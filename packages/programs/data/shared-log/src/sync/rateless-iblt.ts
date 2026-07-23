@@ -81,6 +81,7 @@ class SymbolSerialized implements SSymbol {
 const CODED_SYMBOL_WORDS = 3;
 const CODED_SYMBOL_WORD_BYTES = 8;
 const CODED_SYMBOL_BYTES = CODED_SYMBOL_WORDS * CODED_SYMBOL_WORD_BYTES;
+const MAX_CODED_SYMBOL_BATCH_SIZE = 1_024;
 const BIG_UINT64_ARRAY_IS_LITTLE_ENDIAN =
 	typeof BigUint64Array !== "undefined" &&
 	new Uint8Array(new BigUint64Array([1n]).buffer)[0] === 1;
@@ -226,6 +227,9 @@ const codedSymbolBatchField = {
 	},
 	deserialize: (reader: BinaryReader): CodedSymbolBatch => {
 		const length = reader.u32();
+		if (length > MAX_CODED_SYMBOL_BATCH_SIZE) {
+			throw new Error("RIBLT coded symbol batch exceeds the receiver limit");
+		}
 		const wordLength = length * CODED_SYMBOL_WORDS;
 		const byteLength = length * CODED_SYMBOL_BYTES;
 
@@ -468,7 +472,47 @@ const DEFAULT_CONVERGENT_REPAIR_TIMEOUT_MS = 30_000;
 const DEFAULT_CONVERGENT_RETRY_INTERVALS_MS = [0, 1_000, 3_000, 7_000];
 const DEFAULT_MAX_CONVERGENT_TRACKED_HASHES = 4_096;
 const MIN_MORE_SYMBOLS_BATCH_SIZE = 64;
-const MAX_MORE_SYMBOLS_BATCH_SIZE = 1_024;
+const MAX_MORE_SYMBOLS_BATCH_SIZE = MAX_CODED_SYMBOL_BATCH_SIZE;
+const MAX_INCOMING_RATELESS_PROCESSES = 32;
+const MAX_INCOMING_RATELESS_PROCESSES_PER_SENDER = 4;
+const MAX_INCOMING_RATELESS_QUEUED_BATCHES = 8;
+const MAX_INCOMING_RATELESS_SEQUENCE_GAP = BigInt(
+	MAX_INCOMING_RATELESS_QUEUED_BATCHES,
+);
+const MIN_RATELESS_SYMBOL_BUDGET = 4_096;
+const MAX_RATELESS_SYMBOL_BUDGET = 262_144;
+const RATELESS_SYMBOL_BUDGET_MULTIPLIER = 4;
+const INCOMING_RATELESS_IDLE_TIMEOUT_MS = 20_000;
+const OUTGOING_RATELESS_IDLE_TIMEOUT_MS = 10_000;
+const RATELESS_PROCESS_ABSOLUTE_TIMEOUT_MS = 120_000;
+const INCOMING_RATELESS_FALLBACK_GRACE_MS = 5_000;
+const MAX_RATELESS_RESPONSE_HASHES_INSPECTED = 10_000;
+export const MAX_ACTIVE_RATELESS_RESPONSES_PER_PEER = 4;
+export const MAX_ACTIVE_RATELESS_RESPONSES_GLOBAL = 32;
+
+const getIncomingRatelessSymbolBudget = (initialSymbols: number): number =>
+	Math.min(
+		MAX_RATELESS_SYMBOL_BUDGET,
+		Math.max(
+			MIN_RATELESS_SYMBOL_BUDGET,
+			initialSymbols * initialSymbols * RATELESS_SYMBOL_BUDGET_MULTIPLIER,
+		),
+	);
+
+const getOutgoingRatelessSymbolBudget = (
+	entries: number,
+	initialSymbols: number,
+): number =>
+	Math.min(
+		MAX_RATELESS_SYMBOL_BUDGET,
+		Math.max(
+			MIN_RATELESS_SYMBOL_BUDGET,
+			initialSymbols,
+			entries * RATELESS_SYMBOL_BUDGET_MULTIPLIER,
+		),
+	);
+
+type IncomingRatelessProcessResult = boolean | undefined | "fallback-to-simple";
 
 @variant([3, 0])
 export class StartSync extends TransportMessage {
@@ -719,8 +763,13 @@ type OutgoingRatelessSyncProcess = {
 	consumedResponseHashes: Set<string>;
 	encoder: EncoderWrapper;
 	timeout?: ReturnType<typeof setTimeout>;
+	deadlineTimeout?: ReturnType<typeof setTimeout>;
 	refresh: () => void;
-	next: (message: { lastSeqNo: bigint }) => CodedSymbolBatch;
+	next: (message: {
+		lastSeqNo: bigint;
+	}) => { symbols: CodedSymbolBatch; exhaustedAfterSend: boolean } | undefined;
+	startSimpleFallback: () => Promise<void>;
+	simpleFallbackStarted: boolean;
 	free: (reason?: unknown) => void;
 	processController: AbortController;
 	signal: AbortSignal;
@@ -745,13 +794,25 @@ type IncomingRatelessSyncProcess = {
 	decoder?: DecoderWrapper;
 	completedSynchronizations: Cache<string>;
 	timeout?: ReturnType<typeof setTimeout>;
+	deadlineTimeout?: ReturnType<typeof setTimeout>;
 	refresh: () => void;
+	lastSeqNo: bigint;
+	processedSymbols: number;
+	queuedSymbols: number;
+	symbolBudget: number;
 	process: (message: {
 		seqNo: bigint;
 		symbols: CodedSymbolInput;
-	}) => Promise<boolean | undefined>;
+	}) => Promise<IncomingRatelessProcessResult>;
+	requestAll: () => Promise<void>;
+	fallbackToSimple: (reason?: unknown) => Promise<void>;
 	free: (reason?: unknown) => void;
 	complete: () => void;
+};
+
+type IncomingRatelessProcessAdmission = {
+	key: string;
+	sender: string;
 };
 
 type RatelessRepairSessionLifecycle = {
@@ -781,6 +842,7 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 	private localRangeEncoderCacheMax = 2;
 
 	ingoingSyncProcesses: Map<string, IncomingRatelessSyncProcess>;
+	private incomingRatelessProcessAdmissions: Set<IncomingRatelessProcessAdmission>;
 
 	outgoingSyncProcesses: Map<string, OutgoingRatelessSyncProcess>;
 	private outgoingSyncProcessByTarget: Map<string, OutgoingRatelessSyncProcess>;
@@ -789,6 +851,8 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 		string,
 		Set<RatelessDispatchTargetLifecycle>
 	>;
+	private activeRatelessResponseCount: number;
+	private activeRatelessResponseCountByPeer: Map<string, number>;
 	private ratelessClosed: boolean;
 
 	constructor(readonly properties: SynchronizerComponents<D>) {
@@ -799,15 +863,18 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 		this.outgoingSyncProcessByTarget = new Map();
 		this.ratelessDispatchLifecycleController = new AbortController();
 		this.ratelessDispatchTargets = new Map();
+		this.activeRatelessResponseCount = 0;
+		this.activeRatelessResponseCountByPeer = new Map();
 		this.ratelessClosed = false;
 		this.ingoingSyncProcesses = new Map();
+		this.incomingRatelessProcessAdmissions = new Set();
 		this.startedOrCompletedSynchronizations = new Cache({ max: 1e4 });
 	}
 
 	private get maxConvergentTrackedHashes() {
 		const value = this.properties.sync?.maxConvergentTrackedHashes;
 		return value && Number.isFinite(value) && value > 0
-			? Math.floor(value)
+			? Math.max(1, Math.floor(value))
 			: DEFAULT_MAX_CONVERGENT_TRACKED_HASHES;
 	}
 
@@ -1767,7 +1834,10 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 		let initialSymbolCount = Math.round(
 			Math.sqrt(allCoordinatesToSyncWithIblt.length),
 		); // TODO choose better
-		initialSymbolCount = Math.max(64, initialSymbolCount);
+		initialSymbolCount = Math.min(
+			MAX_MORE_SYMBOLS_BATCH_SIZE,
+			Math.max(64, initialSymbolCount),
+		);
 		if (signal?.aborted) {
 			emitCancelledTopLevelProfile("before-encoder-prepare");
 			return;
@@ -1899,6 +1969,13 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 			const processSignal = processController.signal;
 			let cleared = false;
 			let lastSeqNo = -1n;
+			let symbolsProduced = startSyncSymbols.length;
+			let symbolBudgetExhausted = false;
+			let simpleFallbackPromise: Promise<void> | undefined;
+			const symbolBudget = getOutgoingRatelessSymbolBudget(
+				properties.coordinates.length,
+				startSyncSymbols.length,
+			);
 			let onTargetAbort: (() => void) | undefined;
 			const clear = (
 				reason: unknown = new Error("rateless outgoing process closed"),
@@ -1919,6 +1996,9 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 				if (obj.timeout) {
 					clearTimeout(obj.timeout);
 				}
+				if (obj.deadlineTimeout) {
+					clearTimeout(obj.deadlineTimeout);
+				}
 				if (this.outgoingSyncProcesses.get(syncId) === obj) {
 					this.outgoingSyncProcesses.delete(syncId);
 				}
@@ -1929,11 +2009,43 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 				freeEncoder();
 				this.maybeDisposeRatelessDispatchLifecycle(lifecycle);
 			};
+			const startSimpleFallback = () => {
+				if (!simpleFallbackPromise) {
+					// From this point overlapping ResponseMaybeSync authorization
+					// belongs to Simple. Keeping Rateless first would ship the response
+					// while leaving the duplicate Simple lease charged until its TTL.
+					obj.simpleFallbackStarted = true;
+					simpleFallbackPromise = Promise.resolve(
+						this.simple.onMaybeMissingHashes({
+							hashes: properties.outgoingHashes,
+							targets: [target],
+							signal: lifecycle.callerSignal,
+						}),
+					);
+				}
+				return simpleFallbackPromise;
+			};
+			const fallbackAndClear = (reason: Error) => {
+				void startSimpleFallback().catch((error) => logger.error(error));
+				clear(reason);
+			};
 			const createTimeout = () => {
 				const timeout = setTimeout(
-					() => clear(new Error("rateless outgoing process timed out")),
-					1e4,
-				); // TODO arg
+					() =>
+						fallbackAndClear(new Error("rateless outgoing process timed out")),
+					OUTGOING_RATELESS_IDLE_TIMEOUT_MS,
+				);
+				timeout.unref?.();
+				return timeout;
+			};
+			const createDeadlineTimeout = () => {
+				const timeout = setTimeout(
+					() =>
+						fallbackAndClear(
+							new Error("rateless outgoing process deadline exceeded"),
+						),
+					RATELESS_PROCESS_ABSOLUTE_TIMEOUT_MS,
+				);
 				timeout.unref?.();
 				return timeout;
 			};
@@ -1954,24 +2066,43 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 				targetLifecycle: properties.targetLifecycle,
 				encoder,
 				timeout: undefined,
+				deadlineTimeout: undefined,
 				refresh: () => {
 					if (obj.timeout) {
 						clearTimeout(obj.timeout);
 					}
 					obj.timeout = createTimeout();
 				},
-				next: (message: { lastSeqNo: bigint }): CodedSymbolBatch => {
-					if (processSignal.aborted) {
-						return CodedSymbolBatch.fromSymbols([]);
+				next: (message: { lastSeqNo: bigint }) => {
+					if (processSignal.aborted || symbolBudgetExhausted) {
+						return undefined;
 					}
-					if (message.lastSeqNo <= lastSeqNo) {
-						return CodedSymbolBatch.fromSymbols([]);
+					if (message.lastSeqNo !== lastSeqNo + 1n) {
+						return undefined;
 					}
-					lastSeqNo++;
-					obj.refresh(); // TODO use timestamp instead and collective pruning/refresh
+					lastSeqNo = message.lastSeqNo;
+
+					const remainingBudget = symbolBudget - symbolsProduced;
+					if (remainingBudget <= 0) {
+						symbolBudgetExhausted = true;
+						return {
+							symbols: CodedSymbolBatch.fromSymbols([]),
+							exhaustedAfterSend: true,
+						};
+					}
 
 					const produceStartedAt = syncProfileStart(profile);
-					const symbols = produceNextCodedSymbols(encoder, nextBatch);
+					const symbols = produceNextCodedSymbols(
+						encoder,
+						Math.min(nextBatch, remainingBudget),
+					);
+					symbolsProduced += symbols.length;
+					const exhaustedAfterSend = symbols.length === 0;
+					if (exhaustedAfterSend) {
+						symbolBudgetExhausted = true;
+					} else {
+						obj.refresh();
+					}
 					if (profile) {
 						emitSyncProfileDuration(profile, produceStartedAt, {
 							name: "rateless.produceMoreSymbols",
@@ -1980,8 +2111,10 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 							targets: 1,
 						});
 					}
-					return symbols;
+					return { symbols, exhaustedAfterSend };
 				},
+				startSimpleFallback,
+				simpleFallbackStarted: false,
 				free: clear,
 				outgoingHashes: properties.outgoingHashes,
 				authorizedHashes: properties.authorizedHashes,
@@ -2009,6 +2142,7 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 			this.outgoingSyncProcesses.set(syncId, obj);
 			this.outgoingSyncProcessByTarget.set(target, obj);
 			obj.timeout = createTimeout();
+			obj.deadlineTimeout = createDeadlineTimeout();
 			targetSignal.addEventListener("abort", onTargetAbort, { once: true });
 			encoderTransferred = true;
 			if (targetSignal.aborted) {
@@ -2104,6 +2238,14 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 		) {
 			return undefined;
 		}
+		if (
+			this.activeRatelessResponseCount >=
+				MAX_ACTIVE_RATELESS_RESPONSES_GLOBAL ||
+			(this.activeRatelessResponseCountByPeer.get(target) ?? 0) >=
+				MAX_ACTIVE_RATELESS_RESPONSES_PER_PEER
+		) {
+			return undefined;
+		}
 		const authorized: string[] = [];
 		const remaining: string[] = [];
 		const seen = new Set<string>();
@@ -2134,6 +2276,11 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 
 		const targetLifecycle = process.targetLifecycle;
 		targetLifecycle.responseLeases += 1;
+		this.activeRatelessResponseCount += 1;
+		this.activeRatelessResponseCountByPeer.set(
+			target,
+			(this.activeRatelessResponseCountByPeer.get(target) ?? 0) + 1,
+		);
 		let released = false;
 		return {
 			process,
@@ -2151,6 +2298,14 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 					}
 				}
 				targetLifecycle.responseLeases -= 1;
+				this.activeRatelessResponseCount -= 1;
+				const activeForPeer =
+					(this.activeRatelessResponseCountByPeer.get(target) ?? 1) - 1;
+				if (activeForPeer === 0) {
+					this.activeRatelessResponseCountByPeer.delete(target);
+				} else {
+					this.activeRatelessResponseCountByPeer.set(target, activeForPeer);
+				}
 				this.maybeDisposeRatelessDispatchLifecycle(targetLifecycle.lifecycle);
 			},
 		};
@@ -2175,6 +2330,7 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 			const syncId = getSyncIdString(message);
 			const key = this.getIncomingSyncProcessKey(sender, syncId);
 			const completedSynchronizations = this.startedOrCompletedSynchronizations;
+			const admissionSet = this.incomingRatelessProcessAdmissions;
 			if (this.ingoingSyncProcesses.has(key)) {
 				return true;
 			}
@@ -2183,11 +2339,45 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 				return true;
 			}
 
+			let admissionsForSender = 0;
+			for (const admission of admissionSet) {
+				if (admission.key === key) {
+					return true;
+				}
+				if (admission.sender === sender) {
+					admissionsForSender += 1;
+				}
+			}
+			if (
+				admissionSet.size >= MAX_INCOMING_RATELESS_PROCESSES ||
+				admissionsForSender >= MAX_INCOMING_RATELESS_PROCESSES_PER_SENDER
+			) {
+				return true;
+			}
+			const admission = { key, sender };
+			admissionSet.add(admission);
+
 			const controller = new AbortController();
 			let freed = false;
 			let completed = false;
+			let initializationPending = false;
+			let fallbackSendPending = false;
+			let admissionReleased = false;
+			let fallbackGraceTimeout: ReturnType<typeof setTimeout> | undefined;
 			let onOwnershipAbort: (() => void) | undefined;
 			let obj!: IncomingRatelessSyncProcess;
+			const releaseAdmissionIfSettled = () => {
+				if (
+					admissionReleased ||
+					!freed ||
+					initializationPending ||
+					fallbackSendPending
+				) {
+					return;
+				}
+				admissionReleased = true;
+				admissionSet.delete(admission);
+			};
 			const free = (
 				reason: unknown = new Error("incoming rateless process closed"),
 			) => {
@@ -2208,12 +2398,21 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 					clearTimeout(obj.timeout);
 					obj.timeout = undefined;
 				}
+				if (obj.deadlineTimeout) {
+					clearTimeout(obj.deadlineTimeout);
+					obj.deadlineTimeout = undefined;
+				}
+				if (fallbackGraceTimeout) {
+					clearTimeout(fallbackGraceTimeout);
+					fallbackGraceTimeout = undefined;
+				}
 				if (this.ingoingSyncProcesses.get(key) === obj) {
 					this.ingoingSyncProcesses.delete(key);
 				}
 				const ownedDecoder = obj.decoder;
 				obj.decoder = undefined;
 				ownedDecoder?.free();
+				releaseAdmissionIfSettled();
 			};
 			const complete = () => {
 				if (completed || !this.isIncomingSyncProcessActive(obj)) {
@@ -2232,8 +2431,15 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 				controller,
 				completedSynchronizations,
 				timeout: undefined,
+				deadlineTimeout: undefined,
 				refresh: () => {},
+				lastSeqNo: -1n,
+				processedSymbols: 0,
+				queuedSymbols: 0,
+				symbolBudget: getIncomingRatelessSymbolBudget(message.symbols.length),
 				process: async () => undefined,
+				requestAll: async () => {},
+				fallbackToSimple: async () => {},
 				free,
 				complete,
 			};
@@ -2244,14 +2450,110 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 				onOwnershipAbort,
 				{ once: true },
 			);
+			obj.deadlineTimeout = setTimeout(() => {
+				void obj.fallbackToSimple(
+					new Error("incoming rateless process deadline exceeded"),
+				);
+			}, RATELESS_PROCESS_ABSOLUTE_TIMEOUT_MS);
+			obj.deadlineTimeout.unref?.();
 			if (!this.isIncomingSyncProcessActive(obj)) {
 				free(ownershipLifecycleController.signal.reason);
+				return true;
+			}
+
+			let requestAllPromise: Promise<void> | undefined;
+			obj.requestAll = () => {
+				if (requestAllPromise) {
+					return requestAllPromise;
+				}
+				requestAllPromise = (async () => {
+					if (!this.isIncomingSyncProcessActive(obj)) {
+						return;
+					}
+					fallbackSendPending = true;
+					const sendStartedAt = syncProfileStart(profile);
+					try {
+						await this.simple.rpc.send(
+							new RequestAll({
+								syncId: message.syncId,
+							}),
+							{
+								mode: new SilentDelivery({
+									to: [obj.sender],
+									redundancy: 1,
+								}),
+								priority: SYNC_MESSAGE_PRIORITY,
+								signal: controller.signal,
+							},
+						);
+						if (this.isIncomingSyncProcessActive(obj) && profile) {
+							emitSyncProfileDuration(profile, sendStartedAt, {
+								name: "rateless.sendRequestAll",
+								messages: 1,
+								targets: 1,
+								syncId,
+							});
+						}
+					} finally {
+						fallbackSendPending = false;
+						if (this.isIncomingSyncProcessActive(obj)) {
+							complete();
+						}
+						releaseAdmissionIfSettled();
+					}
+				})();
+				return requestAllPromise;
+			};
+			let boundedFallbackPromise: Promise<void> | undefined;
+			obj.fallbackToSimple = (
+				reason: unknown = new Error("incoming rateless fallback timed out"),
+			) => {
+				if (boundedFallbackPromise) {
+					return boundedFallbackPromise;
+				}
+				const requestAll = obj.requestAll();
+				boundedFallbackPromise = new Promise<void>((resolve) => {
+					let settled = false;
+					const settle = () => {
+						if (settled) {
+							return;
+						}
+						settled = true;
+						controller.signal.removeEventListener("abort", onAbort);
+						if (fallbackGraceTimeout) {
+							clearTimeout(fallbackGraceTimeout);
+							fallbackGraceTimeout = undefined;
+						}
+						resolve();
+					};
+					const onAbort = () => settle();
+					controller.signal.addEventListener("abort", onAbort, {
+						once: true,
+					});
+					fallbackGraceTimeout = setTimeout(() => {
+						free(reason);
+						settle();
+					}, INCOMING_RATELESS_FALLBACK_GRACE_MS);
+					fallbackGraceTimeout.unref?.();
+					void requestAll.then(settle, settle);
+					if (controller.signal.aborted) {
+						onAbort();
+					}
+				});
+				return boundedFallbackPromise;
+			};
+
+			if (message.symbols.length > MAX_MORE_SYMBOLS_BATCH_SIZE) {
+				await obj.fallbackToSimple(
+					new Error("oversized incoming rateless initial batch"),
+				);
 				return true;
 			}
 
 			const wrapped = message.end < message.start;
 			const decoderStartedAt = syncProfileStart(profile);
 			let decoder: DecoderWrapper | false;
+			initializationPending = true;
 			try {
 				decoder = await this.getLocalDecoderForRange(
 					{
@@ -2266,13 +2568,18 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 					},
 				);
 			} catch (error) {
+				const processAborted = controller.signal.aborted;
 				free(error);
 				if (
+					processAborted ||
 					!this.isIncomingSyncGenerationActive(ownershipLifecycleController)
 				) {
 					return true;
 				}
 				throw error;
+			} finally {
+				initializationPending = false;
+				releaseAdmissionIfSettled();
 			}
 			if (!this.isIncomingSyncProcessActive(obj)) {
 				decoder && decoder.free();
@@ -2299,46 +2606,25 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 			}
 
 			if (!decoder) {
-				const sendStartedAt = syncProfileStart(profile);
 				try {
-					await this.simple.rpc.send(
-						new RequestAll({
-							syncId: message.syncId,
-						}),
-						{
-							mode: new SilentDelivery({ to: [obj.from], redundancy: 1 }),
-							priority: SYNC_MESSAGE_PRIORITY,
-							signal: controller.signal,
-						},
+					await obj.fallbackToSimple(
+						new Error("incoming rateless decoder unavailable"),
 					);
-					if (!this.isIncomingSyncProcessActive(obj)) {
-						return true;
-					}
-					if (profile) {
-						emitSyncProfileDuration(profile, sendStartedAt, {
-							name: "rateless.sendRequestAll",
-							messages: 1,
-							targets: 1,
-							syncId,
-						});
-					}
 				} catch (error) {
-					const wasActive = this.isIncomingSyncProcessActive(obj);
-					free(error);
-					if (!wasActive) {
+					if (controller.signal.aborted) {
 						return true;
 					}
 					throw error;
 				}
-				complete();
 				return true;
 			}
 
 			const createTimeout = () => {
-				const timeout = setTimeout(
-					() => free(new Error("incoming rateless process timed out")),
-					2e4,
-				); // TODO arg
+				const timeout = setTimeout(() => {
+					void obj.fallbackToSimple(
+						new Error("incoming rateless process timed out"),
+					);
+				}, INCOMING_RATELESS_IDLE_TIMEOUT_MS);
 				timeout.unref?.();
 				return timeout;
 			};
@@ -2346,8 +2632,8 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 			let messageQueue: {
 				seqNo: bigint;
 				symbols: CodedSymbolInput;
+				symbolCount: number;
 			}[] = [];
-			let lastSeqNo = -1n;
 			obj.refresh = () => {
 				if (!this.isIncomingSyncProcessActive(obj)) {
 					return;
@@ -2360,19 +2646,48 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 			obj.process = async (newMessage: {
 				seqNo: bigint;
 				symbols: CodedSymbolInput;
-			}): Promise<boolean | undefined> => {
+			}): Promise<IncomingRatelessProcessResult> => {
 				if (!this.isIncomingSyncProcessActive(obj)) {
 					return undefined;
 				}
-				obj.refresh(); // TODO use timestamp instead and collective pruning/refresh
 
-				if (newMessage.seqNo <= lastSeqNo) {
+				const symbolCount = CodedSymbolBatch.from(newMessage.symbols).length;
+				if (symbolCount > MAX_MORE_SYMBOLS_BATCH_SIZE) {
+					free(new Error("incoming rateless symbol batch exceeds limit"));
 					return undefined;
 				}
+				if (newMessage.seqNo <= obj.lastSeqNo) {
+					return undefined;
+				}
+				if (
+					newMessage.seqNo >
+					obj.lastSeqNo + MAX_INCOMING_RATELESS_SEQUENCE_GAP
+				) {
+					return undefined;
+				}
+				if (messageQueue.some((queued) => queued.seqNo === newMessage.seqNo)) {
+					return undefined;
+				}
+				if (
+					newMessage.seqNo !== obj.lastSeqNo + 1n &&
+					messageQueue.length >= MAX_INCOMING_RATELESS_QUEUED_BATCHES
+				) {
+					return undefined;
+				}
+				if (
+					obj.processedSymbols + obj.queuedSymbols + symbolCount >
+					obj.symbolBudget
+				) {
+					return "fallback-to-simple";
+				}
+				if (newMessage.seqNo > 0n && symbolCount === 0) {
+					return "fallback-to-simple";
+				}
 
-				messageQueue.push(newMessage);
+				messageQueue.push({ ...newMessage, symbolCount });
+				obj.queuedSymbols += symbolCount;
 				messageQueue.sort((a, b) => Number(a.seqNo - b.seqNo));
-				if (messageQueue[0].seqNo !== lastSeqNo + 1n) {
+				if (messageQueue[0].seqNo !== obj.lastSeqNo + 1n) {
 					return;
 				}
 
@@ -2407,14 +2722,19 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 
 				while (
 					messageQueue.length > 0 &&
-					messageQueue[0].seqNo === lastSeqNo + 1n
+					messageQueue[0].seqNo === obj.lastSeqNo + 1n
 				) {
 					const symbolMessage = messageQueue.shift();
 					if (!symbolMessage) {
 						break;
 					}
 
-					lastSeqNo = symbolMessage.seqNo;
+					obj.queuedSymbols -= symbolMessage.symbolCount;
+					obj.lastSeqNo = symbolMessage.seqNo;
+					obj.processedSymbols += symbolMessage.symbolCount;
+					// Only an authenticated, previously unseen contiguous sequence advances
+					// the idle deadline. Replays and speculative future batches do not.
+					obj.refresh();
 
 					const addBatchAndDecode:
 						| ((symbols: BigUint64Array) => boolean)
@@ -2490,7 +2810,7 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 				return false;
 			};
 			obj.timeout = createTimeout();
-			let initialResult: boolean | undefined;
+			let initialResult: IncomingRatelessProcessResult;
 			try {
 				initialResult = await obj.process({
 					seqNo: 0n,
@@ -2507,6 +2827,12 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 			if (initialResult === true) {
 				return true;
 			}
+			if (initialResult === "fallback-to-simple") {
+				await obj.fallbackToSimple(
+					new Error("incoming rateless symbol budget exhausted"),
+				);
+				return true;
+			}
 			if (!this.isIncomingSyncProcessActive(obj)) {
 				return true;
 			}
@@ -2516,11 +2842,11 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 			try {
 				await this.simple.rpc.send(
 					new RequestMoreSymbols({
-						lastSeqNo: 0n,
+						lastSeqNo: obj.lastSeqNo,
 						syncId: message.syncId,
 					}),
 					{
-						mode: new SilentDelivery({ to: [obj.from], redundancy: 1 }),
+						mode: new SilentDelivery({ to: [obj.sender], redundancy: 1 }),
 						priority: SYNC_MESSAGE_PRIORITY,
 						signal: controller.signal,
 					},
@@ -2561,7 +2887,7 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 			) {
 				return true;
 			}
-			let outProcess: boolean | undefined;
+			let outProcess: IncomingRatelessProcessResult;
 			try {
 				outProcess = await obj.process(message);
 			} catch (error) {
@@ -2574,6 +2900,16 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 			}
 
 			if (outProcess === true) {
+				return true;
+			} else if (outProcess === "fallback-to-simple") {
+				try {
+					await obj.fallbackToSimple(
+						new Error("incoming rateless symbol budget exhausted"),
+					);
+				} catch {
+					// The bounded rateless process is already complete or aborted. A
+					// later repair round may retry if the fallback request was lost.
+				}
 				return true;
 			} else if (outProcess === undefined) {
 				return true; // we don't have enough information, or received information that is redundant
@@ -2588,11 +2924,11 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 			try {
 				await this.simple.rpc.send(
 					new RequestMoreSymbols({
-						lastSeqNo: message.seqNo,
+						lastSeqNo: obj.lastSeqNo,
 						syncId: message.syncId,
 					}),
 					{
-						mode: new SilentDelivery({ to: [obj.from], redundancy: 1 }),
+						mode: new SilentDelivery({ to: [obj.sender], redundancy: 1 }),
 						priority: SYNC_MESSAGE_PRIORITY,
 						signal: obj.controller.signal,
 					},
@@ -2635,7 +2971,11 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 			if (signal.aborted) {
 				return true;
 			}
-			const symbols = obj.next(message);
+			const next = obj.next(message);
+			if (!next) {
+				return true;
+			}
+			const { symbols, exhaustedAfterSend } = next;
 			if (signal.aborted) {
 				return true;
 			}
@@ -2668,6 +3008,13 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 					syncId,
 				});
 			}
+			if (exhaustedAfterSend) {
+				// Latch exhaustion in next() before the send begins, then retain this
+				// bounded process long enough for RequestAll. Starting Simple eagerly
+				// also keeps fallback working with older receivers that ignore an empty
+				// terminal symbol batch.
+				void obj.startSimpleFallback().catch((error) => logger.error(error));
+			}
 			return true;
 		} else if (message instanceof RequestAll) {
 			const p = this.outgoingSyncProcesses.get(getSyncIdString(message));
@@ -2680,81 +3027,107 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 			if (p.signal.aborted) {
 				return true;
 			}
-			const callerSignal = p.callerSignal;
 			// RequestAll ends only this target's rateless attempt. Other target
 			// encoders and response authorizations remain independently owned.
+			const fallback = p.startSimpleFallback();
 			p.free();
-			await this.simple.onMaybeMissingHashes({
-				hashes: p.outgoingHashes,
-				targets: [p.target],
-				signal: callerSignal,
-			});
+			await fallback;
 			return true;
 		} else if (
 			message instanceof ResponseMaybeSync ||
 			message instanceof ResponseMaybeSyncCapabilities
 		) {
 			const from = context.from!;
-			const response = this.consumeAuthorizedRatelessResponse(
+			// Simple authorizations are exact request leases and take precedence
+			// over Rateless' broader process authorization. This also handles a
+			// delayed fallback/prelude response after the Rateless process for the
+			// same target has been replaced.
+			const simpleLeases = this.simple.consumeAuthorizedMaybeSyncResponse(
 				message.hashes,
 				from,
 			);
-			if (!response || response.authorized.length === 0) {
-				return this.simple.onMessage(message, context);
+			const simpleHashes = simpleLeases.flatMap((lease) => lease.hashes);
+			const simpleHashSet = new Set(simpleHashes);
+			const ratelessCandidateHashes: string[] = [];
+			let inspected = 0;
+			const iterator = message.hashes[Symbol.iterator]();
+			let exhausted = false;
+			try {
+				while (inspected < MAX_RATELESS_RESPONSE_HASHES_INSPECTED) {
+					const next = iterator.next();
+					if (next.done) {
+						exhausted = true;
+						break;
+					}
+					inspected += 1;
+					if (!simpleHashSet.has(next.value)) {
+						ratelessCandidateHashes.push(next.value);
+					}
+				}
+			} finally {
+				if (!exhausted) {
+					iterator.return?.();
+				}
 			}
-
-			const remainingMessage =
-				message instanceof ResponseMaybeSyncCapabilities
-					? new ResponseMaybeSyncCapabilities({
-							hashes: response.remaining,
-							capabilities: message.capabilities,
-						})
-					: new ResponseMaybeSync({ hashes: response.remaining });
-			// Consume both authorization domains synchronously. In particular, a
-			// slow rateless shipment must not leave the Simple remainder sitting in
-			// its expiring pending-response window until after the first await.
-			const simpleLeases =
-				response.remaining.length > 0
-					? this.simple.consumeAuthorizedMaybeSyncResponse(
-							response.remaining,
+			const response =
+				ratelessCandidateHashes.length > 0
+					? this.consumeAuthorizedRatelessResponse(
+							ratelessCandidateHashes,
 							from,
 						)
-					: [];
+					: undefined;
+			if (
+				simpleLeases.length === 0 &&
+				(!response || response.authorized.length === 0)
+			) {
+				response?.release();
+				return true;
+			}
 
 			let firstError: unknown;
 			let rollbackRatelessAuthorization = false;
 			try {
-				const responseStartedAt = syncProfileStart(profile);
-				let responseShipment = {
-					messages: 0,
-					fused: false,
-					entries: 0,
-				};
-				try {
-					responseShipment = await this.simple.shipAuthorizedMaybeSyncResponse({
-						hashes: response.authorized,
-						from,
-						response: message,
-						signal: response.signal,
-					});
-				} catch (error) {
-					firstError = error;
-					rollbackRatelessAuthorization = true;
-				}
-				if (profile) {
+				const simpleMessage =
+					message instanceof ResponseMaybeSyncCapabilities
+						? new ResponseMaybeSyncCapabilities({
+								hashes: simpleHashes,
+								capabilities: message.capabilities,
+							})
+						: new ResponseMaybeSync({ hashes: simpleHashes });
+				if (response && response.authorized.length > 0) {
+					const responseStartedAt = syncProfileStart(profile);
+					let responseShipment = {
+						messages: 0,
+						fused: false,
+						entries: 0,
+					};
 					try {
-						emitSyncProfileDuration(profile, responseStartedAt, {
-							name: "simple.exchangeHeads",
-							entries: responseShipment.entries,
-							messages: responseShipment.messages,
-							targets: 1,
-							details: {
-								source: "ratelessResponseMaybeSync",
-								fused: responseShipment.fused,
-							},
-						});
+						responseShipment =
+							await this.simple.shipAuthorizedMaybeSyncResponse({
+								hashes: response.authorized,
+								from,
+								response: message,
+								signal: response.signal,
+							});
 					} catch (error) {
-						firstError ??= error;
+						firstError = error;
+						rollbackRatelessAuthorization = true;
+					}
+					if (profile) {
+						try {
+							emitSyncProfileDuration(profile, responseStartedAt, {
+								name: "simple.exchangeHeads",
+								entries: responseShipment.entries,
+								messages: responseShipment.messages,
+								targets: 1,
+								details: {
+									source: "ratelessResponseMaybeSync",
+									fused: responseShipment.fused,
+								},
+							});
+						} catch (error) {
+							firstError ??= error;
+						}
 					}
 				}
 
@@ -2763,7 +3136,7 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 						await this.simple.shipAuthorizedMaybeSyncResponseLeases({
 							leases: simpleLeases,
 							from,
-							response: remainingMessage,
+							response: simpleMessage,
 						});
 					} catch (error) {
 						firstError ??= error;
@@ -2774,7 +3147,7 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 				}
 				return true;
 			} finally {
-				response.release({ rollback: rollbackRatelessAuthorization });
+				response?.release({ rollback: rollbackRatelessAuthorization });
 				// The Simple helper owns these leases once entered and releases each
 				// one in its own finally. Keep this outer ownership release as the
 				// final safety net for diagnostics or setup failures that happen
@@ -2850,6 +3223,9 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 		this.ratelessDispatchLifecycleController.abort(reason);
 		this.ratelessDispatchLifecycleController = new AbortController();
 		this.startedOrCompletedSynchronizations = new Cache({ max: 1e4 });
+		// Admission accounting intentionally spans local generations: native range
+		// initialization and fallback delivery are not guaranteed to stop merely
+		// because their logical process was aborted.
 		this.ratelessClosed = false;
 		return this.simple.open();
 	}

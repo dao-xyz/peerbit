@@ -1671,6 +1671,238 @@ describe("events", () => {
 		}
 	});
 
+	it("does not let an authorized adaptive rebalance resurrect ownership after full unreplication", async () => {
+		const { db, log } = await openDisconnectedLog(1);
+		const [currentRange] = await db.log.replicate({
+			factor: 0.2,
+			offset: 0.1,
+		});
+		log._isAdaptiveReplicating = true;
+		log.setupDebouncedRebalancing({ limits: { interval: 60_000 } });
+
+		const secondAuthorizationStarted = pDefer<void>();
+		const releaseSecondAuthorization = pDefer<void>();
+		let authorizationCalls = 0;
+		log._isTrustedReplicator = async () => {
+			authorizationCalls++;
+			if (authorizationCalls === 2) {
+				secondAuthorizationStarted.resolve();
+				await releaseSecondAuthorization.promise;
+			}
+			return true;
+		};
+		const getMemoryUsage = sinon.stub(log, "getMemoryUsage").resolves(0);
+		const getDynamicRange = sinon
+			.stub(log, "getDynamicRange")
+			.resolves(currentRange);
+		const calculateTotalParticipation = sinon
+			.stub(log, "calculateTotalParticipation")
+			.resolves(currentRange.widthNormalized);
+		const step = sinon
+			.stub(log.replicationController, "step")
+			.returns(Math.min(1, currentRange.widthNormalized + 0.25));
+		const ensureCoordinates = sinon
+			.stub(log, "ensureCurrentHeadCoordinatesIndexed")
+			.resolves();
+		const send = sinon.stub(log.rpc, "send").resolves();
+
+		try {
+			const balancing = log.rebalanceParticipation();
+			await secondAuthorizationStarted.promise;
+
+			// The rebalance has passed its outer role checks and is delayed in the
+			// authorization path immediately before it queues its range mutation.
+			// Full unreplication must invalidate that admitted planner.
+			await db.log.unreplicate();
+			expect(log._isReplicating).to.be.false;
+			expect(log._isAdaptiveReplicating).to.be.false;
+			expect(await db.log.countReplicationSegments()).to.equal(0);
+
+			releaseSecondAuthorization.resolve();
+			expect(await balancing).to.equal(false);
+			expect(await db.log.countReplicationSegments()).to.equal(0);
+			expect(authorizationCalls).to.equal(2);
+		} finally {
+			releaseSecondAuthorization.resolve();
+			getMemoryUsage.restore();
+			getDynamicRange.restore();
+			calculateTotalParticipation.restore();
+			step.restore();
+			ensureCoordinates.restore();
+			send.restore();
+			log.rebalanceParticipationDebounced?.close();
+		}
+	});
+
+	for (const fixedReplacement of [
+		{
+			name: "explicit fixed reset",
+			range: { factor: 0.3, offset: 0.6 },
+			options: { reset: true, rebalance: false },
+		},
+		{
+			name: "implicit fixed reset",
+			range: { factor: 0.3 },
+			options: { rebalance: false },
+		},
+	]) {
+		it(`does not let an authorized adaptive rebalance augment an ${fixedReplacement.name}`, async () => {
+			const { db, log } = await openDisconnectedLog(1);
+			const [currentRange] = await db.log.replicate({
+				factor: 0.2,
+				offset: 0.1,
+			});
+			log._isAdaptiveReplicating = true;
+			log.setupDebouncedRebalancing({ limits: { interval: 60_000 } });
+
+			const secondAuthorizationStarted = pDefer<void>();
+			const releaseSecondAuthorization = pDefer<void>();
+			let authorizationCalls = 0;
+			log._isTrustedReplicator = async () => {
+				authorizationCalls++;
+				if (authorizationCalls === 2) {
+					secondAuthorizationStarted.resolve();
+					await releaseSecondAuthorization.promise;
+				}
+				return true;
+			};
+			const getMemoryUsage = sinon.stub(log, "getMemoryUsage").resolves(0);
+			const getDynamicRange = sinon
+				.stub(log, "getDynamicRange")
+				.resolves(currentRange);
+			const calculateTotalParticipation = sinon
+				.stub(log, "calculateTotalParticipation")
+				.resolves(currentRange.widthNormalized);
+			const step = sinon
+				.stub(log.replicationController, "step")
+				.returns(Math.min(1, currentRange.widthNormalized + 0.25));
+			const ensureCoordinates = sinon
+				.stub(log, "ensureCurrentHeadCoordinatesIndexed")
+				.resolves();
+			const send = sinon.stub(log.rpc, "send").resolves();
+
+			try {
+				const balancing = log.rebalanceParticipation();
+				await secondAuthorizationStarted.promise;
+
+				// The adaptive update is authorized and delayed immediately before its
+				// mutation. A newer public fixed replacement must fence that stale
+				// output even though the store remains open.
+				const [fixedRange] = await db.log.replicate(
+					fixedReplacement.range,
+					fixedReplacement.options,
+				);
+				expect(log._isReplicating).to.be.true;
+				expect(log._isAdaptiveReplicating).to.be.false;
+				let durable = await db.log.getMyReplicationSegments();
+				expect(durable).to.have.length(1);
+				expect(durable[0].rangeHash).to.equal(fixedRange.rangeHash);
+
+				releaseSecondAuthorization.resolve();
+				expect(await balancing).to.equal(false);
+				durable = await db.log.getMyReplicationSegments();
+				expect(durable).to.have.length(1);
+				expect(durable[0].rangeHash).to.equal(fixedRange.rangeHash);
+				expect(authorizationCalls).to.equal(3);
+			} finally {
+				releaseSecondAuthorization.resolve();
+				getMemoryUsage.restore();
+				getDynamicRange.restore();
+				calculateTotalParticipation.restore();
+				step.restore();
+				ensureCoordinates.restore();
+				send.restore();
+				log.rebalanceParticipationDebounced?.close();
+			}
+		});
+	}
+
+	it("orders a delayed adaptive Added announcement before the authoritative empty snapshot", async () => {
+		const { db, log } = await openDisconnectedLog(1);
+		const [currentRange] = await db.log.replicate({
+			factor: 0.2,
+			offset: 0.1,
+		});
+		log._isAdaptiveReplicating = true;
+		log.setupDebouncedRebalancing({ limits: { interval: 60_000 } });
+
+		log._isTrustedReplicator = async () => true;
+		const getMemoryUsage = sinon.stub(log, "getMemoryUsage").resolves(0);
+		const getDynamicRange = sinon
+			.stub(log, "getDynamicRange")
+			.resolves(currentRange);
+		const calculateTotalParticipation = sinon
+			.stub(log, "calculateTotalParticipation")
+			.resolves(currentRange.widthNormalized);
+		const step = sinon
+			.stub(log.replicationController, "step")
+			.returns(Math.min(1, currentRange.widthNormalized + 0.25));
+		const ensureCoordinates = sinon
+			.stub(log, "ensureCurrentHeadCoordinatesIndexed")
+			.resolves();
+		const addedStarted = pDefer<void>();
+		const releaseAdded = pDefer<void>();
+		const announcements: unknown[] = [];
+		const send = sinon.stub(log.rpc, "send").callsFake(async (message) => {
+			announcements.push(message);
+			if (message instanceof AddedReplicationSegmentMessage) {
+				addedStarted.resolve();
+				await releaseAdded.promise;
+			}
+		});
+
+		try {
+			const balancing = log.rebalanceParticipation();
+			await addedStarted.promise;
+			expect(
+				announcements.filter(
+					(message) => message instanceof AddedReplicationSegmentMessage,
+				),
+			).to.have.length(1);
+
+			const unreplicating = db.log.unreplicate();
+			await waitForResolved(
+				async () => {
+					expect(await db.log.countReplicationSegments()).to.equal(0);
+				},
+				{ timeout: 2_000, delayInterval: 5 },
+			);
+			expect(
+				announcements.filter(
+					(message) => message instanceof AllReplicatingSegmentsMessage,
+				),
+			).to.have.length(0);
+
+			releaseAdded.resolve();
+			expect(await balancing).to.equal(false);
+			await unreplicating;
+
+			const ownershipAnnouncements = announcements.filter(
+				(message) =>
+					message instanceof AddedReplicationSegmentMessage ||
+					message instanceof AllReplicatingSegmentsMessage,
+			);
+			expect(ownershipAnnouncements[0]).to.be.instanceOf(
+				AddedReplicationSegmentMessage,
+			);
+			expect(ownershipAnnouncements[1]).to.be.instanceOf(
+				AllReplicatingSegmentsMessage,
+			);
+			expect(
+				(ownershipAnnouncements[1] as AllReplicatingSegmentsMessage).segments,
+			).to.have.length(0);
+		} finally {
+			releaseAdded.resolve();
+			getMemoryUsage.restore();
+			getDynamicRange.restore();
+			calculateTotalParticipation.restore();
+			step.restore();
+			ensureCoordinates.restore();
+			send.restore();
+			log.rebalanceParticipationDebounced?.close();
+		}
+	});
+
 	it("captures append ownership before the lower append can cross reopen", async () => {
 		const { db, log } = await openDisconnectedLog(1);
 		const { entry } = await db.add("append-generation-seed");
@@ -3976,9 +4208,7 @@ describe("events", () => {
 		const replicationIndex = db1.log.replicationIndex as any;
 		await waitForResolved(async () => {
 			expect(
-				await replicationIndex
-					.iterate({ query: { hash: remoteHash } })
-					.all(),
+				await replicationIndex.iterate({ query: { hash: remoteHash } }).all(),
 			).to.have.length.greaterThan(0);
 			expect(db1.log.uniqueReplicators.has(remoteHash)).to.be.true;
 		});
@@ -4035,9 +4265,7 @@ describe("events", () => {
 			await Promise.all([oldUnsubscribe, reconnect]);
 			await waitForResolved(async () => {
 				expect(
-					await replicationIndex
-						.iterate({ query: { hash: remoteHash } })
-						.all(),
+					await replicationIndex.iterate({ query: { hash: remoteHash } }).all(),
 				).to.have.length.greaterThan(0);
 				expect(log.uniqueReplicators.has(remoteHash)).to.be.true;
 				expect(log._replicatorJoinEmitted.has(remoteHash)).to.be.true;
@@ -4058,9 +4286,7 @@ describe("events", () => {
 			// complete removal, including sync-related cleanup and one leave event.
 			await log._onUnsubscription(unsubscribeEvent);
 			expect(
-				await replicationIndex
-					.iterate({ query: { hash: remoteHash } })
-					.all(),
+				await replicationIndex.iterate({ query: { hash: remoteHash } }).all(),
 			).to.have.length(0);
 			expect(log.uniqueReplicators.has(remoteHash)).to.be.false;
 			expect(log._replicatorJoinEmitted.has(remoteHash)).to.be.false;
@@ -4093,9 +4319,7 @@ describe("events", () => {
 		const replicationIndex = db1.log.replicationIndex as any;
 		await waitForResolved(async () => {
 			expect(
-				await replicationIndex
-					.iterate({ query: { hash: remoteHash } })
-					.all(),
+				await replicationIndex.iterate({ query: { hash: remoteHash } }).all(),
 			).to.have.length.greaterThan(0);
 			expect(db1.log.uniqueReplicators.has(remoteHash)).to.be.true;
 		});
@@ -4153,9 +4377,7 @@ describe("events", () => {
 			]);
 
 			expect(
-				await replicationIndex
-					.iterate({ query: { hash: remoteHash } })
-					.all(),
+				await replicationIndex.iterate({ query: { hash: remoteHash } }).all(),
 			).to.have.length(0);
 			expect(log.uniqueReplicators.has(remoteHash)).to.be.false;
 			expect(log._replicatorJoinEmitted.has(remoteHash)).to.be.false;
@@ -4196,19 +4418,17 @@ describe("events", () => {
 
 		const blockerStarted = pDefer<void>();
 		const releaseBlocker = pDefer<void>();
-		const blocker = log.withReplicationInfoApplyQueue(
-			remoteHash,
-			async () => {
-				blockerStarted.resolve();
-				await releaseBlocker.promise;
-			},
-		);
+		const blocker = log.withReplicationInfoApplyQueue(remoteHash, async () => {
+			blockerStarted.resolve();
+			await releaseBlocker.promise;
+		});
 		await blockerStarted.promise;
 
 		const cleanupStarted = pDefer<void>();
 		const releaseCleanup = pDefer<void>();
-		const originalDisconnect =
-			log.syncronizer.onPeerDisconnected.bind(log.syncronizer);
+		const originalDisconnect = log.syncronizer.onPeerDisconnected.bind(
+			log.syncronizer,
+		);
 		const disconnected = sinon
 			.stub(log.syncronizer, "onPeerDisconnected")
 			.callsFake(async (...args: unknown[]) => {
@@ -4234,9 +4454,9 @@ describe("events", () => {
 				._onSubscription({
 					detail: { from: remoteKey, topics: [db1.log.topic] },
 				})
-					.finally(() => {
-						reconnectSettled = true;
-					});
+				.finally(() => {
+					reconnectSettled = true;
+				});
 			releaseBlocker.resolve();
 			await cleanupStarted.promise;
 			expect(log._receiveCleanupGateByPeer.has(remoteHash)).to.be.true;
@@ -4302,8 +4522,9 @@ describe("events", () => {
 		});
 		const synchronizerEntered = pDefer<void>();
 		const releaseSynchronizer = pDefer<void>();
-		const originalSynchronizerOnMessage =
-			log.syncronizer.onMessage.bind(log.syncronizer);
+		const originalSynchronizerOnMessage = log.syncronizer.onMessage.bind(
+			log.syncronizer,
+		);
 		const synchronizer = sinon
 			.stub(log.syncronizer, "onMessage")
 			.callsFake(async (message: unknown, context: unknown) => {

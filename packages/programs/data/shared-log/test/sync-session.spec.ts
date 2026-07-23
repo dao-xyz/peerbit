@@ -2,7 +2,10 @@ import { Cache } from "@peerbit/cache";
 import { expect } from "chai";
 import sinon from "sinon";
 import { SharedLog } from "../src/index.js";
-import { SimpleSyncronizer } from "../src/sync/simple.js";
+import {
+	RequestMaybeSyncCoordinate,
+	SimpleSyncronizer,
+} from "../src/sync/simple.js";
 
 const emptyLog = {
 	has: async () => false,
@@ -84,15 +87,11 @@ describe("sync-repair-session", () => {
 			await clock.tickAsync(30);
 
 			expect(
-				send
-					.getCalls()
-					.filter((call) => call.args[2] === "rateless"),
+				send.getCalls().filter((call) => call.args[2] === "rateless"),
 			).to.have.length(2);
 			expect(simpleEntryBatches).to.have.length(1);
 			expect(maxActiveSimpleSends).to.equal(1);
-			const blockedState = internals._joinWarmupSendStateByTarget.get(
-				"target",
-			);
+			const blockedState = internals._joinWarmupSendStateByTarget.get("target");
 			expect(blockedState.pending).to.be.true;
 			expect([...blockedState.entries.keys()]).to.have.members([
 				"first",
@@ -207,12 +206,10 @@ describe("sync-repair-session", () => {
 				["target-a", 1],
 				["target-b", 1],
 			]);
-			expect(
-				internals._joinWarmupSendStateByTarget.get("target-a").pending,
-			).to.be.true;
-			expect(
-				internals._joinWarmupSendStateByTarget.get("target-b").pending,
-			).to.be.true;
+			expect(internals._joinWarmupSendStateByTarget.get("target-a").pending).to
+				.be.true;
+			expect(internals._joinWarmupSendStateByTarget.get("target-b").pending).to
+				.be.true;
 
 			for (const release of releaseFirstSimpleByTarget.values()) {
 				release();
@@ -304,9 +301,8 @@ describe("sync-repair-session", () => {
 			expect(pushedEntryBatches).to.deep.equal([
 				["still-missing", "newly-known"],
 			]);
-			expect(
-				internals._joinWarmupSendStateByTarget.get("target").pending,
-			).to.be.true;
+			expect(internals._joinWarmupSendStateByTarget.get("target").pending).to.be
+				.true;
 			internals.markEntriesKnownByPeer(["newly-known"], "target");
 
 			expect(releaseFirstSimple).to.be.a("function");
@@ -476,12 +472,12 @@ describe("sync-repair-session", () => {
 
 			expect(simpleEntryBatches).to.deep.equal([["old"]]);
 			expect(maxActiveSimpleSends).to.equal(1);
-			expect(
-				internals._joinWarmupGenerationByTarget.get("target"),
-			).to.equal(reconnectedGeneration);
-			expect(
-				[...internals._joinWarmupSendStateByTarget.get("target").entries.keys()],
-			).to.deep.equal(["new"]);
+			expect(internals._joinWarmupGenerationByTarget.get("target")).to.equal(
+				reconnectedGeneration,
+			);
+			expect([
+				...internals._joinWarmupSendStateByTarget.get("target").entries.keys(),
+			]).to.deep.equal(["new"]);
 
 			expect(releaseOldSimple).to.be.a("function");
 			releaseOldSimple!();
@@ -550,9 +546,8 @@ describe("sync-repair-session", () => {
 			);
 			await clock.tickAsync(20);
 			expect(simpleEntryBatches).to.have.length(1);
-			expect(
-				internals._joinWarmupSendStateByTarget.get("target").pending,
-			).to.be.true;
+			expect(internals._joinWarmupSendStateByTarget.get("target").pending).to.be
+				.true;
 			expect(rejectFirstSimple).to.be.a("function");
 			rejectFirstSimple!(new Error("injected warmup send failure"));
 			await clock.tickAsync(0);
@@ -564,8 +559,8 @@ describe("sync-repair-session", () => {
 			expect(
 				internals._repairMetrics["join-warmup"].simpleFallbackPasses,
 			).to.equal(2);
-			expect(internals._joinWarmupSendStateByTarget.get("target").running).to
-				.be.false;
+			expect(internals._joinWarmupSendStateByTarget.get("target").running).to.be
+				.false;
 			expect(internals._repairRetryTimers.size).to.equal(0);
 		} finally {
 			await clock.tickAsync(1_000);
@@ -601,15 +596,13 @@ describe("sync-repair-session", () => {
 				},
 			);
 			expect(
-				internals._joinWarmupScheduledRetriesByTarget.get("target")
-					.slotsByDelay.size,
+				internals._joinWarmupScheduledRetriesByTarget.get("target").slotsByDelay
+					.size,
 			).to.equal(6);
 			await clock.tickAsync(60_000);
 
 			expect(
-				send
-					.getCalls()
-					.filter((call) => call.args[2] === "rateless"),
+				send.getCalls().filter((call) => call.args[2] === "rateless"),
 			).to.have.length(1);
 			expect(
 				send.getCalls().filter((call) => call.args[2] === "simple"),
@@ -640,9 +633,7 @@ describe("sync-repair-session", () => {
 			peers: ["target"],
 		});
 		expect(
-			internals._repairSweepPendingPeersByMode
-				.get("join-warmup")
-				.has("target"),
+			internals._repairSweepPendingPeersByMode.get("join-warmup").has("target"),
 		).to.be.false;
 		expect(internals._repairSweepPendingModes.has("join-warmup")).to.be.false;
 
@@ -652,9 +643,7 @@ describe("sync-repair-session", () => {
 			peers: ["target"],
 		});
 		expect(
-			internals._repairSweepPendingPeersByMode
-				.get("join-warmup")
-				.has("target"),
+			internals._repairSweepPendingPeersByMode.get("join-warmup").has("target"),
 		).to.be.true;
 		expect(
 			internals._repairSweepJoinWarmupGenerationByTarget.get("target"),
@@ -690,10 +679,7 @@ describe("sync-repair-session", () => {
 					releasePlan = resolve;
 				});
 				return new Map([
-					[
-						"join-warmup",
-						new Map([["target", new Set(["entry"])]]),
-					],
+					["join-warmup", new Map([["target", new Set(["entry"])]])],
 				]);
 			});
 		sinon
@@ -701,15 +687,9 @@ describe("sync-repair-session", () => {
 			.resolves(new Set(["self", "target"]));
 		const dispatch = sinon.stub(internals, "dispatchMaybeMissingEntries");
 		const oldGeneration = internals.getJoinWarmupGeneration("target");
-		internals.markRepairSweepOptimisticPeer(
-			"gid",
-			"target",
-			oldGeneration,
-		);
+		internals.markRepairSweepOptimisticPeer("gid", "target", oldGeneration);
 		internals._repairSweepPendingModes.add("join-warmup");
-		internals._repairSweepPendingPeersByMode
-			.get("join-warmup")
-			.add("target");
+		internals._repairSweepPendingPeersByMode.get("join-warmup").add("target");
 		internals._repairSweepJoinWarmupGenerationByTarget.set(
 			"target",
 			oldGeneration,
@@ -720,22 +700,16 @@ describe("sync-repair-session", () => {
 		await planEntered;
 		internals.cancelJoinWarmupTarget("target");
 		const newGeneration = internals.getJoinWarmupGeneration("target");
-		internals.markRepairSweepOptimisticPeer(
-			"gid",
-			"target",
-			newGeneration,
-		);
+		internals.markRepairSweepOptimisticPeer("gid", "target", newGeneration);
 		releasePlan();
 		await running;
 
 		expect(dispatch.called).to.be.false;
+		expect(internals._joinWarmupGenerationByTarget.get("target")).to.equal(
+			newGeneration,
+		);
 		expect(
-			internals._joinWarmupGenerationByTarget.get("target"),
-		).to.equal(newGeneration);
-		expect(
-			internals._repairSweepOptimisticGidPeersPending
-				.get("gid")
-				.get("target"),
+			internals._repairSweepOptimisticGidPeersPending.get("gid").get("target"),
 		).to.deep.equal({ count: 1, generation: newGeneration });
 		expect(
 			internals._repairSweepOptimisticGidsByPeer.get("target"),
@@ -801,9 +775,9 @@ describe("sync-repair-session", () => {
 			await changing;
 			await clock.tickAsync(250);
 
-			expect(
-				internals._joinWarmupGenerationByTarget.get("target"),
-			).to.equal(newGeneration);
+			expect(internals._joinWarmupGenerationByTarget.get("target")).to.equal(
+				newGeneration,
+			);
 			expect(
 				internals._repairSweepPendingPeersByMode
 					.get("join-warmup")
@@ -875,7 +849,12 @@ describe("sync-repair-session", () => {
 		expect(sync.syncInFlightQueueInverted.get("p2")).to.deep.equal(
 			new Set([42n]),
 		);
-		expect(send.calledOnce).to.equal(true);
+		expect(send.calledTwice).to.equal(true);
+		expect(send.secondCall.args[0]).to.be.instanceOf(
+			RequestMaybeSyncCoordinate,
+		);
+		expect(send.secondCall.args[0].hashNumbers).to.deep.equal([42n]);
+		expect(send.secondCall.args[1].mode.to).to.deep.equal(["p2"]);
 	});
 
 	it("clears in-flight coordinate aliases when an entry is received by hash", () => {
@@ -1030,7 +1009,7 @@ describe("sync-repair-session", () => {
 			log: emptyLog as any,
 			coordinateToHash: new Cache<string>({ max: 10 }),
 			sync: {
-				maxConvergentTrackedHashes: 1,
+				maxConvergentTrackedHashes: 0.5,
 			},
 		});
 

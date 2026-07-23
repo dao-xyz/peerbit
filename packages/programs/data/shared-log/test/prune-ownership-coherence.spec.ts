@@ -1,6 +1,7 @@
 import { Ed25519Keypair, randomBytes } from "@peerbit/crypto";
 import { TerminalOperationNotStartedError } from "@peerbit/program";
 import { TestSession } from "@peerbit/test-utils";
+import { waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
 import pDefer from "p-defer";
 import sinon from "sinon";
@@ -240,6 +241,82 @@ describe("checked prune ownership coherence", () => {
 		}
 	});
 
+	it("does not delete when a queued final prune is cancelled before entering the ownership lane", async () => {
+		session = await TestSession.disconnected(2);
+		const db = await session.peers[0].open(new EventStore(), {
+			args: {
+				replicate: false,
+				timeUntilRoleMaturity: 0,
+				waitForPruneDelay: 0,
+			},
+		});
+		const log = db.log as any;
+		const { entry } = await db.add("checked-prune-cancelled-at-lane");
+		const remoteHash = (await Ed25519Keypair.create()).publicKey.hashcode();
+		const leaders = new Map([[remoteHash, { intersecting: true }]]);
+		const laneEntered = pDefer<void>();
+		const releaseLane = pDefer<void>();
+
+		const waitForReplicators = sinon
+			.stub(log, "_waitForEntryReplicators")
+			.resolves(true);
+		const getClampedReplicas = sinon
+			.stub(log, "getClampedReplicas")
+			.returns({ getValue: () => 1 });
+		const send = sinon.stub(log.rpc, "send").resolves();
+		const revalidate = sinon
+			.stub(log, "revalidateCheckedPruneOwnership")
+			.resolves({ leaders, localLeader: false });
+		const remove = sinon.spy(log.log, "remove");
+		const laneBlocker = log.withReplicationRangeMutationQueue(async () => {
+			laneEntered.resolve();
+			await releaseLane.promise;
+		});
+
+		try {
+			await laneEntered.promise;
+			const [pruning] = log.prune(new Map([[entry.hash, { entry, leaders }]]), {
+				timeout: 5_000,
+			});
+			const pruningOutcome = pruning.then(
+				() => ({ status: "fulfilled" as const }),
+				(error: unknown) => ({ status: "rejected" as const, error }),
+			);
+			const pending = log._checkedPrune.getPendingDelete(entry.hash);
+			expect(pending).to.exist;
+			await pending.resolve(remoteHash);
+			await waitForResolved(
+				() => {
+					expect(revalidate.calledOnce).to.be.true;
+				},
+				{ timeout: 2_000, delayInterval: 5 },
+			);
+
+			await log.cancelCheckedPruneForLocalLeader(entry.hash);
+			expect(log._checkedPrune.getPendingDelete(entry.hash)).to.be.undefined;
+			releaseLane.resolve();
+			await laneBlocker;
+
+			const outcome = await pruningOutcome;
+			expect(outcome.status).to.equal("rejected");
+			expect("error" in outcome ? outcome.error : undefined).to.be.instanceOf(
+				Error,
+			);
+			await new Promise((resolve) => setTimeout(resolve, 20));
+			expect(remove.called).to.be.false;
+			expect(await log.log.has(entry.hash)).to.be.true;
+			expect(await log.log.blocks.has(entry.hash)).to.be.true;
+		} finally {
+			releaseLane.resolve();
+			await laneBlocker.catch(() => {});
+			waitForReplicators.restore();
+			getClampedReplicas.restore();
+			send.restore();
+			revalidate.restore();
+			remove.restore();
+		}
+	});
+
 	it("rejects a reentrant local mutation while preserving queued remote ownership", async () => {
 		session = await TestSession.disconnected(2);
 		const reentrantAttempted = pDefer<void>();
@@ -256,6 +333,10 @@ describe("checked prune ownership coherence", () => {
 					if (change.removed.length === 0 || !log) {
 						return;
 					}
+					// Re-entry after an async suspension is still part of this
+					// removal callback and must fail instead of waiting on the lane
+					// that is waiting for the callback itself.
+					await Promise.resolve();
 					try {
 						await log.replicate(
 							{ factor: 1, offset: 0 },
@@ -369,6 +450,7 @@ describe("checked prune ownership coherence", () => {
 						if (change.removed.length === 0 || !log) {
 							return;
 						}
+						await Promise.resolve();
 						try {
 							await log[operation]();
 						} catch (error) {

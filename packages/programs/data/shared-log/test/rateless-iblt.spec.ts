@@ -13,6 +13,7 @@ import {
 import { TransportMessage } from "../src/message.js";
 import {
 	CodedSymbolBatch,
+	MAX_ACTIVE_RATELESS_RESPONSES_PER_PEER,
 	MoreSymbols,
 	RatelessIBLTSynchronizer,
 	RequestAll,
@@ -169,6 +170,20 @@ describe("rateless-iblt-syncronizer", () => {
 		expect(
 			Array.from((moreSymbols as MoreSymbols).symbols.toFlat()),
 		).to.deep.equal(expectedFlat);
+	});
+
+	it("rejects an oversized coded-symbol batch during deserialization", () => {
+		const bytes = serialize(
+			new StartSync({
+				from: 0n,
+				to: 10n,
+				symbols: CodedSymbolBatch.fromFlat(new BigUint64Array(1_025 * 3)),
+			}),
+		);
+
+		expect(() => deserialize(bytes, TransportMessage)).to.throw(
+			"receiver limit",
+		);
 	});
 
 	const setupLogs = async (
@@ -596,7 +611,7 @@ describe("rateless-iblt-syncronizer", () => {
 	it("runs delayed full-set retries for a capped convergent repair", async () => {
 		const clock = sinon.useFakeTimers();
 		const sync = createDispatchTestSynchronizer(() => {}, {
-			maxConvergentTrackedHashes: 1,
+			maxConvergentTrackedHashes: 0.5,
 		});
 		const tracked = stubTrackedRepairSession(sync);
 		const dispatch = sinon.stub(sync, "onMaybeMissingEntries").resolves();
@@ -991,6 +1006,95 @@ describe("rateless-iblt-syncronizer", () => {
 		}
 	});
 
+	it("bounds inspected hashes before splitting a mixed response", async () => {
+		const sync = createDispatchTestSynchronizer(() => {});
+		const shipAuthorized = sinon
+			.stub(sync.simple, "shipAuthorizedMaybeSyncResponse")
+			.resolves({ messages: 1, fused: false, entries: 1 });
+		const hashes = Array.from({ length: 10_001 }, (_, index) =>
+			index === 0 ? "hash-399" : `untrusted-${index}`,
+		);
+		Object.defineProperty(hashes, "filter", {
+			configurable: true,
+			value: () => {
+				throw new Error("the full response vector must not be filtered");
+			},
+		});
+		Object.defineProperty(hashes, Symbol.iterator, {
+			configurable: true,
+			value: function* () {
+				for (let index = 0; index < hashes.length; index += 1) {
+					if (index >= 10_000) {
+						throw new Error("response inspection exceeded its bound");
+					}
+					yield hashes[index]!;
+				}
+			},
+		});
+
+		try {
+			await sync.onMaybeMissingEntries({
+				entries: createDispatchTestEntries(),
+				targets: ["peer-a"],
+			});
+			expect(
+				await sync.onMessage(new ResponseMaybeSync({ hashes }), {
+					from: { hashcode: () => "peer-a" },
+				} as any),
+			).to.equal(true);
+
+			expect(shipAuthorized.calledOnce).to.equal(true);
+			expect(shipAuthorized.firstCall.args[0].hashes).to.deep.equal([
+				"hash-399",
+			]);
+		} finally {
+			shipAuthorized.restore();
+			await sync.close();
+		}
+	});
+
+	it("keeps unleased hashes rateless-authorized during a capacity-blocked Simple fallback", async () => {
+		const sync = createDispatchTestSynchronizer(() => {});
+		const shipAuthorized = sinon
+			.stub(sync.simple, "shipAuthorizedMaybeSyncResponse")
+			.resolves({ messages: 0, fused: false, entries: 1 });
+		const from = { hashcode: () => "peer-a" } as any;
+		let fallback: Promise<void> | undefined;
+
+		try {
+			await sync.onMaybeMissingEntries({
+				entries: createDispatchTestEntries(undefined, 10_001),
+				targets: ["peer-a"],
+			});
+			const process = [...sync.outgoingSyncProcesses.values()][0];
+			fallback = process.startSimpleFallback();
+			void fallback.catch(() => {});
+			await waitForResolved(
+				() => {
+					expect((sync.simple as any).pendingMaybeSyncResponseCount).to.equal(
+						9_216,
+					);
+				},
+				{ timeout: 2_000, delayInterval: 1 },
+			);
+
+			await sync.onMessage(new ResponseMaybeSync({ hashes: ["hash-10000"] }), {
+				from,
+			} as any);
+			expect(shipAuthorized.calledOnce).to.equal(true);
+			expect(shipAuthorized.firstCall.args[0].hashes).to.deep.equal([
+				"hash-10000",
+			]);
+			expect((sync.simple as any).pendingMaybeSyncResponseCount).to.equal(
+				9_216,
+			);
+		} finally {
+			shipAuthorized.restore();
+			await sync.close();
+			await fallback?.catch(() => {});
+		}
+	});
+
 	it("lets an accepted >10,000-hash response finish after its process timeout", async () => {
 		const clock = sinon.useFakeTimers();
 		let releaseShipment!: () => void;
@@ -1127,6 +1231,105 @@ describe("rateless-iblt-syncronizer", () => {
 		}
 	});
 
+	it("retains bounded active response work across close and reopen", async () => {
+		const releases: (() => void)[] = [];
+		let blockShipments = true;
+		const sync = createDispatchTestSynchronizer(() => {});
+		const ship = sinon
+			.stub(sync.simple, "shipAuthorizedMaybeSyncResponse")
+			.callsFake(async () => {
+				if (blockShipments) {
+					await new Promise<void>((resolve) => releases.push(resolve));
+				}
+				return { messages: 1, fused: false, entries: 1 };
+			});
+		const from = { hashcode: () => "peer-a" } as any;
+		const handlings: Promise<boolean>[] = [];
+
+		try {
+			await sync.onMaybeMissingEntries({
+				entries: createDispatchTestEntries(),
+				targets: ["peer-a"],
+			});
+			for (
+				let index = 0;
+				index < MAX_ACTIVE_RATELESS_RESPONSES_PER_PEER;
+				index += 1
+			) {
+				handlings.push(
+					sync.onMessage(new ResponseMaybeSync({ hashes: [`hash-${index}`] }), {
+						from,
+					} as any),
+				);
+				await waitForResolved(
+					() => {
+						expect(ship.callCount).to.equal(index + 1);
+					},
+					{ timeout: 2_000, delayInterval: 1 },
+				);
+			}
+			expect((sync as any).activeRatelessResponseCount).to.equal(
+				MAX_ACTIVE_RATELESS_RESPONSES_PER_PEER,
+			);
+
+			expect(
+				await sync.onMessage(
+					new ResponseMaybeSync({
+						hashes: [`hash-${MAX_ACTIVE_RATELESS_RESPONSES_PER_PEER}`],
+					}),
+					{ from } as any,
+				),
+			).to.equal(true);
+			expect(ship.callCount).to.equal(MAX_ACTIVE_RATELESS_RESPONSES_PER_PEER);
+
+			await sync.close();
+			await sync.open();
+			await sync.onMaybeMissingEntries({
+				entries: createDispatchTestEntries(),
+				targets: ["peer-a"],
+			});
+			expect(
+				await sync.onMessage(
+					new ResponseMaybeSync({
+						hashes: [`hash-${MAX_ACTIVE_RATELESS_RESPONSES_PER_PEER}`],
+					}),
+					{ from } as any,
+				),
+			).to.equal(true);
+			expect(ship.callCount).to.equal(MAX_ACTIVE_RATELESS_RESPONSES_PER_PEER);
+
+			blockShipments = false;
+			for (const release of releases) {
+				release();
+			}
+			expect(await Promise.all(handlings)).to.have.length(
+				MAX_ACTIVE_RATELESS_RESPONSES_PER_PEER,
+			);
+			expect((sync as any).activeRatelessResponseCount).to.equal(0);
+			expect((sync as any).activeRatelessResponseCountByPeer.size).to.equal(0);
+
+			expect(
+				await sync.onMessage(
+					new ResponseMaybeSync({
+						hashes: [`hash-${MAX_ACTIVE_RATELESS_RESPONSES_PER_PEER}`],
+					}),
+					{ from } as any,
+				),
+			).to.equal(true);
+			expect(ship.callCount).to.equal(
+				MAX_ACTIVE_RATELESS_RESPONSES_PER_PEER + 1,
+			);
+		} finally {
+			blockShipments = false;
+			for (const release of releases) {
+				release();
+			}
+			await Promise.allSettled(handlings);
+			ship.restore();
+			await sync.close();
+		}
+	});
+
 	it("rolls back rateless response consumption after an ordinary ship failure", async () => {
 		const sync = createDispatchTestSynchronizer(() => {});
 		const ship = sinon.stub(sync.simple, "shipAuthorizedMaybeSyncResponse");
@@ -1209,6 +1412,7 @@ describe("rateless-iblt-syncronizer", () => {
 			await ratelessStarted;
 			expect(consumeSimple.calledOnce).to.equal(true);
 			expect(consumeSimple.firstCall.args[0]).to.deep.equal([
+				"hash-399",
 				"simple-remainder",
 			]);
 
@@ -1331,6 +1535,700 @@ describe("rateless-iblt-syncronizer", () => {
 			expect(sends).to.have.length(sendsBeforeForeignRequests);
 			expect(sync.outgoingSyncProcesses.size).to.equal(1);
 		} finally {
+			await sync.close();
+		}
+	});
+
+	it("bounds incoming process admission before decoder construction", async () => {
+		const sync = createDispatchTestSynchronizer(() => {});
+		const releases: ((decoder: any) => void)[] = [];
+		const decoderFree = sinon.spy();
+		const getDecoder = sinon
+			.stub(sync as any, "getLocalDecoderForRange")
+			.callsFake(
+				() =>
+					new Promise<any>((resolve) => {
+						releases.push(resolve);
+					}),
+			);
+		const handlings: Promise<boolean>[] = [];
+		const startFor = (sender: string) =>
+			sync.onMessage(new StartSync({ from: 0n, to: 10n, symbols: [] }), {
+				from: { hashcode: () => sender },
+			} as any);
+
+		try {
+			for (let i = 0; i < 4; i++) {
+				handlings.push(startFor("peer-0"));
+			}
+			expect(await startFor("peer-0")).to.equal(true);
+			expect(getDecoder.callCount).to.equal(4);
+
+			for (let peer = 1; peer < 8; peer++) {
+				for (let i = 0; i < 4; i++) {
+					handlings.push(startFor(`peer-${peer}`));
+				}
+			}
+			expect(sync.ingoingSyncProcesses.size).to.equal(32);
+			expect(getDecoder.callCount).to.equal(32);
+
+			expect(await startFor("peer-8")).to.equal(true);
+			expect(sync.ingoingSyncProcesses.size).to.equal(32);
+			expect(getDecoder.callCount).to.equal(32);
+
+			await sync.close();
+			expect((sync as any).incomingRatelessProcessAdmissions.size).to.equal(32);
+			await sync.open();
+			expect(await startFor("peer-8")).to.equal(true);
+			expect(getDecoder.callCount).to.equal(32);
+			for (const release of releases) {
+				release({ free: decoderFree });
+			}
+			expect(await Promise.all(handlings)).to.have.length(32);
+			expect(decoderFree.callCount).to.equal(32);
+			expect((sync as any).incomingRatelessProcessAdmissions.size).to.equal(0);
+		} finally {
+			for (const release of releases) {
+				release({ free: () => {} });
+			}
+			getDecoder.restore();
+			await sync.close();
+		}
+	});
+
+	it("starts the incoming absolute deadline before decoder initialization", async () => {
+		const clock = sinon.useFakeTimers();
+		const sends: TransportMessage[] = [];
+		const sync = createDispatchTestSynchronizer((message) => {
+			sends.push(message);
+		});
+		const releases: ((decoder: any) => void)[] = [];
+		const decoderFree = sinon.spy();
+		const getDecoder = sinon
+			.stub(sync as any, "getLocalDecoderForRange")
+			.callsFake(
+				() =>
+					new Promise<any>((resolve) => {
+						releases.push(resolve);
+					}),
+			);
+		const starts = Array.from(
+			{ length: 4 },
+			() => new StartSync({ from: 0n, to: 10n, symbols: [] }),
+		);
+		const from = { hashcode: () => "peer-a" };
+
+		try {
+			const handlings = starts.map((start) =>
+				sync.onMessage(start, { from } as any),
+			);
+			const process = [...sync.ingoingSyncProcesses.values()][0];
+			expect(process.controller.signal.aborted).to.equal(false);
+			expect(getDecoder.callCount).to.equal(4);
+
+			await clock.tickAsync(120_000);
+			expect(process.controller.signal.aborted).to.equal(true);
+			expect(sync.ingoingSyncProcesses.size).to.equal(0);
+			expect((sync as any).incomingRatelessProcessAdmissions.size).to.equal(4);
+			expect(
+				sends.filter((message) => message instanceof RequestAll),
+			).to.have.length(4);
+
+			expect(
+				await sync.onMessage(
+					new StartSync({ from: 0n, to: 10n, symbols: [] }),
+					{ from } as any,
+				),
+			).to.equal(true);
+			expect(getDecoder.callCount).to.equal(4);
+
+			for (const release of releases) {
+				release({ free: decoderFree });
+			}
+			expect(await Promise.all(handlings)).to.deep.equal([
+				true,
+				true,
+				true,
+				true,
+			]);
+			expect(decoderFree.callCount).to.equal(4);
+			expect((sync as any).incomingRatelessProcessAdmissions.size).to.equal(0);
+		} finally {
+			for (const release of releases) {
+				release({ free: () => {} });
+			}
+			getDecoder.restore();
+			await sync.close();
+			clock.restore();
+		}
+	});
+
+	it("retains incoming admission while disconnected decoder initialization settles", async () => {
+		const sync = createDispatchTestSynchronizer(() => {});
+		const releases: ((decoder: any) => void)[] = [];
+		const getDecoder = sinon
+			.stub(sync as any, "getLocalDecoderForRange")
+			.callsFake(
+				() =>
+					new Promise<any>((resolve) => {
+						releases.push(resolve);
+					}),
+			);
+		const from = { hashcode: () => "peer-a" };
+		const handlings = Array.from({ length: 4 }, () =>
+			sync.onMessage(new StartSync({ from: 0n, to: 10n, symbols: [] }), {
+				from,
+			} as any),
+		);
+
+		try {
+			expect(getDecoder.callCount).to.equal(4);
+			await sync.onPeerDisconnected("peer-a");
+			expect(sync.ingoingSyncProcesses.size).to.equal(0);
+			expect((sync as any).incomingRatelessProcessAdmissions.size).to.equal(4);
+
+			expect(
+				await sync.onMessage(
+					new StartSync({ from: 0n, to: 10n, symbols: [] }),
+					{ from } as any,
+				),
+			).to.equal(true);
+			expect(getDecoder.callCount).to.equal(4);
+
+			for (const release of releases) {
+				release({ free: () => {} });
+			}
+			expect(await Promise.all(handlings)).to.have.length(4);
+			expect((sync as any).incomingRatelessProcessAdmissions.size).to.equal(0);
+		} finally {
+			for (const release of releases) {
+				release({ free: () => {} });
+			}
+			getDecoder.restore();
+			await sync.close();
+		}
+	});
+
+	it("falls back before constructing a decoder for an oversized initial batch", async () => {
+		const sends: TransportMessage[] = [];
+		const sync = createDispatchTestSynchronizer((message) => {
+			sends.push(message);
+		});
+		const getDecoder = sinon.spy(sync as any, "getLocalDecoderForRange");
+		const oversized = CodedSymbolBatch.fromFlat(new BigUint64Array(1_025 * 3));
+
+		try {
+			expect(
+				await sync.onMessage(
+					new StartSync({ from: 0n, to: 10n, symbols: oversized }),
+					{ from: { hashcode: () => "peer-a" } } as any,
+				),
+			).to.equal(true);
+			expect(getDecoder.called).to.equal(false);
+			expect(sync.ingoingSyncProcesses.size).to.equal(0);
+			expect(
+				sends.filter((message) => message instanceof RequestAll),
+			).to.have.length(1);
+		} finally {
+			getDecoder.restore();
+			await sync.close();
+		}
+	});
+
+	it("bounds a stalled incoming RequestAll fallback after its grace period", async () => {
+		const clock = sinon.useFakeTimers();
+		const sends: TransportMessage[] = [];
+		const sync = createDispatchTestSynchronizer((message) => {
+			sends.push(message);
+			if (message instanceof RequestAll) {
+				// Model a transport implementation that ignores abort and never
+				// settles. The logical process must still leave the active map, while
+				// its admission remains charged so repeated waves cannot accumulate.
+				return new Promise<void>(() => {});
+			}
+		});
+		const getDecoder = sinon.spy(sync as any, "getLocalDecoderForRange");
+		const oversized = CodedSymbolBatch.fromFlat(new BigUint64Array(1_025 * 3));
+		const from = { hashcode: () => "peer-a" };
+
+		try {
+			const handlings = Array.from({ length: 4 }, () =>
+				sync.onMessage(
+					new StartSync({ from: 0n, to: 10n, symbols: oversized }),
+					{ from } as any,
+				),
+			);
+			expect(sync.ingoingSyncProcesses.size).to.equal(4);
+			expect(
+				sends.filter((message) => message instanceof RequestAll),
+			).to.have.length(4);
+			expect(getDecoder.called).to.equal(false);
+
+			await clock.tickAsync(5_000);
+			expect(await Promise.all(handlings)).to.deep.equal([
+				true,
+				true,
+				true,
+				true,
+			]);
+			expect(sync.ingoingSyncProcesses.size).to.equal(0);
+			expect((sync as any).incomingRatelessProcessAdmissions.size).to.equal(4);
+
+			expect(
+				await sync.onMessage(
+					new StartSync({ from: 0n, to: 10n, symbols: oversized }),
+					{ from } as any,
+				),
+			).to.equal(true);
+			expect(
+				sends.filter((message) => message instanceof RequestAll),
+			).to.have.length(4);
+		} finally {
+			getDecoder.restore();
+			await sync.close();
+			clock.restore();
+		}
+	});
+
+	it("does not refresh incoming idle time for stale replay", async () => {
+		const clock = sinon.useFakeTimers();
+		const sync = createDispatchTestSynchronizer(() => {});
+		const decoderFree = sinon.spy();
+		const getDecoder = sinon
+			.stub(sync as any, "getLocalDecoderForRange")
+			.resolves({
+				add_coded_symbol: () => {},
+				try_decode: () => {},
+				decoded: () => false,
+				get_remote_symbols: () => [],
+				free: decoderFree,
+			});
+		const start = new StartSync({ from: 0n, to: 10n, symbols: [] });
+		const from = { hashcode: () => "peer-a" };
+
+		try {
+			await sync.onMessage(start, { from } as any);
+			expect(sync.ingoingSyncProcesses.size).to.equal(1);
+
+			await clock.tickAsync(19_000);
+			await sync.onMessage(
+				new MoreSymbols({
+					syncId: start.syncId,
+					lastSeqNo: -1n,
+					symbols: [{ count: 0n, hash: 0n, symbol: 0n } as any],
+				}),
+				{ from } as any,
+			);
+			await clock.tickAsync(1_001);
+
+			expect(sync.ingoingSyncProcesses.size).to.equal(0);
+			expect(decoderFree.calledOnce).to.equal(true);
+		} finally {
+			getDecoder.restore();
+			await sync.close();
+			clock.restore();
+		}
+	});
+
+	it("deduplicates and bounds future incoming symbol batches", async () => {
+		const sends: TransportMessage[] = [];
+		const sync = createDispatchTestSynchronizer((message) => {
+			sends.push(message);
+		});
+		const addSymbol = sinon.spy();
+		const getDecoder = sinon
+			.stub(sync as any, "getLocalDecoderForRange")
+			.resolves({
+				add_coded_symbol: addSymbol,
+				try_decode: () => {},
+				decoded: () => false,
+				get_remote_symbols: () => [],
+				free: () => {},
+			});
+		const start = new StartSync({ from: 0n, to: 10n, symbols: [] });
+		const from = { hashcode: () => "peer-a" };
+		const symbols = [{ count: 0n, hash: 0n, symbol: 0n } as any];
+		const more = (seqNo: bigint) =>
+			new MoreSymbols({
+				syncId: start.syncId,
+				lastSeqNo: seqNo - 1n,
+				symbols,
+			});
+
+		try {
+			await sync.onMessage(start, { from } as any);
+			const process = [...sync.ingoingSyncProcesses.values()][0];
+
+			for (let seqNo = 2n; seqNo <= 8n; seqNo++) {
+				await sync.onMessage(more(seqNo), { from } as any);
+			}
+			await sync.onMessage(more(2n), { from } as any);
+			await sync.onMessage(more(9n), { from } as any);
+			expect(process.queuedSymbols).to.equal(7);
+			expect(addSymbol.called).to.equal(false);
+
+			await sync.onMessage(more(1n), { from } as any);
+			expect(process.lastSeqNo).to.equal(8n);
+			expect(process.queuedSymbols).to.equal(0);
+			expect(process.processedSymbols).to.equal(8);
+			expect(addSymbol.callCount).to.equal(8);
+			expect(
+				sends
+					.filter(
+						(message): message is RequestMoreSymbols =>
+							message instanceof RequestMoreSymbols,
+					)
+					.at(-1)?.lastSeqNo,
+			).to.equal(8n);
+		} finally {
+			getDecoder.restore();
+			await sync.close();
+		}
+	});
+
+	it("falls back after the incoming cumulative symbol budget", async () => {
+		const sends: TransportMessage[] = [];
+		const sync = createDispatchTestSynchronizer((message) => {
+			sends.push(message);
+		});
+		const addBatch = sinon.stub().returns(false);
+		const decoderFree = sinon.spy();
+		const getDecoder = sinon
+			.stub(sync as any, "getLocalDecoderForRange")
+			.resolves({
+				add_coded_symbols_and_try_decode: addBatch,
+				decoded: () => false,
+				get_remote_symbols: () => [],
+				free: decoderFree,
+			});
+		const start = new StartSync({ from: 0n, to: 10n, symbols: [] });
+		const from = { hashcode: () => "peer-a" };
+		const fullBatch = CodedSymbolBatch.fromFlat(new BigUint64Array(1_024 * 3));
+
+		try {
+			await sync.onMessage(start, { from } as any);
+			const process = [...sync.ingoingSyncProcesses.values()][0];
+			expect(process.symbolBudget).to.equal(4_096);
+
+			for (let seqNo = 1n; seqNo <= 4n; seqNo++) {
+				await sync.onMessage(
+					new MoreSymbols({
+						syncId: start.syncId,
+						lastSeqNo: seqNo - 1n,
+						symbols: fullBatch,
+					}),
+					{ from } as any,
+				);
+			}
+			expect(process.processedSymbols).to.equal(4_096);
+			expect(sync.ingoingSyncProcesses.size).to.equal(1);
+
+			await sync.onMessage(
+				new MoreSymbols({
+					syncId: start.syncId,
+					lastSeqNo: 4n,
+					symbols: [{ count: 0n, hash: 0n, symbol: 0n } as any],
+				}),
+				{ from } as any,
+			);
+
+			expect(sync.ingoingSyncProcesses.size).to.equal(0);
+			expect(decoderFree.calledOnce).to.equal(true);
+			expect(
+				sends.filter((message) => message instanceof RequestAll),
+			).to.have.length(1);
+		} finally {
+			getDecoder.restore();
+			await sync.close();
+		}
+	});
+
+	it("does not refresh outgoing idle time for replayed symbol requests", async () => {
+		const clock = sinon.useFakeTimers();
+		const sends: TransportMessage[] = [];
+		const sync = createDispatchTestSynchronizer((message) => {
+			sends.push(message);
+		});
+		const fallback = sinon.spy(sync.simple, "onMaybeMissingHashes");
+		const from = { hashcode: () => "peer-a" };
+
+		try {
+			await sync.onMaybeMissingEntries({
+				entries: createDispatchTestEntries(),
+				targets: ["peer-a"],
+			});
+			const start = sends.find(
+				(message): message is StartSync => message instanceof StartSync,
+			)!;
+
+			await clock.tickAsync(9_000);
+			const request = new RequestMoreSymbols({
+				syncId: start.syncId,
+				lastSeqNo: 0n,
+			});
+			await sync.onMessage(request, { from } as any);
+			await clock.tickAsync(9_000);
+			await sync.onMessage(request, { from } as any);
+			await clock.tickAsync(1_001);
+
+			expect(sync.outgoingSyncProcesses.size).to.equal(0);
+			expect(
+				sends.filter((message) => message instanceof MoreSymbols),
+			).to.have.length(1);
+			expect(fallback.calledOnce).to.equal(true);
+		} finally {
+			fallback.restore();
+			await sync.close();
+			clock.restore();
+		}
+	});
+
+	it("enforces an outgoing absolute deadline despite real progress", async () => {
+		const clock = sinon.useFakeTimers();
+		const sends: TransportMessage[] = [];
+		const sync = createDispatchTestSynchronizer((message) => {
+			sends.push(message);
+		});
+		const fallback = sinon.spy(sync.simple, "onMaybeMissingHashes");
+		const from = { hashcode: () => "peer-a" };
+
+		try {
+			await sync.onMaybeMissingEntries({
+				entries: createDispatchTestEntries(),
+				targets: ["peer-a"],
+			});
+			const start = sends.find(
+				(message): message is StartSync => message instanceof StartSync,
+			)!;
+
+			for (let seqNo = 0n; seqNo < 13n; seqNo++) {
+				await clock.tickAsync(9_000);
+				await sync.onMessage(
+					new RequestMoreSymbols({
+						syncId: start.syncId,
+						lastSeqNo: seqNo,
+					}),
+					{ from } as any,
+				);
+			}
+			expect(sync.outgoingSyncProcesses.size).to.equal(1);
+
+			await clock.tickAsync(3_001);
+			expect(sync.outgoingSyncProcesses.size).to.equal(0);
+			expect(fallback.calledOnce).to.equal(true);
+		} finally {
+			fallback.restore();
+			await sync.close();
+			clock.restore();
+		}
+	});
+
+	it("caps cumulative outgoing RequestMoreSymbols work", async () => {
+		const sends: TransportMessage[] = [];
+		const sync = createDispatchTestSynchronizer((message) => {
+			sends.push(message);
+		});
+		const fallback = sinon.spy(sync.simple, "onMaybeMissingHashes");
+		const from = { hashcode: () => "peer-a" };
+
+		try {
+			await sync.onMaybeMissingEntries({
+				entries: createDispatchTestEntries(),
+				targets: ["peer-a"],
+			});
+			const start = sends.find(
+				(message): message is StartSync => message instanceof StartSync,
+			)!;
+			let lastSeqNo = 0n;
+			while (
+				!sends.some(
+					(message) =>
+						message instanceof MoreSymbols && message.symbols.length === 0,
+				)
+			) {
+				await sync.onMessage(
+					new RequestMoreSymbols({
+						syncId: start.syncId,
+						lastSeqNo,
+					}),
+					{ from } as any,
+				);
+				expect(lastSeqNo < 100n).to.equal(true);
+				lastSeqNo += 1n;
+			}
+
+			const moreSymbols = sends.filter(
+				(message): message is MoreSymbols => message instanceof MoreSymbols,
+			);
+			const totalSymbols =
+				start.symbols.length +
+				moreSymbols.reduce(
+					(total, message) => total + message.symbols.length,
+					0,
+				);
+			expect(totalSymbols).to.equal(4_096);
+			expect(moreSymbols.at(-1)?.symbols.length).to.equal(0);
+			expect(sync.outgoingSyncProcesses.size).to.equal(1);
+			expect(fallback.calledOnce).to.equal(true);
+			expect(fallback.firstCall.args[0].hashes).to.deep.equal([
+				...createDispatchTestEntries().keys(),
+			]);
+			expect(fallback.firstCall.args[0].targets).to.deep.equal(["peer-a"]);
+
+			await sync.onMessage(new RequestAll({ syncId: start.syncId }), {
+				from,
+			} as any);
+			expect(fallback.calledOnce).to.equal(true);
+			expect(sync.outgoingSyncProcesses.size).to.equal(0);
+		} finally {
+			fallback.restore();
+			await sync.close();
+		}
+	});
+
+	it("prefers delayed Simple fallback authorization after rateless replacement", async () => {
+		const sends: TransportMessage[] = [];
+		const sync = createDispatchTestSynchronizer((message) => {
+			sends.push(message);
+		});
+		const from = { hashcode: () => "peer-a" };
+
+		try {
+			await sync.onMaybeMissingEntries({
+				entries: createDispatchTestEntries(),
+				targets: ["peer-a"],
+			});
+			const process = [...sync.outgoingSyncProcesses.values()][0];
+			await process.startSimpleFallback();
+			expect(process.simpleFallbackStarted).to.equal(true);
+			expect(sync.outgoingSyncProcesses.size).to.equal(1);
+			expect((sync.simple as any).pendingMaybeSyncResponseCount).to.equal(400);
+
+			await sync.onMaybeMissingEntries({
+				entries: createDispatchTestEntries(),
+				targets: ["peer-a"],
+			});
+			const replacement = [...sync.outgoingSyncProcesses.values()][0];
+			expect(replacement).not.to.equal(process);
+			expect(replacement.simpleFallbackStarted).to.equal(false);
+			const replacementStart = sends
+				.filter((message): message is StartSync => message instanceof StartSync)
+				.at(-1)!;
+
+			const directRatelessShip = sinon.spy(
+				sync.simple,
+				"shipAuthorizedMaybeSyncResponse",
+			);
+			const simpleShip = sinon
+				.stub(sync.simple, "shipAuthorizedMaybeSyncResponseLeases")
+				.callsFake(async ({ leases }: any) => {
+					for (const lease of leases) {
+						lease.release();
+					}
+					return { messages: 0, fused: false, entries: leases.length };
+				});
+			try {
+				await sync.onMessage(new ResponseMaybeSync({ hashes: ["hash-0"] }), {
+					from,
+				} as any);
+
+				expect(directRatelessShip.called).to.equal(false);
+				expect(simpleShip.calledOnce).to.equal(true);
+				expect((sync.simple as any).pendingMaybeSyncResponseCount).to.equal(
+					399,
+				);
+			} finally {
+				directRatelessShip.restore();
+				simpleShip.restore();
+			}
+
+			await sync.onMessage(
+				new RequestAll({ syncId: replacementStart.syncId }),
+				{
+					from,
+				} as any,
+			);
+			expect(sync.outgoingSyncProcesses.size).to.equal(0);
+		} finally {
+			await sync.close();
+		}
+	});
+
+	it("latches outgoing exhaustion before a terminal symbol send settles", async () => {
+		const sends: TransportMessage[] = [];
+		let releaseTerminalSend!: () => void;
+		const terminalSendReleased = new Promise<void>((resolve) => {
+			releaseTerminalSend = resolve;
+		});
+		let markTerminalSendStarted!: () => void;
+		const terminalSendStarted = new Promise<void>((resolve) => {
+			markTerminalSendStarted = resolve;
+		});
+		let terminalSendPending = false;
+		const sync = createDispatchTestSynchronizer((message) => {
+			sends.push(message);
+			if (message instanceof MoreSymbols && message.symbols.length === 0) {
+				terminalSendPending = true;
+				markTerminalSendStarted();
+				return terminalSendReleased;
+			}
+		});
+		const fallback = sinon.spy(sync.simple, "onMaybeMissingHashes");
+		const from = { hashcode: () => "peer-a" };
+
+		try {
+			await sync.onMaybeMissingEntries({
+				entries: createDispatchTestEntries(),
+				targets: ["peer-a"],
+			});
+			const start = sends.find(
+				(message): message is StartSync => message instanceof StartSync,
+			)!;
+			let terminalHandling: Promise<boolean> | undefined;
+			let lastSeqNo = 0n;
+			while (!terminalHandling) {
+				const handling = sync.onMessage(
+					new RequestMoreSymbols({
+						syncId: start.syncId,
+						lastSeqNo,
+					}),
+					{ from } as any,
+				);
+				if (terminalSendPending) {
+					terminalHandling = handling;
+					break;
+				}
+				await handling;
+				expect(lastSeqNo < 100n).to.equal(true);
+				lastSeqNo += 1n;
+			}
+			await terminalSendStarted;
+
+			await Promise.all(
+				Array.from({ length: 100 }, (_, offset) =>
+					sync.onMessage(
+						new RequestMoreSymbols({
+							syncId: start.syncId,
+							lastSeqNo: lastSeqNo + BigInt(offset + 1),
+						}),
+						{ from } as any,
+					),
+				),
+			);
+			expect(
+				sends.filter(
+					(message) =>
+						message instanceof MoreSymbols && message.symbols.length === 0,
+				),
+			).to.have.length(1);
+
+			releaseTerminalSend();
+			expect(await terminalHandling).to.equal(true);
+			expect(fallback.calledOnce).to.equal(true);
+			expect(sync.outgoingSyncProcesses.size).to.equal(1);
+		} finally {
+			releaseTerminalSend();
+			fallback.restore();
 			await sync.close();
 		}
 	});
@@ -1650,7 +2548,9 @@ describe("rateless-iblt-syncronizer", () => {
 				new MoreSymbols({
 					syncId: start.syncId,
 					lastSeqNo: 0n,
-					symbols: CodedSymbolBatch.fromSymbols([]),
+					symbols: CodedSymbolBatch.fromSymbols([
+						{ count: 0n, hash: 0n, symbol: 0n } as any,
+					]),
 				}),
 				{ from: peer } as any,
 			);
@@ -1752,7 +2652,10 @@ describe("rateless-iblt-syncronizer", () => {
 			process.next = () => {
 				nextCalled = true;
 				controller.abort();
-				return CodedSymbolBatch.fromSymbols([]);
+				return {
+					symbols: CodedSymbolBatch.fromSymbols([]),
+					exhaustedAfterSend: false,
+				};
 			};
 
 			await sync.onMessage(
@@ -1817,7 +2720,10 @@ describe("rateless-iblt-syncronizer", () => {
 			expect(startSync).to.be.instanceOf(StartSync);
 			const outgoingProcess = [...sync.outgoingSyncProcesses.values()][0];
 			expect(outgoingProcess).to.not.equal(undefined);
-			outgoingProcess.next = () => CodedSymbolBatch.fromSymbols([]);
+			outgoingProcess.next = () => ({
+				symbols: CodedSymbolBatch.fromSymbols([]),
+				exhaustedAfterSend: false,
+			});
 			const handling = sync.onMessage(
 				new RequestMoreSymbols({
 					syncId: startSync.syncId,

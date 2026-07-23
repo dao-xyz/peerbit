@@ -3425,9 +3425,14 @@ export class SharedLog<
 	private _checkedPruneRemoveBlocksLocalRangeMutationAdmission = 0;
 	// Reject public local role/terminal operations invoked directly by that
 	// program callback rather than letting it await the lane that is awaiting the
-	// callback. Remote/internal mutations and unrelated external callers remain
-	// queued/drained normally.
+	// callback. Keep the guard for the callback's full async lifetime: a callback
+	// that yields before re-entering is still part of the same deadlock cycle.
+	// Remote/internal mutations bypass these public-operation admission checks.
 	private _checkedPruneRemovalCallbackInvocationDepth = 0;
+	// Explicit changes to the local replication role invalidate adaptive planners
+	// that were admitted under the previous role. The ownership lifecycle alone
+	// is insufficient because unreplicate() deliberately keeps the store open.
+	private _localReplicationRoleGeneration = 0;
 	// If durable post-state cannot be reconciled to every native/runtime mirror,
 	// reject later writers and planners until reopen rehydrates those mirrors.
 	private _replicationRangeMutationFailure?: unknown;
@@ -4518,6 +4523,13 @@ export class SharedLog<
 	private _replicationAnnouncementRetryPending!: boolean;
 	private _replicationAnnouncementRetryGeneration!: number;
 	private _replicationAnnouncementRetryController!: AbortController;
+	// Publish local ownership announcements in committed mutation order. This
+	// prevents an older Added message with a delayed transport completion from
+	// overtaking a newer authoritative empty snapshot.
+	private _replicationAnnouncementSendTails?: WeakMap<
+		AbortController,
+		Promise<void>
+	>;
 	private replicationAnnouncementRepairDebounced:
 		| ReturnType<typeof debounceFixedInterval>
 		| undefined;
@@ -4581,10 +4593,7 @@ export class SharedLog<
 		Set<string>
 	>;
 	private _joinWarmupGenerationByTarget!: Map<string, object>;
-	private _joinWarmupSendStateByTarget!: Map<
-		string,
-		JoinWarmupSendState<R>
-	>;
+	private _joinWarmupSendStateByTarget!: Map<string, JoinWarmupSendState<R>>;
 	private _joinWarmupRetryTimersByTarget!: Map<
 		string,
 		Set<JoinWarmupRetryTimer>
@@ -4717,6 +4726,7 @@ export class SharedLog<
 		this._replicationAnnouncementRetryPending = false;
 		this._replicationAnnouncementRetryGeneration = 0;
 		this._replicationAnnouncementRetryController = new AbortController();
+		this._replicationAnnouncementSendTails = new WeakMap();
 		this._replicationAnnouncementRepairPending = false;
 		this._replicationAnnouncementRepairGeneration = 0;
 		this._replicationAnnouncementRepairGenerationController =
@@ -6278,8 +6288,7 @@ export class SharedLog<
 		pending: PendingIHave<T>,
 		entry: Entry<T>,
 	): void {
-		const replicationLifecycleController =
-			this._replicationLifecycleController;
+		const replicationLifecycleController = this._replicationLifecycleController;
 		if (!this.isReplicationLifecycleActive(replicationLifecycleController)) {
 			if (this._pendingIHave.get(entry.hash) === pending) {
 				pending.clear();
@@ -6762,38 +6771,58 @@ export class SharedLog<
 			| AddedReplicationSegmentMessage
 			| StoppedReplicating,
 		ownershipLifecycleController = this.captureReplicationOwnershipLifecycle(),
+		options?: { shouldSend?: () => boolean },
 	): Promise<void> {
-		this.throwIfReplicationOwnershipLifecycleInactive(
-			ownershipLifecycleController,
-		);
-		// Advance before every post-mutation send, including successful ones. An
-		// authoritative retry already in flight may have captured the previous
-		// local state; the generation mismatch forces one more current snapshot
-		// after that stale send settles.
-		this._replicationAnnouncementRetryGeneration += 1;
-		this.advanceCurrentReplicationStateAnnouncementRepairGeneration();
-		try {
-			await this.rpc.send(message, {
-				priority: CONVERGENCE_MESSAGE_PRIORITY,
-				signal: ownershipLifecycleController.signal,
+		const tails = (this._replicationAnnouncementSendTails ??= new WeakMap<
+			AbortController,
+			Promise<void>
+		>());
+		const previous =
+			tails.get(ownershipLifecycleController) ?? Promise.resolve();
+		const send = previous
+			.catch(() => {})
+			.then(async () => {
+				this.throwIfReplicationOwnershipLifecycleInactive(
+					ownershipLifecycleController,
+				);
+				if (options?.shouldSend && !options.shouldSend()) {
+					return;
+				}
+				// Advance before every post-mutation send, including successful ones. An
+				// authoritative retry already in flight may have captured the previous
+				// local state; the generation mismatch forces one more current snapshot
+				// after that stale send settles.
+				this._replicationAnnouncementRetryGeneration += 1;
+				this.advanceCurrentReplicationStateAnnouncementRepairGeneration();
+				try {
+					await this.rpc.send(message, {
+						priority: CONVERGENCE_MESSAGE_PRIORITY,
+						signal: ownershipLifecycleController.signal,
+					});
+					this.throwIfReplicationOwnershipLifecycleInactive(
+						ownershipLifecycleController,
+					);
+					this.queueCurrentReplicationStateAnnouncementRepair();
+				} catch (error) {
+					// An old send can reject only after poison or close has installed a new
+					// ownership generation. Never enqueue its retry work into that generation.
+					this.throwIfReplicationOwnershipLifecycleInactive(
+						ownershipLifecycleController,
+					);
+					// The local replication-index mutation precedes all calls to this
+					// wrapper. Preserve the explicit caller's rejection, but independently
+					// schedule an authoritative snapshot so peers eventually observe the
+					// already-committed local state.
+					this.queueCurrentReplicationStateAnnouncementRetry(error);
+					throw error;
+				}
 			});
-			this.throwIfReplicationOwnershipLifecycleInactive(
-				ownershipLifecycleController,
-			);
-			this.queueCurrentReplicationStateAnnouncementRepair();
-		} catch (error) {
-			// An old send can reject only after poison or close has installed a new
-			// ownership generation. Never enqueue its retry work into that generation.
-			this.throwIfReplicationOwnershipLifecycleInactive(
-				ownershipLifecycleController,
-			);
-			// The local replication-index mutation precedes all calls to this
-			// wrapper. Preserve the explicit caller's rejection, but independently
-			// schedule an authoritative snapshot so peers eventually observe the
-			// already-committed local state.
-			this.queueCurrentReplicationStateAnnouncementRetry(error);
-			throw error;
-		}
+		// Keep the ordering barrier usable after a caller-observed send rejection.
+		tails.set(
+			ownershipLifecycleController,
+			send.catch(() => {}),
+		);
+		return send;
 	}
 
 	private async retryCurrentReplicationStateAnnouncement(): Promise<void> {
@@ -7376,6 +7405,44 @@ export class SharedLog<
 		);
 		const replicationOwnershipLifecycleController =
 			this.captureReplicationOwnershipLifecycle();
+		const requestedRole =
+			rangeOrEntry &&
+			(rangeOrEntry as ExistingReplicationOptions<R>).type === "resume"
+				? (rangeOrEntry as ExistingReplicationOptions<R>).default
+				: (rangeOrEntry ?? true);
+		const requestsAdaptiveRole =
+			requestedRole === true ||
+			(!(requestedRole instanceof Entry) &&
+				!(requestedRole instanceof ReplicationRangeMessage) &&
+				isAdaptiveReplicatorOption(requestedRole as ReplicationOptions<R>));
+		const requestedFixedRoleIsEmpty =
+			Array.isArray(requestedRole) && requestedRole.length === 0;
+		const finalRequestedRange = Array.isArray(requestedRole)
+			? requestedRole[requestedRole.length - 1]
+			: requestedRole;
+		const fixedRoleOffsetWasProvided =
+			finalRequestedRange instanceof Entry ||
+			finalRequestedRange instanceof ReplicationRangeMessage ||
+			(typeof finalRequestedRange === "object" &&
+				finalRequestedRange !== null &&
+				(finalRequestedRange as FixedReplicationOptions).offset != null);
+		if (
+			!isUnreplicationOptions(requestedRole as ReplicationOptions<R>) &&
+			!requestsAdaptiveRole &&
+			!requestedFixedRoleIsEmpty &&
+			(options?.reset === true || !fixedRoleOffsetWasProvided)
+		) {
+			// A fixed replacement is a local role transition, not an additive
+			// per-entry replication request. Match _replicate's implicit reset for
+			// fixed options without an offset as well as an explicit reset.
+			// Invalidate already-admitted adaptive planners synchronously, before
+			// entry-coordinate resolution or the ownership lane can yield, and
+			// prevent a new adaptive planner from starting while the fixed
+			// replacement is being committed.
+			this._localReplicationRoleGeneration =
+				(this._localReplicationRoleGeneration ?? 0) + 1;
+			this._isAdaptiveReplicating = false;
+		}
 		const entryRangeId = (entry: Entry<T>) =>
 			sha256Sync(
 				concat([
@@ -7490,6 +7557,12 @@ export class SharedLog<
 				return;
 			}
 		} else {
+			// Invalidate already-admitted adaptive planners synchronously, before
+			// this operation waits for the ownership lane. Otherwise a planner
+			// that passed its preliminary role checks can enqueue a stale dynamic
+			// range after this full unreplication removes the previous role.
+			this._localReplicationRoleGeneration =
+				(this._localReplicationRoleGeneration ?? 0) + 1;
 			this._isReplicating = false;
 			this._isAdaptiveReplicating = false;
 			await this.removeReplicator(this.node.identity.publicKey, {
@@ -8057,6 +8130,7 @@ export class SharedLog<
 			timestamp?: number;
 			allowLegacyOrderedReplacementPairs?: boolean;
 			onConfirmedDurableStateChanged?: () => void;
+			shouldApply?: () => boolean;
 		} = {},
 		replicationOwnershipLifecycleController = this.captureReplicationOwnershipLifecycle(),
 	) {
@@ -8097,6 +8171,7 @@ export class SharedLog<
 			rebalance,
 			allowLegacyOrderedReplacementPairs,
 			onConfirmedDurableStateChanged,
+			shouldApply,
 		}: {
 			reset?: boolean;
 			rebalance?: boolean;
@@ -8104,6 +8179,7 @@ export class SharedLog<
 			timestamp?: number;
 			allowLegacyOrderedReplacementPairs?: boolean;
 			onConfirmedDurableStateChanged?: () => void;
+			shouldApply?: () => boolean;
 		} = {},
 		replicationOwnershipLifecycleController = this.captureReplicationOwnershipLifecycle(),
 	) {
@@ -8111,6 +8187,12 @@ export class SharedLog<
 		this.throwIfReplicationOwnershipLifecycleInactive(
 			replicationOwnershipLifecycleController,
 		);
+		// This predicate is intentionally checked inside the global ownership lane.
+		// An adaptive update delayed by authorization must not commit after a newer
+		// full unreplication already completed in that lane.
+		if (shouldApply && !shouldApply()) {
+			return [];
+		}
 		const fromHash = from.hashcode();
 		const incomingRangesById = new Map<
 			string,
@@ -8642,6 +8724,7 @@ export class SharedLog<
 			reset?: boolean;
 			checkDuplicates?: boolean;
 			rebalance?: boolean;
+			shouldApply?: () => boolean;
 			announce?: (
 				msg: AllReplicatingSegmentsMessage | AddedReplicationSegmentMessage,
 			) => void;
@@ -8713,6 +8796,9 @@ export class SharedLog<
 		}
 
 		if (change) {
+			if (options.shouldApply && !options.shouldApply()) {
+				return;
+			}
 			// Local replacements are represented as a negative `replaced` fact for
 			// the retired geometry followed by an `added` fact for the durable
 			// replacement. Only the positive/current fact belongs on the wire:
@@ -8756,6 +8842,7 @@ export class SharedLog<
 					await this.sendReplicationAnnouncement(
 						message,
 						replicationOwnershipLifecycleController,
+						{ shouldSend: options.shouldApply },
 					);
 					this.throwIfReplicationOwnershipLifecycleInactive(
 						replicationOwnershipLifecycleController,
@@ -9131,10 +9218,7 @@ export class SharedLog<
 		return generation;
 	}
 
-	private trackJoinWarmupTimer(
-		target: string,
-		timer: JoinWarmupRetryTimer,
-	) {
+	private trackJoinWarmupTimer(target: string, timer: JoinWarmupRetryTimer) {
 		let timers = this._joinWarmupRetryTimersByTarget.get(target);
 		if (!timers) {
 			timers = new Set();
@@ -9144,10 +9228,7 @@ export class SharedLog<
 		this._repairRetryTimers.add(timer.handle);
 	}
 
-	private untrackJoinWarmupTimer(
-		target: string,
-		timer: JoinWarmupRetryTimer,
-	) {
+	private untrackJoinWarmupTimer(target: string, timer: JoinWarmupRetryTimer) {
 		this._repairRetryTimers.delete(timer.handle);
 		const timers = this._joinWarmupRetryTimersByTarget.get(target);
 		if (!timers) {
@@ -9349,8 +9430,7 @@ export class SharedLog<
 						for (const [hash, entry] of batch.entries) {
 							dueEntries.set(hash, entry);
 						}
-						bypassKnownPeerHints ||=
-							batch.bypassKnownPeerHints;
+						bypassKnownPeerHints ||= batch.bypassKnownPeerHints;
 						batch.remainingAttempts -= 1;
 						if (batch.remainingAttempts === 0) {
 							batch.entries.clear();
@@ -10195,15 +10275,10 @@ export class SharedLog<
 					const generation =
 						options.joinWarmupGenerations?.get(peer) ??
 						this.getJoinWarmupGeneration(peer);
-					if (
-						this._joinWarmupGenerationByTarget.get(peer) !== generation
-					) {
+					if (this._joinWarmupGenerationByTarget.get(peer) !== generation) {
 						continue;
 					}
-					this._repairSweepJoinWarmupGenerationByTarget.set(
-						peer,
-						generation,
-					);
+					this._repairSweepJoinWarmupGenerationByTarget.set(peer, generation);
 				}
 				pendingPeers.add(peer);
 			}
@@ -10581,10 +10656,7 @@ export class SharedLog<
 						}
 						for (const [peer, consumed] of peerCounts) {
 							const current = pendingPeerCounts.get(peer);
-							if (
-								!current ||
-								current.generation !== consumed.generation
-							) {
+							if (!current || current.generation !== consumed.generation) {
 								continue;
 							}
 							const next = current.count - consumed.count;
@@ -10595,8 +10667,7 @@ export class SharedLog<
 								});
 							} else {
 								pendingPeerCounts.delete(peer);
-								const gids =
-									this._repairSweepOptimisticGidsByPeer.get(peer);
+								const gids = this._repairSweepOptimisticGidsByPeer.get(peer);
 								gids?.delete(gid);
 								if (gids?.size === 0) {
 									this._repairSweepOptimisticGidsByPeer.delete(peer);
@@ -10775,6 +10846,11 @@ export class SharedLog<
 
 		throwIfInactive();
 		if (!checkedPruneCoordinator.hasActiveWork(args.hash)) {
+			if (args.requireFreshLeaderDecision) {
+				throw new TerminalOperationNotStartedError(
+					"Checked prune work is no longer active at the delete boundary",
+				);
+			}
 			return { leaders: args.leaders, localLeader: false };
 		}
 
@@ -15475,6 +15551,7 @@ export class SharedLog<
 		this._replicationRangeMutationsClosing = false;
 		this._checkedPruneRemoveBlocksLocalRangeMutationAdmission = 0;
 		this._checkedPruneRemovalCallbackInvocationDepth = 0;
+		this._localReplicationRoleGeneration = 0;
 		this._pruneRemovesClosing = false;
 		this._replicationRangeMutationFailure = undefined;
 		this.startRepairLifecycle();
@@ -16907,15 +16984,12 @@ export class SharedLog<
 	async afterOpen(): Promise<void> {
 		await super.afterOpen();
 		const existingSubscribersPromise = this._getTopicSubscribers(this.topic);
-		const replicationLifecycleController =
-			this._replicationLifecycleController;
+		const replicationLifecycleController = this._replicationLifecycleController;
 
 		// We do this here, because these calls requires this.closed == false
 		void this.pruneOfflineReplicators()
 			.then(() => {
-				if (
-					this.isReplicationLifecycleActive(replicationLifecycleController)
-				) {
+				if (this.isReplicationLifecycleActive(replicationLifecycleController)) {
 					this._replicatorsReconciled = true;
 				}
 			})
@@ -16951,8 +17025,7 @@ export class SharedLog<
 	async pruneOfflineReplicators() {
 		// Go through all segments and wait for replicators to become reachable;
 		// otherwise prune them away from the local membership view.
-		const replicationLifecycleController =
-			this._replicationLifecycleController;
+		const replicationLifecycleController = this._replicationLifecycleController;
 		try {
 			if (
 				!replicationLifecycleController ||
@@ -16966,7 +17039,9 @@ export class SharedLog<
 
 			while (!iterator.done()) {
 				const segments = await iterator.next(1000);
-				if (!this.isReplicationLifecycleActive(replicationLifecycleController)) {
+				if (
+					!this.isReplicationLifecycleActive(replicationLifecycleController)
+				) {
 					return;
 				}
 				for (const segment of segments) {
@@ -16998,8 +17073,7 @@ export class SharedLog<
 								const key = await this._resolvePublicKeyFromHash(peerHash);
 								if (!key) {
 									throw new Error(
-										"Failed to resolve public key from hash: " +
-											peerHash,
+										"Failed to resolve public key from hash: " + peerHash,
 									);
 								}
 
@@ -17007,54 +17081,50 @@ export class SharedLog<
 								if (keyHash !== peerHash) {
 									return;
 								}
-								return this.withReplicationInfoApplyQueue(
-									keyHash,
-									async () => {
-										// A successful reachability check may legitimately span a
-										// subscribe event during startup. The current lane's blocked
-										// state plus an extant index row are the authoritative guard;
-										// only the destructive catch path remains tied to the old token.
-										if (
-											!this.isReplicationLifecycleActive(
-												replicationLifecycleController,
-											) ||
-											this.closed ||
-											this._replicationInfoBlockedPeers.has(keyHash)
-										) {
-											return;
-										}
-										const hasReplicationRange =
-											(await this.replicationIndex.count({
-												query: { hash: keyHash },
-											})) > 0;
-										if (
-											!hasReplicationRange ||
-											!this.isReplicationLifecycleActive(
-												replicationLifecycleController,
-											) ||
-											this._replicationInfoBlockedPeers.has(keyHash)
-										) {
-											return;
-										}
-										this.uniqueReplicators.add(keyHash);
+								return this.withReplicationInfoApplyQueue(keyHash, async () => {
+									// A successful reachability check may legitimately span a
+									// subscribe event during startup. The current lane's blocked
+									// state plus an extant index row are the authoritative guard;
+									// only the destructive catch path remains tied to the old token.
+									if (
+										!this.isReplicationLifecycleActive(
+											replicationLifecycleController,
+										) ||
+										this.closed ||
+										this._replicationInfoBlockedPeers.has(keyHash)
+									) {
+										return;
+									}
+									const hasReplicationRange =
+										(await this.replicationIndex.count({
+											query: { hash: keyHash },
+										})) > 0;
+									if (
+										!hasReplicationRange ||
+										!this.isReplicationLifecycleActive(
+											replicationLifecycleController,
+										) ||
+										this._replicationInfoBlockedPeers.has(keyHash)
+									) {
+										return;
+									}
+									this.uniqueReplicators.add(keyHash);
 
-										if (!this._replicatorJoinEmitted.has(keyHash)) {
-											this._replicatorJoinEmitted.add(keyHash);
-											this.events.dispatchEvent(
-												new CustomEvent<ReplicatorJoinEvent>(
-													"replicator:join",
-													{ detail: { publicKey: key } },
-												),
-											);
-											this.events.dispatchEvent(
-												new CustomEvent<ReplicationChangeEvent>(
-													"replication:change",
-													{ detail: { publicKey: key } },
-												),
-											);
-										}
-									},
-								);
+									if (!this._replicatorJoinEmitted.has(keyHash)) {
+										this._replicatorJoinEmitted.add(keyHash);
+										this.events.dispatchEvent(
+											new CustomEvent<ReplicatorJoinEvent>("replicator:join", {
+												detail: { publicKey: key },
+											}),
+										);
+										this.events.dispatchEvent(
+											new CustomEvent<ReplicationChangeEvent>(
+												"replication:change",
+												{ detail: { publicKey: key } },
+											),
+										);
+									}
+								});
 							})
 							.catch(async (error) => {
 								if (
@@ -17080,9 +17150,7 @@ export class SharedLog<
 		} catch (error) {
 			if (
 				isNotStartedError(error as Error) ||
-				!this.isReplicationLifecycleActive(
-					replicationLifecycleController,
-				)
+				!this.isReplicationLifecycleActive(replicationLifecycleController)
 			) {
 				return;
 			}
@@ -17329,8 +17397,7 @@ export class SharedLog<
 	}
 
 	private async runReplicatorLivenessSweep() {
-		const replicationLifecycleController =
-			this._replicationLifecycleController;
+		const replicationLifecycleController = this._replicationLifecycleController;
 		if (
 			this.closed ||
 			this._closeController.signal.aborted ||
@@ -17362,8 +17429,7 @@ export class SharedLog<
 			}
 		} finally {
 			if (
-				this._replicationLifecycleController ===
-				replicationLifecycleController
+				this._replicationLifecycleController === replicationLifecycleController
 			) {
 				this._replicatorLivenessSweepRunning = false;
 			}
@@ -17371,8 +17437,7 @@ export class SharedLog<
 	}
 
 	private async probeReplicatorLiveness(peerHash: string) {
-		const replicationLifecycleController =
-			this._replicationLifecycleController;
+		const replicationLifecycleController = this._replicationLifecycleController;
 		if (
 			this.closed ||
 			this._closeController.signal.aborted ||
@@ -17407,8 +17472,7 @@ export class SharedLog<
 					noEvent: true,
 					replicationLifecycleController,
 					shouldRemove: () =>
-						this._replicatorLastActivityAt.get(peerHash) ===
-						observedActivityAt,
+						this._replicatorLastActivityAt.get(peerHash) === observedActivityAt,
 					subscriptionEpoch,
 					onRemoved: () => {
 						if (!ownsProbe()) {
@@ -21144,9 +21208,7 @@ export class SharedLog<
 					const pendingDelete = this._checkedPrune.getPendingDelete(hash);
 					if (pendingDelete) {
 						responseTasks.push(
-							Promise.resolve(
-								pendingDelete.resolve(context.from.hashcode()),
-							),
+							Promise.resolve(pendingDelete.resolve(context.from.hashcode())),
 						);
 					} else {
 						lateResponses.push(hash);
@@ -21186,10 +21248,7 @@ export class SharedLog<
 							capabilities: msg.capabilities,
 						});
 					} else {
-						this._peerSyncCapabilities.set(
-							receiveFromHash,
-							msg.capabilities,
-						);
+						this._peerSyncCapabilities.set(receiveFromHash, msg.capabilities);
 					}
 				}
 				return;
@@ -21448,10 +21507,7 @@ export class SharedLog<
 					}
 
 					const rangesToRemove =
-						await this.resolveReplicationRangesFromIdsAndKey(
-							segmentIds,
-							from,
-						);
+						await this.resolveReplicationRangesFromIdsAndKey(segmentIds, from);
 
 					await this.removeReplicationRanges(rangesToRemove, from);
 					const timestamp = BigInt(+new Date());
@@ -25641,15 +25697,20 @@ export class SharedLog<
 		}
 
 		this._checkedPruneRemovalCallbackInvocationDepth++;
+		let result: ReturnType<NonNullable<typeof onChange>>;
 		try {
-			// Deliberately return the callback promise without awaiting it. The
-			// reentrancy guard covers the callback's immediate invocation, while an
-			// independent operation started during a later async suspension must be
-			// allowed to queue/drain behind the admitted lower-log removal.
-			return onChange(change);
-		} finally {
+			result = onChange(change);
+		} catch (error) {
 			this._checkedPruneRemovalCallbackInvocationDepth--;
+			throw error;
 		}
+		if (isPromiseLike(result)) {
+			return Promise.resolve(result).finally(() => {
+				this._checkedPruneRemovalCallbackInvocationDepth--;
+			});
+		}
+		this._checkedPruneRemovalCallbackInvocationDepth--;
+		return result;
 	}
 
 	private withReplicationRangeMutationQueue<T>(
@@ -25713,7 +25774,9 @@ export class SharedLog<
 
 	private async drainReplicationInfoApplyQueues(): Promise<void> {
 		for (;;) {
-			const tails = [...(this._replicationInfoApplyQueueByPeer?.values() ?? [])];
+			const tails = [
+				...(this._replicationInfoApplyQueueByPeer?.values() ?? []),
+			];
 			if (tails.length === 0) {
 				return;
 			}
@@ -26346,8 +26409,7 @@ export class SharedLog<
 				// Proactively evict its ranges so leader selection doesn't keep stale owners.
 				removed = await this.removeReplicator(publicKey, {
 					cleanupIfSubscriptionSuperseded: true,
-					expectedJoinWarmupGeneration:
-						disconnectedJoinWarmupGeneration,
+					expectedJoinWarmupGeneration: disconnectedJoinWarmupGeneration,
 					noEvent: true,
 					onRemoved: ({ wasReplicator }) => {
 						if (wasReplicator) {
@@ -26678,6 +26740,14 @@ export class SharedLog<
 								const removed = await this.withReplicationRangeMutationQueue(
 									async () => {
 										throwIfCheckedPruneLifecycleInactive();
+										if (
+											checkedPruneCoordinator.getPendingDelete(entry.hash)
+												?.promise !== deferredPromise
+										) {
+											throw new TerminalOperationNotStartedError(
+												"Checked prune session is no longer active at the delete boundary",
+											);
+										}
 										// The network confirmation and preliminary planner check
 										// deliberately happen outside the global ownership lane. Once
 										// admitted here, re-read leadership and keep the lower-log
@@ -26703,6 +26773,14 @@ export class SharedLog<
 											throw error;
 										}
 										throwIfCheckedPruneLifecycleInactive();
+										if (
+											checkedPruneCoordinator.getPendingDelete(entry.hash)
+												?.promise !== deferredPromise
+										) {
+											throw new TerminalOperationNotStartedError(
+												"Checked prune session changed before removal",
+											);
+										}
 										if (finalOwnership.localLeader) {
 											return false;
 										}
@@ -27647,11 +27725,15 @@ export class SharedLog<
 		ownershipLifecycleController = this.captureReplicationOwnershipLifecycle(),
 		rebalanceParticipationDebounced = this.rebalanceParticipationDebounced,
 	) {
+		const localReplicationRoleGeneration =
+			this._localReplicationRoleGeneration ?? 0;
 		// update more participation rate to converge to the average expected rate or bounded by
 		// resources such as memory and or cpu
 		const isCurrent = () =>
 			this.isRepairLifecycleActive(ownershipLifecycleController) &&
-			this.rebalanceParticipationDebounced === rebalanceParticipationDebounced;
+			this.rebalanceParticipationDebounced ===
+				rebalanceParticipationDebounced &&
+			this._localReplicationRoleGeneration === localReplicationRoleGeneration;
 
 		const isClosedStoreRace = (error: any) => {
 			const message =
@@ -27767,6 +27849,7 @@ export class SharedLog<
 							{
 								checkDuplicates: false,
 								reset: false,
+								shouldApply: isCurrent,
 							},
 							ownershipLifecycleController,
 						);
