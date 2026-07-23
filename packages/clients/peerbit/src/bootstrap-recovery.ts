@@ -176,6 +176,11 @@ export class BootstrapRecoveryController {
 		return this.running;
 	}
 
+	/** Whether this controller currently owns a pending recovery timer. */
+	get hasScheduledRecovery(): boolean {
+		return this.timer !== undefined;
+	}
+
 	start(): void {
 		if (this.running) return;
 		this.running = true;

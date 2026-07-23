@@ -102,13 +102,13 @@ describe("bootstrap recovery policy", () => {
 		controller.start();
 		await clock.tickAsync(0);
 		expect(attempts).to.equal(0);
-		expect(clock.countTimers()).to.equal(1);
+		expect(controller.hasScheduledRecovery).to.equal(true);
 
 		online = true;
 		onlineEvents.dispatchEvent(new Event("online"));
 		await clock.tickAsync(0);
 		expect(attempts).to.equal(1);
-		expect(clock.countTimers()).to.equal(0);
+		expect(controller.hasScheduledRecovery).to.equal(false);
 	});
 
 	it("recovers after the last connection closes while respecting cooldown", async () => {
@@ -230,15 +230,17 @@ describe("bootstrap recovery policy", () => {
 		}
 		await clock.tickAsync(1_000);
 		expect(attempts).to.equal(1);
-		expect(clock.countTimers()).to.equal(0);
+		expect(controller.hasScheduledRecovery).to.equal(false);
 
 		rejectAttempt(new Error("offline"));
 		await clock.tickAsync(0);
-		expect(clock.countTimers()).to.equal(1);
+		expect(controller.hasScheduledRecovery).to.equal(true);
+		const timerCountBeforeStorm = clock.countTimers();
 		for (let index = 0; index < 20; index++) {
 			connectionEvents.dispatchEvent(new Event("connection:close"));
 		}
-		expect(clock.countTimers()).to.equal(1);
+		expect(controller.hasScheduledRecovery).to.equal(true);
+		expect(clock.countTimers()).to.equal(timerCountBeforeStorm);
 	});
 
 	it("preserves exponential backoff across online event storms", async () => {
@@ -342,7 +344,7 @@ describe("bootstrap recovery policy", () => {
 		controller.stop();
 		await clock.tickAsync(0);
 		expect(attemptSignal?.aborted).to.equal(true);
-		expect(clock.countTimers()).to.equal(0);
+		expect(controller.hasScheduledRecovery).to.equal(false);
 
 		connectionEvents.dispatchEvent(new Event("connection:close"));
 		onlineEvents.dispatchEvent(new Event("online"));
