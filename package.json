@@ -191,7 +191,7 @@
 			"patch-package@6>tmp": "0.2.7",
 			"picomatch@2": "2.3.2",
 			"picomatch@4": "4.0.5",
-			"postcss@8": "8.5.10",
+			"postcss@8": "8.5.22",
 			"protobufjs": "7.6.5",
 			"qs": "6.15.2",
 			"rollup@4": "4.59.0",
