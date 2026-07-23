@@ -10724,16 +10724,15 @@ export class SharedLog<
 				logger.error(`Repair sweep failed: ${error?.message ?? error}`);
 			}
 		} finally {
-			if (repairLifecycleController !== this._repairLifecycleController) {
-				return;
-			}
-			this._repairSweepRunning = false;
-			if (
-				this.isRepairLifecycleActive(repairLifecycleController) &&
-				this._repairSweepPendingModes.size > 0
-			) {
-				this._repairSweepRunning = true;
-				void this.runRepairSweep(repairLifecycleController);
+			if (repairLifecycleController === this._repairLifecycleController) {
+				this._repairSweepRunning = false;
+				if (
+					this.isRepairLifecycleActive(repairLifecycleController) &&
+					this._repairSweepPendingModes.size > 0
+				) {
+					this._repairSweepRunning = true;
+					void this.runRepairSweep(repairLifecycleController);
+				}
 			}
 		}
 	}
