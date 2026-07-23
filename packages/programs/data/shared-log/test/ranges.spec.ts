@@ -2939,6 +2939,108 @@ resolutions.forEach((resolution) => {
 					}
 				};
 
+				it("preserves same-id additions from different owners while a debounce run is blocked", async () => {
+					const b = (await Ed25519Keypair.create()).publicKey;
+					await create(
+						createTestEntry("first-owner", 0.1),
+						createTestEntry("second-owner", 0.7),
+					);
+
+					let markBlocked!: () => void;
+					const blocked = new Promise<void>((resolve) => {
+						markBlocked = resolve;
+					});
+					let releaseBlocked!: () => void;
+					const release = new Promise<void>((resolve) => {
+						releaseBlocked = resolve;
+					});
+					const batches: ReplicationChange<ReplicationRangeIndexable<R>>[][] =
+						[];
+					const debounce = debounceAggregationChanges<
+						ReplicationRangeIndexable<R>
+					>(async (changes) => {
+						batches.push(changes);
+						if (batches.length === 1) {
+							markBlocked();
+							await release;
+						}
+					}, 60_000);
+					const blocker = createReplicationRangeFromNormalized({
+						publicKey: a,
+						offset: 0.9,
+						width: 0.01,
+						timestamp: 1n,
+					});
+					const sharedId = randomBytes(32);
+					const roleTimestamp = 7n;
+					const first = createReplicationRangeFromNormalized({
+						id: sharedId,
+						publicKey: a,
+						offset: 0.05,
+						width: 0.1,
+						mode: ReplicationIntent.Strict,
+						timestamp: roleTimestamp,
+					});
+					const second = createReplicationRangeFromNormalized({
+						id: sharedId,
+						publicKey: b,
+						offset: 0.65,
+						width: 0.1,
+						mode: ReplicationIntent.Strict,
+						timestamp: roleTimestamp,
+					});
+					expect(first.idString).to.equal(second.idString);
+					expect(first.hash).to.not.equal(second.hash);
+
+					try {
+						const firstRun = debounce.add({
+							range: blocker,
+							type: "added",
+							timestamp: blocker.timestamp,
+						});
+						await blocked;
+						const pending = [
+							debounce.add({
+								range: first,
+								type: "added",
+								timestamp: roleTimestamp,
+							}),
+							debounce.add({
+								range: second,
+								type: "added",
+								timestamp: roleTimestamp,
+							}),
+						];
+						const flushed = debounce.flush();
+						releaseBlocked();
+						await Promise.all([firstRun, ...pending, flushed]);
+
+						expect(batches).to.have.length(2);
+						expect(batches[1].map((change) => change.type)).to.deep.equal([
+							"added",
+							"added",
+						]);
+						expect(batches[1].map((change) => change.range.hash)).to.deep.equal(
+							[a.hashcode(), b.hashcode()],
+						);
+
+						const cache = new Cache<string>({ max: 1000, ttl: 1e5 });
+						const result = await consumeAllFromAsyncIterator(
+							toRebalance(batches[1], index, cache),
+						);
+						expect(result.map((entry) => entry.gid)).to.have.members([
+							"first-owner",
+							"second-owner",
+						]);
+						expect(result).to.have.length(2);
+						expect(cache.has(first.rangeHash)).to.be.true;
+						expect(cache.has(second.rangeHash)).to.be.true;
+					} finally {
+						releaseBlocked();
+						debounce.close();
+					}
+				});
+
 				it("processes replacement overlap accumulated while a debounce run is blocked", async () => {
 					await create(
 						createEntryReplicated({

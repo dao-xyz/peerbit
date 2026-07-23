@@ -2649,10 +2649,12 @@ export const debounceAggregationChanges = <
 					// announcements have the same requirement: a queued A -> B -> C chain emits
 					// removed(A), added(B), removed(B), added(C), so collapsing removals by id
 					// would omit A-only entries.
+					// Segment ids are peer-supplied and only identify state within an owner, so
+					// live additions must include the owner hash to avoid cross-peer collisions.
 					const key =
 						change.type === "replaced" || change.type === "removed"
 							? `${change.type}:${change.range.idString}:${change.range.rangeHash}`
-							: `${change.type}:${change.range.idString}`;
+							: `${change.type}:${change.range.hash}:${change.range.idString}`;
 					const prev = aggregated.get(key);
 					if (prev) {
 						// Replication ingress rejects strictly stale observations, while equal
