@@ -1,5 +1,11 @@
 # Changelog
 
+## 13.2.14
+
+### Patch Changes
+
+- [#1133](https://github.com/dao-xyz/peerbit/pull/1133) [`5e8d7ad`](https://github.com/dao-xyz/peerbit/commit/5e8d7adea2655824dbea0de0e39dd06296bf8457) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Avoid materializing ancestor payloads while constructing non-native exchange-head reference hints.
+
 ## 13.2.13
 
 ### Patch Changes
