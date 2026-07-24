@@ -1473,6 +1473,38 @@ describe("native peerbit backbone", () => {
 		expect(backbone.graph.payloadSizeSum()).to.equal(4);
 	});
 
+	it("reads entry metadata hints through the WASM receiver", async () => {
+		const backbone = await createNativePeerbitBackbone({
+			clockId: publicKey,
+			privateKey,
+			publicKey,
+		});
+		const prepared = backbone.storageBackedGraph.prepareEntryV0PlainEntryAndPut(
+			{
+				clockId: publicKey,
+				privateKey,
+				publicKey,
+				wallTime: 1n,
+				gid: "gid-metadata-hints",
+				metaData: new Uint8Array([7]),
+				payloadData: new Uint8Array([1]),
+				includeMaterializationBytes: false,
+				includeAppendFactsBytes: true,
+			},
+		);
+
+		expect(
+			backbone.graph.entryMetadataHintsBatch([prepared.hash, "missing"]),
+		).to.deep.equal([
+			{
+				hash: prepared.hash,
+				gid: "gid-metadata-hints",
+				data: new Uint8Array([7]),
+			},
+			undefined,
+		]);
+	});
+
 	it("commits blocks graph and coordinates in one native batch", async () => {
 		const source = await createNativePeerbitBackbone({
 			clockId: publicKey,
