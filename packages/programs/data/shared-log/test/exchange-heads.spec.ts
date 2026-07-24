@@ -1,12 +1,15 @@
+import { deserialize, serialize } from "@dao-xyz/borsh";
 import { AnyBlockStore } from "@peerbit/blocks";
 import { Ed25519Keypair } from "@peerbit/crypto";
 import { Log } from "@peerbit/log";
-import { deserialize, serialize } from "@dao-xyz/borsh";
 import { expect } from "chai";
 import sinon from "sinon";
 import {
+	CheckedPruneRequest,
 	EXCHANGE_HEADS_RESOLVE_BATCH_SIZE,
 	RawExchangeHeadsMessage,
+	RequestIPruneV2,
+	ResponseIPruneV2,
 	createExchangeHeadsMessages,
 	createRawExchangeHeadsMessages,
 	materializeRawExchangeHeadsMessage,
@@ -25,6 +28,58 @@ describe("exchange heads", () => {
 
 	after(async () => {
 		await store.stop();
+	});
+
+	it("keeps the checked-prune correlation wire format stable", () => {
+		const requestId = Uint8Array.from({ length: 32 }, (_, index) => index);
+		const requestIdHex =
+			"000102030405060708090a0b0c0d0e0f" + "101112131415161718191a1b1c1d1e1f";
+		for (const [message, variant] of [
+			[
+				new RequestIPruneV2({
+					requests: [{ hash: "h", requestId }],
+				}),
+				"0b",
+			],
+			[
+				new ResponseIPruneV2({
+					requests: [{ hash: "h", requestId }],
+				}),
+				"0c",
+			],
+		] as const) {
+			const bytes = serialize(message);
+			expect(
+				Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join(
+					"",
+				),
+			).to.equal(`0000${variant}01000000000100000068${requestIdHex}`);
+			const roundTrip = deserialize(bytes, TransportMessage) as
+				| RequestIPruneV2
+				| ResponseIPruneV2;
+			expect(roundTrip).to.be.instanceOf(message.constructor);
+			expect(roundTrip.requests).to.have.length(1);
+			expect(roundTrip.requests[0]).to.be.instanceOf(CheckedPruneRequest);
+			expect(roundTrip.requests[0]!.hash).to.equal("h");
+			expect([...roundTrip.requests[0]!.requestId]).to.deep.equal([
+				...requestId,
+			]);
+		}
+	});
+
+	it("rejects checked-prune correlation ids that are not 32 bytes", () => {
+		for (const create of [
+			(requestId: Uint8Array) =>
+				new RequestIPruneV2({ requests: [{ hash: "h", requestId }] }),
+			(requestId: Uint8Array) =>
+				new ResponseIPruneV2({ requests: [{ hash: "h", requestId }] }),
+		]) {
+			for (const length of [0, 31, 33]) {
+				expect(() => serialize(create(new Uint8Array(length)))).to.throw(
+					/Expected: 32/,
+				);
+			}
+		}
 	});
 
 	it("uses native graph reference gids for single-head messages", async () => {
