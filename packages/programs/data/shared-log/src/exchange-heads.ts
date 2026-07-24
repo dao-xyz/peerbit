@@ -1160,26 +1160,32 @@ export class ResponseIPruneV2 extends TransportMessage {
 
 const MAX_EXCHANGE_MESSAGE_SIZE = 1e5; // 100kb. Too large size might not be faster (even if we can do 5mb)
 export const MAX_RAW_EXCHANGE_MESSAGE_SIZE = 512 * 1024;
+// Hash-resolved full entries and raw JS blocks remain reachable while a yielded
+// message is being sent, so bound their count-based lookahead. Caller-owned
+// Entry[] values and an individual entry's bytes are not byte-bounded here;
+// native metadata-only planning can retain its larger batch.
+const EXCHANGE_HEADS_PAYLOAD_RESOLVE_BATCH_SIZE = 16;
 export const EXCHANGE_HEADS_RESOLVE_BATCH_SIZE = 256;
 
-export const createExchangeHeadsMessages = async function* (
+const createExchangeHeadsMessagesWithVisited = async function* (
 	log: Log<any>,
 	heads: Entry<any>[] | string[] | Set<string>,
+	visitedHeads: Set<string>,
 ): AsyncGenerator<ExchangeHeadsMessage<any>, void, void> {
 	let size = 0;
 	let current: EntryWithRefs<any>[] = [];
-	const visitedHeads = new Set<string>();
 	const headArray = Array.isArray(heads) ? heads : [...heads];
-	const canUseNativeReferenceGids = headArray.length === 1;
+	const canUseNativeReferenceGids =
+		headArray.length === 1 && visitedHeads.size === 0;
 
 	for (
 		let offset = 0;
 		offset < headArray.length;
-		offset += EXCHANGE_HEADS_RESOLVE_BATCH_SIZE
+		offset += EXCHANGE_HEADS_PAYLOAD_RESOLVE_BATCH_SIZE
 	) {
 		const headBatch = headArray.slice(
 			offset,
-			offset + EXCHANGE_HEADS_RESOLVE_BATCH_SIZE,
+			offset + EXCHANGE_HEADS_PAYLOAD_RESOLVE_BATCH_SIZE,
 		);
 		const nativeReferenceRowsByPosition =
 			canUseNativeReferenceGids === false
@@ -1192,6 +1198,7 @@ export const createExchangeHeadsMessages = async function* (
 		);
 		for (let i = 0; i < resolvedHeads.length; i++) {
 			const entry = resolvedHeads[i];
+			resolvedHeads[i] = undefined;
 			if (!entry) {
 				continue; // missing this entry, could be deleted while iterating
 			}
@@ -1290,6 +1297,13 @@ export const createExchangeHeadsMessages = async function* (
 	}
 };
 
+export const createExchangeHeadsMessages = async function* (
+	log: Log<any>,
+	heads: Entry<any>[] | string[] | Set<string>,
+): AsyncGenerator<ExchangeHeadsMessage<any>, void, void> {
+	yield* createExchangeHeadsMessagesWithVisited(log, heads, new Set<string>());
+};
+
 export const createRawExchangeHeadsMessages = async function* (
 	log: Log<any>,
 	heads: string[] | Set<string>,
@@ -1313,30 +1327,44 @@ export const createRawExchangeHeadsMessages = async function* (
 			});
 		}
 	};
+	const flushCurrent = () => {
+		if (current.length === 0) {
+			return undefined;
+		}
+		emitJsBlockBytes(current, size);
+		const message = new RawExchangeHeadsMessage({ heads: current });
+		size = 0;
+		current = [];
+		return message;
+	};
 
-	for (let offset = 0; offset < headArray.length; offset += EXCHANGE_HEADS_RESOLVE_BATCH_SIZE) {
+	for (
+		let offset = 0;
+		offset < headArray.length;
+		offset += EXCHANGE_HEADS_PAYLOAD_RESOLVE_BATCH_SIZE
+	) {
 		const headBatch = headArray.slice(
 			offset,
-			offset + EXCHANGE_HEADS_RESOLVE_BATCH_SIZE,
+			offset + EXCHANGE_HEADS_PAYLOAD_RESOLVE_BATCH_SIZE,
 		);
 		const nativeReferenceRowsByPosition = getNativeReferenceRowsByHeadInput(
 			log,
 			headBatch,
 			visitedHeads,
 		);
-		if (!nativeReferenceRowsByPosition) {
-			for await (const message of createExchangeHeadsMessages(log, headBatch)) {
-				yield message;
+		const blockRows = nativeReferenceRowsByPosition
+			? await resolveExchangeHeadBlocks(log, headBatch, visitedHeads)
+			: undefined;
+		if (!nativeReferenceRowsByPosition || !blockRows) {
+			const pending = flushCurrent();
+			if (pending) {
+				yield pending;
 			}
-			continue;
-		}
-		const blockRows = await resolveExchangeHeadBlocks(
-			log,
-			headBatch,
-			visitedHeads,
-		);
-		if (!blockRows) {
-			for await (const message of createExchangeHeadsMessages(log, headBatch)) {
+			for await (const message of createExchangeHeadsMessagesWithVisited(
+				log,
+				headBatch,
+				visitedHeads,
+			)) {
 				yield message;
 			}
 			continue;
@@ -1344,6 +1372,7 @@ export const createRawExchangeHeadsMessages = async function* (
 
 		for (let i = 0; i < blockRows.length; i++) {
 			const block = blockRows[i];
+			blockRows[i] = undefined;
 			if (!block) {
 				continue;
 			}
@@ -1376,16 +1405,16 @@ export const createRawExchangeHeadsMessages = async function* (
 			);
 			size += block.bytes.byteLength;
 			if (size > MAX_RAW_EXCHANGE_MESSAGE_SIZE) {
-				emitJsBlockBytes(current, size);
-				size = 0;
-				yield new RawExchangeHeadsMessage({ heads: current });
-				current = [];
+				const pending = flushCurrent();
+				if (pending) {
+					yield pending;
+				}
 			}
 		}
 	}
-	if (current.length > 0) {
-		emitJsBlockBytes(current, size);
-		yield new RawExchangeHeadsMessage({ heads: current });
+	const pending = flushCurrent();
+	if (pending) {
+		yield pending;
 	}
 };
 

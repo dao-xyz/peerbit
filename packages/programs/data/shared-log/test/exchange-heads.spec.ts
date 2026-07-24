@@ -6,7 +6,7 @@ import { expect } from "chai";
 import sinon from "sinon";
 import {
 	CheckedPruneRequest,
-	EXCHANGE_HEADS_RESOLVE_BATCH_SIZE,
+	MAX_RAW_EXCHANGE_MESSAGE_SIZE,
 	RawExchangeHeadsMessage,
 	RequestIPruneV2,
 	ResponseIPruneV2,
@@ -15,6 +15,32 @@ import {
 	materializeRawExchangeHeadsMessage,
 } from "../src/exchange-heads.js";
 import { TransportMessage } from "../src/message.js";
+
+const LARGE_HEAD_PAYLOAD_BYTES = MAX_RAW_EXCHANGE_MESSAGE_SIZE + 1;
+const PAYLOAD_RESOLVE_BATCH_SIZE = 16;
+
+const appendLargeIndependentHeads = async (
+	log: Log<Uint8Array>,
+	count: number,
+) => {
+	const heads: string[] = [];
+	for (let i = 0; i < count; i++) {
+		const { entry } = await log.append(
+			new Uint8Array(LARGE_HEAD_PAYLOAD_BYTES),
+			{
+				meta: { next: [], gidSeed: new Uint8Array([i]) },
+			},
+		);
+		heads.push(entry.hash);
+	}
+	return heads;
+};
+
+const createMissingBlockHash = async (log: Log<Uint8Array>) => {
+	const hash = await log.blocks.put(new Uint8Array([0xde, 0xad, 0xbe, 0xef]));
+	await log.blocks.rm(hash);
+	return hash;
+};
 
 describe("exchange heads", () => {
 	let store: AnyBlockStore;
@@ -322,38 +348,278 @@ describe("exchange heads", () => {
 		}
 	});
 
-	it("resolves large hash head responses in bounded entry-index batches", async () => {
+	it("bounds full-entry lookahead while a large response is suspended", async () => {
 		const log = new Log<Uint8Array>();
 		await log.open(store, signKey, {
 			appendDurability: "strict",
 			nativeGraph: true,
 		});
 
-		const heads = [];
-		for (let i = 0; i < EXCHANGE_HEADS_RESOLVE_BATCH_SIZE + 2; i++) {
-			const { entry } = await log.append(new Uint8Array([i % 256]), {
-				meta: { next: [], gidSeed: new Uint8Array([i % 256, i >>> 8]) },
+		const heads = await appendLargeIndependentHeads(log, 18);
+		const missing = await createMissingBlockHash(log);
+		const requested = [...heads.slice(0, 17), missing, heads[17]!];
+		const getManySpy = sinon.spy(log.entryIndex, "getMany");
+		const generator = createExchangeHeadsMessages(log, requested);
+		try {
+			const first = await generator.next();
+			expect(first.done).to.equal(false);
+			expect(first.value!.heads.map((head) => head.entry.hash)).to.deep.equal([
+				heads[0],
+			]);
+			expect(getManySpy.callCount).to.equal(1);
+			expect(getManySpy.firstCall.args[0]).to.have.length(
+				PAYLOAD_RESOLVE_BATCH_SIZE,
+			);
+
+			const received = first.value!.heads.map((head) => head.entry.hash);
+			for await (const message of generator) {
+				received.push(...message.heads.map((head) => head.entry.hash));
+			}
+
+			expect(received).to.deep.equal(heads);
+			expect(getManySpy.callCount).to.equal(2);
+			expect(getManySpy.secondCall.args[0]).to.deep.equal(requested.slice(16));
+			expect(
+				getManySpy
+					.getCalls()
+					.every((call) => call.args[0].length <= PAYLOAD_RESOLVE_BATCH_SIZE),
+			).to.equal(true);
+		} finally {
+			await generator.return(undefined);
+			getManySpy.restore();
+			await log.close();
+		}
+	});
+
+	it("bounds raw-block lookahead while a large response is suspended", async () => {
+		const log = new Log<Uint8Array>();
+		await log.open(store, signKey, {
+			appendDurability: "strict",
+			nativeGraph: true,
+		});
+
+		const heads = await appendLargeIndependentHeads(log, 18);
+		const getManySpy = sinon.spy(log.blocks, "getMany");
+		const generator = createRawExchangeHeadsMessages(log, heads);
+		try {
+			const first = await generator.next();
+			expect(first.done).to.equal(false);
+			expect(first.value).to.be.instanceOf(RawExchangeHeadsMessage);
+			expect(
+				(first.value as RawExchangeHeadsMessage).heads.map((head) => head.hash),
+			).to.deep.equal(heads.slice(0, 1));
+			expect(getManySpy.callCount).to.equal(1);
+			expect(getManySpy.firstCall.args[0]).to.have.length(
+				PAYLOAD_RESOLVE_BATCH_SIZE,
+			);
+
+			const received = (first.value as RawExchangeHeadsMessage).heads.map(
+				(head) => head.hash,
+			);
+			for await (const message of generator) {
+				received.push(
+					...(message instanceof RawExchangeHeadsMessage
+						? message.heads.map((head) => head.hash)
+						: message.heads.map((head) => head.entry.hash)),
+				);
+			}
+
+			expect(received).to.deep.equal(heads);
+			expect(getManySpy.callCount).to.equal(2);
+			expect(getManySpy.secondCall.args[0]).to.deep.equal(heads.slice(16));
+			expect(
+				getManySpy
+					.getCalls()
+					.every((call) => call.args[0].length <= PAYLOAD_RESOLVE_BATCH_SIZE),
+			).to.equal(true);
+		} finally {
+			await generator.return(undefined);
+			getManySpy.restore();
+			await log.close();
+		}
+	});
+
+	it("preserves order when a later raw batch falls back", async () => {
+		const log = new Log<Uint8Array>();
+		await log.open(store, signKey, {
+			appendDurability: "strict",
+			nativeGraph: true,
+		});
+
+		const heads: string[] = [];
+		for (let i = 0; i < 17; i++) {
+			const { entry } = await log.append(new Uint8Array([i]), {
+				meta: { next: [], gidSeed: new Uint8Array([i]) },
 			});
 			heads.push(entry.hash);
 		}
+		await log.blocks.rm(heads[16]!);
 
-		const getManySpy = sinon.spy(log.entryIndex, "getMany");
 		try {
 			const messages = [];
-			for await (const message of createExchangeHeadsMessages(log, heads)) {
+			const profileEvents: Array<{
+				name: string;
+				entries?: number;
+				messages?: number;
+			}> = [];
+			for await (const message of createRawExchangeHeadsMessages(
+				log,
+				heads,
+				(event) => profileEvents.push(event),
+			)) {
 				messages.push(message);
 			}
-
-			expect(messages.flatMap((message) => message.heads)).to.have.length(
-				heads.length,
+			expect(messages).to.have.length(2);
+			expect(messages[0]).to.be.instanceOf(RawExchangeHeadsMessage);
+			expect(messages[1]).to.not.be.instanceOf(RawExchangeHeadsMessage);
+			expect(
+				messages.flatMap((message) =>
+					message instanceof RawExchangeHeadsMessage
+						? message.heads.map((head) => head.hash)
+						: message.heads.map((head) => head.entry.hash),
+				),
+			).to.deep.equal(heads);
+			const rawProfileEvents = profileEvents.filter(
+				(event) => event.name === "sharedLog.rawSend.jsBlockBytes",
 			);
-			expect(getManySpy.callCount).to.equal(2);
-			expect(getManySpy.firstCall.args[0]).to.have.length(
-				EXCHANGE_HEADS_RESOLVE_BATCH_SIZE,
-			);
-			expect(getManySpy.secondCall.args[0]).to.have.length(2);
+			expect(rawProfileEvents).to.have.length(1);
+			expect(rawProfileEvents[0]!.entries).to.equal(16);
+			expect(rawProfileEvents[0]!.messages).to.equal(1);
 		} finally {
-			getManySpy.restore();
+			await log.close();
+		}
+	});
+
+	it("does not repeat native reference gids in one-head fallback", async () => {
+		const log = new Log<Uint8Array>();
+		await log.open(store, signKey, {
+			appendDurability: "strict",
+			nativeGraph: true,
+		});
+
+		const roots = [];
+		for (const seed of [21, 22, 23]) {
+			const { entry } = await log.append(new Uint8Array([seed]), {
+				meta: { next: [], gidSeed: new Uint8Array([seed]) },
+			});
+			roots.push(entry);
+		}
+		roots.sort((left, right) =>
+			left.meta.gid < right.meta.gid
+				? -1
+				: left.meta.gid > right.meta.gid
+					? 1
+					: 0,
+		);
+		const { entry: rawHead } = await log.append(new Uint8Array([24]), {
+			meta: { next: [roots[0]!, roots[2]!] },
+		});
+		const { entry: fallbackHead } = await log.append(new Uint8Array([25]), {
+			meta: { next: [roots[1]!, roots[2]!] },
+		});
+		const sharedReference = roots[2]!;
+		const firstBatch = [rawHead.hash];
+		for (let i = 0; i < 15; i++) {
+			const { entry } = await log.append(new Uint8Array([i + 30]), {
+				meta: { next: [], gidSeed: new Uint8Array([i + 30]) },
+			});
+			firstBatch.push(entry.hash);
+		}
+		expect((await log.get(fallbackHead.hash))?.hash).to.equal(
+			fallbackHead.hash,
+		);
+		await log.blocks.rm(fallbackHead.hash);
+
+		try {
+			const sent: Array<{ hash: string; gidRefrences: string[] }> = [];
+			for await (const message of createRawExchangeHeadsMessages(log, [
+				...firstBatch,
+				fallbackHead.hash,
+			])) {
+				sent.push(
+					...(message instanceof RawExchangeHeadsMessage
+						? message.heads.map(({ hash, gidRefrences }) => ({
+								hash,
+								gidRefrences,
+							}))
+						: message.heads.map(({ entry, gidRefrences }) => ({
+								hash: entry.hash,
+								gidRefrences,
+							}))),
+				);
+			}
+
+			expect(sent.map(({ hash }) => hash)).to.deep.equal([
+				...firstBatch,
+				fallbackHead.hash,
+			]);
+			expect(
+				sent
+					.flatMap(({ gidRefrences }) => gidRefrences)
+					.filter((gid) => gid === sharedReference.meta.gid),
+			).to.have.length(1);
+			expect(
+				sent.find(({ hash }) => hash === rawHead.hash)!.gidRefrences,
+			).to.include(sharedReference.meta.gid);
+			expect(
+				sent.find(({ hash }) => hash === fallbackHead.hash)!.gidRefrences,
+			).to.not.include(sharedReference.meta.gid);
+		} finally {
+			await log.close();
+		}
+	});
+
+	it("deduplicates heads and references across raw fallback batches", async () => {
+		const log = new Log<Uint8Array>();
+		await log.open(store, signKey, {
+			appendDurability: "strict",
+			nativeGraph: false,
+		});
+
+		const { entry: left } = await log.append(new Uint8Array([1]), {
+			meta: { next: [], gidSeed: new Uint8Array([1]) },
+		});
+		const { entry: right } = await log.append(new Uint8Array([2]), {
+			meta: { next: [], gidSeed: new Uint8Array([2]) },
+		});
+		const { entry: head } = await log.append(new Uint8Array([3]), {
+			meta: { next: [left, right] },
+		});
+		const reference = [left, right].find(
+			(entry) => entry.meta.gid !== head.meta.gid,
+		)!;
+		const firstBatch = [head.hash];
+		for (let i = 0; i < 15; i++) {
+			const { entry } = await log.append(new Uint8Array([i + 4]), {
+				meta: { next: [], gidSeed: new Uint8Array([i + 4]) },
+			});
+			firstBatch.push(entry.hash);
+		}
+
+		try {
+			const sent: Array<{ hash: string; gidRefrences: string[] }> = [];
+			for await (const message of createRawExchangeHeadsMessages(log, [
+				...firstBatch,
+				reference.hash,
+				head.hash,
+			])) {
+				sent.push(
+					...(message instanceof RawExchangeHeadsMessage
+						? message.heads.map(({ hash, gidRefrences }) => ({
+								hash,
+								gidRefrences,
+							}))
+						: message.heads.map(({ entry, gidRefrences }) => ({
+								hash: entry.hash,
+								gidRefrences,
+							}))),
+				);
+			}
+			expect(sent.map(({ hash }) => hash)).to.deep.equal(firstBatch);
+			expect(
+				sent.find(({ hash }) => hash === head.hash)!.gidRefrences,
+			).to.include(reference.meta.gid);
+		} finally {
 			await log.close();
 		}
 	});
