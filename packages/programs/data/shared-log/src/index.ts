@@ -19,7 +19,9 @@ import {
 	Ed25519PublicKey,
 	PublicSignKey,
 	Secp256k1PublicKey,
+	fromHexString,
 	getPublicKeyFromPeerId,
+	randomBytes,
 	sha256Base64Sync,
 	sha256Sync,
 	toHexString,
@@ -119,7 +121,6 @@ import {
 import {
 	AbortError,
 	TimeoutError,
-	debounceAccumulator,
 	debounceFixedInterval,
 	waitFor,
 } from "@peerbit/time";
@@ -131,6 +132,7 @@ import {
 	CheckedPruneCoordinator,
 	type CheckedPruneEntry,
 	type CheckedPruneLeaderMap,
+	type CheckedPrunePendingDelete,
 	type CheckedPruneRetryState,
 } from "./checked-prune.js";
 import { type CPUUsage, CPUUsageIntervalLag } from "./cpu.js";
@@ -149,7 +151,10 @@ import {
 	RawExchangeHeadsMessage,
 	type RawReceiveHashSelection,
 	RequestIPrune,
+	RequestIPruneV2,
 	ResponseIPrune,
+	ResponseIPruneV2,
+	SYNC_CAPABILITY_CHECKED_PRUNE_HANDOFF,
 	SYNC_CAPABILITY_RAW_EXCHANGE_HEADS,
 	StashBackedRawExchangeHeadsMessage,
 	SyncCapabilitiesMessage,
@@ -282,9 +287,28 @@ const mapMaybePromise = <T, R>(
 type PendingIHave<T> = {
 	resetTimeout: () => void;
 	requesting: Set<string>;
+	requestIdsByPeer?: Map<string, Uint8Array>;
 	clear: () => void;
-	callback: (entry: Entry<T>) => MaybePromise<void>;
+	callbackActive?: boolean;
+	callbackController?: AbortController;
+	callback: (
+		entry: Entry<T>,
+		work: PendingIHaveCallbackWork,
+	) => MaybePromise<void>;
 	expiresAt?: number;
+};
+
+type PendingIHaveCallbackWork = {
+	deadline: number;
+	signal: AbortSignal;
+	isActive: () => boolean;
+	remainingMs: () => number;
+	settlingWork: CheckedPruneSettlingWork;
+};
+
+type CheckedPruneGrantRequest = {
+	hash: string;
+	requestId: Uint8Array;
 };
 
 type PeerReceiveLeaseBucket = {
@@ -295,6 +319,77 @@ type PeerReceiveLeaseBucket = {
 type PeerReceiveLeaseState = {
 	current: PeerReceiveLeaseBucket;
 	activeBuckets: Set<PeerReceiveLeaseBucket>;
+};
+
+type CheckedPruneRequestWorkAdmissionState = {
+	replicationLifecycleController: AbortController;
+	activeByPeer: Map<string, object>;
+};
+
+type PendingIHaveCallbackWorkAdmissionState = {
+	replicationLifecycleController: AbortController;
+	active: number;
+};
+
+type CheckedPruneSettlingWork = {
+	track: (work: PromiseLike<unknown>) => void;
+};
+
+/**
+ * Tracks operations whose result can be abandoned at a protocol deadline but
+ * whose underlying implementation cannot necessarily be cancelled.
+ *
+ * The admission lease is released only after the tracker is sealed and every
+ * operation admitted before that boundary has actually settled. A tracker is
+ * captured by one lifecycle generation, so close/reopen can retire the old
+ * admission map without waiting for a permanently stuck storage implementation.
+ */
+class CheckedPruneSettlingWorkTracker implements CheckedPruneSettlingWork {
+	private pending = 0;
+	private sealed = false;
+	private readonly settled = pDefer<void>();
+
+	track(work: PromiseLike<unknown>): void {
+		// A tracked outer operation may start a nested planner check after the
+		// protocol deadline sealed the lease. Accept that nested work while the
+		// outer operation still keeps the tracker non-empty; once fully drained,
+		// starting more work would violate the admission boundary.
+		if (this.sealed && this.pending === 0) {
+			throw new Error("Cannot add checked-prune work after admission release");
+		}
+		this.pending++;
+		void Promise.resolve(work).then(
+			() => this.finish(),
+			() => this.finish(),
+		);
+	}
+
+	sealAndWait(): Promise<void> {
+		this.sealed = true;
+		if (this.pending === 0) {
+			this.settled.resolve();
+		}
+		return this.settled.promise;
+	}
+
+	private finish(): void {
+		this.pending = Math.max(0, this.pending - 1);
+		if (this.sealed && this.pending === 0) {
+			this.settled.resolve();
+		}
+	}
+}
+
+type CheckedPruneRequestWorkLease = {
+	settlingWork: CheckedPruneSettlingWorkTracker;
+	release: () => void;
+};
+
+type SyncCapabilityRepairState = {
+	subscriptionEpoch: object;
+	attempts: number;
+	controller: AbortController;
+	timer?: ReturnType<typeof setTimeout>;
 };
 
 const toLocalPublicSignKey = (
@@ -1623,6 +1718,9 @@ type LeaderSelectionOptions<R extends "u32" | "u64"> = {
 type WaitForReplicatorsOptions<R extends "u32" | "u64"> =
 	LeaderSelectionOptions<R> & {
 		timeout?: number;
+		signal?: AbortSignal;
+		drainInFlightChecks?: boolean;
+		settlingWork?: CheckedPruneSettlingWork;
 	};
 
 type WaitForReplicator = { key: string; replicator: boolean };
@@ -2706,6 +2804,145 @@ const CHECKED_PRUNE_RESEND_INTERVAL_MAX_MS = 5_000;
 const CHECKED_PRUNE_BACKGROUND_TIMEOUT_MIN_MS = 120_000;
 const CHECKED_PRUNE_RETRY_MAX_ATTEMPTS = 3;
 const CHECKED_PRUNE_RETRY_MAX_DELAY_MS = 30_000;
+const CHECKED_PRUNE_REQUEST_ID_BYTES = 32;
+const CHECKED_PRUNE_MAX_REQUESTS_PER_MESSAGE = 1_024;
+const CHECKED_PRUNE_MAX_HASH_CODE_UNITS = 256;
+const CHECKED_PRUNE_MAX_CONCURRENT_REQUEST_SENDS = 4;
+const CHECKED_PRUNE_MAX_CONCURRENT_GRANT_SENDS = 4;
+const CHECKED_PRUNE_MAX_ACTIVE_REQUEST_HANDLERS = 4;
+const CHECKED_PRUNE_REQUEST_HANDLER_MAX_WAIT_MS = 5_000;
+const CHECKED_PRUNE_MAX_PENDING_IHAVE_PER_PEER = 1_024;
+const CHECKED_PRUNE_MAX_PENDING_IHAVE_GLOBAL = 4_096;
+const CHECKED_PRUNE_MAX_ACTIVE_PENDING_IHAVE_CALLBACKS = 4;
+const CHECKED_PRUNE_PENDING_IHAVE_CALLBACK_MAX_WAIT_MS = 5_000;
+const SYNC_CAPABILITY_REPAIR_MIN_DELAY_MS = 250;
+const SYNC_CAPABILITY_REPAIR_MAX_DELAY_MS = 30_000;
+
+type AbortableQueueTask<T> = {
+	run: () => MaybePromise<T>;
+	resolve: (value: T | PromiseLike<T>) => void;
+	reject: (reason?: unknown) => void;
+	signal?: AbortSignal;
+	onAbort?: () => void;
+	started: boolean;
+	settled: boolean;
+};
+
+class AbortableFixedConcurrencyQueue {
+	private active = 0;
+	private readonly pending: AbortableQueueTask<unknown>[] = [];
+	private readonly idleWaiters = new Set<() => void>();
+
+	constructor(private readonly concurrency: number) {}
+
+	get size() {
+		return this.pending.length;
+	}
+
+	get running() {
+		return this.active;
+	}
+
+	add<T>(run: () => MaybePromise<T>, signal?: AbortSignal): Promise<T> {
+		return new Promise<T>((resolve, reject) => {
+			const task: AbortableQueueTask<T> = {
+				run,
+				resolve,
+				reject,
+				signal,
+				started: false,
+				settled: false,
+			};
+			const rejectOnce = (reason?: unknown) => {
+				if (task.settled) {
+					return;
+				}
+				task.settled = true;
+				task.reject(reason);
+			};
+			task.onAbort = () => {
+				if (task.started) {
+					// The running operation owns the signal and must settle before
+					// its caller can release a checked-prune ordering barrier.
+					return;
+				}
+				const index = this.pending.indexOf(task as AbortableQueueTask<unknown>);
+				if (index >= 0) {
+					this.pending.splice(index, 1);
+				}
+				task.signal?.removeEventListener("abort", task.onAbort!);
+				rejectOnce(task.signal?.reason ?? new AbortError());
+				this.drain();
+				this.resolveIdleIfNeeded();
+			};
+			if (signal?.aborted) {
+				task.onAbort();
+				return;
+			}
+			signal?.addEventListener("abort", task.onAbort, { once: true });
+			this.pending.push(task as AbortableQueueTask<unknown>);
+			this.drain();
+		});
+	}
+
+	onIdle(): Promise<void> {
+		if (this.active === 0 && this.pending.length === 0) {
+			return Promise.resolve();
+		}
+		return new Promise((resolve) => this.idleWaiters.add(resolve));
+	}
+
+	private drain() {
+		while (this.active < this.concurrency && this.pending.length > 0) {
+			const task = this.pending.shift()!;
+			if (task.signal?.aborted) {
+				task.onAbort?.();
+				continue;
+			}
+			task.started = true;
+			this.active++;
+			void Promise.resolve()
+				.then(task.run)
+				.then(
+					(value) => {
+						if (!task.settled) {
+							task.settled = true;
+							task.resolve(value);
+						}
+					},
+					(error) => {
+						if (!task.settled) {
+							task.settled = true;
+							task.reject(error);
+						}
+					},
+				)
+				.finally(() => {
+					task.signal?.removeEventListener("abort", task.onAbort!);
+					this.active--;
+					this.drain();
+					this.resolveIdleIfNeeded();
+				});
+		}
+	}
+
+	private resolveIdleIfNeeded() {
+		if (this.active !== 0 || this.pending.length !== 0) {
+			return;
+		}
+		for (const resolve of this.idleWaiters) {
+			resolve();
+		}
+		this.idleWaiters.clear();
+	}
+}
+
+class CheckedPruneTargetUnavailableError extends Error {
+	constructor(readonly peer: string) {
+		super(`Checked prune target became unavailable: ${peer}`);
+		this.name = "CheckedPruneTargetUnavailableError";
+	}
+}
 
 // DONT SET THIS ANY LOWER, because it will make the pid controller unstable as the system responses are not fast enough to updates from the pid controller
 const RECALCULATE_PARTICIPATION_DEBOUNCE_INTERVAL = 1000;
@@ -3370,6 +3607,9 @@ export class SharedLog<
 	private _activeReceiveHandlersByPeer!: Map<string, PeerReceiveLeaseState>;
 	private _receiveHandlerDrainByPeer!: Map<string, Set<Promise<void>>>;
 	private _receiveCleanupGateByPeer!: Map<string, number>;
+	private _checkedPruneRequestWorkAdmission?:
+		| CheckedPruneRequestWorkAdmissionState
+		| undefined;
 	private _subscriptionOpeningEpochByPeer!: Map<string, object>;
 	private _openingSyncCapabilitiesByPeer!: Map<
 		string,
@@ -3393,6 +3633,10 @@ export class SharedLog<
 	private _admittedPruneRemoves!: Set<Promise<unknown>>;
 	private _pruneRemovesClosing = false;
 	private _pendingIHaveCallbacks!: Set<Promise<void>>;
+	private _pendingIHaveActiveCallbacks!: number;
+	private _pendingIHaveCallbackWorkAdmission?:
+		| PendingIHaveCallbackWorkAdmissionState
+		| undefined;
 	private _pendingIHaveExpiryTimer?: ReturnType<typeof setTimeout>;
 	private _pendingIHaveExpiryDeadline = Number.POSITIVE_INFINITY;
 
@@ -3401,6 +3645,8 @@ export class SharedLog<
 	}
 
 	private _pendingIHave!: Map<string, PendingIHave<T>>;
+	private _pendingIHaveCountByPeer!: Map<string, number>;
+	private _pendingIHaveRequesterCount!: number;
 
 	// public key hash to range id to range
 	pendingMaturity!: Map<string, Map<string, PendingMaturityRecord<R>>>; // map of peerId to timeout
@@ -3414,6 +3660,7 @@ export class SharedLog<
 		string,
 		{ attempts: number; timer?: ReturnType<typeof setTimeout> }
 	>;
+	private _syncCapabilityRepairByPeer!: Map<string, SyncCapabilityRepairState>;
 	private _replicationInfoApplyQueueByPeer!: Map<string, Promise<void>>;
 	// Range ids are global primary keys while receive lanes are per peer. Keep
 	// reads and writes that decide one mutation in a single global lane.
@@ -4550,16 +4797,6 @@ export class SharedLog<
 		entry: CheckedPruneEntry<T, R>;
 		leaders: CheckedPruneLeaderMap;
 	}>;
-	private responseToPruneDebouncedFn!: ReturnType<
-		typeof debounceAccumulator<
-			string,
-			{
-				hashes: string[];
-				peers: string[] | Set<string>;
-			},
-			Map<string, Set<string>>
-		>
-	>;
 
 	private get _requestIPruneSent() {
 		return this._checkedPrune.requestIPruneSent;
@@ -4640,6 +4877,8 @@ export class SharedLog<
 
 	// regular distribution checks
 	private distributeQueue?: PQueue;
+	private _checkedPruneRequestSendQueue!: PQueue;
+	private _checkedPruneGrantSendQueue!: AbortableFixedConcurrencyQueue;
 
 	syncronizer!: Syncronizer<R>;
 
@@ -4669,12 +4908,23 @@ export class SharedLog<
 		this.log = new Log(properties);
 		this.rpc = new RPC();
 		this._checkedPrune = new CheckedPruneCoordinator<T, R>();
+		this._checkedPruneRequestSendQueue = new PQueue({
+			concurrency: CHECKED_PRUNE_MAX_CONCURRENT_REQUEST_SENDS,
+		});
+		this._checkedPruneGrantSendQueue = new AbortableFixedConcurrencyQueue(
+			CHECKED_PRUNE_MAX_CONCURRENT_GRANT_SENDS,
+		);
 		this._admittedPruneRemoves = new Set();
 		this._pendingIHave = new Map();
+		this._pendingIHaveCountByPeer = new Map();
+		this._pendingIHaveRequesterCount = 0;
 		this._pendingIHaveCallbacks = new Set();
+		this._pendingIHaveActiveCallbacks = 0;
+		this._pendingIHaveCallbackWorkAdmission = undefined;
 		this.latestReplicationInfoMessage = new Map();
 		this._replicationInfoBlockedPeers = new Set();
 		this._replicationInfoRequestByPeer = new Map();
+		this._syncCapabilityRepairByPeer = new Map();
 		this._replicationInfoApplyQueueByPeer = new Map();
 		this._replicationInfoReceiveEpochByPeer = new Map();
 		this._subscriptionEpochByPeer = new Map();
@@ -4682,6 +4932,7 @@ export class SharedLog<
 		this._activeReceiveHandlersByPeer = new Map();
 		this._receiveHandlerDrainByPeer = new Map();
 		this._receiveCleanupGateByPeer = new Map();
+		this._checkedPruneRequestWorkAdmission = undefined;
 		this._subscriptionOpeningEpochByPeer = new Map();
 		this._openingSyncCapabilitiesByPeer = new Map();
 		this._gidPeersHistory = new Map();
@@ -5182,6 +5433,93 @@ export class SharedLog<
 				SYNC_CAPABILITY_RAW_EXCHANGE_HEADS) !==
 			0
 		);
+	}
+
+	private peerSupportsCheckedPruneHandoff(peerHash: string): boolean {
+		return (
+			((this._peerSyncCapabilities.get(peerHash) ?? 0) &
+				SYNC_CAPABILITY_CHECKED_PRUNE_HANDOFF) !==
+			0
+		);
+	}
+
+	private recordPeerSyncCapabilities(peerHash: string, capabilities: number) {
+		// Capabilities are immutable for a live subscription. Treat repeated
+		// advertisements as a monotonic union so a peer cannot flap one bit and
+		// repeatedly reset every matching checked-prune retry generation. A real
+		// reconnect clears this map and starts a fresh negotiation epoch.
+		const previousCapabilities = this._peerSyncCapabilities.get(peerHash) ?? 0;
+		const nextCapabilities = (previousCapabilities | capabilities) >>> 0;
+		const supportedCheckedPruneBefore =
+			(previousCapabilities & SYNC_CAPABILITY_CHECKED_PRUNE_HANDOFF) !== 0;
+		this._peerSyncCapabilities.set(peerHash, nextCapabilities);
+		if (
+			!supportedCheckedPruneBefore &&
+			(nextCapabilities & SYNC_CAPABILITY_CHECKED_PRUNE_HANDOFF) !== 0
+		) {
+			this.wakeCheckedPruneRetriesForPeer(peerHash);
+		}
+	}
+
+	private wakeCheckedPruneRetriesForPeer(peerHash: string) {
+		const checkedPruneCoordinator = this._checkedPrune;
+		const ownershipLifecycleController =
+			this.captureReplicationOwnershipLifecycle();
+		const isCurrent = () =>
+			this.isRepairLifecycleActive(ownershipLifecycleController) &&
+			this._checkedPrune === checkedPruneCoordinator;
+		if (!isCurrent()) {
+			return;
+		}
+
+		for (const [hash, state] of checkedPruneCoordinator.retries) {
+			if (
+				checkedPruneCoordinator.hasPendingDelete(hash) ||
+				!state.leaders.has(peerHash)
+			) {
+				continue;
+			}
+			checkedPruneCoordinator.clearRetryTimer(hash);
+			// The missing protocol capability was the reason this candidate could
+			// not start. Treat its first advertisement as fresh progress rather
+			// than making it consume the old backoff budget.
+			state.attempts = 0;
+			void this.pruneDebouncedFnAddIfNotKeeping(
+				{
+					key: hash,
+					value: {
+						entry: state.entry,
+						leaders: this.checkedPruneLeadersToMap(state.leaders),
+					},
+				},
+				ownershipLifecycleController,
+			).then(
+				(enqueued) => {
+					if (
+						!enqueued &&
+						isCurrent() &&
+						checkedPruneCoordinator.isCurrentRetry(hash, state)
+					) {
+						checkedPruneCoordinator.clearRetry(hash, state);
+					}
+				},
+				(error) => {
+					if (
+						!isCurrent() ||
+						!checkedPruneCoordinator.isCurrentRetry(hash, state)
+					) {
+						return;
+					}
+					if (!isNotStartedError(error as Error)) {
+						logger.error(error);
+					}
+					this.scheduleCheckedPruneRetry(
+						{ entry: state.entry, leaders: state.leaders },
+						ownershipLifecycleController,
+					);
+				},
+			);
+		}
 	}
 
 	/**
@@ -6143,6 +6481,7 @@ export class SharedLog<
 
 	private stopSubscriptionChangeCallbackAdmission() {
 		this._acceptSubscriptionChangeCallbacks = false;
+		this.cancelAllSyncCapabilityRepairs();
 		if (!this._replicationLifecycleController?.signal.aborted) {
 			this._replicationLifecycleController?.abort(
 				new AbortError("SharedLog is terminating"),
@@ -6239,6 +6578,49 @@ export class SharedLog<
 		};
 	}
 
+	private acquireCheckedPruneRequestWork(
+		peerHash: string,
+		replicationLifecycleController: AbortController | undefined,
+		subscriptionEpoch: object | null,
+	): CheckedPruneRequestWorkLease | undefined {
+		const state = this._checkedPruneRequestWorkAdmission;
+		if (
+			!state ||
+			state.replicationLifecycleController !== replicationLifecycleController ||
+			!this.isPeerReceiveAdmissionOpen(
+				peerHash,
+				replicationLifecycleController,
+				subscriptionEpoch,
+			) ||
+			state.activeByPeer.has(peerHash) ||
+			state.activeByPeer.size >= CHECKED_PRUNE_MAX_ACTIVE_REQUEST_HANDLERS
+		) {
+			return;
+		}
+
+		const token = {};
+		const settlingWork = new CheckedPruneSettlingWorkTracker();
+		state.activeByPeer.set(peerHash, token);
+		let releaseRequested = false;
+		return {
+			settlingWork,
+			release: () => {
+				if (releaseRequested) {
+					return;
+				}
+				releaseRequested = true;
+				// Do not await this from the receive handler: its protocol deadline
+				// remains bounded. The captured generation retains its capacity token
+				// until every abandoned non-cancellable operation really settles.
+				void settlingWork.sealAndWait().then(() => {
+					if (state.activeByPeer.get(peerHash) === token) {
+						state.activeByPeer.delete(peerHash);
+					}
+				});
+			},
+		};
+	}
+
 	private async drainPeerReceiveHandlers(peerHash: string): Promise<void> {
 		const state = this._activeReceiveHandlersByPeer.get(peerHash);
 		if (!state || state.activeBuckets.size === 0) {
@@ -6284,44 +6666,189 @@ export class SharedLog<
 		}
 	}
 
+	private canCreatePendingIHave(peerHash: string): boolean {
+		return (
+			this._pendingIHave.size < CHECKED_PRUNE_MAX_PENDING_IHAVE_GLOBAL &&
+			this._pendingIHaveRequesterCount <
+				CHECKED_PRUNE_MAX_PENDING_IHAVE_GLOBAL &&
+			(this._pendingIHaveCountByPeer.get(peerHash) ?? 0) <
+				CHECKED_PRUNE_MAX_PENDING_IHAVE_PER_PEER
+		);
+	}
+
+	private addPendingIHaveRequester(
+		pending: PendingIHave<T>,
+		peerHash: string,
+	): boolean {
+		if (pending.requesting.has(peerHash)) {
+			return true;
+		}
+		const count = this._pendingIHaveCountByPeer.get(peerHash) ?? 0;
+		if (
+			count >= CHECKED_PRUNE_MAX_PENDING_IHAVE_PER_PEER ||
+			this._pendingIHaveRequesterCount >= CHECKED_PRUNE_MAX_PENDING_IHAVE_GLOBAL
+		) {
+			return false;
+		}
+		pending.requesting.add(peerHash);
+		this._pendingIHaveCountByPeer.set(peerHash, count + 1);
+		this._pendingIHaveRequesterCount++;
+		return true;
+	}
+
+	private removePendingIHaveRequester(
+		pending: PendingIHave<T>,
+		peerHash: string,
+	): void {
+		if (!pending.requesting.delete(peerHash)) {
+			return;
+		}
+		pending.requestIdsByPeer?.delete(peerHash);
+		const count = this._pendingIHaveCountByPeer.get(peerHash) ?? 0;
+		if (count <= 1) {
+			this._pendingIHaveCountByPeer.delete(peerHash);
+		} else {
+			this._pendingIHaveCountByPeer.set(peerHash, count - 1);
+		}
+		this._pendingIHaveRequesterCount = Math.max(
+			0,
+			this._pendingIHaveRequesterCount - 1,
+		);
+	}
+
+	private deletePendingIHave(
+		hash: string,
+		expected?: PendingIHave<T>,
+	): boolean {
+		const pending = this._pendingIHave.get(hash);
+		if (!pending || (expected && pending !== expected)) {
+			return false;
+		}
+		this._pendingIHave.delete(hash);
+		pending.callbackController?.abort(
+			new AbortError("Pending checked-prune handoff was cancelled"),
+		);
+		pending.clear();
+		for (const peerHash of [...pending.requesting]) {
+			this.removePendingIHaveRequester(pending, peerHash);
+		}
+		return true;
+	}
+
+	private clearPendingIHaves(): void {
+		for (const [hash, pending] of [...this._pendingIHave]) {
+			this.deletePendingIHave(hash, pending);
+		}
+		this._pendingIHaveCountByPeer.clear();
+		this._pendingIHaveRequesterCount = 0;
+	}
+
 	private runPendingIHaveCallback(
 		pending: PendingIHave<T>,
 		entry: Entry<T>,
-	): void {
+	): boolean {
 		const replicationLifecycleController = this._replicationLifecycleController;
-		if (!this.isReplicationLifecycleActive(replicationLifecycleController)) {
-			if (this._pendingIHave.get(entry.hash) === pending) {
-				pending.clear();
-				this._pendingIHave.delete(entry.hash);
-			}
-			return;
+		const callbackWorkAdmission = this._pendingIHaveCallbackWorkAdmission;
+		if (
+			!replicationLifecycleController ||
+			!callbackWorkAdmission ||
+			callbackWorkAdmission.replicationLifecycleController !==
+				replicationLifecycleController ||
+			!this.isReplicationLifecycleActive(replicationLifecycleController)
+		) {
+			this.deletePendingIHave(entry.hash, pending);
+			return false;
 		}
+		if (pending.callbackActive) {
+			return true;
+		}
+		if (
+			callbackWorkAdmission.active >=
+			CHECKED_PRUNE_MAX_ACTIVE_PENDING_IHAVE_CALLBACKS
+		) {
+			// Do not queue every retained missing hash. Keep this pending request
+			// intact so a later entry notification or the requester's correlated
+			// retry can recover after one of the fixed callback slots is released.
+			return false;
+		}
+
+		const deadline =
+			Date.now() + CHECKED_PRUNE_PENDING_IHAVE_CALLBACK_MAX_WAIT_MS;
+		const deadlineController = new AbortController();
+		const signal = AbortSignal.any([
+			replicationLifecycleController.signal,
+			deadlineController.signal,
+		]);
+		const isActive = () =>
+			this._pendingIHave.get(entry.hash) === pending &&
+			this.isReplicationLifecycleActive(replicationLifecycleController) &&
+			!signal.aborted &&
+			Date.now() < deadline;
+		const deadlineTimer = setTimeout(() => {
+			deadlineController.abort(
+				new TimeoutError("Pending checked-prune handoff work timed out"),
+			);
+		}, CHECKED_PRUNE_PENDING_IHAVE_CALLBACK_MAX_WAIT_MS);
+		deadlineTimer.unref?.();
+		const settlingWork = new CheckedPruneSettlingWorkTracker();
+		const work: PendingIHaveCallbackWork = {
+			deadline,
+			signal,
+			isActive,
+			remainingMs: () => Math.max(0, deadline - Date.now()),
+			settlingWork,
+		};
 
 		// Register before invoking the callback so a synchronous terminal reentry
 		// cannot make close/drop miss work that has already been admitted.
+		pending.callbackActive = true;
+		pending.callbackController = deadlineController;
+		pending.clear();
+		callbackWorkAdmission.active++;
+		if (this._pendingIHaveCallbackWorkAdmission === callbackWorkAdmission) {
+			this._pendingIHaveActiveCallbacks = callbackWorkAdmission.active;
+		}
 		const completion = pDefer<void>();
 		const observed = completion.promise.catch((error) => {
-			if (!(this.isTerminating() && isNotStartedError(error as Error))) {
+			if (
+				!signal.aborted &&
+				!(this.isTerminating() && isNotStartedError(error as Error))
+			) {
 				logger.error(error?.toString?.() ?? String(error));
 			}
 		});
 		this._pendingIHaveCallbacks.add(observed);
 		void observed.finally(() => {
+			clearTimeout(deadlineTimer);
 			this._pendingIHaveCallbacks.delete(observed);
-			if (this._pendingIHave.get(entry.hash) === pending) {
-				pending.clear();
-				this._pendingIHave.delete(entry.hash);
+			pending.callbackActive = false;
+			if (pending.callbackController === deadlineController) {
+				pending.callbackController = undefined;
 			}
+			this.deletePendingIHave(entry.hash, pending);
+			// The callback's protocol deadline may abandon a non-cancellable
+			// planner read. Keep this generation's slot occupied until all such
+			// work settles, while allowing close/reopen to install a fresh state.
+			void settlingWork.sealAndWait().then(() => {
+				callbackWorkAdmission.active = Math.max(
+					0,
+					callbackWorkAdmission.active - 1,
+				);
+				if (this._pendingIHaveCallbackWorkAdmission === callbackWorkAdmission) {
+					this._pendingIHaveActiveCallbacks = callbackWorkAdmission.active;
+				}
+			});
 		});
 
 		try {
-			Promise.resolve(pending.callback(entry)).then(
+			Promise.resolve(pending.callback(entry, work)).then(
 				() => completion.resolve(),
 				(error) => completion.reject(error),
 			);
 		} catch (error) {
 			completion.reject(error);
 		}
+		return true;
 	}
 
 	private async drainPendingIHaveCallbacks(): Promise<void> {
@@ -10768,11 +11295,6 @@ export class SharedLog<
 				return false;
 			}
 		}
-		checkedPruneCoordinator.trackCandidate(
-			args.key,
-			args.value.entry,
-			args.value.leaders,
-		);
 		void pruneDebouncedFn.add(args).catch((error) => {
 			if (isCurrent() && !isNotStartedError(error as Error)) {
 				logger.error(error);
@@ -10793,8 +11315,378 @@ export class SharedLog<
 		await pendingDelete?.reject(new Error("Failed to delete, is leader again"));
 	}
 
-	private hasActiveCheckedPruneWork(hash: string) {
-		return this._checkedPrune.hasActiveWork(hash);
+	/**
+	 * Bound read-only checked-prune request work by the receive lease. The
+	 * underlying storage/planner promise may not expose cancellation, so keep an
+	 * observer attached and abandon only its result after the signal fires.
+	 */
+	private async awaitCheckedPruneRequestRead<T>(
+		read: () => PromiseLike<T> | T,
+		signal: AbortSignal,
+		isActive: () => boolean,
+		settlingWork?: CheckedPruneSettlingWork,
+	): Promise<{ active: true; value: T } | { active: false }> {
+		if (signal.aborted || !isActive()) {
+			return { active: false };
+		}
+
+		let operation: Promise<T>;
+		try {
+			operation = Promise.resolve(read());
+		} catch (error) {
+			if (signal.aborted || !isActive()) {
+				return { active: false };
+			}
+			throw error;
+		}
+		settlingWork?.track(operation);
+
+		return new Promise((resolve, reject) => {
+			let settled = false;
+			const finish = (
+				result: { active: true; value: T } | { active: false },
+			) => {
+				if (settled) {
+					return;
+				}
+				settled = true;
+				signal.removeEventListener("abort", onAbort);
+				resolve(result);
+			};
+			const onAbort = () => finish({ active: false });
+			signal.addEventListener("abort", onAbort, { once: true });
+			operation.then(
+				(value) => {
+					if (signal.aborted || !isActive()) {
+						finish({ active: false });
+						return;
+					}
+					finish({ active: true, value });
+				},
+				(error) => {
+					if (settled) {
+						return;
+					}
+					settled = true;
+					signal.removeEventListener("abort", onAbort);
+					if (signal.aborted || !isActive()) {
+						resolve({ active: false });
+						return;
+					}
+					reject(error);
+				},
+			);
+		});
+	}
+
+	/**
+	 * Recompute responder ownership at grant admission without publishing any
+	 * coordinate state. The surrounding range-mutation lane keeps the ownership
+	 * snapshot stable until the caller has installed the grant-send barrier.
+	 */
+	private async revalidateCheckedPruneGrantLocalLeaders(
+		hashes: string[],
+		ownershipLifecycleController: AbortController,
+		requestWork?: {
+			signal: AbortSignal;
+			isActive: () => boolean;
+			settlingWork?: CheckedPruneSettlingWork;
+		},
+	): Promise<Set<string> | undefined> {
+		this.throwIfReplicationOwnershipLifecycleInactive(
+			ownershipLifecycleController,
+		);
+		if (
+			requestWork &&
+			(requestWork.signal.aborted || !requestWork.isActive())
+		) {
+			return undefined;
+		}
+		const localLeaderHashes = new Set<string>();
+		const unresolvedHashes = new Set(hashes);
+		const nativePlanner = this._nativeBackbone ?? this._nativeRangePlanner;
+		const nativeEntryMetadata = this.getNativeLogEntryMetadataBatch(hashes);
+
+		if (nativePlanner && !this.hasCustomFindLeaders() && nativeEntryMetadata) {
+			const nativeItems: Array<{
+				hash: string;
+				gid: string;
+				replicas: number;
+			}> = [];
+			for (let index = 0; index < hashes.length; index++) {
+				const entry = nativeEntryMetadata[index];
+				if (!entry) {
+					continue;
+				}
+				nativeItems.push({
+					hash: hashes[index]!,
+					gid: entry.gid,
+					replicas:
+						entry.replicas ??
+						decodeReplicas({
+							meta: { data: entry.data },
+						}).getValue(this),
+				});
+			}
+
+			if (nativeItems.length > 0) {
+				const contextResult = requestWork
+					? await this.awaitCheckedPruneRequestRead(
+							() =>
+								this.createLeaderSelectionContext(
+									undefined,
+									ownershipLifecycleController,
+								),
+							requestWork.signal,
+							requestWork.isActive,
+							requestWork.settlingWork,
+						)
+					: {
+							active: true as const,
+							value: await this.createLeaderSelectionContext(
+								undefined,
+								ownershipLifecycleController,
+							),
+						};
+				if (!contextResult.active) {
+					return undefined;
+				}
+				const context = contextResult.value;
+				this.throwIfReplicationOwnershipLifecycleInactive(
+					ownershipLifecycleController,
+				);
+				const plans = nativePlanner.planLeadersForGidsBatch(
+					nativeItems.map(({ gid, replicas }) => ({ gid, replicas })),
+					this.createNativeLeaderOptions(context),
+				);
+				this.throwIfReplicationOwnershipLifecycleInactive(
+					ownershipLifecycleController,
+				);
+				for (let index = 0; index < nativeItems.length; index++) {
+					const item = nativeItems[index]!;
+					unresolvedHashes.delete(item.hash);
+					if (plans[index]?.leaders.has(context.selfHash)) {
+						localLeaderHashes.add(item.hash);
+					}
+				}
+			}
+		}
+
+		// Custom leader selection and entries without native metadata use the
+		// ordinary planner, explicitly disabling coordinate persistence.
+		for (const hash of unresolvedHashes) {
+			const indexedEntryResult = requestWork
+				? await this.awaitCheckedPruneRequestRead(
+						() => this.log.entryIndex.getShallow(hash),
+						requestWork.signal,
+						requestWork.isActive,
+						requestWork.settlingWork,
+					)
+				: {
+						active: true as const,
+						value: await this.log.entryIndex.getShallow(hash),
+					};
+			if (!indexedEntryResult.active) {
+				return undefined;
+			}
+			const indexedEntry = indexedEntryResult.value;
+			this.throwIfReplicationOwnershipLifecycleInactive(
+				ownershipLifecycleController,
+			);
+			if (!indexedEntry) {
+				continue;
+			}
+			const planResult = requestWork
+				? await this.awaitCheckedPruneRequestRead(
+						() =>
+							this.planEntryLeaders(
+								indexedEntry.value,
+								decodeReplicas(indexedEntry.value).getValue(this),
+								{ persist: false },
+								ownershipLifecycleController,
+							),
+						requestWork.signal,
+						requestWork.isActive,
+						requestWork.settlingWork,
+					)
+				: {
+						active: true as const,
+						value: await this.planEntryLeaders(
+							indexedEntry.value,
+							decodeReplicas(indexedEntry.value).getValue(this),
+							{ persist: false },
+							ownershipLifecycleController,
+						),
+					};
+			if (!planResult.active) {
+				return undefined;
+			}
+			const plan = planResult.value;
+			this.throwIfReplicationOwnershipLifecycleInactive(
+				ownershipLifecycleController,
+			);
+			if (plan.isLeader) {
+				localLeaderHashes.add(hash);
+			}
+		}
+		return localLeaderHashes;
+	}
+
+	/**
+	 * Admit responder grants in the same global lane as checked-prune removal.
+	 *
+	 * A grant first cancels every older outbound prune for the hash. Its send is
+	 * then tracked before this method yields; every later outbound prune request
+	 * waits for that send. This gives the causal order needed to rule out a
+	 * circular handoff without relying on timing or a long-lived retention pin.
+	 */
+	private async admitCheckedPruneGrants(
+		requests: Iterable<CheckedPruneGrantRequest>,
+		peer: string,
+		receiveStillActive?: () => boolean,
+		sendSignal?: AbortSignal,
+		settlingWork?: CheckedPruneSettlingWork,
+	): Promise<string[]> {
+		const latestByHash = new Map<string, CheckedPruneGrantRequest>();
+		for (const request of requests) {
+			latestByHash.set(request.hash, request);
+		}
+		if (latestByHash.size === 0) {
+			return Promise.resolve([]);
+		}
+
+		const checkedPruneCoordinator = this._checkedPrune;
+		const ownershipLifecycleController =
+			this.captureReplicationOwnershipLifecycle();
+		const signal = sendSignal
+			? AbortSignal.any([ownershipLifecycleController.signal, sendSignal])
+			: ownershipLifecycleController.signal;
+		const requestWorkIsActive = () =>
+			this._checkedPrune === checkedPruneCoordinator &&
+			!signal.aborted &&
+			(!receiveStillActive || receiveStillActive());
+		const admission = await this.withReplicationRangeMutationQueue(async () => {
+			if (!requestWorkIsActive()) {
+				return { admitted: [] as CheckedPruneGrantRequest[] };
+			}
+
+			const hashes = [...latestByHash.keys()];
+			const presentResult = await this.awaitCheckedPruneRequestRead(
+				async () =>
+					(await this.log.blocks.hasMany?.(hashes)) ??
+					(await Promise.all(hashes.map((hash) => this.log.blocks.has(hash)))),
+				signal,
+				requestWorkIsActive,
+				settlingWork,
+			);
+			if (!presentResult.active) {
+				return { admitted: [] as CheckedPruneGrantRequest[] };
+			}
+			const present = presentResult.value;
+
+			const presentHashes: string[] = [];
+			for (let index = 0; index < hashes.length; index++) {
+				if (present[index] === true) {
+					presentHashes.push(hashes[index]!);
+				}
+			}
+			const currentLocalLeaderHashes =
+				await this.revalidateCheckedPruneGrantLocalLeaders(
+					presentHashes,
+					ownershipLifecycleController,
+					{
+						signal,
+						isActive: requestWorkIsActive,
+						settlingWork,
+					},
+				);
+			if (!currentLocalLeaderHashes || !requestWorkIsActive()) {
+				return { admitted: [] as CheckedPruneGrantRequest[] };
+			}
+
+			const admitted: CheckedPruneGrantRequest[] = [];
+			for (const hash of presentHashes) {
+				if (currentLocalLeaderHashes.has(hash)) {
+					admitted.push(latestByHash.get(hash)!);
+				}
+			}
+			if (admitted.length === 0) {
+				return { admitted };
+			}
+
+			// Register the ordering barrier before rejecting any old pending prune.
+			// Rejecting settles a user-visible promise and can immediately queue a
+			// replacement prune in a microtask. There must be no await between
+			// cancellation admission and making that replacement wait for this grant.
+			const barrier = pDefer<void>();
+			const observedBarrier = checkedPruneCoordinator.trackGrantSend(
+				admitted.map(({ hash }) => hash),
+				barrier.promise,
+			);
+			const pendingRejections: Promise<unknown>[] = [];
+			for (const request of admitted) {
+				const pendingDelete = checkedPruneCoordinator.getPendingDelete(
+					request.hash,
+				);
+				this.pruneDebouncedFn.delete(request.hash);
+				checkedPruneCoordinator.markCancelled(request.hash);
+				try {
+					pendingRejections.push(
+						Promise.resolve(
+							pendingDelete?.reject(
+								new Error(
+									"Failed to delete, granted checked prune to another peer",
+								),
+							),
+						),
+					);
+				} catch (error) {
+					pendingRejections.push(Promise.reject(error));
+				}
+			}
+			await Promise.allSettled(pendingRejections);
+			return { admitted, barrier, observedBarrier };
+		}, ownershipLifecycleController);
+
+		const admittedHashes = admission.admitted.map(({ hash }) => hash);
+		if (!admission.barrier) {
+			return admittedHashes;
+		}
+		try {
+			try {
+				await this._checkedPruneGrantSendQueue.add(async () => {
+					if (
+						this._checkedPrune !== checkedPruneCoordinator ||
+						(receiveStillActive && !receiveStillActive()) ||
+						signal.aborted
+					) {
+						return;
+					}
+					await this.rpc.send(
+						new ResponseIPruneV2({ requests: admission.admitted }),
+						{
+							mode: new AcknowledgeDelivery({
+								to: [peer],
+								redundancy: 1,
+							}),
+							priority: CONVERGENCE_MESSAGE_PRIORITY,
+							signal,
+						},
+					);
+				}, signal);
+			} catch (error) {
+				// A receive deadline or terminal lifecycle abort is an expected
+				// fail-closed outcome. The correlated requester can retry with the
+				// same generation if it remains connected.
+				if (!signal.aborted) {
+					throw error;
+				}
+			}
+		} finally {
+			admission.barrier.resolve();
+			await admission.observedBarrier;
+		}
+		return admittedHashes;
 	}
 
 	private async revalidateCheckedPruneOwnership(args: {
@@ -11038,7 +11930,10 @@ export class SharedLog<
 			await this.pruneDebouncedFnAddIfNotKeeping(
 				{
 					key: entry.hash,
-					value: { entry, leaders },
+					value: {
+						entry,
+						leaders,
+					},
 				},
 				ownershipLifecycleController,
 			);
@@ -11046,7 +11941,6 @@ export class SharedLog<
 				ownershipLifecycleController,
 			);
 			enqueuedPrune++;
-			this.responseToPruneDebouncedFn.delete(entry.hash);
 		}
 		emitSyncProfileDuration(options?.profile, loopStartedAt, {
 			name: "sharedLog.receive.checkedPrune.loop",
@@ -11122,7 +12016,6 @@ export class SharedLog<
 					this.throwIfReplicationOwnershipLifecycleInactive(
 						ownershipLifecycleController,
 					);
-					this.responseToPruneDebouncedFn.delete(entryReplicated.hash);
 				}
 			}
 		} finally {
@@ -11203,7 +12096,6 @@ export class SharedLog<
 			this.throwIfReplicationOwnershipLifecycleInactive(
 				ownershipLifecycleController,
 			);
-			this.responseToPruneDebouncedFn.delete(head.hash);
 		}
 
 		if (enqueuedPrune) {
@@ -11315,8 +12207,10 @@ export class SharedLog<
 
 		if (state.timer) return;
 		if (state.attempts >= CHECKED_PRUNE_RETRY_MAX_ATTEMPTS) {
-			// Avoid unbounded background retries; a new replication-change event can
-			// always re-enqueue pruning with fresh leader info.
+			// A terminal retry must not remain active forever. Dropping the exact
+			// exhausted generation lets a later ownership scan rediscover the entry
+			// with fresh leader/capability information.
+			checkedPruneCoordinator.clearRetry(hash, state);
 			return;
 		}
 
@@ -11331,11 +12225,17 @@ export class SharedLog<
 		state.timer = setTimeout(() => {
 			const run = async () => {
 				const st = checkedPruneCoordinator.getRetry(hash);
-				if (st) st.timer = undefined;
+				if (
+					st !== state ||
+					!checkedPruneCoordinator.isCurrentRetry(hash, state)
+				) {
+					return;
+				}
+				state.timer = undefined;
 				if (!isCurrent()) return;
 				if (checkedPruneCoordinator.hasPendingDelete(hash)) return;
-				const retryEntry = st?.entry ?? args.entry;
-				const retryLeaders = st?.leaders ?? args.leaders;
+				const retryEntry = state.entry;
+				const retryLeaders = state.leaders;
 
 				let leadersMap: CheckedPruneLeaderMap | undefined;
 				try {
@@ -11353,7 +12253,12 @@ export class SharedLog<
 					// A current-generation planning failure is best-effort; fall back
 					// to the last confirmed leader set below.
 				}
-				if (!isCurrent()) return;
+				if (
+					!isCurrent() ||
+					!checkedPruneCoordinator.isCurrentRetry(hash, state)
+				) {
+					return;
+				}
 
 				if (!leadersMap || leadersMap.size === 0) {
 					leadersMap = this.checkedPruneLeadersToMap(retryLeaders);
@@ -11361,101 +12266,42 @@ export class SharedLog<
 
 				const leadersForRetry =
 					leadersMap ?? new Map<string, { intersecting: boolean }>();
-				await this.pruneDebouncedFnAddIfNotKeeping(
+				const enqueued = await this.pruneDebouncedFnAddIfNotKeeping(
 					{
 						key: hash,
-						value: { entry: retryEntry, leaders: leadersForRetry },
+						value: {
+							entry: retryEntry,
+							leaders: leadersForRetry,
+						},
 					},
 					ownershipLifecycleController,
 				);
+				if (
+					!enqueued &&
+					isCurrent() &&
+					checkedPruneCoordinator.isCurrentRetry(hash, state)
+				) {
+					checkedPruneCoordinator.clearRetry(hash, state);
+				}
 			};
 			void run().catch((error) => {
-				if (isCurrent() && !isNotStartedError(error as Error)) {
+				if (
+					!isCurrent() ||
+					!checkedPruneCoordinator.isCurrentRetry(hash, state)
+				) {
+					return;
+				}
+				if (!isNotStartedError(error as Error)) {
 					logger.error(error);
 				}
+				this.scheduleCheckedPruneRetry(
+					{ entry: state.entry, leaders: state.leaders },
+					ownershipLifecycleController,
+				);
 			});
 		}, delayMs);
 		state.timer.unref?.();
 		checkedPruneCoordinator.setRetry(hash, state);
-	}
-
-	private async recoverCheckedPruneFromLateResponses(
-		hashes: string[],
-		publicKeyHash: string,
-	) {
-		if (this.closed) return;
-		const selfHash = this.node.identity.publicKey.hashcode();
-		const toPrune = new Map<
-			string,
-			{
-				entry: CheckedPruneEntry<T, R>;
-				leaders: CheckedPruneLeaderMap;
-			}
-		>();
-		const responseStillApplies: string[] = [];
-
-		for (const hash of hashes) {
-			if (this.closed) {
-				break;
-			}
-			if (this._checkedPrune.hasPendingDelete(hash)) {
-				continue;
-			}
-			const retry = this._checkedPrune.clearRetryTimer(hash);
-			if (!retry) {
-				continue;
-			}
-
-			const entry = retry.entry;
-			let leaders = this.checkedPruneLeadersToMap(retry.leaders);
-			try {
-				const currentLeaders = await this.findLeadersFromEntry(
-					entry,
-					decodeReplicas(entry).getValue(this),
-					{ roleAge: 0 },
-				);
-				if (currentLeaders.size > 0) {
-					leaders = currentLeaders;
-				}
-			} catch {
-				// Best-effort only; the stored retry leaders came from a previous
-				// checked-prune decision for this exact entry.
-			}
-
-			if (leaders.has(selfHash)) {
-				await this.cancelCheckedPruneForLocalLeader(hash);
-				continue;
-			}
-			if (leaders.size === 0) {
-				continue;
-			}
-
-			toPrune.set(hash, { entry, leaders });
-			if (leaders.has(publicKeyHash)) {
-				responseStillApplies.push(hash);
-			}
-		}
-
-		if (toPrune.size === 0) {
-			return;
-		}
-
-		const pruneTasks = this.prune(toPrune);
-		const confirmationTasks: Promise<void>[] = [];
-		for (const hash of responseStillApplies) {
-			const pendingDelete = this._checkedPrune.getPendingDelete(hash);
-			if (pendingDelete) {
-				confirmationTasks.push(
-					Promise.resolve(pendingDelete.resolve(publicKeyHash)),
-				);
-			}
-		}
-		// The restarted prune session owns its own bounded timeout and revalidates
-		// before deletion. Only the peer-derived confirmations must remain inside
-		// this receive lease; waiting for the whole prune session could stall close
-		// or disconnect until its background timeout.
-		void Promise.allSettled(pruneTasks);
-		await Promise.allSettled(confirmationTasks);
 	}
 
 	async append(
@@ -15588,12 +16434,26 @@ export class SharedLog<
 		);
 		this._respondToIHaveTimeout = options?.respondToIHaveTimeout ?? 2e4;
 		this._checkedPrune = new CheckedPruneCoordinator<T, R>();
+		this._checkedPruneRequestSendQueue = new PQueue({
+			concurrency: CHECKED_PRUNE_MAX_CONCURRENT_REQUEST_SENDS,
+		});
+		this._checkedPruneGrantSendQueue = new AbortableFixedConcurrencyQueue(
+			CHECKED_PRUNE_MAX_CONCURRENT_GRANT_SENDS,
+		);
 		this._admittedPruneRemoves = new Set();
 		this._pendingIHave = new Map();
+		this._pendingIHaveCountByPeer = new Map();
+		this._pendingIHaveRequesterCount = 0;
 		this._pendingIHaveCallbacks = new Set();
+		this._pendingIHaveActiveCallbacks = 0;
+		this._pendingIHaveCallbackWorkAdmission = {
+			replicationLifecycleController: this._replicationLifecycleController!,
+			active: 0,
+		};
 		this.latestReplicationInfoMessage = new Map();
 		this._replicationInfoBlockedPeers = new Set();
 		this._replicationInfoRequestByPeer = new Map();
+		this._syncCapabilityRepairByPeer = new Map();
 		// Terminal close/drop drains the previous lifecycle before another open can
 		// install fresh lanes and opaque per-subscription ownership tokens.
 		this._replicationInfoApplyQueueByPeer = new Map();
@@ -15603,6 +16463,10 @@ export class SharedLog<
 		this._activeReceiveHandlersByPeer = new Map();
 		this._receiveHandlerDrainByPeer = new Map();
 		this._receiveCleanupGateByPeer = new Map();
+		this._checkedPruneRequestWorkAdmission = {
+			replicationLifecycleController: this._replicationLifecycleController!,
+			activeByPeer: new Map(),
+		};
 		this._subscriptionOpeningEpochByPeer = new Map();
 		this._openingSyncCapabilitiesByPeer = new Map();
 		this._repairRetryTimers = new Set();
@@ -15718,6 +16582,7 @@ export class SharedLog<
 				if (state.timer) clearTimeout(state.timer);
 			}
 			this._replicationInfoRequestByPeer.clear();
+			this.cancelAllSyncCapabilityRepairs();
 		});
 		const invalidateLeaderSelectionContext = () =>
 			this.invalidateLeaderSelectionContextCache();
@@ -16010,63 +16875,6 @@ export class SharedLog<
 			},
 		);
 		this.pruneDebouncedFn = pruneDebouncedFn;
-
-		this.responseToPruneDebouncedFn = debounceAccumulator<
-			string,
-			{
-				hashes: string[];
-				peers: string[] | Set<string>;
-			},
-			Map<string, Set<string>>
-		>(
-			(result) => {
-				let allRequestingPeers = new Set<string>();
-				let hashes: string[] = [];
-				for (const [hash, requestingPeers] of result) {
-					for (const peer of requestingPeers) {
-						allRequestingPeers.add(peer);
-					}
-					hashes.push(hash);
-				}
-
-				if (hashes.length > 0 && allRequestingPeers.size > 0) {
-					this.rpc
-						.send(new ResponseIPrune({ hashes }), {
-							mode: new AcknowledgeDelivery({
-								to: allRequestingPeers,
-								redundancy: 1,
-							}),
-							priority: CONVERGENCE_MESSAGE_PRIORITY,
-						})
-						.catch(() => {});
-				}
-			},
-			() => {
-				let accumulator = new Map<string, Set<string>>();
-				return {
-					add: (props: { hashes: string[]; peers: string[] | Set<string> }) => {
-						for (const hash of props.hashes) {
-							let prev = accumulator.get(hash);
-							if (!prev) {
-								prev = new Set<string>();
-								accumulator.set(hash, prev);
-							}
-							for (const peer of props.peers) {
-								prev.add(peer);
-							}
-						}
-					},
-					delete: (hash: string) => {
-						accumulator.delete(hash);
-					},
-					size: () => accumulator.size,
-					clear: () => accumulator.clear(),
-					value: accumulator,
-					has: (hash: string) => accumulator.has(hash),
-				};
-			},
-			PRUNE_DEBOUNCE_INTERVAL,
-		);
 
 		await remoteBlocksStartPromise;
 		// Failed native prepares can leave content-addressed bytes behind. Recovery
@@ -17223,15 +18031,55 @@ export class SharedLog<
 		this._replicatorLastActivityAt.delete(peerHash);
 		this._peerSyncCapabilities.delete(peerHash);
 		this.cleanupPendingIHavePeer(peerHash);
-		this._checkedPrune.cleanupPeer(peerHash);
+		const checkedPruneCoordinator = this._checkedPrune;
+		const affected = checkedPruneCoordinator.cleanupPeer(peerHash);
+		const ownershipLifecycleController =
+			this.captureReplicationOwnershipLifecycle();
+		for (const generation of affected) {
+			const resilient = generation.pending.background;
+			const retry = () => {
+				if (!resilient || this._checkedPrune !== checkedPruneCoordinator) {
+					return;
+				}
+				this.scheduleCheckedPruneRetry(
+					{
+						entry: generation.entry,
+						leaders: generation.leaders,
+					},
+					ownershipLifecycleController,
+				);
+			};
+			try {
+				void Promise.resolve(
+					generation.pending.reject(
+						new CheckedPruneTargetUnavailableError(peerHash),
+					),
+				).then(retry, (error) => {
+					if (
+						this._checkedPrune === checkedPruneCoordinator &&
+						!isNotStartedError(error as Error)
+					) {
+						logger.error(error);
+					}
+					retry();
+				});
+			} catch (error) {
+				if (
+					this._checkedPrune === checkedPruneCoordinator &&
+					!isNotStartedError(error as Error)
+				) {
+					logger.error(error);
+				}
+				retry();
+			}
+		}
 	}
 
 	private cleanupPendingIHavePeer(peerHash: string) {
 		for (const [hash, pending] of this._pendingIHave) {
-			pending.requesting.delete(peerHash);
+			this.removePendingIHaveRequester(pending, peerHash);
 			if (pending.requesting.size === 0) {
-				pending.clear();
-				this._pendingIHave.delete(hash);
+				this.deletePendingIHave(hash, pending);
 			}
 		}
 	}
@@ -18366,6 +19214,8 @@ export class SharedLog<
 	}
 
 	private async _close(options?: { preserveDropRetryResources?: boolean }) {
+		const checkedPruneRequestSendQueue = this._checkedPruneRequestSendQueue;
+		const checkedPruneGrantSendQueue = this._checkedPruneGrantSendQueue;
 		this.stopRepairLifecycle();
 		const preserveDropRetryResources =
 			options?.preserveDropRetryResources === true;
@@ -18385,6 +19235,7 @@ export class SharedLog<
 			}
 		};
 		captureSync(() => this.cancelCurrentReplicationStateAnnouncementRetry());
+		captureSync(() => this.cancelAllSyncCapabilityRepairs());
 		this.replicationAnnouncementRetryDebounced = undefined;
 		captureSync(() => {
 			if (this._wireSyncSession) {
@@ -18468,14 +19319,22 @@ export class SharedLog<
 				this._pendingIHaveExpiryDeadline = Number.POSITIVE_INFINITY;
 			}
 		});
+		// Reopen must not publish a fresh prune request ahead of a response
+		// admitted by the previous lifecycle.
+		await capture(() => this._checkedPrune.waitForGrantSends());
+		await capture(() => checkedPruneRequestSendQueue?.onIdle());
+		await capture(() => checkedPruneGrantSendQueue?.onIdle());
 		captureSync(() => this._checkedPrune.close());
 
 		if (!preserveDropRetryResources) {
 			await capture(() => this.remoteBlocks?.stop?.());
 		}
 		captureSync(() => {
-			this._pendingIHave?.clear();
+			this.clearPendingIHaves();
 			this._pendingIHaveCallbacks?.clear();
+			this._pendingIHaveActiveCallbacks = 0;
+			this._pendingIHaveCallbackWorkAdmission = undefined;
+			this._checkedPruneRequestWorkAdmission = undefined;
 			this.latestReplicationInfoMessage?.clear();
 			this._replicationInfoReceiveEpochByPeer?.clear();
 			this._activeReceiveHandlersByPeer?.clear();
@@ -18495,7 +19354,6 @@ export class SharedLog<
 		captureSync(() => this.rebalanceParticipationDebounced?.close());
 		captureSync(() => this.replicationChangeDebounceFn?.close?.());
 		captureSync(() => this.pruneDebouncedFn?.close?.());
-		captureSync(() => this.responseToPruneDebouncedFn?.close?.());
 		this.pruneDebouncedFn = undefined as any;
 		this.rebalanceParticipationDebounced = undefined;
 		if (!preserveDropRetryResources) {
@@ -18600,7 +19458,6 @@ export class SharedLog<
 				this.rebalanceParticipationDebounced?.close();
 				this.replicationChangeDebounceFn?.close?.();
 				this.pruneDebouncedFn?.close?.();
-				this.responseToPruneDebouncedFn?.close?.();
 
 				// Ensure the "I'm leaving" replication reset is actually published before
 				// the RPC child program closes and unsubscribes from its topic. If we fire
@@ -18729,7 +19586,6 @@ export class SharedLog<
 				this.rebalanceParticipationDebounced?.close();
 				this.replicationChangeDebounceFn?.close?.();
 				this.pruneDebouncedFn?.close?.();
-				this.responseToPruneDebouncedFn?.close?.();
 
 				const abort = new AbortController();
 				const abortTimer = setTimeout(() => {
@@ -18935,6 +19791,11 @@ export class SharedLog<
 			? msg
 			: undefined;
 		let releasePeerReceiveLease: (() => void) | undefined;
+		let checkedPruneRequestWork: CheckedPruneRequestWorkLease | undefined;
+		let checkedPruneRequestDeadlineTimer:
+			| ReturnType<typeof setTimeout>
+			| undefined;
+		let checkedPruneRequestDeadlineController: AbortController | undefined;
 		try {
 			this.throwIfNativeDurableCommitFailed();
 			if (!context.from) {
@@ -20778,19 +21639,98 @@ export class SharedLog<
 					}
 				}
 			} else if (msg instanceof RequestIPrune) {
+				// Hash-only legacy requests are unauthenticated and uncorrelated.
+				// They cannot authorize deletion or mutate checked-prune/peer state.
+				return;
+			} else if (msg instanceof RequestIPruneV2) {
 				const requestPruneStartedAt = syncProfileStart(syncProfile);
 				const from = context.from.hashcode();
+				if (
+					msg.requests.length === 0 ||
+					msg.requests.length > CHECKED_PRUNE_MAX_REQUESTS_PER_MESSAGE
+				) {
+					return;
+				}
+				const requestsByHash = new Map<string, CheckedPruneGrantRequest>();
+				for (const request of msg.requests) {
+					if (
+						request.hash.length === 0 ||
+						request.hash.length > CHECKED_PRUNE_MAX_HASH_CODE_UNITS ||
+						request.requestId.length !== CHECKED_PRUNE_REQUEST_ID_BYTES ||
+						requestsByHash.has(request.hash)
+					) {
+						return;
+					}
+					requestsByHash.set(request.hash, {
+						hash: request.hash,
+						requestId: request.requestId,
+					});
+				}
+				checkedPruneRequestWork = this.acquireCheckedPruneRequestWork(
+					from,
+					receiveReplicationLifecycleController,
+					receiveSubscriptionEpoch,
+				);
+				if (!checkedPruneRequestWork) {
+					return;
+				}
+				const requestWorkDeadline =
+					Date.now() + CHECKED_PRUNE_REQUEST_HANDLER_MAX_WAIT_MS;
+				checkedPruneRequestDeadlineController = new AbortController();
+				checkedPruneRequestDeadlineTimer = setTimeout(() => {
+					checkedPruneRequestDeadlineController?.abort(
+						new TimeoutError("Checked-prune request handling timed out"),
+					);
+				}, CHECKED_PRUNE_REQUEST_HANDLER_MAX_WAIT_MS);
+				checkedPruneRequestDeadlineTimer.unref?.();
+				const requestHashes = [...requestsByHash.keys()];
+				if (requestHashes.length === 0) {
+					return;
+				}
+				const receiveStillActive = () =>
+					this.isPeerReceiveAdmissionOpen(
+						from,
+						receiveReplicationLifecycleController,
+						receiveSubscriptionEpoch,
+					) &&
+					!checkedPruneRequestDeadlineController?.signal.aborted &&
+					Date.now() < requestWorkDeadline;
+				const awaitRequestRead = <V>(read: () => PromiseLike<V> | V) =>
+					this.awaitCheckedPruneRequestRead(
+						read,
+						checkedPruneRequestDeadlineController!.signal,
+						receiveStillActive,
+						checkedPruneRequestWork!.settlingWork,
+					);
+				const remainingRequestWorkMs = () =>
+					Math.max(
+						0,
+						Math.min(
+							this.waitForReplicatorTimeout,
+							requestWorkDeadline - Date.now(),
+						),
+					);
+				const requestsFor = (hashes: Iterable<string>) => {
+					const requests: CheckedPruneGrantRequest[] = [];
+					for (const hash of hashes) {
+						const request = requestsByHash.get(hash);
+						if (request) {
+							requests.push(request);
+						}
+					}
+					return requests;
+				};
 				const coordinatorCleanupStartedAt = syncProfileStart(syncProfile);
-				this.removeEntriesKnownByPeer(msg.hashes, from);
-				this.removePruneRequestsSent(msg.hashes, from);
-				this._checkedPrune.removeConfirmedReplicators(msg.hashes, from);
+				this.removeEntriesKnownByPeer(requestHashes, from);
+				this.removePruneRequestsSent(requestHashes, from);
+				this._checkedPrune.removeConfirmedReplicators(requestHashes, from);
 				if (syncProfile) {
 					emitSyncProfileDuration(syncProfile, coordinatorCleanupStartedAt, {
 						name: "sharedLog.receive.requestPrune.coordinatorCleanup",
 						component: "shared-log",
-						entries: msg.hashes.length,
+						entries: requestHashes.length,
 						messages: 1,
-						details: { hashes: msg.hashes.length },
+						details: { hashes: requestHashes.length },
 					});
 				}
 				let nativeEntryMetadata:
@@ -20802,22 +21742,28 @@ export class SharedLog<
 					| undefined;
 				let presentBlocks: boolean[] | undefined;
 				const nativeBackbonePlanStartedAt = syncProfileStart(syncProfile);
-				let nativeLeaderHints =
-					await this.planCurrentNativeBackboneRequestPruneLeaderHints(
-						msg.hashes,
+				const nativeBackbonePlanResult = await awaitRequestRead(() =>
+					this.planCurrentNativeBackboneRequestPruneLeaderHints(
+						requestHashes,
 						from,
-					);
+						receiveStillActive,
+					),
+				);
+				if (!nativeBackbonePlanResult.active) {
+					return;
+				}
+				let nativeLeaderHints = nativeBackbonePlanResult.value;
 				if (nativeLeaderHints) {
 					if (syncProfile) {
 						emitSyncProfileDuration(syncProfile, nativeBackbonePlanStartedAt, {
 							name: "sharedLog.receive.requestPrune.nativeBackbonePlan",
 							component: "shared-log",
-							entries: msg.hashes.length,
+							entries: requestHashes.length,
 							messages: 1,
 							details: {
 								nativeEntries:
 									(nativeLeaderHints.nativeAllConfirmed
-										? msg.hashes.length
+										? requestHashes.length
 										: undefined) ??
 									nativeLeaderHints.nativeEntries?.size ??
 									countPresentValues(
@@ -20827,18 +21773,18 @@ export class SharedLog<
 									0,
 								presentBlocks:
 									(nativeLeaderHints.nativeAllConfirmed
-										? msg.hashes.length
+										? requestHashes.length
 										: undefined) ??
 									nativeLeaderHints.presentBlockHashes?.size ??
 									countTruthyValues(nativeLeaderHints.presentBlocks) ??
 									0,
 								localLeaders: nativeLeaderHints.nativeAllConfirmed
-									? msg.hashes.length
+									? requestHashes.length
 									: nativeLeaderHints.localLeaderHashes.size ||
 										countTruthyValues(nativeLeaderHints.localLeaderFlags) ||
 										0,
 								plannedEntries: nativeLeaderHints.nativeAllConfirmed
-									? msg.hashes.length
+									? requestHashes.length
 									: nativeLeaderHints.replicaCounts.size ||
 										countPositiveValues(
 											nativeLeaderHints.replicaCountsByIndex,
@@ -20850,12 +21796,13 @@ export class SharedLog<
 					}
 				} else {
 					const metadataStartedAt = syncProfileStart(syncProfile);
-					nativeEntryMetadata = this.getNativeLogEntryMetadataBatch(msg.hashes);
+					nativeEntryMetadata =
+						this.getNativeLogEntryMetadataBatch(requestHashes);
 					if (syncProfile) {
 						emitSyncProfileDuration(syncProfile, metadataStartedAt, {
 							name: "sharedLog.receive.requestPrune.nativeMetadata",
 							component: "shared-log",
-							entries: msg.hashes.length,
+							entries: requestHashes.length,
 							messages: 1,
 							details: {
 								nativeEntries:
@@ -20867,12 +21814,18 @@ export class SharedLog<
 						});
 					}
 					const blockHasManyStartedAt = syncProfileStart(syncProfile);
-					presentBlocks = await this.log.blocks.hasMany?.(msg.hashes);
+					const presentBlocksResult = await awaitRequestRead(() =>
+						this.log.blocks.hasMany?.(requestHashes),
+					);
+					if (!presentBlocksResult.active) {
+						return;
+					}
+					presentBlocks = presentBlocksResult.value;
 					if (syncProfile) {
 						emitSyncProfileDuration(syncProfile, blockHasManyStartedAt, {
 							name: "sharedLog.receive.requestPrune.blockHasMany",
 							component: "shared-log",
-							entries: msg.hashes.length,
+							entries: requestHashes.length,
 							messages: 1,
 							details: {
 								batched: presentBlocks != null,
@@ -20885,17 +21838,22 @@ export class SharedLog<
 						});
 					}
 					const nativeLeaderPlanStartedAt = syncProfileStart(syncProfile);
-					nativeLeaderHints =
-						await this.planCurrentNativeRequestPruneLeaderHints({
-							hashes: msg.hashes,
+					const nativeLeaderPlanResult = await awaitRequestRead(() =>
+						this.planCurrentNativeRequestPruneLeaderHints({
+							hashes: requestHashes,
 							nativeEntryMetadata,
 							presentBlocks,
-						});
+						}),
+					);
+					if (!nativeLeaderPlanResult.active) {
+						return;
+					}
+					nativeLeaderHints = nativeLeaderPlanResult.value;
 					if (syncProfile) {
 						emitSyncProfileDuration(syncProfile, nativeLeaderPlanStartedAt, {
 							name: "sharedLog.receive.requestPrune.nativeLeaderPlan",
 							component: "shared-log",
-							entries: msg.hashes.length,
+							entries: requestHashes.length,
 							messages: 1,
 							details: {
 								localLeaders: nativeLeaderHints.localLeaderHashes.size,
@@ -20906,6 +21864,9 @@ export class SharedLog<
 					}
 				}
 				const gidCleanupStartedAt = syncProfileStart(syncProfile);
+				if (!receiveStillActive()) {
+					return;
+				}
 				this.removePeerFromGidPeerHistoryBatch(
 					from,
 					nativeLeaderHints.peerHistoryGids,
@@ -20927,26 +21888,29 @@ export class SharedLog<
 				if (
 					canConfirmNativeRequestPruneBatch(
 						nativeLeaderHints,
-						msg.hashes.length,
+						requestHashes.length,
 					)
 				) {
-					this.responseToPruneDebouncedFn.add({
-						hashes: msg.hashes,
-						peers: [from],
-					});
+					const admitted = await this.admitCheckedPruneGrants(
+						requestsFor(requestHashes),
+						from,
+						receiveStillActive,
+						checkedPruneRequestDeadlineController.signal,
+						checkedPruneRequestWork.settlingWork,
+					);
 					if (syncProfile) {
 						emitSyncProfileDuration(syncProfile, requestPruneLoopStartedAt, {
 							name: "sharedLog.receive.requestPrune.loop",
 							component: "shared-log",
-							entries: msg.hashes.length,
+							entries: requestHashes.length,
 							messages: 1,
 							details: {
-								presentEntries: msg.hashes.length,
+								presentEntries: requestHashes.length,
 								indexedFallbackLookups: 0,
 								fallbackBlockChecks: 0,
 								pendingDeleteEntries: 0,
-								leaderResponses: msg.hashes.length,
-								leaderResponseBatches: 1,
+								leaderResponses: admitted.length,
+								leaderResponseBatches: admitted.length > 0 ? 1 : 0,
 								pendingIHaveCreated: 0,
 								pendingIHaveExtended: 0,
 								skippedIndexedLookupsForMissingBlocks: 0,
@@ -20956,7 +21920,7 @@ export class SharedLog<
 						emitSyncProfileDuration(syncProfile, requestPruneStartedAt, {
 							name: "sharedLog.receive.requestPrune.total",
 							component: "shared-log",
-							entries: msg.hashes.length,
+							entries: requestHashes.length,
 							messages: 1,
 						});
 					}
@@ -20971,15 +21935,11 @@ export class SharedLog<
 				let pendingIHaveCreated = 0;
 				let pendingIHaveExtended = 0;
 				const leaderResponseHashes: string[] = [];
-				for (let i = 0; i < msg.hashes.length; i++) {
-					if (
-						!this.isReplicationLifecycleActive(
-							receiveReplicationLifecycleController,
-						)
-					) {
+				for (let i = 0; i < requestHashes.length; i++) {
+					if (!receiveStillActive()) {
 						return;
 					}
-					const hash = msg.hashes[i]!;
+					const hash = requestHashes[i]!;
 
 					const nativeEntryGid = nativeLeaderHints.nativeEntryGids?.[i];
 					const nativeEntryData = nativeLeaderHints.nativeEntryDataByIndex?.[i];
@@ -20993,22 +21953,37 @@ export class SharedLog<
 						| undefined;
 					let isLeader = false;
 
-					const hasPresentBlock = nativeLeaderHints.presentBlockHashes
-						? nativeLeaderHints.presentBlockHashes.has(hash)
-						: nativeLeaderHints.presentBlocks
-							? !!nativeLeaderHints.presentBlocks[i]
-							: presentBlocks
-								? presentBlocks[i] === true
-								: await this.log.blocks.has(hash);
-					if (
+					let hasPresentBlock: boolean;
+					const needsFallbackBlockCheck =
 						!presentBlocks &&
 						!nativeLeaderHints.presentBlockHashes &&
-						!nativeLeaderHints.presentBlocks
-					) {
+						!nativeLeaderHints.presentBlocks;
+					if (nativeLeaderHints.presentBlockHashes) {
+						hasPresentBlock = nativeLeaderHints.presentBlockHashes.has(hash);
+					} else if (nativeLeaderHints.presentBlocks) {
+						hasPresentBlock = !!nativeLeaderHints.presentBlocks[i];
+					} else if (presentBlocks) {
+						hasPresentBlock = presentBlocks[i] === true;
+					} else {
+						const blockPresentResult = await awaitRequestRead(() =>
+							this.log.blocks.has(hash),
+						);
+						if (!blockPresentResult.active) {
+							return;
+						}
+						hasPresentBlock = blockPresentResult.value;
+					}
+					if (needsFallbackBlockCheck) {
 						fallbackBlockChecks += 1;
 					}
 					if (!hasNativeEntry && hasPresentBlock) {
-						indexedEntry = await this.log.entryIndex.getShallow(hash);
+						const indexedEntryResult = await awaitRequestRead(() =>
+							this.log.entryIndex.getShallow(hash),
+						);
+						if (!indexedEntryResult.active) {
+							return;
+						}
+						indexedEntry = indexedEntryResult.value;
 						indexedFallbackLookups += 1;
 					} else if (!hasNativeEntry) {
 						skippedIndexedLookupsForMissingBlocks += 1;
@@ -21018,17 +21993,33 @@ export class SharedLog<
 						const pendingDelete = this._checkedPrune.getPendingDelete(hash);
 						if (pendingDelete) {
 							pendingDeleteEntries += 1;
-							const pendingEntry =
-								indexedEntry?.value ??
-								(await this.log.entryIndex.getShallow(hash))?.value;
+							let pendingEntry = indexedEntry?.value;
+							if (!pendingEntry) {
+								const pendingEntryResult = await awaitRequestRead(() =>
+									this.log.entryIndex.getShallow(hash),
+								);
+								if (!pendingEntryResult.active) {
+									return;
+								}
+								pendingEntry = pendingEntryResult.value?.value;
+							}
 							if (pendingEntry) {
-								const ownership = await this.revalidateCheckedPruneOwnership({
-									hash,
-									entry: pendingEntry,
-									leaders: new Map(),
-								});
+								const ownershipResult = await awaitRequestRead(() =>
+									this.revalidateCheckedPruneOwnership({
+										hash,
+										entry: pendingEntry,
+										leaders: new Map(),
+									}),
+								);
+								if (!ownershipResult.active) {
+									return;
+								}
+								const ownership = ownershipResult.value;
 								if (ownership.localLeader) {
 									await this.cancelCheckedPruneForLocalLeader(hash);
+									if (!receiveStillActive()) {
+										return;
+									}
 									isLeader = true;
 								}
 							}
@@ -21072,25 +22063,44 @@ export class SharedLog<
 										replicator: true,
 									},
 								];
+								const remainingWaitMs = remainingRequestWorkMs();
+								if (remainingWaitMs <= 0) {
+									return;
+								}
 								const waitOptions: WaitForReplicatorsOptions<R> = {
+									timeout: remainingWaitMs,
+									signal: checkedPruneRequestDeadlineController.signal,
+									persist: false,
+									drainInFlightChecks: false,
+									settlingWork: checkedPruneRequestWork.settlingWork,
 									onLeader: (key) => {
 										isLeader = isLeader || key === selfHash;
 									},
 								};
 								if (hasNativeEntry) {
-									await this._waitForGidReplicators(
-										gid,
-										replicas,
-										waitFor,
-										waitOptions,
+									const waitResult = await awaitRequestRead(() =>
+										this._waitForGidReplicators(
+											gid,
+											replicas,
+											waitFor,
+											waitOptions,
+										),
 									);
+									if (!waitResult.active) {
+										return;
+									}
 								} else {
-									await this._waitForEntryReplicators(
-										indexedEntry!.value,
-										replicas,
-										waitFor,
-										waitOptions,
+									const waitResult = await awaitRequestRead(() =>
+										this._waitForEntryReplicators(
+											indexedEntry!.value,
+											replicas,
+											waitFor,
+											waitOptions,
+										),
 									);
+									if (!waitResult.active) {
+										return;
+									}
 								}
 							}
 						}
@@ -21102,19 +22112,34 @@ export class SharedLog<
 					} else {
 						const prevPendingIHave = this._pendingIHave.get(hash);
 						if (prevPendingIHave) {
+							if (!this.addPendingIHaveRequester(prevPendingIHave, from)) {
+								continue;
+							}
 							pendingIHaveExtended += 1;
-							prevPendingIHave.requesting.add(from);
+							(prevPendingIHave.requestIdsByPeer ??= new Map()).set(
+								from,
+								requestsByHash.get(hash)!.requestId,
+							);
 							prevPendingIHave.resetTimeout();
 						} else {
+							if (!this.canCreatePendingIHave(from)) {
+								continue;
+							}
 							pendingIHaveCreated += 1;
-							const requesting = new Set([from]);
+							const requesting = new Set<string>();
+							const requestIdsByPeer = new Map<string, Uint8Array>();
 							let pendingIHave!: PendingIHave<T>;
 							pendingIHave = {
 								requesting,
+								requestIdsByPeer,
 								resetTimeout: () => this.resetPendingIHaveTimeout(pendingIHave),
 								clear: () => this.clearPendingIHaveTimeout(pendingIHave),
-								callback: async (entry: Entry<T>) => {
+								callback: async (
+									entry: Entry<T>,
+									work: PendingIHaveCallbackWork,
+								) => {
 									if (
+										!work.isActive() ||
 										!this.isReplicationLifecycleActive(
 											receiveReplicationLifecycleController,
 										) ||
@@ -21127,27 +22152,45 @@ export class SharedLog<
 											requester,
 											entry.meta.gid,
 										);
-										this.removePruneRequestSent(entry.hash, requester);
 									}
 									let isLeader = false;
-									await this._waitForEntryReplicators(
-										entry,
-										decodeReplicas(entry).getValue(this),
-										[
-											{
-												key: this.node.identity.publicKey.hashcode(),
-												replicator: true,
-											},
-										],
-										{
-											onLeader: (key) => {
-												isLeader =
-													isLeader ||
-													key === this.node.identity.publicKey.hashcode();
-											},
-										},
+									const remainingWaitMs = work.remainingMs();
+									if (remainingWaitMs <= 0) {
+										return;
+									}
+									const waitResult = await this.awaitCheckedPruneRequestRead(
+										() =>
+											this._waitForEntryReplicators(
+												entry,
+												decodeReplicas(entry).getValue(this),
+												[
+													{
+														key: this.node.identity.publicKey.hashcode(),
+														replicator: true,
+													},
+												],
+												{
+													timeout: remainingWaitMs,
+													signal: work.signal,
+													persist: false,
+													drainInFlightChecks: false,
+													settlingWork: work.settlingWork,
+													onLeader: (key) => {
+														isLeader =
+															isLeader ||
+															key === this.node.identity.publicKey.hashcode();
+													},
+												},
+											),
+										work.signal,
+										work.isActive,
+										work.settlingWork,
 									);
+									if (!waitResult.active) {
+										return;
+									}
 									if (
+										!work.isActive() ||
 										!this.isReplicationLifecycleActive(
 											receiveReplicationLifecycleController,
 										) ||
@@ -21156,30 +22199,62 @@ export class SharedLog<
 										return;
 									}
 									if (isLeader) {
-										this.responseToPruneDebouncedFn.add({
-											hashes: [entry.hash],
-											peers: new Set(requesting),
-										});
+										// Process requesters serially. A single retained hash can
+										// have thousands of requesters; launching every ACK at once
+										// would defeat the instance-wide callback admission bound.
+										for (const requester of [...requesting]) {
+											if (!work.isActive()) {
+												return;
+											}
+											const requestId = requestIdsByPeer.get(requester);
+											if (!requestId) {
+												continue;
+											}
+											const requestStillActive = () =>
+												work.isActive() &&
+												this.isReplicationLifecycleActive(
+													receiveReplicationLifecycleController,
+												) &&
+												requesting.has(requester) &&
+												requestIdsByPeer.get(requester) === requestId;
+											await this.admitCheckedPruneGrants(
+												[{ hash: entry.hash, requestId }],
+												requester,
+												requestStillActive,
+												work.signal,
+												work.settlingWork,
+											);
+										}
 									}
 								},
 							};
 
+							if (!this.addPendingIHaveRequester(pendingIHave, from)) {
+								continue;
+							}
+							requestIdsByPeer.set(from, requestsByHash.get(hash)!.requestId);
 							this._pendingIHave.set(hash, pendingIHave);
 							this.resetPendingIHaveTimeout(pendingIHave);
 						}
 					}
 				}
 				if (leaderResponseHashes.length > 0) {
-					this.responseToPruneDebouncedFn.add({
-						hashes: leaderResponseHashes,
-						peers: [from],
-					});
+					if (!receiveStillActive()) {
+						return;
+					}
+					await this.admitCheckedPruneGrants(
+						requestsFor(leaderResponseHashes),
+						from,
+						receiveStillActive,
+						checkedPruneRequestDeadlineController.signal,
+						checkedPruneRequestWork.settlingWork,
+					);
 				}
 				if (syncProfile) {
 					emitSyncProfileDuration(syncProfile, requestPruneLoopStartedAt, {
 						name: "sharedLog.receive.requestPrune.loop",
 						component: "shared-log",
-						entries: msg.hashes.length,
+						entries: requestHashes.length,
 						messages: 1,
 						details: {
 							presentEntries,
@@ -21196,30 +22271,53 @@ export class SharedLog<
 					emitSyncProfileDuration(syncProfile, requestPruneStartedAt, {
 						name: "sharedLog.receive.requestPrune.total",
 						component: "shared-log",
-						entries: msg.hashes.length,
+						entries: requestHashes.length,
 						messages: 1,
 					});
 				}
 			} else if (msg instanceof ResponseIPrune) {
-				const lateResponses: string[] = [];
+				// Legacy responses are never deletion authorization. Their hashes
+				// are not correlated to an exact attempt and may arrive a week late.
+				return;
+			} else if (msg instanceof ResponseIPruneV2) {
 				const responseTasks: Promise<void>[] = [];
-				for (const hash of msg.hashes) {
-					const pendingDelete = this._checkedPrune.getPendingDelete(hash);
-					if (pendingDelete) {
-						responseTasks.push(
-							Promise.resolve(pendingDelete.resolve(context.from.hashcode())),
-						);
-					} else {
-						lateResponses.push(hash);
-					}
+				const from = context.from.hashcode();
+				if (
+					msg.requests.length === 0 ||
+					msg.requests.length > CHECKED_PRUNE_MAX_REQUESTS_PER_MESSAGE
+				) {
+					return;
 				}
-				if (lateResponses.length > 0) {
-					responseTasks.push(
-						this.recoverCheckedPruneFromLateResponses(
-							lateResponses,
-							context.from.hashcode(),
-						),
+				const responseHashes = new Set<string>();
+				for (const request of msg.requests) {
+					if (
+						request.hash.length === 0 ||
+						request.hash.length > CHECKED_PRUNE_MAX_HASH_CODE_UNITS ||
+						request.requestId.length !== CHECKED_PRUNE_REQUEST_ID_BYTES ||
+						responseHashes.has(request.hash)
+					) {
+						return;
+					}
+					responseHashes.add(request.hash);
+				}
+				for (const request of msg.requests) {
+					const requestId = toHexString(request.requestId);
+					const pendingDelete = this._checkedPrune.getPendingDelete(
+						request.hash,
 					);
+					if (
+						pendingDelete &&
+						this._checkedPrune.isCurrentRequestForPeer(
+							request.hash,
+							pendingDelete,
+							from,
+							requestId,
+						)
+					) {
+						responseTasks.push(
+							Promise.resolve(pendingDelete.resolve(from, requestId)),
+						);
+					}
 				}
 				const results = await Promise.allSettled(responseTasks);
 				for (const result of results) {
@@ -21240,14 +22338,21 @@ export class SharedLog<
 						openingEpoch === receiveSubscriptionEpoch
 					) {
 						// A prior unsubscribe cleanup may still be ahead of this reconnect
-						// barrier. Stage the new generation's one-shot advertisement so that
-						// cleanup cannot erase it before the opening transition commits.
+						// barrier. Stage the new generation's advertisement so that cleanup
+						// cannot erase it before the opening transition commits. Merge
+						// repeated frames monotonically for the same epoch, matching the
+						// committed capability state.
+						const previous =
+							this._openingSyncCapabilitiesByPeer.get(receiveFromHash);
 						this._openingSyncCapabilitiesByPeer.set(receiveFromHash, {
 							epoch: openingEpoch,
-							capabilities: msg.capabilities,
+							capabilities:
+								previous?.epoch === openingEpoch
+									? (previous.capabilities | msg.capabilities) >>> 0
+									: msg.capabilities,
 						});
 					} else {
-						this._peerSyncCapabilities.set(receiveFromHash, msg.capabilities);
+						this.recordPeerSyncCapabilities(receiveFromHash, msg.capabilities);
 					}
 				}
 				return;
@@ -21571,6 +22676,12 @@ export class SharedLog<
 				// Every return and every locally swallowed receive error passes this
 				// boundary. Release a native wire stash exactly once first, then surface
 				// any durable mutation poison that arose while handling the message.
+				if (checkedPruneRequestDeadlineTimer) {
+					clearTimeout(checkedPruneRequestDeadlineTimer);
+					checkedPruneRequestDeadlineTimer = undefined;
+				}
+				checkedPruneRequestWork?.release();
+				checkedPruneRequestWork = undefined;
 				releasePeerReceiveLease?.();
 				releasePeerReceiveLease = undefined;
 				this.throwIfNativeDurableCommitFailed();
@@ -22259,6 +23370,9 @@ export class SharedLog<
 		options: WaitForReplicatorsOptions<R>,
 		checkLeaders: (options: WaitForReplicatorsOptions<R>) => Promise<LeaderMap>,
 	): Promise<LeaderMap | false> {
+		if (options.drainInFlightChecks === false && options.persist !== false) {
+			throw new Error("Non-draining leader waits require persist=false");
+		}
 		const timeout = options.timeout ?? this.waitForReplicatorTimeout;
 		const closeSignal = this._closeController.signal;
 		const replicationLifecycleSignal =
@@ -22272,12 +23386,17 @@ export class SharedLog<
 				this.events.removeEventListener("replicator:mature", roleListener);
 				closeSignal.removeEventListener("abort", abortListener);
 				replicationLifecycleSignal?.removeEventListener("abort", abortListener);
+				options.signal?.removeEventListener("abort", abortListener);
 			};
 			const settleResolve = (value: LeaderMap | false) => {
 				if (settled) return;
 				settled = true;
 				removeListeners();
 				clearTimeout(timer);
+				if (options.drainInFlightChecks === false) {
+					resolve(value);
+					return;
+				}
 				// Leader planning may persist coordinates. Keep the caller (and any
 				// receive lease it owns) alive until checks admitted before this
 				// timeout/abort have finished their local side effects.
@@ -22307,6 +23426,11 @@ export class SharedLog<
 						leaderKeys.add(key);
 					},
 				});
+				// Custom/native planners may return the authoritative leader map
+				// without replaying every key through the optional callback.
+				for (const key of leaders.keys()) {
+					leaderKeys.add(key);
+				}
 
 				for (const waitForKey of waitFor) {
 					if (waitForKey.replicator && !leaderKeys!.has(waitForKey.key)) {
@@ -22321,15 +23445,30 @@ export class SharedLog<
 
 				settleResolve(leaders);
 			};
+			let checkRunning = false;
+			let rerunRequested = false;
 			const runCheck = () => {
 				if (settled) return;
+				if (checkRunning) {
+					rerunRequested = true;
+					return;
+				}
+				checkRunning = true;
 				let running!: Promise<void>;
 				running = check()
 					.catch((error) => {
 						settleReject(error);
 					})
-					.finally(() => checks.delete(running));
+					.finally(() => {
+						checks.delete(running);
+						checkRunning = false;
+						if (rerunRequested && !settled) {
+							rerunRequested = false;
+							runCheck();
+						}
+					});
 				checks.add(running);
+				options.settlingWork?.track(running);
 			};
 
 			const roleListener = () => {
@@ -22340,10 +23479,15 @@ export class SharedLog<
 			this.events.addEventListener("replicator:mature", roleListener);
 			closeSignal.addEventListener("abort", abortListener);
 			replicationLifecycleSignal?.addEventListener("abort", abortListener);
+			options.signal?.addEventListener("abort", abortListener);
 			// AbortSignal does not replay an abort event to listeners added after it
 			// fired. Recheck after registration so work started concurrently with the
 			// terminal fence cannot wait for the full leader-selection timeout.
-			if (closeSignal.aborted || replicationLifecycleSignal?.aborted) {
+			if (
+				closeSignal.aborted ||
+				replicationLifecycleSignal?.aborted ||
+				options.signal?.aborted
+			) {
 				abortListener();
 				return;
 			}
@@ -22521,11 +23665,19 @@ export class SharedLog<
 	private async planCurrentNativeBackboneRequestPruneLeaderHints(
 		hashes: string[],
 		from: string,
+		isActive: () => boolean = () => true,
 	): Promise<NativeRequestPruneLeaderHints | undefined> {
-		if (!this._nativeBackbone) {
+		if (!this._nativeBackbone || !isActive()) {
 			return undefined;
 		}
 		const context = await this.createLeaderSelectionContext();
+		// The all-confirmed native fast path also removes the pruning peer from
+		// native gid history. Fence that synchronous mutation after the only
+		// asynchronous boundary so a timed-out or superseded receive cannot
+		// resume and alter the current subscription generation.
+		if (!isActive()) {
+			return undefined;
+		}
 		const skipHashes =
 			this._checkedPrune.pendingDeletes.size > 0
 				? [...this._checkedPrune.pendingDeletes.keys()]
@@ -22561,6 +23713,9 @@ export class SharedLog<
 					nativeBackbonePeerHistoryCleaned: true,
 				};
 			}
+		}
+		if (!isActive()) {
+			return undefined;
 		}
 		const hintColumns =
 			nativeBackboneHintArrays.planRequestPruneLeaderHintColumns?.(
@@ -26207,6 +27362,7 @@ export class SharedLog<
 	}
 
 	private advanceSubscriptionEpoch(peerHash: string): object {
+		this.cancelSyncCapabilityRepair(peerHash);
 		const next = {};
 		this._subscriptionEpochByPeer.set(peerHash, next);
 		return next;
@@ -26230,6 +27386,112 @@ export class SharedLog<
 			clearTimeout(state.timer);
 		}
 		this._replicationInfoRequestByPeer.delete(peerHash);
+	}
+
+	private cancelSyncCapabilityRepair(
+		peerHash: string,
+		expected?: SyncCapabilityRepairState,
+	): void {
+		const state = this._syncCapabilityRepairByPeer.get(peerHash);
+		if (!state || (expected && state !== expected)) {
+			return;
+		}
+		if (state.timer) {
+			clearTimeout(state.timer);
+		}
+		this._syncCapabilityRepairByPeer.delete(peerHash);
+		state.controller.abort();
+	}
+
+	private cancelAllSyncCapabilityRepairs(): void {
+		for (const peerHash of [...this._syncCapabilityRepairByPeer.keys()]) {
+			this.cancelSyncCapabilityRepair(peerHash);
+		}
+	}
+
+	private scheduleSyncCapabilityRepair(
+		peer: PublicSignKey,
+		capabilities: number,
+		replicationLifecycleController: AbortController,
+		subscriptionEpoch: object,
+	): void {
+		const peerHash = peer.hashcode();
+		if (
+			!this.isReplicationLifecycleActive(replicationLifecycleController) ||
+			!this.isCurrentSubscriptionEpoch(peerHash, subscriptionEpoch)
+		) {
+			return;
+		}
+		const existing = this._syncCapabilityRepairByPeer.get(peerHash);
+		if (existing?.subscriptionEpoch === subscriptionEpoch) {
+			return;
+		}
+		this.cancelSyncCapabilityRepair(peerHash);
+
+		const state: SyncCapabilityRepairState = {
+			subscriptionEpoch,
+			attempts: 0,
+			controller: new AbortController(),
+		};
+		this._syncCapabilityRepairByPeer.set(peerHash, state);
+		const signal = AbortSignal.any([
+			replicationLifecycleController.signal,
+			state.controller.signal,
+		]);
+		const isCurrent = () =>
+			this._syncCapabilityRepairByPeer.get(peerHash) === state &&
+			this.isReplicationLifecycleActive(replicationLifecycleController) &&
+			this.isCurrentSubscriptionEpoch(peerHash, subscriptionEpoch) &&
+			!signal.aborted;
+
+		const scheduleNext = () => {
+			if (!isCurrent()) {
+				this.cancelSyncCapabilityRepair(peerHash, state);
+				return;
+			}
+			const delay = Math.min(
+				SYNC_CAPABILITY_REPAIR_MAX_DELAY_MS,
+				SYNC_CAPABILITY_REPAIR_MIN_DELAY_MS * 2 ** Math.min(state.attempts, 16),
+			);
+			state.timer = setTimeout(() => {
+				state.timer = undefined;
+				if (!isCurrent()) {
+					this.cancelSyncCapabilityRepair(peerHash, state);
+					return;
+				}
+				state.attempts++;
+				void this.rpc
+					.send(
+						new SyncCapabilitiesMessage({
+							capabilities,
+						}),
+						{
+							mode: new AcknowledgeDelivery({
+								redundancy: 1,
+								to: [peer],
+							}),
+							signal,
+						},
+					)
+					.then(() => {
+						this.cancelSyncCapabilityRepair(peerHash, state);
+					})
+					.catch((error) => {
+						if (!isCurrent()) {
+							this.cancelSyncCapabilityRepair(peerHash, state);
+							return;
+						}
+						this.handleReplicationLifecycleSendError(
+							error,
+							replicationLifecycleController,
+						);
+						scheduleNext();
+					});
+			}, delay);
+			state.timer.unref?.();
+		};
+
+		scheduleNext();
 	}
 
 	private scheduleReplicationInfoRequests(
@@ -26366,7 +27628,7 @@ export class SharedLog<
 				const openingCapabilities =
 					this._openingSyncCapabilitiesByPeer.get(peerHash);
 				if (openingCapabilities?.epoch === expectedSubscriptionEpoch) {
-					this._peerSyncCapabilities.set(
+					this.recordPeerSyncCapabilities(
 						peerHash,
 						openingCapabilities.capabilities,
 					);
@@ -26445,28 +27707,6 @@ export class SharedLog<
 		this._replicatorLivenessFailures.delete(peerHash);
 		this.markReplicatorActivity(peerHash);
 
-		if (this._logProperties?.sync?.rawExchangeHeads === true) {
-			// One-shot capability advertisement so live append gossip can pick
-			// the raw exchange-heads path for this peer without a per-request
-			// round trip. Peers that do not know the message drop it.
-			this.rpc
-				.send(
-					new SyncCapabilitiesMessage({
-						capabilities: SYNC_CAPABILITY_RAW_EXCHANGE_HEADS,
-					}),
-					{
-						mode: new SilentDelivery({ redundancy: 1, to: [publicKey] }),
-						signal: replicationLifecycleController.signal,
-					},
-				)
-				.catch((error) =>
-					this.handleReplicationLifecycleSendError(
-						error,
-						replicationLifecycleController,
-					),
-				);
-		}
-
 		let replicationSegments: ReplicationRangeIndexable<R>[];
 		try {
 			replicationSegments = await this.getMyReplicationSegments();
@@ -26485,9 +27725,53 @@ export class SharedLog<
 		) {
 			return;
 		}
-		if (replicationSegments.length > 0) {
-			const segments = replicationSegments.map((x) => x.toReplicationRange());
+		const segments =
+			replicationSegments.length > 0
+				? replicationSegments.map((x) => x.toReplicationRange())
+				: undefined;
+		if (segments) {
 			this.validatePersistedReplicationRangeSnapshot(segments);
+		}
+
+		// Checked-prune correlation is always supported by this version. Raw
+		// exchange-heads remains opt-in. Validate local ownership first, then
+		// publish this capability before any ownership announcement.
+		const syncCapabilities =
+			SYNC_CAPABILITY_CHECKED_PRUNE_HANDOFF |
+			(this._logProperties?.sync?.rawExchangeHeads === true
+				? SYNC_CAPABILITY_RAW_EXCHANGE_HEADS
+				: 0);
+		const sendSyncCapabilities = () =>
+			this.rpc.send(
+				new SyncCapabilitiesMessage({
+					capabilities: syncCapabilities,
+				}),
+				{
+					mode: new AcknowledgeDelivery({
+						redundancy: 1,
+						to: [publicKey],
+					}),
+					signal: replicationLifecycleController.signal,
+				},
+			);
+		let syncCapabilitiesAdvertised = false;
+		try {
+			await sendSyncCapabilities();
+			syncCapabilitiesAdvertised = true;
+		} catch (error) {
+			this.handleReplicationLifecycleSendError(
+				error,
+				replicationLifecycleController,
+			);
+		}
+		if (
+			!this.isReplicationLifecycleActive(replicationLifecycleController) ||
+			!ownsSubscriptionEpoch()
+		) {
+			return;
+		}
+
+		if (segments) {
 			await this.rpc
 				.send(
 					new AllReplicatingSegmentsMessage({
@@ -26533,6 +27817,18 @@ export class SharedLog<
 						),
 					);
 			}
+		}
+
+		if (!syncCapabilitiesAdvertised) {
+			// A failed first ACK must not permanently strand this subscription in
+			// fail-closed mode after the following ownership ACK discovers a route.
+			// Keep repairing with bounded backoff for exactly this subscription epoch.
+			this.scheduleSyncCapabilityRepair(
+				publicKey,
+				syncCapabilities,
+				replicationLifecycleController,
+				expectedSubscriptionEpoch,
+			);
 		}
 
 		// Request the remote peer's replication info. This makes joins resilient to
@@ -26640,47 +27936,141 @@ export class SharedLog<
 
 		const promises: Promise<any>[] = [];
 
-		let peerToEntries: Map<string, string[]> = new Map();
-		let cleanupTimer: ReturnType<typeof setTimeout>[] = [];
+		type ClaimedCheckedPruneRequest = {
+			hash: string;
+			pendingDelete: CheckedPrunePendingDelete;
+			requestId: string;
+			ownsResend: boolean;
+		};
+		const peerToEntries = new Map<string, ClaimedCheckedPruneRequest[]>();
 		const explicitTimeout = options?.timeout != null;
 
 		for (const { entry, leaders } of entries.values()) {
+			const capableLeaders: string[] = [];
 			for (const leader of leaders.keys()) {
-				let set = peerToEntries.get(leader);
-				if (!set) {
-					set = [];
-					peerToEntries.set(leader, set);
+				// Unknown/older peers cannot provide replay-safe authorization.
+				// Excluding them keeps mixed-version operation fail-closed.
+				if (this.peerSupportsCheckedPruneHandoff(leader)) {
+					capableLeaders.push(leader);
 				}
-
-				set.push(entry.hash);
 			}
+			const claimCapableLeaderRequests = (
+				pendingDelete: CheckedPrunePendingDelete,
+			) => {
+				for (const leader of capableLeaders) {
+					let activeRequestId = checkedPruneCoordinator.getRequestId(
+						entry.hash,
+						leader,
+					);
+					let claimed = false;
+					if (activeRequestId == null) {
+						const requestId = toHexString(
+							randomBytes(CHECKED_PRUNE_REQUEST_ID_BYTES),
+						);
+						claimed = checkedPruneCoordinator.claimRequestSent(
+							entry.hash,
+							leader,
+							pendingDelete,
+							requestId,
+						);
+						activeRequestId = claimed
+							? requestId
+							: checkedPruneCoordinator.getRequestId(entry.hash, leader);
+					}
+					const ownsResend =
+						pendingDelete.background &&
+						activeRequestId != null &&
+						checkedPruneCoordinator.claimAutoResend(
+							entry.hash,
+							leader,
+							pendingDelete,
+							activeRequestId,
+						);
+					// Preserve the explicit caller's one-shot retry behavior without
+					// giving it a second periodic resend owner. Background duplicates
+					// only emit for newly claimed targets or when promoting an
+					// explicit-first generation to its sole periodic resend owner.
+					if (
+						!claimed &&
+						!ownsResend &&
+						(!explicitTimeout ||
+							activeRequestId == null ||
+							!checkedPruneCoordinator.isCurrentRequestForPeer(
+								entry.hash,
+								pendingDelete,
+								leader,
+								activeRequestId,
+							))
+					) {
+						continue;
+					}
+					if (activeRequestId == null) {
+						continue;
+					}
+					let set = peerToEntries.get(leader);
+					if (!set) {
+						set = [];
+						peerToEntries.set(leader, set);
+					}
+					set.push({
+						hash: entry.hash,
+						pendingDelete,
+						requestId: activeRequestId,
+						ownsResend,
+					});
+				}
+			};
+			const wrapExplicitPending = (
+				pendingDelete: CheckedPrunePendingDelete,
+			) => {
+				const timeoutMs = Math.max(0, Math.floor(options?.timeout ?? 0));
+				return new Promise<void>((resolve, reject) => {
+					const timer = setTimeout(() => {
+						const error = new Error(
+							`Timeout for checked pruning after ${timeoutMs}ms (pending=true closed=${this.closed})`,
+						);
+						reject(error);
+						if (
+							checkedPruneCoordinator.isCurrentRequest(
+								entry.hash,
+								pendingDelete,
+							) &&
+							!pendingDelete.background
+						) {
+							try {
+								void Promise.resolve(pendingDelete.reject(error)).catch(
+									() => {},
+								);
+							} catch {}
+						}
+					}, timeoutMs);
+					timer.unref?.();
+					void pendingDelete.promise.promise.then(
+						() => {
+							clearTimeout(timer);
+							resolve();
+						},
+						(error) => {
+							clearTimeout(timer);
+							reject(error);
+						},
+					);
+				});
+			};
 
 			const pendingPrev = checkedPruneCoordinator.getPendingDelete(entry.hash);
 			if (pendingPrev) {
+				if (!explicitTimeout) {
+					checkedPruneCoordinator.promoteToBackground(entry.hash, pendingPrev);
+				}
+				claimCapableLeaderRequests(pendingPrev);
 				// If a background prune is already in-flight, an explicit prune request should
 				// still respect the caller's timeout. Otherwise, tests (and user calls) can
 				// block on the longer "checked prune" timeout derived from
 				// `_respondToIHaveTimeout + waitForReplicatorTimeout`, which is intentionally
 				// large for resiliency.
 				if (explicitTimeout) {
-					const timeoutMs = Math.max(0, Math.floor(options?.timeout ?? 0));
-					promises.push(
-						new Promise((resolve, reject) => {
-							// Mirror the checked-prune error prefix so existing callers/tests can
-							// match on the message substring.
-							const timer = setTimeout(() => {
-								reject(
-									new Error(
-										`Timeout for checked pruning after ${timeoutMs}ms (pending=true closed=${this.closed})`,
-									),
-								);
-							}, timeoutMs);
-							timer.unref?.();
-							pendingPrev.promise.promise
-								.then(resolve, reject)
-								.finally(() => clearTimeout(timer));
-						}),
-					);
+					promises.push(wrapExplicitPending(pendingPrev));
 				} else {
 					promises.push(pendingPrev.promise.promise);
 				}
@@ -26688,15 +28078,57 @@ export class SharedLog<
 			}
 
 			const minReplicas = decodeReplicas(entry);
+			const minReplicasValue =
+				this.getClampedReplicas(minReplicas).getValue(this);
+			if (capableLeaders.length < minReplicasValue) {
+				const error = new Error(
+					`Insufficient checked-prune capable leaders (${capableLeaders.length}/${minReplicasValue})`,
+				);
+				if (!explicitTimeout) {
+					this.scheduleCheckedPruneRetry(
+						{ entry, leaders },
+						ownershipLifecycleController,
+					);
+				}
+				const failed = Promise.reject(error);
+				// Background pruning intentionally ignores the returned promise array.
+				// Attach an observer here while preserving rejection for explicit callers.
+				void failed.catch(() => {});
+				promises.push(failed);
+				continue;
+			}
 			const deferredPromise: DeferredPromise<void> = pDefer();
-			let finalOwnershipRevalidationFailed = false;
+			// Background pruning is intentionally fire-and-forget. Keep an internal
+			// observer attached so an expected timeout or peer disconnect cannot
+			// become a process-level unhandled rejection; explicit callers still
+			// receive and observe the original rejecting promise below.
+			void deferredPromise.promise.catch(() => {});
+			let pendingDelete!: CheckedPrunePendingDelete;
+			let pruneDeleteStarted = false;
+			const checkedPruneBackgroundTimeoutMs = Math.max(
+				CHECKED_PRUNE_BACKGROUND_TIMEOUT_MIN_MS,
+				Number(this._respondToIHaveTimeout ?? 0) +
+					this.waitForReplicatorTimeout +
+					PRUNE_DEBOUNCE_INTERVAL * 2,
+			);
+			const generationTimeoutMs = Math.max(
+				checkedPruneBackgroundTimeoutMs,
+				Math.max(0, Math.floor(options?.timeout ?? 0)),
+			);
+			let generationTimeout: ReturnType<typeof setTimeout>;
+			let removalTimer: ReturnType<typeof setTimeout> | undefined;
+			let removalScheduled = false;
 
 			const clear = () => {
 				const pending = checkedPruneCoordinator.getPendingDelete(entry.hash);
 				if (pending?.promise === deferredPromise) {
 					checkedPruneCoordinator.deletePendingDelete(entry.hash, pending);
 				}
-				clearTimeout(timeout);
+				clearTimeout(generationTimeout);
+				if (removalTimer) {
+					clearTimeout(removalTimer);
+					removalTimer = undefined;
+				}
 			};
 
 			const resolve = () => {
@@ -26706,24 +28138,167 @@ export class SharedLog<
 					reject(error);
 					return;
 				}
-				clearTimeout(timeout);
+				if (removalScheduled) {
+					return;
+				}
+				removalScheduled = true;
+				clearTimeout(generationTimeout);
 				checkedPruneCoordinator.clearRetry(entry.hash);
-				cleanupTimer.push(
-					setTimeout(() => {
-						const run = async () => {
-							throwIfCheckedPruneLifecycleInactive();
-							const ownership = await this.revalidateCheckedPruneOwnership({
-								hash: entry.hash,
-								entry,
-								leaders: this.checkedPruneLeadersToMap(leaders),
-								selfReplicating: true,
+				removalTimer = setTimeout(() => {
+					const run = async () => {
+						throwIfCheckedPruneLifecycleInactive();
+						const ownership = await this.revalidateCheckedPruneOwnership({
+							hash: entry.hash,
+							entry,
+							leaders: this.checkedPruneLeadersToMap(leaders),
+							selfReplicating: true,
+							ownershipLifecycleController,
+							checkedPruneCoordinator,
+						});
+						throwIfCheckedPruneLifecycleInactive();
+						if (
+							checkedPruneCoordinator.getPendingDelete(entry.hash) !==
+							pendingDelete
+						) {
+							throw new TerminalOperationNotStartedError(
+								"Checked prune session changed during ownership revalidation",
+							);
+						}
+						if (ownership.localLeader) {
+							const resilient = pendingDelete.background;
+							const isCurrentGeneration =
+								checkedPruneCoordinator.isCurrentRequest(
+									entry.hash,
+									pendingDelete,
+								);
+							clear();
+							if (isCurrentGeneration) {
+								checkedPruneCoordinator.markCancelled(entry.hash, {
+									preserveRetry: resilient,
+								});
+							}
+							if (resilient && isCurrentGeneration) {
+								this.scheduleCheckedPruneRetry(
+									{ entry, leaders },
+									ownershipLifecycleController,
+								);
+							}
+							deferredPromise.reject(
+								new Error("Failed to delete, is leader again"),
+							);
+							return;
+						}
+
+						try {
+							const removed = await this.withReplicationRangeMutationQueue(
+								async () => {
+									throwIfCheckedPruneLifecycleInactive();
+									if (
+										checkedPruneCoordinator.getPendingDelete(entry.hash) !==
+										pendingDelete
+									) {
+										throw new TerminalOperationNotStartedError(
+											"Checked prune session is no longer active at the delete boundary",
+										);
+									}
+									// The network confirmation and preliminary planner check
+									// deliberately happen outside the global ownership lane. Once
+									// admitted here, re-read leadership and keep the lower-log
+									// delete in the same lane so a durable range mutation cannot
+									// commit between the decision and the destructive operation.
+									const finalOwnership =
+										await this.revalidateCheckedPruneOwnership({
+											hash: entry.hash,
+											entry,
+											leaders: this.checkedPruneLeadersToMap(leaders),
+											selfReplicating: true,
+											requireFreshLeaderDecision: true,
+											ownershipLifecycleController,
+											checkedPruneCoordinator,
+										});
+									throwIfCheckedPruneLifecycleInactive();
+									if (
+										checkedPruneCoordinator.getPendingDelete(entry.hash) !==
+										pendingDelete
+									) {
+										throw new TerminalOperationNotStartedError(
+											"Checked prune session changed before removal",
+										);
+									}
+									if (finalOwnership.localLeader) {
+										return false;
+									}
+									const contactedReplicators =
+										checkedPruneCoordinator.getContactedReplicators(entry.hash);
+									const confirmedReplicators =
+										checkedPruneCoordinator.getConfirmedReplicators(entry.hash);
+									let activeConfirmedReplicators = 0;
+									for (const peer of confirmedReplicators ?? []) {
+										const requestId = checkedPruneCoordinator.getRequestId(
+											entry.hash,
+											peer,
+										);
+										if (
+											contactedReplicators?.has(peer) &&
+											requestId != null &&
+											checkedPruneCoordinator.getConfirmedRequestId(
+												entry.hash,
+												peer,
+											) === requestId &&
+											finalOwnership.leaders.has(peer)
+										) {
+											activeConfirmedReplicators++;
+										}
+									}
+									if (activeConfirmedReplicators < minReplicasValue) {
+										throw new Error(
+											"Checked prune confirmation is no longer active at the delete boundary",
+										);
+									}
+
+									this.deleteGidPeerHistory(entry.meta.gid);
+									checkedPruneCoordinator.removeRequestSent(entry.hash);
+									checkedPruneCoordinator.clearConfirmedReplicators(entry.hash);
+									throwIfCheckedPruneLifecycleInactive();
+									checkedPruneCoordinator.markRemoving(entry.hash);
+									this._checkedPruneRemoveBlocksLocalRangeMutationAdmission++;
+									pruneDeleteStarted = true;
+									try {
+										await this.trackAdmittedPruneRemove(
+											() =>
+												this.log.remove(entry, {
+													recursively: false,
+												}),
+											ownershipLifecycleController,
+										);
+									} finally {
+										this._checkedPruneRemoveBlocksLocalRangeMutationAdmission--;
+									}
+									// Complete only the exact generation that admitted this
+									// lower-log removal. An explicit timeout or disconnect can
+									// retire it while the admitted remove is still settling and
+									// allow a replacement generation to start.
+									checkedPruneCoordinator.markDone(entry.hash, pendingDelete);
+									clear();
+									deferredPromise.resolve();
+									return true;
+								},
 								ownershipLifecycleController,
-								checkedPruneCoordinator,
-							});
-							throwIfCheckedPruneLifecycleInactive();
-							if (ownership.localLeader) {
+							);
+							if (!removed) {
+								const resilient = pendingDelete.background;
+								const isCurrentGeneration =
+									checkedPruneCoordinator.isCurrentRequest(
+										entry.hash,
+										pendingDelete,
+									);
 								clear();
-								if (!explicitTimeout) {
+								if (isCurrentGeneration) {
+									checkedPruneCoordinator.markCancelled(entry.hash, {
+										preserveRetry: resilient,
+									});
+								}
+								if (resilient && isCurrentGeneration) {
 									this.scheduleCheckedPruneRetry(
 										{ entry, leaders },
 										ownershipLifecycleController,
@@ -26734,295 +28309,386 @@ export class SharedLog<
 								);
 								return;
 							}
-
-							try {
-								const removed = await this.withReplicationRangeMutationQueue(
-									async () => {
-										throwIfCheckedPruneLifecycleInactive();
-										if (
-											checkedPruneCoordinator.getPendingDelete(entry.hash)
-												?.promise !== deferredPromise
-										) {
-											throw new TerminalOperationNotStartedError(
-												"Checked prune session is no longer active at the delete boundary",
-											);
-										}
-										// The network confirmation and preliminary planner check
-										// deliberately happen outside the global ownership lane. Once
-										// admitted here, re-read leadership and keep the lower-log
-										// delete in the same lane so a durable range mutation cannot
-										// commit between the decision and the destructive operation.
-										let finalOwnership: {
-											leaders: CheckedPruneLeaderMap;
-											localLeader: boolean;
-										};
-										try {
-											finalOwnership =
-												await this.revalidateCheckedPruneOwnership({
-													hash: entry.hash,
-													entry,
-													leaders: this.checkedPruneLeadersToMap(leaders),
-													selfReplicating: true,
-													requireFreshLeaderDecision: true,
-													ownershipLifecycleController,
-													checkedPruneCoordinator,
-												});
-										} catch (error) {
-											finalOwnershipRevalidationFailed = true;
-											throw error;
-										}
-										throwIfCheckedPruneLifecycleInactive();
-										if (
-											checkedPruneCoordinator.getPendingDelete(entry.hash)
-												?.promise !== deferredPromise
-										) {
-											throw new TerminalOperationNotStartedError(
-												"Checked prune session changed before removal",
-											);
-										}
-										if (finalOwnership.localLeader) {
-											return false;
-										}
-
-										this.deleteGidPeerHistory(entry.meta.gid);
-										checkedPruneCoordinator.removeRequestSent(entry.hash);
-										checkedPruneCoordinator.clearConfirmedReplicators(
-											entry.hash,
-										);
-										throwIfCheckedPruneLifecycleInactive();
-										checkedPruneCoordinator.markRemoving(entry.hash);
-										this._checkedPruneRemoveBlocksLocalRangeMutationAdmission++;
-										try {
-											await this.trackAdmittedPruneRemove(
-												() =>
-													this.log.remove(entry, {
-														recursively: true,
-													}),
-												ownershipLifecycleController,
-											);
-										} finally {
-											this
-												._checkedPruneRemoveBlocksLocalRangeMutationAdmission--;
-										}
-										clear();
-										checkedPruneCoordinator.markDone(entry.hash);
-										deferredPromise.resolve();
-										return true;
-									},
+						} catch (error) {
+							const resilient = pendingDelete.background;
+							const isCurrentGeneration =
+								checkedPruneCoordinator.isCurrentRequest(
+									entry.hash,
+									pendingDelete,
+								);
+							clear();
+							if (isCurrentGeneration) {
+								checkedPruneCoordinator.markCancelled(entry.hash, {
+									// Everything before the lower-log delete starts is a
+									// definite no-delete failure and can be retried safely. A
+									// lower-log rejection may follow a partial commit, so do not
+									// guess by replaying it.
+									preserveRetry: resilient && !pruneDeleteStarted,
+								});
+							}
+							if (isCurrentGeneration && resilient && !pruneDeleteStarted) {
+								this.scheduleCheckedPruneRetry(
+									{ entry, leaders },
 									ownershipLifecycleController,
 								);
-								if (!removed) {
-									clear();
-									if (!explicitTimeout) {
-										this.scheduleCheckedPruneRetry(
-											{ entry, leaders },
-											ownershipLifecycleController,
-										);
-									}
-									deferredPromise.reject(
-										new Error("Failed to delete, is leader again"),
-									);
-									return;
-								}
-							} catch (error) {
-								clear();
-								checkedPruneCoordinator.markCancelled(entry.hash, {
-									preserveRetry:
-										!explicitTimeout && finalOwnershipRevalidationFailed,
-								});
-								if (!explicitTimeout && finalOwnershipRevalidationFailed) {
-									this.scheduleCheckedPruneRetry(
-										{ entry, leaders },
-										ownershipLifecycleController,
-									);
-								}
-								deferredPromise.reject(error);
-								return;
 							}
+							deferredPromise.reject(error);
+							return;
+						}
 
-							// The delete has already settled. Diagnostics are best-effort:
-							// poison/close/reopen must not turn an ignored timer callback into
-							// an unhandled rejection or mutate the next lifecycle.
-							if (!isCheckedPruneLifecycleCurrent()) {
-								return;
+						// The delete has already settled. Diagnostics are best-effort:
+						// poison/close/reopen must not turn an ignored timer callback into
+						// an unhandled rejection or mutate the next lifecycle.
+						if (!isCheckedPruneLifecycleCurrent()) {
+							return;
+						}
+						try {
+							this.deleteGidPeerHistory(entry.meta.gid);
+							const postRemoveOwnership =
+								await this.revalidateCheckedPruneOwnership({
+									hash: entry.hash,
+									entry,
+									leaders: this.checkedPruneLeadersToMap(leaders),
+									selfReplicating: true,
+									ownershipLifecycleController,
+									checkedPruneCoordinator,
+								});
+							if (
+								isCheckedPruneLifecycleCurrent() &&
+								postRemoveOwnership.localLeader
+							) {
+								logger.error("Unexpected: Is leader after delete");
 							}
-							try {
-								this.deleteGidPeerHistory(entry.meta.gid);
-								checkedPruneCoordinator.removeRequestSent(entry.hash);
-								checkedPruneCoordinator.clearConfirmedReplicators(entry.hash);
-								const postRemoveOwnership =
-									await this.revalidateCheckedPruneOwnership({
-										hash: entry.hash,
-										entry,
-										leaders: this.checkedPruneLeadersToMap(leaders),
-										selfReplicating: true,
-										ownershipLifecycleController,
-										checkedPruneCoordinator,
-									});
-								if (
-									isCheckedPruneLifecycleCurrent() &&
-									postRemoveOwnership.localLeader
-								) {
-									logger.error("Unexpected: Is leader after delete");
-								}
-							} catch (error) {
-								if (
-									isCheckedPruneLifecycleCurrent() &&
-									!isNotStartedError(error as Error)
-								) {
-									logger.error(error);
-								}
+						} catch (error) {
+							if (
+								isCheckedPruneLifecycleCurrent() &&
+								!isNotStartedError(error as Error)
+							) {
+								logger.error(error);
 							}
-						};
-						void run().catch((error) => {
-							reject(error);
-						});
-					}, this.waitForPruneDelay),
-				);
+						}
+					};
+					void run().catch((error) => {
+						const resilient = pendingDelete.background;
+						const isCurrentGeneration =
+							checkedPruneCoordinator.isCurrentRequest(
+								entry.hash,
+								pendingDelete,
+							);
+						if (isCurrentGeneration && resilient && !pruneDeleteStarted) {
+							clear();
+							checkedPruneCoordinator.markCancelled(entry.hash, {
+								preserveRetry: true,
+							});
+							deferredPromise.reject(error);
+							this.scheduleCheckedPruneRetry(
+								{ entry, leaders },
+								ownershipLifecycleController,
+							);
+							return;
+						}
+						reject(error);
+					});
+				}, this.waitForPruneDelay);
 			};
 
 			const reject = (e: any) => {
+				const resilient = pendingDelete.background;
+				const isCurrentGeneration = checkedPruneCoordinator.isCurrentRequest(
+					entry.hash,
+					pendingDelete,
+				);
 				clear();
 				const isCheckedPruneTimeout =
 					e instanceof Error &&
 					typeof e.message === "string" &&
 					e.message.startsWith("Timeout for checked pruning");
-				checkedPruneCoordinator.markCancelled(entry.hash, {
-					preserveRetry: !explicitTimeout && isCheckedPruneTimeout,
-				});
+				if (isCurrentGeneration) {
+					checkedPruneCoordinator.markCancelled(entry.hash, {
+						preserveRetry: resilient && isCheckedPruneTimeout,
+					});
+				}
 				deferredPromise.reject(e);
 			};
 
-			// Checked prune requests can legitimately take longer than a fixed 10s:
-			// - The remote may not have the entry yet and will wait up to `_respondToIHaveTimeout`
-			// - Leadership/replicator information may take up to `waitForReplicatorTimeout` to settle
-			// If we time out too early we can end up with permanently prunable heads that never
-			// get retried (a common CI flake in "prune before join" tests).
-			const checkedPruneTimeoutMs =
-				options?.timeout ??
-				Math.max(
-					CHECKED_PRUNE_BACKGROUND_TIMEOUT_MIN_MS,
-					Number(this._respondToIHaveTimeout ?? 0) +
-						this.waitForReplicatorTimeout +
-						PRUNE_DEBOUNCE_INTERVAL * 2,
-				);
+			pendingDelete = {
+				promise: deferredPromise,
+				background: !explicitTimeout,
+				promoteToBackground: () => {
+					pendingDelete.background = true;
+				},
+				clear,
+				reject,
+				resolve: async (publicKeyHash: string, requestId: string) => {
+					try {
+						throwIfCheckedPruneLifecycleInactive();
+					} catch (error) {
+						reject(error);
+						return;
+					}
+					if (
+						!checkedPruneCoordinator.isCurrentRequestForPeer(
+							entry.hash,
+							pendingDelete,
+							publicKeyHash,
+							requestId,
+						)
+					) {
+						return;
+					}
+					// Confirmation recording below is synchronous up to the request-id
+					// commit, so exact replays cannot interleave before this guard changes.
+					if (
+						checkedPruneCoordinator.getConfirmedRequestId(
+							entry.hash,
+							publicKeyHash,
+						) === requestId
+					) {
+						return;
+					}
+					// The authenticated responder admitted this exact request only
+					// after verifying that it holds the block and is a leader. Do not
+					// wait for the requester's membership view to converge here: the
+					// destructive boundary below re-plans under the global ownership
+					// lane and counts only still-current confirmed peers that remain
+					// leaders.
+					const existCounter = checkedPruneCoordinator.addConfirmedReplicator(
+						entry.hash,
+						publicKeyHash,
+						pendingDelete,
+						requestId,
+					);
+					if (!existCounter) {
+						return;
+					}
+					// Seed provider hints so future remote reads can avoid extra round-trips.
+					this.remoteBlocks.hintProviders(entry.hash, [publicKeyHash]);
 
-			const timeout = setTimeout(() => {
-				// For internal/background prune flows (no explicit timeout), retry a few times
-				// to avoid "permanently prunable" entries when `_pendingIHave` expires under
-				// heavy load.
-				if (!explicitTimeout && isCheckedPruneLifecycleCurrent()) {
+					if (minReplicasValue <= existCounter.size) {
+						resolve();
+					}
+				},
+			};
+			// Every generation retains a background-sized internal deadline. An
+			// explicit caller has its own shorter wrapper below; promotion makes
+			// that wrapper caller-only while this generation remains retryable.
+			generationTimeout = setTimeout(() => {
+				if (
+					!isCheckedPruneLifecycleCurrent() ||
+					!checkedPruneCoordinator.isCurrentRequest(entry.hash, pendingDelete)
+				) {
+					return;
+				}
+				const resilient = pendingDelete.background;
+				const error = new Error(
+					`Timeout for checked pruning after ${generationTimeoutMs}ms (closed=${this.closed})`,
+				);
+				reject(error);
+				if (resilient && isCheckedPruneLifecycleCurrent()) {
 					this.scheduleCheckedPruneRetry(
 						{ entry, leaders },
 						ownershipLifecycleController,
 					);
 				}
-				reject(
-					new Error(
-						`Timeout for checked pruning after ${checkedPruneTimeoutMs}ms (closed=${this.closed})`,
-					),
-				);
-			}, checkedPruneTimeoutMs);
-			timeout.unref?.();
-
+			}, generationTimeoutMs);
+			generationTimeout.unref?.();
 			checkedPruneCoordinator.setPendingDelete(
 				entry.hash,
-				{
-					promise: deferredPromise,
-					clear,
-					reject,
-					resolve: async (publicKeyHash: string) => {
-						try {
-							throwIfCheckedPruneLifecycleInactive();
-						} catch (error) {
-							reject(error);
-							return;
-						}
-						const minReplicasObj = this.getClampedReplicas(minReplicas);
-						const minReplicasValue = minReplicasObj.getValue(this);
-
-						// TODO is this check necessary
-						if (
-							!(await this._waitForEntryReplicators(
-								entry,
-								minReplicasValue,
-								[
-									{ key: publicKeyHash, replicator: true },
-									{
-										key: this.node.identity.publicKey.hashcode(),
-										replicator: false,
-									},
-								],
-								{
-									persist: false,
-								},
-							))
-						) {
-							return;
-						}
-						try {
-							throwIfCheckedPruneLifecycleInactive();
-						} catch (error) {
-							reject(error);
-							return;
-						}
-
-						const existCounter = checkedPruneCoordinator.addConfirmedReplicator(
-							entry.hash,
-							publicKeyHash,
-						);
-						// Seed provider hints so future remote reads can avoid extra round-trips.
-						this.remoteBlocks.hintProviders(entry.hash, [publicKeyHash]);
-
-						if (minReplicasValue <= existCounter.size) {
-							resolve();
-						}
-					},
-				},
+				pendingDelete,
 				entry,
 				leaders,
 			);
+			claimCapableLeaderRequests(pendingDelete);
 
-			promises.push(deferredPromise.promise);
+			promises.push(
+				explicitTimeout
+					? wrapExplicitPending(pendingDelete)
+					: deferredPromise.promise,
+			);
 		}
 
-		const emitMessages = async (entries: string[], to: string) => {
+		const emitMessages = async (
+			entries: ClaimedCheckedPruneRequest[],
+			to: string,
+		) => {
 			throwIfCheckedPruneLifecycleInactive();
-			const filteredSet: string[] = [];
-			for (const entry of entries) {
-				/* TODO why can we not have this statement? 
-				if (set.has(to)) {
+			// A responder grant cancels every older outbound session before its
+			// response is sent. Waiting here orders any later request publish
+			// after that response publish, which makes circular delete handoffs
+			// impossible.
+			await Promise.all(
+				[...new Set(entries.map(({ hash }) => hash))].map((hash) =>
+					checkedPruneCoordinator.waitForGrantSends(hash),
+				),
+			);
+			throwIfCheckedPruneLifecycleInactive();
+
+			const requests: Array<
+				ClaimedCheckedPruneRequest & { requestIdBytes: Uint8Array }
+			> = [];
+			const uniqueEntries = new Map(
+				entries.map((entry) => [entry.hash, entry]),
+			);
+			for (const entry of uniqueEntries.values()) {
+				if (
+					!checkedPruneCoordinator.isCurrentRequestForPeer(
+						entry.hash,
+						entry.pendingDelete,
+						to,
+						entry.requestId,
+					)
+				) {
 					continue;
-				} */
-				checkedPruneCoordinator.addRequestSent(entry, to);
-				filteredSet.push(entry);
+				}
+				requests.push({
+					...entry,
+					requestIdBytes: fromHexString(entry.requestId),
+				});
 			}
-			if (filteredSet.length > 0) {
-				const result = await this.rpc.send(
-					new RequestIPrune({
-						hashes: filteredSet,
-					}),
-					{
-						mode: new AcknowledgeDelivery({
-							to: [to], // TODO group by peers?
-							redundancy: 1,
-						}),
-						priority: CONVERGENCE_MESSAGE_PRIORITY,
-					},
-				);
+			if (requests.length > 0) {
+				let firstFailure: unknown;
+				for (
+					let offset = 0;
+					offset < requests.length;
+					offset += CHECKED_PRUNE_MAX_REQUESTS_PER_MESSAGE
+				) {
+					const chunk = requests.slice(
+						offset,
+						offset + CHECKED_PRUNE_MAX_REQUESTS_PER_MESSAGE,
+					);
+					try {
+						await this._checkedPruneRequestSendQueue.add(async () => {
+							throwIfCheckedPruneLifecycleInactive();
+							const currentRequests = chunk.filter(
+								({ hash, pendingDelete, requestId }) =>
+									checkedPruneCoordinator.isCurrentRequestForPeer(
+										hash,
+										pendingDelete,
+										to,
+										requestId,
+									),
+							);
+							if (currentRequests.length === 0) {
+								return;
+							}
+							// Admission to this instance-wide queue bounds acknowledged
+							// prune sends across destinations, chunks, concurrent prune
+							// calls, and resend passes. Revalidate the exact generation
+							// only after the slot is acquired.
+							await this.rpc.send(
+								new RequestIPruneV2({
+									requests: currentRequests.map(({ hash, requestIdBytes }) => ({
+										hash,
+										requestId: requestIdBytes,
+									})),
+								}),
+								{
+									mode: new AcknowledgeDelivery({
+										to: [to], // TODO group by peers?
+										redundancy: 1,
+									}),
+									priority: CONVERGENCE_MESSAGE_PRIORITY,
+									signal: ownershipLifecycleController.signal,
+								},
+							);
+						});
+					} catch (error) {
+						// Keep this bounded producer moving so one failed ACK cannot
+						// starve later chunks or destinations in the same wave.
+						firstFailure ??= error;
+					}
+				}
 				throwIfCheckedPruneLifecycleInactive();
-				return result;
+				if (firstFailure !== undefined) {
+					throw firstFailure;
+				}
 			}
 		};
 
-		for (const [k, v] of peerToEntries) {
-			emitMessages(v, k).catch(() => {});
-		}
+		const runEmitWave = async (
+			pendingByPeer: [string, ClaimedCheckedPruneRequest[]][],
+		) => {
+			const destinations = pendingByPeer.map(([peer, requests]) => ({
+				peer,
+				requests,
+				offset: 0,
+			}));
+			let nextDestination = 0;
+			let firstFailure: unknown;
+			const takeChunk = () => {
+				for (let inspected = 0; inspected < destinations.length; inspected++) {
+					const destination = destinations[nextDestination]!;
+					nextDestination = (nextDestination + 1) % destinations.length;
+					if (destination.offset >= destination.requests.length) {
+						continue;
+					}
+					const requests = destination.requests.slice(
+						destination.offset,
+						destination.offset + CHECKED_PRUNE_MAX_REQUESTS_PER_MESSAGE,
+					);
+					destination.offset += requests.length;
+					return { peer: destination.peer, requests };
+				}
+				return undefined;
+			};
+			const sendChunks = async () => {
+				for (;;) {
+					const next = takeChunk();
+					if (!next) {
+						return;
+					}
+					try {
+						await emitMessages(next.requests, next.peer);
+					} catch (error) {
+						firstFailure ??= error;
+					}
+				}
+			};
+			await Promise.all(
+				Array.from(
+					{
+						length: Math.min(
+							CHECKED_PRUNE_MAX_CONCURRENT_REQUEST_SENDS,
+							pendingByPeer.length,
+						),
+					},
+					() => sendChunks(),
+				),
+			);
+			if (firstFailure !== undefined) {
+				throw firstFailure;
+			}
+		};
+
+		let emitWaveInFlight: Promise<void> | undefined;
+		const startEmitWave = (
+			pendingByPeer: [string, ClaimedCheckedPruneRequest[]][],
+		) => {
+			if (emitWaveInFlight || pendingByPeer.length === 0) {
+				return;
+			}
+			const wave = runEmitWave(pendingByPeer)
+				.catch(() => {})
+				.finally(() => {
+					if (emitWaveInFlight === wave) {
+						emitWaveInFlight = undefined;
+					}
+				});
+			emitWaveInFlight = wave;
+		};
+		startEmitWave([...peerToEntries]);
 
 		// Keep remote `_pendingIHave` alive in the common "leader doesn't have entry yet"
-		// case. This is intentionally disabled when an explicit timeout is provided to
-		// preserve unit tests that assert remote `_pendingIHave` clears promptly.
-		if (!explicitTimeout && peerToEntries.size > 0) {
+		// case. Resend ownership belongs to the pending generation that first claimed
+		// each exact target, not to a later caller that happens to observe it.
+		const resendPeerToEntries = new Map<string, ClaimedCheckedPruneRequest[]>();
+		for (const [peer, requests] of peerToEntries) {
+			const resendRequests = requests.filter(({ ownsResend }) => ownsResend);
+			if (resendRequests.length > 0) {
+				resendPeerToEntries.set(peer, resendRequests);
+			}
+		}
+		if (resendPeerToEntries.size > 0) {
 			const respondToIHaveTimeout = Number(this._respondToIHaveTimeout ?? 0);
 			const resendIntervalMs = Math.min(
 				CHECKED_PRUNE_RESEND_INTERVAL_MAX_MS,
@@ -27031,18 +28697,23 @@ export class SharedLog<
 					Math.floor(respondToIHaveTimeout / 2) || 1_000,
 				),
 			);
-			let inFlight = false;
 			const timer = setInterval(() => {
-				if (inFlight) return;
+				if (emitWaveInFlight) return;
 				if (!isCheckedPruneLifecycleCurrent()) {
 					clearInterval(timer);
 					return;
 				}
 
-				const pendingByPeer: [string, string[]][] = [];
-				for (const [peer, hashes] of peerToEntries) {
-					const pending = hashes.filter((h) =>
-						checkedPruneCoordinator.hasPendingDelete(h),
+				const pendingByPeer: [string, ClaimedCheckedPruneRequest[]][] = [];
+				for (const [peer, requests] of resendPeerToEntries) {
+					const pending = requests.filter(
+						({ hash, pendingDelete, requestId }) =>
+							checkedPruneCoordinator.isCurrentRequestForPeer(
+								hash,
+								pendingDelete,
+								peer,
+								requestId,
+							),
 					);
 					if (pending.length > 0) {
 						pendingByPeer.push([peer, pending]);
@@ -27053,30 +28724,27 @@ export class SharedLog<
 					return;
 				}
 
-				inFlight = true;
-				Promise.allSettled(
-					pendingByPeer.map(([peer, hashes]) =>
-						emitMessages(hashes, peer).catch(() => {}),
-					),
-				).finally(() => {
-					if (isCheckedPruneLifecycleCurrent()) {
-						inFlight = false;
-					}
-				});
+				startEmitWave(pendingByPeer);
 			}, resendIntervalMs);
 			timer.unref?.();
-			cleanupTimer.push(timer as any);
+			let resendCleaned = false;
+			const cleanupResend = () => {
+				if (resendCleaned) {
+					return;
+				}
+				resendCleaned = true;
+				clearInterval(timer);
+				closeController.signal.removeEventListener("abort", cleanupResend);
+			};
+			const pendingPromises = new Set(
+				[...resendPeerToEntries.values()]
+					.flat()
+					.map(({ pendingDelete }) => pendingDelete.promise.promise),
+			);
+			void Promise.allSettled([...pendingPromises]).finally(cleanupResend);
+			closeController.signal.addEventListener("abort", cleanupResend);
 		}
 
-		let cleanup = () => {
-			for (const timer of cleanupTimer) {
-				clearTimeout(timer);
-			}
-			closeController.signal.removeEventListener("abort", cleanup);
-		};
-
-		Promise.allSettled(promises).finally(cleanup);
-		closeController.signal.addEventListener("abort", cleanup);
 		return promises;
 	}
 
@@ -27442,8 +29110,6 @@ export class SharedLog<
 							if (!isOwnershipLifecycleCurrent()) {
 								return false;
 							}
-
-							this.responseToPruneDebouncedFn.delete(entryReplicated.hash);
 						} else {
 							throwIfOwnershipLifecycleInactive();
 							await this.cancelCheckedPruneForLocalLeader(entryReplicated.hash);
@@ -27533,8 +29199,6 @@ export class SharedLog<
 						if (!isOwnershipLifecycleCurrent()) {
 							return false;
 						}
-
-						this.responseToPruneDebouncedFn.delete(entryReplicated.hash); // don't allow others to prune because of expecting me to replicating this entry
 					} else {
 						throwIfOwnershipLifecycleInactive();
 						await this.cancelCheckedPruneForLocalLeader(entryReplicated.hash);
@@ -27945,7 +29609,6 @@ export class SharedLog<
 		const ih = this._pendingIHave.get(entry.hash);
 
 		if (ih) {
-			ih.clear();
 			this.runPendingIHaveCallback(ih, entry);
 		}
 
@@ -27959,7 +29622,6 @@ export class SharedLog<
 				throw new Error("Missing entry materializer for pending IHave");
 			}
 			const entry = materializeEntry();
-			ih.clear();
 			this.runPendingIHaveCallback(ih, entry);
 			this.syncronizer.onEntryAdded(entry);
 			return;
@@ -28014,7 +29676,7 @@ export class SharedLog<
 			}
 			if (expiresAt <= now) {
 				pending.expiresAt = undefined;
-				this._pendingIHave.delete(hash);
+				this.deletePendingIHave(hash, pending);
 				continue;
 			}
 			if (expiresAt < nextDeadline) {
@@ -28026,13 +29688,22 @@ export class SharedLog<
 		}
 	}
 
+	private clearCheckedPruneRetryForRemovedEntry(hash: string) {
+		this.pruneDebouncedFn?.delete(hash);
+		this.clearCheckedPruneRetry(hash);
+	}
+
 	onEntryRemoved(hash: string) {
+		this.clearCheckedPruneRetryForRemovedEntry(hash);
 		this.syncronizer.onEntryRemoved(hash);
 	}
 
 	private onEntryRemovedHashes(hashes: string[]) {
 		if (hashes.length === 0) {
 			return;
+		}
+		for (const hash of hashes) {
+			this.clearCheckedPruneRetryForRemovedEntry(hash);
 		}
 		if (this.syncronizer.onEntryRemovedHashes) {
 			this.syncronizer.onEntryRemovedHashes(hashes);

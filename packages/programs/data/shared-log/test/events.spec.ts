@@ -1,4 +1,5 @@
 import { type PublicSignKey, randomBytes } from "@peerbit/crypto";
+import { AcknowledgeDelivery } from "@peerbit/stream-interface";
 import { TestSession } from "@peerbit/test-utils";
 import { delay, waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
@@ -7,6 +8,7 @@ import sinon from "sinon";
 import { v4 as uuid } from "uuid";
 import {
 	ExchangeHeadsMessage,
+	SYNC_CAPABILITY_CHECKED_PRUNE_HANDOFF,
 	SyncCapabilitiesMessage,
 } from "../src/exchange-heads.js";
 import { ReplicationIntent } from "../src/ranges.js";
@@ -16,6 +18,23 @@ import {
 	StoppedReplicating,
 } from "../src/replication.js";
 import { EventStore } from "./utils/stores/index.js";
+
+const enableCheckedPrunePeer = (log: any, peer: string) => {
+	log._peerSyncCapabilities.set(peer, SYNC_CAPABILITY_CHECKED_PRUNE_HANDOFF);
+};
+
+const resolveCurrentCheckedPrune = async (
+	log: any,
+	hash: string,
+	peer: string,
+	pending: any,
+) => {
+	await waitForResolved(() => {
+		expect(log._checkedPrune.getRequestId(hash, peer)).to.be.a("string");
+	});
+	const requestId = log._checkedPrune.getRequestId(hash, peer);
+	await pending.resolve(peer, requestId);
+};
 
 describe("events", () => {
 	let session: TestSession;
@@ -988,6 +1007,207 @@ describe("events", () => {
 		} finally {
 			send.restore();
 			log._replicationRangeMutationFailure = undefined;
+		}
+	});
+
+	it("acknowledges checked-prune capability before announcing ownership", async () => {
+		const { db, log } = await openDisconnectedLog(2);
+		await db.log.replicate({ factor: 0.2, offset: 0.1 });
+		const remoteKey = session.peers[1].identity.publicKey;
+		const capabilityStarted = pDefer<void>();
+		const releaseCapability = pDefer<void>();
+		const sent: Array<{ message: unknown; options: any }> = [];
+		const send = sinon
+			.stub(log.rpc, "send")
+			.callsFake(async (message: unknown, options: any) => {
+				sent.push({ message, options });
+				if (message instanceof SyncCapabilitiesMessage) {
+					capabilityStarted.resolve();
+					await releaseCapability.promise;
+				}
+			});
+		const scheduleRequests = sinon
+			.stub(log, "scheduleReplicationInfoRequests")
+			.callsFake(() => {});
+		let subscription: Promise<void> | undefined;
+
+		try {
+			subscription = log._onSubscription({
+				detail: { from: remoteKey, topics: [log.topic] },
+			});
+			await capabilityStarted.promise;
+			const capability = sent.find(
+				(call) => call.message instanceof SyncCapabilitiesMessage,
+			);
+			expect(capability?.options.mode).to.be.instanceOf(AcknowledgeDelivery);
+			expect(
+				sent.some(
+					(call) => call.message instanceof AllReplicatingSegmentsMessage,
+				),
+			).to.be.false;
+
+			releaseCapability.resolve();
+			await subscription;
+			const capabilityIndex = sent.findIndex(
+				(call) => call.message instanceof SyncCapabilitiesMessage,
+			);
+			const ownershipIndex = sent.findIndex(
+				(call) => call.message instanceof AllReplicatingSegmentsMessage,
+			);
+			expect(capabilityIndex).to.be.greaterThanOrEqual(0);
+			expect(ownershipIndex).to.be.greaterThan(capabilityIndex);
+		} finally {
+			releaseCapability.resolve();
+			await subscription?.catch(() => {});
+			scheduleRequests.restore();
+			send.restore();
+		}
+	});
+
+	it("retries a failed capability ACK within the subscription epoch", async () => {
+		const { db, log } = await openDisconnectedLog(2);
+		await db.log.replicate({ factor: 0.2, offset: 0.1 });
+		const remoteKey = session.peers[1].identity.publicKey;
+		const sent: Array<{ message: unknown; options: any }> = [];
+		let capabilityAttempts = 0;
+		const send = sinon
+			.stub(log.rpc, "send")
+			.callsFake(async (message: unknown, options: any) => {
+				sent.push({ message, options });
+				if (message instanceof SyncCapabilitiesMessage) {
+					capabilityAttempts++;
+					if (capabilityAttempts === 1) {
+						throw new Error("transient capability ACK failure");
+					}
+				}
+			});
+		const scheduleRequests = sinon
+			.stub(log, "scheduleReplicationInfoRequests")
+			.callsFake(() => {});
+
+		try {
+			await log._onSubscription({
+				detail: { from: remoteKey, topics: [log.topic] },
+			});
+			await waitForResolved(() => expect(capabilityAttempts).to.equal(2));
+			const capabilityIndexes = sent.flatMap((call, index) =>
+				call.message instanceof SyncCapabilitiesMessage ? [index] : [],
+			);
+			const ownershipIndex = sent.findIndex(
+				(call) => call.message instanceof AllReplicatingSegmentsMessage,
+			);
+			expect(capabilityIndexes).to.have.length(2);
+			expect(ownershipIndex).to.be.greaterThan(capabilityIndexes[0]);
+			expect(capabilityIndexes[1]).to.be.greaterThan(ownershipIndex);
+			expect(
+				capabilityIndexes.every(
+					(index) => sent[index].options.mode instanceof AcknowledgeDelivery,
+				),
+			).to.be.true;
+		} finally {
+			scheduleRequests.restore();
+			send.restore();
+		}
+	});
+
+	it("repairs capability advertisement until the route recovers", async () => {
+		const { db, log } = await openDisconnectedLog(2);
+		await db.log.replicate({ factor: 0.2, offset: 0.1 });
+		const remoteKey = session.peers[1].identity.publicKey;
+		const remoteHash = remoteKey.hashcode();
+		let capabilityAttempts = 0;
+		let routeHealthy = false;
+		const send = sinon
+			.stub(log.rpc, "send")
+			.callsFake(async (message: unknown) => {
+				if (message instanceof SyncCapabilitiesMessage) {
+					capabilityAttempts++;
+					if (!routeHealthy) {
+						throw new Error("capability route unavailable");
+					}
+				}
+			});
+		const scheduleRequests = sinon
+			.stub(log, "scheduleReplicationInfoRequests")
+			.callsFake(() => {});
+
+		try {
+			await log._onSubscription({
+				detail: { from: remoteKey, topics: [log.topic] },
+			});
+			await waitForResolved(() => expect(capabilityAttempts).to.equal(3));
+			expect(log._syncCapabilityRepairByPeer.has(remoteHash)).to.be.true;
+
+			routeHealthy = true;
+			await waitForResolved(() => expect(capabilityAttempts).to.equal(4), {
+				timeout: 2_000,
+				delayInterval: 10,
+			});
+			expect(log._syncCapabilityRepairByPeer.has(remoteHash)).to.be.false;
+		} finally {
+			log.cancelSyncCapabilityRepair(remoteHash);
+			scheduleRequests.restore();
+			send.restore();
+		}
+	});
+
+	it("aborts stale capability repair without cancelling the next epoch", async () => {
+		const { log } = await openDisconnectedLog(2);
+		const remoteKey = session.peers[1].identity.publicKey;
+		const remoteHash = remoteKey.hashcode();
+		const firstSendEntered = pDefer<void>();
+		let capabilityAttempts = 0;
+		const send = sinon
+			.stub(log.rpc, "send")
+			.callsFake(async (...args: unknown[]) => {
+				const message = args[0];
+				const options = args[1] as { signal?: AbortSignal };
+				if (!(message instanceof SyncCapabilitiesMessage)) {
+					return;
+				}
+				capabilityAttempts++;
+				if (capabilityAttempts !== 1) {
+					return;
+				}
+				firstSendEntered.resolve();
+				await new Promise<void>((resolve, reject) => {
+					const signal = options.signal!;
+					if (signal.aborted) {
+						reject(new Error("stale capability repair aborted"));
+						return;
+					}
+					signal.addEventListener(
+						"abort",
+						() => reject(new Error("stale capability repair aborted")),
+						{ once: true },
+					);
+				});
+			});
+		const firstEpoch = log.advanceSubscriptionEpoch(remoteHash);
+		log.scheduleSyncCapabilityRepair(
+			remoteKey,
+			SYNC_CAPABILITY_CHECKED_PRUNE_HANDOFF,
+			log._replicationLifecycleController,
+			firstEpoch,
+		);
+
+		try {
+			await firstSendEntered.promise;
+			const secondEpoch = log.advanceSubscriptionEpoch(remoteHash);
+			log.scheduleSyncCapabilityRepair(
+				remoteKey,
+				SYNC_CAPABILITY_CHECKED_PRUNE_HANDOFF,
+				log._replicationLifecycleController,
+				secondEpoch,
+			);
+			await waitForResolved(() => expect(capabilityAttempts).to.equal(2), {
+				timeout: 2_000,
+				delayInterval: 10,
+			});
+			expect(log._syncCapabilityRepairByPeer.has(remoteHash)).to.be.false;
+		} finally {
+			log.cancelSyncCapabilityRepair(remoteHash);
+			send.restore();
 		}
 	});
 
@@ -3418,11 +3638,9 @@ describe("events", () => {
 		const { entry } = await db.add("prune-race");
 		const remoteHash = session.peers[1].identity.publicKey.hashcode();
 		const leaders = new Map([[remoteHash, { intersecting: true }]]);
+		enableCheckedPrunePeer(log, remoteHash);
 		const plannerStarted = pDefer<void>();
 		const releasePlanner = pDefer<void>();
-		const waitForReplicators = sinon
-			.stub(log, "_waitForEntryReplicators")
-			.resolves(true);
 		const getClampedReplicas = sinon
 			.stub(log, "getClampedReplicas")
 			.returns({ getValue: () => 1 });
@@ -3442,7 +3660,7 @@ describe("events", () => {
 			});
 			const pending = log._checkedPrune.getPendingDelete(entry.hash);
 			expect(pending).to.exist;
-			await pending.resolve(remoteHash);
+			await resolveCurrentCheckedPrune(log, entry.hash, remoteHash, pending);
 			await plannerStarted.promise;
 
 			log.poisonReplicationOwnership(new Error("forced ownership poison"));
@@ -3455,7 +3673,6 @@ describe("events", () => {
 			expect(log._checkedPrune.getPendingDelete(entry.hash)).to.be.undefined;
 		} finally {
 			releasePlanner.resolve();
-			waitForReplicators.restore();
 			getClampedReplicas.restore();
 			send.restore();
 			findLeaders.restore();
@@ -3473,11 +3690,9 @@ describe("events", () => {
 		const { entry } = await db.add("prune-reopen-race");
 		const remoteHash = session.peers[1].identity.publicKey.hashcode();
 		const leaders = new Map([[remoteHash, { intersecting: true }]]);
+		enableCheckedPrunePeer(log, remoteHash);
 		const plannerStarted = pDefer<void>();
 		const releasePlanner = pDefer<void>();
-		const waitForReplicators = sinon
-			.stub(log, "_waitForEntryReplicators")
-			.resolves(true);
 		const getClampedReplicas = sinon
 			.stub(log, "getClampedReplicas")
 			.returns({ getValue: () => 1 });
@@ -3505,7 +3720,7 @@ describe("events", () => {
 			const oldCoordinator = log._checkedPrune;
 			const pending = oldCoordinator.getPendingDelete(entry.hash);
 			expect(pending).to.exist;
-			await pending.resolve(remoteHash);
+			await resolveCurrentCheckedPrune(log, entry.hash, remoteHash, pending);
 			await plannerStarted.promise;
 
 			log.poisonReplicationOwnership(new Error("forced ownership poison"));
@@ -3534,7 +3749,6 @@ describe("events", () => {
 			);
 		} finally {
 			releasePlanner.resolve();
-			waitForReplicators.restore();
 			getClampedReplicas.restore();
 			send.restore();
 			findLeaders.restore();
@@ -3553,11 +3767,9 @@ describe("events", () => {
 		const { entry } = await db.add("prune-post-remove-race");
 		const remoteHash = session.peers[1].identity.publicKey.hashcode();
 		const leaders = new Map([[remoteHash, { intersecting: true }]]);
+		enableCheckedPrunePeer(log, remoteHash);
 		const removeStarted = pDefer<void>();
 		const releaseRemove = pDefer<void>();
-		const waitForReplicators = sinon
-			.stub(log, "_waitForEntryReplicators")
-			.resolves(true);
 		const getClampedReplicas = sinon
 			.stub(log, "getClampedReplicas")
 			.returns({ getValue: () => 1 });
@@ -3581,7 +3793,7 @@ describe("events", () => {
 			});
 			const pending = log._checkedPrune.getPendingDelete(entry.hash);
 			expect(pending).to.exist;
-			await pending.resolve(remoteHash);
+			await resolveCurrentCheckedPrune(log, entry.hash, remoteHash, pending);
 			await removeStarted.promise;
 
 			log.poisonReplicationOwnership(new Error("forced ownership poison"));
@@ -3595,7 +3807,6 @@ describe("events", () => {
 		} finally {
 			process.removeListener("unhandledRejection", onUnhandledRejection);
 			releaseRemove.resolve();
-			waitForReplicators.restore();
 			getClampedReplicas.restore();
 			send.restore();
 			findLeaders.restore();
@@ -3616,11 +3827,9 @@ describe("events", () => {
 			);
 			const remoteHash = session.peers[1].identity.publicKey.hashcode();
 			const leaders = new Map([[remoteHash, { intersecting: true }]]);
+			enableCheckedPrunePeer(log, remoteHash);
 			const removeStarted = pDefer<void>();
 			const releaseRemove = pDefer<void>();
-			const waitForReplicators = sinon
-				.stub(log, "_waitForEntryReplicators")
-				.resolves(true);
 			const getClampedReplicas = sinon
 				.stub(log, "getClampedReplicas")
 				.returns({ getValue: () => 1 });
@@ -3641,7 +3850,12 @@ describe("events", () => {
 				if (!unchecked) {
 					const pending = log._checkedPrune.getPendingDelete(entry.hash);
 					expect(pending).to.exist;
-					await pending.resolve(remoteHash);
+					await resolveCurrentCheckedPrune(
+						log,
+						entry.hash,
+						remoteHash,
+						pending,
+					);
 				}
 				await removeStarted.promise;
 				expect(log._admittedPruneRemoves.size).to.equal(1);
@@ -3668,7 +3882,6 @@ describe("events", () => {
 				expect(log._admittedPruneRemoves.size).to.equal(0);
 			} finally {
 				releaseRemove.resolve();
-				waitForReplicators.restore();
 				getClampedReplicas.restore();
 				send.restore();
 				findLeaders.restore();

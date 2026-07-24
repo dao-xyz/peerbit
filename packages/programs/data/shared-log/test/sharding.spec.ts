@@ -1,15 +1,16 @@
 import { keys } from "@libp2p/crypto";
-import { randomBytes, toBase64 } from "@peerbit/crypto";
+import { randomBytes, toBase64, toHexString } from "@peerbit/crypto";
 import type { Entry } from "@peerbit/log";
 // Include test utilities
 import { TestSession } from "@peerbit/test-utils";
 import { delay, waitFor, waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
+import pDefer from "p-defer";
 import sinon from "sinon";
 import {
 	ExchangeHeadsMessage,
-	RequestIPrune,
-	ResponseIPrune,
+	RequestIPruneV2,
+	ResponseIPruneV2,
 } from "../src/exchange-heads.js";
 import {
 	type ReplicationDomainHash,
@@ -1600,15 +1601,18 @@ testSetups.forEach((setup) => {
 					const cleanupPubSubChaos: (() => Promise<void>)[] = [];
 					const chaosRules = [
 						{
-							type: RequestIPrune,
+							type: RequestIPruneV2,
 							minDelayMs: 20_000,
 							maxDelayMs: 45_000,
 							probability: 1,
 						},
 						{
-							type: ResponseIPrune,
-							minDelayMs: 20_000,
-							maxDelayMs: 45_000,
+							type: ResponseIPruneV2,
+							// Grant delivery is part of the responder's bounded five-second
+							// admission window. Keep this leg delayed but inside that budget;
+							// the request leg below still exercises 20-45s network latency.
+							minDelayMs: 500,
+							maxDelayMs: 1_500,
 							probability: 1,
 						},
 						{
@@ -1773,9 +1777,10 @@ testSetups.forEach((setup) => {
 								"expected delayed checked-prune traffic to leave at least one peer temporarily over the upper bound",
 							).to.equal(true);
 
-							// Phase 1 — prune liveness while every checked-prune handshake
-							// leg is still delayed by 20-45s: each peer must shed its join
-							// backlog below the upper bound at least once. Instantaneous
+							// Phase 1 — prune liveness while checked-prune requests are
+							// delayed by 20-45s and grants are delayed within the responder's
+							// five-second budget: each peer must shed its join backlog below
+							// the upper bound at least once. Instantaneous
 							// lengths legitimately oscillate above the bound for as long as
 							// the chaos is active: authoritative repair re-seeds already
 							// pruned entries in bulk (its roleAge-0 leader view runs ahead of
@@ -2419,11 +2424,30 @@ testSetups.forEach((setup) => {
 				});
 				const leavingHash = db3.node.identity.publicKey.hashcode();
 				const logInternals = db1.log as any;
-
-				logInternals._checkedPrune.addRequestSent(entry.hash, leavingHash);
+				const pendingDeferred = pDefer<void>();
+				const pendingDelete = {
+					promise: pendingDeferred,
+					clear: () => {},
+					resolve: () => {},
+					reject: () => {},
+				};
+				logInternals._checkedPrune.setPendingDelete(
+					entry.hash,
+					pendingDelete,
+					entry,
+					new Set([leavingHash]),
+				);
+				const requestId = toHexString(randomBytes(32));
+				logInternals._checkedPrune.addRequestSent(
+					entry.hash,
+					leavingHash,
+					requestId,
+				);
 				logInternals._checkedPrune.addConfirmedReplicator(
 					entry.hash,
 					leavingHash,
+					pendingDelete,
+					requestId,
 				);
 				expect(
 					logInternals._checkedPrune

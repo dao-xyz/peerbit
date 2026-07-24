@@ -1,6 +1,10 @@
 import { serialize } from "@dao-xyz/borsh";
 import { keys } from "@libp2p/crypto";
-import { DecryptedThing, getKeypairFromPrivateKey } from "@peerbit/crypto";
+import {
+	DecryptedThing,
+	getKeypairFromPrivateKey,
+	randomBytes,
+} from "@peerbit/crypto";
 import { create as createRustIndexer } from "@peerbit/indexer-rust";
 import { Entry } from "@peerbit/log";
 import {
@@ -21,7 +25,8 @@ import {
 	ExchangeHeadsMessage,
 	RawEntryWithRefs,
 	RawExchangeHeadsMessage,
-	RequestIPrune,
+	RequestIPruneV2,
+	ResponseIPruneV2,
 	collectRawExchangeHeadSendPlan,
 	createRawExchangeHeadsMessages,
 } from "../src/exchange-heads.js";
@@ -3004,9 +3009,7 @@ describe("raw exchange-head sync", () => {
 				db.log as any,
 				"removePeerFromGidPeerHistoryBatch",
 			);
-			const responseAddStub = sinon
-				.stub((db.log as any).responseToPruneDebouncedFn, "add")
-				.resolves();
+			const sendStub = sinon.stub((db.log as any).rpc, "send").resolves();
 			const hasManyStub = sinon
 				.stub(db.log.log.blocks as any, "hasMany")
 				.resolves(hashes.map(() => true));
@@ -3059,7 +3062,11 @@ describe("raw exchange-head sync", () => {
 					return new Map([[selfHash, { intersecting: true }]]);
 				});
 			try {
-				await db.log.onMessage(new RequestIPrune({ hashes }), {
+				const requests = hashes.map((hash) => ({
+					hash,
+					requestId: randomBytes(32),
+				}));
+				await db.log.onMessage(new RequestIPruneV2({ requests }), {
 					from: session.peers[0].identity.publicKey,
 				} as any);
 
@@ -3076,11 +3083,10 @@ describe("raw exchange-head sync", () => {
 				expect(
 					[...removeConfirmedReplicatorsSpy.firstCall.args[0]],
 				).to.deep.equal(hashes);
-				const queuedHashes: string[] = [];
 				expect(
 					(nativeLocalLeaderHashesStub?.callCount ?? 0) +
 						nativeBatchPlanStub.callCount,
-				).to.equal(1);
+				).to.equal(2);
 				const plannedItems = nativeLocalLeaderHashesStub?.called
 					? [...nativeLocalLeaderHashesStub.firstCall.args[0]]
 					: [...nativeBatchPlanStub.firstCall.args[0]].map(
@@ -3098,21 +3104,24 @@ describe("raw exchange-head sync", () => {
 					plannedItems.length,
 				);
 				expect(waitForGidStub.callCount).to.equal(0);
-				expect(responseAddStub.callCount).to.equal(
-					plannedItems.length > 0 ? 1 : 0,
-				);
+				const responses = sendStub
+					.getCalls()
+					.map((call) => call.args[0])
+					.filter(
+						(message): message is ResponseIPruneV2 =>
+							message instanceof ResponseIPruneV2,
+					);
+				expect(responses).to.have.length(plannedItems.length > 0 ? 1 : 0);
 				if (plannedItems.length > 0) {
-					const [queued] = responseAddStub.firstCall.args;
-					expect(queued.hashes).to.have.length(plannedItems.length);
-					expect(queued.peers).to.deep.equal([
-						session.peers[0].identity.publicKey.hashcode(),
-					]);
-					for (const queuedHash of queued.hashes) {
-						expect(hashes).to.include(queuedHash);
-						queuedHashes.push(queuedHash);
+					expect(responses[0].requests).to.have.length(plannedItems.length);
+					for (const response of responses[0].requests) {
+						const request = requests.find(
+							(candidate) => candidate.hash === response.hash,
+						);
+						expect(request).to.exist;
+						expect(response.requestId).to.deep.equal(request!.requestId);
 					}
 				}
-				expect(new Set(queuedHashes).size).to.equal(queuedHashes.length);
 				const profileNames = profileEvents.map((event) => event.name);
 				expect(profileNames).to.include.members([
 					"sharedLog.receive.requestPrune.coordinatorCleanup",
@@ -3148,7 +3157,7 @@ describe("raw exchange-head sync", () => {
 				nativeLocalLeaderHashesStub?.restore();
 				nativeMetadataStub.restore();
 				hasManyStub.restore();
-				responseAddStub.restore();
+				sendStub.restore();
 				removeGidBatchSpy.restore();
 				removeConfirmedReplicatorsSpy.restore();
 				removePruneRequestsSentSpy.restore();
@@ -3198,9 +3207,17 @@ describe("raw exchange-head sync", () => {
 				.stub(target.log.log.blocks as any, "hasMany")
 				.resolves(hashes.map(() => false));
 			try {
-				await target.log.onMessage(new RequestIPrune({ hashes }), {
-					from: source.node.identity.publicKey,
-				} as any);
+				await target.log.onMessage(
+					new RequestIPruneV2({
+						requests: hashes.map((hash) => ({
+							hash,
+							requestId: randomBytes(32),
+						})),
+					}),
+					{
+						from: source.node.identity.publicKey,
+					} as any,
+				);
 
 				expect(hasManyStub.callCount).to.equal(1);
 				expect(getShallowSpy.callCount).to.equal(0);
@@ -3209,10 +3226,7 @@ describe("raw exchange-head sync", () => {
 					{ clear?: () => void }
 				>;
 				expect(pending.size).to.equal(hashes.length);
-				for (const value of pending.values()) {
-					value.clear?.();
-				}
-				pending.clear();
+				(target.log as any).clearPendingIHaves();
 
 				const loopProfile = profileEvents.find(
 					(event) => event.name === "sharedLog.receive.requestPrune.loop",
@@ -3275,29 +3289,46 @@ describe("raw exchange-head sync", () => {
 				backbone,
 				"planRequestPruneLeaderHintColumns",
 			);
-			const responseAddStub = sinon
-				.stub(sharedLog.responseToPruneDebouncedFn, "add")
-				.resolves();
+			const finalLeaderPlanStub = sinon
+				.stub(sharedLog, "revalidateCheckedPruneGrantLocalLeaders")
+				.callsFake(async (...args: unknown[]) => new Set(args[0] as string[]));
+			const sendStub = sinon.stub(sharedLog.rpc, "send").resolves();
 			const waitForGidSpy = sinon.spy(sharedLog, "_waitForGidReplicators");
 			const waitForEntrySpy = sinon.spy(sharedLog, "_waitForEntryReplicators");
 			const blockHasManySpy = sinon.spy(target.log.log.blocks as any, "hasMany");
 			const getShallowSpy = sinon.spy(target.log.log.entryIndex, "getShallow");
 			try {
-				await target.log.onMessage(new RequestIPrune({ hashes }), {
+				const requests = hashes.map((hash) => ({
+					hash,
+					requestId: randomBytes(32),
+				}));
+				await target.log.onMessage(new RequestIPruneV2({ requests }), {
 					from: session.peers[0].identity.publicKey,
 				} as any);
 
 				expect(allConfirmedStub.callCount).to.equal(1);
 				expect(hintColumnsSpy.callCount).to.equal(0);
-				expect(blockHasManySpy.callCount).to.equal(0);
+				expect(finalLeaderPlanStub.callCount).to.equal(1);
+				expect(blockHasManySpy.callCount).to.equal(1);
 				expect(getShallowSpy.callCount).to.equal(0);
 				expect(waitForGidSpy.callCount).to.equal(0);
 				expect(waitForEntrySpy.callCount).to.equal(0);
-				expect(responseAddStub.callCount).to.equal(1);
-				expect(responseAddStub.firstCall.args[0].hashes).to.deep.equal(hashes);
-				expect(responseAddStub.firstCall.args[0].peers).to.deep.equal([
-					session.peers[0].identity.publicKey.hashcode(),
-				]);
+				const responses = sendStub
+					.getCalls()
+					.map((call) => call.args[0])
+					.filter(
+						(message): message is ResponseIPruneV2 =>
+							message instanceof ResponseIPruneV2,
+					);
+				expect(responses).to.have.length(1);
+				expect(responses[0].requests.map(({ hash }) => hash)).to.deep.equal(
+					hashes,
+				);
+				for (let index = 0; index < requests.length; index++) {
+					expect(responses[0].requests[index].requestId).to.deep.equal(
+						requests[index].requestId,
+					);
+				}
 				const backboneProfile = profileEvents.find(
 					(event) =>
 						event.name === "sharedLog.receive.requestPrune.nativeBackbonePlan",
@@ -3311,21 +3342,95 @@ describe("raw exchange-head sync", () => {
 				expect(loopProfile.details.nativeBatchConfirmed).to.equal(true);
 				expect(loopProfile.details.leaderResponses).to.equal(hashes.length);
 			} finally {
-				const pending = sharedLog._pendingIHave as Map<
-					string,
-					{ clear?: () => void }
-				>;
-				for (const value of pending.values()) {
-					value.clear?.();
-				}
-				pending.clear();
+				sharedLog.clearPendingIHaves();
 				getShallowSpy.restore();
+				finalLeaderPlanStub.restore();
 				blockHasManySpy.restore();
 				waitForEntrySpy.restore();
 				waitForGidSpy.restore();
-				responseAddStub.restore();
+				sendStub.restore();
 				hintColumnsSpy.restore();
 				allConfirmedStub.restore();
+			}
+		} finally {
+			await session.stop();
+		}
+	});
+
+	it("fences native all-confirmed peer-history mutation after a subscription changes", async () => {
+		const session = await TestSession.disconnected(2, {
+			indexer: (directory) => createRustIndexer(directory),
+		});
+
+		try {
+			const target = await session.peers[1].open(
+				new EventStore<string, any>(),
+				{
+					args: {
+						replicate: false,
+						setup: {
+							domain: createReplicationDomainHash("u32"),
+							type: "u32" as const,
+							syncronizer: SimpleSyncronizer,
+							name: "u32-simple-raw",
+						},
+						nativeGraph: true,
+						nativeBackbone: { optional: false },
+						keep: () => true,
+						timeUntilRoleMaturity: 0,
+					},
+				},
+			);
+			const { entry } = await target.add(uuid(), { meta: { next: [] } });
+			const sharedLog = target.log as any;
+			const backbone = sharedLog._nativeBackbone;
+			expect(backbone).to.exist;
+			const validContext = await sharedLog.createLeaderSelectionContext();
+			const contextEntered = pDefer<void>();
+			const releaseContext = pDefer<void>();
+			const contextStub = sinon
+				.stub(sharedLog, "createLeaderSelectionContext")
+				.callsFake(async () => {
+					contextEntered.resolve();
+					await releaseContext.promise;
+					return validContext;
+				});
+			const allConfirmedSpy = sinon.spy(
+				backbone,
+				"planRequestPruneAllConfirmed",
+			);
+			const sendStub = sinon.stub(sharedLog.rpc, "send").resolves();
+			const requesterKey = session.peers[0].identity.publicKey;
+			let receiving: Promise<void> | undefined;
+
+			try {
+				receiving = target.log.onMessage(
+					new RequestIPruneV2({
+						requests: [{ hash: entry.hash, requestId: randomBytes(32) }],
+					}),
+					{ from: requesterKey } as any,
+				);
+				await contextEntered.promise;
+
+				sharedLog.advanceSubscriptionEpoch(requesterKey.hashcode());
+				releaseContext.resolve();
+				await receiving;
+
+				expect(allConfirmedSpy.callCount).to.equal(0);
+				expect(
+					sendStub
+						.getCalls()
+						.some((call) => call.args[0] instanceof ResponseIPruneV2),
+				).to.be.false;
+				expect(
+					sharedLog._checkedPruneRequestWorkAdmission.activeByPeer.size,
+				).to.equal(0);
+			} finally {
+				releaseContext.resolve();
+				await Promise.allSettled(receiving ? [receiving] : []);
+				sendStub.restore();
+				allConfirmedSpy.restore();
+				contextStub.restore();
 			}
 		} finally {
 			await session.stop();

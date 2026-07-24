@@ -1,12 +1,14 @@
-import { AnyBlockStore } from "@peerbit/blocks";
-import { Ed25519Keypair } from "@peerbit/crypto";
-import { Log } from "@peerbit/log";
 import { deserialize, serialize } from "@dao-xyz/borsh";
+import { AnyBlockStore } from "@peerbit/blocks";
+import { Ed25519Keypair, randomBytes } from "@peerbit/crypto";
+import { Log } from "@peerbit/log";
 import { expect } from "chai";
 import sinon from "sinon";
 import {
 	EXCHANGE_HEADS_RESOLVE_BATCH_SIZE,
 	RawExchangeHeadsMessage,
+	RequestIPruneV2,
+	ResponseIPruneV2,
 	createExchangeHeadsMessages,
 	createRawExchangeHeadsMessages,
 	materializeRawExchangeHeadsMessage,
@@ -25,6 +27,28 @@ describe("exchange heads", () => {
 
 	after(async () => {
 		await store.stop();
+	});
+
+	it("round-trips fixed-size checked-prune request correlation", () => {
+		const requestId = randomBytes(32);
+		for (const message of [
+			new RequestIPruneV2({
+				requests: [{ hash: "request-hash", requestId }],
+			}),
+			new ResponseIPruneV2({
+				requests: [{ hash: "response-hash", requestId }],
+			}),
+		]) {
+			const roundTrip = deserialize(serialize(message), TransportMessage) as
+				| RequestIPruneV2
+				| ResponseIPruneV2;
+			expect(roundTrip).to.be.instanceOf(message.constructor);
+			expect(roundTrip.requests).to.have.length(1);
+			expect(roundTrip.requests[0]!.hash).to.equal(message.requests[0]!.hash);
+			expect([...roundTrip.requests[0]!.requestId]).to.deep.equal([
+				...requestId,
+			]);
+		}
 	});
 
 	it("uses native graph reference gids for single-head messages", async () => {

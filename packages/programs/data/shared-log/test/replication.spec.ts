@@ -15,8 +15,9 @@ import sinon from "sinon";
 import { BlocksMessage } from "../src/blocks.js";
 import {
 	ExchangeHeadsMessage,
-	RequestIPrune,
-	ResponseIPrune,
+	RequestIPruneV2,
+	ResponseIPruneV2,
+	SYNC_CAPABILITY_CHECKED_PRUNE_HANDOFF,
 } from "../src/exchange-heads.js";
 import {
 	type ReplicationOptions,
@@ -530,8 +531,11 @@ testSetups.forEach((setup) => {
 						return onMessageFn2(msg, cxt);
 					};
 
-					await waitForResolved(() => {
-						expect(db1.log.log.length).equal(0);
+					await waitForResolved(async () => {
+						// The child handoff is non-recursive. Its higher-replica parent
+						// remains local instead of being cascaded through the child delete.
+						expect(db1.log.log.length).equal(1);
+						expect(await db1.log.log.has(e1.entry.hash)).to.be.true;
 						expect(db2.log.log.length).greaterThanOrEqual(1);
 					});
 
@@ -3594,7 +3598,7 @@ testSetups.forEach((setup) => {
 							{ timeout: 3000 },
 						),
 					),
-				).rejectedWith("Timeout for checked pruning");
+				).rejectedWith("Insufficient checked-prune capable leaders (1/10)");
 				expect(db1.log.log.length).equal(1); // No deletions
 			});
 
@@ -3602,7 +3606,7 @@ testSetups.forEach((setup) => {
 				db1 = await session.peers[0].open(new EventStore<string, any>(), {
 					args: {
 						replicas: {
-							min: 10,
+							min: 1,
 						},
 						replicate: {
 							factor: 1,
@@ -3616,7 +3620,7 @@ testSetups.forEach((setup) => {
 					{
 						args: {
 							replicas: {
-								min: 10,
+								min: 1,
 							},
 							replicate: {
 								factor: 1,
@@ -3629,6 +3633,13 @@ testSetups.forEach((setup) => {
 				const e1 = await db1.add("hello");
 				await waitForResolved(() => expect(db1.log.log.length).equal(1));
 				await waitForResolved(() => expect(db2.log.log.length).equal(1));
+				await waitForResolved(() =>
+					expect(
+						((db1.log as any)._peerSyncCapabilities.get(
+							db2.node.identity.publicKey.hashcode(),
+						) ?? 0) & SYNC_CAPABILITY_CHECKED_PRUNE_HANDOFF,
+					).to.equal(SYNC_CAPABILITY_CHECKED_PRUNE_HANDOFF),
+				);
 				await expect(
 					Promise.all(
 						db1.log.prune(
@@ -3728,7 +3739,15 @@ testSetups.forEach((setup) => {
 				// peer 1 observer
 				// peer 2 observer
 				expect(db2.log.log.length).equal(1);
-				await delay(2000);
+				await waitForResolved(
+					() =>
+						expect(
+							((db2.log as any)._peerSyncCapabilities.get(
+								db1.node.identity.publicKey.hashcode(),
+							) ?? 0) & SYNC_CAPABILITY_CHECKED_PRUNE_HANDOFF,
+						).to.equal(SYNC_CAPABILITY_CHECKED_PRUNE_HANDOFF),
+					{ timeout: 30_000 },
+				);
 				// expect(db2ReorgCounter).equal(1); TODO limit distributions and test this
 
 				await db2.log.replicate(false);
@@ -3743,7 +3762,9 @@ testSetups.forEach((setup) => {
 				});
 
 				await waitForResolved(() => expect(db1.log.log.length).equal(1));
-				await waitForResolved(() => expect(db2.log.log.length).equal(0));
+				await waitForResolved(() => expect(db2.log.log.length).equal(0), {
+					timeout: 30_000,
+				});
 				// expect(db2ReorgCounter).equal(3); TODO
 			});
 			it("can override min on program level", async () => {
@@ -3819,6 +3840,10 @@ testSetups.forEach((setup) => {
 					return onMessageFn(msg, cxt);
 				};
 				const { entry } = await db1.add("hello");
+				(db1.log as any)._peerSyncCapabilities.set(
+					db2.node.identity.publicKey.hashcode(),
+					SYNC_CAPABILITY_CHECKED_PRUNE_HANDOFF,
+				);
 				const expectPromise = expect(
 					Promise.all(
 						db1.log.prune(
@@ -3892,6 +3917,10 @@ testSetups.forEach((setup) => {
 				};
 
 				const { entry } = await db1.add("hello", { meta: { next: [] } });
+				(db1.log as any)._peerSyncCapabilities.set(
+					db2.node.identity.publicKey.hashcode(),
+					SYNC_CAPABILITY_CHECKED_PRUNE_HANDOFF,
+				);
 				await (db2.log.log.entryIndex as any).properties.index.put(
 					entry.toShallow(true),
 				);
@@ -4372,10 +4401,10 @@ testSetups.forEach((setup) => {
 							received.some(
 								(m) =>
 									m instanceof AddedReplicationSegmentMessage ||
-									m instanceof AllReplicatingSegmentsMessage,
+								m instanceof AllReplicatingSegmentsMessage,
 							),
 						).to.equal(true);
-						expect(received.some((m) => m instanceof RequestIPrune)).to.equal(true);
+						expect(received.some((m) => m instanceof RequestIPruneV2)).to.equal(true);
 					/* const entryRefs1 = await db1.log.entryCoordinatesIndex.iterate().all();
 					const entryRefs2 = await db2.log.entryCoordinatesIndex.iterate().all();
 		
@@ -5220,10 +5249,30 @@ testSetups.forEach((setup) => {
 					const slowController = new AbortController();
 
 					// Keep replication updates slow, but allow many prune messages to get "in flight".
-					slowDownMessage(db1.log, RequestIPrune, 1500, slowController.signal);
-					slowDownMessage(db2.log, RequestIPrune, 1500, slowController.signal);
-					slowDownMessage(db2.log, ResponseIPrune, 1500, slowController.signal);
-					slowDownMessage(db3.log, ResponseIPrune, 1500, slowController.signal);
+					slowDownMessage(
+						db1.log,
+						RequestIPruneV2,
+						1500,
+						slowController.signal,
+					);
+					slowDownMessage(
+						db2.log,
+						RequestIPruneV2,
+						1500,
+						slowController.signal,
+					);
+					slowDownMessage(
+						db2.log,
+						ResponseIPruneV2,
+						1500,
+						slowController.signal,
+					);
+					slowDownMessage(
+						db3.log,
+						ResponseIPruneV2,
+						1500,
+						slowController.signal,
+					);
 
 					const range1 = (
 						await db1.log.getMyReplicationSegments()

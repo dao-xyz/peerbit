@@ -4,7 +4,7 @@
 //   RECEIVE_PRUNE_COUNTS=100,1000,5000 RECEIVE_PRUNE_WARMUP_RUNS=1 RECEIVE_PRUNE_RUNS=1 BENCH_JSON=1 pnpm run benchmark:receive-prune
 //   RECEIVE_PRUNE_SCENARIOS=raw-receive-native,raw-receive-native-backbone,raw-receive-native-coordinate-wal,raw-receive-native-backbone-replicating,raw-receive-native-coordinate-wal-replicating,raw-receive-native-coordinate-wal-replicating-defer-verify,raw-receive-native-coordinate-wal-half,raw-receive-native-coordinate-wal-verify-prepare,raw-receive-native-backbone-select-all,raw-receive-native-coordinate-wal-select-all,raw-receive-native-backbone-select-half,raw-receive-native-coordinate-wal-select-half,raw-receive-native-backbone-drop,raw-receive-native-backbone-drop-verify-prepare,request-prune-native-confirm,request-prune-native-backbone-confirm RECEIVE_PRUNE_COUNTS=1000 pnpm run benchmark:receive-prune
 import { deserialize, serialize } from "@dao-xyz/borsh";
-import { DecryptedThing, PreHash } from "@peerbit/crypto";
+import { DecryptedThing, PreHash, randomBytes } from "@peerbit/crypto";
 import { create as createRustIndexer } from "@peerbit/indexer-rust";
 import {
 	NativeBackboneCoordinatePersistence,
@@ -24,7 +24,8 @@ import { performance } from "node:perf_hooks";
 import { v4 as uuid } from "uuid";
 import {
 	type RawExchangeHeadsMessage,
-	RequestIPrune,
+	RequestIPruneV2,
+	ResponseIPruneV2,
 	createRawExchangeHeadsMessages,
 } from "../src/exchange-heads.js";
 import { TransportMessage } from "../src/message.js";
@@ -719,23 +720,37 @@ const installFastLeaderWaits = (store: EventStore<string, any>) => {
 };
 
 const suppressPruneResponses = (store: EventStore<string, any>) => {
-	const debounced = (store.log as any).responseToPruneDebouncedFn;
-	const originalAdd = debounced.add;
-	debounced.add = () => undefined;
+	const rpc = (store.log as any).rpc;
+	const originalSend = rpc.send;
+	rpc.send = async (message: unknown, ...args: unknown[]) => {
+		if (message instanceof ResponseIPruneV2) {
+			return;
+		}
+		return originalSend.call(rpc, message, ...args);
+	};
 	return () => {
-		debounced.add = originalAdd;
+		rpc.send = originalSend;
 	};
 };
 
-const clearPendingIHaves = (store: EventStore<string, any>) => {
-	const pending = (store.log as any)._pendingIHave as Map<
-		string,
-		{ clear?: () => void }
-	>;
-	for (const value of pending.values()) {
-		value.clear?.();
+const createCheckedPruneRequestBatches = (hashes: string[]) => {
+	const requests = hashes.map((hash) => ({
+		hash,
+		requestId: randomBytes(32),
+	}));
+	const batches: RequestIPruneV2[] = [];
+	for (let offset = 0; offset < requests.length; offset += 1_024) {
+		batches.push(
+			new RequestIPruneV2({
+				requests: requests.slice(offset, offset + 1_024),
+			}),
+		);
 	}
-	pending.clear();
+	return batches;
+};
+
+const clearPendingIHaves = (store: EventStore<string, any>) => {
+	(store.log as any).clearPendingIHaves();
 };
 
 const runRequestPruneNativeConfirm = async (
@@ -755,13 +770,16 @@ const runRequestPruneNativeConfirm = async (
 			},
 		});
 		const hashes = await appendIndependentEntries(db, count);
+		const requestBatches = createCheckedPruneRequestBatches(hashes);
 		const restoreWaits = installFastLeaderWaits(db);
 		const restoreResponses = suppressPruneResponses(db);
 		try {
 			const started = performance.now();
-			await db.log.onMessage(new RequestIPrune({ hashes }), {
-				from: session.peers[0].identity.publicKey,
-			} as any);
+			for (const request of requestBatches) {
+				await db.log.onMessage(request, {
+					from: session.peers[0].identity.publicKey,
+				} as any);
+			}
 			const elapsed = performance.now() - started;
 
 			return {
@@ -790,6 +808,7 @@ const runRequestPrunePendingIHave = async (
 	count: number,
 	run: number,
 ): Promise<BenchRow> => {
+	const acceptedCount = Math.min(count, 1_024);
 	const session = await TestSession.disconnected(2, {
 		indexer: (directory) => createRustIndexer(directory),
 	});
@@ -802,21 +821,24 @@ const runRequestPrunePendingIHave = async (
 		const target = await session.peers[1].open(new EventStore<string, any>(), {
 			args: createOpenArgs(targetProfileEvents),
 		});
-		const hashes = await appendIndependentEntries(source, count);
+		const hashes = await appendIndependentEntries(source, acceptedCount);
+		const requestBatches = createCheckedPruneRequestBatches(hashes);
 
 		try {
 			const started = performance.now();
-			await target.log.onMessage(new RequestIPrune({ hashes }), {
-				from: source.node.identity.publicKey,
-			} as any);
+			for (const request of requestBatches) {
+				await target.log.onMessage(request, {
+					from: source.node.identity.publicKey,
+				} as any);
+			}
 			const elapsed = performance.now() - started;
 
 			return {
 				scenario: "request-prune-pending-ihave",
-				count,
+				count: acceptedCount,
 				run,
 				elapsedMs: elapsed,
-				opsPerSecond: (count / elapsed) * 1000,
+				opsPerSecond: (acceptedCount / elapsed) * 1000,
 				profile: summarizeProfileEvents(targetProfileEvents),
 			};
 		} finally {
@@ -1014,7 +1036,11 @@ for (const scenario of scenarios) {
 
 const aggregateRows = [...new Set(rows.map((row) => row.scenario))].flatMap(
 	(scenario) =>
-		counts.map((count) => {
+		[
+			...new Set(
+				rows.filter((row) => row.scenario === scenario).map((row) => row.count),
+			),
+		].map((count) => {
 			const samples = rows.filter(
 				(row) => row.scenario === scenario && row.count === count,
 			);

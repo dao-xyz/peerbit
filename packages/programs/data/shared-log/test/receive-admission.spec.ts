@@ -1,4 +1,6 @@
+import { randomBytes, toHexString } from "@peerbit/crypto";
 import { Entry } from "@peerbit/log";
+import { AcknowledgeDelivery } from "@peerbit/stream-interface";
 import { TestSession } from "@peerbit/test-utils";
 import { waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
@@ -8,8 +10,11 @@ import { v4 as uuid } from "uuid";
 import {
 	EntryWithRefs,
 	ExchangeHeadsMessage,
-	RequestIPrune,
+	RequestIPruneV2,
 	ResponseIPrune,
+	ResponseIPruneV2,
+	SYNC_CAPABILITY_CHECKED_PRUNE_HANDOFF,
+	SYNC_CAPABILITY_RAW_EXCHANGE_HEADS,
 	SyncCapabilitiesMessage,
 } from "../src/exchange-heads.js";
 import { createReplicationDomainHash } from "../src/replication-domain-hash.js";
@@ -135,12 +140,28 @@ describe("receive admission", () => {
 				expect(sharedLog._replicationInfoBlockedPeers.has(sourceHash)).to.be
 					.true;
 
-				await target.log.onMessage(new SyncCapabilitiesMessage(), {
-					from: sourceKey,
-				} as any);
+				const advertisedCapabilities =
+					SYNC_CAPABILITY_RAW_EXCHANGE_HEADS |
+					SYNC_CAPABILITY_CHECKED_PRUNE_HANDOFF;
+				await target.log.onMessage(
+					new SyncCapabilitiesMessage({
+						capabilities: advertisedCapabilities,
+					}),
+					{
+						from: sourceKey,
+					} as any,
+				);
+				await target.log.onMessage(
+					new SyncCapabilitiesMessage({ capabilities: 0 }),
+					{
+						from: sourceKey,
+					} as any,
+				);
 				await subscription;
 
-				expect(sharedLog._peerSyncCapabilities.get(sourceHash)).to.equal(1);
+				expect(sharedLog._peerSyncCapabilities.get(sourceHash)).to.equal(
+					advertisedCapabilities,
+				);
 				expect(sharedLog._subscriptionOpeningEpochByPeer.has(sourceHash)).to.be
 					.false;
 				expect(sharedLog._replicationInfoBlockedPeers.has(sourceHash)).to.be
@@ -371,13 +392,13 @@ describe("receive admission", () => {
 		}
 	});
 
-	it("drains asynchronous prune-response side effects before cleanup", async () => {
+	it("drains asynchronous correlated prune-response side effects before cleanup", async () => {
 		const session = await TestSession.disconnected(2);
-		const pendingResolveEntered = pDefer<void>();
-		const lateResolveEntered = pDefer<void>();
-		const pendingResolveFinished = pDefer<void>();
-		const releasePendingResponse = pDefer<void>();
-		const releaseLateResponse = pDefer<void>();
+		const firstResolveEntered = pDefer<void>();
+		const secondResolveEntered = pDefer<void>();
+		const firstResolveFinished = pDefer<void>();
+		const releaseFirstResponse = pDefer<void>();
+		const releaseSecondResponse = pDefer<void>();
 		try {
 			const store = new EventStore<string, any>();
 			const source = await session.peers[0].open(store.clone(), {
@@ -389,60 +410,102 @@ describe("receive admission", () => {
 			const sharedLog = target.log as any;
 			const sourceKey = source.node.identity.publicKey;
 			const sourceHash = sourceKey.hashcode();
-			const pendingHash = "pending-prune-response";
-			const { entry: retryEntry } = await source.add(uuid(), {
+			const { entry: firstEntry } = await source.add(uuid(), {
 				meta: { next: [] },
 			});
-			const lateHash = retryEntry.hash;
+			const { entry: secondEntry } = await source.add(uuid(), {
+				meta: { next: [] },
+			});
+			const leaders = new Map([[sourceHash, { intersecting: true }]]);
+			let resolveCalls = 0;
 			const installPending = (
-				hash: string,
+				entry: Entry<any>,
+				requestIdBytes: Uint8Array,
 				entered: DeferredPromise<void>,
 				release: DeferredPromise<void>,
 				finished?: DeferredPromise<void>,
 			) => {
 				const pendingPromise = pDefer<void>();
-				sharedLog._checkedPrune.pendingDeletes.set(hash, {
+				const requestId = toHexString(requestIdBytes);
+				let pending: any;
+				pending = {
 					promise: pendingPromise,
 					clear: () => {},
 					reject: () => {},
-					resolve: async (peerHash: string) => {
+					resolve: async (peerHash: string, responseRequestId: string) => {
+						resolveCalls++;
+						expect(peerHash).to.equal(sourceHash);
+						expect(responseRequestId).to.equal(requestId);
 						entered.resolve();
 						await release.promise;
-						sharedLog._checkedPrune.addConfirmedReplicator(hash, peerHash);
+						sharedLog._checkedPrune.addConfirmedReplicator(
+							entry.hash,
+							peerHash,
+							pending,
+							responseRequestId,
+						);
 						finished?.resolve();
 					},
-				});
+				};
+				sharedLog._checkedPrune.setPendingDelete(
+					entry.hash,
+					pending,
+					entry,
+					leaders,
+				);
+				expect(
+					sharedLog._checkedPrune.addRequestSent(
+						entry.hash,
+						sourceHash,
+						requestId,
+					),
+				).to.be.true;
 			};
+			const firstRequestId = randomBytes(32);
+			const secondRequestId = randomBytes(32);
 			installPending(
-				pendingHash,
-				pendingResolveEntered,
-				releasePendingResponse,
-				pendingResolveFinished,
+				firstEntry,
+				firstRequestId,
+				firstResolveEntered,
+				releaseFirstResponse,
+				firstResolveFinished,
 			);
-			const leaders = new Map([[sourceHash, { intersecting: true }]]);
-			sharedLog._checkedPrune.setRetry(lateHash, {
-				attempts: 1,
-				entry: retryEntry,
-				leaders,
-			});
-			const findLeaders = sinon
-				.stub(sharedLog, "findLeadersFromEntry")
-				.resolves(leaders);
-			const prune = sinon.stub(sharedLog, "prune").callsFake((...args: unknown[]) => {
-				const entries = args[0] as Map<string, unknown>;
-				expect(entries.has(lateHash)).to.be.true;
-				installPending(lateHash, lateResolveEntered, releaseLateResponse);
-				return [Promise.resolve()];
-			});
+			installPending(
+				secondEntry,
+				secondRequestId,
+				secondResolveEntered,
+				releaseSecondResponse,
+			);
 
 			try {
+				await target.log.onMessage(
+					new SyncCapabilitiesMessage({
+						capabilities: SYNC_CAPABILITY_CHECKED_PRUNE_HANDOFF,
+					}),
+					{ from: sourceKey } as any,
+				);
+				// Legacy hash-only responses are deliberately fail-closed and must
+				// not enter either exact-generation resolver.
+				await target.log.onMessage(
+					new ResponseIPrune({
+						hashes: [firstEntry.hash, secondEntry.hash],
+					}),
+					{ from: sourceKey } as any,
+				);
+				expect(resolveCalls).to.equal(0);
+
 				const receive = target.log.onMessage(
-					new ResponseIPrune({ hashes: [pendingHash, lateHash] }),
+					new ResponseIPruneV2({
+						requests: [
+							{ hash: firstEntry.hash, requestId: firstRequestId },
+							{ hash: secondEntry.hash, requestId: secondRequestId },
+						],
+					}),
 					{ from: sourceKey } as any,
 				);
 				await Promise.all([
-					pendingResolveEntered.promise,
-					lateResolveEntered.promise,
+					firstResolveEntered.promise,
+					secondResolveEntered.promise,
 				]);
 
 				let unsubscribeSettled = false;
@@ -459,15 +522,20 @@ describe("receive admission", () => {
 				);
 				expect(unsubscribeSettled).to.be.false;
 
-				releasePendingResponse.resolve();
-				await pendingResolveFinished.promise;
+				releaseFirstResponse.resolve();
+				await firstResolveFinished.promise;
+				expect(
+					sharedLog._checkedPrune
+						.getConfirmedReplicators(firstEntry.hash)
+						?.has(sourceHash),
+				).to.be.true;
 				await new Promise<void>((resolve) => setTimeout(resolve, 0));
 				expect(sharedLog._activeReceiveHandlersByPeer.has(sourceHash)).to.be.true;
 				expect(unsubscribeSettled).to.be.false;
 
-				releaseLateResponse.resolve();
+				releaseSecondResponse.resolve();
 				await Promise.all([receive, unsubscribe]);
-				for (const hash of [pendingHash, lateHash]) {
+				for (const hash of [firstEntry.hash, secondEntry.hash]) {
 					expect(
 						sharedLog._checkedPrune
 							.getConfirmedReplicators(hash)
@@ -478,14 +546,12 @@ describe("receive admission", () => {
 					.false;
 				expect(sharedLog._receiveCleanupGateByPeer.has(sourceHash)).to.be.false;
 			} finally {
-				releasePendingResponse.resolve();
-				releaseLateResponse.resolve();
-				prune.restore();
-				findLeaders.restore();
+				releaseFirstResponse.resolve();
+				releaseSecondResponse.resolve();
 			}
 		} finally {
-			releasePendingResponse.resolve();
-			releaseLateResponse.resolve();
+			releaseFirstResponse.resolve();
+			releaseSecondResponse.resolve();
 			await session.stop();
 		}
 	});
@@ -505,7 +571,11 @@ describe("receive admission", () => {
 			});
 			const sharedLog = target.log as any;
 			const sourceKey = source.node.identity.publicKey;
-			const hash = "close-cancels-prune-response-leader-wait";
+			const sourceHash = sourceKey.hashcode();
+			const { entry } = await source.add(uuid(), { meta: { next: [] } });
+			const hash = entry.hash;
+			const requestIdBytes = randomBytes(32);
+			const requestId = toHexString(requestIdBytes);
 			const pendingPromise = pDefer<void>();
 			let waitCount = 0;
 			let secondWaitHasEntered = false;
@@ -529,20 +599,40 @@ describe("receive admission", () => {
 				);
 			};
 
-			sharedLog._checkedPrune.pendingDeletes.set(hash, {
+			let pending: any;
+			pending = {
 				promise: pendingPromise,
 				clear: () => {},
 				reject: () => {},
-				resolve: async () => {
+				resolve: async (peerHash: string, responseRequestId: string) => {
+					expect(peerHash).to.equal(sourceHash);
+					expect(responseRequestId).to.equal(requestId);
 					expect(await waitForMissingLeader()).to.be.false;
 					// This wait begins after the close signal has already fired. It must
 					// observe the latched abort instead of waiting for its full timeout.
 					expect(await waitForMissingLeader()).to.be.false;
 				},
-			});
+			};
+			sharedLog._checkedPrune.setPendingDelete(
+				hash,
+				pending,
+				entry,
+				new Map([[sourceHash, { intersecting: true }]]),
+			);
+			expect(
+				sharedLog._checkedPrune.addRequestSent(hash, sourceHash, requestId),
+			).to.be.true;
+			await target.log.onMessage(
+				new SyncCapabilitiesMessage({
+					capabilities: SYNC_CAPABILITY_CHECKED_PRUNE_HANDOFF,
+				}),
+				{ from: sourceKey } as any,
+			);
 
 			const receive = target.log.onMessage(
-				new ResponseIPrune({ hashes: [hash] }),
+				new ResponseIPruneV2({
+					requests: [{ hash, requestId: requestIdBytes }],
+				}),
 				{ from: sourceKey } as any,
 			);
 			await firstWaitEntered.promise;
@@ -656,20 +746,41 @@ describe("receive admission", () => {
 			const firstHash = firstKey.hashcode();
 			const secondKey = session.peers[2].identity.publicKey;
 			const secondHash = secondKey.hashcode();
+			const firstRequestId = randomBytes(32);
+			const secondRequestId = randomBytes(32);
 
+			for (const from of [firstKey, secondKey]) {
+				await target.log.onMessage(
+					new SyncCapabilitiesMessage({
+						capabilities: SYNC_CAPABILITY_CHECKED_PRUNE_HANDOFF,
+					}),
+					{ from } as any,
+				);
+			}
 			await target.log.onMessage(
-				new RequestIPrune({ hashes: [entry.hash] }),
+				new RequestIPruneV2({
+					requests: [{ hash: entry.hash, requestId: firstRequestId }],
+				}),
 				{ from: firstKey } as any,
 			);
 			await target.log.onMessage(
-				new RequestIPrune({ hashes: [entry.hash] }),
+				new RequestIPruneV2({
+					requests: [{ hash: entry.hash, requestId: secondRequestId }],
+				}),
 				{ from: secondKey } as any,
 			);
 			const pending = sharedLog._pendingIHave.get(entry.hash);
 			expect([...pending.requesting]).to.have.members([firstHash, secondHash]);
+			expect([...pending.requestIdsByPeer.get(firstHash)]).to.deep.equal([
+				...firstRequestId,
+			]);
+			expect([...pending.requestIdsByPeer.get(secondHash)]).to.deep.equal([
+				...secondRequestId,
+			]);
 
 			sharedLog.cleanupPeerDisconnectTracking(firstHash);
 			expect([...pending.requesting]).to.deep.equal([secondHash]);
+			expect(pending.requestIdsByPeer.has(firstHash)).to.be.false;
 			expect(sharedLog._pendingIHave.get(entry.hash)).to.equal(pending);
 
 			const selfHash = target.node.identity.publicKey.hashcode();
@@ -679,23 +790,44 @@ describe("receive admission", () => {
 					args[3]?.onLeader?.(selfHash);
 					return new Map([[selfHash, { intersecting: true }]]);
 				});
-			const responseAdd = sinon.spy(sharedLog.responseToPruneDebouncedFn, "add");
+			const hasMany = sinon
+				.stub(sharedLog.log.blocks, "hasMany")
+				.resolves([true]);
+			const finalLeaderPlan = sinon
+				.stub(sharedLog, "revalidateCheckedPruneGrantLocalLeaders")
+				.resolves(new Set([entry.hash]));
+			const responses: Array<{ message: ResponseIPruneV2; options: any }> = [];
+			const responseSend = sinon
+				.stub(sharedLog.rpc, "send")
+				.callsFake(async (message: unknown, options: any) => {
+					if (message instanceof ResponseIPruneV2) {
+						responses.push({ message, options });
+					}
+				});
 			const synchronizerEntryAdded = sinon
 				.stub(sharedLog.syncronizer, "onEntryAdded")
 				.callsFake(() => {});
 
 			try {
 				sharedLog.onEntryAdded(entry);
-				await waitForResolved(() => expect(responseAdd.calledOnce).to.be.true);
-				const response = responseAdd.firstCall.args[0];
-				expect([...response.peers]).to.deep.equal([secondHash]);
-				await waitForResolved(() =>
-					expect(sharedLog._pendingIHave.has(entry.hash)).to.be.false,
+				await waitForResolved(() => expect(responses).to.have.length(1));
+				const response = responses[0]!;
+				expect(response.options.mode).to.be.instanceOf(AcknowledgeDelivery);
+				expect(response.options.mode.to).to.deep.equal([secondHash]);
+				expect(response.message.requests).to.have.length(1);
+				expect(response.message.requests[0]!.hash).to.equal(entry.hash);
+				expect([...response.message.requests[0]!.requestId]).to.deep.equal([
+					...secondRequestId,
+				]);
+				await waitForResolved(
+					() => expect(sharedLog._pendingIHave.has(entry.hash)).to.be.false,
 				);
 				expect(sharedLog._pendingIHaveCallbacks.size).to.equal(0);
 			} finally {
 				synchronizerEntryAdded.restore();
-				responseAdd.restore();
+				responseSend.restore();
+				finalLeaderPlan.restore();
+				hasMany.restore();
 				waitForEntryReplicators.restore();
 			}
 		} finally {

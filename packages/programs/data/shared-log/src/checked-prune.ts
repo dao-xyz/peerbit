@@ -11,8 +11,10 @@ export type CheckedPruneEntry<T, R extends "u32" | "u64"> =
 
 export type CheckedPrunePendingDelete = {
 	promise: DeferredPromise<void>;
+	background: boolean;
+	promoteToBackground: () => void;
 	clear: () => void;
-	resolve: (publicKeyHash: string) => Promise<void> | void;
+	resolve: (publicKeyHash: string, requestId: string) => Promise<void> | void;
 	reject(reason: any): Promise<void> | void;
 };
 
@@ -24,7 +26,6 @@ export type CheckedPruneRetryState<T, R extends "u32" | "u64"> = {
 };
 
 type CheckedPruneSessionPhase =
-	| "candidate"
 	| "requested"
 	| "confirmed"
 	| "removing"
@@ -45,15 +46,22 @@ type CheckedPruneSession<T, R extends "u32" | "u64"> = {
 export class CheckedPruneCoordinator<T, R extends "u32" | "u64"> {
 	readonly pendingDeletes = new Map<string, CheckedPrunePendingDelete>();
 	readonly requestIPruneSent = new Map<string, Set<string>>();
+	readonly requestIds = new Map<string, Map<string, string>>();
 	readonly responseReplicatorSet = new Map<string, Set<string>>();
+	readonly confirmationIds = new Map<string, Map<string, string>>();
 	readonly retries = new Map<string, CheckedPruneRetryState<T, R>>();
+	private readonly autoResendClaims = new Map<
+		string,
+		Map<string, { pending: CheckedPrunePendingDelete; requestId: string }>
+	>();
+	private readonly grantSends = new Map<string, Set<Promise<void>>>();
 	private readonly sessions = new Map<string, CheckedPruneSession<T, R>>();
 
 	private getOrCreateSession(hash: string): CheckedPruneSession<T, R> {
 		let session = this.sessions.get(hash);
 		if (!session) {
 			session = {
-				phase: "candidate",
+				phase: "requested",
 				contacted: new Set(),
 				confirmed: new Set(),
 			};
@@ -89,17 +97,6 @@ export class CheckedPruneCoordinator<T, R extends "u32" | "u64"> {
 		this.sessions.delete(hash);
 	}
 
-	trackCandidate(
-		hash: string,
-		entry: CheckedPruneEntry<T, R>,
-		leaders: CheckedPruneLeaderMap | Set<string>,
-	) {
-		const session = this.remember(hash, entry, leaders);
-		if (!this.hasActiveWork(hash)) {
-			session.phase = "candidate";
-		}
-	}
-
 	hasActiveWork(hash: string) {
 		return (
 			this.pendingDeletes.has(hash) ||
@@ -123,9 +120,18 @@ export class CheckedPruneCoordinator<T, R extends "u32" | "u64"> {
 		entry: CheckedPruneEntry<T, R>,
 		leaders: CheckedPruneLeaderMap | Set<string>,
 	) {
+		// A new request id starts a new authorization generation. No peer or
+		// confirmation from an older generation may survive into it.
+		this.requestIPruneSent.delete(hash);
+		this.requestIds.delete(hash);
+		this.responseReplicatorSet.delete(hash);
+		this.confirmationIds.delete(hash);
+		this.autoResendClaims.delete(hash);
 		this.pendingDeletes.set(hash, pending);
 		const session = this.remember(hash, entry, leaders);
 		session.pending = pending;
+		session.contacted.clear();
+		session.confirmed.clear();
 		session.phase = "requested";
 	}
 
@@ -149,6 +155,13 @@ export class CheckedPruneCoordinator<T, R extends "u32" | "u64"> {
 		return this.retries.has(hash);
 	}
 
+	isCurrentRetry(hash: string, state: CheckedPruneRetryState<T, R>) {
+		return (
+			this.retries.get(hash) === state &&
+			this.sessions.get(hash)?.retry === state
+		);
+	}
+
 	setRetry(hash: string, state: CheckedPruneRetryState<T, R>) {
 		this.retries.set(hash, state);
 		const session = this.remember(hash, state.entry, state.leaders);
@@ -156,8 +169,11 @@ export class CheckedPruneCoordinator<T, R extends "u32" | "u64"> {
 		session.phase = "retrying";
 	}
 
-	clearRetry(hash: string) {
+	clearRetry(hash: string, expected?: CheckedPruneRetryState<T, R>) {
 		const state = this.retries.get(hash);
+		if (expected && state !== expected) {
+			return false;
+		}
 		if (state?.timer) {
 			clearTimeout(state.timer);
 		}
@@ -167,6 +183,7 @@ export class CheckedPruneCoordinator<T, R extends "u32" | "u64"> {
 			session.retry = undefined;
 		}
 		this.deleteSessionIfIdle(hash);
+		return true;
 	}
 
 	clearRetryTimer(hash: string) {
@@ -178,36 +195,137 @@ export class CheckedPruneCoordinator<T, R extends "u32" | "u64"> {
 		return state;
 	}
 
-	addRequestSent(hash: string, peer: string) {
+	isCurrentRequest(hash: string, pending: CheckedPrunePendingDelete) {
+		const session = this.sessions.get(hash);
+		return (
+			this.pendingDeletes.get(hash) === pending && session?.pending === pending
+		);
+	}
+
+	promoteToBackground(hash: string, pending: CheckedPrunePendingDelete) {
+		if (!this.isCurrentRequest(hash, pending)) {
+			return false;
+		}
+		pending.promoteToBackground();
+		return true;
+	}
+
+	isCurrentRequestForPeer(
+		hash: string,
+		pending: CheckedPrunePendingDelete,
+		peer: string,
+		requestId: string,
+	) {
+		return (
+			this.isCurrentRequest(hash, pending) &&
+			this.requestIPruneSent.get(hash)?.has(peer) === true &&
+			this.requestIds.get(hash)?.get(peer) === requestId
+		);
+	}
+
+	addRequestSent(hash: string, peer: string, requestId: string) {
+		const pending = this.pendingDeletes.get(hash);
+		if (!pending || !this.isCurrentRequest(hash, pending)) {
+			return false;
+		}
+		const previousRequestId = this.requestIds.get(hash)?.get(peer);
+		if (previousRequestId != null && previousRequestId !== requestId) {
+			// Changing the contact generation intrinsically revokes any grant
+			// attached to the previous id. Callers must not be able to preserve an
+			// authorization accidentally by overwriting only the request id.
+			this.removeConfirmedReplicator(hash, peer);
+			this.removeAutoResendClaim(hash, peer);
+		}
 		let set = this.requestIPruneSent.get(hash);
 		if (!set) {
 			set = new Set();
 			this.requestIPruneSent.set(hash, set);
 		}
 		set.add(peer);
+		let ids = this.requestIds.get(hash);
+		if (!ids) {
+			ids = new Map();
+			this.requestIds.set(hash, ids);
+		}
+		ids.set(peer, requestId);
 		const session = this.getOrCreateSession(hash);
 		session.contacted.add(peer);
-		if (session.phase === "candidate") {
-			session.phase = "requested";
+		session.phase = "requested";
+		return true;
+	}
+
+	claimRequestSent(
+		hash: string,
+		peer: string,
+		pending: CheckedPrunePendingDelete,
+		requestId: string,
+	) {
+		if (
+			!this.isCurrentRequest(hash, pending) ||
+			this.requestIPruneSent.get(hash)?.has(peer) === true ||
+			this.requestIds.get(hash)?.has(peer) === true
+		) {
+			return false;
+		}
+		return this.addRequestSent(hash, peer, requestId);
+	}
+
+	claimAutoResend(
+		hash: string,
+		peer: string,
+		pending: CheckedPrunePendingDelete,
+		requestId: string,
+	) {
+		if (
+			!this.isCurrentRequestForPeer(hash, pending, peer, requestId) ||
+			!pending.background
+		) {
+			return false;
+		}
+		let claims = this.autoResendClaims.get(hash);
+		if (!claims) {
+			claims = new Map();
+			this.autoResendClaims.set(hash, claims);
+		}
+		const existing = claims.get(peer);
+		if (existing?.pending === pending && existing.requestId === requestId) {
+			return false;
+		}
+		claims.set(peer, { pending, requestId });
+		return true;
+	}
+
+	private removeAutoResendClaim(hash: string, peer: string) {
+		const claims = this.autoResendClaims.get(hash);
+		claims?.delete(peer);
+		if (claims?.size === 0) {
+			this.autoResendClaims.delete(hash);
 		}
 	}
 
 	removeRequestSent(hash: string, peer?: string) {
 		if (!peer) {
 			this.requestIPruneSent.delete(hash);
+			this.requestIds.delete(hash);
+			this.autoResendClaims.delete(hash);
+			this.clearConfirmedReplicators(hash);
 			const session = this.sessions.get(hash);
 			session?.contacted.clear();
 			this.deleteSessionIfIdle(hash);
 			return;
 		}
 		const set = this.requestIPruneSent.get(hash);
-		if (!set) {
-			return;
+		set?.delete(peer);
+		this.removeConfirmedReplicator(hash, peer);
+		this.removeAutoResendClaim(hash, peer);
+		const ids = this.requestIds.get(hash);
+		ids?.delete(peer);
+		if (ids?.size === 0) {
+			this.requestIds.delete(hash);
 		}
-		set.delete(peer);
 		const session = this.sessions.get(hash);
 		session?.contacted.delete(peer);
-		if (set.size === 0) {
+		if (set?.size === 0) {
 			this.requestIPruneSent.delete(hash);
 			this.deleteSessionIfIdle(hash);
 		}
@@ -222,13 +340,27 @@ export class CheckedPruneCoordinator<T, R extends "u32" | "u64"> {
 		}
 	}
 
-	addConfirmedReplicator(hash: string, peer: string) {
+	addConfirmedReplicator(
+		hash: string,
+		peer: string,
+		pending: CheckedPrunePendingDelete,
+		requestId: string,
+	) {
+		if (!this.isCurrentRequestForPeer(hash, pending, peer, requestId)) {
+			return undefined;
+		}
 		let set = this.responseReplicatorSet.get(hash);
 		if (!set) {
 			set = new Set();
 			this.responseReplicatorSet.set(hash, set);
 		}
 		set.add(peer);
+		let ids = this.confirmationIds.get(hash);
+		if (!ids) {
+			ids = new Map();
+			this.confirmationIds.set(hash, ids);
+		}
+		ids.set(peer, requestId);
 		const session = this.getOrCreateSession(hash);
 		session.confirmed.add(peer);
 		session.phase = "confirmed";
@@ -241,6 +373,11 @@ export class CheckedPruneCoordinator<T, R extends "u32" | "u64"> {
 			return;
 		}
 		set.delete(peer);
+		const ids = this.confirmationIds.get(hash);
+		ids?.delete(peer);
+		if (ids?.size === 0) {
+			this.confirmationIds.delete(hash);
+		}
 		const session = this.sessions.get(hash);
 		session?.confirmed.delete(peer);
 		if (set.size === 0) {
@@ -260,6 +397,7 @@ export class CheckedPruneCoordinator<T, R extends "u32" | "u64"> {
 
 	clearConfirmedReplicators(hash: string) {
 		this.responseReplicatorSet.delete(hash);
+		this.confirmationIds.delete(hash);
 		const session = this.sessions.get(hash);
 		session?.confirmed.clear();
 		this.deleteSessionIfIdle(hash);
@@ -278,8 +416,52 @@ export class CheckedPruneCoordinator<T, R extends "u32" | "u64"> {
 		return this.responseReplicatorSet.get(hash);
 	}
 
+	getConfirmedRequestId(hash: string, peer: string) {
+		return this.confirmationIds.get(hash)?.get(peer);
+	}
+
 	getContactedReplicators(hash: string) {
 		return this.requestIPruneSent.get(hash);
+	}
+
+	getRequestId(hash: string, peer: string) {
+		return this.requestIds.get(hash)?.get(peer);
+	}
+
+	trackGrantSend(hashes: Iterable<string>, send: Promise<void>) {
+		const uniqueHashes = [...new Set(hashes)];
+		const observed = send.then(
+			() => undefined,
+			() => undefined,
+		);
+		for (const hash of uniqueHashes) {
+			let sends = this.grantSends.get(hash);
+			if (!sends) {
+				sends = new Set();
+				this.grantSends.set(hash, sends);
+			}
+			sends.add(observed);
+		}
+		void observed.finally(() => {
+			for (const hash of uniqueHashes) {
+				const sends = this.grantSends.get(hash);
+				sends?.delete(observed);
+				if (sends?.size === 0) {
+					this.grantSends.delete(hash);
+				}
+			}
+		});
+		return observed;
+	}
+
+	async waitForGrantSends(hash?: string) {
+		if (hash) {
+			await Promise.all(this.grantSends.get(hash) ?? []);
+			return;
+		}
+		await Promise.all(
+			[...this.grantSends.values()].flatMap((sends) => [...sends]),
+		);
 	}
 
 	markRemoving(hash: string) {
@@ -287,16 +469,23 @@ export class CheckedPruneCoordinator<T, R extends "u32" | "u64"> {
 		session.phase = "removing";
 	}
 
-	markDone(hash: string) {
+	markDone(hash: string, pending: CheckedPrunePendingDelete) {
+		if (!this.isCurrentRequest(hash, pending)) {
+			return false;
+		}
 		const session = this.sessions.get(hash);
 		if (session) {
 			session.phase = "done";
 		}
 		this.pendingDeletes.delete(hash);
 		this.requestIPruneSent.delete(hash);
+		this.requestIds.delete(hash);
 		this.responseReplicatorSet.delete(hash);
+		this.confirmationIds.delete(hash);
+		this.autoResendClaims.delete(hash);
 		this.clearRetry(hash);
 		this.sessions.delete(hash);
+		return true;
 	}
 
 	markCancelled(hash: string, options?: { preserveRetry?: boolean }) {
@@ -312,7 +501,10 @@ export class CheckedPruneCoordinator<T, R extends "u32" | "u64"> {
 			}
 		}
 		this.requestIPruneSent.delete(hash);
+		this.requestIds.delete(hash);
 		this.responseReplicatorSet.delete(hash);
+		this.confirmationIds.delete(hash);
+		this.autoResendClaims.delete(hash);
 		if (!options?.preserveRetry) {
 			this.clearRetry(hash);
 		}
@@ -320,8 +512,42 @@ export class CheckedPruneCoordinator<T, R extends "u32" | "u64"> {
 	}
 
 	cleanupPeer(peer: string) {
+		const affected = new Map<
+			string,
+			{
+				hash: string;
+				pending: CheckedPrunePendingDelete;
+				entry: CheckedPruneEntry<T, R>;
+				leaders: CheckedPruneLeaderMap | Set<string>;
+			}
+		>();
+		for (const [hash, peers] of this.requestIPruneSent) {
+			if (!peers.has(peer)) {
+				continue;
+			}
+			const session = this.sessions.get(hash);
+			const pending = this.pendingDeletes.get(hash);
+			if (
+				pending &&
+				session?.pending === pending &&
+				session.entry &&
+				session.leaders
+			) {
+				affected.set(hash, {
+					hash,
+					pending,
+					entry: session.entry,
+					leaders: session.leaders,
+				});
+			}
+		}
 		for (const [hash, peers] of this.requestIPruneSent) {
 			peers.delete(peer);
+			const ids = this.requestIds.get(hash);
+			ids?.delete(peer);
+			if (ids?.size === 0) {
+				this.requestIds.delete(hash);
+			}
 			this.sessions.get(hash)?.contacted.delete(peer);
 			if (peers.size === 0) {
 				this.requestIPruneSent.delete(hash);
@@ -331,12 +557,24 @@ export class CheckedPruneCoordinator<T, R extends "u32" | "u64"> {
 
 		for (const [hash, peers] of this.responseReplicatorSet) {
 			peers.delete(peer);
+			const ids = this.confirmationIds.get(hash);
+			ids?.delete(peer);
+			if (ids?.size === 0) {
+				this.confirmationIds.delete(hash);
+			}
 			this.sessions.get(hash)?.confirmed.delete(peer);
 			if (peers.size === 0) {
 				this.responseReplicatorSet.delete(hash);
 				this.deleteSessionIfIdle(hash);
 			}
 		}
+		for (const [hash, claims] of this.autoResendClaims) {
+			claims.delete(peer);
+			if (claims.size === 0) {
+				this.autoResendClaims.delete(hash);
+			}
+		}
+		return [...affected.values()];
 	}
 
 	close() {
@@ -351,7 +589,10 @@ export class CheckedPruneCoordinator<T, R extends "u32" | "u64"> {
 		}
 		this.pendingDeletes.clear();
 		this.requestIPruneSent.clear();
+		this.requestIds.clear();
 		this.responseReplicatorSet.clear();
+		this.confirmationIds.clear();
+		this.autoResendClaims.clear();
 		this.retries.clear();
 		this.sessions.clear();
 	}

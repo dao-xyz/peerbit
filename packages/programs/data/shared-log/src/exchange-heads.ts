@@ -349,10 +349,19 @@ export const EXCHANGE_HEADS_REPAIR_HINT = 1;
 export const SYNC_CAPABILITY_RAW_EXCHANGE_HEADS = 1;
 
 /**
+ * Capability bit: the peer supports request-correlated checked-prune handoffs.
+ *
+ * A correlated response can authorize deletion only for the exact random
+ * request id that is still active locally. Peers that do not advertise this
+ * capability are excluded from checked-prune confirmation quorums.
+ */
+export const SYNC_CAPABILITY_CHECKED_PRUNE_HANDOFF = 1 << 1;
+
+/**
  * One-shot capability advertisement, sent to a peer when it (or we) subscribe
- * to the program topic and `sync.rawExchangeHeads` is enabled. Peers that do
- * not know this message drop it as an unknown variant; peers that never
- * advertise keep receiving the plain `ExchangeHeadsMessage` path.
+ * to the program topic. Peers that do not know this message drop it as an
+ * unknown variant. Optional protocol paths remain disabled until their
+ * corresponding bit is observed.
  */
 @variant([0, 10])
 export class SyncCapabilitiesMessage extends TransportMessage {
@@ -1103,6 +1112,66 @@ export class ResponseIPrune extends TransportMessage {
 	constructor(props: { hashes: string[] }) {
 		super();
 		this.hashes = props.hashes;
+	}
+}
+
+@variant(0)
+export class CheckedPruneRequest {
+	@field({ type: "string" })
+	hash: string;
+
+	@field({ type: fixedArray("u8", 32) })
+	requestId: Uint8Array;
+
+	constructor(props: { hash: string; requestId: Uint8Array }) {
+		this.hash = props.hash;
+		this.requestId = props.requestId;
+	}
+}
+
+/**
+ * Checked-prune request whose random id distinguishes this attempt from every
+ * earlier or later attempt for the same entry and peer.
+ */
+@variant([0, 11])
+export class RequestIPruneV2 extends TransportMessage {
+	@field({ type: vec(CheckedPruneRequest) })
+	requests: CheckedPruneRequest[];
+
+	constructor(props: {
+		requests: Array<
+			CheckedPruneRequest | { hash: string; requestId: Uint8Array }
+		>;
+	}) {
+		super();
+		this.requests = props.requests.map((request) =>
+			request instanceof CheckedPruneRequest
+				? request
+				: new CheckedPruneRequest(request),
+		);
+	}
+}
+
+/**
+ * Exact echo of the checked-prune attempts for which this responder currently
+ * accepts responsibility.
+ */
+@variant([0, 12])
+export class ResponseIPruneV2 extends TransportMessage {
+	@field({ type: vec(CheckedPruneRequest) })
+	requests: CheckedPruneRequest[];
+
+	constructor(props: {
+		requests: Array<
+			CheckedPruneRequest | { hash: string; requestId: Uint8Array }
+		>;
+	}) {
+		super();
+		this.requests = props.requests.map((request) =>
+			request instanceof CheckedPruneRequest
+				? request
+				: new CheckedPruneRequest(request),
+		);
 	}
 }
 
