@@ -8,8 +8,8 @@ import { v4 as uuid } from "uuid";
 import {
 	EntryWithRefs,
 	ExchangeHeadsMessage,
-	RequestIPrune,
-	ResponseIPrune,
+	RequestIPruneV2,
+	ResponseIPruneV2,
 	SyncCapabilitiesMessage,
 } from "../src/exchange-heads.js";
 import { createReplicationDomainHash } from "../src/replication-domain-hash.js";
@@ -390,54 +390,65 @@ describe("receive admission", () => {
 			const sourceKey = source.node.identity.publicKey;
 			const sourceHash = sourceKey.hashcode();
 			const pendingHash = "pending-prune-response";
-			const { entry: retryEntry } = await source.add(uuid(), {
-				meta: { next: [] },
-			});
-			const lateHash = retryEntry.hash;
+			const lateHash = "second-pending-prune-response";
 			const installPending = (
 				hash: string,
+				requestId: Uint8Array,
 				entered: DeferredPromise<void>,
 				release: DeferredPromise<void>,
 				finished?: DeferredPromise<void>,
 			) => {
 				const pendingPromise = pDefer<void>();
-				sharedLog._checkedPrune.pendingDeletes.set(hash, {
+				const pending = {
+					requestId,
 					promise: pendingPromise,
 					clear: () => {},
 					reject: () => {},
-					resolve: async (peerHash: string) => {
+					resolve: async (peerHash: string, responseRequestId: Uint8Array) => {
+						expect(responseRequestId).to.deep.equal(requestId);
 						entered.resolve();
 						await release.promise;
-						sharedLog._checkedPrune.addConfirmedReplicator(hash, peerHash);
+						sharedLog._checkedPrune.addConfirmedReplicator(
+							hash,
+							peerHash,
+							pending,
+							responseRequestId,
+						);
 						finished?.resolve();
 					},
-				});
+				};
+				sharedLog._checkedPrune.setPendingDelete(
+					hash,
+					pending,
+					{ hash } as any,
+					new Map(),
+				);
+				sharedLog._checkedPrune.addRequestSent(hash, sourceHash, pending);
 			};
+			const pendingRequestId = new Uint8Array(32).fill(1);
+			const lateRequestId = new Uint8Array(32).fill(2);
 			installPending(
 				pendingHash,
+				pendingRequestId,
 				pendingResolveEntered,
 				releasePendingResponse,
 				pendingResolveFinished,
 			);
-			const leaders = new Map([[sourceHash, { intersecting: true }]]);
-			sharedLog._checkedPrune.setRetry(lateHash, {
-				attempts: 1,
-				entry: retryEntry,
-				leaders,
-			});
-			const findLeaders = sinon
-				.stub(sharedLog, "findLeadersFromEntry")
-				.resolves(leaders);
-			const prune = sinon.stub(sharedLog, "prune").callsFake((...args: unknown[]) => {
-				const entries = args[0] as Map<string, unknown>;
-				expect(entries.has(lateHash)).to.be.true;
-				installPending(lateHash, lateResolveEntered, releaseLateResponse);
-				return [Promise.resolve()];
-			});
+			installPending(
+				lateHash,
+				lateRequestId,
+				lateResolveEntered,
+				releaseLateResponse,
+			);
 
 			try {
 				const receive = target.log.onMessage(
-					new ResponseIPrune({ hashes: [pendingHash, lateHash] }),
+					new ResponseIPruneV2({
+						requests: [
+							{ hash: pendingHash, requestId: pendingRequestId },
+							{ hash: lateHash, requestId: lateRequestId },
+						],
+					}),
 					{ from: sourceKey } as any,
 				);
 				await Promise.all([
@@ -480,8 +491,6 @@ describe("receive admission", () => {
 			} finally {
 				releasePendingResponse.resolve();
 				releaseLateResponse.resolve();
-				prune.restore();
-				findLeaders.restore();
 			}
 		} finally {
 			releasePendingResponse.resolve();
@@ -490,85 +499,53 @@ describe("receive admission", () => {
 		}
 	});
 
-	it("cancels leader waits before draining prune responses on close", async () => {
-		const session = await TestSession.disconnected(2);
-		const firstWaitEntered = pDefer<void>();
-		const secondWaitEntered = pDefer<void>();
-		const releaseFirstCheck = pDefer<void>();
+	it("drains in-flight leader checks and observes a latched lifecycle abort", async () => {
+		const session = await TestSession.disconnected(1);
+		const checkEntered = pDefer<void>();
+		const releaseCheck = pDefer<void>();
 		try {
-			const store = new EventStore<string, any>();
-			const source = await session.peers[0].open(store.clone(), {
-				args: { replicate: false, setup },
-			});
-			const target = await session.peers[1].open(store.clone(), {
-				args: { replicate: false, setup },
-			});
+			const target = await session.peers[0].open(
+				new EventStore<string, any>(),
+				{
+					args: { replicate: false, setup },
+				},
+			);
 			const sharedLog = target.log as any;
-			const sourceKey = source.node.identity.publicKey;
-			const hash = "close-cancels-prune-response-leader-wait";
-			const pendingPromise = pDefer<void>();
-			let waitCount = 0;
-			let secondWaitHasEntered = false;
-			const waitForMissingLeader = () => {
-				waitCount += 1;
-				const currentWait = waitCount;
-				if (currentWait === 2) {
-					secondWaitHasEntered = true;
-					secondWaitEntered.resolve();
-				}
-				return sharedLog.waitForLeaderSelection(
+			let settled = false;
+			const waiting = sharedLog
+				.waitForLeaderSelection(
 					[{ key: "missing-replicator", replicator: true }],
 					{ timeout: 60_000 },
 					async () => {
-						if (currentWait === 1) {
-							firstWaitEntered.resolve();
-							await releaseFirstCheck.promise;
-						}
+						checkEntered.resolve();
+						await releaseCheck.promise;
 						return new Map();
 					},
-				);
-			};
+				)
+				.then((result: unknown) => {
+					settled = true;
+					return result;
+				});
 
-			sharedLog._checkedPrune.pendingDeletes.set(hash, {
-				promise: pendingPromise,
-				clear: () => {},
-				reject: () => {},
-				resolve: async () => {
-					expect(await waitForMissingLeader()).to.be.false;
-					// This wait begins after the close signal has already fired. It must
-					// observe the latched abort instead of waiting for its full timeout.
-					expect(await waitForMissingLeader()).to.be.false;
-				},
-			});
-
-			const receive = target.log.onMessage(
-				new ResponseIPrune({ hashes: [hash] }),
-				{ from: sourceKey } as any,
-			);
-			await firstWaitEntered.promise;
-
-			let closeSettled = false;
-			const close = target.close().then(() => {
-				closeSettled = true;
-			});
-			await waitForResolved(() =>
-				expect(sharedLog._replicationLifecycleController.signal.aborted).to.be
-					.true,
-			);
-			expect(sharedLog._closeController.signal.aborted).to.be.false;
+			await checkEntered.promise;
+			sharedLog._replicationLifecycleController.abort();
 			await new Promise<void>((resolve) => setTimeout(resolve, 0));
-			// Aborting the outer wait must not release the receive lease while its
-			// already-admitted leader check can still perform local persistence.
-			expect(secondWaitHasEntered).to.be.false;
-			expect(closeSettled).to.be.false;
-			releaseFirstCheck.resolve();
-			await secondWaitEntered.promise;
-			await waitForResolved(() => expect(closeSettled).to.be.true, {
-				timeout: 2_000,
-			});
-			await Promise.all([receive, close]);
+			expect(settled).to.be.false;
+
+			const lateCheck = sinon.spy(async () => new Map());
+			expect(
+				await sharedLog.waitForLeaderSelection(
+					[{ key: "missing-replicator", replicator: true }],
+					{ timeout: 60_000 },
+					lateCheck,
+				),
+			).to.be.false;
+			expect(lateCheck.called).to.be.false;
+
+			releaseCheck.resolve();
+			expect(await waiting).to.be.false;
 		} finally {
-			releaseFirstCheck.resolve();
+			releaseCheck.resolve();
 			await session.stop();
 		}
 	});
@@ -656,47 +633,52 @@ describe("receive admission", () => {
 			const firstHash = firstKey.hashcode();
 			const secondKey = session.peers[2].identity.publicKey;
 			const secondHash = secondKey.hashcode();
+			const firstRequestId = new Uint8Array(32).fill(4);
+			const secondRequestId = new Uint8Array(32).fill(5);
 
 			await target.log.onMessage(
-				new RequestIPrune({ hashes: [entry.hash] }),
+				new RequestIPruneV2({
+					requests: [{ hash: entry.hash, requestId: firstRequestId }],
+				}),
 				{ from: firstKey } as any,
 			);
 			await target.log.onMessage(
-				new RequestIPrune({ hashes: [entry.hash] }),
+				new RequestIPruneV2({
+					requests: [{ hash: entry.hash, requestId: secondRequestId }],
+				}),
 				{ from: secondKey } as any,
 			);
 			const pending = sharedLog._pendingIHave.get(entry.hash);
-			expect([...pending.requesting]).to.have.members([firstHash, secondHash]);
+			expect([...pending.requesting.keys()]).to.have.members([
+				firstHash,
+				secondHash,
+			]);
 
 			sharedLog.cleanupPeerDisconnectTracking(firstHash);
-			expect([...pending.requesting]).to.deep.equal([secondHash]);
+			expect([...pending.requesting.keys()]).to.deep.equal([secondHash]);
 			expect(sharedLog._pendingIHave.get(entry.hash)).to.equal(pending);
 
-			const selfHash = target.node.identity.publicKey.hashcode();
-			const waitForEntryReplicators = sinon
-				.stub(sharedLog, "_waitForEntryReplicators")
-				.callsFake(async (...args: any[]) => {
-					args[3]?.onLeader?.(selfHash);
-					return new Map([[selfHash, { intersecting: true }]]);
-				});
-			const responseAdd = sinon.spy(sharedLog.responseToPruneDebouncedFn, "add");
+			const sendGrants = sinon
+				.stub(sharedLog, "admitAndSendCheckedPruneGrants")
+				.resolves();
 			const synchronizerEntryAdded = sinon
 				.stub(sharedLog.syncronizer, "onEntryAdded")
 				.callsFake(() => {});
 
 			try {
 				sharedLog.onEntryAdded(entry);
-				await waitForResolved(() => expect(responseAdd.calledOnce).to.be.true);
-				const response = responseAdd.firstCall.args[0];
-				expect([...response.peers]).to.deep.equal([secondHash]);
-				await waitForResolved(() =>
-					expect(sharedLog._pendingIHave.has(entry.hash)).to.be.false,
+				await waitForResolved(() => expect(sendGrants.calledOnce).to.be.true);
+				expect(sendGrants.firstCall.args[0]).to.equal(secondHash);
+				expect(sendGrants.firstCall.args[1]).to.deep.equal([
+					{ hash: entry.hash, requestId: secondRequestId },
+				]);
+				await waitForResolved(
+					() => expect(sharedLog._pendingIHave.has(entry.hash)).to.be.false,
 				);
 				expect(sharedLog._pendingIHaveCallbacks.size).to.equal(0);
 			} finally {
 				synchronizerEntryAdded.restore();
-				responseAdd.restore();
-				waitForEntryReplicators.restore();
+				sendGrants.restore();
 			}
 		} finally {
 			await session.stop();

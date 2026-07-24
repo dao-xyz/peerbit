@@ -1106,6 +1106,58 @@ export class ResponseIPrune extends TransportMessage {
 	}
 }
 
+@variant(0)
+export class CheckedPruneRequest {
+	@field({ type: "string" })
+	hash: string;
+
+	@field({ type: fixedArray("u8", 32) })
+	requestId: Uint8Array;
+
+	constructor(props: { hash: string; requestId: Uint8Array }) {
+		this.hash = props.hash;
+		this.requestId = props.requestId;
+	}
+}
+
+@variant([0, 11])
+export class RequestIPruneV2 extends TransportMessage {
+	@field({ type: vec(CheckedPruneRequest) })
+	requests: CheckedPruneRequest[];
+
+	constructor(props: {
+		requests: Array<
+			CheckedPruneRequest | { hash: string; requestId: Uint8Array }
+		>;
+	}) {
+		super();
+		this.requests = props.requests.map((request) =>
+			request instanceof CheckedPruneRequest
+				? request
+				: new CheckedPruneRequest(request),
+		);
+	}
+}
+
+@variant([0, 12])
+export class ResponseIPruneV2 extends TransportMessage {
+	@field({ type: vec(CheckedPruneRequest) })
+	requests: CheckedPruneRequest[];
+
+	constructor(props: {
+		requests: Array<
+			CheckedPruneRequest | { hash: string; requestId: Uint8Array }
+		>;
+	}) {
+		super();
+		this.requests = props.requests.map((request) =>
+			request instanceof CheckedPruneRequest
+				? request
+				: new CheckedPruneRequest(request),
+		);
+	}
+}
+
 const MAX_EXCHANGE_MESSAGE_SIZE = 1e5; // 100kb. Too large size might not be faster (even if we can do 5mb)
 export const MAX_RAW_EXCHANGE_MESSAGE_SIZE = 512 * 1024;
 export const EXCHANGE_HEADS_RESOLVE_BATCH_SIZE = 256;

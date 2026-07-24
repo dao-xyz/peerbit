@@ -21,7 +21,8 @@ import {
 	ExchangeHeadsMessage,
 	RawEntryWithRefs,
 	RawExchangeHeadsMessage,
-	RequestIPrune,
+	RequestIPruneV2,
+	ResponseIPruneV2,
 	collectRawExchangeHeadSendPlan,
 	createRawExchangeHeadsMessages,
 } from "../src/exchange-heads.js";
@@ -2955,7 +2956,7 @@ describe("raw exchange-head sync", () => {
 		}
 	});
 
-	it("batches request-prune bookkeeping while queuing only newly confirmed hashes", async () => {
+	it("batches correlated request-prune bookkeeping and direct grants", async () => {
 		const session = await TestSession.disconnected(2, {
 			indexer: (directory) => createRustIndexer(directory),
 		});
@@ -2987,31 +2988,23 @@ describe("raw exchange-head sync", () => {
 				hashes.push(entry.hash);
 				entries.push(entry);
 			}
-
-			const removeKnownSpy = sinon.spy(
-				db.log as any,
-				"removeEntriesKnownByPeer",
-			);
-			const removePruneRequestsSentSpy = sinon.spy(
-				db.log as any,
-				"removePruneRequestsSent",
-			);
-			const removeConfirmedReplicatorsSpy = sinon.spy(
-				(db.log as any)._checkedPrune,
+			const requests = entries.map((entry, index) => ({
+				hash: entry.hash,
+				requestId: new Uint8Array(32).fill(index + 1),
+			}));
+			const log = db.log as any;
+			const sourceHash = session.peers[0].identity.publicKey.hashcode();
+			const removeKnown = sinon.spy(log, "removeEntriesKnownByPeer");
+			const removeOutbound = sinon.spy(log, "removePruneRequestsSent");
+			const removeConfirmations = sinon.spy(
+				log._checkedPrune,
 				"removeConfirmedReplicators",
 			);
-			const removeGidBatchSpy = sinon.spy(
-				db.log as any,
-				"removePeerFromGidPeerHistoryBatch",
-			);
-			const responseAddStub = sinon
-				.stub((db.log as any).responseToPruneDebouncedFn, "add")
-				.resolves();
-			const hasManyStub = sinon
+			const hasMany = sinon
 				.stub(db.log.log.blocks as any, "hasMany")
 				.resolves(hashes.map(() => true));
-			const nativeMetadataStub = sinon
-				.stub(db.log as any, "getNativeLogEntryMetadataBatch")
+			const nativeMetadata = sinon
+				.stub(log, "getNativeLogEntryMetadataBatch")
 				.returns(
 					entries.map((entry) => ({
 						hash: entry.hash,
@@ -3020,139 +3013,69 @@ describe("raw exchange-head sync", () => {
 					})),
 				);
 			const selfHash = db.node.identity.publicKey.hashcode();
-			const nativePlanner =
-				(db.log as any)._nativeBackbone ?? (db.log as any)._nativeRangePlanner;
+			const nativePlanner = log._nativeBackbone ?? log._nativeRangePlanner;
 			expect(nativePlanner).to.exist;
-			const nativeLocalLeaderHashesStub =
-				"planLocalLeaderHashesForGidsBatch" in nativePlanner &&
-				typeof nativePlanner.planLocalLeaderHashesForGidsBatch === "function"
-					? sinon
-							.stub(nativePlanner, "planLocalLeaderHashesForGidsBatch")
-							.callsFake((items: unknown) => {
-								return new Set(
-									[...(items as Iterable<{ hash: string }>)].map(
-										(item) => item.hash,
-									),
-								);
-							})
-					: undefined;
-			const nativeBatchPlanStub = sinon
+			const batchPlan = sinon
 				.stub(nativePlanner, "planLeadersForGidsBatch")
 				.callsFake((...args: unknown[]) =>
-					[
-						...(args[0] as Iterable<{ gid: string; replicas: number }>),
-					].map((_item, index) => ({
-						coordinates: [index],
-						leaders: new Map([[selfHash, { intersecting: true }]]),
-					})),
+					[...(args[0] as Iterable<{ gid: string; replicas: number }>)].map(
+						(_item, index) => ({
+							coordinates: [index],
+							leaders: new Map([[selfHash, { intersecting: true }]]),
+						}),
+					),
 				);
-			const waitForGidStub = sinon
-				.stub(db.log as any, "_waitForGidReplicators")
-				.callsFake(async (_gid, _replicas, _waitFor, options: any) => {
-					options?.onLeader?.(selfHash);
-					return new Map([[selfHash, { intersecting: true }]]);
-				});
-			const waitForEntryStub = sinon
-				.stub(db.log as any, "_waitForEntryReplicators")
-				.callsFake(async (_entry, _replicas, _waitFor, options: any) => {
-					options?.onLeader?.(selfHash);
-					return new Map([[selfHash, { intersecting: true }]]);
-				});
+			const send = sinon.stub(log.rpc, "send").resolves();
+
 			try {
-				await db.log.onMessage(new RequestIPrune({ hashes }), {
+				await db.log.onMessage(new RequestIPruneV2({ requests }), {
 					from: session.peers[0].identity.publicKey,
 				} as any);
 
-				expect(removeKnownSpy.callCount).to.equal(1);
-				expect([...removeKnownSpy.firstCall.args[0]]).to.deep.equal(hashes);
-				expect(removeKnownSpy.firstCall.args[1]).to.equal(
-					session.peers[0].identity.publicKey.hashcode(),
-				);
-				expect(removePruneRequestsSentSpy.callCount).to.equal(1);
-				expect([...removePruneRequestsSentSpy.firstCall.args[0]]).to.deep.equal(
-					hashes,
-				);
-				expect(removeConfirmedReplicatorsSpy.callCount).to.equal(1);
+				expect(removeKnown.calledOnce).true;
+				expect([...removeKnown.firstCall.args[0]]).to.deep.equal(hashes);
+				expect(removeKnown.firstCall.args[1]).to.equal(sourceHash);
+				expect(removeOutbound.calledOnce).true;
+				expect([...removeOutbound.firstCall.args[0]]).to.deep.equal(hashes);
+				expect(removeOutbound.firstCall.args[1]).to.equal(sourceHash);
+				expect(removeConfirmations.called).false;
+				expect(hasMany.calledOnce).true;
+				expect(batchPlan.calledOnce).true;
+
+				const response = send
+					.getCalls()
+					.map((call) => call.args[0])
+					.find(
+						(message): message is ResponseIPruneV2 =>
+							message instanceof ResponseIPruneV2,
+					);
+				expect(response).to.exist;
 				expect(
-					[...removeConfirmedReplicatorsSpy.firstCall.args[0]],
-				).to.deep.equal(hashes);
-				const queuedHashes: string[] = [];
-				expect(
-					(nativeLocalLeaderHashesStub?.callCount ?? 0) +
-						nativeBatchPlanStub.callCount,
-				).to.equal(1);
-				const plannedItems = nativeLocalLeaderHashesStub?.called
-					? [...nativeLocalLeaderHashesStub.firstCall.args[0]]
-					: [...nativeBatchPlanStub.firstCall.args[0]].map(
-							(item: { gid: string; replicas: number }, index) => ({
-								hash: hashes[index]!,
-								...item,
-							}),
-						);
-				expect(plannedItems.length).to.be.greaterThan(0);
-				expect(removeGidBatchSpy.callCount).to.equal(1);
-				expect(removeGidBatchSpy.firstCall.args[0]).to.equal(
-					session.peers[0].identity.publicKey.hashcode(),
-				);
-				expect([...removeGidBatchSpy.firstCall.args[1]]).to.have.length(
-					plannedItems.length,
-				);
-				expect(waitForGidStub.callCount).to.equal(0);
-				expect(responseAddStub.callCount).to.equal(
-					plannedItems.length > 0 ? 1 : 0,
-				);
-				if (plannedItems.length > 0) {
-					const [queued] = responseAddStub.firstCall.args;
-					expect(queued.hashes).to.have.length(plannedItems.length);
-					expect(queued.peers).to.deep.equal([
-						session.peers[0].identity.publicKey.hashcode(),
-					]);
-					for (const queuedHash of queued.hashes) {
-						expect(hashes).to.include(queuedHash);
-						queuedHashes.push(queuedHash);
-					}
-				}
-				expect(new Set(queuedHashes).size).to.equal(queuedHashes.length);
-				const profileNames = profileEvents.map((event) => event.name);
+					response!.requests.map(({ hash, requestId }) => ({
+						hash,
+						requestId,
+					})),
+				).to.deep.equal(requests);
+
+				const profileNames = profileEvents.map(({ name }) => name);
 				expect(profileNames).to.include.members([
 					"sharedLog.receive.requestPrune.coordinatorCleanup",
-					"sharedLog.receive.requestPrune.nativeMetadata",
-					"sharedLog.receive.requestPrune.blockHasMany",
-					"sharedLog.receive.requestPrune.nativeLeaderPlan",
-					"sharedLog.receive.requestPrune.gidCleanup",
-					"sharedLog.receive.requestPrune.loop",
 					"sharedLog.receive.requestPrune.total",
 				]);
-				const loopProfile = profileEvents.find(
-					(event) => event.name === "sharedLog.receive.requestPrune.loop",
+				const total = profileEvents.find(
+					({ name }) => name === "sharedLog.receive.requestPrune.total",
 				);
-				expect(loopProfile.entries).to.equal(hashes.length);
-				expect(loopProfile.details.leaderResponses).to.equal(
-					plannedItems.length,
-				);
-				expect(
-					loopProfile.details.leaderResponses +
-						loopProfile.details.pendingIHaveCreated +
-						loopProfile.details.pendingIHaveExtended,
-				).to.equal(hashes.length);
-				expect(loopProfile.details.leaderResponseBatches).to.equal(
-					plannedItems.length > 0 ? 1 : 0,
-				);
-				expect(loopProfile.details.pendingIHaveCreated).to.equal(
-					hashes.length - plannedItems.length,
-				);
+				expect(total.details.presentEntries).to.equal(hashes.length);
+				expect(total.details.leaderResponses).to.equal(hashes.length);
+				expect(total.details.pendingIHaveCreated).to.equal(0);
 			} finally {
-				waitForEntryStub.restore();
-				waitForGidStub.restore();
-				nativeBatchPlanStub.restore();
-				nativeLocalLeaderHashesStub?.restore();
-				nativeMetadataStub.restore();
-				hasManyStub.restore();
-				responseAddStub.restore();
-				removeGidBatchSpy.restore();
-				removeConfirmedReplicatorsSpy.restore();
-				removePruneRequestsSentSpy.restore();
-				removeKnownSpy.restore();
+				send.restore();
+				batchPlan.restore();
+				nativeMetadata.restore();
+				hasMany.restore();
+				removeConfirmations.restore();
+				removeOutbound.restore();
+				removeKnown.restore();
 			}
 		} finally {
 			await session.stop();
@@ -3192,13 +3115,17 @@ describe("raw exchange-head sync", () => {
 				const { entry } = await source.add(uuid(), { meta: { next: [] } });
 				hashes.push(entry.hash);
 			}
+			const requests = hashes.map((hash, index) => ({
+				hash,
+				requestId: new Uint8Array(32).fill(index + 1),
+			}));
 
 			const getShallowSpy = sinon.spy(target.log.log.entryIndex, "getShallow");
 			const hasManyStub = sinon
 				.stub(target.log.log.blocks as any, "hasMany")
 				.resolves(hashes.map(() => false));
 			try {
-				await target.log.onMessage(new RequestIPrune({ hashes }), {
+				await target.log.onMessage(new RequestIPruneV2({ requests }), {
 					from: source.node.identity.publicKey,
 				} as any);
 
@@ -3206,22 +3133,31 @@ describe("raw exchange-head sync", () => {
 				expect(getShallowSpy.callCount).to.equal(0);
 				const pending = (target.log as any)._pendingIHave as Map<
 					string,
-					{ clear?: () => void }
+					{
+						clear?: () => void;
+						requesting: Map<string, Uint8Array>;
+					}
 				>;
 				expect(pending.size).to.equal(hashes.length);
+				const sourceHash = source.node.identity.publicKey.hashcode();
+				for (let index = 0; index < requests.length; index++) {
+					expect(
+						pending.get(requests[index]!.hash)!.requesting.get(sourceHash),
+					).to.deep.equal(requests[index]!.requestId);
+				}
 				for (const value of pending.values()) {
 					value.clear?.();
 				}
 				pending.clear();
 
-				const loopProfile = profileEvents.find(
-					(event) => event.name === "sharedLog.receive.requestPrune.loop",
+				const totalProfile = profileEvents.find(
+					(event) => event.name === "sharedLog.receive.requestPrune.total",
 				);
-				expect(loopProfile.details.indexedFallbackLookups).to.equal(0);
-				expect(
-					loopProfile.details.skippedIndexedLookupsForMissingBlocks,
-				).to.equal(hashes.length);
-				expect(loopProfile.details.pendingIHaveCreated).to.equal(hashes.length);
+				expect(totalProfile.details.presentEntries).to.equal(0);
+				expect(totalProfile.details.leaderResponses).to.equal(0);
+				expect(totalProfile.details.pendingIHaveCreated).to.equal(
+					hashes.length,
+				);
 			} finally {
 				hasManyStub.restore();
 				getShallowSpy.restore();
@@ -3231,7 +3167,7 @@ describe("raw exchange-head sync", () => {
 		}
 	});
 
-	it("uses native-backbone request-prune all-confirmed path without per-hash waits", async () => {
+	it("uses the in-lane native all-confirmed path without fallback work", async () => {
 		const session = await TestSession.disconnected(2, {
 			indexer: (directory) => createRustIndexer(directory),
 		});
@@ -3264,6 +3200,10 @@ describe("raw exchange-head sync", () => {
 				const { entry } = await target.add(uuid(), { meta: { next: [] } });
 				hashes.push(entry.hash);
 			}
+			const requests = hashes.map((hash, index) => ({
+				hash,
+				requestId: new Uint8Array(32).fill(index + 1),
+			}));
 
 			const sharedLog = target.log as any;
 			const backbone = sharedLog._nativeBackbone;
@@ -3275,15 +3215,11 @@ describe("raw exchange-head sync", () => {
 				backbone,
 				"planRequestPruneLeaderHintColumns",
 			);
-			const responseAddStub = sinon
-				.stub(sharedLog.responseToPruneDebouncedFn, "add")
-				.resolves();
-			const waitForGidSpy = sinon.spy(sharedLog, "_waitForGidReplicators");
-			const waitForEntrySpy = sinon.spy(sharedLog, "_waitForEntryReplicators");
 			const blockHasManySpy = sinon.spy(target.log.log.blocks as any, "hasMany");
 			const getShallowSpy = sinon.spy(target.log.log.entryIndex, "getShallow");
+			const send = sinon.stub(sharedLog.rpc, "send").resolves();
 			try {
-				await target.log.onMessage(new RequestIPrune({ hashes }), {
+				await target.log.onMessage(new RequestIPruneV2({ requests }), {
 					from: session.peers[0].identity.publicKey,
 				} as any);
 
@@ -3291,39 +3227,30 @@ describe("raw exchange-head sync", () => {
 				expect(hintColumnsSpy.callCount).to.equal(0);
 				expect(blockHasManySpy.callCount).to.equal(0);
 				expect(getShallowSpy.callCount).to.equal(0);
-				expect(waitForGidSpy.callCount).to.equal(0);
-				expect(waitForEntrySpy.callCount).to.equal(0);
-				expect(responseAddStub.callCount).to.equal(1);
-				expect(responseAddStub.firstCall.args[0].hashes).to.deep.equal(hashes);
-				expect(responseAddStub.firstCall.args[0].peers).to.deep.equal([
-					session.peers[0].identity.publicKey.hashcode(),
-				]);
-				const backboneProfile = profileEvents.find(
-					(event) =>
-						event.name === "sharedLog.receive.requestPrune.nativeBackbonePlan",
+				const response = send
+					.getCalls()
+					.map((call) => call.args[0])
+					.find(
+						(message): message is ResponseIPruneV2 =>
+							message instanceof ResponseIPruneV2,
+					);
+				expect(response).to.exist;
+				expect(
+					response!.requests.map(({ hash, requestId }) => ({
+						hash,
+						requestId,
+					})),
+				).to.deep.equal(requests);
+				const total = profileEvents.find(
+					(event) => event.name === "sharedLog.receive.requestPrune.total",
 				);
-				expect(backboneProfile.details.nativeEntries).to.equal(hashes.length);
-				expect(backboneProfile.details.presentBlocks).to.equal(hashes.length);
-				expect(backboneProfile.details.localLeaders).to.equal(hashes.length);
-				const loopProfile = profileEvents.find(
-					(event) => event.name === "sharedLog.receive.requestPrune.loop",
-				);
-				expect(loopProfile.details.nativeBatchConfirmed).to.equal(true);
-				expect(loopProfile.details.leaderResponses).to.equal(hashes.length);
+				expect(total.details.presentEntries).to.equal(requests.length);
+				expect(total.details.leaderResponses).to.equal(requests.length);
+				expect(total.details.pendingIHaveCreated).to.equal(0);
 			} finally {
-				const pending = sharedLog._pendingIHave as Map<
-					string,
-					{ clear?: () => void }
-				>;
-				for (const value of pending.values()) {
-					value.clear?.();
-				}
-				pending.clear();
+				send.restore();
 				getShallowSpy.restore();
 				blockHasManySpy.restore();
-				waitForEntrySpy.restore();
-				waitForGidSpy.restore();
-				responseAddStub.restore();
 				hintColumnsSpy.restore();
 				allConfirmedStub.restore();
 			}

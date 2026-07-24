@@ -24,7 +24,7 @@ import { performance } from "node:perf_hooks";
 import { v4 as uuid } from "uuid";
 import {
 	type RawExchangeHeadsMessage,
-	RequestIPrune,
+	RequestIPruneV2,
 	createRawExchangeHeadsMessages,
 } from "../src/exchange-heads.js";
 import { TransportMessage } from "../src/message.js";
@@ -689,43 +689,29 @@ const runRawReceive = async (
 	}
 };
 
-const installFastLeaderWaits = (store: EventStore<string, any>) => {
+const suppressPruneResponses = (store: EventStore<string, any>) => {
 	const log = store.log as any;
-	const selfHash = store.node.identity.publicKey.hashcode();
-	const originalWaitForGid = log._waitForGidReplicators;
-	const originalWaitForEntry = log._waitForEntryReplicators;
-	log._waitForGidReplicators = async (
-		_gid: string,
-		_replicas: number,
-		_waitFor: unknown,
-		options: { onLeader?: (key: string) => void } | undefined,
+	const original = log.sendCheckedPruneResponse;
+	let granted = 0;
+	log.sendCheckedPruneResponse = async (
+		_to: string,
+		requests: Array<{ hash: string; requestId: Uint8Array }>,
 	) => {
-		options?.onLeader?.(selfHash);
-		return new Map([[selfHash, { intersecting: true }]]);
+		granted += requests.length;
 	};
-	log._waitForEntryReplicators = async (
-		_entry: unknown,
-		_replicas: number,
-		_waitFor: unknown,
-		options: { onLeader?: (key: string) => void } | undefined,
-	) => {
-		options?.onLeader?.(selfHash);
-		return new Map([[selfHash, { intersecting: true }]]);
-	};
-	return () => {
-		log._waitForGidReplicators = originalWaitForGid;
-		log._waitForEntryReplicators = originalWaitForEntry;
+	return {
+		granted: () => granted,
+		restore: () => {
+			log.sendCheckedPruneResponse = original;
+		},
 	};
 };
 
-const suppressPruneResponses = (store: EventStore<string, any>) => {
-	const debounced = (store.log as any).responseToPruneDebouncedFn;
-	const originalAdd = debounced.add;
-	debounced.add = () => undefined;
-	return () => {
-		debounced.add = originalAdd;
-	};
-};
+const correlatedPruneRequests = (hashes: string[]) =>
+	hashes.map((hash) => ({
+		hash,
+		requestId: new Uint8Array(32),
+	}));
 
 const clearPendingIHaves = (store: EventStore<string, any>) => {
 	const pending = (store.log as any)._pendingIHave as Map<
@@ -755,21 +741,31 @@ const runRequestPruneNativeConfirm = async (
 			},
 		});
 		const hashes = await appendIndependentEntries(db, count);
-		const restoreWaits = installFastLeaderWaits(db);
-		const restoreResponses = suppressPruneResponses(db);
+		const responses = suppressPruneResponses(db);
 		try {
 			const started = performance.now();
-			await db.log.onMessage(new RequestIPrune({ hashes }), {
-				from: session.peers[0].identity.publicKey,
-			} as any);
+			await db.log.onMessage(
+				new RequestIPruneV2({
+					requests: correlatedPruneRequests(hashes),
+				}),
+				{
+					from: session.peers[0].identity.publicKey,
+				} as any,
+			);
 			const elapsed = performance.now() - started;
+			const granted = responses.granted();
+			if (granted !== count) {
+				throw new Error(
+					`Expected ${count} checked-prune grants, got ${granted}`,
+				);
+			}
 
 			return {
 				scenario: options?.coordinateWal
 					? "request-prune-native-backbone-coordinate-wal-confirm"
 					: options?.nativeBackbone
 						? "request-prune-native-backbone-confirm"
-					: "request-prune-native-confirm",
+						: "request-prune-native-confirm",
 				count,
 				run,
 				elapsedMs: elapsed,
@@ -777,8 +773,7 @@ const runRequestPruneNativeConfirm = async (
 				profile: summarizeProfileEvents(profileEvents),
 			};
 		} finally {
-			restoreResponses();
-			restoreWaits();
+			responses.restore();
 			clearPendingIHaves(db);
 		}
 	} finally {
@@ -806,10 +801,21 @@ const runRequestPrunePendingIHave = async (
 
 		try {
 			const started = performance.now();
-			await target.log.onMessage(new RequestIPrune({ hashes }), {
-				from: source.node.identity.publicKey,
-			} as any);
+			await target.log.onMessage(
+				new RequestIPruneV2({
+					requests: correlatedPruneRequests(hashes),
+				}),
+				{
+					from: source.node.identity.publicKey,
+				} as any,
+			);
 			const elapsed = performance.now() - started;
+			const pendingCount = (target.log as any)._pendingIHave.size;
+			if (pendingCount !== count) {
+				throw new Error(
+					`Expected ${count} pending-IHave entries, got ${pendingCount}`,
+				);
+			}
 
 			return {
 				scenario: "request-prune-pending-ihave",
