@@ -1,5 +1,11 @@
 # @peerbit/native-backbone
 
+## 0.2.3
+
+### Patch Changes
+
+- [#1131](https://github.com/dao-xyz/peerbit/pull/1131) [`65c3320`](https://github.com/dao-xyz/peerbit/commit/65c3320b4a2d0927647e37e3cb0da23e6df01463) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Preserve the native WASM receiver when reading batched entry metadata hints.
+
 ## 0.2.2
 
 ### Patch Changes
