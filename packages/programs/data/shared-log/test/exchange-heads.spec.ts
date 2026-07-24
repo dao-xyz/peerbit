@@ -130,6 +130,58 @@ describe("exchange heads", () => {
 		}
 	});
 
+	it("does not materialize fallback reference payloads while a message is suspended", async () => {
+		const log = new Log<Uint8Array>();
+		await log.open(store, signKey, {
+			appendDurability: "strict",
+			nativeGraph: false,
+		});
+		expect(log.entryIndex.properties.nativeGraph).to.equal(undefined);
+
+		const roots = [];
+		for (const seed of [1, 2, 3]) {
+			const { entry } = await log.append(new Uint8Array(128 * 1024), {
+				meta: { next: [], gidSeed: new Uint8Array([seed]) },
+			});
+			roots.push(entry);
+		}
+		roots.sort((left, right) => left.meta.gid.localeCompare(right.meta.gid));
+		const headGroup = roots[0]!;
+		const branchGroup = roots[1]!;
+		const deepGroup = roots[2]!;
+		const { entry: branch } = await log.append(new Uint8Array(128 * 1024), {
+			meta: { next: [branchGroup, deepGroup] },
+		});
+		const { entry: head } = await log.append(new Uint8Array(128 * 1024), {
+			meta: { next: [branch, headGroup] },
+		});
+		const expectedReferenceGids = [branch, deepGroup]
+			.filter((entry) => entry.meta.gid !== head.meta.gid)
+			.map((entry) => entry.meta.gid);
+		expect(expectedReferenceGids).to.not.be.empty;
+
+		const getSpy = sinon.spy(log.entryIndex, "get");
+		const getManySpy = sinon.spy(log.entryIndex, "getMany");
+		const generator = createExchangeHeadsMessages(log, [head]);
+		try {
+			const first = await generator.next();
+
+			expect(first.done).to.equal(false);
+			expect(first.value!.heads).to.have.length(1);
+			expect(first.value!.heads[0]!.entry.hash).to.equal(head.hash);
+			expect(first.value!.heads[0]!.gidRefrences).to.deep.equal(
+				expectedReferenceGids,
+			);
+			expect(getSpy.callCount).to.equal(0);
+			expect(getManySpy.callCount).to.equal(0);
+		} finally {
+			await generator.return(undefined);
+			getManySpy.restore();
+			getSpy.restore();
+			await log.close();
+		}
+	});
+
 	it("resolves multiple hash heads in one entry-index batch", async () => {
 		const log = new Log<Uint8Array>();
 		await log.open(store, signKey, {
