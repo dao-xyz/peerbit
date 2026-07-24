@@ -1,5 +1,23 @@
 # Changelog
 
+## 13.2.13
+
+### Patch Changes
+
+- [#1128](https://github.com/dao-xyz/peerbit/pull/1128) [`0b349d8`](https://github.com/dao-xyz/peerbit/commit/0b349d8e8a81bb610a4c1ddfb8b7a7afad6fd0e8) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Serialize replication-range mutations, validate bounded owner snapshots, and reconcile ambiguous durable writes before publishing ownership changes. Fence append planning, checked-prune deletion and callbacks, adaptive role changes, explicit fixed-role replacements, repair, warmup, and announcements across ownership failure and close or reopen boundaries.
+
+- [#1128](https://github.com/dao-xyz/peerbit/pull/1128) [`61c218a`](https://github.com/dao-xyz/peerbit/commit/61c218a91fe8598c5655d1ca1e8782757c6b6436) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Isolate Rateless IBLT synchronization by target and sender, route oversized boundary batches directly through Rateless sync, preserve an active per-target transfer across overlapping repair batches, bound process admissions, sequence gaps, symbol work, response inspection, and active response delivery, fall back to Simple sync on exhaustion or timeout, and reliably release native encoder and decoder resources. Oversized coded-symbol batches are rejected during deserialization before allocation.
+
+- [#1132](https://github.com/dao-xyz/peerbit/pull/1132) [`5a10560`](https://github.com/dao-xyz/peerbit/commit/5a10560e3d09e41e671d78eb3fca149c538d5c15) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Correlate checked-prune grants with exact per-generation IDs and authenticated peers, then revalidate ownership and quorum at the serialized delete boundary. Revoke stale receipts across peer churn, retain expired background handoffs in a bounded low-rate audit, and prune newly exposed parents through independent nonrecursive generations.
+
+  This is a fail-closed protocol cutover: legacy uncorrelated prune messages no longer authorize deletion. During a mixed-version rollout, peers retain extra copies until every participant in a handoff has upgraded.
+
+- [#1128](https://github.com/dao-xyz/peerbit/pull/1128) [`5318cd5`](https://github.com/dao-xyz/peerbit/commit/5318cd5811b7d70adb7ba53398cbbf9700aa6953) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Bound Simple sync response authorization and active delivery, capacity waiters, coordinate resolution, incoming claim and resolver work, retry scans, and per-target retry fanout; give admitted new claimants a prompt request, propagate cancellation through delivery, and use indexed expiry and cleanup paths for abandoned work. Response authorization now follows cross-caller conflicts through request delivery and payload success or failure, retains non-abortable transport work across lifecycle rollover, and starts its response deadline only after a request is sent. Coordinate request frames are now limited to 1,024 symbols, and larger custom sender chunk settings are clamped to that receiver work limit.
+
+- Updated dependencies []:
+  - @peerbit/log@6.2.10
+  - @peerbit/rpc@6.1.8
+
 ## 13.2.12
 
 ### Patch Changes

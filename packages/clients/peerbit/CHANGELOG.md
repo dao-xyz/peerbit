@@ -1,5 +1,7 @@
 # Changelog
 
+## 5.3.12
+
 ## 5.3.11
 
 ### Patch Changes
