@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
-import { Link, useLocation, useNavigate } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router";
 import { BellNotification, Xmark } from "iconoir-react";
 
 import { DocsLayout } from "../layout/DocsLayout";
