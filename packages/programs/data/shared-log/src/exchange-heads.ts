@@ -1256,21 +1256,19 @@ export const createExchangeHeadsMessages = async function* (
 			}
 
 			// Fallback for logs without native reference rows.
-			const refs = (await allEntriesWithUniqueGids(log, entry)).filter((x) => {
-				if (visitedHeads.has(x.hash)) {
-					return false;
-				}
-				visitedHeads.add(x.hash);
-				return true;
-			});
+			const gidRefrences = await collectFallbackUniqueReferenceGids(
+				log,
+				entry,
+				visitedHeads,
+			);
 
-			if (refs.length > 1000) {
-				warn("Large refs count: ", refs.length);
+			if (gidRefrences.length > 1000) {
+				warn("Large refs count: ", gidRefrences.length);
 			}
 			current.push(
 				new EntryWithRefs({
 					entry,
-					gidRefrences: refs.map((x) => x.meta.gid),
+					gidRefrences,
 				}),
 			);
 
@@ -2148,18 +2146,18 @@ const resolveExchangeHeadEntries = async (
 	return resolved;
 };
 
-export const allEntriesWithUniqueGids = async (
+const collectFallbackUniqueReferenceGids = async (
 	log: Log<any>,
 	entry: Entry<any>,
-): Promise<Entry<any>[]> => {
-	// TODO optimize this
-	const map: Map<string, ShallowEntry | Entry<any>> = new Map();
+	visitedHeads: Set<string>,
+): Promise<string[]> => {
+	const hashByGid = new Map<string, string>();
 	let curr: (Entry<any> | ShallowEntry)[] = [entry];
 	while (curr.length > 0) {
 		const nexts: (Entry<any> | ShallowEntry)[] = [];
 		for (const element of curr) {
-			if (!map.has(element.meta.gid)) {
-				map.set(element.meta.gid, element);
+			if (!hashByGid.has(element.meta.gid)) {
+				hashByGid.set(element.meta.gid, element.hash);
 				if (element.meta.type === EntryType.APPEND) {
 					for (const next of element.meta.next) {
 						const indexedEntry = await log.entryIndex.getShallow(next);
@@ -2174,30 +2172,17 @@ export const allEntriesWithUniqueGids = async (
 					}
 				}
 			}
-			curr = nexts;
 		}
+		curr = nexts;
 	}
-	const values = [...map.values()];
-	const resolved: Array<Entry<any> | undefined> = new Array(values.length);
-	const unresolvedHashes: string[] = [];
-	const unresolvedPositions: number[] = [];
-	for (let i = 0; i < values.length; i++) {
-		const value = values[i]!;
-		if (value instanceof Entry) {
-			resolved[i] = value;
+
+	const gidRefrences: string[] = [];
+	for (const [gid, hash] of hashByGid) {
+		if (visitedHeads.has(hash)) {
 			continue;
 		}
-		unresolvedHashes.push(value.hash);
-		unresolvedPositions.push(i);
+		visitedHeads.add(hash);
+		gidRefrences.push(gid);
 	}
-	if (unresolvedHashes.length > 0) {
-		const entries = await log.entryIndex.getMany(unresolvedHashes, {
-			type: "full",
-			ignoreMissing: true,
-		});
-		for (let i = 0; i < entries.length; i++) {
-			resolved[unresolvedPositions[i]!] = entries[i];
-		}
-	}
-	return resolved.filter((x) => !!x) as Entry<any>[];
+	return gidRefrences;
 };
