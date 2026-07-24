@@ -5368,11 +5368,13 @@ class NativeBackboneLogGraph {
 	}
 
 	entryMetadataHintsBatch(hashes: Iterable<string>): Array<any | undefined> {
-		return (
-			this.native.graph_entry_metadata_hints_batch ??
-			this.native.graph_entry_metadata_batch
-		)([...hashes]).map((row) => {
-			if (row == null || !this.native.graph_entry_metadata_hints_batch) {
+		const normalized = [...hashes];
+		const usingHints = this.native.graph_entry_metadata_hints_batch != null;
+		const rows = usingHints
+			? this.native.graph_entry_metadata_hints_batch!(normalized)
+			: this.native.graph_entry_metadata_batch(normalized);
+		return rows.map((row) => {
+			if (row == null || !usingHints) {
 				return metadataEntryFromRow(row);
 			}
 			return requestPruneEntryFromRow(row);
