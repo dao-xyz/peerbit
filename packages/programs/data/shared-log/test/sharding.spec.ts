@@ -5,11 +5,12 @@ import type { Entry } from "@peerbit/log";
 import { TestSession } from "@peerbit/test-utils";
 import { delay, waitFor, waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
+import pDefer from "p-defer";
 import sinon from "sinon";
 import {
 	ExchangeHeadsMessage,
-	RequestIPrune,
-	ResponseIPrune,
+	RequestIPruneV2,
+	ResponseIPruneV2,
 } from "../src/exchange-heads.js";
 import {
 	type ReplicationDomainHash,
@@ -67,6 +68,7 @@ export const testSetups: TestSetupConfig<any>[] = [
 ];
 
 type CheckedPrunePendingDelete = {
+	requestId: Uint8Array;
 	promise: { promise: Promise<void> };
 	clear: () => void;
 	resolve: () => void;
@@ -495,7 +497,6 @@ testSetups.forEach((setup) => {
 						},
 					});
 				}
-
 				console.error(
 					`[shared-log-semantic-replication-diagnostics:${label}] ${JSON.stringify(
 						{
@@ -829,6 +830,7 @@ testSetups.forEach((setup) => {
 				const seedPendingDelete = () => {
 					let rejected: Error | undefined;
 					log._pendingDeletes.set(entry.hash, {
+						requestId: new Uint8Array(32),
 						promise: { promise: new Promise<void>(() => {}) },
 						clear: () => log._pendingDeletes.delete(entry.hash),
 						resolve: () => {},
@@ -882,6 +884,7 @@ testSetups.forEach((setup) => {
 					session.peers[1].identity.publicKey.hashcode();
 				let rejected: Error | undefined;
 				log._pendingDeletes.set(entry.hash, {
+					requestId: new Uint8Array(32),
 					promise: { promise: new Promise<void>(() => {}) },
 					clear: () => log._pendingDeletes.delete(entry.hash),
 					resolve: () => {},
@@ -1068,8 +1071,9 @@ testSetups.forEach((setup) => {
 				);
 				const db2Key = db2.log.node.identity.publicKey;
 				const db2Hash = db2Key.hashcode();
-				await waitForResolved(() =>
-					expect((db1.log as any).uniqueReplicators.has(db2Hash)).to.be.true,
+				await waitForResolved(
+					() =>
+						expect((db1.log as any).uniqueReplicators.has(db2Hash)).to.be.true,
 				);
 				await waitForResolved(async () =>
 					expect(
@@ -1600,13 +1604,13 @@ testSetups.forEach((setup) => {
 					const cleanupPubSubChaos: (() => Promise<void>)[] = [];
 					const chaosRules = [
 						{
-							type: RequestIPrune,
+							type: RequestIPruneV2,
 							minDelayMs: 20_000,
 							maxDelayMs: 45_000,
 							probability: 1,
 						},
 						{
-							type: ResponseIPrune,
+							type: ResponseIPruneV2,
 							minDelayMs: 20_000,
 							maxDelayMs: 45_000,
 							probability: 1,
@@ -1785,9 +1789,7 @@ testSetups.forEach((setup) => {
 							// races those waves — the historical "got 95" CI flake — so track
 							// a cumulative per-peer minimum instead, which is monotone and
 							// immune to sampling between waves.
-							const minLengths = [db1, db2, db3].map(
-								(db) => db.log.log.length,
-							);
+							const minLengths = [db1, db2, db3].map((db) => db.log.log.length);
 							await waitForResolved(
 								() => {
 									[db1, db2, db3].forEach((db, index) => {
@@ -2419,11 +2421,30 @@ testSetups.forEach((setup) => {
 				});
 				const leavingHash = db3.node.identity.publicKey.hashcode();
 				const logInternals = db1.log as any;
+				const pending = {
+					requestId: randomBytes(32),
+					promise: pDefer<void>(),
+					clear: () => {},
+					resolve: () => {},
+					reject: () => {},
+				};
 
-				logInternals._checkedPrune.addRequestSent(entry.hash, leavingHash);
+				logInternals._checkedPrune.setPendingDelete(
+					entry.hash,
+					pending,
+					entry,
+					new Map([[leavingHash, { intersecting: true }]]),
+				);
+				logInternals._checkedPrune.addRequestSent(
+					entry.hash,
+					leavingHash,
+					pending,
+				);
 				logInternals._checkedPrune.addConfirmedReplicator(
 					entry.hash,
 					leavingHash,
+					pending,
+					pending.requestId,
 				);
 				expect(
 					logInternals._checkedPrune
@@ -2912,7 +2933,12 @@ testSetups.forEach((setup) => {
 						timeout: 30_000,
 					});
 				} catch (error) {
-					await printShardingPruneDiagnostics("observer-unreplicate", db1, db2, db3);
+					await printShardingPruneDiagnostics(
+						"observer-unreplicate",
+						db1,
+						db2,
+						db3,
+					);
 					await dbgLogs([db1.log, db2.log, db3.log]);
 					throw error;
 				}

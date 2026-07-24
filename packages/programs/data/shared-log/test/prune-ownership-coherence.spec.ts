@@ -14,11 +14,31 @@ describe("checked prune ownership coherence", () => {
 		await session?.stop();
 	});
 
+	const resolveCurrentPrune = async (
+		log: any,
+		hash: string,
+		remoteHash: string,
+		beforeResolve?: (pending: any) => Promise<void>,
+	) => {
+		const pending = log._checkedPrune.getPendingDelete(hash);
+		expect(pending).to.exist;
+		await waitForResolved(
+			() =>
+				expect(log._checkedPrune.getContactedReplicators(hash)?.has(remoteHash))
+					.to.be.true,
+			{ timeout: 2_000, delayInterval: 5 },
+		);
+		await beforeResolve?.(pending);
+		await pending.resolve(remoteHash, pending.requestId);
+		return pending;
+	};
+
 	it("retains an entry when local ownership commits at the final prune boundary", async () => {
 		session = await TestSession.disconnected(2);
 		const db = await session.peers[0].open(new EventStore(), {
 			args: {
 				replicate: false,
+				keep: () => true,
 				timeUntilRoleMaturity: 0,
 				waitForPruneDelay: 0,
 			},
@@ -28,12 +48,6 @@ describe("checked prune ownership coherence", () => {
 		const selfHash = session.peers[0].identity.publicKey.hashcode();
 		const remoteHash = (await Ed25519Keypair.create()).publicKey.hashcode();
 		const leaders = new Map([[remoteHash, { intersecting: true }]]);
-		const preliminaryCheckFinished = pDefer<void>();
-		const releasePreliminaryCheck = pDefer<void>();
-
-		const waitForReplicators = sinon
-			.stub(log, "_waitForEntryReplicators")
-			.resolves(true);
 		const getClampedReplicas = sinon
 			.stub(log, "getClampedReplicas")
 			.returns({ getValue: () => 1 });
@@ -44,11 +58,6 @@ describe("checked prune ownership coherence", () => {
 			.stub(log, "revalidateCheckedPruneOwnership")
 			.callsFake(async (args: any) => {
 				revalidationCount++;
-				if (revalidationCount === 1) {
-					preliminaryCheckFinished.resolve();
-					await releasePreliminaryCheck.promise;
-					return { leaders: args.leaders, localLeader: false };
-				}
 				expect(await db.log.countReplicationSegments()).to.equal(1);
 				return {
 					leaders: new Map([[selfHash, { intersecting: true }]]),
@@ -63,33 +72,26 @@ describe("checked prune ownership coherence", () => {
 			const [pruning] = log.prune(new Map([[entry.hash, { entry, leaders }]]), {
 				timeout: 5_000,
 			});
-			const pending = log._checkedPrune.getPendingDelete(entry.hash);
-			expect(pending).to.exist;
-			await pending.resolve(remoteHash);
-			await preliminaryCheckFinished.promise;
-
-			// Commit authoritative local ownership while the prune callback is
-			// paused after its preliminary planner result. The destructive path
-			// must revalidate in the range-mutation lane after this commit.
-			await db.log.replicate(
-				{ factor: 1, offset: 0 },
-				{ reset: true, rebalance: false },
-			);
+			await resolveCurrentPrune(log, entry.hash, remoteHash, async () => {
+				// Commit authoritative local ownership before the receipt is
+				// admitted to the destructive boundary.
+				await db.log.replicate(
+					{ factor: 1, offset: 0 },
+					{ reset: true, rebalance: false },
+				);
+			});
 			expect(await db.log.countReplicationSegments()).to.equal(1);
 
-			releasePreliminaryCheck.resolve();
 			await expect(pruning).to.be.rejectedWith(
 				"Failed to delete, is leader again",
 			);
 
-			expect(revalidationCount).to.equal(2);
+			expect(revalidationCount).to.equal(1);
 			expect(remove.called).to.be.false;
 			expect(await log.log.has(entry.hash)).to.be.true;
 			expect(await log.log.blocks.has(entry.hash)).to.be.true;
 			expect(log._checkedPrune.getPendingDelete(entry.hash)).to.be.undefined;
 		} finally {
-			releasePreliminaryCheck.resolve();
-			waitForReplicators.restore();
 			getClampedReplicas.restore();
 			send.restore();
 			remove.restore();
@@ -102,6 +104,7 @@ describe("checked prune ownership coherence", () => {
 		const db = await session.peers[0].open(new EventStore(), {
 			args: {
 				replicate: false,
+				keep: () => true,
 				timeUntilRoleMaturity: 0,
 				waitForPruneDelay: 0,
 			},
@@ -112,9 +115,6 @@ describe("checked prune ownership coherence", () => {
 		const leaders = new Map([[remoteHash, { intersecting: true }]]);
 		const plannerError = new Error("forced final ownership planner rejection");
 
-		const waitForReplicators = sinon
-			.stub(log, "_waitForEntryReplicators")
-			.resolves(true);
 		const getClampedReplicas = sinon
 			.stub(log, "getClampedReplicas")
 			.returns({ getValue: () => 1 });
@@ -142,13 +142,11 @@ describe("checked prune ownership coherence", () => {
 			const [pruning] = log.prune(new Map([[entry.hash, { entry, leaders }]]), {
 				timeout: 5_000,
 			});
-			const pending = log._checkedPrune.getPendingDelete(entry.hash);
-			expect(pending).to.exist;
-			await pending.resolve(remoteHash);
+			await resolveCurrentPrune(log, entry.hash, remoteHash);
 
 			await expect(pruning).to.be.rejectedWith(plannerError.message);
-			expect(revalidate.callCount).to.equal(2);
-			expect(revalidate.secondCall.args[0].requireFreshLeaderDecision).to.be
+			expect(revalidate.callCount).to.equal(1);
+			expect(revalidate.firstCall.args[0].requireFreshLeaderDecision).to.be
 				.true;
 			expect(findLeaders.calledOnce).to.be.true;
 			expect(remove.called).to.be.false;
@@ -156,7 +154,6 @@ describe("checked prune ownership coherence", () => {
 			expect(await log.log.blocks.has(entry.hash)).to.be.true;
 			expect(log._checkedPrune.getPendingDelete(entry.hash)).to.be.undefined;
 		} finally {
-			waitForReplicators.restore();
 			getClampedReplicas.restore();
 			send.restore();
 			cancelLocalLeader.restore();
@@ -171,6 +168,7 @@ describe("checked prune ownership coherence", () => {
 		const db = await session.peers[0].open(new EventStore(), {
 			args: {
 				replicate: false,
+				keep: () => true,
 				timeUntilRoleMaturity: 0,
 				waitForPruneDelay: 0,
 			},
@@ -180,9 +178,6 @@ describe("checked prune ownership coherence", () => {
 		const remoteHash = (await Ed25519Keypair.create()).publicKey.hashcode();
 		const leaders = new Map([[remoteHash, { intersecting: true }]]);
 
-		const waitForReplicators = sinon
-			.stub(log, "_waitForEntryReplicators")
-			.resolves(true);
 		const getClampedReplicas = sinon
 			.stub(log, "getClampedReplicas")
 			.returns({ getValue: () => 1 });
@@ -209,15 +204,13 @@ describe("checked prune ownership coherence", () => {
 
 		try {
 			const [pruning] = log.prune(new Map([[entry.hash, { entry, leaders }]]));
-			const pending = log._checkedPrune.getPendingDelete(entry.hash);
-			expect(pending).to.exist;
-			await pending.resolve(remoteHash);
+			await resolveCurrentPrune(log, entry.hash, remoteHash);
 
 			await expect(pruning).to.be.rejectedWith(
 				"Could not establish current leaders at the checked-prune delete boundary",
 			);
-			expect(revalidate.callCount).to.equal(2);
-			expect(revalidate.secondCall.args[0].requireFreshLeaderDecision).to.be
+			expect(revalidate.callCount).to.equal(1);
+			expect(revalidate.firstCall.args[0].requireFreshLeaderDecision).to.be
 				.true;
 			expect(findLeaders.calledOnce).to.be.true;
 			expect(scheduleRetry.callCount).to.be.greaterThanOrEqual(1);
@@ -230,7 +223,6 @@ describe("checked prune ownership coherence", () => {
 			expect(await log.log.blocks.has(entry.hash)).to.be.true;
 		} finally {
 			log._checkedPrune.clearRetry(entry.hash);
-			waitForReplicators.restore();
 			getClampedReplicas.restore();
 			send.restore();
 			cancelLocalLeader.restore();
@@ -246,6 +238,7 @@ describe("checked prune ownership coherence", () => {
 		const db = await session.peers[0].open(new EventStore(), {
 			args: {
 				replicate: false,
+				keep: () => true,
 				timeUntilRoleMaturity: 0,
 				waitForPruneDelay: 0,
 			},
@@ -254,12 +247,8 @@ describe("checked prune ownership coherence", () => {
 		const { entry } = await db.add("checked-prune-cancelled-at-lane");
 		const remoteHash = (await Ed25519Keypair.create()).publicKey.hashcode();
 		const leaders = new Map([[remoteHash, { intersecting: true }]]);
-		const laneEntered = pDefer<void>();
 		const releaseLane = pDefer<void>();
 
-		const waitForReplicators = sinon
-			.stub(log, "_waitForEntryReplicators")
-			.resolves(true);
 		const getClampedReplicas = sinon
 			.stub(log, "getClampedReplicas")
 			.returns({ getValue: () => 1 });
@@ -268,13 +257,17 @@ describe("checked prune ownership coherence", () => {
 			.stub(log, "revalidateCheckedPruneOwnership")
 			.resolves({ leaders, localLeader: false });
 		const remove = sinon.spy(log.log, "remove");
-		const laneBlocker = log.withReplicationRangeMutationQueue(async () => {
-			laneEntered.resolve();
-			await releaseLane.promise;
-		});
+		const finalLaneQueued = pDefer<void>();
+		const originalQueue = log.withReplicationRangeMutationQueue.bind(log);
+		const queue = sinon
+			.stub(log, "withReplicationRangeMutationQueue")
+			.callsFake(async (...args: any[]) => {
+				finalLaneQueued.resolve();
+				await releaseLane.promise;
+				return originalQueue(...args);
+			});
 
 		try {
-			await laneEntered.promise;
 			const [pruning] = log.prune(new Map([[entry.hash, { entry, leaders }]]), {
 				timeout: 5_000,
 			});
@@ -282,20 +275,13 @@ describe("checked prune ownership coherence", () => {
 				() => ({ status: "fulfilled" as const }),
 				(error: unknown) => ({ status: "rejected" as const, error }),
 			);
-			const pending = log._checkedPrune.getPendingDelete(entry.hash);
-			expect(pending).to.exist;
-			await pending.resolve(remoteHash);
-			await waitForResolved(
-				() => {
-					expect(revalidate.calledOnce).to.be.true;
-				},
-				{ timeout: 2_000, delayInterval: 5 },
-			);
+			await resolveCurrentPrune(log, entry.hash, remoteHash);
+			await finalLaneQueued.promise;
 
 			await log.cancelCheckedPruneForLocalLeader(entry.hash);
 			expect(log._checkedPrune.getPendingDelete(entry.hash)).to.be.undefined;
 			releaseLane.resolve();
-			await laneBlocker;
+			await Promise.allSettled([queue.firstCall.returnValue]);
 
 			const outcome = await pruningOutcome;
 			expect(outcome.status).to.equal("rejected");
@@ -308,8 +294,7 @@ describe("checked prune ownership coherence", () => {
 			expect(await log.log.blocks.has(entry.hash)).to.be.true;
 		} finally {
 			releaseLane.resolve();
-			await laneBlocker.catch(() => {});
-			waitForReplicators.restore();
+			queue.restore();
 			getClampedReplicas.restore();
 			send.restore();
 			revalidate.restore();
@@ -327,6 +312,7 @@ describe("checked prune ownership coherence", () => {
 		const db = await session.peers[0].open(new EventStore(), {
 			args: {
 				replicate: false,
+				keep: () => true,
 				timeUntilRoleMaturity: 0,
 				waitForPruneDelay: 0,
 				onChange: async (change) => {
@@ -365,9 +351,6 @@ describe("checked prune ownership coherence", () => {
 			timestamp: 1n,
 		});
 
-		const waitForReplicators = sinon
-			.stub(log, "_waitForEntryReplicators")
-			.resolves(true);
 		const getClampedReplicas = sinon
 			.stub(log, "getClampedReplicas")
 			.returns({ getValue: () => 1 });
@@ -380,9 +363,7 @@ describe("checked prune ownership coherence", () => {
 			const [pruning] = log.prune(new Map([[entry.hash, { entry, leaders }]]), {
 				timeout: 5_000,
 			});
-			const pending = log._checkedPrune.getPendingDelete(entry.hash);
-			expect(pending).to.exist;
-			await pending.resolve(remoteHash);
+			await resolveCurrentPrune(log, entry.hash, remoteHash);
 			await Promise.all([
 				reentrantAttempted.promise,
 				removalCallbackHoldingLane.promise,
@@ -427,7 +408,6 @@ describe("checked prune ownership coherence", () => {
 			expect(log._checkedPrune.getPendingDelete(entry.hash)).to.be.undefined;
 		} finally {
 			releaseRemovalCallback.resolve();
-			waitForReplicators.restore();
 			getClampedReplicas.restore();
 			send.restore();
 			revalidate.restore();
@@ -444,6 +424,7 @@ describe("checked prune ownership coherence", () => {
 			const db = await session.peers[0].open(new EventStore(), {
 				args: {
 					replicate: false,
+					keep: () => true,
 					timeUntilRoleMaturity: 0,
 					waitForPruneDelay: 0,
 					onChange: async (change) => {
@@ -469,9 +450,6 @@ describe("checked prune ownership coherence", () => {
 			const remoteHash = (await Ed25519Keypair.create()).publicKey.hashcode();
 			const leaders = new Map([[remoteHash, { intersecting: true }]]);
 
-			const waitForReplicators = sinon
-				.stub(log, "_waitForEntryReplicators")
-				.resolves(true);
 			const getClampedReplicas = sinon
 				.stub(log, "getClampedReplicas")
 				.returns({ getValue: () => 1 });
@@ -487,9 +465,7 @@ describe("checked prune ownership coherence", () => {
 					new Map([[entry.hash, { entry, leaders }]]),
 					{ timeout: 5_000 },
 				);
-				const pending = log._checkedPrune.getPendingDelete(entry.hash);
-				expect(pending).to.exist;
-				await pending.resolve(remoteHash);
+				await resolveCurrentPrune(log, entry.hash, remoteHash);
 				await terminalAttempted.promise;
 
 				expect(terminalError).to.be.instanceOf(
@@ -520,7 +496,6 @@ describe("checked prune ownership coherence", () => {
 				}
 			} finally {
 				releaseRemovalCallback.resolve();
-				waitForReplicators.restore();
 				getClampedReplicas.restore();
 				send.restore();
 				revalidate.restore();

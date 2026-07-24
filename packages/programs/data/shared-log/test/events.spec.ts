@@ -36,6 +36,21 @@ describe("events", () => {
 		};
 	};
 
+	const resolveCurrentPrune = async (
+		log: any,
+		hash: string,
+		remoteHash: string,
+	) => {
+		const pending = log._checkedPrune.getPendingDelete(hash);
+		expect(pending).to.exist;
+		await waitForResolved(
+			() =>
+				expect(log._checkedPrune.getContactedReplicators(hash)?.has(remoteHash))
+					.true,
+		);
+		await pending.resolve(remoteHash, pending.requestId);
+	};
+
 	const makeReplicationRange = (
 		log: any,
 		properties: {
@@ -3420,9 +3435,6 @@ describe("events", () => {
 		const leaders = new Map([[remoteHash, { intersecting: true }]]);
 		const plannerStarted = pDefer<void>();
 		const releasePlanner = pDefer<void>();
-		const waitForReplicators = sinon
-			.stub(log, "_waitForEntryReplicators")
-			.resolves(true);
 		const getClampedReplicas = sinon
 			.stub(log, "getClampedReplicas")
 			.returns({ getValue: () => 1 });
@@ -3440,9 +3452,7 @@ describe("events", () => {
 			const [pruning] = log.prune(new Map([[entry.hash, { entry, leaders }]]), {
 				timeout: 2_000,
 			});
-			const pending = log._checkedPrune.getPendingDelete(entry.hash);
-			expect(pending).to.exist;
-			await pending.resolve(remoteHash);
+			await resolveCurrentPrune(log, entry.hash, remoteHash);
 			await plannerStarted.promise;
 
 			log.poisonReplicationOwnership(new Error("forced ownership poison"));
@@ -3455,7 +3465,6 @@ describe("events", () => {
 			expect(log._checkedPrune.getPendingDelete(entry.hash)).to.be.undefined;
 		} finally {
 			releasePlanner.resolve();
-			waitForReplicators.restore();
 			getClampedReplicas.restore();
 			send.restore();
 			findLeaders.restore();
@@ -3464,7 +3473,7 @@ describe("events", () => {
 		}
 	});
 
-	it("keeps a stale checked prune out of the reopened coordinator", async () => {
+	it("drains a stale checked prune before reopening the coordinator", async () => {
 		session = await TestSession.disconnected(2);
 		const db = await session.peers[0].open(new EventStore(), {
 			args: { replicate: 1, timeUntilRoleMaturity: 0 },
@@ -3475,9 +3484,6 @@ describe("events", () => {
 		const leaders = new Map([[remoteHash, { intersecting: true }]]);
 		const plannerStarted = pDefer<void>();
 		const releasePlanner = pDefer<void>();
-		const waitForReplicators = sinon
-			.stub(log, "_waitForEntryReplicators")
-			.resolves(true);
 		const getClampedReplicas = sinon
 			.stub(log, "getClampedReplicas")
 			.returns({ getValue: () => 1 });
@@ -3503,38 +3509,37 @@ describe("events", () => {
 				(error: unknown) => ({ status: "rejected" as const, error }),
 			);
 			const oldCoordinator = log._checkedPrune;
-			const pending = oldCoordinator.getPendingDelete(entry.hash);
-			expect(pending).to.exist;
-			await pending.resolve(remoteHash);
+			await resolveCurrentPrune(log, entry.hash, remoteHash);
 			await plannerStarted.promise;
 
 			log.poisonReplicationOwnership(new Error("forced ownership poison"));
-			await db.close();
+			let closeSettled = false;
+			const closing = db.close().finally(() => {
+				closeSettled = true;
+			});
+			await delay(25);
+			expect(closeSettled).to.be.false;
+			releasePlanner.resolve();
+			await closing;
 			await session.peers[0].open(db, {
-				args: { replicate: false, timeUntilRoleMaturity: 0 },
+				args: {
+					replicate: false,
+					keep: () => true,
+					timeUntilRoleMaturity: 0,
+				},
 			});
 			const freshCoordinator = log._checkedPrune;
 			expect(freshCoordinator).to.not.equal(oldCoordinator);
-			const freshPendingBeforeRelease = freshCoordinator.getPendingDelete(
-				entry.hash,
-			);
 			freshMarkRemoving = sinon.spy(freshCoordinator, "markRemoving");
 
-			releasePlanner.resolve();
 			const outcome = await pruningOutcome;
-			// Terminal close deliberately settles old pending prunes so callers do
-			// not hang; the important boundary is that the resumed callback cannot
-			// perform the delete or touch the newly opened coordinator.
-			expect(outcome.status).to.equal("fulfilled");
+			expect(outcome.status).to.equal("rejected");
 			await delay(25);
 			expect(remove.called).to.be.false;
 			expect(freshMarkRemoving.called).to.be.false;
-			expect(freshCoordinator.getPendingDelete(entry.hash)).to.equal(
-				freshPendingBeforeRelease,
-			);
+			expect(freshCoordinator.getPendingDelete(entry.hash)).to.be.undefined;
 		} finally {
 			releasePlanner.resolve();
-			waitForReplicators.restore();
 			getClampedReplicas.restore();
 			send.restore();
 			findLeaders.restore();
@@ -3555,9 +3560,6 @@ describe("events", () => {
 		const leaders = new Map([[remoteHash, { intersecting: true }]]);
 		const removeStarted = pDefer<void>();
 		const releaseRemove = pDefer<void>();
-		const waitForReplicators = sinon
-			.stub(log, "_waitForEntryReplicators")
-			.resolves(true);
 		const getClampedReplicas = sinon
 			.stub(log, "getClampedReplicas")
 			.returns({ getValue: () => 1 });
@@ -3579,9 +3581,7 @@ describe("events", () => {
 			const [pruning] = log.prune(new Map([[entry.hash, { entry, leaders }]]), {
 				timeout: 2_000,
 			});
-			const pending = log._checkedPrune.getPendingDelete(entry.hash);
-			expect(pending).to.exist;
-			await pending.resolve(remoteHash);
+			await resolveCurrentPrune(log, entry.hash, remoteHash);
 			await removeStarted.promise;
 
 			log.poisonReplicationOwnership(new Error("forced ownership poison"));
@@ -3595,7 +3595,6 @@ describe("events", () => {
 		} finally {
 			process.removeListener("unhandledRejection", onUnhandledRejection);
 			releaseRemove.resolve();
-			waitForReplicators.restore();
 			getClampedReplicas.restore();
 			send.restore();
 			findLeaders.restore();
@@ -3618,9 +3617,6 @@ describe("events", () => {
 			const leaders = new Map([[remoteHash, { intersecting: true }]]);
 			const removeStarted = pDefer<void>();
 			const releaseRemove = pDefer<void>();
-			const waitForReplicators = sinon
-				.stub(log, "_waitForEntryReplicators")
-				.resolves(true);
 			const getClampedReplicas = sinon
 				.stub(log, "getClampedReplicas")
 				.returns({ getValue: () => 1 });
@@ -3639,9 +3635,7 @@ describe("events", () => {
 					{ timeout: 2_000, unchecked },
 				);
 				if (!unchecked) {
-					const pending = log._checkedPrune.getPendingDelete(entry.hash);
-					expect(pending).to.exist;
-					await pending.resolve(remoteHash);
+					await resolveCurrentPrune(log, entry.hash, remoteHash);
 				}
 				await removeStarted.promise;
 				expect(log._admittedPruneRemoves.size).to.equal(1);
@@ -3668,7 +3662,6 @@ describe("events", () => {
 				expect(log._admittedPruneRemoves.size).to.equal(0);
 			} finally {
 				releaseRemove.resolve();
-				waitForReplicators.restore();
 				getClampedReplicas.restore();
 				send.restore();
 				findLeaders.restore();

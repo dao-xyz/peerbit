@@ -15,8 +15,8 @@ import sinon from "sinon";
 import { BlocksMessage } from "../src/blocks.js";
 import {
 	ExchangeHeadsMessage,
-	RequestIPrune,
-	ResponseIPrune,
+	RequestIPruneV2,
+	ResponseIPruneV2,
 } from "../src/exchange-heads.js";
 import {
 	type ReplicationOptions,
@@ -488,7 +488,7 @@ testSetups.forEach((setup) => {
 						replicas: new AbsoluteReplicas(3),
 						meta: { next: [] },
 					});
-					await db1.add("1", {
+					const e2 = await db1.add("1", {
 						replicas: new AbsoluteReplicas(1), // will be overriden by 'maxReplicas' above
 						meta: { next: [e1.entry] },
 					});
@@ -531,9 +531,13 @@ testSetups.forEach((setup) => {
 					};
 
 					await waitForResolved(() => {
-						expect(db1.log.log.length).equal(0);
-						expect(db2.log.log.length).greaterThanOrEqual(1);
+						expect(db1.log.log.length).equal(1);
+						expect(db2.log.log.length).equal(2);
 					});
+					expect(await db1.log.log.has(e1.entry.hash)).to.be.true;
+					expect(await db1.log.log.has(e2.entry.hash)).to.be.false;
+					expect(await db2.log.log.has(e1.entry.hash)).to.be.true;
+					expect(await db2.log.log.has(e2.entry.hash)).to.be.true;
 
 					expect(receivedMessageDb1).to.have.length(1);
 					expect(receivedMessageDb1[0]).to.be.instanceOf(BlockRequest);
@@ -4375,7 +4379,7 @@ testSetups.forEach((setup) => {
 									m instanceof AllReplicatingSegmentsMessage,
 							),
 						).to.equal(true);
-						expect(received.some((m) => m instanceof RequestIPrune)).to.equal(true);
+						expect(received.some((m) => m instanceof RequestIPruneV2)).to.equal(true);
 					/* const entryRefs1 = await db1.log.entryCoordinatesIndex.iterate().all();
 					const entryRefs2 = await db2.log.entryCoordinatesIndex.iterate().all();
 		
@@ -5220,10 +5224,30 @@ testSetups.forEach((setup) => {
 					const slowController = new AbortController();
 
 					// Keep replication updates slow, but allow many prune messages to get "in flight".
-					slowDownMessage(db1.log, RequestIPrune, 1500, slowController.signal);
-					slowDownMessage(db2.log, RequestIPrune, 1500, slowController.signal);
-					slowDownMessage(db2.log, ResponseIPrune, 1500, slowController.signal);
-					slowDownMessage(db3.log, ResponseIPrune, 1500, slowController.signal);
+					slowDownMessage(
+						db1.log,
+						RequestIPruneV2,
+						1500,
+						slowController.signal,
+					);
+					slowDownMessage(
+						db2.log,
+						RequestIPruneV2,
+						1500,
+						slowController.signal,
+					);
+					slowDownMessage(
+						db2.log,
+						ResponseIPruneV2,
+						1500,
+						slowController.signal,
+					);
+					slowDownMessage(
+						db3.log,
+						ResponseIPruneV2,
+						1500,
+						slowController.signal,
+					);
 
 					const range1 = (
 						await db1.log.getMyReplicationSegments()
