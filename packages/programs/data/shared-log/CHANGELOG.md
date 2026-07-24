@@ -1,5 +1,11 @@
 # Changelog
 
+## 13.2.15
+
+### Patch Changes
+
+- [#1135](https://github.com/dao-xyz/peerbit/pull/1135) [`807ed08`](https://github.com/dao-xyz/peerbit/commit/807ed08f794fd59442e7bab4d81f1ac8c5c7a17c) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Bound count-based lookahead for hash-resolved full entries and raw JS blocks while preserving order and deduplication when a batch falls back. Caller-owned entries and individual entry size remain outside this count bound.
+
 ## 13.2.14
 
 ### Patch Changes
