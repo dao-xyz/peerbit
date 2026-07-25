@@ -16342,6 +16342,8 @@ export class SharedLog<
 				sync: options?.sync,
 				isEntryRecentlyKnownByPeer: (hash, peer, maxAgeMs) =>
 					this.isEntryRecentlyKnownByPeer(hash, peer, maxAgeMs),
+				peerSupportsRawExchangeHeads: (peer) =>
+					this.peerSupportsRawExchangeHeads(peer),
 				sendRawExchangeHeads,
 			});
 		} else {
@@ -16359,6 +16361,8 @@ export class SharedLog<
 					sync: options?.sync,
 					isEntryRecentlyKnownByPeer: (hash, peer, maxAgeMs) =>
 						this.isEntryRecentlyKnownByPeer(hash, peer, maxAgeMs),
+					peerSupportsRawExchangeHeads: (peer) =>
+						this.peerSupportsRawExchangeHeads(peer),
 					sendRawExchangeHeads,
 				});
 			} else {
@@ -16381,6 +16385,8 @@ export class SharedLog<
 					sync: options?.sync,
 					isEntryRecentlyKnownByPeer: (hash, peer, maxAgeMs) =>
 						this.isEntryRecentlyKnownByPeer(hash, peer, maxAgeMs),
+					peerSupportsRawExchangeHeads: (peer) =>
+						this.peerSupportsRawExchangeHeads(peer),
 					sendRawExchangeHeads,
 				}) as Syncronizer<R>;
 			}

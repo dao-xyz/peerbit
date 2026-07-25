@@ -28,11 +28,32 @@ import {
 } from "../src/exchange-heads.js";
 import { createReplicationDomainHash } from "../src/replication-domain-hash.js";
 import type { SyncProfileEvent } from "../src/sync/index.js";
-import { SimpleSyncronizer } from "../src/sync/simple.js";
+import {
+	ResponseMaybeSync,
+	ResponseMaybeSyncCapabilities,
+	SimpleSyncronizer,
+} from "../src/sync/simple.js";
 import { groupByGid, tryGroupByGidSync } from "../src/utils.js";
 import { EventStore } from "./utils/stores/event-store.js";
 
 describe("raw exchange-head sync", () => {
+	const waitForRawCapability = (
+		left: EventStore<string, any>,
+		right: EventStore<string, any>,
+	) =>
+		waitForResolved(() => {
+			expect(
+				(left.log as any).peerSupportsRawExchangeHeads(
+					right.node.identity.publicKey.hashcode(),
+				),
+			).to.equal(true);
+			expect(
+				(right.log as any).peerSupportsRawExchangeHeads(
+					left.node.identity.publicKey.hashcode(),
+				),
+			).to.equal(true);
+		});
+
 	it("groups already-materialized entry refs without async meta reads", async () => {
 		const session = await TestSession.disconnected(1, {
 			indexer: (directory) => createRustIndexer(directory),
@@ -217,6 +238,7 @@ describe("raw exchange-head sync", () => {
 			await waitForResolved(() =>
 				session.peers[0].dial(session.peers[1].getMultiaddrs()),
 			);
+			await waitForRawCapability(db1, db2);
 			await (
 				db1.log.syncronizer as SimpleSyncronizer<any>
 			).onMaybeMissingHashes({
@@ -3401,6 +3423,7 @@ describe("raw exchange-head sync", () => {
 		await waitForResolved(() =>
 			session.peers[0].dial(session.peers[1].getMultiaddrs()),
 		);
+		await waitForRawCapability(db1, db2);
 		await (db1.log.syncronizer as SimpleSyncronizer<any>).onMaybeMissingHashes({
 			hashes,
 			targets: [db2.node.identity.publicKey.hashcode()],
@@ -3915,6 +3938,7 @@ describe("raw exchange-head sync", () => {
 			await waitForResolved(() =>
 				session.peers[0].dial(session.peers[1].getMultiaddrs()),
 			);
+			await waitForRawCapability(db1, db2);
 			await (
 				db1.log.syncronizer as SimpleSyncronizer<any>
 			).onMaybeMissingHashes({
@@ -4085,10 +4109,16 @@ describe("raw exchange-head sync", () => {
 			await db2.log.waitForReplicator(db1.node.identity.publicKey);
 
 			let plainLiveMessages = 0;
+			let plainBulkRequests = 0;
+			let rawBulkRequests = 0;
 			const send1 = db1.log.rpc.send.bind(db1.log.rpc);
 			db1.log.rpc.send = async (message, options) => {
 				if (message instanceof ExchangeHeadsMessage) {
 					plainLiveMessages += 1;
+				} else if (message instanceof ResponseMaybeSyncCapabilities) {
+					rawBulkRequests += 1;
+				} else if (message instanceof ResponseMaybeSync) {
+					plainBulkRequests += 1;
 				}
 				return send1(message, options);
 			};
@@ -4112,6 +4142,17 @@ describe("raw exchange-head sync", () => {
 					db2.node.identity.publicKey.hashcode(),
 				),
 			).to.equal(false);
+
+			await (
+				db2.log.syncronizer as SimpleSyncronizer<any>
+			).onMaybeMissingHashes({
+				hashes: ["legacy-bulk-fallback"],
+				targets: [db1.node.identity.publicKey.hashcode()],
+			});
+			await waitForResolved(() => {
+				expect(plainBulkRequests).to.equal(1);
+			});
+			expect(rawBulkRequests).to.equal(0);
 		} finally {
 			await session.stop();
 		}

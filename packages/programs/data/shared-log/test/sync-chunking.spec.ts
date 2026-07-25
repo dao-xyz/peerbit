@@ -3199,7 +3199,7 @@ describe("sync-chunking", () => {
 		}
 	});
 
-	it("advertises raw exchange-head support when enabled", async () => {
+	it("keeps legacy requests until raw peer capability is known", async () => {
 		const send = sinon.stub().resolves();
 		const sync = new SimpleSyncronizer<"u64">({
 			rpc: { send } as any,
@@ -3216,14 +3216,55 @@ describe("sync-chunking", () => {
 		await (sync as any).requestSync(["h1", 2n], ["peer-a"]);
 
 		const messages = send.getCalls().map((call) => call.args[0]);
+		expect(send.callCount).to.equal(2);
 		const hashMessage = messages.find(
-			(message) => message instanceof ResponseMaybeSyncCapabilities,
-		) as ResponseMaybeSyncCapabilities | undefined;
+			(message) => message instanceof ResponseMaybeSync,
+		) as ResponseMaybeSync | undefined;
 		const coordinateMessage = messages.find(
-			(message) => message instanceof RequestMaybeSyncCoordinateCapabilities,
-		) as RequestMaybeSyncCoordinateCapabilities | undefined;
+			(message) => message instanceof RequestMaybeSyncCoordinate,
+		) as RequestMaybeSyncCoordinate | undefined;
 		expect(hashMessage?.hashes).to.deep.equal(["h1"]);
 		expect(coordinateMessage?.hashNumbers).to.deep.equal([2n]);
+		expect(
+			messages.some(
+				(message) => message instanceof ResponseMaybeSyncCapabilities,
+			),
+		).to.equal(false);
+		expect(
+			messages.some(
+				(message) => message instanceof RequestMaybeSyncCoordinateCapabilities,
+			),
+		).to.equal(false);
+	});
+
+	it("splits raw-capable and legacy request targets", async () => {
+		const send = sinon.stub().resolves();
+		const sync = new SimpleSyncronizer<"u64">({
+			rpc: { send } as any,
+			entryIndex: { count: async () => 0 } as any,
+			log: { has: async () => false } as any,
+			coordinateToHash: new Cache<string>({ max: 10 }),
+			peerSupportsRawExchangeHeads: (peer) => peer === "peer-raw",
+			sync: { rawExchangeHeads: true },
+		});
+
+		await (sync as any).requestSync(["h1", 2n], ["peer-raw", "peer-legacy"]);
+
+		expect(send.callCount).to.equal(4);
+		const [rawCoordinate, legacyCoordinate, rawHash, legacyHash] =
+			send.getCalls();
+		expect(rawCoordinate.args[0]).to.be.instanceOf(
+			RequestMaybeSyncCoordinateCapabilities,
+		);
+		expect(rawCoordinate.args[1].mode.to).to.deep.equal(["peer-raw"]);
+		expect(legacyCoordinate.args[0]).to.be.instanceOf(
+			RequestMaybeSyncCoordinate,
+		);
+		expect(legacyCoordinate.args[1].mode.to).to.deep.equal(["peer-legacy"]);
+		expect(rawHash.args[0]).to.be.instanceOf(ResponseMaybeSyncCapabilities);
+		expect(rawHash.args[1].mode.to).to.deep.equal(["peer-raw"]);
+		expect(legacyHash.args[0]).to.be.instanceOf(ResponseMaybeSync);
+		expect(legacyHash.args[1].mode.to).to.deep.equal(["peer-legacy"]);
 	});
 
 	it("responds with raw exchange heads only to capable requests", async () => {

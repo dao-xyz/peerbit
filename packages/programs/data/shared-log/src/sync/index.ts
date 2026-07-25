@@ -172,6 +172,7 @@ export type SynchronizerComponents<R extends "u32" | "u64"> = {
 		peer: string,
 		maxAgeMs: number,
 	) => boolean;
+	peerSupportsRawExchangeHeads?: (peer: string) => boolean;
 	sendRawExchangeHeads?: RawExchangeHeadsSender;
 };
 export type SynchronizerConstructor<R extends "u32" | "u64"> = new (
