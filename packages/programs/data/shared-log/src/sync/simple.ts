@@ -558,6 +558,7 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 		peer: string,
 		maxAgeMs: number,
 	) => boolean;
+	private peerSupportsRawExchangeHeads?: (peer: string) => boolean;
 	private sendRawExchangeHeads?: RawExchangeHeadsSender;
 	private recentlySentExchangeHeads: Map<string, Map<string, number>>;
 	private pendingMaybeSyncResponses: Map<
@@ -602,6 +603,7 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 			peer: string,
 			maxAgeMs: number,
 		) => boolean;
+		peerSupportsRawExchangeHeads?: (peer: string) => boolean;
 		sendRawExchangeHeads?: RawExchangeHeadsSender;
 	}) {
 		this.syncInFlightQueue = new Map();
@@ -638,6 +640,7 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 		this.resolveHashListForSymbols = properties.resolveHashListForSymbols;
 		this.syncOptions = properties.sync;
 		this.isEntryRecentlyKnownByPeer = properties.isEntryRecentlyKnownByPeer;
+		this.peerSupportsRawExchangeHeads = properties.peerSupportsRawExchangeHeads;
 		this.sendRawExchangeHeads = properties.sendRawExchangeHeads;
 		this.recentlySentExchangeHeads = new Map();
 		this.pendingMaybeSyncResponses = new Map();
@@ -3958,13 +3961,16 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 					this.maxCoordinatesPerMessage,
 				);
 				for (const target of targets) {
+					const requestRawExchangeHeads =
+						this.syncOptions?.rawExchangeHeads === true &&
+						this.peerSupportsRawExchangeHeads?.(target) === true;
 					for (const chunk of chunks) {
 						if (!this.isSyncDispatchLifecycleActive(lifecycle, target)) {
 							break;
 						}
 						try {
 							await this.rpc.send(
-								this.syncOptions?.rawExchangeHeads
+								requestRawExchangeHeads
 									? new RequestMaybeSyncCoordinateCapabilities({
 											hashNumbers: chunk,
 										})
@@ -3993,13 +3999,16 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 			if (stringHashes.length > 0) {
 				const chunks = this.chunk(stringHashes, this.maxHashesPerMessage);
 				for (const target of targets) {
+					const requestRawExchangeHeads =
+						this.syncOptions?.rawExchangeHeads === true &&
+						this.peerSupportsRawExchangeHeads?.(target) === true;
 					for (const chunk of chunks) {
 						if (!this.isSyncDispatchLifecycleActive(lifecycle, target)) {
 							break;
 						}
 						try {
 							await this.rpc.send(
-								this.syncOptions?.rawExchangeHeads
+								requestRawExchangeHeads
 									? new ResponseMaybeSyncCapabilities({
 											hashes: chunk,
 										})
