@@ -230,6 +230,14 @@ export type TopicControlPlaneOptions = DirectStreamOptions & {
 	subscriberCacheMaxEntries?: number;
 };
 
+type EnsureFanoutChannelOptions = {
+	ephemeral?: boolean;
+	pin?: boolean;
+	root?: string;
+	rootCandidateGeneration?: string;
+	signal?: AbortSignal;
+};
+
 export type TopicControlPlaneComponents = DirectStreamComponents;
 
 export type PeerId = Libp2pPeerId | PublicSignKey;
@@ -333,6 +341,9 @@ export class TopicControlPlane
 	private autoTopicRootCandidates = false;
 	private autoTopicRootCandidateSet?: Set<string>;
 	private reconcileShardOverlaysInFlight?: Promise<void>;
+	private reconcileShardOverlaysDirty = false;
+	private topicControlPlaneStopping = false;
+	private topicControlPlaneLifecycleRevision = 0;
 	private hostOwnedShardRootsInFlight?: Promise<void>;
 	private hostOwnedShardRootsDirty = false;
 	private autoCandidatesBroadcastTimers: Array<ReturnType<typeof setTimeout>> =
@@ -356,9 +367,18 @@ export class TopicControlPlane
 			idleCloseTimeout?: ReturnType<typeof setTimeout>;
 		}
 	>();
+	private ensureFanoutChannelInFlight = new Map<
+		string,
+		{
+			candidateGeneration: string;
+			lifecycleRevision: number;
+			opening: Promise<void>;
+		}
+	>();
 	private pendingTopicRootQueries = new Map<
 		number,
 		{
+			expectedPeerHash: string;
 			topic: string;
 			resolve: (root: string | undefined) => void;
 			timer: ReturnType<typeof setTimeout>;
@@ -524,6 +544,7 @@ export class TopicControlPlane
 	}
 
 	public override async start() {
+		this.topicControlPlaneStopping = false;
 		await this.fanout.start();
 		this._onFanoutPeerUnreachable =
 			this._onFanoutPeerUnreachable ||
@@ -540,9 +561,16 @@ export class TopicControlPlane
 		if (this.hostOwnedShardRootsDirty) {
 			this.scheduleHostOwnedShardRoots();
 		}
+		if (this.reconcileShardOverlaysDirty) {
+			this.scheduleReconcileShardOverlays();
+		}
 	}
 
 	public override async stop() {
+		this.topicControlPlaneStopping = true;
+		this.topicControlPlaneLifecycleRevision += 1;
+		this.reconcileShardOverlaysDirty = false;
+		this.ensureFanoutChannelInFlight.clear();
 		if (this._onFanoutPeerUnreachable) {
 			this.fanout.removeEventListener(
 				"fanout:peer-unreachable",
@@ -603,7 +631,8 @@ export class TopicControlPlane
 
 		this.debounceSubscribeAggregator.close();
 		this.debounceUnsubscribeAggregator.close();
-		return super.stop();
+		await super.stop();
+		this.reconcileShardOverlaysDirty = false;
 	}
 
 	public override async onPeerConnected(
@@ -840,21 +869,45 @@ export class TopicControlPlane
 	}
 
 	private scheduleReconcileShardOverlays() {
+		this.reconcileShardOverlaysDirty = true;
+		if (!this.started || this.stopping || this.topicControlPlaneStopping)
+			return;
 		if (this.reconcileShardOverlaysInFlight) return;
-		this.reconcileShardOverlaysInFlight = this.reconcileShardOverlays()
-			.catch(() => {
-				// best-effort retry: fanout streams/roots might not be ready yet.
-				if (!this.started || this.stopping) return;
-				const t = setTimeout(() => this.scheduleReconcileShardOverlays(), 250);
-				t.unref?.();
-			})
-			.finally(() => {
-				this.reconcileShardOverlaysInFlight = undefined;
-			});
+		this.reconcileShardOverlaysInFlight = (async () => {
+			for (;;) {
+				if (!this.started || this.stopping || this.topicControlPlaneStopping)
+					return;
+				if (!this.reconcileShardOverlaysDirty) return;
+				this.reconcileShardOverlaysDirty = false;
+				try {
+					await this.reconcileShardOverlays();
+				} catch {
+					// Fanout streams or roots might not be ready yet. Preserve both
+					// failures and root changes that arrived during the active pass.
+					if (!this.started || this.stopping || this.topicControlPlaneStopping)
+						return;
+					this.reconcileShardOverlaysDirty = true;
+					await new Promise<void>((resolve) => {
+						const timer = setTimeout(resolve, 250);
+						timer.unref?.();
+					});
+				}
+			}
+		})().finally(() => {
+			this.reconcileShardOverlaysInFlight = undefined;
+			if (
+				this.reconcileShardOverlaysDirty &&
+				this.started &&
+				!this.stopping &&
+				!this.topicControlPlaneStopping
+			) {
+				this.scheduleReconcileShardOverlays();
+			}
+		});
 	}
 
 	private async reconcileShardOverlays() {
-		if (!this.started) return;
+		if (!this.started || this.topicControlPlaneStopping) return;
 
 		const byShard = new Map<string, string[]>();
 		for (const topic of this.subscriptions.keys()) {
@@ -1134,6 +1187,41 @@ export class TopicControlPlane
 		return PubSubMessage.from(bytes);
 	}
 
+	private getTopicRootCandidateGeneration(): string {
+		return JSON.stringify([
+			this.autoTopicRootCandidates,
+			this.topicRootControlPlane.getTopicRootCandidates(),
+		]);
+	}
+
+	private assertTopicControlPlaneActive(lifecycleRevision: number): void {
+		if (
+			lifecycleRevision !== this.topicControlPlaneLifecycleRevision ||
+			!this.started ||
+			this.stopping ||
+			this.topicControlPlaneStopping
+		) {
+			throw new NotStartedError();
+		}
+	}
+
+	private normalizePeerTopicRootState(
+		topic: string,
+		root: string,
+	): { root: string; authoritative: boolean } {
+		const deterministic =
+			this.topicRootControlPlane.resolveDeterministicTopicRoot(topic);
+		if (
+			this.autoTopicRootCandidates &&
+			topic.startsWith(this.shardTopicPrefix) &&
+			deterministic &&
+			root !== deterministic
+		) {
+			return { root: deterministic, authoritative: false };
+		}
+		return { root, authoritative: true };
+	}
+
 	private async resolveTopicRootState(
 		topic: string,
 	): Promise<{ root?: string; authoritative: boolean }> {
@@ -1144,7 +1232,12 @@ export class TopicControlPlane
 
 		const resolvedThroughPeers = await this.resolveTopicRootThroughPeers(topic);
 		if (resolvedThroughPeers) {
-			return { root: resolvedThroughPeers, authoritative: true };
+			// Unconfigured peer-query replies cannot override the locally
+			// deterministic root for internal shards in auto mode. Roots, resolvers,
+			// and trackers explicitly configured on this control plane are resolved
+			// above and remain authoritative. A leaf relying on a queried gateway for
+			// shard roots must first disable auto mode with setTopicRootCandidates([]).
+			return this.normalizePeerTopicRootState(topic, resolvedThroughPeers);
 		}
 
 		const deterministic = this.topicRootControlPlane.resolveDeterministicTopicRoot(topic);
@@ -1157,46 +1250,65 @@ export class TopicControlPlane
 				await delay(150 * (attempt < 4 ? 1 : 2));
 				const retried = await this.resolveTopicRootThroughPeers(topic);
 				if (retried) {
-					return { root: retried, authoritative: true };
+					return this.normalizePeerTopicRootState(topic, retried);
 				}
 			}
 		}
 
-		return { root: deterministic, authoritative: false };
+		return {
+			root: this.topicRootControlPlane.resolveDeterministicTopicRoot(topic),
+			authoritative: false,
+		};
 	}
 
 	public async resolveTopicRoot(topic: string): Promise<string | undefined> {
 		return (await this.resolveTopicRootState(topic)).root;
 	}
 
-	private async resolveShardRoot(shardTopic: string): Promise<string> {
-		// If someone configured topic-root candidates externally (e.g. TestSession router
-		// selection or Peerbit.bootstrap) after this peer entered auto mode, disable auto
-		// mode before we cache any roots based on a stale candidate set.
-		if (this.autoTopicRootCandidates) {
-			this.maybeDisableAutoTopicRootCandidatesIfExternallyConfigured();
-		}
+	private async resolveShardRootState(
+		shardTopic: string,
+	): Promise<{ root: string; candidateGeneration: string }> {
+		const lifecycleRevision = this.topicControlPlaneLifecycleRevision;
+		for (;;) {
+			this.assertTopicControlPlaneActive(lifecycleRevision);
+			// If someone configured topic-root candidates externally (e.g.
+			// TestSession router selection or Peerbit.bootstrap) after this peer
+			// entered auto mode, disable auto mode before caching a root.
+			if (this.autoTopicRootCandidates) {
+				this.maybeDisableAutoTopicRootCandidatesIfExternallyConfigured();
+			}
 
-		const hasConnectedTrackers = this.getConnectedTopicRootTrackers().length > 0;
-		const cached = this.shardRootCache.get(shardTopic);
-		if (cached && (cached.authoritative || !hasConnectedTrackers)) {
-			return cached.root;
+			const candidateGeneration = this.getTopicRootCandidateGeneration();
+			const hasConnectedTrackers =
+				this.getConnectedTopicRootTrackers().length > 0;
+			const cached = this.shardRootCache.get(shardTopic);
+			if (cached && (cached.authoritative || !hasConnectedTrackers)) {
+				return { root: cached.root, candidateGeneration };
+			}
+
+			const resolved = await this.resolveTopicRootState(shardTopic);
+			this.assertTopicControlPlaneActive(lifecycleRevision);
+			if (candidateGeneration !== this.getTopicRootCandidateGeneration()) {
+				continue;
+			}
+			if (!resolved.root) {
+				throw new Error(
+					`No root resolved for shard topic ${shardTopic}. Configure TopicRootControlPlane candidates/resolver/trackers, or dial/bootstrap a peer that can resolve shard roots.`,
+				);
+			}
+			if (resolved.authoritative || !hasConnectedTrackers) {
+				this.shardRootCache.set(
+					shardTopic,
+					resolved as {
+						root: string;
+						authoritative: boolean;
+					},
+				);
+			} else {
+				this.shardRootCache.delete(shardTopic);
+			}
+			return { root: resolved.root, candidateGeneration };
 		}
-		const resolved = await this.resolveTopicRootState(shardTopic);
-		if (!resolved.root) {
-			throw new Error(
-				`No root resolved for shard topic ${shardTopic}. Configure TopicRootControlPlane candidates/resolver/trackers, or dial/bootstrap a peer that can resolve shard roots.`,
-			);
-		}
-		if (resolved.authoritative || !hasConnectedTrackers) {
-			this.shardRootCache.set(shardTopic, resolved as {
-				root: string;
-				authoritative: boolean;
-			});
-		} else {
-			this.shardRootCache.delete(shardTopic);
-		}
-		return resolved.root;
 	}
 
 	private getConnectedTopicRootTrackers(): PeerStreams[] {
@@ -1240,9 +1352,14 @@ export class TopicControlPlane
 
 	private resolvePendingTopicRootQuery(
 		message: TopicRootQueryResponse,
+		responderPeerHash: string,
 	): boolean {
 		const pending = this.pendingTopicRootQueries.get(message.requestId);
-		if (!pending || pending.topic !== message.topic) {
+		if (
+			!pending ||
+			pending.topic !== message.topic ||
+			pending.expectedPeerHash !== responderPeerHash
+		) {
 			return false;
 		}
 		this.pendingTopicRootQueries.delete(message.requestId);
@@ -1258,6 +1375,7 @@ export class TopicControlPlane
 	): Promise<string | undefined> {
 		if (!this.started || this.stopping) return undefined;
 
+		const expectedPeerHash = peer.publicKey.hashcode();
 		const requestId = this.nextTopicRootRequestIdValue();
 		const responsePromise = new Promise<string | undefined>((resolve) => {
 			const timer = setTimeout(() => {
@@ -1265,7 +1383,12 @@ export class TopicControlPlane
 				resolve(undefined);
 			}, Math.max(1, Math.floor(timeoutMs)));
 			timer.unref?.();
-			this.pendingTopicRootQueries.set(requestId, { topic, resolve, timer });
+			this.pendingTopicRootQueries.set(requestId, {
+				expectedPeerHash,
+				topic,
+				resolve,
+				timer,
+			});
 		});
 
 		try {
@@ -1288,8 +1411,11 @@ export class TopicControlPlane
 	private async confirmDirectShardRoot(
 		shardTopic: string,
 		root: string,
+		candidateGeneration: string,
+		lifecycleRevision: number,
 		signal?: AbortSignal,
 	): Promise<string> {
+		this.assertTopicControlPlaneActive(lifecycleRevision);
 		if (root === this.publicKeyHash) return root;
 		const rootPeer = this.peers.get(root);
 		if (!rootPeer) return root;
@@ -1302,37 +1428,64 @@ export class TopicControlPlane
 			),
 			signal,
 		);
+		this.assertTopicControlPlaneActive(lifecycleRevision);
+		if (candidateGeneration !== this.getTopicRootCandidateGeneration()) {
+			return root;
+		}
 		if (!confirmation) return root;
-		if (confirmation !== root) {
+		const resolved = this.normalizePeerTopicRootState(shardTopic, confirmation);
+		if (!resolved.authoritative) {
+			this.shardRootCache.delete(shardTopic);
+		} else if (resolved.root !== root) {
 			this.shardRootCache.set(shardTopic, {
-				root: confirmation,
+				root: resolved.root,
 				authoritative: true,
 			});
 		}
-		return confirmation;
+		return resolved.root;
 	}
 
 	private async resolveQueryableTopicRoot(
 		topic: string,
 	): Promise<string | undefined> {
-		const root = await this.topicRootControlPlane.resolveCanonicalTopicRoot(topic);
-		if (root !== this.publicKeyHash) {
-			return root;
-		}
-		if (!topic.startsWith(this.shardTopicPrefix)) {
-			return root;
-		}
+		const lifecycleRevision = this.topicControlPlaneLifecycleRevision;
+		for (;;) {
+			this.assertTopicControlPlaneActive(lifecycleRevision);
+			const rootCandidateGeneration = this.getTopicRootCandidateGeneration();
+			const root =
+				await this.topicRootControlPlane.resolveCanonicalTopicRoot(topic);
+			this.assertTopicControlPlaneActive(lifecycleRevision);
+			if (rootCandidateGeneration !== this.getTopicRootCandidateGeneration()) {
+				continue;
+			}
+			if (root !== this.publicKeyHash) {
+				return root;
+			}
+			if (!topic.startsWith(this.shardTopicPrefix)) {
+				return root;
+			}
 
-		try {
-			await this.ensureFanoutChannel(topic, { pin: true, root });
-			return root;
-		} catch (error) {
-			warn(
-				`Failed to host shard root ${topic} before answering root query: ${
-					error instanceof Error ? error.message : String(error)
-				}`,
-			);
-			return undefined;
+			try {
+				await this.ensureFanoutChannel(topic, {
+					pin: true,
+					root,
+					rootCandidateGeneration,
+				});
+				this.assertTopicControlPlaneActive(lifecycleRevision);
+				if (
+					rootCandidateGeneration !== this.getTopicRootCandidateGeneration()
+				) {
+					continue;
+				}
+				return root;
+			} catch (error) {
+				warn(
+					`Failed to host shard root ${topic} before answering root query: ${
+						error instanceof Error ? error.message : String(error)
+					}`,
+				);
+				return undefined;
+			}
 		}
 	}
 
@@ -1361,14 +1514,69 @@ export class TopicControlPlane
 
 	private async ensureFanoutChannel(
 		shardTopic: string,
-		options?: {
-			ephemeral?: boolean;
-			pin?: boolean;
-			root?: string;
-			signal?: AbortSignal;
-		},
+		options?: EnsureFanoutChannelOptions,
 	): Promise<void> {
-		if (!this.started) throw new NotStartedError();
+		const topic = shardTopic.toString();
+		const lifecycleRevision = this.topicControlPlaneLifecycleRevision;
+		for (;;) {
+			this.assertTopicControlPlaneActive(lifecycleRevision);
+			const candidateGeneration = this.getTopicRootCandidateGeneration();
+			const active = this.ensureFanoutChannelInFlight.get(topic);
+			if (
+				active?.candidateGeneration === candidateGeneration &&
+				active.lifecycleRevision === lifecycleRevision
+			) {
+				try {
+					await withAbort(active.opening, options?.signal);
+				} catch (error) {
+					if (options?.signal?.aborted) throw error;
+					this.assertTopicControlPlaneActive(lifecycleRevision);
+				}
+				continue;
+			}
+
+			const opening = this.ensureFanoutChannelOnce(
+				topic,
+				options,
+				lifecycleRevision,
+				candidateGeneration,
+			);
+			const inFlight = {
+				candidateGeneration,
+				lifecycleRevision,
+				opening,
+			};
+			this.ensureFanoutChannelInFlight.set(topic, inFlight);
+			try {
+				await opening;
+				this.assertTopicControlPlaneActive(lifecycleRevision);
+				if (candidateGeneration !== this.getTopicRootCandidateGeneration()) {
+					continue;
+				}
+				return;
+			} catch (error) {
+				if (options?.signal?.aborted) throw error;
+				this.assertTopicControlPlaneActive(lifecycleRevision);
+				if (candidateGeneration !== this.getTopicRootCandidateGeneration()) {
+					continue;
+				}
+				throw error;
+			} finally {
+				if (this.ensureFanoutChannelInFlight.get(topic) === inFlight) {
+					this.ensureFanoutChannelInFlight.delete(topic);
+				}
+			}
+		}
+	}
+
+	private async ensureFanoutChannelOnce(
+		shardTopic: string,
+		options: EnsureFanoutChannelOptions | undefined,
+		lifecycleRevision: number,
+		candidateGeneration: string,
+	): Promise<void> {
+		this.assertTopicControlPlaneActive(lifecycleRevision);
+		if (candidateGeneration !== this.getTopicRootCandidateGeneration()) return;
 		const t = shardTopic.toString();
 		const pin = options?.pin === true;
 		const wantEphemeral = options?.ephemeral === true;
@@ -1376,10 +1584,31 @@ export class TopicControlPlane
 		// Allow callers that already resolved the shard root (e.g. hostShardRootsNow)
 		// to pass it through to avoid a race where the candidate set changes between
 		// two resolve calls, causing an unnecessary (and potentially slow) join.
-		let root: string | undefined = options?.root;
+		const suppliedRoot = options?.root;
+		const suppliedRootGeneration = options?.rootCandidateGeneration;
+		if (
+			suppliedRoot !== undefined &&
+			suppliedRootGeneration !== candidateGeneration
+		) {
+			return;
+		}
+		this.assertTopicControlPlaneActive(lifecycleRevision);
+		let resolvedGeneration = candidateGeneration;
+		let root = suppliedRoot;
 		const existing = this.fanoutChannels.get(t);
 		if (existing) {
-			root = root ?? (await this.resolveShardRoot(t));
+			if (!root) {
+				const resolved = await this.resolveShardRootState(t);
+				this.assertTopicControlPlaneActive(lifecycleRevision);
+				root = resolved.root;
+				resolvedGeneration = resolved.candidateGeneration;
+			}
+			if (
+				resolvedGeneration !== candidateGeneration ||
+				candidateGeneration !== this.getTopicRootCandidateGeneration()
+			) {
+				return;
+			}
 			if (root === existing.root) {
 				existing.lastUsedAt = Date.now();
 				if (existing.ephemeral && !wantEphemeral) {
@@ -1390,15 +1619,48 @@ export class TopicControlPlane
 				}
 				if (pin) this.pinnedShards.add(t);
 				await withAbort(existing.join, options?.signal);
+				this.assertTopicControlPlaneActive(lifecycleRevision);
+				if (
+					resolvedGeneration !== candidateGeneration ||
+					candidateGeneration !== this.getTopicRootCandidateGeneration()
+				) {
+					return;
+				}
 				return;
 			}
 
-			// Root mapping changed (candidate set updated): migrate to the new overlay.
-			await withAbort(this.closeFanoutChannel(t, { force: true }), options?.signal);
+			// Root mapping changed (candidate set updated): migrate to the new
+			// overlay.
+			await withAbort(
+				this.closeFanoutChannel(t, { force: true }),
+				options?.signal,
+			);
+			this.assertTopicControlPlaneActive(lifecycleRevision);
+			if (candidateGeneration !== this.getTopicRootCandidateGeneration()) {
+				return;
+			}
 		}
 
-		root = root ?? (await this.resolveShardRoot(t));
-		root = await this.confirmDirectShardRoot(t, root, options?.signal);
+		if (!root) {
+			const resolved = await this.resolveShardRootState(t);
+			this.assertTopicControlPlaneActive(lifecycleRevision);
+			root = resolved.root;
+			resolvedGeneration = resolved.candidateGeneration;
+		}
+		root = await this.confirmDirectShardRoot(
+			t,
+			root,
+			resolvedGeneration,
+			lifecycleRevision,
+			options?.signal,
+		);
+		this.assertTopicControlPlaneActive(lifecycleRevision);
+		if (
+			resolvedGeneration !== candidateGeneration ||
+			candidateGeneration !== this.getTopicRootCandidateGeneration()
+		) {
+			return;
+		}
 		const channel = new FanoutChannel(this.fanout, { topic: t, root });
 
 		const onPayload = (payload: Uint8Array) => {
@@ -1541,7 +1803,7 @@ export class TopicControlPlane
 
 		const lastUsedAt = Date.now();
 		if (pin) this.pinnedShards.add(t);
-		this.fanoutChannels.set(t, {
+		const channelState = {
 			root,
 			channel,
 			join,
@@ -1549,14 +1811,19 @@ export class TopicControlPlane
 			onUnicast,
 			ephemeral: wantEphemeral,
 			lastUsedAt,
-		});
+		};
+		this.fanoutChannels.set(t, channelState);
 		join.catch(() => {
-			this.fanoutChannels.delete(t);
+			if (this.fanoutChannels.get(t) === channelState) {
+				this.fanoutChannels.delete(t);
+			}
 		});
 		join
 			.then(() => {
 				const st = this.fanoutChannels.get(t);
-				if (st?.ephemeral) this.scheduleFanoutIdleClose(t);
+				if (st === channelState && st.ephemeral) {
+					this.scheduleFanoutIdleClose(t);
+				}
 			})
 			.catch(() => {
 				// ignore
@@ -1565,6 +1832,7 @@ export class TopicControlPlane
 			this.evictEphemeralFanoutChannels(t);
 		}
 		await withAbort(join, options?.signal);
+		this.assertTopicControlPlaneActive(lifecycleRevision);
 	}
 
 	private async closeFanoutChannel(
@@ -1604,9 +1872,15 @@ export class TopicControlPlane
 		const joins: Promise<void>[] = [];
 		for (let i = 0; i < this.shardCount; i++) {
 			const shardTopic = `${this.shardTopicPrefix}${i}`;
-			const root = await this.resolveShardRoot(shardTopic);
-			if (root !== this.publicKeyHash) continue;
-			joins.push(this.ensureFanoutChannel(shardTopic, { pin: true, root }));
+			const resolved = await this.resolveShardRootState(shardTopic);
+			if (resolved.root !== this.publicKeyHash) continue;
+			joins.push(
+				this.ensureFanoutChannel(shardTopic, {
+					pin: true,
+					root: resolved.root,
+					rootCandidateGeneration: resolved.candidateGeneration,
+				}),
+			);
 		}
 		await Promise.all(joins);
 	}
@@ -2503,6 +2777,19 @@ export class TopicControlPlane
 		stream: PeerStreams;
 	}): Promise<void> {
 		const { pubsubMessage, message, from, stream } = input;
+		const isDirectRootControl =
+			pubsubMessage instanceof TopicRootCandidates ||
+			pubsubMessage instanceof TopicRootQuery ||
+			pubsubMessage instanceof TopicRootQueryResponse;
+		const directRootSigner = isDirectRootControl
+			? message.header.signatures?.publicKeys[0]
+			: undefined;
+		if (
+			isDirectRootControl &&
+			(!directRootSigner || !directRootSigner.equals(stream.publicKey))
+		) {
+			return;
+		}
 
 		if (pubsubMessage instanceof TopicRootCandidates) {
 			// Used only to converge deterministic shard-root candidates in auto mode.
@@ -2524,7 +2811,8 @@ export class TopicControlPlane
 		}
 
 		if (pubsubMessage instanceof TopicRootQueryResponse) {
-			this.resolvePendingTopicRootQuery(pubsubMessage);
+			const senderHash = directRootSigner!.hashcode();
+			this.resolvePendingTopicRootQuery(pubsubMessage, senderHash);
 			return;
 		}
 
