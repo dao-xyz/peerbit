@@ -1,5 +1,18 @@
 # Changelog
 
+## 13.1.18
+
+### Patch Changes
+
+- Updated dependencies [[`aeb860f`](https://github.com/dao-xyz/peerbit/commit/aeb860f0e168c9b7a3cacbbc48d95f4a494b2560)]:
+  - @peerbit/stream-interface@6.0.14
+  - @peerbit/pubsub@5.3.7
+  - @peerbit/log@6.2.11
+  - @peerbit/shared-log@13.2.17
+  - @peerbit/program@6.0.42
+  - @peerbit/rpc@6.1.10
+  - @peerbit/document-interface@3.2.54
+
 ## 13.1.17
 
 ### Patch Changes

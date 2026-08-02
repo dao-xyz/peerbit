@@ -1,5 +1,15 @@
 # Changelog
 
+## 5.1.84
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @peerbit/log@6.2.11
+  - @peerbit/shared-log@13.2.17
+  - @peerbit/program@6.0.42
+  - @peerbit/rpc@6.1.10
+
 ## 5.1.83
 
 ### Patch Changes

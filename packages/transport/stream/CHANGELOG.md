@@ -1,5 +1,14 @@
 # Changelog
 
+## 5.1.5
+
+### Patch Changes
+
+- [#1142](https://github.com/dao-xyz/peerbit/pull/1142) [`aeb860f`](https://github.com/dao-xyz/peerbit/commit/aeb860f0e168c9b7a3cacbbc48d95f4a494b2560) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Classify delivery modes by their canonical Borsh wire schema so duplicate JavaScript module instances cannot silently drop targeted messages or misroute acknowledgements.
+
+- Updated dependencies [[`aeb860f`](https://github.com/dao-xyz/peerbit/commit/aeb860f0e168c9b7a3cacbbc48d95f4a494b2560)]:
+  - @peerbit/stream-interface@6.0.14
+
 ## 5.1.4
 
 ### Patch Changes
