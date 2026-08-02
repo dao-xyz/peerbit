@@ -372,13 +372,39 @@ for (const [name, job] of [
 	);
 	assert.match(
 		job,
+		/head_repository\.full_name == github\.repository/,
+		`${name} must accept release runs only from this repository`,
+	);
+	assert.match(
+		job,
 		/vars\.ACTIONS_SECRETS_MIGRATED == 'true'/,
 		`${name} must wait for repository-wide secret migration`,
 	);
 	assert.match(
 		job,
+		/peerbit-org:273107789/,
+		`${name} must authenticate the immutable Peerbit Bot identity`,
+	);
+	assert.match(
+		job,
 		/^    environment: post-release$/m,
 		`${name} must obtain bot credentials from the master-restricted post-release environment`,
+	);
+	const peerbitCheckout = actionSteps(job, "actions/checkout").find(
+		(checkout) => !checkout.includes("repository: dao-xyz/peerbit-bootstrap"),
+	);
+	assert(peerbitCheckout, `${name} must check out peerbit`);
+	assert.match(
+		peerbitCheckout,
+		/ref: \$\{\{ github\.event\.workflow_run\.head_sha \}\}/,
+		`${name} must use the exact completed release SHA`,
+	);
+	const setupNode = actionSteps(job, "actions/setup-node");
+	assert.equal(setupNode.length, 1, `${name} must set up Node exactly once`);
+	assert.match(
+		setupNode[0],
+		/uses: actions\/setup-node@[0-9a-f]{40} # v4\.4\.0/,
+		`${name} must pin the Node setup action`,
 	);
 }
 const postReleaseCheckouts = actionSteps(
@@ -392,13 +418,11 @@ for (const checkout of postReleaseCheckouts) {
 		/persist-credentials: false/,
 		"every post-release checkout must avoid persisting default or bot credentials",
 	);
-	if (checkout.includes("PEERBIT_BOOTSTRAP_PR_TOKEN")) {
-		assert.match(
-			checkout,
-			/uses: actions\/checkout@[0-9a-f]{40} # v4/,
-			"the token-bearing cross-repository checkout must be commit-pinned",
-		);
-	}
+	assert.match(
+		checkout,
+		/uses: actions\/checkout@[0-9a-f]{40} # v4\.3\.1/,
+		"every post-release checkout must be commit-pinned",
+	);
 }
 const pullRequestActions = actionSteps(
 	postReleaseWorkflow,
@@ -411,7 +435,30 @@ for (const pullRequestAction of pullRequestActions) {
 		/uses: peter-evans\/create-pull-request@[0-9a-f]{40} # v6/,
 		"every bot-credentialed pull-request action must be commit-pinned",
 	);
+	assert.match(
+		pullRequestAction,
+		/^          base: master$/m,
+		"every post-release pull request must name its base after exact-SHA checkout",
+	);
 }
+const bootstrapRolloutJob = workflowJob(
+	postReleaseWorkflow,
+	"bootstrap-rollout-pr",
+);
+assert.match(
+	bootstrapRolloutJob,
+	/name: Validate generated rollout[\s\S]*?npm ci --ignore-scripts --no-audit --no-fund[\s\S]*?npm run validate:rollout[\s\S]*?npm run test:rollout/,
+	"generated bootstrap rollouts must pass the downstream repository's validators",
+);
+const bootstrapRolloutPullRequest = actionSteps(
+	bootstrapRolloutJob,
+	"peter-evans/create-pull-request",
+)[0];
+assert.match(
+	bootstrapRolloutPullRequest,
+	/^          draft: true$/m,
+	"bootstrap rollout pull requests must remain draft until production source state is verified",
+);
 assert.match(
 	postReleaseWorkflow,
 	/name: Use Node\.js[\s\S]*?node-version: 22/,

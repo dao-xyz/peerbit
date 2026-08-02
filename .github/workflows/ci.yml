@@ -60,6 +60,9 @@ jobs:
         run: |
           node --test scripts/validate-retired-domain-references.test.mjs
           node scripts/validate-retired-domain-references.mjs
+      - name: Validate bootstrap rollout PR generation
+        if: steps.workspace_dist_cache.outputs.cache-hit != 'true'
+        run: node --test tools/sync-bootstrap-rollout.spec.mjs
       - name: Validate managed DNS lease edge function
         if: steps.workspace_dist_cache.outputs.cache-hit != 'true'
         run: |
