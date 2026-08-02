@@ -12,7 +12,7 @@ permissions:
 
 jobs:
   restore:
-    if: ${{ vars.ACTIONS_SECRETS_MIGRATED == 'true' && github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'master' && vars.ENABLE_WORKSPACE_RESTORE == 'true' }}
+    if: ${{ vars.ACTIONS_SECRETS_MIGRATED == 'true' && github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_repository.full_name == github.repository && github.event.workflow_run.head_branch == 'master' && vars.ENABLE_WORKSPACE_RESTORE == 'true' }}
     runs-on: ubuntu-latest
     environment: post-release
     steps:
@@ -24,23 +24,24 @@ jobs:
             echo "RELEASE_PR_TOKEN is required for workspace restore pull requests" >&2
             exit 1
           fi
-          if ! authenticated_login=$(gh api user --jq .login); then
+          if ! authenticated_identity=$(gh api user --jq '"\(.login):\(.id)"'); then
             echo "RELEASE_PR_TOKEN could not authenticate with GitHub" >&2
             exit 1
           fi
-          if [ "$authenticated_login" != "peerbit-org" ]; then
-            echo "RELEASE_PR_TOKEN must authenticate as peerbit-org (got: $authenticated_login)" >&2
+          if [ "$authenticated_identity" != "peerbit-org:273107789" ]; then
+            echo "RELEASE_PR_TOKEN must authenticate as peerbit-org:273107789 (got: $authenticated_identity)" >&2
             exit 1
           fi
 
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
+          ref: ${{ github.event.workflow_run.head_sha }}
           fetch-depth: 0
           persist-credentials: false
 
       - name: Use Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
 
@@ -64,19 +65,21 @@ jobs:
             ---
 
             _This PR was opened by the **Restore Workspace Dependencies** workflow._
+          base: master
           branch: chore/restore-workspace-deps
           labels: chore
           add-paths: |
             **/package.json
             tools/restore-workspace-deps.mjs
   bootstrap-rollout-pr:
-    if: ${{ vars.ACTIONS_SECRETS_MIGRATED == 'true' && github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'master' && vars.ENABLE_BOOTSTRAP_ROLLOUT_PR == 'true' }}
+    if: ${{ vars.ACTIONS_SECRETS_MIGRATED == 'true' && github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_repository.full_name == github.repository && github.event.workflow_run.head_branch == 'master' && vars.ENABLE_BOOTSTRAP_ROLLOUT_PR == 'true' }}
     runs-on: ubuntu-latest
     environment: post-release
     steps:
       - name: Checkout peerbit
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
+          ref: ${{ github.event.workflow_run.head_sha }}
           fetch-depth: 2
           persist-credentials: false
 
@@ -105,29 +108,43 @@ jobs:
             echo "PEERBIT_BOOTSTRAP_PR_TOKEN is required when @peerbit/server changes" >&2
             exit 1
           fi
-          if ! authenticated_login=$(gh api user --jq .login); then
+          if ! authenticated_identity=$(gh api user --jq '"\(.login):\(.id)"'); then
             echo "PEERBIT_BOOTSTRAP_PR_TOKEN could not authenticate with GitHub" >&2
             exit 1
           fi
-          if [ "$authenticated_login" != "peerbit-org" ]; then
-            echo "PEERBIT_BOOTSTRAP_PR_TOKEN must authenticate as peerbit-org (got: $authenticated_login)" >&2
+          if [ "$authenticated_identity" != "peerbit-org:273107789" ]; then
+            echo "PEERBIT_BOOTSTRAP_PR_TOKEN must authenticate as peerbit-org:273107789 (got: $authenticated_identity)" >&2
             exit 1
           fi
           echo "enabled=true" >> "$GITHUB_OUTPUT"
 
       - name: Checkout peerbit-bootstrap
         if: ${{ steps.server.outputs.changed == 'true' && steps.auth.outputs.enabled == 'true' }}
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           repository: dao-xyz/peerbit-bootstrap
           token: ${{ secrets.PEERBIT_BOOTSTRAP_PR_TOKEN }}
           path: peerbit-bootstrap
           persist-credentials: false
 
+      - name: Use Node.js
+        if: ${{ steps.server.outputs.changed == 'true' && steps.auth.outputs.enabled == 'true' }}
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+
       - name: Sync rollout target
         if: ${{ steps.server.outputs.changed == 'true' && steps.auth.outputs.enabled == 'true' }}
         run: |
           node tools/sync-bootstrap-rollout.mjs peerbit-bootstrap "${{ steps.server.outputs.version }}"
+
+      - name: Validate generated rollout
+        if: ${{ steps.server.outputs.changed == 'true' && steps.auth.outputs.enabled == 'true' }}
+        working-directory: peerbit-bootstrap
+        run: |
+          npm ci --ignore-scripts --no-audit --no-fund
+          npm run validate:rollout
+          npm run test:rollout
 
       - name: Create bootstrap rollout pull request
         if: ${{ steps.server.outputs.changed == 'true' && steps.auth.outputs.enabled == 'true' }}
@@ -139,20 +156,27 @@ jobs:
           committer: "Peerbit Bot <273107789+peerbit-org@users.noreply.github.com>"
           commit-message: "chore: roll bootstrap-5 to @peerbit/server@${{ steps.server.outputs.version }}"
           title: "chore: roll bootstrap-5 to @peerbit/server@${{ steps.server.outputs.version }}"
+          draft: true
           body: |
             ## Summary
 
             * update `rollouts/bootstrap-5.json` to `@peerbit/server@${{ steps.server.outputs.version }}`
-            * align the bootstrap ops dependency on `@peerbit/server`
+            * promote the previously reviewed target into the rollback contract
+            * pin the exact bootstrap ops dependency and audited lockfile cohort
             * generated automatically after a successful `peerbit` release
 
-            Merging this PR triggers the bootstrap rollout workflow in `dao-xyz/peerbit-bootstrap`.
+            This PR intentionally opens as a draft. Before marking it ready, verify
+            that the latest successful production rollout left bootstrap-5 on the
+            promoted `expectedCurrentVersion`. Merging this PR triggers the bootstrap
+            rollout workflow in `dao-xyz/peerbit-bootstrap`.
 
             ---
 
             _This PR was opened by the **Post Release Automation** workflow after [Release](${{ github.event.workflow_run.html_url }})._
+          base: master
           branch: chore/bootstrap-5-rollout-server-v${{ steps.server.outputs.version }}
           delete-branch: false
           add-paths: |
             rollouts/bootstrap-5.json
             package.json
+            package-lock.json
