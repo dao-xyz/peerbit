@@ -1,5 +1,12 @@
 # Changelog
 
+## 6.2.12
+
+### Patch Changes
+
+- Updated dependencies [[`3de7810`](https://github.com/dao-xyz/peerbit/commit/3de7810ed925ca8f279fd07385b30696901978d9)]:
+  - @peerbit/pubsub-interface@5.1.9
+
 ## 6.2.11
 
 ### Patch Changes
