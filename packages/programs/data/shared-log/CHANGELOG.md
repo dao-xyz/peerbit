@@ -1,5 +1,11 @@
 # Changelog
 
+## 13.2.18
+
+### Patch Changes
+
+- [#1144](https://github.com/dao-xyz/peerbit/pull/1144) [`ef37392`](https://github.com/dao-xyz/peerbit/commit/ef37392690a7f7a491cad55de0f5cdc710280006) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Recheck receive-side prune ownership after joins and fence stale retry cleanup from newer work.
+
 ## 13.2.17
 
 ### Patch Changes
