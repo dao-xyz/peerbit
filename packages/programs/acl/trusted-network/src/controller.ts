@@ -1,4 +1,4 @@
-import { field, serialize, variant } from "@dao-xyz/borsh";
+import { deserialize, field, serialize, variant } from "@dao-xyz/borsh";
 import { type PeerId } from "@libp2p/interface";
 import {
 	PublicSignKey,
@@ -47,10 +47,17 @@ const openDocumentsLike = async <T, I extends Record<string, any> = any>(
 	return opened as DocumentsLike<T, I>;
 };
 
-const coercePublicKey = (publicKey: PublicSignKey | PeerId) => {
-	return publicKey instanceof PublicSignKey
-		? publicKey
-		: getPublicKeyFromPeerId(publicKey);
+const coercePublicKey = (publicKey: PublicSignKey | PeerId): PublicSignKey => {
+	if (publicKey instanceof PublicSignKey) {
+		return publicKey;
+	}
+
+	const bytes = (publicKey as { bytes?: unknown })?.bytes;
+	if (bytes instanceof Uint8Array) {
+		return deserialize(bytes, PublicSignKey);
+	}
+
+	return getPublicKeyFromPeerId(publicKey as PeerId);
 };
 const canPerformByRelation = async (
 	properties: CanPerformOperations<IdentityRelation>,
@@ -60,17 +67,15 @@ const canPerformByRelation = async (
 	const keys = await properties.entry.getPublicKeys();
 	const checkKey = async (key: PublicSignKey): Promise<boolean> => {
 		if (properties.type === "put") {
-			// TODO, this clause is only applicable when we modify the identityGraph, but it does not make sense that the canPerform method does not know what the payload will
-			// be, upon deserialization. There should be known in the `canPerform` method whether we are appending to the identityGraph.
-
-			const relation = properties.value;
-			if (relation instanceof IdentityRelation) {
-				if (!relation.from.equals(key)) {
+			try {
+				const from = coercePublicKey(properties.value.from);
+				const signer = coercePublicKey(key);
+				if (!from.equals(signer)) {
 					return false;
 				}
+			} catch {
+				return false;
 			}
-
-			// else assume the payload is accepted
 		}
 		if (isTrusted) {
 			const trusted = await isTrusted(key);
@@ -144,7 +149,9 @@ export class IdentityGraph extends Program<IdentityGraphArgs> {
 		await this.relationGraph.put(
 			new IdentityRelation({
 				to: coercePublicKey(to),
-				from: options?.identity?.publicKey || this.node.identity.publicKey,
+				from: coercePublicKey(
+					options?.identity?.publicKey || this.node.identity.publicKey,
+				),
 			}),
 			options,
 		);
@@ -204,19 +211,14 @@ export class TrustedNetwork extends Program<TrustedNetworkArgs> {
 		trustee: PublicSignKey | PeerId,
 		options?: AppendOptions<Operation>,
 	) {
-		const key =
-			trustee instanceof PublicSignKey
-				? trustee
-				: getPublicKeyFromPeerId(trustee);
+		const key = coercePublicKey(trustee);
+		const truster = coercePublicKey(this.node.identity.publicKey);
 
-		const existingRelation = await this.getRelation(
-			key,
-			this.node.identity.publicKey,
-		);
+		const existingRelation = await this.getRelation(key, truster);
 		if (!existingRelation) {
 			const relation = new IdentityRelation({
 				to: key,
-				from: this.node.identity.publicKey,
+				from: truster,
 			});
 			await this.trustGraph!.put(relation);
 			return relation;
@@ -252,15 +254,18 @@ export class TrustedNetwork extends Program<TrustedNetworkArgs> {
 	 * @returns true, if trusted
 	 */
 	async isTrusted(
-		trustee: PublicSignKey,
-		truster: PublicSignKey = this.rootTrust,
+		trustee: PublicSignKey | PeerId,
+		truster: PublicSignKey | PeerId = this.rootTrust,
 	): Promise<boolean> {
-		if (trustee.equals(this.rootTrust)) {
+		const trusteeKey = coercePublicKey(trustee);
+		const trusterKey = coercePublicKey(truster);
+
+		if (trusteeKey.equals(this.rootTrust)) {
 			return true;
 		}
 
 		// Fast local-only check first. This avoids stalling writes on cold-start or churn.
-		if (await this._isTrustedLocal(trustee, truster)) {
+		if (await this._isTrustedLocal(trusteeKey, trusterKey)) {
 			return true;
 		}
 
