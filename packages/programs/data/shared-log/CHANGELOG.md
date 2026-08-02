@@ -1,5 +1,17 @@
 # Changelog
 
+## 13.2.16
+
+### Patch Changes
+
+- [#1140](https://github.com/dao-xyz/peerbit/pull/1140) [`5e0d87a`](https://github.com/dao-xyz/peerbit/commit/5e0d87a263a27aaac1c584ba1374363f6163941e) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Gate raw Simple sync request variants on each remote peer's advertised capability so mixed-version peers fall back to legacy messages.
+
+- Updated dependencies [[`c65f981`](https://github.com/dao-xyz/peerbit/commit/c65f981e574a717dc6bd066553d3e537a76b5973)]:
+  - @peerbit/pubsub@5.3.6
+  - @peerbit/program@6.0.41
+  - @peerbit/rpc@6.1.9
+  - @peerbit/log@6.2.10
+
 ## 13.2.15
 
 ### Patch Changes
