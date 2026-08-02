@@ -1,5 +1,11 @@
 # Changelog
 
+## 5.1.9
+
+### Patch Changes
+
+- [#1152](https://github.com/dao-xyz/peerbit/pull/1152) [`3de7810`](https://github.com/dao-xyz/peerbit/commit/3de7810ed925ca8f279fd07385b30696901978d9) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Bound automatic topic-root candidate frames and managed state to canonical SHA-256 hashes, with matching TypeScript and native validation and no-op reconciliation guards.
+
 ## 5.1.8
 
 ### Patch Changes

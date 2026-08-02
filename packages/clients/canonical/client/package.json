@@ -1,6 +1,6 @@
 {
 	"name": "@peerbit/canonical-client",
-	"version": "1.1.46",
+	"version": "1.1.47",
 	"description": "Client helpers for connecting to a Peerbit canonical runtime",
 	"author": "Peerbit contributors",
 	"license": "MIT",

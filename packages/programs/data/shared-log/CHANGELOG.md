@@ -1,5 +1,16 @@
 # Changelog
 
+## 13.2.20
+
+### Patch Changes
+
+- Updated dependencies [[`3de7810`](https://github.com/dao-xyz/peerbit/commit/3de7810ed925ca8f279fd07385b30696901978d9)]:
+  - @peerbit/pubsub-interface@5.1.9
+  - @peerbit/pubsub@5.3.9
+  - @peerbit/log@6.2.12
+  - @peerbit/program@6.0.44
+  - @peerbit/rpc@6.1.12
+
 ## 13.2.19
 
 ### Patch Changes
