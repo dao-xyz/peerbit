@@ -2652,14 +2652,7 @@ testSetups.forEach((setup) => {
 				try {
 					await leavingDb.close();
 
-					await Promise.all([
-						waitForResolved(async () =>
-							expect(await sourceDb.log.replicationIndex?.getSize()).equal(2),
-						),
-						waitForResolved(async () =>
-							expect(await targetDb.log.replicationIndex?.getSize()).equal(2),
-						),
-					]);
+					await waitForReplicationIndexes(2, sourceDb, targetDb);
 
 					await waitForResolved(
 						async () =>
