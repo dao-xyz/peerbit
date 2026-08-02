@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.0.56
+
+### Patch Changes
+
+- Updated dependencies []:
+  - peerbit@5.3.15
+
 ## 1.0.55
 
 ### Patch Changes

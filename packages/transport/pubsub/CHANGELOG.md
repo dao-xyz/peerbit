@@ -1,5 +1,11 @@
 # Changelog
 
+## 5.3.8
+
+### Patch Changes
+
+- [#1149](https://github.com/dao-xyz/peerbit/pull/1149) [`3e892d0`](https://github.com/dao-xyz/peerbit/commit/3e892d0f99254bc64fef3228bcb89aba8fcb70d3) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Cancel stale fanout shard joins when automatic topic-root candidates change so subscription reconciliation can retry the current root without waiting for the old join timeout.
+
 ## 5.3.7
 
 ### Patch Changes
