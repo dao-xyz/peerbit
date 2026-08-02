@@ -374,9 +374,11 @@ export class TopicControlPlane
 	private ensureFanoutChannelInFlight = new Map<
 		string,
 		{
+			abortController: AbortController;
 			candidateGeneration: string;
 			lifecycleRevision: number;
 			opening: Promise<void>;
+			settled: Promise<void>;
 		}
 	>();
 	private pendingTopicRootQueries = new Map<
@@ -574,6 +576,11 @@ export class TopicControlPlane
 		this.topicControlPlaneStopping = true;
 		this.topicControlPlaneLifecycleRevision += 1;
 		this.reconcileShardOverlaysDirty = false;
+		for (const opening of this.ensureFanoutChannelInFlight.values()) {
+			opening.abortController.abort(
+				new AbortError("topic control plane stopped"),
+			);
+		}
 		this.ensureFanoutChannelInFlight.clear();
 		if (this._onFanoutPeerUnreachable) {
 			this.fanout.removeEventListener(
@@ -873,6 +880,14 @@ export class TopicControlPlane
 	}
 
 	private scheduleReconcileShardOverlays() {
+		const candidateGeneration = this.getTopicRootCandidateGeneration();
+		for (const opening of this.ensureFanoutChannelInFlight.values()) {
+			if (opening.candidateGeneration !== candidateGeneration) {
+				opening.abortController.abort(
+					new AbortError("topic root candidates changed"),
+				);
+			}
+		}
 		this.reconcileShardOverlaysDirty = true;
 		if (!this.started || this.stopping || this.topicControlPlaneStopping)
 			return;
@@ -1524,6 +1539,12 @@ export class TopicControlPlane
 		const lifecycleRevision = this.topicControlPlaneLifecycleRevision;
 		for (;;) {
 			this.assertTopicControlPlaneActive(lifecycleRevision);
+			if (options?.signal?.aborted) {
+				throw (
+					options.signal.reason ??
+					new AbortError("fanout channel opening aborted")
+				);
+			}
 			const candidateGeneration = this.getTopicRootCandidateGeneration();
 			const active = this.ensureFanoutChannelInFlight.get(topic);
 			if (
@@ -1536,19 +1557,54 @@ export class TopicControlPlane
 					if (options?.signal?.aborted) throw error;
 					this.assertTopicControlPlaneActive(lifecycleRevision);
 				}
+				await withAbort(active.settled, options?.signal);
+				if (this.ensureFanoutChannelInFlight.get(topic) === active) {
+					this.ensureFanoutChannelInFlight.delete(topic);
+				}
 				continue;
+			}
+			if (active) {
+				active.abortController.abort(
+					new AbortError("topic root candidates changed"),
+				);
+				await withAbort(active.settled, options?.signal);
+				if (this.ensureFanoutChannelInFlight.get(topic) === active) {
+					this.ensureFanoutChannelInFlight.delete(topic);
+				}
+				continue;
+			}
+
+			const abortController = new AbortController();
+			const abortFromCaller = () => {
+				abortController.abort(
+					options?.signal?.reason ??
+						new AbortError("fanout channel opening aborted"),
+				);
+			};
+			if (options?.signal?.aborted) {
+				abortFromCaller();
+			} else {
+				options?.signal?.addEventListener("abort", abortFromCaller, {
+					once: true,
+				});
 			}
 
 			const opening = this.ensureFanoutChannelOnce(
 				topic,
-				options,
+				{ ...options, signal: abortController.signal },
 				lifecycleRevision,
 				candidateGeneration,
 			);
+			let resolveSettled!: () => void;
+			const settled = new Promise<void>((resolve) => {
+				resolveSettled = resolve;
+			});
 			const inFlight = {
+				abortController,
 				candidateGeneration,
 				lifecycleRevision,
 				opening,
+				settled,
 			};
 			this.ensureFanoutChannelInFlight.set(topic, inFlight);
 			try {
@@ -1561,14 +1617,25 @@ export class TopicControlPlane
 			} catch (error) {
 				if (options?.signal?.aborted) throw error;
 				this.assertTopicControlPlaneActive(lifecycleRevision);
+				if (abortController.signal.aborted) {
+					if (this.ensureFanoutChannelInFlight.get(topic) === inFlight) {
+						const staleJoin = this.fanoutChannels
+							.get(topic)
+							?.join.catch(() => {});
+						if (staleJoin) await withAbort(staleJoin, options?.signal);
+					}
+					continue;
+				}
 				if (candidateGeneration !== this.getTopicRootCandidateGeneration()) {
 					continue;
 				}
 				throw error;
 			} finally {
+				options?.signal?.removeEventListener("abort", abortFromCaller);
 				if (this.ensureFanoutChannelInFlight.get(topic) === inFlight) {
 					this.ensureFanoutChannelInFlight.delete(topic);
 				}
+				resolveSettled();
 			}
 		}
 	}
