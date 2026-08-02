@@ -47,6 +47,10 @@ import {
 	type WithExtraSigners,
 	deliveryModeHasReceiver,
 	getMsgId,
+	isAcknowledgeAnyWhereDeliveryMode,
+	isAcknowledgeDeliveryMode,
+	isAnyWhereDeliveryMode,
+	isSilentDeliveryMode,
 } from "@peerbit/stream-interface";
 import { AbortError, TimeoutError, delay } from "@peerbit/time";
 import { Uint8ArrayList } from "uint8arraylist";
@@ -2284,7 +2288,8 @@ export class TopicControlPlane
 				);
 			}
 
-			const silentDelivery = options?.mode instanceof SilentDelivery;
+			const silentDelivery =
+				options?.mode != null && isSilentDeliveryMode(options.mode);
 			try {
 				await this.publishMessage(
 					this.publicKey,
@@ -2427,7 +2432,7 @@ export class TopicControlPlane
 			}),
 		);
 
-		const silentDelivery = options.mode instanceof SilentDelivery;
+		const silentDelivery = isSilentDeliveryMode(options.mode);
 		try {
 			await this.publishMessage(
 				this.publicKey,
@@ -3145,8 +3150,8 @@ export class TopicControlPlane
 		if (deliveryModeHasReceiver(message.header.mode)) {
 			isForMe = message.header.mode.to.includes(this.publicKeyHash);
 		} else if (
-			message.header.mode instanceof AnyWhere ||
-			message.header.mode instanceof AcknowledgeAnyWhere
+			isAnyWhereDeliveryMode(message.header.mode) ||
+			isAcknowledgeAnyWhereDeliveryMode(message.header.mode)
 		) {
 			isForMe = true;
 		}
@@ -3177,8 +3182,8 @@ export class TopicControlPlane
 		}
 
 		if (
-			message.header.mode instanceof SilentDelivery ||
-			message.header.mode instanceof AcknowledgeDelivery
+			isSilentDeliveryMode(message.header.mode) ||
+			isAcknowledgeDeliveryMode(message.header.mode)
 		) {
 			if (
 				message.header.mode.to.length === 1 &&
@@ -3190,8 +3195,8 @@ export class TopicControlPlane
 
 		const shouldForward =
 			seenBefore === 0 ||
-			((message.header.mode instanceof AcknowledgeDelivery ||
-				message.header.mode instanceof AcknowledgeAnyWhere) &&
+			((isAcknowledgeDeliveryMode(message.header.mode) ||
+				isAcknowledgeAnyWhereDeliveryMode(message.header.mode)) &&
 				seenBefore < message.header.mode.redundancy);
 		if (shouldForward) {
 			this.relayMessage(from, message).catch(logErrorIfStarted);

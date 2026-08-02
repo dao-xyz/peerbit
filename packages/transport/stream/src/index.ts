@@ -54,7 +54,11 @@ import {
 	getDeliveryHopTrace,
 	getResponsePriorityFromMessage,
 	hasDeliveryHop,
+	isAcknowledgeAnyWhereDeliveryMode,
+	isAcknowledgeDeliveryMode,
 	isAcknowledgedDeliveryMode,
+	isAnyWhereDeliveryMode,
+	isSilentDeliveryMode,
 	setDeliveryOriginHop,
 } from "@peerbit/stream-interface";
 import type {
@@ -2631,16 +2635,16 @@ export abstract class DirectStream<
 
 		let isForMe = false;
 		if (
-			message.header.mode instanceof AnyWhere ||
-			message.header.mode instanceof AcknowledgeAnyWhere
+			isAnyWhereDeliveryMode(message.header.mode) ||
+			isAcknowledgeAnyWhereDeliveryMode(message.header.mode)
 		) {
 			isForMe = true;
 		} else {
 			const isFromSelf = this.publicKey.equals(from);
 			if (
 				!isFromSelf &&
-				(message.header.mode instanceof SilentDelivery ||
-					message.header.mode instanceof AcknowledgeDelivery)
+				(isSilentDeliveryMode(message.header.mode) ||
+					isAcknowledgeDeliveryMode(message.header.mode))
 			) {
 				isForMe = message.header.mode.to.includes(this.publicKeyHash);
 			}
@@ -2665,8 +2669,8 @@ export abstract class DirectStream<
 		}
 
 		if (
-			message.header.mode instanceof SilentDelivery ||
-			message.header.mode instanceof AcknowledgeDelivery
+			isSilentDeliveryMode(message.header.mode) ||
+			isAcknowledgeDeliveryMode(message.header.mode)
 		) {
 			if (
 				message.header.mode.to &&
@@ -2681,8 +2685,8 @@ export abstract class DirectStream<
 			// Forward
 			const shouldForward =
 				seenBefore === 0 ||
-				((message.header.mode instanceof AcknowledgeDelivery ||
-					message.header.mode instanceof AcknowledgeAnyWhere) &&
+				((isAcknowledgeDeliveryMode(message.header.mode) ||
+					isAcknowledgeAnyWhereDeliveryMode(message.header.mode)) &&
 					seenBefore < message.header.mode.redundancy);
 
 			if (shouldForward) {
@@ -2714,14 +2718,12 @@ export abstract class DirectStream<
 		message: DataMessage | Goodbye,
 		seenBefore: number,
 	) {
-		if (
-			message.header.mode instanceof AcknowledgeDelivery ||
-			message.header.mode instanceof AcknowledgeAnyWhere
-		) {
+		if (isAcknowledgedDeliveryMode(message.header.mode)) {
 			const isRecipient =
-				message.header.mode instanceof AcknowledgeAnyWhere
-					? true
-					: message.header.mode.to.includes(this.publicKeyHash);
+				isAcknowledgeAnyWhereDeliveryMode(message.header.mode) ||
+				(message.header.mode as AcknowledgeDelivery).to.includes(
+					this.publicKeyHash,
+				);
 			const shouldAcknowledge = this.rustCore
 				? this.rustCore.decisions.shouldAcknowledge({
 						isRecipient,
@@ -2754,8 +2756,7 @@ export abstract class DirectStream<
 							// only include once (seenBefore=0) and only if we have not recently pruned
 							// a connection to any signer in the path
 							origin:
-								(message.header.mode instanceof AcknowledgeAnyWhere ||
-									message.header.mode instanceof AcknowledgeDelivery) &&
+								isAcknowledgedDeliveryMode(message.header.mode) &&
 								seenBefore === 0 &&
 								!signers.find((x) =>
 									this.prunedConnectionsCache?.has(x),
@@ -2976,8 +2977,8 @@ export abstract class DirectStream<
 				});
 
 		if (
-			mode instanceof AcknowledgeDelivery ||
-			mode instanceof SilentDelivery
+			isAcknowledgeDeliveryMode(mode) ||
+			isSilentDeliveryMode(mode)
 		) {
 			if (mode.to) {
 				let preLength = mode.to.length;
@@ -3170,7 +3171,7 @@ export abstract class DirectStream<
 		relayed?: boolean,
 		signal?: AbortSignal,
 	): Promise<{ promise: Promise<void>; startTimeout: () => void }> {
-		if (message.header.mode instanceof AnyWhere) {
+		if (isAnyWhereDeliveryMode(message.header.mode)) {
 			return {
 				promise: Promise.resolve(),
 				startTimeout: () => {},
@@ -3335,7 +3336,7 @@ export abstract class DirectStream<
 				) {
 					const shouldKeepCallbackForRouteLearning =
 						!relayed &&
-						message.header.mode instanceof AcknowledgeDelivery &&
+						isAcknowledgeDeliveryMode(message.header.mode) &&
 						message.header.mode.redundancy > 1;
 					if (haveReceivers && !shouldKeepCallbackForRouteLearning) {
 						// If we have an explicit recipient list we can clear the ACK callback once we
@@ -3370,8 +3371,7 @@ export abstract class DirectStream<
 				// This matters because relays may modify `to`, and because "ack-anywhere" style probes intentionally
 				// do not provide an explicit recipient list.
 				if (
-					message.header.mode instanceof AcknowledgeDelivery ||
-					message.header.mode instanceof AcknowledgeAnyWhere
+					isAcknowledgedDeliveryMode(message.header.mode)
 				) {
 					const upstreamHash = messageFrom?.publicKey.hashcode();
 
@@ -3455,7 +3455,7 @@ export abstract class DirectStream<
 			(!message.header.signatures ||
 				message.header.signatures.publicKeys.length === 0) &&
 			message instanceof DataMessage &&
-			message.header.mode instanceof SilentDelivery === false
+			!isSilentDeliveryMode(message.header.mode)
 		) {
 			throw new Error("Missing signature");
 		}
@@ -3466,8 +3466,7 @@ export abstract class DirectStream<
 
 		if (
 			(message instanceof DataMessage || message instanceof Goodbye) &&
-			(message.header.mode instanceof AcknowledgeDelivery ||
-				message.header.mode instanceof AcknowledgeAnyWhere)
+			isAcknowledgedDeliveryMode(message.header.mode)
 		) {
 			const deliveryDeferredPromise = await this.createDeliveryPromise(
 				from,
@@ -3493,8 +3492,8 @@ export abstract class DirectStream<
 
 			if (message instanceof DataMessage) {
 				if (
-					(message.header.mode instanceof AcknowledgeDelivery ||
-						message.header.mode instanceof SilentDelivery) &&
+					(isAcknowledgeDeliveryMode(message.header.mode) ||
+						isSilentDeliveryMode(message.header.mode)) &&
 					!to
 				) {
 					if (message.header.mode.to.length === 0) {
@@ -3519,7 +3518,7 @@ export abstract class DirectStream<
 						for (const [neighbour, _distantPeers] of fanout) {
 							const stream = this.peers.get(neighbour);
 							if (!stream) continue;
-							if (message.header.mode instanceof SilentDelivery) {
+							if (isSilentDeliveryMode(message.header.mode)) {
 								message.header.mode.to = [..._distantPeers.keys()];
 								promises.push(
 									this.waitForPeerWrite(
@@ -3541,7 +3540,7 @@ export abstract class DirectStream<
 							}
 							usedNeighbours.add(neighbour);
 						}
-						if (message.header.mode instanceof SilentDelivery) {
+						if (isSilentDeliveryMode(message.header.mode)) {
 							message.header.mode.to = originalTo;
 						}
 
@@ -3551,7 +3550,7 @@ export abstract class DirectStream<
 						// a separate delivery mode.
 						if (
 							!isRelayed &&
-							message.header.mode instanceof AcknowledgeDelivery &&
+							isAcknowledgeDeliveryMode(message.header.mode) &&
 							usedNeighbours.size < message.header.mode.redundancy
 						) {
 							if (this.rustCore) {
@@ -3601,7 +3600,7 @@ export abstract class DirectStream<
 					// - For acknowledged deliveries, fall through to flooding (route discovery / repair).
 					// - For silent deliveries, relays should not flood (prevents unnecessary fanout); origin may still flood.
 					//   We still allow direct neighbour delivery to explicit recipients (if connected).
-					if (isRelayed && message.header.mode instanceof SilentDelivery) {
+					if (isRelayed && isSilentDeliveryMode(message.header.mode)) {
 						const promises: Promise<any>[] = [];
 						const originalTo = message.header.mode.to;
 						const recipients = this.rustCore

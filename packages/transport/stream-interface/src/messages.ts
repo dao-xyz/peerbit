@@ -3,6 +3,9 @@ import {
 	deserialize,
 	field,
 	fixedArray,
+	getDependencies,
+	getOffset,
+	getSchema,
 	option,
 	serialize,
 	variant,
@@ -39,11 +42,11 @@ export const getMsgId = async (msg: Uint8ArrayList | Uint8Array) => {
 
 export const deliveryModeHasReceiver = (
 	mode: DeliveryMode,
-): mode is { to: string[] } => {
-	if (mode instanceof SilentDelivery && mode.to.length > 0) {
+): mode is SilentDelivery | AcknowledgeDelivery => {
+	if (isSilentDeliveryMode(mode) && mode.to.length > 0) {
 		return true;
 	}
-	if (mode instanceof AcknowledgeDelivery && mode.to.length > 0) {
+	if (isAcknowledgeDeliveryMode(mode) && mode.to.length > 0) {
 		return true;
 	}
 	return false;
@@ -51,10 +54,201 @@ export const deliveryModeHasReceiver = (
 
 export abstract class DeliveryMode {}
 
+type DeliveryModeFieldType = "u8" | "string-vector";
+
+const DELIVERY_MODE_SCHEMAS = new Map<
+	number,
+	readonly { key: string; type: DeliveryModeFieldType }[]
+>([
+	[
+		0,
+		[
+			{ key: "to", type: "string-vector" },
+			{ key: "redundancy", type: "u8" },
+		],
+	],
+	[
+		1,
+		[
+			{ key: "to", type: "string-vector" },
+			{ key: "redundancy", type: "u8" },
+			{ key: "hops", type: "string-vector" },
+		],
+	],
+	[3, [{ key: "trace", type: "string-vector" }]],
+	[4, []],
+	[
+		5,
+		[
+			{ key: "redundancy", type: "u8" },
+			{ key: "hops", type: "string-vector" },
+		],
+	],
+]);
+
+const deliveryModeVariants = new WeakMap<Function, number | undefined>();
+
+const isStringArray = (value: unknown): value is string[] => {
+	if (!Array.isArray(value)) return false;
+	for (let index = 0; index < value.length; index++) {
+		if (!Object.hasOwn(value, index) || typeof value[index] !== "string") {
+			return false;
+		}
+	}
+	return true;
+};
+
+const isU8 = (value: unknown): value is number =>
+	typeof value === "number" &&
+	Number.isInteger(value) &&
+	value >= 0 &&
+	value <= 0xff;
+
+const hasExpectedDeliveryModeFieldType = (
+	type: unknown,
+	expected: DeliveryModeFieldType,
+) => {
+	if (expected === "u8") {
+		return type === "u8";
+	}
+	if (typeof type !== "object" || type == null) {
+		return false;
+	}
+	const vector = type as { elementType?: unknown; sizeEncoding?: unknown };
+	const keys = Object.keys(vector);
+	return (
+		keys.length === 2 &&
+		Object.hasOwn(vector, "elementType") &&
+		Object.hasOwn(vector, "sizeEncoding") &&
+		vector.elementType === "string" &&
+		vector.sizeEncoding === "u32" &&
+		!("serialize" in vector) &&
+		!("deserialize" in vector)
+	);
+};
+
+const getDeliveryModeVariantFromSchema = (
+	constructor: Function,
+): number | undefined => {
+	if (deliveryModeVariants.has(constructor)) {
+		return deliveryModeVariants.get(constructor);
+	}
+
+	let variant: number | undefined;
+	try {
+		const basePrototype = Object.getPrototypeOf(constructor.prototype);
+		const baseConstructor = Object.getOwnPropertyDescriptor(
+			basePrototype,
+			"constructor",
+		)?.value;
+		const schema = getSchema(constructor);
+		const schemaVariant = schema?.variant;
+		if (typeof schemaVariant === "number") {
+			const expected = DELIVERY_MODE_SCHEMAS.get(schemaVariant);
+			if (
+				expected &&
+				typeof baseConstructor === "function" &&
+				getOffset(constructor) === 1 &&
+				getSchema(baseConstructor) == null &&
+				getDependencies(baseConstructor, 0)?.includes(constructor) === true &&
+				schema.variantMarker === true &&
+				schema.serializer == null &&
+				schema.fields.length === expected.length &&
+				schema.fields.every(
+					(field, index) =>
+						field.key === expected[index]!.key &&
+						hasExpectedDeliveryModeFieldType(field.type, expected[index]!.type),
+				)
+			) {
+				variant = schemaVariant;
+			}
+		}
+	} catch {
+		// Unknown modes fail closed.
+	}
+	deliveryModeVariants.set(constructor, variant);
+	return variant;
+};
+
+const hasValidDeliveryModeFields = (mode: object, variant: number): boolean => {
+	const getValue = (key: string) => {
+		const descriptor = Object.getOwnPropertyDescriptor(mode, key);
+		return descriptor && "value" in descriptor ? descriptor.value : undefined;
+	};
+	if (variant === 0) {
+		return isStringArray(getValue("to")) && isU8(getValue("redundancy"));
+	}
+	if (variant === 1) {
+		return (
+			isStringArray(getValue("to")) &&
+			isU8(getValue("redundancy")) &&
+			isStringArray(getValue("hops"))
+		);
+	}
+	if (variant === 3) {
+		return isStringArray(getValue("trace"));
+	}
+	if (variant === 4) {
+		return true;
+	}
+	if (variant === 5) {
+		return isU8(getValue("redundancy")) && isStringArray(getValue("hops"));
+	}
+	return false;
+};
+
+const getDeliveryModeVariant = (mode: unknown): number | undefined => {
+	try {
+		if (typeof mode !== "object" || mode == null) {
+			return undefined;
+		}
+		const prototype = Object.getPrototypeOf(mode);
+		// Preserve the common local-instance fast path without accepting subclasses.
+		if (prototype === SilentDelivery.prototype) return 0;
+		if (prototype === AcknowledgeDelivery.prototype) return 1;
+		if (prototype === TracedDelivery.prototype) return 3;
+		if (prototype === AnyWhere.prototype) return 4;
+		if (prototype === AcknowledgeAnyWhere.prototype) return 5;
+
+		const constructor = Object.getOwnPropertyDescriptor(
+			prototype,
+			"constructor",
+		)?.value;
+		if (typeof constructor !== "function") {
+			return undefined;
+		}
+		if (constructor.prototype !== prototype) return undefined;
+		const variant = getDeliveryModeVariantFromSchema(constructor);
+		if (variant == null) {
+			return undefined;
+		}
+		return hasValidDeliveryModeFields(mode, variant) ? variant : undefined;
+	} catch {
+		return undefined;
+	}
+};
+
+export const isSilentDeliveryMode = (mode: unknown): mode is SilentDelivery =>
+	getDeliveryModeVariant(mode) === 0;
+
+export const isAcknowledgeDeliveryMode = (
+	mode: unknown,
+): mode is AcknowledgeDelivery => getDeliveryModeVariant(mode) === 1;
+
+export const isTracedDeliveryMode = (mode: unknown): mode is TracedDelivery =>
+	getDeliveryModeVariant(mode) === 3;
+
+export const isAnyWhereDeliveryMode = (mode: unknown): boolean =>
+	getDeliveryModeVariant(mode) === 4;
+
+export const isAcknowledgeAnyWhereDeliveryMode = (
+	mode: unknown,
+): mode is AcknowledgeAnyWhere => getDeliveryModeVariant(mode) === 5;
+
 export const isAcknowledgedDeliveryMode = (
 	mode: DeliveryMode,
 ): mode is AcknowledgeDelivery | AcknowledgeAnyWhere =>
-	mode instanceof AcknowledgeDelivery || mode instanceof AcknowledgeAnyWhere;
+	isAcknowledgeDeliveryMode(mode) || isAcknowledgeAnyWhereDeliveryMode(mode);
 
 export const getDeliveryHopTrace = (mode: DeliveryMode): string[] =>
 	isAcknowledgedDeliveryMode(mode) ? mode.hops : [];
@@ -271,29 +465,29 @@ export const FOREGROUND_READ_MESSAGE_PRIORITY = 2;
 export const ACK_CONTROL_PRIORITY = 3;
 
 const getDefaultPriorityFromMode = (mode: DeliveryMode) => {
-	if (mode instanceof SilentDelivery) {
+	if (isSilentDeliveryMode(mode)) {
 		return BACKGROUND_MESSAGE_PRIORITY;
 	}
-	if (mode instanceof AnyWhere) {
+	if (isAnyWhereDeliveryMode(mode)) {
 		return BACKGROUND_MESSAGE_PRIORITY;
 	}
-	if (mode instanceof AcknowledgeAnyWhere) {
+	if (isAcknowledgeAnyWhereDeliveryMode(mode)) {
 		return CONVERGENCE_MESSAGE_PRIORITY;
 	}
 
-	if (mode instanceof AcknowledgeDelivery) {
+	if (isAcknowledgeDeliveryMode(mode)) {
 		return CONVERGENCE_MESSAGE_PRIORITY;
 	}
-	if (mode instanceof TracedDelivery) {
+	if (isTracedDeliveryMode(mode)) {
 		return ACK_CONTROL_PRIORITY;
 	}
-	throw new Error("Unexpected mode: " + mode.constructor.name);
+	throw new Error("Unexpected delivery mode");
 };
 
 const getDefaultResponsePriorityFromMode = (mode: DeliveryMode) => {
 	if (
-		mode instanceof AcknowledgeAnyWhere ||
-		mode instanceof AcknowledgeDelivery
+		isAcknowledgeAnyWhereDeliveryMode(mode) ||
+		isAcknowledgeDeliveryMode(mode)
 	) {
 		return ACK_CONTROL_PRIORITY;
 	}

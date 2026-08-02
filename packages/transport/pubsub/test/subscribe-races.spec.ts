@@ -1,17 +1,42 @@
+import { field, variant, vec } from "@dao-xyz/borsh";
 import { getPublicKeyFromPeerId } from "@peerbit/crypto";
 import { TestSession } from "@peerbit/libp2p-test-utils";
 import {
 	TopicRootCandidates,
+	TopicRootQuery,
 	TopicRootQueryResponse,
 } from "@peerbit/pubsub-interface";
 import { waitForNeighbour } from "@peerbit/stream";
+import {
+	DataMessage,
+	type DeliveryMode,
+	MessageHeader,
+} from "@peerbit/stream-interface";
 import { delay, waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
+import sinon from "sinon";
 import {
 	FanoutTree,
 	TopicControlPlane,
 	TopicRootControlPlane,
 } from "../src/index.js";
+
+abstract class ForeignDeliveryMode {}
+
+@variant(0)
+class ForeignSilentDelivery extends ForeignDeliveryMode {
+	@field({ type: vec("string") })
+	to: string[];
+
+	@field({ type: "u8" })
+	redundancy: number;
+
+	constructor(to: string[], redundancy: number) {
+		super();
+		this.to = to;
+		this.redundancy = redundancy;
+	}
+}
 
 describe("pubsub (subscribe race regressions)", function () {
 	let session:
@@ -597,6 +622,49 @@ describe("pubsub (subscribe race regressions)", function () {
 		).to.equal(true);
 		expect(resolved).to.equal(true);
 		expect(internals.pendingTopicRootQueries.has(requestId)).to.equal(false);
+	});
+
+	it("processes targeted root control from another delivery-mode identity", async () => {
+		session = await createDisconnectedSessionWithPerPeerRoots(2);
+		const receiver = session.peers[0]!.services.pubsub;
+		const sender = session.peers[1]!.services.pubsub;
+		const processDirect = sinon
+			.stub(receiver as any, "processDirectPubSubMessage")
+			.resolves();
+		sinon.stub(receiver, "verifyAndProcess").resolves(true);
+
+		const createMessage = (recipient: string) =>
+			new DataMessage({
+				data: new TopicRootQuery({
+					requestId: 1,
+					topic: "/peerbit/pubsub-shard/1/foreign-mode",
+				}).bytes(),
+				header: new MessageHeader({
+					mode: new ForeignSilentDelivery(
+						[recipient],
+						1,
+					) as unknown as DeliveryMode,
+					session: 1,
+				}),
+			});
+		const stream = { publicKey: sender.publicKey } as any;
+
+		await receiver.onDataMessage(
+			sender.publicKey,
+			stream,
+			createMessage(receiver.publicKeyHash),
+			0,
+		);
+		expect(processDirect.calledOnce).to.equal(true);
+
+		processDirect.resetHistory();
+		await receiver.onDataMessage(
+			sender.publicKey,
+			stream,
+			createMessage("different-recipient"),
+			0,
+		);
+		expect(processDirect.called).to.equal(false);
 	});
 
 	it("ignores direct root control signed by a different peer", async () => {
