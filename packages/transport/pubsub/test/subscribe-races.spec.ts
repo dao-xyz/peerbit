@@ -2,6 +2,7 @@ import { field, variant, vec } from "@dao-xyz/borsh";
 import { getPublicKeyFromPeerId, sha256Base64Sync } from "@peerbit/crypto";
 import { TestSession } from "@peerbit/libp2p-test-utils";
 import {
+	TOPIC_ROOT_CANDIDATES_MAX,
 	TopicRootCandidates,
 	TopicRootQuery,
 	TopicRootQueryResponse,
@@ -196,21 +197,47 @@ describe("pubsub (subscribe race regressions)", function () {
 
 	const canonicalCandidate = (label: string) =>
 		sha256Base64Sync(new TextEncoder().encode(label));
+	const preparePendingAutoTopicRootCandidateUpdate = (
+		pubsub: TopicControlPlane,
+		label: string,
+	) => {
+		const internals = pubsub as any;
+		internals.scheduleReconcileShardOverlays = () => {};
+		internals.scheduleHostOwnedShardRoots = () => {};
+		internals.scheduleAutoTopicRootCandidatesBroadcast = () => {};
+		expect(
+			internals.mergeAutoTopicRootCandidatesFromPeer([
+				canonicalCandidate(`${label}-leading`),
+			]),
+		).to.equal(true);
+		expect(
+			internals.mergeAutoTopicRootCandidatesFromPeer([
+				canonicalCandidate(`${label}-pending`),
+			]),
+		).to.equal(true);
+		expect(internals.pendingAutoTopicRootCandidates).to.not.equal(undefined);
+		return internals;
+	};
 
 	const stubFirstFanoutJoinUntilAbort = (
 		expectedRoot: string,
 		releaseAfterAbort?: Promise<void>,
+		nextExpectedRoot = expectedRoot,
 	) => {
 		const started = deferred();
 		const aborted = deferred();
+		let abortCount = 0;
 		const join = sinon
 			.stub(FanoutChannel.prototype, "join")
 			.callsFake(function (this: FanoutChannel, _options, joinOptions) {
-				expect(this.root).to.equal(expectedRoot);
+				expect(this.root).to.equal(
+					join.callCount > 1 ? nextExpectedRoot : expectedRoot,
+				);
 				if (join.callCount > 1) return Promise.resolve();
 				started.resolve();
 				return new Promise<void>((_resolve, reject) => {
 					const onAbort = async () => {
+						abortCount += 1;
 						aborted.resolve();
 						await releaseAfterAbort;
 						reject(
@@ -227,7 +254,14 @@ describe("pubsub (subscribe race regressions)", function () {
 					}
 				});
 			});
-		return { aborted: aborted.promise, join, started: started.promise };
+		return {
+			aborted: aborted.promise,
+			get abortCount() {
+				return abortCount;
+			},
+			join,
+			started: started.promise,
+		};
 	};
 
 	afterEach(async () => {
@@ -415,6 +449,158 @@ describe("pubsub (subscribe race regressions)", function () {
 		expect(internals.autoTopicRootCandidateSet.size).to.equal(64);
 	});
 
+	it("coalesces auto-candidate generations globally on a fixed cooldown", async () => {
+		session = await createDisconnectedSessionWithPerPeerRoots(1);
+		const pubsub = session.peers[0]!.services.pubsub;
+		const internals = pubsub as any;
+		const clock = sinon.useFakeTimers({
+			now: Date.now(),
+			toFake: ["Date", "clearTimeout", "setTimeout"],
+		});
+		const scheduled = { broadcast: 0, host: 0, reconcile: 0 };
+		internals.scheduleReconcileShardOverlays = () => scheduled.reconcile++;
+		internals.scheduleHostOwnedShardRoots = () => scheduled.host++;
+		internals.scheduleAutoTopicRootCandidatesBroadcast = () =>
+			scheduled.broadcast++;
+
+		const candidates = Array.from({ length: 160 }, (_, index) =>
+			canonicalCandidate(`coalesced-auto-root-${index}`),
+		).sort((left, right) => (left < right ? 1 : left > right ? -1 : 0));
+
+		try {
+			expect(
+				internals.mergeAutoTopicRootCandidatesFromPeer([candidates[0]]),
+			).to.equal(true);
+			expect(scheduled).to.deep.equal({ broadcast: 1, host: 1, reconcile: 1 });
+			expect(internals.pendingAutoTopicRootCandidates).to.equal(undefined);
+			const leadingTimer = internals.autoTopicRootCandidateUpdateTimer;
+			expect(leadingTimer).to.not.equal(undefined);
+
+			for (let index = 1; index < candidates.length; index++) {
+				if (index % 2 === 0) {
+					internals.maybeUpdateAutoTopicRootCandidates(candidates[index]);
+				} else {
+					expect(
+						internals.mergeAutoTopicRootCandidatesFromPeer([candidates[index]]),
+					).to.equal(true);
+				}
+				expect(internals.autoTopicRootCandidateUpdateTimer).to.equal(
+					leadingTimer,
+				);
+				expect(internals.pendingAutoTopicRootCandidates.length).to.be.at.most(
+					TOPIC_ROOT_CANDIDATES_MAX,
+				);
+			}
+
+			const expectedTrailing = internals.normalizeAutoTopicRootCandidates([
+				...candidates,
+				pubsub.publicKeyHash,
+			]);
+			expect(internals.pendingAutoTopicRootCandidates).to.deep.equal(
+				expectedTrailing,
+			);
+			expect(internals.pendingAutoTopicRootCandidates).to.have.length(
+				TOPIC_ROOT_CANDIDATES_MAX,
+			);
+			expect(
+				internals.maybeDisableAutoTopicRootCandidatesIfExternallyConfigured(),
+			).to.equal(false);
+			expect([...internals.autoTopicRootCandidateSet]).to.deep.equal(
+				pubsub.topicRootControlPlane.getTopicRootCandidates(),
+			);
+			expect(scheduled).to.deep.equal({ broadcast: 1, host: 1, reconcile: 1 });
+
+			clock.tick(1_999);
+			expect(scheduled).to.deep.equal({ broadcast: 1, host: 1, reconcile: 1 });
+			clock.tick(1);
+			expect(
+				pubsub.topicRootControlPlane.getTopicRootCandidates(),
+			).to.deep.equal(expectedTrailing);
+			expect(scheduled).to.deep.equal({ broadcast: 2, host: 2, reconcile: 2 });
+			expect(internals.pendingAutoTopicRootCandidates).to.equal(undefined);
+
+			const trailingTimer = internals.autoTopicRootCandidateUpdateTimer;
+			expect(trailingTimer).to.not.equal(undefined);
+			expect(trailingTimer).to.not.equal(leadingTimer);
+			const nextCandidate = "A".repeat(43) + "=";
+			expect(expectedTrailing).not.to.include(nextCandidate);
+			internals.maybeUpdateAutoTopicRootCandidates(nextCandidate);
+			expect(internals.autoTopicRootCandidateUpdateTimer).to.equal(
+				trailingTimer,
+			);
+			expect(scheduled).to.deep.equal({ broadcast: 2, host: 2, reconcile: 2 });
+
+			clock.tick(2_000);
+			expect(pubsub.topicRootControlPlane.getTopicRootCandidates()).to.include(
+				nextCandidate,
+			);
+			expect(scheduled).to.deep.equal({ broadcast: 3, host: 3, reconcile: 3 });
+		} finally {
+			internals.clearAutoTopicRootCandidateUpdateSchedule();
+			clock.restore();
+		}
+	});
+
+	it("drops a pending auto-candidate update when explicit candidates are set", async () => {
+		session = await createDisconnectedSessionWithPerPeerRoots(1);
+		const pubsub = session.peers[0]!.services.pubsub;
+		const internals = preparePendingAutoTopicRootCandidateUpdate(
+			pubsub,
+			"explicit",
+		);
+
+		const explicit = ["explicit-root-candidate"];
+		pubsub.setTopicRootCandidates(explicit);
+		expect(internals.autoTopicRootCandidates).to.equal(false);
+		expect(internals.autoTopicRootCandidateUpdateTimer).to.equal(undefined);
+		expect(internals.pendingAutoTopicRootCandidates).to.equal(undefined);
+		internals.flushPendingAutoTopicRootCandidateUpdate();
+		expect(pubsub.topicRootControlPlane.getTopicRootCandidates()).to.deep.equal(
+			explicit,
+		);
+	});
+
+	it("drops a pending auto-candidate update when auto mode is externally disabled", async () => {
+		session = await createDisconnectedSessionWithPerPeerRoots(1);
+		const pubsub = session.peers[0]!.services.pubsub;
+		const internals = preparePendingAutoTopicRootCandidateUpdate(
+			pubsub,
+			"external",
+		);
+
+		const external = ["externally-configured-root-candidate"];
+		pubsub.topicRootControlPlane.setTopicRootCandidates(external);
+		expect(
+			internals.maybeDisableAutoTopicRootCandidatesIfExternallyConfigured(),
+		).to.equal(true);
+		expect(internals.autoTopicRootCandidates).to.equal(false);
+		expect(internals.autoTopicRootCandidateUpdateTimer).to.equal(undefined);
+		expect(internals.pendingAutoTopicRootCandidates).to.equal(undefined);
+		internals.flushPendingAutoTopicRootCandidateUpdate();
+		expect(pubsub.topicRootControlPlane.getTopicRootCandidates()).to.deep.equal(
+			external,
+		);
+	});
+
+	it("drops a pending auto-candidate update on stop", async () => {
+		session = await createDisconnectedSessionWithPerPeerRoots(1);
+		const pubsub = session.peers[0]!.services.pubsub;
+		const internals = preparePendingAutoTopicRootCandidateUpdate(
+			pubsub,
+			"stop",
+		);
+		const appliedBeforeStop =
+			pubsub.topicRootControlPlane.getTopicRootCandidates();
+
+		await pubsub.stop();
+		expect(internals.autoTopicRootCandidateUpdateTimer).to.equal(undefined);
+		expect(internals.pendingAutoTopicRootCandidates).to.equal(undefined);
+		internals.flushPendingAutoTopicRootCandidateUpdate();
+		expect(pubsub.topicRootControlPlane.getTopicRootCandidates()).to.deep.equal(
+			appliedBeforeStop,
+		);
+	});
+
 	it("filters non-canonical candidates only from auto mode", async () => {
 		session = await createDisconnectedSessionWithPerPeerRoots(1);
 		const pubsub = session.peers[0]!.services.pubsub;
@@ -453,6 +639,9 @@ describe("pubsub (subscribe race regressions)", function () {
 		expect(internals.mergeAutoTopicRootCandidatesFromPeer([oldRoot])).to.equal(
 			true,
 		);
+		// The first merge only establishes this race's stale generation. Expire its
+		// cooldown so the later merge remains the immediate generation change under test.
+		internals.clearAutoTopicRootCandidateUpdateSchedule();
 		const beforeCandidates =
 			pubsub.topicRootControlPlane.getTopicRootCandidates();
 		const afterCandidates = [...beforeCandidates, addedCandidate];
@@ -550,6 +739,9 @@ describe("pubsub (subscribe race regressions)", function () {
 		expect(
 			internals.mergeAutoTopicRootCandidatesFromPeer([staleRoot]),
 		).to.equal(true);
+		// The first merge only establishes this race's stale generation. Expire its
+		// cooldown so the later merge remains the immediate generation change under test.
+		internals.clearAutoTopicRootCandidateUpdateSchedule();
 		const beforeCandidates =
 			pubsub.topicRootControlPlane.getTopicRootCandidates();
 		const afterCandidates = [...beforeCandidates, addedCandidate];
@@ -593,6 +785,96 @@ describe("pubsub (subscribe race regressions)", function () {
 			);
 		} finally {
 			staleJoin.join.restore();
+		}
+	});
+
+	it("applies a queued candidate on the trailing cooldown and reopens a stale join once", async () => {
+		session = await createDisconnectedSessionWithPerPeerRoots(1);
+		const pubsub = session.peers[0]!.services.pubsub;
+		const fanout = session.peers[0]!.services.fanout;
+		const internals = pubsub as any;
+		const clock = sinon.useFakeTimers({
+			now: Date.now(),
+			toFake: ["Date", "clearTimeout", "setTimeout"],
+		});
+		const staleRoot = canonicalCandidate("queued-stale-join");
+		const addedCandidate = canonicalCandidate("queued-moved-root");
+		internals.scheduleHostOwnedShardRoots = () => {};
+		internals.scheduleAutoTopicRootCandidatesBroadcast = () => {};
+
+		expect(
+			internals.mergeAutoTopicRootCandidatesFromPeer([staleRoot]),
+		).to.equal(true);
+		const beforeCandidates =
+			pubsub.topicRootControlPlane.getTopicRootCandidates();
+		const afterCandidates = internals.normalizeAutoTopicRootCandidates([
+			...beforeCandidates,
+			addedCandidate,
+		]);
+		const { topic } = findCandidateTransitionTopic(
+			beforeCandidates,
+			afterCandidates,
+			staleRoot,
+			addedCandidate,
+		);
+		const staleGeneration = internals.getTopicRootCandidateGeneration();
+		internals.resolveShardRootState = async () => {
+			const candidateGeneration = internals.getTopicRootCandidateGeneration();
+			return {
+				root:
+					candidateGeneration === staleGeneration ? staleRoot : addedCandidate,
+				candidateGeneration,
+			};
+		};
+
+		const waitFor = sinon.stub(fanout, "waitFor").resolves([]);
+		const staleJoin = stubFirstFanoutJoinUntilAbort(
+			staleRoot,
+			undefined,
+			addedCandidate,
+		);
+
+		try {
+			const opening = internals.ensureFanoutChannel(topic);
+			await staleJoin.started;
+
+			expect(
+				internals.mergeAutoTopicRootCandidatesFromPeer([addedCandidate]),
+			).to.equal(true);
+			expect(internals.getTopicRootCandidateGeneration()).to.equal(
+				staleGeneration,
+			);
+			expect(internals.pendingAutoTopicRootCandidates).to.deep.equal(
+				afterCandidates,
+			);
+			expect(staleJoin.abortCount).to.equal(0);
+
+			await clock.tickAsync(1_999);
+			expect(staleJoin.abortCount).to.equal(0);
+			expect(staleJoin.join.callCount).to.equal(1);
+
+			await clock.tickAsync(1);
+			await staleJoin.aborted;
+			await opening;
+			expect(staleJoin.abortCount).to.equal(1);
+			expect(staleJoin.join.callCount).to.equal(2);
+			expect(
+				pubsub.topicRootControlPlane.getTopicRootCandidates(),
+			).to.deep.equal(afterCandidates);
+			expect(internals.fanoutChannels.get(topic)?.root).to.equal(
+				addedCandidate,
+			);
+
+			// The trailing application opens a fresh cooldown. With nothing pending,
+			// its expiry must not cause another abort or reopen.
+			await clock.tickAsync(2_000);
+			expect(staleJoin.abortCount).to.equal(1);
+			expect(staleJoin.join.callCount).to.equal(2);
+		} finally {
+			internals.clearAutoTopicRootCandidateUpdateSchedule();
+			staleJoin.join.restore();
+			waitFor.restore();
+			clock.restore();
 		}
 	});
 

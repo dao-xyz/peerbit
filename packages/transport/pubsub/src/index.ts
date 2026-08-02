@@ -142,6 +142,7 @@ const DEFAULT_FANOUT_PUBLISH_MAX_EPHEMERAL_CHANNELS = 64;
 const DEFAULT_PUBSUB_SHARD_COUNT = 256;
 const PUBSUB_SHARD_COUNT_HARD_CAP = 16_384;
 const DEFAULT_PUBSUB_SHARD_TOPIC_PREFIX = "/peerbit/pubsub-shard/1/";
+const AUTO_TOPIC_ROOT_CANDIDATE_UPDATE_COOLDOWN_MS = 2_000;
 const sameCandidates = (left: string[], right: string[]) =>
 	left.length === right.length &&
 	left.every((candidate, index) => candidate === right[index]);
@@ -350,6 +351,8 @@ export class TopicControlPlane
 	// This keeps small ad-hoc networks working without explicit bootstraps.
 	private autoTopicRootCandidates = false;
 	private autoTopicRootCandidateSet?: Set<string>;
+	private pendingAutoTopicRootCandidates?: string[];
+	private autoTopicRootCandidateUpdateTimer?: ReturnType<typeof setTimeout>;
 	private reconcileShardOverlaysInFlight?: Promise<void>;
 	private reconcileShardOverlaysDirty = false;
 	private topicControlPlaneStopping = false;
@@ -537,6 +540,7 @@ export class TopicControlPlane
 		// Disable auto mode and stop its background gossip/timers.
 		this.autoTopicRootCandidates = false;
 		this.autoTopicRootCandidateSet = undefined;
+		this.clearAutoTopicRootCandidateUpdateSchedule();
 		for (const t of this.autoCandidatesBroadcastTimers) clearTimeout(t);
 		this.autoCandidatesBroadcastTimers = [];
 		if (this.autoCandidatesGossipInterval) {
@@ -580,6 +584,7 @@ export class TopicControlPlane
 
 	public override async stop() {
 		this.topicControlPlaneStopping = true;
+		this.clearAutoTopicRootCandidateUpdateSchedule();
 		this.topicControlPlaneLifecycleRevision += 1;
 		this.reconcileShardOverlaysDirty = false;
 		for (const opening of this.ensureFanoutChannelInFlight.values()) {
@@ -703,6 +708,7 @@ export class TopicControlPlane
 		// intact and reconcile shard overlays under the new mapping.
 		this.autoTopicRootCandidates = false;
 		this.autoTopicRootCandidateSet = undefined;
+		this.clearAutoTopicRootCandidateUpdateSchedule();
 		this.shardRootCache.clear();
 
 		// Ensure we host any shard roots we're now responsible for. This is important
@@ -722,34 +728,7 @@ export class TopicControlPlane
 		)
 			return;
 
-		if (this.maybeDisableAutoTopicRootCandidatesIfExternallyConfigured())
-			return;
-
-		const current = this.topicRootControlPlane.getTopicRootCandidates();
-		const managed = this.autoTopicRootCandidateSet;
-
-		if (current.includes(peerHash)) return;
-
-		managed?.add(peerHash);
-		const next = this.normalizeAutoTopicRootCandidates(
-			managed ? [...managed] : [...current, peerHash],
-		);
-		this.autoTopicRootCandidateSet = new Set(next);
-		if (sameCandidates(current, next)) return;
-		this.topicRootControlPlane.setTopicRootCandidates(next);
-		this.shardRootCache.clear();
-		this.scheduleReconcileShardOverlays();
-
-		// In auto-candidate mode, shard roots are selected deterministically across
-		// *all* connected peers (not just those currently subscribed to a shard).
-		// That means a peer can be selected as root for shards it isn't using yet.
-		// Ensure we proactively host the shard roots we're responsible for so other
-		// peers can join without timing out in small ad-hoc networks.
-		this.scheduleHostOwnedShardRoots();
-
-		// Share the updated candidate set so other peers converge on the same
-		// deterministic mapping even in partially connected topologies.
-		this.scheduleAutoTopicRootCandidatesBroadcast();
+		this.queueAutoTopicRootCandidateUpdate([peerHash]);
 	}
 
 	private normalizeAutoTopicRootCandidates(candidates: string[]): string[] {
@@ -842,26 +821,88 @@ export class TopicControlPlane
 
 	private mergeAutoTopicRootCandidatesFromPeer(candidates: string[]): boolean {
 		if (!this.autoTopicRootCandidates) return false;
+		return this.queueAutoTopicRootCandidateUpdate(candidates);
+	}
+
+	private queueAutoTopicRootCandidateUpdate(
+		candidates: readonly string[],
+	): boolean {
+		if (
+			!this.autoTopicRootCandidates ||
+			this.stopping ||
+			this.topicControlPlaneStopping
+		)
+			return false;
 		if (this.maybeDisableAutoTopicRootCandidatesIfExternallyConfigured())
 			return false;
 		const managed = this.autoTopicRootCandidateSet;
 		if (!managed) return false;
 
-		const before = this.topicRootControlPlane.getTopicRootCandidates();
-		for (const c of candidates) {
-			if (!isCanonicalTopicRootCandidate(c)) continue;
-			managed.add(c);
-		}
-		const next = this.normalizeAutoTopicRootCandidates([...managed]);
-		this.autoTopicRootCandidateSet = new Set(next);
+		const before = this.pendingAutoTopicRootCandidates ?? [...managed];
+		const next = this.normalizeAutoTopicRootCandidates([
+			...before,
+			...candidates,
+		]);
 		if (sameCandidates(before, next)) return false;
 
+		if (this.autoTopicRootCandidateUpdateTimer) {
+			this.pendingAutoTopicRootCandidates = next;
+			return true;
+		}
+
+		this.scheduleAutoTopicRootCandidateUpdateCooldown();
+		this.applyAutoTopicRootCandidates(next);
+		return true;
+	}
+
+	private applyAutoTopicRootCandidates(next: string[]) {
+		this.autoTopicRootCandidateSet = new Set(next);
 		this.topicRootControlPlane.setTopicRootCandidates(next);
 		this.shardRootCache.clear();
 		this.scheduleReconcileShardOverlays();
 		this.scheduleHostOwnedShardRoots();
 		this.scheduleAutoTopicRootCandidatesBroadcast();
-		return true;
+	}
+
+	private scheduleAutoTopicRootCandidateUpdateCooldown() {
+		if (this.autoTopicRootCandidateUpdateTimer) return;
+		const timer = setTimeout(() => {
+			if (this.autoTopicRootCandidateUpdateTimer !== timer) return;
+			this.flushPendingAutoTopicRootCandidateUpdate();
+		}, AUTO_TOPIC_ROOT_CANDIDATE_UPDATE_COOLDOWN_MS);
+		timer.unref?.();
+		this.autoTopicRootCandidateUpdateTimer = timer;
+	}
+
+	private flushPendingAutoTopicRootCandidateUpdate() {
+		if (this.autoTopicRootCandidateUpdateTimer) {
+			clearTimeout(this.autoTopicRootCandidateUpdateTimer);
+			this.autoTopicRootCandidateUpdateTimer = undefined;
+		}
+		const next = this.pendingAutoTopicRootCandidates;
+		this.pendingAutoTopicRootCandidates = undefined;
+		if (!next) return;
+		if (
+			!this.autoTopicRootCandidates ||
+			this.stopping ||
+			this.topicControlPlaneStopping
+		)
+			return;
+		if (this.maybeDisableAutoTopicRootCandidatesIfExternallyConfigured())
+			return;
+
+		// The trailing update starts its own fixed window so another inbound update
+		// cannot create a second candidate generation immediately afterwards.
+		this.scheduleAutoTopicRootCandidateUpdateCooldown();
+		this.applyAutoTopicRootCandidates(next);
+	}
+
+	private clearAutoTopicRootCandidateUpdateSchedule() {
+		if (this.autoTopicRootCandidateUpdateTimer) {
+			clearTimeout(this.autoTopicRootCandidateUpdateTimer);
+			this.autoTopicRootCandidateUpdateTimer = undefined;
+		}
+		this.pendingAutoTopicRootCandidates = undefined;
 	}
 
 	private scheduleHostOwnedShardRoots() {
