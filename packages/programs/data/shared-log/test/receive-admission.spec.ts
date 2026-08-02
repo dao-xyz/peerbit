@@ -1,3 +1,4 @@
+import { randomBytes } from "@peerbit/crypto";
 import { Entry } from "@peerbit/log";
 import { TestSession } from "@peerbit/test-utils";
 import { waitForResolved } from "@peerbit/time";
@@ -13,6 +14,7 @@ import {
 	SyncCapabilitiesMessage,
 } from "../src/exchange-heads.js";
 import { createReplicationDomainHash } from "../src/replication-domain-hash.js";
+import { ReplicationIntent } from "../src/ranges.js";
 import { AllReplicatingSegmentsMessage } from "../src/replication.js";
 import {
 	ConfirmEntriesMessage,
@@ -871,10 +873,160 @@ describe("receive admission", () => {
 				expect(
 					pruneSpy.lastCall.args[0].map((entry: any) => entry.hash),
 				).to.deep.equal([child.hash]);
+				expect(pruneSpy.lastCall.args[1].freshReceiveOwnerAudit).to.not.equal(
+					true,
+				);
+				expect(
+					pruneSpy.lastCall.args[1].preserveExistingPruneOnLocalResult,
+				).to.equal(true);
+				expect(pruneSpy.lastCall.args[1].reusableLeaderPlans).to.be.instanceOf(
+					Map,
+				);
 			} finally {
 				missingParentStub?.restore();
 				pruneSpy.restore();
 				confirmationStub.restore();
+			}
+		} finally {
+			await session.stop();
+		}
+	});
+
+	it("rearms a receive while a rebalance-disabled ownership mutation is pending", async () => {
+		const session = await TestSession.disconnected(2);
+		try {
+			const store = new EventStore<string, any>();
+			const source = await session.peers[0].open(store.clone(), {
+				args: { replicate: false, setup },
+			});
+			const target = await session.peers[1].open(store.clone(), {
+				args: {
+					replicate: false,
+					keep: () => true,
+					setup,
+					timeUntilRoleMaturity: 0,
+				},
+			});
+			const { entry } = await source.add(uuid(), { meta: { next: [] } });
+			const sharedLog = target.log as any;
+			const range = new sharedLog.indexableDomain.constructorRange({
+				id: randomBytes(32),
+				offset: sharedLog.indexableDomain.numbers.denormalize(0.1),
+				width: sharedLog.indexableDomain.numbers.denormalize(0.2),
+				publicKeyHash: source.node.identity.publicKey.hashcode(),
+				mode: ReplicationIntent.NonStrict,
+				timestamp: 1n,
+			});
+			const rangePersisted = pDefer<void>();
+			const releaseRangePut = pDefer<void>();
+			const originalPut = sharedLog.replicationIndex.put.bind(
+				sharedLog.replicationIndex,
+			);
+			const put = sinon
+				.stub(sharedLog.replicationIndex, "put")
+				.callsFake(async (...args: any[]) => {
+					const result = await originalPut(...args);
+					if (args[0].idString === range.idString) {
+						rangePersisted.resolve();
+						await releaseRangePut.promise;
+					}
+					return result;
+				});
+			const originalPlan = sharedLog.planEntryLeaderBatch.bind(sharedLog);
+			let rejectedFreshItems: any[] | undefined;
+			const leaderPlan = sinon
+				.stub(sharedLog, "planEntryLeaderBatch")
+				.callsFake(async (...callArgs: unknown[]) => {
+					const [items, ...args] = callArgs as [any[], ...any[]];
+					if (items.some((item) => item.options?.persist === false)) {
+						rejectedFreshItems = items;
+						throw new Error("fresh receive planner failed");
+					}
+					return originalPlan(items, ...args);
+				});
+			const audit = sinon.spy(sharedLog, "pruneJoinedEntriesNoLongerLed");
+			let adding: Promise<unknown> | undefined;
+
+			try {
+				adding = sharedLog.addReplicationRange(
+					[range],
+					source.node.identity.publicKey,
+					{ checkDuplicates: false, rebalance: false },
+				);
+				await rangePersisted.promise;
+				expect(sharedLog._receiveOwnershipMutationAdmissions).to.equal(1);
+				await target.log.onMessage(exchange(entry), {
+					from: source.node.identity.publicKey,
+				} as any);
+
+				expect(sharedLog._checkedPrune.hasRetry(entry.hash)).to.equal(true);
+				expect(audit.calledOnce).to.equal(true);
+				expect(audit.firstCall.args[1].freshReceiveOwnerAudit).to.equal(true);
+				expect(
+					audit.firstCall.args[1].preserveExistingPruneOnLocalResult,
+				).to.equal(true);
+				expect(audit.firstCall.args[1].reusableLeaderPlans).to.equal(undefined);
+				expect(rejectedFreshItems).to.have.length(1);
+				expect(rejectedFreshItems![0].options).to.deep.equal({
+					roleAge: 0,
+					persist: false,
+				});
+				expect(await target.log.log.has(entry.hash)).to.equal(true);
+				releaseRangePut.resolve();
+				await adding;
+				expect(sharedLog._receiveOwnershipMutationAdmissions).to.equal(0);
+			} finally {
+				releaseRangePut.resolve();
+				await adding;
+				sharedLog._checkedPrune.clearRetry(entry.hash);
+				audit.restore();
+				leaderPlan.restore();
+				put.restore();
+			}
+		} finally {
+			await session.stop();
+		}
+	});
+
+	it("falls back from raw hash drops when ownership changes during notification", async () => {
+		const session = await TestSession.disconnected(1);
+		try {
+			const target = await session.peers[0].open(new EventStore<string, any>(), {
+				args: { replicate: false, setup },
+			});
+			const sharedLog = target.log as any;
+			const originalBackbone = sharedLog._nativeBackbone;
+			const clearPrepared = sinon.spy();
+			sharedLog._nativeBackbone = {
+				clearPreparedRawReceiveEntries: clearPrepared,
+			};
+			const notify = sinon
+				.stub(sharedLog.syncronizer, "onReceivedEntryHashes")
+				.callsFake(async () => {
+					sharedLog.invalidateLeaderSelectionContextCache();
+				});
+			const revision = sharedLog._receiveOwnershipRevision;
+			try {
+				const dropped = await sharedLog.tryFastDropPreparedRawReceive({
+					heads: [],
+					hashes: ["raw-hash"],
+					from: target.node.identity.publicKey,
+					fromIsSelf: true,
+					selection: {
+						retainedHashes: [],
+						droppedHashes: ["raw-hash"],
+						groupCount: 1,
+						plannedHashCount: 1,
+						usedNativeFastDropPlan: true,
+						usedLeaderSamplePlans: true,
+					},
+					receiveOwnershipRevision: revision,
+				});
+				expect(dropped).to.equal(false);
+				expect(clearPrepared.called).to.equal(false);
+			} finally {
+				notify.restore();
+				sharedLog._nativeBackbone = originalBackbone;
 			}
 		} finally {
 			await session.stop();

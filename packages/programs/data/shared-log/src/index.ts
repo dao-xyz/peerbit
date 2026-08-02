@@ -132,6 +132,7 @@ import {
 	type CheckedPruneLeaderMap,
 	type CheckedPrunePendingDelete,
 	type CheckedPruneRestartCandidate,
+	type CheckedPruneRetryIdentity,
 	type CheckedPruneRetryState,
 } from "./checked-prune.js";
 import { type CPUUsage, CPUUsageIntervalLag } from "./cpu.js";
@@ -3349,6 +3350,13 @@ export class SharedLog<
 	// before a liveness eviction but reach the per-peer apply lane after it. Unlike
 	// message timestamps, these tokens never compare clocks from different peers.
 	private _replicationInfoReceiveEpochByPeer!: Map<string, object>;
+	// Receive-side ownership plans may span lower-log joins that invoke user code.
+	// Increment synchronously with leader-cache invalidation so the handler can
+	// detect whether its pre-join plan needs one fresh post-persist audit.
+	private _receiveOwnershipRevision = 0;
+	// Count ownership-changing range mutations from queue admission through
+	// settlement, including mutations already pending when a receive starts.
+	private _receiveOwnershipMutationAdmissions = 0;
 	// Subscription callbacks can overlap because removing a replicator mutates the
 	// replication index asynchronously. Keep that lifecycle separate from message
 	// timestamps so a reconnect can synchronously revoke an older unsubscribe.
@@ -5921,7 +5929,15 @@ export class SharedLog<
 	}
 
 	private invalidateLeaderSelectionContextCache() {
+		this._receiveOwnershipRevision++;
 		this._leaderSelectionContextCache = undefined;
+	}
+
+	private isReceiveOwnershipSnapshotStable(revision: number): boolean {
+		return (
+			this._receiveOwnershipMutationAdmissions === 0 &&
+			this._receiveOwnershipRevision === revision
+		);
 	}
 
 	private canCacheLeaderSelectionContext(options?: {
@@ -7706,7 +7722,7 @@ export class SharedLog<
 				let deleted: ReplicationRangeIndexable<R>[] = [];
 				let ownerHasRanges = false;
 				let mutationError: unknown;
-				const mutationCommitted = await this.withReplicationRangeMutationQueue(
+				const mutationCommitted = await this.withReceiveOwnershipMutationQueue(
 					async () => {
 						if (
 							!ownsReplicationOwnershipLifecycle() ||
@@ -7934,7 +7950,7 @@ export class SharedLog<
 		this.throwIfReplicationOwnershipLifecycleInactive(
 			replicationOwnershipLifecycleController,
 		);
-		return this.withReplicationRangeMutationQueue(
+		return this.withReceiveOwnershipMutationQueue(
 			() => this.removeReplicationRangesUnlocked(ranges, from, options),
 			replicationOwnershipLifecycleController,
 		);
@@ -8106,7 +8122,7 @@ export class SharedLog<
 		this.throwIfReplicationOwnershipLifecycleInactive(
 			replicationOwnershipLifecycleController,
 		);
-		return this.withReplicationRangeMutationQueue(
+		return this.withReceiveOwnershipMutationQueue(
 			() =>
 				this.addReplicationRangeUnlocked(
 					ranges,
@@ -11005,6 +11021,8 @@ export class SharedLog<
 		entries: ShallowOrFullEntry<T>[],
 		options?: {
 			decodedReplicaCounts?: DecodedReplicaCountMap;
+			freshReceiveOwnerAudit?: boolean;
+			preserveExistingPruneOnLocalResult?: boolean;
 			reusableLeaderPlans?: ReadonlyMap<
 				string,
 				Pick<ReusableReceiveCoordinatePlan<R>, "plan" | "replicas">
@@ -11020,11 +11038,17 @@ export class SharedLog<
 			return;
 		}
 		const selfHash = this.node.identity.publicKey.hashcode();
+		const freshReceiveRoleAge = options?.freshReceiveOwnerAudit
+			? await this.getDefaultMinRoleAge()
+			: undefined;
+		this.throwIfReplicationOwnershipLifecycleInactive(
+			ownershipLifecycleController,
+		);
 		const plans = new Array<EntryLeaderPlan<R> | undefined>(entries.length);
 		const leaderItems: Array<{
 			entry: ShallowOrFullEntry<T>;
 			replicas: number;
-			options: { roleAge: number; persist: false };
+			options: LeaderSelectionOptions<R>;
 		}> = [];
 		const leaderItemIndexes: number[] = [];
 		let reusableLeaderPlanHits = 0;
@@ -11033,7 +11057,9 @@ export class SharedLog<
 			const replicas =
 				options?.decodedReplicaCounts?.get(entry.hash) ??
 				decodeReplicas(entry).getValue(this);
-			const reusablePlan = options?.reusableLeaderPlans?.get(entry.hash);
+			const reusablePlan = options?.freshReceiveOwnerAudit
+				? undefined
+				: options?.reusableLeaderPlans?.get(entry.hash);
 			if (reusablePlan && reusablePlan.replicas === replicas) {
 				plans[i] = reusablePlan.plan;
 				reusableLeaderPlanHits++;
@@ -11042,7 +11068,9 @@ export class SharedLog<
 			leaderItems.push({
 				entry,
 				replicas,
-				options: { roleAge: 0, persist: false },
+				options: options?.freshReceiveOwnerAudit
+					? { roleAge: freshReceiveRoleAge!, persist: false }
+					: { roleAge: 0, persist: false },
 			});
 			leaderItemIndexes.push(i);
 		}
@@ -11116,6 +11144,7 @@ export class SharedLog<
 		const loopStartedAt = syncProfileStart(options?.profile);
 		let enqueuedPrune = 0;
 		let cancelledLocalLeader = 0;
+		let localLeaderResults = 0;
 		for (let i = 0; i < entries.length; i++) {
 			if (!this.isRepairLifecycleActive(ownershipLifecycleController)) {
 				continue;
@@ -11124,11 +11153,14 @@ export class SharedLog<
 			const leaders = plans[i]?.leaders ?? new Map();
 
 			if (leaders.has(selfHash)) {
-				await this.cancelCheckedPruneForLocalLeader(entry.hash);
-				this.throwIfReplicationOwnershipLifecycleInactive(
-					ownershipLifecycleController,
-				);
-				cancelledLocalLeader++;
+				if (!options?.preserveExistingPruneOnLocalResult) {
+					await this.cancelCheckedPruneForLocalLeader(entry.hash);
+					this.throwIfReplicationOwnershipLifecycleInactive(
+						ownershipLifecycleController,
+					);
+					cancelledLocalLeader++;
+				}
+				localLeaderResults++;
 				continue;
 			}
 
@@ -11162,7 +11194,7 @@ export class SharedLog<
 			entries: entries.length,
 			count: enqueuedPrune,
 			messages: 1,
-			details: { cancelledLocalLeader },
+			details: { cancelledLocalLeader, localLeaderResults },
 		});
 	}
 
@@ -11482,9 +11514,11 @@ export class SharedLog<
 			checkedPruneCoordinator.getRetry(hash) ??
 			({
 				attempts: 0,
+				generation: 0,
 				entry: args.entry,
 				leaders: args.leaders,
 			} satisfies CheckedPruneRetryState<T, R>);
+		state.generation++;
 		state.entry = args.entry;
 		state.leaders = args.leaders;
 
@@ -11507,6 +11541,7 @@ export class SharedLog<
 
 		state.attempts = attempt;
 		const timer = setTimeout(() => {
+			const generation = state.generation;
 			const run = async () => {
 				const st = checkedPruneCoordinator.getRetry(hash);
 				if (st !== state || state.timer !== timer || !isCurrent()) {
@@ -11516,6 +11551,7 @@ export class SharedLog<
 				const isExactAttempt = () =>
 					isCurrent() &&
 					checkedPruneCoordinator.getRetry(hash) === state &&
+					state.generation === generation &&
 					state.timer === undefined;
 				if (checkedPruneCoordinator.hasPendingDelete(hash)) return;
 				const retryEntry = state.entry;
@@ -11567,25 +11603,31 @@ export class SharedLog<
 				) {
 					// A keep policy is terminal for this background prune. Do not
 					// retain a retry record with neither a timer nor pending work.
-					checkedPruneCoordinator.clearRetry(hash);
+					checkedPruneCoordinator.clearRetry(hash, {
+						state,
+						generation,
+					});
 				}
 			};
 			void run().catch((error) => {
 				if (isCurrent() && !isNotStartedError(error as Error)) {
 					logger.error(error);
-					const retry = checkedPruneCoordinator.getRetry(hash);
 					if (
-						retry === state &&
-						!retry.timer &&
+						checkedPruneCoordinator.getRetry(hash) === state &&
+						state.generation === generation &&
+						!state.timer &&
 						!checkedPruneCoordinator.hasPendingDelete(hash)
 					) {
 						try {
 							this.scheduleCheckedPruneRetry(
-								{ entry: retry.entry, leaders: retry.leaders },
+								{ entry: state.entry, leaders: state.leaders },
 								ownershipLifecycleController,
 							);
 						} catch {
-							checkedPruneCoordinator.clearRetry(hash);
+							checkedPruneCoordinator.clearRetry(hash, {
+								state,
+								generation,
+							});
 						}
 					}
 				}
@@ -15689,6 +15731,8 @@ export class SharedLog<
 		this._checkedPruneRemoveBlocksLocalRangeMutationAdmission = 0;
 		this._checkedPruneRemovalCallbackInvocationDepth = 0;
 		this._localReplicationRoleGeneration = 0;
+		this._receiveOwnershipRevision = 0;
+		this._receiveOwnershipMutationAdmissions = 0;
 		this._pruneRemovesClosing = false;
 		this._replicationRangeMutationFailure = undefined;
 		this.startRepairLifecycle();
@@ -16123,7 +16167,9 @@ export class SharedLog<
 							continue;
 						}
 						if (checkedPruneLeaders.localLeader) {
-							const retry = checkedPruneCoordinator.getRetry(hash);
+							const retryIdentity =
+								checkedPruneCoordinator.getRetryIdentity(hash);
+							const retry = retryIdentity?.state;
 							await this.cancelCheckedPruneForLocalLeader(hash, {
 								preserveRetry: retry != null,
 							});
@@ -16133,7 +16179,7 @@ export class SharedLog<
 							if (retry) {
 								// A delayed confirmation of local ownership is terminal.
 								// Future ownership mutations will enqueue fresh work.
-								checkedPruneCoordinator.clearRetry(hash);
+								checkedPruneCoordinator.clearRetry(hash, retryIdentity);
 							} else {
 								// A first positive view can be a transient membership
 								// snapshot. Confirm it once after the normal retry delay
@@ -16182,6 +16228,15 @@ export class SharedLog<
 									pruneOwnershipLifecycleController,
 								);
 							} catch {
+								if (
+									value.workToken != null &&
+									checkedPruneCoordinator.isCandidateTokenCurrent(
+										hash,
+										value.workToken,
+									)
+								) {
+									checkedPruneCoordinator.invalidateCandidateToken(hash);
+								}
 								checkedPruneCoordinator.clearRetry(hash);
 							}
 						}
@@ -16982,7 +17037,7 @@ export class SharedLog<
 	) {
 		const ownershipLifecycleController =
 			this.captureReplicationOwnershipLifecycle();
-		return this.withReplicationRangeMutationQueue(async () => {
+		return this.withReceiveOwnershipMutationQueue(async () => {
 			this.throwIfReplicationOwnershipLifecycleInactive(
 				ownershipLifecycleController,
 			);
@@ -19157,6 +19212,9 @@ export class SharedLog<
 			if (!releasePeerReceiveLease) {
 				return;
 			}
+			const receiveOwnershipRevision = this._receiveOwnershipRevision;
+			const receiveOwnershipLifecycleController =
+				this.captureReplicationOwnershipLifecycle();
 			const receiveReplicationInfoReceiveEpoch =
 				this.getReplicationInfoReceiveEpoch(receiveFromHash);
 			if (msg instanceof ResponseRoleMessage) {
@@ -19440,6 +19498,7 @@ export class SharedLog<
 												heads,
 												hashes,
 											),
+											receiveOwnershipRevision,
 										}),
 							selectPreparedRawReceiveHashes: rawIsRepairHint
 								? undefined
@@ -19454,6 +19513,7 @@ export class SharedLog<
 												heads,
 												hashes,
 											),
+											receiveOwnershipRevision,
 										}),
 						},
 					);
@@ -20150,6 +20210,7 @@ export class SharedLog<
 						!isReplicating &&
 						!this.keep &&
 						!isRepairHint &&
+						this.isReceiveOwnershipSnapshotStable(receiveOwnershipRevision) &&
 						receiveGroups.length > 0 &&
 						receiveGroups.every(
 							(group) =>
@@ -20894,11 +20955,60 @@ export class SharedLog<
 							confirmedHashes.add(hash);
 						}
 						const checkedPruneStartedAt = syncProfileStart(syncProfile);
-						await this.pruneJoinedEntriesNoLongerLed(admittedShallowEntries, {
-							decodedReplicaCounts: receiveReplicaCounts,
-							reusableLeaderPlans: reusableCoordinatePlans,
-							profile: syncProfile,
-						});
+						const ownershipChangedDuringReceive =
+							!this.isReceiveOwnershipSnapshotStable(
+								receiveOwnershipRevision,
+							);
+						if (ownershipChangedDuringReceive) {
+							const freshAuditRevision = this._receiveOwnershipRevision;
+							const armFreshAuditRetry = () => {
+								for (const entry of admittedShallowEntries) {
+									this.scheduleCheckedPruneRetry(
+										{ entry, leaders: new Map() },
+										receiveOwnershipLifecycleController,
+									);
+								}
+							};
+							try {
+								await this.pruneJoinedEntriesNoLongerLed(
+									admittedShallowEntries,
+									{
+										decodedReplicaCounts: receiveReplicaCounts,
+										freshReceiveOwnerAudit: true,
+										preserveExistingPruneOnLocalResult: true,
+										profile: syncProfile,
+									},
+									receiveOwnershipLifecycleController,
+								);
+								this.throwIfReplicationOwnershipLifecycleInactive(
+									receiveOwnershipLifecycleController,
+								);
+								if (
+									!this.isReceiveOwnershipSnapshotStable(freshAuditRevision)
+								) {
+									armFreshAuditRetry();
+								}
+							} catch {
+								// The lower-log and coordinate commits are already durable. A
+								// sender retry will filter these hashes as present, so retain a
+								// bounded local obligation instead of failing the admitted receive.
+								this.throwIfReplicationOwnershipLifecycleInactive(
+									receiveOwnershipLifecycleController,
+								);
+								armFreshAuditRetry();
+							}
+						} else {
+							await this.pruneJoinedEntriesNoLongerLed(
+								admittedShallowEntries,
+								{
+									decodedReplicaCounts: receiveReplicaCounts,
+									preserveExistingPruneOnLocalResult: true,
+									reusableLeaderPlans: reusableCoordinatePlans,
+									profile: syncProfile,
+								},
+								receiveOwnershipLifecycleController,
+							);
+						}
 						if (syncProfile) {
 							emitSyncProfileDuration(syncProfile, checkedPruneStartedAt, {
 								name: "sharedLog.receive.checkedPrune",
@@ -24490,8 +24600,10 @@ export class SharedLog<
 		fromIsSelf: boolean;
 		syncProfile?: SyncProfileFn;
 		selection?: NativeBackboneRawReceiveSelectionPlan;
+		receiveOwnershipRevision: number;
 	}): Promise<boolean> {
 		const backbone = this._nativeBackbone;
+		const ownershipRevision = properties.receiveOwnershipRevision;
 		if (!backbone || !this.syncronizer.onReceivedEntryHashes) {
 			return false;
 		}
@@ -24499,7 +24611,11 @@ export class SharedLog<
 		const selection =
 			properties.selection ??
 			(await this.planNativePreparedRawReceiveSelection(properties));
-		if (!selection || selection.retainedHashes.length > 0) {
+		if (
+			!selection ||
+			selection.retainedHashes.length > 0 ||
+			!this.isReceiveOwnershipSnapshotStable(ownershipRevision)
+		) {
 			return false;
 		}
 
@@ -24534,6 +24650,9 @@ export class SharedLog<
 			hashes: selection.droppedHashes,
 			from: properties.from,
 		});
+		if (!this.isReceiveOwnershipSnapshotStable(ownershipRevision)) {
+			return false;
+		}
 		if (properties.syncProfile) {
 			emitSyncProfileDuration(properties.syncProfile, notifyStartedAt, {
 				name: "sharedLog.receive.notifySynchronizer",
@@ -24572,7 +24691,9 @@ export class SharedLog<
 		fromIsSelf: boolean;
 		syncProfile?: SyncProfileFn;
 		selection?: NativeBackboneRawReceiveSelectionPlan;
+		receiveOwnershipRevision: number;
 	}): Promise<RawReceiveHashSelection | undefined> {
+		const ownershipRevision = properties.receiveOwnershipRevision;
 		if (!this.syncronizer.onReceivedEntryHashes) {
 			return undefined;
 		}
@@ -24580,7 +24701,10 @@ export class SharedLog<
 		const selection =
 			properties.selection ??
 			(await this.planNativePreparedRawReceiveSelection(properties));
-		if (!selection) {
+		if (
+			!selection ||
+			!this.isReceiveOwnershipSnapshotStable(ownershipRevision)
+		) {
 			return undefined;
 		}
 		if (selection.droppedHashes.length === 0) {
@@ -24598,6 +24722,9 @@ export class SharedLog<
 			hashes: selection.droppedHashes,
 			from: properties.from,
 		});
+		if (!this.isReceiveOwnershipSnapshotStable(ownershipRevision)) {
+			return undefined;
+		}
 		emitSyncProfileDuration(properties.syncProfile, notifyStartedAt, {
 			name: "sharedLog.receive.notifySynchronizer",
 			component: "shared-log",
@@ -25465,6 +25592,7 @@ export class SharedLog<
 	private withReplicationRangeMutationQueue<T>(
 		fn: () => Promise<T>,
 		replicationOwnershipLifecycleController = this.captureReplicationOwnershipLifecycle(),
+		options?: { affectsReceiveOwnership?: boolean },
 	): Promise<T> {
 		try {
 			this.throwIfReplicationOwnershipLifecycleInactive(
@@ -25480,6 +25608,15 @@ export class SharedLog<
 				),
 			);
 		}
+		let releaseReceiveOwnershipMutationAdmission: (() => void) | undefined;
+		if (options?.affectsReceiveOwnership) {
+			this._receiveOwnershipMutationAdmissions++;
+			this.invalidateLeaderSelectionContextCache();
+			releaseReceiveOwnershipMutationAdmission = () => {
+				this._receiveOwnershipMutationAdmissions--;
+				this.invalidateLeaderSelectionContextCache();
+			};
+		}
 		const run = (this._replicationRangeMutationTail ?? Promise.resolve())
 			.catch(() => {
 				// A failed predecessor must not leave the queue permanently rejected.
@@ -25493,11 +25630,25 @@ export class SharedLog<
 				);
 				return fn();
 			});
-		this._replicationRangeMutationTail = run.then(
+		const fencedRun = releaseReceiveOwnershipMutationAdmission
+			? run.finally(releaseReceiveOwnershipMutationAdmission)
+			: run;
+		this._replicationRangeMutationTail = fencedRun.then(
 			() => undefined,
 			() => undefined,
 		);
-		return run;
+		return fencedRun;
+	}
+
+	private withReceiveOwnershipMutationQueue<T>(
+		fn: () => Promise<T>,
+		replicationOwnershipLifecycleController = this.captureReplicationOwnershipLifecycle(),
+	): Promise<T> {
+		return this.withReplicationRangeMutationQueue(
+			fn,
+			replicationOwnershipLifecycleController,
+			{ affectsReceiveOwnership: true },
+		);
 	}
 
 	private acquireReplicationRangeMutationTerminalFence(): {
@@ -26428,12 +26579,13 @@ export class SharedLog<
 			const restartCandidates: Array<{
 				candidate: CheckedPruneRestartCandidate<T, R>;
 				reservation: object;
-				retry?: CheckedPruneRetryState<T, R>;
+				retryIdentity?: CheckedPruneRetryIdentity<T, R>;
 			}> = [];
 			for (const { hash } of admitted) {
 				const candidate = checkedPruneCoordinator.getRestartCandidate(hash);
 				const pending = checkedPruneCoordinator.getPendingDelete(hash);
-				const retry = checkedPruneCoordinator.getRetry(hash);
+				const retryIdentity = checkedPruneCoordinator.getRetryIdentity(hash);
+				const retry = retryIdentity?.state;
 				const hadQueuedCandidate = this.pruneDebouncedFn.has(hash);
 				const hadInFlightCandidate = checkedPruneCoordinator.hasCandidate(hash);
 				const shouldRestart =
@@ -26476,7 +26628,7 @@ export class SharedLog<
 					restartCandidates.push({
 						candidate,
 						reservation: checkedPruneCoordinator.reserveRestart(hash),
-						retry,
+						retryIdentity,
 					});
 				}
 			}
@@ -26512,7 +26664,7 @@ export class SharedLog<
 			for (const {
 				candidate,
 				reservation,
-				retry,
+				retryIdentity,
 			} of admission.restartCandidates) {
 				if (
 					this._checkedPrune !== checkedPruneCoordinator ||
@@ -26522,11 +26674,8 @@ export class SharedLog<
 						candidate.hash,
 						reservation,
 					);
-					if (
-						retry &&
-						checkedPruneCoordinator.getRetry(candidate.hash) === retry
-					) {
-						checkedPruneCoordinator.clearRetry(candidate.hash);
+					if (retryIdentity) {
+						checkedPruneCoordinator.clearRetry(candidate.hash, retryIdentity);
 					}
 					continue;
 				}

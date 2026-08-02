@@ -307,6 +307,65 @@ describe("checked prune coordinator", () => {
 			.false;
 	});
 
+	it("fences stale retry cleanup without erasing newer work", () => {
+		const coordinator = new CheckedPruneCoordinator<Uint8Array, "u32">();
+		const entry = { hash: "candidate" } as any;
+		const leaders = new Set(["peer"]);
+		const state = { attempts: 1, generation: 1, entry, leaders };
+		coordinator.setRetry(entry.hash, state);
+		const staleIdentity = coordinator.getRetryIdentity(entry.hash)!;
+
+		state.generation++;
+		coordinator.setRetry(entry.hash, state);
+		const candidateToken = coordinator.trackCandidate(
+			entry.hash,
+			entry,
+			leaders,
+		);
+		expect(coordinator.clearRetry(entry.hash, staleIdentity)).to.be.false;
+		expect(coordinator.getRetry(entry.hash)).to.equal(state);
+		expect(coordinator.isCandidateTokenCurrent(entry.hash, candidateToken)).to
+			.be.true;
+
+		const currentIdentity = coordinator.getRetryIdentity(entry.hash)!;
+		expect(coordinator.clearRetry(entry.hash, currentIdentity)).to.be.true;
+		expect(coordinator.getRetry(entry.hash)).to.be.undefined;
+		expect(coordinator.isCandidateTokenCurrent(entry.hash, candidateToken)).to
+			.be.true;
+
+		const restartEntry = { hash: "restart" } as any;
+		const restartState = {
+			attempts: 1,
+			generation: 1,
+			entry: restartEntry,
+			leaders,
+		};
+		coordinator.setRetry(restartEntry.hash, restartState);
+		const restart = coordinator.reserveRestart(restartEntry.hash);
+		expect(
+			coordinator.clearRetry(
+				restartEntry.hash,
+				coordinator.getRetryIdentity(restartEntry.hash),
+			),
+		).to.be.true;
+		expect(coordinator.hasRestartReservation(restartEntry.hash)).to.be.true;
+		expect(coordinator.getRestartCandidate(restartEntry.hash)?.entry).to.equal(
+			restartEntry,
+		);
+		expect(coordinator.consumeRestartReservation(restartEntry.hash, restart)).to
+			.be.true;
+		expect(coordinator.getRestartCandidate(restartEntry.hash)).to.be.undefined;
+
+		coordinator.setRetry(restartEntry.hash, restartState);
+		const cancelledRestart = coordinator.reserveRestart(restartEntry.hash);
+		coordinator.clearRetry(
+			restartEntry.hash,
+			coordinator.getRetryIdentity(restartEntry.hash),
+		);
+		coordinator.cancelRestartReservation(restartEntry.hash, cancelledRestart);
+		expect(coordinator.getRestartCandidate(restartEntry.hash)).to.be.undefined;
+	});
+
 	it("clears every authorization generation on close", () => {
 		let clears = 0;
 		const coordinator = new CheckedPruneCoordinator<Uint8Array, "u32">();

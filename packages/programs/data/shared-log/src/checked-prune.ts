@@ -26,9 +26,15 @@ export type CheckedPrunePendingDelete = {
 
 export type CheckedPruneRetryState<T, R extends "u32" | "u64"> = {
 	attempts: number;
+	generation: number;
 	timer?: ReturnType<typeof setTimeout>;
 	entry: CheckedPruneEntry<T, R>;
 	leaders: CheckedPruneLeaderMap | Set<string>;
+};
+
+export type CheckedPruneRetryIdentity<T, R extends "u32" | "u64"> = {
+	state: CheckedPruneRetryState<T, R>;
+	generation: number;
 };
 
 export type CheckedPruneInvalidatedGeneration<T, R extends "u32" | "u64"> = {
@@ -109,6 +115,7 @@ export class CheckedPruneCoordinator<T, R extends "u32" | "u64"> {
 			this.requestIPruneSent.has(hash) ||
 			this.responseReplicatorSet.has(hash) ||
 			this.retries.has(hash) ||
+			this.restartReservations.has(hash) ||
 			this.candidateTokens.has(hash)
 		) {
 			return;
@@ -219,6 +226,11 @@ export class CheckedPruneCoordinator<T, R extends "u32" | "u64"> {
 		return this.retries.get(hash);
 	}
 
+	getRetryIdentity(hash: string): CheckedPruneRetryIdentity<T, R> | undefined {
+		const state = this.retries.get(hash);
+		return state ? { state, generation: state.generation } : undefined;
+	}
+
 	hasRetry(hash: string) {
 		return this.retries.has(hash);
 	}
@@ -232,10 +244,14 @@ export class CheckedPruneCoordinator<T, R extends "u32" | "u64"> {
 		session.phase = "retrying";
 	}
 
-	clearRetry(hash: string) {
-		this.restartReservations.delete(hash);
-		this.candidateTokens.delete(hash);
+	clearRetry(hash: string, expected?: CheckedPruneRetryIdentity<T, R>) {
 		const state = this.retries.get(hash);
+		if (
+			expected &&
+			(state !== expected.state || state.generation !== expected.generation)
+		) {
+			return false;
+		}
 		if (state?.timer) {
 			clearTimeout(state.timer);
 		}
@@ -245,6 +261,7 @@ export class CheckedPruneCoordinator<T, R extends "u32" | "u64"> {
 			session.retry = undefined;
 		}
 		this.deleteSessionIfIdle(hash);
+		return true;
 	}
 
 	clearRetryTimer(hash: string) {
@@ -477,12 +494,14 @@ export class CheckedPruneCoordinator<T, R extends "u32" | "u64"> {
 			return false;
 		}
 		this.restartReservations.delete(hash);
+		this.deleteSessionIfIdle(hash);
 		return true;
 	}
 
 	cancelRestartReservation(hash: string, reservation: object) {
 		if (this.restartReservations.get(hash) === reservation) {
 			this.restartReservations.delete(hash);
+			this.deleteSessionIfIdle(hash);
 		}
 	}
 
