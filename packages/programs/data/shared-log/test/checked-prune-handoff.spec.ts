@@ -607,6 +607,7 @@ describe("checked prune correlated handoff", () => {
 		try {
 			log._checkedPrune.setRetry(backgroundEntry.hash, {
 				attempts: 1,
+				generation: 0,
 				entry: backgroundEntry,
 				leaders,
 			});
@@ -1614,6 +1615,111 @@ describe("checked prune correlated handoff", () => {
 		}
 	});
 
+	it("freshly replans received entries without cancelling newer prune work", async () => {
+		session = await TestSession.disconnected(2);
+		const db = await session.peers[0].open(new EventStore(), {
+			args: {
+				replicate: false,
+				keep: () => true,
+				timeUntilRoleMaturity: 0,
+			},
+		});
+		const log = db.log as any;
+		const { entry: localEntry } = await db.add(
+			"checked-prune-fresh-receive-local",
+		);
+		const { entry: remoteEntry } = await db.add(
+			"checked-prune-fresh-receive-remote",
+		);
+		const selfHash = session.peers[0].identity.publicKey.hashcode();
+		const remoteHash = session.peers[1].identity.publicKey.hashcode();
+		const localLeaders = new Map([[selfHash, { intersecting: true }]]);
+		const remoteLeaders = new Map([[remoteHash, { intersecting: true }]]);
+		const stalePlans = new Map([
+			[
+				localEntry.hash,
+				{
+					replicas: 1,
+					plan: {
+						coordinates: [],
+						leaders: remoteLeaders,
+						isLeader: false,
+					},
+				},
+			],
+			[
+				remoteEntry.hash,
+				{
+					replicas: 1,
+					plan: {
+						coordinates: [],
+						leaders: localLeaders,
+						isLeader: true,
+					},
+				},
+			],
+		]);
+		const getDefaultMinRoleAge = sinon
+			.stub(log, "getDefaultMinRoleAge")
+			.resolves(4_321);
+		const canPlanNative = sinon
+			.stub(log, "canPlanNativeEntryLeaderBatch")
+			.returns(false);
+		const plan = sinon.stub(log, "planEntryLeaderBatch").resolves([
+			{ coordinates: [], leaders: localLeaders, isLeader: true },
+			{ coordinates: [], leaders: remoteLeaders, isLeader: false },
+		]);
+		const cancel = sinon
+			.stub(log, "cancelCheckedPruneForLocalLeader")
+			.resolves();
+		const enqueue = sinon
+			.stub(log, "pruneDebouncedFnAddIfNotKeeping")
+			.resolves(true);
+		const candidateToken = log._checkedPrune.trackCandidate(
+			localEntry.hash,
+			localEntry,
+			remoteLeaders,
+		);
+
+		try {
+			await log.pruneJoinedEntriesNoLongerLed([localEntry, remoteEntry], {
+				decodedReplicaCounts: new Map([
+					[localEntry.hash, 1],
+					[remoteEntry.hash, 1],
+				]),
+				freshReceiveOwnerAudit: true,
+				preserveExistingPruneOnLocalResult: true,
+				reusableLeaderPlans: stalePlans,
+			});
+
+			expect(getDefaultMinRoleAge.calledOnce).to.be.true;
+			expect(plan.calledOnce).to.be.true;
+			expect(plan.firstCall.args[0]).to.have.length(2);
+			expect(
+				plan.firstCall.args[0].map((item: any) => item.options),
+			).to.deep.equal([
+				{ roleAge: 4_321, persist: false },
+				{ roleAge: 4_321, persist: false },
+			]);
+			expect(cancel.called).to.be.false;
+			expect(
+				log._checkedPrune.isCandidateTokenCurrent(
+					localEntry.hash,
+					candidateToken,
+				),
+			).to.be.true;
+			expect(enqueue.calledOnce).to.be.true;
+			expect(enqueue.firstCall.args[0].key).to.equal(remoteEntry.hash);
+		} finally {
+			log._checkedPrune.invalidateCandidateToken(localEntry.hash);
+			enqueue.restore();
+			cancel.restore();
+			plan.restore();
+			canPlanNative.restore();
+			getDefaultMinRoleAge.restore();
+		}
+	});
+
 	it("moves exhausted retries to one coalesced low-rate audit", async () => {
 		session = await TestSession.disconnected(2);
 		const db = await session.peers[0].open(new EventStore(), {
@@ -1632,6 +1738,7 @@ describe("checked prune correlated handoff", () => {
 		try {
 			log._checkedPrune.setRetry(entry.hash, {
 				attempts: 3,
+				generation: 0,
 				entry,
 				leaders,
 			});
@@ -1677,6 +1784,7 @@ describe("checked prune correlated handoff", () => {
 			for (const hash of hashes) {
 				log._checkedPrune.setRetry(hash, {
 					attempts: 3,
+					generation: 0,
 					entry: { hash, meta: entry.meta },
 					leaders,
 				});
