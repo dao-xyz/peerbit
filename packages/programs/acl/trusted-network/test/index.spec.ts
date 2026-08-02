@@ -1,6 +1,11 @@
 import { serialize, variant } from "@dao-xyz/borsh";
-import { AccessError, Ed25519Keypair, type Identity } from "@peerbit/crypto";
-import { Secp256k1PublicKey } from "@peerbit/crypto";
+import {
+	AccessError,
+	Ed25519Keypair,
+	type Identity,
+	PublicSignKey,
+	Secp256k1PublicKey,
+} from "@peerbit/crypto";
 import { Documents, SearchRequest } from "@peerbit/document";
 import { Program } from "@peerbit/program";
 import { TestSession } from "@peerbit/test-utils";
@@ -29,6 +34,9 @@ const createIdentity = async () => {
 	};
 };
 
+const asStructuralPublicKey = (key: PublicSignKey): PublicSignKey =>
+	({ bytes: key.bytes.slice() }) as unknown as PublicSignKey;
+
 // Tests in this workspace run in parallel across packages; allow extra headroom for
 // network/replication warmup under CI load.
 // CI can be significantly slower/noisier than local runs; replicator discovery is network-driven.
@@ -47,6 +55,107 @@ class AnyCanAppendIdentityGraph extends IdentityGraph {
 		return true;
 	}
 }
+describe("copy-stable public keys", () => {
+	it("canonicalizes structural Ed25519 and secp256k1 keys", async () => {
+		const keys = [
+			(await Ed25519Keypair.create()).publicKey,
+			await Secp256k1PublicKey.recover(await Wallet.createRandom()),
+		];
+
+		for (const key of keys) {
+			const local = new TrustedNetwork({ rootTrust: key });
+			expect(local.rootTrust).to.equal(key);
+
+			const structural = asStructuralPublicKey(key);
+			expect(structural).not.to.be.instanceof(PublicSignKey);
+			const normalized = new TrustedNetwork({ rootTrust: structural });
+			expect(normalized.rootTrust).to.be.instanceof(PublicSignKey);
+			expect(normalized.rootTrust.equals(key)).to.be.true;
+			expect(await normalized.isTrusted(structural)).to.be.true;
+		}
+	});
+
+	it("canonicalizes structural keys used by addRelation", async () => {
+		const signer = await Ed25519Keypair.create();
+		const trustee = await Secp256k1PublicKey.recover(
+			await Wallet.createRandom(),
+		);
+		let relation: IdentityRelation | undefined;
+		let receivedOptions: unknown;
+		const store = new IdentityGraph({
+			relationGraph: {
+				put: async (value: IdentityRelation, options: unknown) => {
+					relation = value;
+					receivedOptions = options;
+				},
+			} as any,
+		});
+		store.node = { identity: signer } as any;
+		const identity: Identity = {
+			publicKey: asStructuralPublicKey(signer.publicKey),
+			sign: signer.sign.bind(signer),
+		};
+		const options = { identity };
+
+		await store.addRelation(asStructuralPublicKey(trustee), options);
+
+		expect(relation?.from).to.be.instanceof(PublicSignKey);
+		expect(relation?.from.equals(signer.publicKey)).to.be.true;
+		expect(relation?.to).to.be.instanceof(PublicSignKey);
+		expect(relation?.to.equals(trustee)).to.be.true;
+		expect(receivedOptions).to.equal(options);
+	});
+
+	it("requires every structural relation put to match its signer", async () => {
+		const graph = new IdentityGraph();
+		const ed25519 = (await Ed25519Keypair.create()).publicKey;
+		const secp256k1 = await Secp256k1PublicKey.recover(
+			await Wallet.createRandom(),
+		);
+		const canPut = (from: PublicSignKey, signer: PublicSignKey) =>
+			graph.canPerform({
+				type: "put",
+				value: { from: asStructuralPublicKey(from) },
+				entry: {
+					getPublicKeys: async () => [asStructuralPublicKey(signer)],
+				},
+			} as any);
+
+		expect(await canPut(ed25519, ed25519)).to.be.true;
+		expect(await canPut(secp256k1, secp256k1)).to.be.true;
+		expect(await canPut(ed25519, secp256k1)).to.be.false;
+	});
+
+	it("accepts structural keys in add and getRelation", async () => {
+		const root = (await Ed25519Keypair.create()).publicKey;
+		const trustee = await Secp256k1PublicKey.recover(
+			await Wallet.createRandom(),
+		);
+		let stored: IdentityRelation | undefined;
+		const network = new TrustedNetwork({ rootTrust: root });
+		network.node = { identity: { publicKey: root } } as any;
+		network.trustGraph = {
+			index: {
+				get: async (id: Uint8Array) =>
+					stored && equals(stored.id, id) ? stored : undefined,
+			},
+			put: async (relation: IdentityRelation) => {
+				stored = relation;
+			},
+		} as any;
+
+		const relation = await network.add(asStructuralPublicKey(trustee));
+		expect(relation.to.equals(trustee)).to.be.true;
+		expect(relation.to).to.be.instanceof(PublicSignKey);
+
+		const found = await network.getRelation(
+			asStructuralPublicKey(root),
+			asStructuralPublicKey(trustee),
+		);
+		expect(found?.id).to.deep.equal(relation.id);
+	});
+});
+
 describe("index", () => {
 	describe("identity-graph", () => {
 		let session: TestSession, identites: Identity[], programs: Program[];
