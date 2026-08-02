@@ -8,6 +8,69 @@ import {
 } from "@dao-xyz/borsh";
 import { Uint8ArrayList } from "uint8arraylist";
 
+export const TOPIC_ROOT_CANDIDATES_MAX = 64;
+const TOPIC_ROOT_CANDIDATE_LENGTH = 44;
+export const TOPIC_ROOT_CANDIDATES_MAX_FRAME_BYTES =
+	1 + 4 + TOPIC_ROOT_CANDIDATES_MAX * (4 + TOPIC_ROOT_CANDIDATE_LENGTH);
+
+// A SHA-256 digest in canonical, padded RFC 4648 Base64 is 44 ASCII bytes.
+// The final data character has two zero padding bits, so only these Base64
+// indices can precede the trailing `=`.
+const CANONICAL_SHA256_BASE64 = /^[A-Za-z0-9+/]{42}[AEIMQUYcgkosw048]=$/;
+
+export const isCanonicalTopicRootCandidate = (candidate: string): boolean =>
+	typeof candidate === "string" && CANONICAL_SHA256_BASE64.test(candidate);
+
+export const assertCanonicalTopicRootCandidates = (
+	candidates: readonly string[],
+): void => {
+	if (candidates.length > TOPIC_ROOT_CANDIDATES_MAX) {
+		throw new Error(
+			`Topic-root candidate count exceeds ${TOPIC_ROOT_CANDIDATES_MAX}`,
+		);
+	}
+	for (const candidate of candidates) {
+		if (!isCanonicalTopicRootCandidate(candidate)) {
+			throw new Error("Topic-root candidate is not a canonical SHA-256 hash");
+		}
+	}
+};
+
+const frameByteLength = (bytes: Uint8Array | Uint8ArrayList): number =>
+	bytes.byteLength;
+
+const frameByteAt = (
+	bytes: Uint8Array | Uint8ArrayList,
+	offset: number,
+): number => (bytes instanceof Uint8Array ? bytes[offset]! : bytes.get(offset));
+
+export const assertTopicRootCandidatesFrame = (
+	bytes: Uint8Array | Uint8ArrayList,
+): void => {
+	const byteLength = frameByteLength(bytes);
+	if (byteLength > TOPIC_ROOT_CANDIDATES_MAX_FRAME_BYTES) {
+		throw new Error(
+			`Topic-root candidates frame exceeds ${TOPIC_ROOT_CANDIDATES_MAX_FRAME_BYTES} bytes`,
+		);
+	}
+	if (byteLength < 5) {
+		throw new Error("Topic-root candidates frame is truncated");
+	}
+	if (frameByteAt(bytes, 0) !== 4) {
+		throw new Error("Invalid topic-root candidates frame variant");
+	}
+	const count =
+		frameByteAt(bytes, 1) |
+		(frameByteAt(bytes, 2) << 8) |
+		(frameByteAt(bytes, 3) << 16) |
+		(frameByteAt(bytes, 4) << 24);
+	if (count >>> 0 > TOPIC_ROOT_CANDIDATES_MAX) {
+		throw new Error(
+			`Topic-root candidate count exceeds ${TOPIC_ROOT_CANDIDATES_MAX}`,
+		);
+	}
+};
+
 export abstract class PubSubMessage {
 	abstract bytes(): Uint8Array | Uint8ArrayList;
 	static from(bytes: Uint8Array) {
@@ -214,10 +277,12 @@ export class TopicRootCandidates extends PubSubMessage {
 	}
 
 	static from(bytes: Uint8Array | Uint8ArrayList): TopicRootCandidates {
+		assertTopicRootCandidatesFrame(bytes);
 		const ret = deserialize(
 			bytes instanceof Uint8Array ? bytes : bytes.subarray(),
 			TopicRootCandidates,
 		);
+		assertCanonicalTopicRootCandidates(ret.candidates);
 		if (bytes instanceof Uint8ArrayList) {
 			ret._serialized = bytes;
 		}

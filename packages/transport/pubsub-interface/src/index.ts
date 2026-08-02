@@ -177,11 +177,16 @@ export interface PubSub
 }
 
 export {
+	assertCanonicalTopicRootCandidates,
+	assertTopicRootCandidatesFrame,
 	GetSubscribers,
+	isCanonicalTopicRootCandidate,
 	PeerUnavailable,
 	PubSubData,
 	PubSubMessage,
 	Subscribe,
+	TOPIC_ROOT_CANDIDATES_MAX,
+	TOPIC_ROOT_CANDIDATES_MAX_FRAME_BYTES,
 	TopicRootCandidates,
 	TopicRootQuery,
 	TopicRootQueryResponse,

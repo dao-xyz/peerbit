@@ -5,8 +5,11 @@ import {
 import { PublicSignKey, getPublicKeyFromPeerId } from "@peerbit/crypto";
 import { logger as loggerFn } from "@peerbit/logger";
 import {
+	assertCanonicalTopicRootCandidates,
+	assertTopicRootCandidatesFrame,
 	DataEvent,
 	GetSubscribers,
+	isCanonicalTopicRootCandidate,
 	PeerUnavailable,
 	type PubSub,
 	PubSubData,
@@ -16,6 +19,7 @@ import {
 	Subscribe,
 	SubscriptionData,
 	SubscriptionEvent,
+	TOPIC_ROOT_CANDIDATES_MAX,
 	TopicRootCandidates,
 	TopicRootQuery,
 	TopicRootQueryResponse,
@@ -138,7 +142,9 @@ const DEFAULT_FANOUT_PUBLISH_MAX_EPHEMERAL_CHANNELS = 64;
 const DEFAULT_PUBSUB_SHARD_COUNT = 256;
 const PUBSUB_SHARD_COUNT_HARD_CAP = 16_384;
 const DEFAULT_PUBSUB_SHARD_TOPIC_PREFIX = "/peerbit/pubsub-shard/1/";
-const AUTO_TOPIC_ROOT_CANDIDATES_MAX = 64;
+const sameCandidates = (left: string[], right: string[]) =>
+	left.length === right.length &&
+	left.every((candidate, index) => candidate === right[index]);
 // Topic-root queries may need to wait for the responder to finish opening an
 // outbound stream back to the requester after an inbound-only dial.
 const DEFAULT_TOPIC_ROOT_QUERY_TIMEOUT_MS = 12_000;
@@ -710,7 +716,11 @@ export class TopicControlPlane
 
 	private maybeUpdateAutoTopicRootCandidates(peerHash: string) {
 		if (!this.autoTopicRootCandidates) return;
-		if (!peerHash || peerHash === this.publicKeyHash) return;
+		if (
+			!isCanonicalTopicRootCandidate(peerHash) ||
+			peerHash === this.publicKeyHash
+		)
+			return;
 
 		if (this.maybeDisableAutoTopicRootCandidatesIfExternallyConfigured())
 			return;
@@ -725,6 +735,7 @@ export class TopicControlPlane
 			managed ? [...managed] : [...current, peerHash],
 		);
 		this.autoTopicRootCandidateSet = new Set(next);
+		if (sameCandidates(current, next)) return;
 		this.topicRootControlPlane.setTopicRootCandidates(next);
 		this.shardRootCache.clear();
 		this.scheduleReconcileShardOverlays();
@@ -742,20 +753,24 @@ export class TopicControlPlane
 	}
 
 	private normalizeAutoTopicRootCandidates(candidates: string[]): string[] {
+		const canonicalCandidates = candidates.filter(
+			isCanonicalTopicRootCandidate,
+		);
 		if (this.nativeTopicControl) {
 			return this.nativeTopicControl.normalizeAutoCandidates(
-				candidates,
+				canonicalCandidates,
 				this.publicKeyHash,
 			);
 		}
 		const unique = new Set<string>();
-		for (const c of candidates) {
-			if (!c) continue;
+		for (const c of canonicalCandidates) {
 			unique.add(c);
 		}
-		unique.add(this.publicKeyHash);
+		if (isCanonicalTopicRootCandidate(this.publicKeyHash)) {
+			unique.add(this.publicKeyHash);
+		}
 		const sorted = [...unique].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
-		return sorted.slice(0, AUTO_TOPIC_ROOT_CANDIDATES_MAX);
+		return sorted.slice(0, TOPIC_ROOT_CANDIDATES_MAX);
 	}
 
 	private scheduleAutoTopicRootCandidatesBroadcast(targets?: PeerStreams[]) {
@@ -834,18 +849,13 @@ export class TopicControlPlane
 
 		const before = this.topicRootControlPlane.getTopicRootCandidates();
 		for (const c of candidates) {
-			if (!c) continue;
+			if (!isCanonicalTopicRootCandidate(c)) continue;
 			managed.add(c);
 		}
 		const next = this.normalizeAutoTopicRootCandidates([...managed]);
-		if (
-			before.length === next.length &&
-			before.every((c, i) => c === next[i])
-		) {
-			return false;
-		}
-
 		this.autoTopicRootCandidateSet = new Set(next);
+		if (sameCandidates(before, next)) return false;
+
 		this.topicRootControlPlane.setTopicRootCandidates(next);
 		this.shardRootCache.clear();
 		this.scheduleReconcileShardOverlays();
@@ -1162,6 +1172,9 @@ export class TopicControlPlane
 	 * their fallback behavior).
 	 */
 	private decodePubSubMessage(bytes: Uint8Array): PubSubMessage {
+		if (bytes[0] === 4) {
+			assertTopicRootCandidatesFrame(bytes);
+		}
 		const native = this.nativeTopicControl;
 		if (native) {
 			const decoded = native.decodePubSubMessage(bytes);
@@ -1182,6 +1195,7 @@ export class TopicControlPlane
 				case "get-subscribers":
 					return new GetSubscribers({ topics: decoded.topics });
 				case "topic-root-candidates":
+					assertCanonicalTopicRootCandidates(decoded.candidates);
 					return new TopicRootCandidates({ candidates: decoded.candidates });
 				case "peer-unavailable":
 					return new PeerUnavailable({

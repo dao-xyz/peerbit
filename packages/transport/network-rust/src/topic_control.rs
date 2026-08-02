@@ -22,6 +22,12 @@ pub const PUBSUB_VARIANT_TOPIC_ROOT_QUERY_RESPONSE: u8 = 7;
 
 /// `AUTO_TOPIC_ROOT_CANDIDATES_MAX` in `pubsub/src/index.ts`.
 pub const AUTO_TOPIC_ROOT_CANDIDATES_MAX: usize = 64;
+/// A public-key SHA-256 hash encoded as canonical padded Base64.
+pub const TOPIC_ROOT_CANDIDATE_BYTES: usize = 44;
+/// Variant byte + vector length + 64 length-prefixed canonical candidates.
+pub const TOPIC_ROOT_CANDIDATES_FRAME_MAX: usize =
+    1 + 4 + AUTO_TOPIC_ROOT_CANDIDATES_MAX * (4 + TOPIC_ROOT_CANDIDATE_BYTES);
+const TOPIC_ROOT_CANDIDATE_LAST_SEXTETS: &[u8] = b"AEIMQUYcgkosw048";
 
 /// A decoded `PubSubMessage`. `Data` payload bytes are reported as a range
 /// into the input frame so the host can alias them without a copy.
@@ -72,6 +78,45 @@ fn read_bool(reader: &mut Reader) -> WireResult<bool> {
     }
 }
 
+fn is_base64_byte(value: u8) -> bool {
+    value.is_ascii_alphanumeric() || matches!(value, b'+' | b'/')
+}
+
+/// Standard padded Base64 has a unique 44-byte representation for a 32-byte
+/// SHA-256 digest. The last sextet can only carry four data bits, so its low
+/// two bits must be zero.
+pub fn is_canonical_topic_root_candidate(candidate: &str) -> bool {
+    let bytes = candidate.as_bytes();
+    bytes.len() == TOPIC_ROOT_CANDIDATE_BYTES
+        && bytes[..42].iter().copied().all(is_base64_byte)
+        && TOPIC_ROOT_CANDIDATE_LAST_SEXTETS.contains(&bytes[42])
+        && bytes[43] == b'='
+}
+
+fn read_topic_root_candidates(reader: &mut Reader, frame_length: usize) -> WireResult<Vec<String>> {
+    if frame_length > TOPIC_ROOT_CANDIDATES_FRAME_MAX {
+        return Err("topic-root candidates frame exceeds limit".to_string());
+    }
+    let length = reader.u32_le()? as usize;
+    if length > AUTO_TOPIC_ROOT_CANDIDATES_MAX {
+        return Err("too many topic-root candidates".to_string());
+    }
+    let mut candidates = Vec::with_capacity(length);
+    for _ in 0..length {
+        let candidate_length = reader.u32_le()? as usize;
+        if candidate_length != TOPIC_ROOT_CANDIDATE_BYTES {
+            return Err("invalid topic-root candidate length".to_string());
+        }
+        let candidate = std::str::from_utf8(reader.take(candidate_length)?)
+            .map_err(|_| "invalid utf8 in topic-root candidate".to_string())?;
+        if !is_canonical_topic_root_candidate(candidate) {
+            return Err("invalid topic-root candidate".to_string());
+        }
+        candidates.push(candidate.to_string());
+    }
+    Ok(candidates)
+}
+
 pub fn decode_pubsub_message(frame: &[u8]) -> WireResult<DecodedPubSubMessage> {
     let mut reader = Reader::new(frame);
     let variant = reader.u8()?;
@@ -100,7 +145,7 @@ pub fn decode_pubsub_message(frame: &[u8]) -> WireResult<DecodedPubSubMessage> {
             topics: reader.string_vec()?,
         },
         PUBSUB_VARIANT_TOPIC_ROOT_CANDIDATES => DecodedPubSubMessage::TopicRootCandidates {
-            candidates: reader.string_vec()?,
+            candidates: read_topic_root_candidates(&mut reader, frame.len())?,
         },
         PUBSUB_VARIANT_PEER_UNAVAILABLE => DecodedPubSubMessage::PeerUnavailable {
             public_key_hash: reader.string()?,
@@ -255,18 +300,20 @@ fn js_string_sort(values: &mut [String]) {
     });
 }
 
-/// `normalizeAutoTopicRootCandidates`: dedupe (dropping empties), always
-/// include self, sort by UTF-16 code units and cap at
+/// `normalizeAutoTopicRootCandidates`: retain canonical hashes, dedupe, add a
+/// canonical self hash before the shared UTF-16 sort and cap at
 /// [`AUTO_TOPIC_ROOT_CANDIDATES_MAX`].
 pub fn normalize_auto_candidates(candidates: &[String], me: &str) -> Vec<String> {
     let mut unique: HashSet<&str> = HashSet::new();
     for candidate in candidates {
-        if candidate.is_empty() {
+        if !is_canonical_topic_root_candidate(candidate) {
             continue;
         }
         unique.insert(candidate.as_str());
     }
-    unique.insert(me);
+    if is_canonical_topic_root_candidate(me) {
+        unique.insert(me);
+    }
     let mut sorted: Vec<String> = unique.into_iter().map(|value| value.to_string()).collect();
     js_string_sort(&mut sorted);
     sorted.truncate(AUTO_TOPIC_ROOT_CANDIDATES_MAX);
@@ -364,6 +411,17 @@ mod tests {
         values.iter().map(|value| value.to_string()).collect()
     }
 
+    fn candidate(index: usize) -> String {
+        const ALPHABET: &[u8; 64] =
+            b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        let mut value = vec![b'A'; TOPIC_ROOT_CANDIDATE_BYTES];
+        value[0] = ALPHABET[(index / 64) % 64];
+        value[1] = ALPHABET[index % 64];
+        value[42] = b'A';
+        value[43] = b'=';
+        String::from_utf8(value).unwrap()
+    }
+
     #[test]
     fn pubsub_data_encodes_borsh_layout() {
         let encoded = encode_pubsub_data(&strings(&["t1", "t2"]), true, &[7, 8]);
@@ -395,12 +453,13 @@ mod tests {
 
     #[test]
     fn pubsub_messages_roundtrip() {
+        let root_candidates = vec![candidate(1), candidate(2)];
         let frames = [
             encode_pubsub_data(&strings(&["a"]), false, &[1, 2, 3]),
             encode_subscribe(&strings(&["a", "b"]), true),
             encode_unsubscribe(&strings(&[])),
             encode_get_subscribers(&strings(&["x"])),
-            encode_topic_root_candidates(&strings(&["c1", "c2"])),
+            encode_topic_root_candidates(&root_candidates),
             encode_peer_unavailable("hash", u64::MAX, 0, &strings(&["t"])),
             encode_topic_root_query(42, "topic"),
             encode_topic_root_query_response(42, "topic", Some("root")),
@@ -422,7 +481,7 @@ mod tests {
                 topics: strings(&["x"]),
             },
             DecodedPubSubMessage::TopicRootCandidates {
-                candidates: strings(&["c1", "c2"]),
+                candidates: root_candidates,
             },
             DecodedPubSubMessage::PeerUnavailable {
                 public_key_hash: "hash".to_string(),
@@ -467,6 +526,30 @@ mod tests {
         let mut trailing = encode_unsubscribe(&strings(&["a"]));
         trailing.push(0);
         assert!(decode_pubsub_message(&trailing).is_err());
+
+        let mut too_many_candidates = vec![PUBSUB_VARIANT_TOPIC_ROOT_CANDIDATES];
+        too_many_candidates.extend_from_slice(&65u32.to_le_bytes());
+        assert!(decode_pubsub_message(&too_many_candidates).is_err());
+
+        let invalid_candidates = [
+            "short",
+            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA_",
+            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAB=",
+            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==",
+        ];
+        for invalid in invalid_candidates {
+            assert!(
+                decode_pubsub_message(&encode_topic_root_candidates(&strings(&[invalid]))).is_err(),
+                "accepted invalid candidate {invalid:?}",
+            );
+        }
+
+        let mut oversized =
+            encode_topic_root_candidates(&vec![candidate(0); AUTO_TOPIC_ROOT_CANDIDATES_MAX]);
+        oversized.push(0);
+        assert!(oversized.len() > TOPIC_ROOT_CANDIDATES_FRAME_MAX);
+        assert!(decode_pubsub_message(&oversized).is_err());
     }
 
     #[test]
@@ -498,13 +581,28 @@ mod tests {
 
     #[test]
     fn normalize_auto_candidates_sorts_and_caps() {
-        let normalized = normalize_auto_candidates(&strings(&["b", "", "a", "b"]), "me");
-        assert_eq!(normalized, strings(&["a", "b", "me"]));
+        let me = candidate(0);
+        let one = candidate(1);
+        let two = candidate(2);
+        let normalized = normalize_auto_candidates(
+            &[two.clone(), "invalid".to_string(), one.clone(), two.clone()],
+            &me,
+        );
+        assert_eq!(normalized, vec![me.clone(), one, two]);
 
-        let many: Vec<String> = (0..80).map(|i| format!("peer-{i:03}")).collect();
-        let normalized = normalize_auto_candidates(&many, "peer-000");
+        let many: Vec<String> = (0..80).map(candidate).collect();
+        let normalized = normalize_auto_candidates(&many, &me);
         assert_eq!(normalized.len(), AUTO_TOPIC_ROOT_CANDIDATES_MAX);
-        assert_eq!(normalized[0], "peer-000");
+        assert!(normalized.contains(&me));
+        assert!(normalized
+            .windows(2)
+            .all(|pair| !js_string_lt(&pair[1], &pair[0])));
+        assert!(normalized
+            .iter()
+            .all(|candidate| is_canonical_topic_root_candidate(candidate)));
+
+        let high_self = candidate(80);
+        assert!(!normalize_auto_candidates(&many[..64], &high_self).contains(&high_self));
     }
 
     #[test]
