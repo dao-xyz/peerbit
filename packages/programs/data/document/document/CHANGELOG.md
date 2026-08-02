@@ -1,5 +1,11 @@
 # Changelog
 
+## 13.1.20
+
+### Patch Changes
+
+- [#1146](https://github.com/dao-xyz/peerbit/pull/1146) [`78fa798`](https://github.com/dao-xyz/peerbit/commit/78fa798421bf0db9f9f7e69fbdfae64920eaa5f4) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Allow index transforms to explicitly preserve Borsh getter/setter fields when Documents adds its local context wrapper, enabling compatible persisted-index migrations that discard large derived payloads.
+
 ## 13.1.19
 
 ### Patch Changes
