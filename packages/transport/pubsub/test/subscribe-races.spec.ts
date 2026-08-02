@@ -1,5 +1,5 @@
 import { field, variant, vec } from "@dao-xyz/borsh";
-import { getPublicKeyFromPeerId } from "@peerbit/crypto";
+import { getPublicKeyFromPeerId, sha256Base64Sync } from "@peerbit/crypto";
 import { TestSession } from "@peerbit/libp2p-test-utils";
 import {
 	TopicRootCandidates,
@@ -194,6 +194,9 @@ describe("pubsub (subscribe race regressions)", function () {
 		return { promise, resolve };
 	};
 
+	const canonicalCandidate = (label: string) =>
+		sha256Base64Sync(new TextEncoder().encode(label));
+
 	const stubFirstFanoutJoinUntilAbort = (
 		expectedRoot: string,
 		releaseAfterAbort?: Promise<void>,
@@ -288,7 +291,7 @@ describe("pubsub (subscribe race regressions)", function () {
 		const pubsub = session.peers[0]!.services.pubsub;
 		const internals = pubsub as any;
 		const staleRoot = pubsub.publicKeyHash;
-		const addedCandidate = "root-candidate-added-during-query";
+		const addedCandidate = canonicalCandidate("query-race");
 		const { afterRoot: currentRoot, topic } = findCandidateTransitionTopic(
 			[staleRoot],
 			[staleRoot, addedCandidate],
@@ -327,7 +330,7 @@ describe("pubsub (subscribe race regressions)", function () {
 		const pubsub = session.peers[0]!.services.pubsub;
 		const internals = pubsub as any;
 		const staleRoot = pubsub.publicKeyHash;
-		const addedCandidate = "root-candidate-added-before-cache-write";
+		const addedCandidate = canonicalCandidate("cache-race");
 		const { afterRoot: currentRoot, topic } = findCandidateTransitionTopic(
 			[staleRoot],
 			[staleRoot, addedCandidate],
@@ -371,13 +374,78 @@ describe("pubsub (subscribe race regressions)", function () {
 		expect(stateCalls).to.equal(2);
 	});
 
+	it("bounds the managed auto-candidate set when normalization is a no-op", async () => {
+		session = await createDisconnectedSessionWithPerPeerRoots(1);
+		const pubsub = session.peers[0]!.services.pubsub;
+		const internals = pubsub as any;
+		const base64Alphabet =
+			"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+		const lowCandidates = [...base64Alphabet].map(
+			(character) => "A".repeat(41) + character + "A=",
+		);
+		const discardedHighCandidates = [...base64Alphabet].map(
+			(character) => "z".repeat(41) + character + "8=",
+		);
+
+		const scheduled = { broadcast: 0, host: 0, reconcile: 0 };
+		internals.scheduleReconcileShardOverlays = () => scheduled.reconcile++;
+		internals.scheduleHostOwnedShardRoots = () => scheduled.host++;
+		internals.scheduleAutoTopicRootCandidatesBroadcast = () =>
+			scheduled.broadcast++;
+		expect(
+			internals.mergeAutoTopicRootCandidatesFromPeer(lowCandidates),
+		).to.equal(true);
+		const before = pubsub.topicRootControlPlane.getTopicRootCandidates();
+		expect(before).to.have.length(64);
+
+		expect(
+			internals.mergeAutoTopicRootCandidatesFromPeer(discardedHighCandidates),
+		).to.equal(false);
+		expect(pubsub.topicRootControlPlane.getTopicRootCandidates()).to.deep.equal(
+			before,
+		);
+		expect(internals.autoTopicRootCandidateSet.size).to.equal(64);
+		expect([...internals.autoTopicRootCandidateSet]).to.have.members(before);
+
+		const afterMerge = { ...scheduled };
+		const discardedDirectPeer = discardedHighCandidates[0]!;
+		expect(before).not.to.include(discardedDirectPeer);
+		internals.maybeUpdateAutoTopicRootCandidates(discardedDirectPeer);
+		expect(scheduled).to.deep.equal(afterMerge);
+		expect(internals.autoTopicRootCandidateSet.size).to.equal(64);
+	});
+
+	it("filters non-canonical candidates only from auto mode", async () => {
+		session = await createDisconnectedSessionWithPerPeerRoots(1);
+		const pubsub = session.peers[0]!.services.pubsub;
+		const internals = pubsub as any;
+		const nonCanonicalCandidate = "A".repeat(42) + "B=";
+		const before = pubsub.topicRootControlPlane.getTopicRootCandidates();
+
+		expect(
+			internals.mergeAutoTopicRootCandidatesFromPeer([nonCanonicalCandidate]),
+		).to.equal(false);
+		expect(pubsub.topicRootControlPlane.getTopicRootCandidates()).to.deep.equal(
+			before,
+		);
+		expect(
+			internals.autoTopicRootCandidateSet.has(nonCanonicalCandidate),
+		).to.equal(false);
+
+		pubsub.setTopicRootCandidates([nonCanonicalCandidate]);
+		expect(pubsub.topicRootControlPlane.getTopicRootCandidates()).to.deep.equal(
+			[nonCanonicalCandidate],
+		);
+		expect(internals.autoTopicRootCandidates).to.equal(false);
+	});
+
 	it("does not let an old opener block or overwrite the current generation", async () => {
 		session = await createDisconnectedSessionWithPerPeerRoots(1);
 		const pubsub = session.peers[0]!.services.pubsub;
 		const internals = pubsub as any;
 		const fanout = session.peers[0]!.services.fanout as any;
-		const oldRoot = "stale-generation-root";
-		const addedCandidate = "new-generation-candidate";
+		const oldRoot = canonicalCandidate("old-generation");
+		const addedCandidate = canonicalCandidate("new-generation");
 
 		internals.scheduleReconcileShardOverlays = () => {};
 		internals.scheduleHostOwnedShardRoots = () => {};
@@ -474,8 +542,8 @@ describe("pubsub (subscribe race regressions)", function () {
 		session = await createDisconnectedSessionWithPerPeerRoots(1);
 		const pubsub = session.peers[0]!.services.pubsub;
 		const internals = pubsub as any;
-		const staleRoot = "stale-join-root";
-		const addedCandidate = "candidate-that-moves-the-root";
+		const staleRoot = canonicalCandidate("stale-join");
+		const addedCandidate = canonicalCandidate("moved-root");
 
 		internals.scheduleHostOwnedShardRoots = () => {};
 		internals.scheduleAutoTopicRootCandidatesBroadcast = () => {};
@@ -533,8 +601,8 @@ describe("pubsub (subscribe race regressions)", function () {
 		const pubsub = session.peers[0]!.services.pubsub;
 		const fanout = session.peers[0]!.services.fanout;
 		const internals = pubsub as any;
-		const staleRoot = "stale-join-root-after-generation-cycle";
-		const addedCandidate = "transient-root-candidate";
+		const staleRoot = canonicalCandidate("cycle-root");
+		const addedCandidate = canonicalCandidate("transient-root");
 
 		internals.scheduleHostOwnedShardRoots = () => {};
 		internals.scheduleAutoTopicRootCandidatesBroadcast = () => {};
@@ -719,7 +787,7 @@ describe("pubsub (subscribe race regressions)", function () {
 		session = await createDisconnectedSessionWithPerPeerRoots(1);
 		const pubsub = session.peers[0]!.services.pubsub;
 		const internals = pubsub as any;
-		const autoPeer = "auto-peer-with-stale-shard-root";
+		const autoPeer = canonicalCandidate("stale-auto-peer");
 		expect(internals.mergeAutoTopicRootCandidatesFromPeer([autoPeer])).to.equal(
 			true,
 		);

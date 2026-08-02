@@ -12,10 +12,12 @@ import {
 	PubSubData,
 	PubSubMessage,
 	Subscribe,
+	TOPIC_ROOT_CANDIDATES_MAX,
 	TopicRootCandidates,
 	TopicRootQuery,
 	TopicRootQueryResponse,
 	Unsubscribe,
+	isCanonicalTopicRootCandidate,
 } from "@peerbit/pubsub-interface";
 import type { RustTopicControl } from "@peerbit/stream";
 import { expect } from "chai";
@@ -55,6 +57,12 @@ const randomUtf16String = (rand: () => number, maxUnits: number) => {
 	return String.fromCharCode(...units);
 };
 
+const candidate = (index: number) => {
+	const alphabet =
+		"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+	return `${alphabet[Math.floor(index / 64) % 64]}${alphabet[index % 64]}${"A".repeat(40)}A=`;
+};
+
 describe("topic-control parity", () => {
 	let topicControl: RustTopicControl;
 
@@ -80,7 +88,9 @@ describe("topic-control parity", () => {
 		new Subscribe({ topics: [], requestSubscribers: false }),
 		new Unsubscribe({ topics: ["t1", "t2"] }),
 		new GetSubscribers({ topics: ["héllo"] }),
-		new TopicRootCandidates({ candidates: ["c1", "c2", "c3"] }),
+		new TopicRootCandidates({
+			candidates: [candidate(1), candidate(2), candidate(3)],
+		}),
 		new PeerUnavailable({
 			publicKeyHash: "hash",
 			session: 18446744073709551615n,
@@ -249,6 +259,22 @@ describe("topic-control parity", () => {
 		];
 		const trailing = serialize(new Unsubscribe({ topics: ["a"] }));
 		bad.push(new Uint8Array([...trailing, 0]));
+		bad.push(
+			serialize(new TopicRootCandidates({ candidates: ["not-a-hash"] })),
+			serialize(
+				new TopicRootCandidates({
+					candidates: [`${"A".repeat(42)}B=`],
+				}),
+			),
+			serialize(
+				new TopicRootCandidates({
+					candidates: Array.from(
+						{ length: TOPIC_ROOT_CANDIDATES_MAX + 1 },
+						(_, index) => candidate(index),
+					),
+				}),
+			),
+		);
 		for (const frame of bad) {
 			expect(() => topicControl.decodePubSubMessage(frame)).to.throw();
 			expect(() => PubSubMessage.from(frame)).to.throw();
@@ -287,24 +313,25 @@ describe("topic-control parity", () => {
 		const tsNormalize = (candidates: string[], me: string) => {
 			const unique = new Set<string>();
 			for (const c of candidates) {
-				if (!c) continue;
+				if (!isCanonicalTopicRootCandidate(c)) continue;
 				unique.add(c);
 			}
-			unique.add(me);
+			if (isCanonicalTopicRootCandidate(me)) unique.add(me);
 			const sorted = [...unique].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
-			return sorted.slice(0, 64);
+			return sorted.slice(0, TOPIC_ROOT_CANDIDATES_MAX);
 		};
 		const cases: string[][] = [
 			[],
-			["b", "a", "b", ""],
-			["z", "y", "x"],
-			["\u{1d400}", "Ａ"], // surrogate-pair vs BMP sort order
-			Array.from({ length: 100 }, (_, i) => `peer-${(i * 7) % 100}`),
+			[candidate(2), candidate(1), candidate(2), ""],
+			[candidate(12), candidate(11), candidate(10)],
+			["\u{1d400}", "Ａ"],
+			Array.from({ length: 100 }, (_, i) => candidate((i * 7) % 100)),
 		];
+		const me = candidate(0);
 		for (const candidates of cases) {
 			expect(
-				topicControl.normalizeAutoCandidates(candidates, "me"),
-			).to.deep.equal(tsNormalize(candidates, "me"));
+				topicControl.normalizeAutoCandidates(candidates, me),
+			).to.deep.equal(tsNormalize(candidates, me));
 		}
 	});
 
