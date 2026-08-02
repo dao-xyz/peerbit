@@ -1,5 +1,14 @@
 # Changelog
 
+## 6.0.65
+
+### Patch Changes
+
+- [#1147](https://github.com/dao-xyz/peerbit/pull/1147) [`3e18d89`](https://github.com/dao-xyz/peerbit/commit/3e18d891ff9d56247e460a557afda700ba8c8890) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Canonicalize public keys from duplicate package copies and require identity-relation signers to match the relation source.
+
+- Updated dependencies [[`78fa798`](https://github.com/dao-xyz/peerbit/commit/78fa798421bf0db9f9f7e69fbdfae64920eaa5f4)]:
+  - @peerbit/document@13.1.20
+
 ## 6.0.64
 
 ### Patch Changes
