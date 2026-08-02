@@ -1,5 +1,13 @@
 # Changelog
 
+## 5.3.6
+
+### Patch Changes
+
+- [#1138](https://github.com/dao-xyz/peerbit/pull/1138) [`c65f981`](https://github.com/dao-xyz/peerbit/commit/c65f981e574a717dc6bd066553d3e537a76b5973) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Converge auto-discovered shard roots across late peer joins and bind direct root-control messages to their verified transport peer.
+
+  Leaves that use a queried gateway's internal shard roots must disable automatic candidates with `setTopicRootCandidates([])`; locally configured roots, resolvers, and trackers remain authoritative.
+
 ## 5.3.5
 
 ### Patch Changes
