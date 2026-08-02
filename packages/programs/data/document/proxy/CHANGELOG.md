@@ -1,5 +1,18 @@
 # Changelog
 
+## 2.0.63
+
+### Patch Changes
+
+- Updated dependencies [[`aeb860f`](https://github.com/dao-xyz/peerbit/commit/aeb860f0e168c9b7a3cacbbc48d95f4a494b2560)]:
+  - @peerbit/stream-interface@6.0.14
+  - @peerbit/document@13.1.18
+  - @peerbit/program@6.0.42
+  - @peerbit/canonical-host@1.0.55
+  - @peerbit/document-interface@3.2.54
+  - @peerbit/shared-log-proxy@2.0.61
+  - @peerbit/canonical-client@1.1.45
+
 ## 2.0.62
 
 ### Patch Changes

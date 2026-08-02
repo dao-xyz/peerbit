@@ -1,5 +1,14 @@
 # Changelog
 
+## 4.2.8
+
+### Patch Changes
+
+- Updated dependencies [[`aeb860f`](https://github.com/dao-xyz/peerbit/commit/aeb860f0e168c9b7a3cacbbc48d95f4a494b2560)]:
+  - @peerbit/stream-interface@6.0.14
+  - @peerbit/stream@5.1.5
+  - @peerbit/blocks-interface@2.1.4
+
 ## 4.2.7
 
 ### Patch Changes
