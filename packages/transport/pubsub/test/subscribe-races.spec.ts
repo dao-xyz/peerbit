@@ -12,10 +12,11 @@ import {
 	type DeliveryMode,
 	MessageHeader,
 } from "@peerbit/stream-interface";
-import { delay, waitForResolved } from "@peerbit/time";
+import { AbortError, delay, waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
 import sinon from "sinon";
 import {
+	FanoutChannel,
 	FanoutTree,
 	TopicControlPlane,
 	TopicRootControlPlane,
@@ -191,6 +192,39 @@ describe("pubsub (subscribe race regressions)", function () {
 			resolve = next;
 		});
 		return { promise, resolve };
+	};
+
+	const stubFirstFanoutJoinUntilAbort = (
+		expectedRoot: string,
+		releaseAfterAbort?: Promise<void>,
+	) => {
+		const started = deferred();
+		const aborted = deferred();
+		const join = sinon
+			.stub(FanoutChannel.prototype, "join")
+			.callsFake(function (this: FanoutChannel, _options, joinOptions) {
+				expect(this.root).to.equal(expectedRoot);
+				if (join.callCount > 1) return Promise.resolve();
+				started.resolve();
+				return new Promise<void>((_resolve, reject) => {
+					const onAbort = async () => {
+						aborted.resolve();
+						await releaseAfterAbort;
+						reject(
+							joinOptions?.signal?.reason ??
+								new AbortError("stale join aborted"),
+						);
+					};
+					if (joinOptions?.signal?.aborted) {
+						onAbort();
+					} else {
+						joinOptions?.signal?.addEventListener("abort", onAbort, {
+							once: true,
+						});
+					}
+				});
+			});
+		return { aborted: aborted.promise, join, started: started.promise };
 	};
 
 	afterEach(async () => {
@@ -436,6 +470,138 @@ describe("pubsub (subscribe race regressions)", function () {
 		expect(channelListenerAdds).to.equal(4);
 	});
 
+	it("aborts a stale shard join when auto-root candidates change", async () => {
+		session = await createDisconnectedSessionWithPerPeerRoots(1);
+		const pubsub = session.peers[0]!.services.pubsub;
+		const internals = pubsub as any;
+		const staleRoot = "stale-join-root";
+		const addedCandidate = "candidate-that-moves-the-root";
+
+		internals.scheduleHostOwnedShardRoots = () => {};
+		internals.scheduleAutoTopicRootCandidatesBroadcast = () => {};
+		expect(
+			internals.mergeAutoTopicRootCandidatesFromPeer([staleRoot]),
+		).to.equal(true);
+		const beforeCandidates =
+			pubsub.topicRootControlPlane.getTopicRootCandidates();
+		const afterCandidates = [...beforeCandidates, addedCandidate];
+		const { topic } = findCandidateTransitionTopic(
+			beforeCandidates,
+			afterCandidates,
+			staleRoot,
+			pubsub.publicKeyHash,
+		);
+		const staleGeneration = internals.getTopicRootCandidateGeneration();
+		internals.resolveShardRootState = async () => {
+			const candidateGeneration =
+				internals.getTopicRootCandidateGeneration();
+			return {
+				root:
+					candidateGeneration === staleGeneration
+						? staleRoot
+						: pubsub.publicKeyHash,
+				candidateGeneration,
+			};
+		};
+		const staleJoin = stubFirstFanoutJoinUntilAbort(staleRoot);
+
+		try {
+			const opening = internals.ensureFanoutChannel(topic);
+			await staleJoin.started;
+
+			expect(
+				internals.mergeAutoTopicRootCandidatesFromPeer([addedCandidate]),
+			).to.equal(true);
+			await Promise.race([
+				staleJoin.aborted,
+				delay(1_000).then(() => {
+					throw new Error("stale join was not aborted");
+				}),
+			]);
+			await opening;
+
+			expect(internals.fanoutChannels.get(topic)?.root).to.equal(
+				pubsub.publicKeyHash,
+			);
+		} finally {
+			staleJoin.join.restore();
+		}
+	});
+
+	it("retries a stale join when candidate generation cycles back", async () => {
+		session = await createDisconnectedSessionWithPerPeerRoots(1);
+		const pubsub = session.peers[0]!.services.pubsub;
+		const fanout = session.peers[0]!.services.fanout;
+		const internals = pubsub as any;
+		const staleRoot = "stale-join-root-after-generation-cycle";
+		const addedCandidate = "transient-root-candidate";
+
+		internals.scheduleHostOwnedShardRoots = () => {};
+		internals.scheduleAutoTopicRootCandidatesBroadcast = () => {};
+		internals.reconcileShardOverlays = async () => {};
+		expect(
+			internals.mergeAutoTopicRootCandidatesFromPeer([staleRoot]),
+		).to.equal(true);
+		const originalCandidates =
+			pubsub.topicRootControlPlane.getTopicRootCandidates();
+		const { topic } = findCandidateTransitionTopic(
+			originalCandidates,
+			[...originalCandidates, addedCandidate],
+			staleRoot,
+		);
+		const originalGeneration = internals.getTopicRootCandidateGeneration();
+		internals.resolveShardRootState = async () => ({
+			root: staleRoot,
+			candidateGeneration: internals.getTopicRootCandidateGeneration(),
+		});
+
+		const waitFor = sinon.stub(fanout, "waitFor").resolves([]);
+		const releaseStaleJoin = deferred();
+		const staleJoin = stubFirstFanoutJoinUntilAbort(
+			staleRoot,
+			releaseStaleJoin.promise,
+		);
+
+		try {
+			const opening = internals.ensureFanoutChannel(topic);
+			await staleJoin.started;
+
+			pubsub.topicRootControlPlane.setTopicRootCandidates([
+				...originalCandidates,
+				addedCandidate,
+			]);
+			internals.scheduleReconcileShardOverlays();
+			await staleJoin.aborted;
+
+			const externalAbort = new AbortController();
+			const externalReason = new AbortError("caller stopped waiting");
+			const externallyCancelled = internals.ensureFanoutChannel(topic, {
+				signal: externalAbort.signal,
+			});
+			externalAbort.abort(externalReason);
+			await expect(externallyCancelled).to.be.rejectedWith(externalReason);
+
+			const concurrentOpening = internals.ensureFanoutChannel(topic);
+			pubsub.topicRootControlPlane.setTopicRootCandidates(originalCandidates);
+			internals.scheduleReconcileShardOverlays();
+
+			releaseStaleJoin.resolve();
+			await opening;
+			await concurrentOpening;
+
+			expect(internals.getTopicRootCandidateGeneration()).to.equal(
+				originalGeneration,
+			);
+			expect(staleJoin.join.callCount).to.equal(2);
+			expect(internals.fanoutChannels.get(topic)?.root).to.equal(staleRoot);
+			expect(internals.ensureFanoutChannelInFlight.size).to.equal(0);
+		} finally {
+			releaseStaleJoin.resolve();
+			staleJoin.join.restore();
+			waitFor.restore();
+		}
+	});
+
 	it("serializes concurrent opens for the same shard channel", async () => {
 		session = await createDisconnectedSessionWithPerPeerRoots(1);
 		const pubsub = session.peers[0]!.services.pubsub;
@@ -476,9 +642,11 @@ describe("pubsub (subscribe race regressions)", function () {
 		const candidateGeneration = internals.getTopicRootCandidateGeneration();
 		const lifecycleRevision = internals.topicControlPlaneLifecycleRevision;
 		internals.ensureFanoutChannelInFlight.set(shardTopic, {
+			abortController: new AbortController(),
 			candidateGeneration,
 			lifecycleRevision: lifecycleRevision - 1,
 			opening: new Promise<void>(() => {}),
+			settled: Promise.resolve(),
 		});
 
 		let settled = false;
