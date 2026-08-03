@@ -255,6 +255,7 @@ import {
 } from "./replication.js";
 import { ReplicatorLivenessMonitor } from "./replicator-liveness.js";
 import { Observer, Replicator } from "./role.js";
+import { createSyncronizer } from "./sync/factory.js";
 import type {
 	SharedLogNativeWireSync,
 	SyncEntryCoordinates,
@@ -268,7 +269,6 @@ import {
 	emitSyncProfileEvent,
 	syncProfileStart,
 } from "./sync/profile.js";
-import { RatelessIBLTSynchronizer } from "./sync/rateless-iblt.js";
 import {
 	ConfirmEntriesMessage,
 	SYNC_MESSAGE_PRIORITY,
@@ -14266,123 +14266,29 @@ export class SharedLog<
 			this._nativeDurableRecoveryReadyForReopen = false;
 			this._nativeDurableRecoveryCids.clear();
 		}
-		const resolveHashesForSymbols = (
-			symbols: readonly bigint[] | BigUint64Array,
-		) => {
-			const nativeState = this._nativeBackbone ?? this._nativeSharedLogState;
-			if (!nativeState) {
-				return undefined;
-			}
-			if (
-				typeof BigUint64Array !== "undefined" &&
-				typeof nativeState.getEntryHashesForHashNumbersU64 === "function"
-			) {
-				return nativeState.getEntryHashesForHashNumbersU64(
-					symbols instanceof BigUint64Array
-						? symbols
-						: BigUint64Array.from(symbols),
-				);
-			}
-			return nativeState.getEntryHashesForHashNumbers(symbols);
-		};
-		const resolveHashListForSymbols = (
-			symbols: readonly bigint[] | BigUint64Array,
-		) => {
-			const nativeState = this._nativeBackbone ?? this._nativeSharedLogState;
-			if (
-				!nativeState ||
-				typeof BigUint64Array === "undefined" ||
-				typeof nativeState.getEntryHashListForHashNumbersU64 !== "function"
-			) {
-				return undefined;
-			}
-			return nativeState.getEntryHashListForHashNumbersU64(
-				symbols instanceof BigUint64Array
-					? symbols
-					: BigUint64Array.from(symbols),
-			);
-		};
-		const resolveHashNumbersInRange = (range: {
-			start1: bigint | number;
-			end1: bigint | number;
-			start2: bigint | number;
-			end2: bigint | number;
-		}) => {
-			const nativeState = this._nativeBackbone ?? this._nativeSharedLogState;
-			return (
-				nativeState?.getEntryHashNumbersInRangeU64?.(range) ??
-				nativeState?.getEntryHashNumbersInRange(range)
-			);
-		};
-
-		const sendRawExchangeHeads = (
-			hashes: string[],
-			to: string[],
-			sendOptions?: { priority?: number; signal?: AbortSignal },
-		) => this.trySendFusedRawExchangeHeads(hashes, to, sendOptions);
-		if (options?.syncronizer) {
-			this.syncronizer = new options.syncronizer({
-				numbers: this.indexableDomain.numbers,
-				entryIndex: this.entryCoordinatesIndex,
-				log: this.log,
-				rangeIndex: this._replicationRangeIndex,
-				rpc: this.rpc,
-				coordinateToHash: this.coordinateToHash,
-				resolveHashesForSymbols,
-				resolveHashListForSymbols,
-				resolveHashNumbersInRange,
-				sync: options?.sync,
-				isEntryRecentlyKnownByPeer: (hash, peer, maxAgeMs) =>
-					this.isEntryRecentlyKnownByPeer(hash, peer, maxAgeMs),
-				peerSupportsRawExchangeHeads: (peer) =>
-					this.peerSupportsRawExchangeHeads(peer),
-				sendRawExchangeHeads,
-			});
-		} else {
-			if (
-				this._logProperties?.compatibility &&
-				this._logProperties.compatibility < 10
-			) {
-				this.syncronizer = new SimpleSyncronizer({
-					log: this.log,
-					rpc: this.rpc,
-					entryIndex: this.entryCoordinatesIndex,
-					coordinateToHash: this.coordinateToHash,
-					resolveHashesForSymbols,
-					resolveHashListForSymbols,
-					sync: options?.sync,
-					isEntryRecentlyKnownByPeer: (hash, peer, maxAgeMs) =>
-						this.isEntryRecentlyKnownByPeer(hash, peer, maxAgeMs),
-					peerSupportsRawExchangeHeads: (peer) =>
-						this.peerSupportsRawExchangeHeads(peer),
-					sendRawExchangeHeads,
-				});
-			} else {
-				if (this.domain.resolution === "u32") {
-					warn(
-						"u32 resolution is not recommended for RatelessIBLTSynchronizer",
-					);
-				}
-
-				this.syncronizer = new RatelessIBLTSynchronizer<R>({
-					numbers: this.indexableDomain.numbers,
-					entryIndex: this.entryCoordinatesIndex,
-					log: this.log,
-					rangeIndex: this._replicationRangeIndex,
-					rpc: this.rpc,
-					coordinateToHash: this.coordinateToHash,
-					resolveHashesForSymbols,
-					resolveHashListForSymbols,
-					resolveHashNumbersInRange,
-					sync: options?.sync,
-					isEntryRecentlyKnownByPeer: (hash, peer, maxAgeMs) =>
-						this.isEntryRecentlyKnownByPeer(hash, peer, maxAgeMs),
-					peerSupportsRawExchangeHeads: (peer) =>
-						this.peerSupportsRawExchangeHeads(peer),
-					sendRawExchangeHeads,
-				}) as Syncronizer<R>;
-			}
-		}
+		this.syncronizer = createSyncronizer<R>({
+			numbers: this.indexableDomain.numbers,
+			entryIndex: this.entryCoordinatesIndex,
+			rangeIndex: this._replicationRangeIndex,
+			log: this.log,
+			rpc: this.rpc,
+			coordinateToHash: this.coordinateToHash,
+			getNativeState: () => this._nativeBackbone ?? this._nativeSharedLogState,
+			isEntryRecentlyKnownByPeer: (hash, peer, maxAgeMs) =>
+				this.isEntryRecentlyKnownByPeer(hash, peer, maxAgeMs),
+			peerSupportsRawExchangeHeads: (peer) =>
+				this.peerSupportsRawExchangeHeads(peer),
+			sendRawExchangeHeads: (
+				hashes: string[],
+				to: string[],
+				sendOptions?: { priority?: number; signal?: AbortSignal },
+			) => this.trySendFusedRawExchangeHeads(hashes, to, sendOptions),
+			warn,
+			compatibility: this._logProperties?.compatibility,
+			resolution: this.domain.resolution,
+			sync: options?.sync,
+			syncronizer: options?.syncronizer,
+		});
 
 		// Open for communcation
 		this._onSubscriptionFn =
