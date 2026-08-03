@@ -4637,6 +4637,7 @@ export class SharedLog<
 		this._repairSweepOptimisticGidPeersPending = new Map();
 		this._repairSweepOptimisticGidsByPeer = new Map();
 		this._entryKnownPeers = new Map();
+		this._entryKnownPeerObservedAt = new Map();
 		this._joinAuthoritativeRepairTimersByDelay = new Map();
 		this._joinAuthoritativeRepairPeersByDelay = new Map();
 		this._appendBackfillPendingByTarget = new Map();
@@ -6298,22 +6299,6 @@ export class SharedLog<
 		}
 	}
 
-	private blockPeerReceiveAdmission(peerHash: string) {
-		this._receiveCleanupGateByPeer.set(
-			peerHash,
-			(this._receiveCleanupGateByPeer.get(peerHash) ?? 0) + 1,
-		);
-	}
-
-	private unblockPeerReceiveAdmission(peerHash: string) {
-		const remaining = (this._receiveCleanupGateByPeer.get(peerHash) ?? 1) - 1;
-		if (remaining > 0) {
-			this._receiveCleanupGateByPeer.set(peerHash, remaining);
-		} else {
-			this._receiveCleanupGateByPeer.delete(peerHash);
-		}
-	}
-
 	private handleReplicationLifecycleSendError(
 		error: unknown,
 		controller = this._replicationLifecycleController,
@@ -6511,6 +6496,34 @@ export class SharedLog<
 		void this.replicationAnnouncementRepairDebounced.call();
 	}
 
+	/**
+	 * Single validity predicate for announcement-repair workers. "stale":
+	 * the store closed or a lifecycle controller aborted — exit silently.
+	 * "superseded": a newer announcement generation took over — the worker
+	 * must requeue so the current generation gets serviced. The
+	 * generation-controller identity comparison stays at the one call site
+	 * that historically required it; folding it in here is a stage-5
+	 * semantic decision, not a consolidation.
+	 */
+	private announcementRepairWorkerStatus(worker: {
+		generation: number;
+		lifecycleController: AbortController;
+		generationController: AbortController;
+	}): "current" | "stale" | "superseded" {
+		if (
+			this.closed ||
+			this._closeController.signal.aborted ||
+			worker.lifecycleController.signal.aborted ||
+			worker.generationController.signal.aborted
+		) {
+			return "stale";
+		}
+		if (worker.generation !== this._replicationAnnouncementRetryGeneration) {
+			return "superseded";
+		}
+		return "current";
+	}
+
 	private async runCurrentReplicationStateAnnouncementRepair(): Promise<void> {
 		const generation = this._replicationAnnouncementRetryGeneration;
 		const lifecycleController = this._replicationAnnouncementRepairController;
@@ -6524,11 +6537,11 @@ export class SharedLog<
 			});
 		} catch (error) {
 			if (
-				this.closed ||
-				this._closeController.signal.aborted ||
-				lifecycleController.signal.aborted ||
-				generationController.signal.aborted ||
-				generation !== this._replicationAnnouncementRetryGeneration ||
+				this.announcementRepairWorkerStatus({
+					generation,
+					lifecycleController,
+					generationController,
+				}) !== "current" ||
 				generationController !==
 					this._replicationAnnouncementRepairGenerationController
 			) {
@@ -6565,33 +6578,35 @@ export class SharedLog<
 		const segments = (await this.getMyReplicationSegments()).map((range) =>
 			range.toReplicationRange(),
 		);
-		if (
-			this.closed ||
-			this._closeController.signal.aborted ||
-			lifecycleController.signal.aborted ||
-			generationController.signal.aborted
+		switch (
+			this.announcementRepairWorkerStatus({
+				generation,
+				lifecycleController,
+				generationController,
+			})
 		) {
-			return;
-		}
-		if (generation !== this._replicationAnnouncementRetryGeneration) {
-			this.queueCurrentReplicationStateAnnouncementRepair();
-			return;
+			case "stale":
+				return;
+			case "superseded":
+				this.queueCurrentReplicationStateAnnouncementRepair();
+				return;
 		}
 		this.validatePersistedReplicationRangeSnapshot(segments);
 
 		const subscribers =
 			(await this.node.services.pubsub.getSubscribers(this.topic)) ?? [];
-		if (
-			this.closed ||
-			this._closeController.signal.aborted ||
-			lifecycleController.signal.aborted ||
-			generationController.signal.aborted
+		switch (
+			this.announcementRepairWorkerStatus({
+				generation,
+				lifecycleController,
+				generationController,
+			})
 		) {
-			return;
-		}
-		if (generation !== this._replicationAnnouncementRetryGeneration) {
-			this.queueCurrentReplicationStateAnnouncementRepair();
-			return;
+			case "stale":
+				return;
+			case "superseded":
+				this.queueCurrentReplicationStateAnnouncementRepair();
+				return;
 		}
 
 		const selfHash = this.node.identity.publicKey.hashcode();
@@ -6666,17 +6681,18 @@ export class SharedLog<
 				}),
 			),
 		);
-		if (
-			this.closed ||
-			this._closeController.signal.aborted ||
-			lifecycleController.signal.aborted ||
-			generationController.signal.aborted
+		switch (
+			this.announcementRepairWorkerStatus({
+				generation,
+				lifecycleController,
+				generationController,
+			})
 		) {
-			return;
-		}
-		if (generation !== this._replicationAnnouncementRetryGeneration) {
-			this.queueCurrentReplicationStateAnnouncementRepair();
-			return;
+			case "stale":
+				return;
+			case "superseded":
+				this.queueCurrentReplicationStateAnnouncementRepair();
+				return;
 		}
 
 		for (const [index, result] of results.entries()) {
@@ -7673,6 +7689,10 @@ export class SharedLog<
 		};
 		const isMe = this.node.identity.publicKey.hashcode() === keyHash;
 		let receiveAdmissionBlocked = false;
+		// Capture the gate map instance: close/reopen replaces the map, and the
+		// release in this call's finally must drain the exact map it
+		// incremented — a late release against a fresh open's map would
+		// corrupt that open's refcounts.
 		const receiveCleanupGateByPeer = this._receiveCleanupGateByPeer;
 		const checkedPruneCoordinator = this._checkedPrune;
 		const isSpeculativePeerRemoval =
