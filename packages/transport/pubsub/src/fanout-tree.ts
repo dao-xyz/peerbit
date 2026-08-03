@@ -956,6 +956,7 @@ type ProviderAnnounceState = {
 	bootstrapOverride?: Multiaddr[];
 	bootstrapDialTimeoutMs: number;
 	bootstrapMaxPeers: number;
+	closeController: AbortController;
 	closed: boolean;
 	loop?: Promise<void>;
 };
@@ -970,6 +971,7 @@ type ProviderWatchState = {
 	bootstrapMaxPeers: number;
 	onProviders: (providers: FanoutProviderCandidate[]) => void;
 	signal?: AbortSignal;
+	closeController: AbortController;
 	closed: boolean;
 	trackerPeers: string[];
 	loop?: Promise<void>;
@@ -1000,6 +1002,7 @@ type ChannelState = {
 	metrics: FanoutTreeChannelMetrics;
 	level: number;
 	isRoot: boolean;
+	closeController: AbortController;
 	closed: boolean;
 	parent?: string;
 	children: Map<string, ChildInfo>;
@@ -1399,7 +1402,36 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		);
 	}
 
+	private createLoopCloseController(): AbortController {
+		const controller = new AbortController();
+		const stopSignal = this.closeController.signal;
+		const abortOnStop = () => controller.abort();
+
+		if (stopSignal.aborted) {
+			abortOnStop();
+		} else {
+			stopSignal.addEventListener("abort", abortOnStop, { once: true });
+			controller.signal.addEventListener(
+				"abort",
+				() => stopSignal.removeEventListener("abort", abortOnStop),
+				{ once: true },
+			);
+		}
+		return controller;
+	}
+
 	public override async stop() {
+		for (const state of this.providerAnnounceBySuffixKey.values()) {
+			state.closeController.abort();
+		}
+		for (const watches of this.providerWatchesBySuffixKey.values()) {
+			for (const watch of watches) {
+				watch.closeController.abort();
+			}
+		}
+		for (const channel of this.channelsBySuffixKey.values()) {
+			channel.closeController.abort();
+		}
 		if (this.underlayPeerDisconnectHandler) {
 			this.components.events.removeEventListener(
 				"peer:disconnect",
@@ -1668,6 +1700,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 				bootstrapOverride,
 				bootstrapDialTimeoutMs,
 				bootstrapMaxPeers,
+				closeController: this.createLoopCloseController(),
 				closed: false,
 			};
 			this.providerAnnounceBySuffixKey.set(id.suffixKey, state);
@@ -1685,6 +1718,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 				const current = this.providerAnnounceBySuffixKey.get(id.suffixKey);
 				if (!current) return;
 				current.closed = true;
+				current.closeController.abort();
 				this.providerAnnounceBySuffixKey.delete(id.suffixKey);
 				// Best-effort immediate withdrawal (ttl=0).
 				void this.announceProviderOnce(
@@ -1739,6 +1773,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 			bootstrapOverride,
 			bootstrapDialTimeoutMs,
 			bootstrapMaxPeers,
+			closeController: new AbortController(),
 			closed: false,
 		};
 
@@ -1748,7 +1783,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 	private async _providerAnnounceLoop(
 		state: ProviderAnnounceState,
 	): Promise<void> {
-		const signal = this.closeController.signal;
+		const signal = state.closeController.signal;
 		for (;;) {
 			if (signal.aborted || state.closed) return;
 			try {
@@ -1756,7 +1791,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 			} catch {
 				// ignore
 			}
-			await delay(Math.max(50, state.announceIntervalMs));
+			await delay(Math.max(50, state.announceIntervalMs), { signal });
 		}
 	}
 
@@ -2008,6 +2043,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 			),
 			onProviders: options.onProviders,
 			signal: options.signal,
+			closeController: this.createLoopCloseController(),
 			closed: false,
 			trackerPeers: [],
 		};
@@ -2036,6 +2072,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		const close = () => {
 			if (watch.closed) return;
 			watch.closed = true;
+			watch.closeController.abort();
 			localWatches?.delete(watch);
 			if (localWatches && localWatches.size === 0) {
 				this.providerWatchesBySuffixKey.delete(id.suffixKey);
@@ -2053,8 +2090,8 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		watch.signal?.addEventListener("abort", onAbort, { once: true });
 
 		const loopSignal = watch.signal
-			? anySignal([this.closeController.signal, watch.signal])
-			: this.closeController.signal;
+			? anySignal([watch.closeController.signal, watch.signal])
+			: watch.closeController.signal;
 
 		watch.loop = (async () => {
 			for (;;) {
@@ -2268,6 +2305,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 			metrics: this.getMetricsForSuffixKey(id.suffixKey),
 			level: opts.role === "root" ? 0 : Number.POSITIVE_INFINITY,
 			isRoot: opts.role === "root",
+			closeController: this.createLoopCloseController(),
 			closed: false,
 			parent: undefined,
 			children: new Map(),
@@ -2624,6 +2662,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		if (!ch) return;
 		if (ch.closed) return;
 		ch.closed = true;
+		ch.closeController.abort();
 
 		// If a join is in-flight, surface that it won't complete.
 		try {
@@ -4900,7 +4939,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 	}
 
 	private async _announceLoop(ch: ChannelState): Promise<void> {
-		const signal = this.closeController.signal;
+		const signal = ch.closeController.signal;
 		for (;;) {
 			if (signal.aborted || ch.closed) return;
 			try {
@@ -4925,12 +4964,12 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 				// ignore
 			}
 			const sleepMs = ch.announceIntervalMs > 0 ? ch.announceIntervalMs : 1_000;
-			await delay(sleepMs);
+			await delay(sleepMs, { signal });
 		}
 	}
 
 	private async _repairLoop(ch: ChannelState): Promise<void> {
-		const signal = this.closeController.signal;
+		const signal = ch.closeController.signal;
 		for (;;) {
 			if (signal.aborted || ch.closed) return;
 			try {
@@ -4941,7 +4980,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 			const activeMs = ch.repairIntervalMs > 0 ? ch.repairIntervalMs : 200;
 			const sleepMs =
 				ch.missingSeqs.size > 0 ? activeMs : Math.max(activeMs, 1_000);
-			await delay(sleepMs);
+			await delay(sleepMs, { signal });
 		}
 	}
 
@@ -5179,7 +5218,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 	}
 
 	private async _meshLoop(ch: ChannelState): Promise<void> {
-		const signal = this.closeController.signal;
+		const signal = ch.closeController.signal;
 		let lastRefreshAt = 0;
 		for (;;) {
 			if (signal.aborted || ch.closed) return;
@@ -5209,7 +5248,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 				ch.neighborMeshRefreshIntervalMs,
 			].filter((v) => v > 0);
 			const sleepMs = intervals.length > 0 ? Math.min(...intervals) : 500;
-			await delay(Math.max(50, sleepMs));
+			await delay(Math.max(50, sleepMs), { signal });
 		}
 	}
 
@@ -5678,8 +5717,8 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		const start = Date.now();
 		const cooldownUntilByHash = new Map<string, number>();
 		const combinedSignal = joinOpts.signal
-			? anySignal([this.closeController.signal, joinOpts.signal])
-			: this.closeController.signal;
+			? anySignal([ch.closeController.signal, joinOpts.signal])
+			: ch.closeController.signal;
 		const signal = combinedSignal as AbortSignal & { clear?: () => void };
 		let nextParentUpgradeCheckAt = 0;
 		let parentUpgradeCheckSeq = 0;
