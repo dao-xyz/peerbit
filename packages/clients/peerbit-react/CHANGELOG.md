@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.1.44
+
+### Patch Changes
+
+- Updated dependencies []:
+  - peerbit@5.3.19
+  - @peerbit/program@6.0.47
+  - @peerbit/canonical-client@1.1.50
+  - @peerbit/program-react@0.4.51
+
 ## 1.1.43
 
 ### Patch Changes

@@ -1,5 +1,11 @@
 # Changelog
 
+## 5.1.6
+
+### Patch Changes
+
+- [#1161](https://github.com/dao-xyz/peerbit/pull/1161) [`2a59f05`](https://github.com/dao-xyz/peerbit/commit/2a59f05cfd40b4f9b05d7ef200b256597877cb91) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Coalesce stream shutdown and prevent disconnect callbacks from starting goodbye publication after teardown begins.
+
 ## 5.1.5
 
 ### Patch Changes

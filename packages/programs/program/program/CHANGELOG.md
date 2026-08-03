@@ -1,5 +1,13 @@
 # Changelog
 
+## 6.0.47
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @peerbit/blocks@4.2.9
+  - @peerbit/pubsub@5.3.12
+
 ## 6.0.46
 
 ### Patch Changes
