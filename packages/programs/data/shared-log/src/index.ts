@@ -186,6 +186,7 @@ import {
 	type Numbers,
 	createNumbers,
 } from "./integers.js";
+import { LeaderPlanCache } from "./leader-plan-cache.js";
 import { TransportMessage } from "./message.js";
 import { PIDReplicationController } from "./pid.js";
 import {
@@ -2638,6 +2639,14 @@ const RECALCULATE_PARTICIPATION_MIN_RELATIVE_CHANGE_WITH_MEMORY_LIMIT = 0.001;
 const RECALCULATE_PARTICIPATION_RELATIVE_DENOMINATOR_FLOOR = 1e-3;
 const TOPIC_SUBSCRIBERS_CACHE_TTL_MS = 250;
 const LEADER_SELECTION_CONTEXT_CACHE_TTL_MS = 50;
+// Leader-plan results are invalidated structurally (replication:change,
+// replicator:mature, subscriber changes). The TTL bounds wall-clock maturity
+// flips that have no timer at all — a range re-crossing maturity after the
+// dynamic default roleAge regrew is only visible via expiry — so it is
+// load-bearing for that edge and must stay at the same order as the
+// leader-selection context TTL.
+const LEADER_PLAN_CACHE_TTL_MS = 50;
+const LEADER_PLAN_CACHE_MAX = 10_000;
 const ADAPTIVE_REBALANCE_IDLE_INTERVAL_MULTIPLIER = 5;
 const ADAPTIVE_REBALANCE_MIN_IDLE_AFTER_LOCAL_APPEND_MS = 10_000;
 
@@ -4536,6 +4545,7 @@ export class SharedLog<
 		expiresAt: number;
 		context: LeaderSelectionContext;
 	};
+	private _leaderPlanCache!: LeaderPlanCache;
 	// Sync capability bits advertised by peers (SyncCapabilitiesMessage), keyed
 	// by public key hash. Entries are dropped on unsubscribe/disconnect.
 	private _peerSyncCapabilities!: Map<string, number>;
@@ -5931,6 +5941,34 @@ export class SharedLog<
 	private invalidateLeaderSelectionContextCache() {
 		this._receiveOwnershipRevision++;
 		this._leaderSelectionContextCache = undefined;
+		this._leaderPlanCache?.invalidate();
+	}
+
+	/**
+	 * Cache key for a leader-plan lookup, or undefined when the call is
+	 * uncacheable: explicit freshness demands, per-call candidate filters,
+	 * roleAge outside the two hot buckets (dynamic default and 0), or an
+	 * in-flight replication-range mutation window (a plan observed
+	 * mid-transition must not outlive the transition).
+	 */
+	private leaderPlanCacheBucket(options?: {
+		roleAge?: number;
+		candidates?: Iterable<string>;
+		freshLeaderPlan?: boolean;
+	}): string | undefined {
+		if (options?.freshLeaderPlan || options?.candidates != null) {
+			return undefined;
+		}
+		if (this._receiveOwnershipMutationAdmissions !== 0) {
+			return undefined;
+		}
+		if (options?.roleAge == null) {
+			return "d";
+		}
+		if (options.roleAge === 0) {
+			return "0";
+		}
+		return undefined;
 	}
 
 	private isReceiveOwnershipSnapshotStable(revision: number): boolean {
@@ -7027,6 +7065,9 @@ export class SharedLog<
 		}
 
 		this._isReplicating = true;
+		// Flipping replication mode changes getDefaultMinRoleAge and the
+		// self-replicating context input even when no range is admitted.
+		this.invalidateLeaderSelectionContextCache();
 
 		if (isAdaptiveReplicatorOption(options!)) {
 			this._isAdaptiveReplicating = true;
@@ -10967,9 +11008,12 @@ export class SharedLog<
 
 		try {
 			throwIfInactive();
+			// Ownership decisions here feed prune/delete outcomes; never serve
+			// them from the leader-plan cache.
 			const currentLeaders = await this.findLeadersFromEntry(
 				args.entry,
 				decodeReplicas(args.entry).getValue(this),
+				{ freshLeaderPlan: true },
 			);
 			throwIfInactive();
 			if (currentLeaders.size > 0) {
@@ -15817,6 +15861,10 @@ export class SharedLog<
 		this._repairMetrics = createRepairMetrics();
 		this._topicSubscribersCache = new Map();
 		this._leaderSelectionContextCache = undefined;
+		this._leaderPlanCache = new LeaderPlanCache({
+			max: LEADER_PLAN_CACHE_MAX,
+			ttl: LEADER_PLAN_CACHE_TTL_MS,
+		});
 		this._peerSyncCapabilities = new Map();
 		this._liveRawGossipBatches = new Map();
 		this._liveRawGossipFlushScheduled = false;
@@ -17300,7 +17348,10 @@ export class SharedLog<
 									) {
 										return;
 									}
-									this.uniqueReplicators.add(keyHash);
+									if (!this.uniqueReplicators.has(keyHash)) {
+										this.uniqueReplicators.add(keyHash);
+										this.invalidateLeaderSelectionContextCache();
+									}
 
 									if (!this._replicatorJoinEmitted.has(keyHash)) {
 										this._replicatorJoinEmitted.add(keyHash);
@@ -24907,6 +24958,43 @@ export class SharedLog<
 		options?: {
 			roleAge?: number;
 			candidates?: Iterable<string>;
+			freshLeaderPlan?: boolean;
+		},
+		ownershipLifecycleController = this.captureReplicationOwnershipLifecycle(),
+	): Promise<Map<string, { intersecting: boolean }>> {
+		const cacheBucket = this.leaderPlanCacheBucket(options);
+		if (cacheBucket == null) {
+			return this._findLeadersUncached(
+				cursors,
+				options,
+				ownershipLifecycleController,
+			);
+		}
+		const cacheKey = `c:${cursors.join(",")}|${cacheBucket}`;
+		const cached = this._leaderPlanCache.get(cacheKey);
+		if (cached) {
+			this.throwIfReplicationOwnershipLifecycleInactive(
+				ownershipLifecycleController,
+			);
+			return cached;
+		}
+		const capturedVersion = this._leaderPlanCache.capture();
+		const leaders = await this._findLeadersUncached(
+			cursors,
+			options,
+			ownershipLifecycleController,
+		);
+		if (this._receiveOwnershipMutationAdmissions === 0) {
+			this._leaderPlanCache.put(cacheKey, leaders, capturedVersion);
+		}
+		return leaders;
+	}
+
+	private async _findLeadersUncached(
+		cursors: NumberFromType<R>[],
+		options?: {
+			roleAge?: number;
+			candidates?: Iterable<string>;
 		},
 		ownershipLifecycleController = this.captureReplicationOwnershipLifecycle(),
 	): Promise<Map<string, { intersecting: boolean }>> {
@@ -25358,6 +25446,46 @@ export class SharedLog<
 		options?: {
 			roleAge?: number;
 			candidates?: Iterable<string>;
+			freshLeaderPlan?: boolean;
+		},
+		ownershipLifecycleController = this.captureReplicationOwnershipLifecycle(),
+	): Promise<Map<string, { intersecting: boolean }> | undefined> {
+		const cacheBucket = this.leaderPlanCacheBucket(options);
+		if (cacheBucket == null) {
+			return this._findLeadersFromHashGidUncached(
+				gid,
+				replicas,
+				options,
+				ownershipLifecycleController,
+			);
+		}
+		const cacheKey = `g:${gid}:${replicas}|${cacheBucket}`;
+		const cached = this._leaderPlanCache.get(cacheKey);
+		if (cached) {
+			this.throwIfReplicationOwnershipLifecycleInactive(
+				ownershipLifecycleController,
+			);
+			return cached;
+		}
+		const capturedVersion = this._leaderPlanCache.capture();
+		const leaders = await this._findLeadersFromHashGidUncached(
+			gid,
+			replicas,
+			options,
+			ownershipLifecycleController,
+		);
+		if (leaders && this._receiveOwnershipMutationAdmissions === 0) {
+			this._leaderPlanCache.put(cacheKey, leaders, capturedVersion);
+		}
+		return leaders;
+	}
+
+	private async _findLeadersFromHashGidUncached(
+		gid: string,
+		replicas: number,
+		options?: {
+			roleAge?: number;
+			candidates?: Iterable<string>;
 		},
 		ownershipLifecycleController = this.captureReplicationOwnershipLifecycle(),
 	): Promise<Map<string, { intersecting: boolean }> | undefined> {
@@ -25480,6 +25608,7 @@ export class SharedLog<
 		replicas: number,
 		options?: {
 			roleAge?: number;
+			freshLeaderPlan?: boolean;
 		},
 		ownershipLifecycleController = this.captureReplicationOwnershipLifecycle(),
 	): Promise<Map<string, { intersecting: boolean }>> {
