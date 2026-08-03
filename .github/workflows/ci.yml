@@ -14,7 +14,9 @@ permissions:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  # PRs: superseded pushes cancel the stale run. Master pushes queue instead of
+  # cancelling each other, so every master commit gets a completed CI verdict.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 env:
   WASM_PACK_VERSION: 0.13.1
 jobs:
@@ -212,7 +214,9 @@ jobs:
           tar -xzf workspace-dist.tar.gz
       - name: Lint
         if: matrix.test_cmd == 'pnpm run test:ci:part-1'
-        run: pnpm run lint
+        run: |
+          pnpm run lint
+          node ./scripts/ci/check-shard-coverage.mjs
       - name: Tests
         env:
           PEERBIT_MOCHA_LOG_TEST_START: ${{ (matrix.test_cmd == 'pnpm run test:ci:part-4' || matrix.test_cmd == 'pnpm run test:ci:part-6' || startsWith(matrix.test_cmd, 'pnpm run test:ci:part-7')) && '1' || '0' }}
@@ -260,13 +264,23 @@ jobs:
         run: |
           echo "No coverage files found under */.coverage/"
           exit 1
+      # Tar the exact file list from coverage_files instead of letting
+      # upload-artifact walk "**/.coverage/**": that recursive glob traverses
+      # pnpm's symlinked node_modules and hangs until the job timeout, which has
+      # kept every master push run red/cancelled since 2026-07-23.
+      - name: Pack coverage files
+        if: always() && steps.coverage_files.outputs.count != '0'
+        shell: bash
+        run: |
+          set -euo pipefail
+          IFS=',' read -ra files <<< "${{ steps.coverage_files.outputs.files }}"
+          tar -czf "coverage-${{ strategy.job-index }}.tar.gz" "${files[@]}"
       - name: Upload coverage artifact
         if: always() && steps.coverage_files.outputs.count != '0'
         uses: actions/upload-artifact@v4
         with:
           name: coverage-${{ strategy.job-index }}
-          path: "**/.coverage/**"
-          include-hidden-files: true
+          path: coverage-${{ strategy.job-index }}.tar.gz
           if-no-files-found: error
           overwrite: true
           retention-days: 1
@@ -289,6 +303,15 @@ jobs:
         with:
           pattern: coverage-*
           path: coverage
+      - name: Unpack coverage artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          find coverage -type f -name '*.tar.gz' -print0 | while IFS= read -r -d '' t; do
+            dir="${t%.tar.gz}"
+            mkdir -p "$dir"
+            tar -xzf "$t" -C "$dir"
+          done
       - name: Collect coverage files
         id: coverage_files
         shell: bash
@@ -373,7 +396,9 @@ jobs:
           tar -xzf workspace-dist.tar.gz
       - name: Lint
         if: matrix.test_cmd == 'pnpm run test:ci:part-1'
-        run: pnpm run lint
+        run: |
+          pnpm run lint
+          node ./scripts/ci/check-shard-coverage.mjs
       - name: Tests
         env:
           PEERBIT_MOCHA_LOG_TEST_START: ${{ (matrix.test_cmd == 'pnpm run test:ci:part-4' || matrix.test_cmd == 'pnpm run test:ci:part-6' || startsWith(matrix.test_cmd, 'pnpm run test:ci:part-7')) && '1' || '0' }}
