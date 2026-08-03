@@ -1,4 +1,4 @@
-import { serialize } from "@dao-xyz/borsh";
+import { deserialize, serialize } from "@dao-xyz/borsh";
 import { Cache } from "@peerbit/cache";
 import {
 	Ed25519Keypair,
@@ -8,7 +8,7 @@ import {
 } from "@peerbit/crypto";
 import type { Index } from "@peerbit/indexer-interface";
 import { create as createIndices } from "@peerbit/indexer-sqlite3";
-import { LamportClock, Meta } from "@peerbit/log";
+import { LamportClock, Meta, ShallowMeta } from "@peerbit/log";
 import { expect } from "chai";
 import {
 	type NumberFromType,
@@ -2631,6 +2631,59 @@ resolutions.forEach((resolution) => {
 			let index: Index<EntryReplicated<R>>;
 			const entryClass =
 				resolution === "u32" ? EntryReplicatedU32 : EntryReplicatedU64;
+
+			it("owns metadata from oversized decoded backing buffers", () => {
+				for (const includeMetaBytes of [false, true]) {
+					const serialized = serialize(
+						new ShallowMeta({
+							clock: new LamportClock({ id: randomBytes(32) }),
+							data: randomBytes(16),
+							gid: "gid",
+							next: ["next"],
+							type: 0,
+						}),
+					);
+					const backing = new Uint8Array(1024 * 1024);
+					const metaBytes = backing.subarray(123, 123 + serialized.byteLength);
+					metaBytes.set(serialized);
+					const expected = Uint8Array.from(metaBytes);
+					const decoded = deserialize(metaBytes, ShallowMeta);
+					const expectedClockId = Uint8Array.from(decoded.clock.id);
+					const expectedData = Uint8Array.from(decoded.data!);
+					const common = {
+						assignedToRangeBoundary: false,
+						hash: "hash",
+						meta: decoded,
+						...(includeMetaBytes ? { metaBytes } : {}),
+					};
+					const entry =
+						resolution === "u32"
+							? new EntryReplicatedU32({
+									...common,
+									coordinates: [1],
+									hashNumber: 2,
+								})
+							: new EntryReplicatedU64({
+									...common,
+									coordinates: [1n],
+									hashNumber: 2n,
+								});
+
+					const retained = entry.getMetaBytes();
+					expect(retained).to.deep.equal(expected);
+					expect(retained).to.not.equal(metaBytes);
+					expect(retained.buffer).to.not.equal(backing.buffer);
+					expect(retained.buffer.byteLength).to.equal(retained.byteLength);
+
+					backing.fill(0);
+					expect(retained).to.deep.equal(expected);
+					expect(entry.meta).to.not.equal(decoded);
+					expect(entry.meta.clock.id).to.deep.equal(expectedClockId);
+					expect(entry.meta.data).to.deep.equal(expectedData);
+					expect(entry.meta.clock.id.buffer).to.not.equal(backing.buffer);
+					expect(entry.meta.data!.buffer).to.not.equal(backing.buffer);
+				}
+			});
 
 			let create = async (...rects: EntryReplicated<R>[]) => {
 				const indices = await createIndices();

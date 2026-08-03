@@ -126,7 +126,7 @@ export class EntryReplicatedU32 implements EntryReplicated<"u32"> {
 	@field({ type: Uint8Array })
 	private _meta: Uint8Array;
 
-	private _metaResolved: ShallowMeta;
+	private _metaResolved?: ShallowMeta;
 
 	constructor(properties: {
 		coordinates: number[];
@@ -154,13 +154,16 @@ export class EntryReplicatedU32 implements EntryReplicated<"u32"> {
 			properties.meta?.clock.timestamp.wallTime ?? properties.wallTime!;
 		this.hashNumber = properties.hashNumber;
 		this._meta =
-			properties.metaBytes ??
-			serialize(
-				properties.meta instanceof Meta
-					? new ShallowMeta(properties.meta)
-					: properties.meta!,
-			);
-		this._metaResolved = properties.meta as ShallowMeta;
+			properties.metaBytes != null
+				? Uint8Array.from(properties.metaBytes)
+				: Uint8Array.from(
+						serialize(
+							properties.meta instanceof Meta
+								? new ShallowMeta(properties.meta)
+								: properties.meta!,
+						),
+					);
+		this._metaResolved = undefined;
 		this.assignedToRangeBoundary = properties.assignedToRangeBoundary;
 	}
 
@@ -199,7 +202,7 @@ export class EntryReplicatedU64 implements EntryReplicated<"u64"> {
 	@field({ type: Uint8Array })
 	private _meta: Uint8Array;
 
-	private _metaResolved: ShallowMeta;
+	private _metaResolved?: ShallowMeta;
 
 	constructor(properties: {
 		coordinates: bigint[];
@@ -227,13 +230,16 @@ export class EntryReplicatedU64 implements EntryReplicated<"u64"> {
 		this.wallTime =
 			properties.meta?.clock.timestamp.wallTime ?? properties.wallTime!;
 		this._meta =
-			properties.metaBytes ??
-			serialize(
-				properties.meta instanceof Meta
-					? new ShallowMeta(properties.meta)
-					: properties.meta!,
-			);
-		this._metaResolved = properties.meta as ShallowMeta;
+			properties.metaBytes != null
+				? Uint8Array.from(properties.metaBytes)
+				: Uint8Array.from(
+						serialize(
+							properties.meta instanceof Meta
+								? new ShallowMeta(properties.meta)
+								: properties.meta!,
+						),
+					);
+		this._metaResolved = undefined;
 		this.assignedToRangeBoundary = properties.assignedToRangeBoundary;
 	}
 
