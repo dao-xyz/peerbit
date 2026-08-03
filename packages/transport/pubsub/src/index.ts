@@ -70,7 +70,10 @@ import type {
 	FanoutTreeDataEvent,
 	FanoutTreeJoinOptions,
 } from "./fanout-tree.js";
-import { TopicRootControlPlane } from "./topic-root-control-plane.js";
+import {
+	TopicRootControlPlane,
+	type TopicRootResolutionOptions,
+} from "./topic-root-control-plane.js";
 
 export * from "./fanout-tree.js";
 // The complete /peerbit/fanout-tree/0.5.0 wire codec and the
@@ -107,6 +110,7 @@ const logErrorIfStarted = (e?: { message: string }) => {
 const withAbort = async <T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> => {
 	if (!signal) return promise;
 	if (signal.aborted) {
+		void promise.catch(() => {});
 		throw signal.reason ?? new AbortError("Operation was aborted");
 	}
 	return new Promise<T>((resolve, reject) => {
@@ -133,6 +137,53 @@ const withAbort = async <T>(promise: Promise<T>, signal?: AbortSignal): Promise<
 			},
 		);
 	});
+};
+
+const throwIfAborted = (signal?: AbortSignal): void => {
+	if (signal?.aborted) {
+		throw signal.reason ?? new AbortError("Operation was aborted");
+	}
+};
+
+type AbortSignalLink = {
+	signal: AbortSignal;
+	clear: () => void;
+};
+
+const linkAbortSignals = (
+	signals: Array<AbortSignal | undefined>,
+): AbortSignalLink => {
+	const unique = [...new Set(signals.filter((signal) => signal !== undefined))];
+	if (unique.length === 1) {
+		return { signal: unique[0]!, clear: () => {} };
+	}
+
+	const controller = new AbortController();
+	const listeners = new Map<AbortSignal, () => void>();
+	const clear = () => {
+		for (const [signal, listener] of listeners) {
+			signal.removeEventListener("abort", listener);
+		}
+		listeners.clear();
+	};
+	const abortFrom = (signal: AbortSignal) => {
+		clear();
+		controller.abort(
+			signal.reason ?? new AbortError("Topic-root resolution aborted"),
+		);
+	};
+
+	const aborted = unique.find((signal) => signal.aborted);
+	if (aborted) {
+		abortFrom(aborted);
+	} else {
+		for (const signal of unique) {
+			const listener = () => abortFrom(signal);
+			listeners.set(signal, listener);
+			signal.addEventListener("abort", listener, { once: true });
+		}
+	}
+	return { signal: controller.signal, clear };
 };
 
 const SUBSCRIBER_CACHE_MAX_ENTRIES_HARD_CAP = 100_000;
@@ -357,6 +408,9 @@ export class TopicControlPlane
 	private reconcileShardOverlaysDirty = false;
 	private topicControlPlaneStopping = false;
 	private topicControlPlaneLifecycleRevision = 0;
+	private topicRootResolutionAbortController = new AbortController();
+	private topicRootCandidateResolutionGeneration?: string;
+	private topicRootCandidateResolutionAbortController = new AbortController();
 	private hostOwnedShardRootsInFlight?: Promise<void>;
 	private hostOwnedShardRootsDirty = false;
 	private autoCandidatesBroadcastTimers: Array<ReturnType<typeof setTimeout>> =
@@ -561,6 +615,9 @@ export class TopicControlPlane
 
 	public override async start() {
 		this.topicControlPlaneStopping = false;
+		if (this.topicRootResolutionAbortController.signal.aborted) {
+			this.topicRootResolutionAbortController = new AbortController();
+		}
 		await this.fanout.start();
 		this._onFanoutPeerUnreachable =
 			this._onFanoutPeerUnreachable ||
@@ -584,6 +641,9 @@ export class TopicControlPlane
 
 	public override async stop() {
 		this.topicControlPlaneStopping = true;
+		this.topicRootResolutionAbortController.abort(
+			new AbortError("topic control plane stopped"),
+		);
 		this.clearAutoTopicRootCandidateUpdateSchedule();
 		this.topicControlPlaneLifecycleRevision += 1;
 		this.reconcileShardOverlaysDirty = false;
@@ -932,6 +992,7 @@ export class TopicControlPlane
 
 	private scheduleReconcileShardOverlays() {
 		const candidateGeneration = this.getTopicRootCandidateGeneration();
+		this.syncTopicRootCandidateResolutionSignal(candidateGeneration);
 		for (const opening of this.ensureFanoutChannelInFlight.values()) {
 			if (opening.candidateGeneration !== candidateGeneration) {
 				opening.abortController.abort(
@@ -1279,6 +1340,67 @@ export class TopicControlPlane
 		}
 	}
 
+	private syncTopicRootCandidateResolutionSignal(
+		candidateGeneration = this.getTopicRootCandidateGeneration(),
+	): AbortSignal {
+		if (this.topicRootCandidateResolutionGeneration === undefined) {
+			this.topicRootCandidateResolutionGeneration = candidateGeneration;
+		} else if (
+			candidateGeneration !== this.topicRootCandidateResolutionGeneration
+		) {
+			this.topicRootCandidateResolutionAbortController.abort(
+				new AbortError("topic root candidates changed"),
+			);
+			this.topicRootCandidateResolutionAbortController = new AbortController();
+			this.topicRootCandidateResolutionGeneration = candidateGeneration;
+		}
+		return this.topicRootCandidateResolutionAbortController.signal;
+	}
+
+	private async withTopicRootCandidateResolution<T>(
+		operation: (context: {
+			candidateGeneration: string;
+			signal: AbortSignal;
+		}) => Promise<T>,
+		terminalSignals: Array<AbortSignal | undefined> = [],
+	): Promise<T> {
+		for (;;) {
+			for (const signal of terminalSignals) throwIfAborted(signal);
+			const candidateGeneration = this.getTopicRootCandidateGeneration();
+			const candidateSignal = this.syncTopicRootCandidateResolutionSignal(
+				candidateGeneration,
+			);
+			const linked = linkAbortSignals([...terminalSignals, candidateSignal]);
+			try {
+				const result = await operation({
+					candidateGeneration,
+					signal: linked.signal,
+				});
+				for (const signal of terminalSignals) throwIfAborted(signal);
+				if (
+					candidateSignal.aborted ||
+					candidateGeneration !== this.getTopicRootCandidateGeneration()
+				) {
+					continue;
+				}
+				return result;
+			} catch (error) {
+				for (const signal of terminalSignals) {
+					if (signal?.aborted) throw signal.reason ?? error;
+				}
+				if (
+					candidateSignal.aborted ||
+					candidateGeneration !== this.getTopicRootCandidateGeneration()
+				) {
+					continue;
+				}
+				throw error;
+			} finally {
+				linked.clear();
+			}
+		}
+	}
+
 	private normalizePeerTopicRootState(
 		topic: string,
 		root: string,
@@ -1298,13 +1420,21 @@ export class TopicControlPlane
 
 	private async resolveTopicRootState(
 		topic: string,
+		options?: TopicRootResolutionOptions,
 	): Promise<{ root?: string; authoritative: boolean }> {
-		const tracked = await this.topicRootControlPlane.resolveTrackedTopicRoot(topic);
+		throwIfAborted(options?.signal);
+		const tracked = await this.topicRootControlPlane.resolveTrackedTopicRoot(
+			topic,
+			options,
+		);
 		if (tracked) {
 			return { root: tracked, authoritative: true };
 		}
 
-		const resolvedThroughPeers = await this.resolveTopicRootThroughPeers(topic);
+		const resolvedThroughPeers = await this.resolveTopicRootThroughPeers(
+			topic,
+			options,
+		);
 		if (resolvedThroughPeers) {
 			// Unconfigured peer-query replies cannot override the locally
 			// deterministic root for internal shards in auto mode. Roots, resolvers,
@@ -1321,8 +1451,11 @@ export class TopicControlPlane
 			this.getConnectedTopicRootTrackers().length > 0
 		) {
 			for (let attempt = 0; attempt < 8; attempt++) {
-				await delay(150 * (attempt < 4 ? 1 : 2));
-				const retried = await this.resolveTopicRootThroughPeers(topic);
+				await withAbort(
+					delay(150 * (attempt < 4 ? 1 : 2), options),
+					options?.signal,
+				);
+				const retried = await this.resolveTopicRootThroughPeers(topic, options);
 				if (retried) {
 					return this.normalizePeerTopicRootState(topic, retried);
 				}
@@ -1335,15 +1468,28 @@ export class TopicControlPlane
 		};
 	}
 
-	public async resolveTopicRoot(topic: string): Promise<string | undefined> {
-		return (await this.resolveTopicRootState(topic)).root;
+	public async resolveTopicRoot(
+		topic: string,
+		options?: TopicRootResolutionOptions,
+	): Promise<string | undefined> {
+		const lifecycleSignal =
+			this.started && !this.stopping && !this.topicControlPlaneStopping
+				? this.topicRootResolutionAbortController.signal
+				: undefined;
+		return this.withTopicRootCandidateResolution(
+			async ({ signal }) =>
+				(await this.resolveTopicRootState(topic, { signal })).root,
+			[lifecycleSignal, options?.signal],
+		);
 	}
 
 	private async resolveShardRootState(
 		shardTopic: string,
+		options?: TopicRootResolutionOptions,
 	): Promise<{ root: string; candidateGeneration: string }> {
 		const lifecycleRevision = this.topicControlPlaneLifecycleRevision;
 		for (;;) {
+			throwIfAborted(options?.signal);
 			this.assertTopicControlPlaneActive(lifecycleRevision);
 			// If someone configured topic-root candidates externally (e.g.
 			// TestSession router selection or Peerbit.bootstrap) after this peer
@@ -1360,7 +1506,7 @@ export class TopicControlPlane
 				return { root: cached.root, candidateGeneration };
 			}
 
-			const resolved = await this.resolveTopicRootState(shardTopic);
+			const resolved = await this.resolveTopicRootState(shardTopic, options);
 			this.assertTopicControlPlaneActive(lifecycleRevision);
 			if (candidateGeneration !== this.getTopicRootCandidateGeneration()) {
 				continue;
@@ -1446,40 +1592,65 @@ export class TopicControlPlane
 		peer: PeerStreams,
 		topic: string,
 		timeoutMs = DEFAULT_TOPIC_ROOT_QUERY_TIMEOUT_MS,
+		signal?: AbortSignal,
 	): Promise<string | undefined> {
+		throwIfAborted(signal);
 		if (!this.started || this.stopping) return undefined;
 
 		const expectedPeerHash = peer.publicKey.hashcode();
 		const requestId = this.nextTopicRootRequestIdValue();
 		const responsePromise = new Promise<string | undefined>((resolve) => {
-			const timer = setTimeout(() => {
-				this.pendingTopicRootQueries.delete(requestId);
-				resolve(undefined);
-			}, Math.max(1, Math.floor(timeoutMs)));
+			let settled = false;
+			const settle = (root: string | undefined) => {
+				if (settled) return;
+				settled = true;
+				const pending = this.pendingTopicRootQueries.get(requestId);
+				if (pending?.resolve === settle) {
+					this.pendingTopicRootQueries.delete(requestId);
+				}
+				clearTimeout(timer);
+				if (signal && onAbort) {
+					signal.removeEventListener("abort", onAbort);
+				}
+				resolve(root);
+			};
+			const onAbort = signal ? () => settle(undefined) : undefined;
+			const timer = setTimeout(
+				() => settle(undefined),
+				Math.max(1, Math.floor(timeoutMs)),
+			);
 			timer.unref?.();
 			this.pendingTopicRootQueries.set(requestId, {
 				expectedPeerHash,
 				topic,
-				resolve,
+				resolve: settle,
 				timer,
 			});
+			if (signal && onAbort) {
+				signal.addEventListener("abort", onAbort, { once: true });
+				if (signal.aborted) onAbort();
+			}
 		});
 
 		try {
-			await this.sendDirectControlMessage(
-				peer,
-				new TopicRootQuery({ requestId, topic }),
+			await withAbort(
+				this.sendDirectControlMessage(
+					peer,
+					new TopicRootQuery({ requestId, topic }),
+				),
+				signal,
 			);
-		} catch {
+		} catch (error) {
 			const pending = this.pendingTopicRootQueries.get(requestId);
 			if (pending) {
 				this.pendingTopicRootQueries.delete(requestId);
 				clearTimeout(pending.timer);
 				pending.resolve(undefined);
 			}
+			if (signal?.aborted) throw error;
 		}
 
-		return responsePromise;
+		return withAbort(responsePromise, signal);
 	}
 
 	private async confirmDirectShardRoot(
@@ -1499,6 +1670,7 @@ export class TopicControlPlane
 				rootPeer,
 				shardTopic,
 				DIRECT_SHARD_ROOT_CONFIRM_TIMEOUT_MS,
+				signal,
 			),
 			signal,
 		);
@@ -1523,49 +1695,56 @@ export class TopicControlPlane
 		topic: string,
 	): Promise<string | undefined> {
 		const lifecycleRevision = this.topicControlPlaneLifecycleRevision;
-		for (;;) {
-			this.assertTopicControlPlaneActive(lifecycleRevision);
-			const rootCandidateGeneration = this.getTopicRootCandidateGeneration();
-			const root =
-				await this.topicRootControlPlane.resolveCanonicalTopicRoot(topic);
-			this.assertTopicControlPlaneActive(lifecycleRevision);
-			if (rootCandidateGeneration !== this.getTopicRootCandidateGeneration()) {
-				continue;
-			}
-			if (root !== this.publicKeyHash) {
-				return root;
-			}
-			if (!topic.startsWith(this.shardTopicPrefix)) {
-				return root;
-			}
-
-			try {
-				await this.ensureFanoutChannel(topic, {
-					pin: true,
-					root,
-					rootCandidateGeneration,
-				});
+		const lifecycleSignal = this.topicRootResolutionAbortController.signal;
+		return this.withTopicRootCandidateResolution(
+			async ({ candidateGeneration, signal }) => {
+				throwIfAborted(signal);
 				this.assertTopicControlPlaneActive(lifecycleRevision);
-				if (
-					rootCandidateGeneration !== this.getTopicRootCandidateGeneration()
-				) {
-					continue;
+				const root =
+					await this.topicRootControlPlane.resolveCanonicalTopicRoot(topic, {
+						signal,
+					});
+				this.assertTopicControlPlaneActive(lifecycleRevision);
+				if (root !== this.publicKeyHash) {
+					return root;
 				}
-				return root;
-			} catch (error) {
-				warn(
-					`Failed to host shard root ${topic} before answering root query: ${
-						error instanceof Error ? error.message : String(error)
-					}`,
-				);
-				return undefined;
-			}
-		}
+				if (!topic.startsWith(this.shardTopicPrefix)) {
+					return root;
+				}
+
+				try {
+					await this.ensureFanoutChannel(topic, {
+						pin: true,
+						root,
+						rootCandidateGeneration: candidateGeneration,
+						signal,
+					});
+					this.assertTopicControlPlaneActive(lifecycleRevision);
+					return root;
+				} catch (error) {
+					if (
+						signal.aborted ||
+						candidateGeneration !== this.getTopicRootCandidateGeneration()
+					) {
+						throw error;
+					}
+					warn(
+						`Failed to host shard root ${topic} before answering root query: ${
+							error instanceof Error ? error.message : String(error)
+						}`,
+					);
+					return undefined;
+				}
+			},
+			[lifecycleSignal],
+		);
 	}
 
 	private async resolveTopicRootThroughPeers(
 		topic: string,
+		options?: TopicRootResolutionOptions,
 	): Promise<string | undefined> {
+		throwIfAborted(options?.signal);
 		const peers = this.getConnectedTopicRootTrackers();
 		if (peers.length === 0) {
 			return undefined;
@@ -1573,14 +1752,22 @@ export class TopicControlPlane
 
 		for (let attempt = 0; attempt < 3; attempt++) {
 			for (const peer of peers) {
-				const resolved = await this.queryTopicRootFromPeer(peer, topic);
+				const resolved = await this.queryTopicRootFromPeer(
+					peer,
+					topic,
+					DEFAULT_TOPIC_ROOT_QUERY_TIMEOUT_MS,
+					options?.signal,
+				);
 				if (resolved) {
 					return resolved;
 				}
 			}
 
 			if (attempt < 2) {
-				await delay(150 * (attempt + 1));
+				await withAbort(
+					delay(150 * (attempt + 1), options),
+					options?.signal,
+				);
 			}
 		}
 		return undefined;
@@ -1724,7 +1911,9 @@ export class TopicControlPlane
 		const existing = this.fanoutChannels.get(t);
 		if (existing) {
 			if (!root) {
-				const resolved = await this.resolveShardRootState(t);
+				const resolved = await this.resolveShardRootState(t, {
+					signal: options?.signal,
+				});
 				this.assertTopicControlPlaneActive(lifecycleRevision);
 				root = resolved.root;
 				resolvedGeneration = resolved.candidateGeneration;
@@ -1768,7 +1957,9 @@ export class TopicControlPlane
 		}
 
 		if (!root) {
-			const resolved = await this.resolveShardRootState(t);
+			const resolved = await this.resolveShardRootState(t, {
+				signal: options?.signal,
+			});
 			this.assertTopicControlPlaneActive(lifecycleRevision);
 			root = resolved.root;
 			resolvedGeneration = resolved.candidateGeneration;
@@ -1993,22 +2184,37 @@ export class TopicControlPlane
 		}
 	}
 
-	public async hostShardRootsNow() {
+	public async hostShardRootsNow(options?: TopicRootResolutionOptions) {
 		if (!this.started) throw new NotStartedError();
-		const joins: Promise<void>[] = [];
-		for (let i = 0; i < this.shardCount; i++) {
-			const shardTopic = `${this.shardTopicPrefix}${i}`;
-			const resolved = await this.resolveShardRootState(shardTopic);
-			if (resolved.root !== this.publicKeyHash) continue;
-			joins.push(
-				this.ensureFanoutChannel(shardTopic, {
-					pin: true,
-					root: resolved.root,
-					rootCandidateGeneration: resolved.candidateGeneration,
-				}),
-			);
-		}
-		await Promise.all(joins);
+		const lifecycleSignal = this.topicRootResolutionAbortController.signal;
+		return this.withTopicRootCandidateResolution(
+			async ({ candidateGeneration, signal }) => {
+				const joins: Promise<void>[] = [];
+				try {
+					for (let i = 0; i < this.shardCount; i++) {
+						throwIfAborted(signal);
+						const shardTopic = `${this.shardTopicPrefix}${i}`;
+						const resolved = await this.resolveShardRootState(shardTopic, {
+							signal,
+						});
+						if (resolved.root !== this.publicKeyHash) continue;
+						const joining = this.ensureFanoutChannel(shardTopic, {
+							pin: true,
+							root: resolved.root,
+							rootCandidateGeneration: resolved.candidateGeneration,
+							signal,
+						});
+						void joining.catch(() => {});
+						joins.push(joining);
+					}
+					await Promise.all(joins);
+				} catch (error) {
+					await Promise.allSettled(joins);
+					throw error;
+				}
+			},
+			[lifecycleSignal, options?.signal],
+		);
 	}
 
 	async subscribe(topic: string) {

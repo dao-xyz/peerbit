@@ -1,4 +1,5 @@
 import type { RustTopicRootDirectoryState } from "@peerbit/stream";
+import { AbortError } from "@peerbit/time";
 
 const topicHash32 = (topic: string) => {
 	let hash = 0x811c9dc5; // FNV-1a
@@ -9,17 +10,62 @@ const topicHash32 = (topic: string) => {
 	return hash >>> 0;
 };
 
+export type TopicRootResolutionOptions = {
+	signal?: AbortSignal;
+};
+
 export type TopicRootResolver = (
 	topic: string,
+	options?: TopicRootResolutionOptions,
 ) => string | undefined | Promise<string | undefined>;
 
 export type TopicRootTracker = {
-	resolveRoot(topic: string): string | undefined | Promise<string | undefined>;
+	resolveRoot(
+		topic: string,
+		options?: TopicRootResolutionOptions,
+	): string | undefined | Promise<string | undefined>;
 };
 
 export type TopicRootDirectoryOptions = {
 	defaultCandidates?: string[];
 	resolver?: TopicRootResolver;
+};
+
+const abortReason = (signal: AbortSignal) =>
+	signal.reason ?? new AbortError("Topic-root resolution aborted");
+
+const throwIfAborted = (signal?: AbortSignal): void => {
+	if (signal?.aborted) throw abortReason(signal);
+};
+
+const awaitWithSignal = async <T>(
+	value: T | PromiseLike<T>,
+	signal?: AbortSignal,
+): Promise<T> => {
+	if (signal?.aborted) {
+		void Promise.resolve(value).catch(() => {});
+		throw abortReason(signal);
+	}
+	if (!signal) return await value;
+
+	return new Promise<T>((resolve, reject) => {
+		const onAbort = () => {
+			cleanup();
+			reject(abortReason(signal));
+		};
+		const cleanup = () => signal.removeEventListener("abort", onAbort);
+		signal.addEventListener("abort", onAbort, { once: true });
+		Promise.resolve(value).then(
+			(result) => {
+				cleanup();
+				resolve(result);
+			},
+			(error) => {
+				cleanup();
+				reject(error);
+			},
+		);
+	});
 };
 
 export class TopicRootDirectory {
@@ -103,18 +149,27 @@ export class TopicRootDirectory {
 		this.resolver = resolver;
 	}
 
-	public async resolveRoot(topic: string): Promise<string | undefined> {
-		const local = await this.resolveLocal(topic);
+	public async resolveRoot(
+		topic: string,
+		options?: TopicRootResolutionOptions,
+	): Promise<string | undefined> {
+		const local = await this.resolveLocal(topic, options);
 		if (local) return local;
 
+		throwIfAborted(options?.signal);
 		return this.resolveDeterministicCandidate(topic);
 	}
 
-	public async resolveLocal(topic: string): Promise<string | undefined> {
+	public async resolveLocal(
+		topic: string,
+		options?: TopicRootResolutionOptions,
+	): Promise<string | undefined> {
+		throwIfAborted(options?.signal);
 		const explicit = this.getRoot(topic);
 		if (explicit) return explicit;
 
-		return this.resolver?.(topic);
+		if (!this.resolver) return undefined;
+		return awaitWithSignal(this.resolver(topic, options), options?.signal);
 	}
 
 	public resolveDeterministicCandidate(topic: string): string | undefined {
@@ -183,45 +238,64 @@ export class TopicRootControlPlane {
 		return [...this.trackers];
 	}
 
-	public resolveLocalTopicRoot(topic: string) {
-		return this.directory.resolveLocal(topic);
+	public resolveLocalTopicRoot(
+		topic: string,
+		options?: TopicRootResolutionOptions,
+	) {
+		return this.directory.resolveLocal(topic, options);
 	}
 
 	public resolveDeterministicTopicRoot(topic: string) {
 		return this.directory.resolveDeterministicCandidate(topic);
 	}
 
-	public resolveCanonicalTopicRoot(topic: string) {
-		return this.directory.resolveRoot(topic);
+	public resolveCanonicalTopicRoot(
+		topic: string,
+		options?: TopicRootResolutionOptions,
+	) {
+		return this.directory.resolveRoot(topic, options);
 	}
 
-	public resolveTrackedTopicRoot(topic: string) {
-		return this.resolveWithTrackers(topic, false);
+	public resolveTrackedTopicRoot(
+		topic: string,
+		options?: TopicRootResolutionOptions,
+	) {
+		return this.resolveWithTrackers(topic, false, options);
 	}
 
-	public resolveTopicRoot(topic: string) {
-		return this.resolveWithTrackers(topic, true);
+	public resolveTopicRoot(
+		topic: string,
+		options?: TopicRootResolutionOptions,
+	) {
+		return this.resolveWithTrackers(topic, true, options);
 	}
 
 	private async resolveWithTrackers(
 		topic: string,
 		fallbackToDeterministic = true,
+		options?: TopicRootResolutionOptions,
 	): Promise<string | undefined> {
-		const local = await this.directory.resolveLocal(topic);
+		const local = await this.directory.resolveLocal(topic, options);
 		if (local) {
 			return local;
 		}
 
 		for (const tracker of this.trackers) {
 			try {
-				const resolved = await tracker.resolveRoot(topic);
+				throwIfAborted(options?.signal);
+				const resolved = await awaitWithSignal(
+					tracker.resolveRoot(topic, options),
+					options?.signal,
+				);
 				if (resolved) {
 					return resolved;
 				}
 			} catch {
+				throwIfAborted(options?.signal);
 				// ignore tracker failures and continue with remaining trackers
 			}
 		}
+		throwIfAborted(options?.signal);
 		return fallbackToDeterministic
 			? this.directory.resolveDeterministicCandidate(topic)
 			: undefined;
