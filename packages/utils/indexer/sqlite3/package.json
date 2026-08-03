@@ -24,18 +24,20 @@
 	"files": [
 		"src",
 		"dist",
+		"!dist/benchmark",
 		"!dist/e2e",
 		"!dist/test",
+		"!dist/index.min.js",
+		"!dist/index.min.js.map",
+		"!dist/assets/sqlite3/sqlite3.js",
+		"!dist/assets/sqlite3/sqlite3.mjs",
+		"!dist/assets/sqlite3/sqlite3-worker1*",
 		"!**/*.tsbuildinfo"
 	],
 	"exports": {
 		".": {
 			"types": "./dist/src/index.d.ts",
 			"import": "./dist/src/index.js"
-		},
-		"./sqlite.org": {
-			"types": "./dist/assets/sqlite3/sqlite.org/sqlite3.d.ts",
-			"import": "./dist/assets/sqlite3/sqlite.org/sqlite3.js"
 		}
 	},
 	"browser": {

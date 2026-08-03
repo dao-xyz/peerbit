@@ -26,6 +26,7 @@
 	"files": [
 		"src",
 		"dist",
+		"!dist/benchmark",
 		"!dist/e2e",
 		"!dist/test",
 		"!**/*.tsbuildinfo"
