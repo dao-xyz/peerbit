@@ -1,5 +1,19 @@
 # Changelog
 
+## 6.0.48
+
+### Patch Changes
+
+- Updated dependencies [[`fca4485`](https://github.com/dao-xyz/peerbit/commit/fca4485aeb16b9a4640048bff88175f75fe9f37b), [`9782bb7`](https://github.com/dao-xyz/peerbit/commit/9782bb7f6f0b628f11d35fcedd0c8be257e2e57b)]:
+  - @peerbit/blocks@4.2.10
+  - @peerbit/pubsub@5.4.0
+  - @peerbit/crypto@3.1.5
+  - @peerbit/pubsub-interface@5.2.0
+  - @peerbit/blocks-interface@2.1.5
+  - @peerbit/stream-interface@6.0.15
+  - @peerbit/indexer-interface@3.0.9
+  - @peerbit/keychain@1.2.14
+
 ## 6.0.47
 
 ### Patch Changes

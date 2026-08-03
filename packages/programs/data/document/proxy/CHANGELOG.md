@@ -1,5 +1,19 @@
 # Changelog
 
+## 2.0.71
+
+### Patch Changes
+
+- Updated dependencies [[`fca4485`](https://github.com/dao-xyz/peerbit/commit/fca4485aeb16b9a4640048bff88175f75fe9f37b)]:
+  - @peerbit/document@13.1.26
+  - @peerbit/canonical-host@1.0.61
+  - @peerbit/document-interface@3.2.57
+  - @peerbit/shared-log-proxy@2.0.68
+  - @peerbit/program@6.0.48
+  - @peerbit/canonical-client@1.1.51
+  - @peerbit/stream-interface@6.0.15
+  - @peerbit/indexer-interface@3.0.9
+
 ## 2.0.70
 
 ### Patch Changes

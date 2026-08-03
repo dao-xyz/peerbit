@@ -1,5 +1,16 @@
 # Changelog
 
+## 6.1.16
+
+### Patch Changes
+
+- Updated dependencies [[`fca4485`](https://github.com/dao-xyz/peerbit/commit/fca4485aeb16b9a4640048bff88175f75fe9f37b), [`9782bb7`](https://github.com/dao-xyz/peerbit/commit/9782bb7f6f0b628f11d35fcedd0c8be257e2e57b)]:
+  - @peerbit/pubsub@5.4.0
+  - @peerbit/crypto@3.1.5
+  - @peerbit/pubsub-interface@5.2.0
+  - @peerbit/program@6.0.48
+  - @peerbit/stream-interface@6.0.15
+
 ## 6.1.15
 
 ### Patch Changes

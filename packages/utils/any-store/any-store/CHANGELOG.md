@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.2.14
+
+### Patch Changes
+
+- Updated dependencies [[`fca4485`](https://github.com/dao-xyz/peerbit/commit/fca4485aeb16b9a4640048bff88175f75fe9f37b)]:
+  - @peerbit/crypto@3.1.5
+  - @peerbit/any-store-opfs@1.1.12
+
 ## 2.2.13
 
 ### Patch Changes
