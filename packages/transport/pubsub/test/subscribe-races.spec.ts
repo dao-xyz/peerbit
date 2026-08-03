@@ -1212,6 +1212,277 @@ describe("pubsub (subscribe race regressions)", function () {
 		);
 	});
 
+	it("clears a pending peer root query immediately when cancelled", async () => {
+		session = await createDisconnectedSessionWithPerPeerRoots(1);
+		const pubsub = session.peers[0]!.services.pubsub;
+		const internals = pubsub as any;
+		const send = sinon
+			.stub(internals, "sendDirectControlMessage")
+			.resolves();
+		const abortController = new AbortController();
+		const reason = new AbortError("root query cancelled");
+		const querying = internals.queryTopicRootFromPeer(
+			{ publicKey: pubsub.publicKey },
+			"/peerbit/pubsub-shard/1/cancelled-query",
+			10_000,
+			abortController.signal,
+		);
+
+		await waitForResolved(
+			() => expect(internals.pendingTopicRootQueries.size).to.equal(1),
+			{ timeout: 1_000, delayInterval: 10 },
+		);
+		abortController.abort(reason);
+		await expect(querying).to.be.rejectedWith(reason);
+		expect(internals.pendingTopicRootQueries.size).to.equal(0);
+		expect(send.calledOnce).to.equal(true);
+	});
+
+	it("aborts a hanging resolver when the control plane stops", async () => {
+		session = await createDisconnectedSessionWithPerPeerRoots(1);
+		const pubsub = session.peers[0]!.services.pubsub;
+		const internals = pubsub as any;
+		const resolutionEntered = deferred();
+		let resolverSignal: AbortSignal | undefined;
+		pubsub.topicRootControlPlane.setTopicRootResolver((_topic, options) => {
+			resolverSignal = options?.signal;
+			resolutionEntered.resolve();
+			return new Promise<string | undefined>(() => {});
+		});
+		const opening = internals
+			.ensureFanoutChannel("/peerbit/pubsub-shard/1/hanging-resolver")
+			.then(
+				(): undefined => undefined,
+				(error: unknown) => error,
+			);
+
+		await resolutionEntered.promise;
+		expect(resolverSignal?.aborted).to.equal(false);
+		await Promise.race([
+			pubsub.stop(),
+			delay(1_000).then(() => {
+				throw new Error("control-plane stop remained blocked");
+			}),
+		]);
+		expect(await opening).to.be.instanceOf(Error);
+		expect(resolverSignal?.aborted).to.equal(true);
+		expect(internals.ensureFanoutChannelInFlight.size).to.equal(0);
+	});
+
+	it("aborts stale root resolution when candidates change", async () => {
+		session = await createDisconnectedSessionWithPerPeerRoots(1);
+		const pubsub = session.peers[0]!.services.pubsub;
+		const internals = pubsub as any;
+		const firstResolutionEntered = deferred();
+		let firstSignal: AbortSignal | undefined;
+		let resolutionCalls = 0;
+		pubsub.topicRootControlPlane.setTopicRootResolver((_topic, options) => {
+			resolutionCalls += 1;
+			if (resolutionCalls === 1) {
+				firstSignal = options?.signal;
+				firstResolutionEntered.resolve();
+				return new Promise<string | undefined>(() => {});
+			}
+			return pubsub.publicKeyHash;
+		});
+		internals.hostShardRootsNow = async () => {};
+		internals.reconcileShardOverlays = async () => {};
+		const shardTopic = "/peerbit/pubsub-shard/1/candidate-cancel";
+		const opening = internals.ensureFanoutChannel(shardTopic);
+
+		await firstResolutionEntered.promise;
+		const currentCandidates =
+			pubsub.topicRootControlPlane.getTopicRootCandidates();
+		pubsub.topicRootControlPlane.setTopicRootCandidates([
+			...currentCandidates,
+			canonicalCandidate("cancel-stale-resolution"),
+		]);
+		internals.scheduleReconcileShardOverlays();
+
+		await Promise.race([
+			opening,
+			delay(2_000).then(() => {
+				throw new Error("candidate change did not restart root resolution");
+			}),
+		]);
+		expect(firstSignal?.aborted).to.equal(true);
+		expect(resolutionCalls).to.equal(2);
+		expect(internals.ensureFanoutChannelInFlight.size).to.equal(0);
+	});
+
+	it("preserves caller abort reasons and local lookup after stop", async () => {
+		session = await createDisconnectedSessionWithPerPeerRoots(1, {
+			pubsub: { shardCount: 1 },
+		});
+		const pubsub = session.peers[0]!.services.pubsub;
+		const entered = deferred();
+		let resolverSignal: AbortSignal | undefined;
+		pubsub.topicRootControlPlane.setTopicRootResolver((_topic, options) => {
+			resolverSignal = options?.signal;
+			entered.resolve();
+			return new Promise<string | undefined>(() => {});
+		});
+		const abortController = new AbortController();
+		const reason = new Error("caller cancelled exact root lookup");
+		const resolving = pubsub.resolveTopicRoot("caller-cancelled", {
+			signal: abortController.signal,
+		});
+
+		await entered.promise;
+		abortController.abort(reason);
+		await expect(resolving).to.be.rejectedWith(reason);
+		expect(resolverSignal?.reason).to.equal(reason);
+
+		const lifecycleEntered = deferred();
+		let lifecycleSignal: AbortSignal | undefined;
+		pubsub.topicRootControlPlane.setTopicRootResolver((_topic, options) => {
+			lifecycleSignal = options?.signal;
+			lifecycleEntered.resolve();
+			return new Promise<string | undefined>(() => {});
+		});
+		const lifecycleResolving = pubsub.resolveTopicRoot("stop-cancelled");
+		await lifecycleEntered.promise;
+		await pubsub.stop();
+		await expect(lifecycleResolving).to.be.rejectedWith(
+			"topic control plane stopped",
+		);
+		expect(lifecycleSignal?.aborted).to.equal(true);
+
+		pubsub.topicRootControlPlane.setTopicRootResolver(undefined);
+		expect(await pubsub.resolveTopicRoot("stopped-local-lookup")).to.equal(
+			pubsub.publicKeyHash,
+		);
+	});
+
+	it("handles a pre-aborted retry delay without an unhandled rejection", async () => {
+		session = await createDisconnectedSessionWithPerPeerRoots(1, {
+			pubsub: { shardCount: 1 },
+		});
+		const pubsub = session.peers[0]!.services.pubsub;
+		const internals = pubsub as any;
+		const abortController = new AbortController();
+		const reason = new Error("abort immediately before root retry delay");
+		const unhandled: unknown[] = [];
+		const onUnhandled = (error: unknown) => unhandled.push(error);
+		sinon
+			.stub(internals, "getConnectedTopicRootTrackers")
+			.returns([{ publicKey: pubsub.publicKey }]);
+		sinon
+			.stub(internals, "resolveTopicRootThroughPeers")
+			.callsFake(async () => {
+				abortController.abort(reason);
+				return undefined;
+			});
+		process.on("unhandledRejection", onUnhandled);
+
+		try {
+			await expect(
+				pubsub.resolveTopicRoot("pre-aborted-retry-delay", {
+					signal: abortController.signal,
+				}),
+			).to.be.rejectedWith(reason);
+			await delay(0);
+			expect(unhandled).to.deep.equal([]);
+		} finally {
+			process.removeListener("unhandledRejection", onUnhandled);
+		}
+	});
+
+	it("restarts a queryable resolver when candidates change", async () => {
+		session = await createDisconnectedSessionWithPerPeerRoots(1, {
+			pubsub: { shardCount: 1 },
+		});
+		const pubsub = session.peers[0]!.services.pubsub;
+		const internals = pubsub as any;
+		const entered = deferred();
+		const nextRoot = canonicalCandidate("queryable-resolution-next-root");
+		let firstSignal: AbortSignal | undefined;
+		let calls = 0;
+		pubsub.topicRootControlPlane.setTopicRootResolver((_topic, options) => {
+			calls += 1;
+			if (calls === 1) {
+				firstSignal = options?.signal;
+				entered.resolve();
+				return new Promise<string | undefined>(() => {});
+			}
+			return nextRoot;
+		});
+		internals.scheduleHostOwnedShardRoots = () => {};
+		internals.reconcileShardOverlays = async () => {};
+		const resolving = internals.resolveQueryableTopicRoot(
+			"/peerbit/pubsub-shard/1/queryable-candidate-change",
+		);
+
+		await entered.promise;
+		pubsub.setTopicRootCandidates([
+			pubsub.publicKeyHash,
+			canonicalCandidate("queryable-candidate-change"),
+		]);
+
+		expect(await resolving).to.equal(nextRoot);
+		expect(firstSignal?.aborted).to.equal(true);
+		expect(calls).to.equal(2);
+	});
+
+	it("restarts host resolution when candidates change", async () => {
+		session = await createDisconnectedSessionWithPerPeerRoots(1, {
+			pubsub: { shardCount: 1 },
+		});
+		const pubsub = session.peers[0]!.services.pubsub;
+		const internals = pubsub as any;
+		const entered = deferred();
+		let firstSignal: AbortSignal | undefined;
+		let calls = 0;
+		pubsub.topicRootControlPlane.setTopicRootResolver((_topic, options) => {
+			calls += 1;
+			if (calls === 1) {
+				firstSignal = options?.signal;
+				entered.resolve();
+				return new Promise<string | undefined>(() => {});
+			}
+			return pubsub.publicKeyHash;
+		});
+		internals.shardRootCache.clear();
+		internals.scheduleHostOwnedShardRoots = () => {};
+		internals.reconcileShardOverlays = async () => {};
+		const ensure = sinon.stub(internals, "ensureFanoutChannel").resolves();
+		const hosting = pubsub.hostShardRootsNow();
+
+		await entered.promise;
+		pubsub.setTopicRootCandidates([
+			pubsub.publicKeyHash,
+			canonicalCandidate("host-candidate-change"),
+		]);
+
+		await hosting;
+		expect(firstSignal?.aborted).to.equal(true);
+		expect(calls).to.equal(2);
+		expect(ensure.calledOnce).to.equal(true);
+	});
+
+	it("drains started host joins when a later shard resolution fails", async () => {
+		session = await createDisconnectedSessionWithPerPeerRoots(1, {
+			pubsub: { shardCount: 2 },
+		});
+		const pubsub = session.peers[0]!.services.pubsub;
+		const internals = pubsub as any;
+		const candidateGeneration = internals.getTopicRootCandidateGeneration();
+		const scanError = new Error("later shard resolution failed");
+		const joinError = new Error("earlier shard join failed");
+		let resolutions = 0;
+		sinon.stub(internals, "resolveShardRootState").callsFake(async () => {
+			resolutions += 1;
+			if (resolutions === 2) throw scanError;
+			return { root: pubsub.publicKeyHash, candidateGeneration };
+		});
+		sinon
+			.stub(internals, "ensureFanoutChannel")
+			.returns(Promise.reject(joinError));
+
+		await expect(pubsub.hostShardRootsNow()).to.be.rejectedWith(scanError);
+		expect(resolutions).to.equal(2);
+	});
+
 	it("does not install a channel after the control plane stops", async () => {
 		session = await createDisconnectedSessionWithPerPeerRoots(1);
 		const pubsub = session.peers[0]!.services.pubsub;
