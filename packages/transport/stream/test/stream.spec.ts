@@ -4331,6 +4331,117 @@ describe("start/stop", () => {
 		await session.stop();
 	});
 
+	it("coalesces concurrent stop without resuming disconnect handling", async () => {
+		session = await connected(3);
+		const subject = stream(session, 0);
+		const disconnected = stream(session, 1);
+		const dependent = stream(session, 2);
+		await waitForNeighbour(subject, disconnected);
+		await waitForNeighbour(subject, dependent);
+
+		const peerStreams = subject.peers.get(disconnected.publicKeyHash)!;
+		const closeEntered = pDefer<void>();
+		const releaseClose = pDefer<void>();
+		const closeStub = sinon.stub(peerStreams, "close").callsFake(async () => {
+			closeEntered.resolve();
+			await releaseClose.promise;
+		});
+		const connectionsStub = sinon
+			.stub(subject.components.connectionManager, "getConnections")
+			.returns([]);
+		const dependentStub = sinon.stub(subject.routes, "getDependent");
+		dependentStub
+			.withArgs(disconnected.publicKeyHash)
+			.returns([dependent.publicKeyHash]);
+		const publishSpy = sinon.spy(subject, "publishMessageMaybe");
+
+		try {
+			const disconnectPromise = subject.__testOnPeerDisconnected(
+				disconnected.peerId,
+			);
+			await closeEntered.promise;
+
+			const stopPromise = subject.stop();
+			const concurrentStopPromise = subject.stop();
+			await waitFor(() => !subject.isStarted());
+			const startDuringStopPromise = subject.start();
+			releaseClose.resolve();
+
+			const [
+				disconnectResult,
+				stopResult,
+				concurrentStopResult,
+				startDuringStopResult,
+			] =
+				await Promise.allSettled([
+					disconnectPromise,
+					stopPromise,
+					concurrentStopPromise,
+					startDuringStopPromise,
+				]);
+			expect(disconnectResult.status).to.equal("fulfilled");
+			expect(stopResult.status).to.equal("fulfilled");
+			expect(concurrentStopResult.status).to.equal("fulfilled");
+			expect(startDuringStopResult.status).to.equal("fulfilled");
+			expect(subject.isStarted()).to.be.false;
+			expect(closeStub.callCount).to.equal(2);
+			expect(dependentStub.called).to.be.false;
+			expect(publishSpy.called).to.be.false;
+		} finally {
+			releaseClose.resolve();
+			closeStub.restore();
+			connectionsStub.restore();
+			dependentStub.restore();
+			publishSpy.restore();
+		}
+	});
+
+	it("honors stop requested during startup", async () => {
+		session = await connected(1);
+		const subject = stream(session, 0);
+		await subject.stop();
+
+		const startImpl = (subject as any)._startImpl.bind(subject);
+		const startEntered = pDefer<void>();
+		const releaseStart = pDefer<void>();
+		const startStub = sinon
+			.stub(subject as any, "_startImpl")
+			.callsFake(async () => {
+				startEntered.resolve();
+				await releaseStart.promise;
+				await startImpl();
+			});
+
+		try {
+			const startPromise = subject.start();
+			await startEntered.promise;
+			const stopPromise = subject.stop();
+			let stopSettled = false;
+			void stopPromise.then(
+				() => {
+					stopSettled = true;
+				},
+				() => {
+					stopSettled = true;
+				},
+			);
+			await Promise.resolve();
+			expect(stopSettled).to.be.false;
+
+			releaseStart.resolve();
+			const [startResult, stopResult] = await Promise.allSettled([
+				startPromise,
+				stopPromise,
+			]);
+			expect(startResult.status).to.equal("fulfilled");
+			expect(stopResult.status).to.equal("fulfilled");
+			expect(subject.isStarted()).to.be.false;
+		} finally {
+			releaseStart.resolve();
+			startStub.restore();
+		}
+	});
+
 	it("can restart", async () => {
 		session = await connected(2, {
 			transports: [tcp(), webSockets()],

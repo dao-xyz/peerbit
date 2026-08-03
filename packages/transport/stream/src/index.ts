@@ -1266,6 +1266,7 @@ export abstract class DirectStream<
 			private prunedConnectionsCache?: Cache<string>;
 			private pruneToLimitsInFlight?: Promise<void>;
 			private _startInFlight?: Promise<void>;
+			private _stopInFlight?: Promise<void>;
 			private routeMaxRetentionPeriod: number;
 	private routeCacheMaxFromEntries?: number;
 	private routeCacheMaxTargetsPerFrom?: number;
@@ -1545,8 +1546,11 @@ export abstract class DirectStream<
 		}
 
 		async start() {
+			// Do not queue a restart behind teardown; callers can retry after stop resolves.
+			if (this._stopInFlight) return;
 			if (this.started) return;
 			if (this._startInFlight) return this._startInFlight;
+			this.stopping = false;
 			this._startInFlight = this._startImpl().finally(() => {
 				this._startInFlight = undefined;
 			});
@@ -1669,7 +1673,6 @@ export abstract class DirectStream<
 		}
 
 		this.started = true;
-		this.stopping = false;
 		logger.trace("starting");
 
 		// Incoming streams
@@ -1780,11 +1783,50 @@ export abstract class DirectStream<
 	/**
 	 * Unregister the pubsub protocol and the streams with other peers will be closed.
 	 */
-	async stop() {
-		if (!this.started) {
-			return;
+	stop(): Promise<void> {
+		if (this._stopInFlight) return this._stopInFlight;
+		if (!this.started && !this._startInFlight) return Promise.resolve();
+		this.stopping = true;
+		const starting = this._startInFlight;
+		this._stopInFlight = this._stopAfterStart(starting).finally(() => {
+			this.stopping = false;
+			this._stopInFlight = undefined;
+		});
+		return this._stopInFlight;
+	}
+
+	private async _stopAfterStart(starting?: Promise<void>): Promise<void> {
+		let startFailed = false;
+		let startFailure: unknown;
+		try {
+			await starting;
+		} catch (error) {
+			startFailed = true;
+			startFailure = error;
 		}
 
+		let stopFailed = false;
+		let stopFailure: unknown;
+		if (this.started) {
+			try {
+				await this._stopImpl();
+			} catch (error) {
+				stopFailed = true;
+				stopFailure = error;
+			}
+		}
+
+		if (startFailed && stopFailed) {
+			throw new AggregateError(
+				[startFailure, stopFailure],
+				"DirectStream start and rollback stop failed",
+			);
+		}
+		if (stopFailed) throw stopFailure;
+		if (startFailed) throw startFailure;
+	}
+
+	private async _stopImpl(): Promise<void> {
 		const sharedState = this.sharedRoutingState;
 		const sharedKey = this.sharedRoutingKey;
 
@@ -1876,7 +1918,6 @@ export abstract class DirectStream<
 			}
 		}
 		logger.trace("stopped");
-		this.stopping = false;
 	}
 
 	isStarted() {
@@ -2030,6 +2071,10 @@ export abstract class DirectStream<
 	 * Registrar notifies a closing connection with pubsub protocol
 	 */
 	protected async onPeerDisconnected(peerId: PeerId, conn?: Connection) {
+		if (this.stopping || !this.started) {
+			return;
+		}
+
 		// PeerId could be me, if so, it means that I am disconnecting
 		const peerKey = getPublicKeyFromPeerId(peerId);
 		const peerKeyHash = peerKey.hashcode();
@@ -2056,6 +2101,9 @@ export abstract class DirectStream<
 		}
 		if (!this.publicKey.equals(peerKey)) {
 			await this._removePeer(peerKey);
+			if (this.stopping || !this.started) {
+				return;
+			}
 
 			// tell dependent peers that there is a node that might have left
 			const dependent = this.routes.getDependent(peerKeyHash);
@@ -2064,15 +2112,19 @@ export abstract class DirectStream<
 			this.removePeerFromRoutes(peerKeyHash, true);
 
 			if (dependent.length > 0) {
+				const goodbye = await new Goodbye({
+					leaving: [peerKeyHash],
+					header: new MessageHeader({
+						session: this.session,
+						mode: new SilentDelivery({ to: dependent, redundancy: 2 }),
+					}),
+				}).sign(this.sign);
+				if (this.stopping || !this.started) {
+					return;
+				}
 				await this.publishMessageMaybe(
 					this.publicKey,
-					await new Goodbye({
-						leaving: [peerKeyHash],
-						header: new MessageHeader({
-							session: this.session,
-							mode: new SilentDelivery({ to: dependent, redundancy: 2 }),
-						}),
-					}).sign(this.sign),
+					goodbye,
 				);
 			}
 
