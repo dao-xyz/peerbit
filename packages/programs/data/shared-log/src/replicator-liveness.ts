@@ -63,6 +63,10 @@ export type ReplicatorLivenessDeps = {
 	confirmReplicatorSubscriberPresence: (peerHash: string) => Promise<boolean>;
 	getNode: () => Parameters<typeof waitForSubscribers>[0];
 	getWaitForReplicatorTimeout: () => number;
+	// Host-routed dispatch so instance stubs/spies keep intercepting
+	// sweep-driven probes and activity marks.
+	probeReplicatorLiveness: (peerHash: string) => Promise<void> | void;
+	markReplicatorActivity: (peerHash: string, now?: number) => void;
 };
 
 export class ReplicatorLivenessMonitor {
@@ -252,7 +256,7 @@ export class ReplicatorLivenessMonitor {
 			const peerHash = targets[this._replicatorLivenessCursor]!;
 			this._replicatorLivenessCursor =
 				(this._replicatorLivenessCursor + 1) % targets.length;
-			await this.probeReplicatorLiveness(peerHash);
+			await this.deps.probeReplicatorLiveness(peerHash);
 		} catch (error) {
 			if (!isNotStartedError(error as Error)) {
 				logger.error((error as any)?.toString?.() ?? String(error));
@@ -332,7 +336,7 @@ export class ReplicatorLivenessMonitor {
 			if (!ownsProbe()) {
 				return;
 			}
-			this.markReplicatorActivity(peerHash);
+			this.deps.markReplicatorActivity(peerHash);
 			this._replicatorLivenessFailures.delete(peerHash);
 			return;
 		} catch (error) {
@@ -354,7 +358,7 @@ export class ReplicatorLivenessMonitor {
 			if (!ownsProbe()) {
 				return;
 			}
-			this.markReplicatorActivity(peerHash);
+			this.deps.markReplicatorActivity(peerHash);
 			this._replicatorLivenessFailures.delete(peerHash);
 			return;
 		}

@@ -223,6 +223,7 @@ import {
 import {
 	ReplicationAnnouncementCoordinator,
 	isTransientReplicationAnnouncementError,
+	type ReplicationAnnouncementRepairWorkerContext,
 } from "./replication-announcement.js";
 import {
 	type ReplicationDomainHash,
@@ -3262,6 +3263,13 @@ export class SharedLog<
 
 	private createReplicationAnnouncementCoordinator(): ReplicationAnnouncementCoordinator<R> {
 		return new ReplicationAnnouncementCoordinator<R>({
+			// Route re-entrant queueing through the SharedLog delegators so sinon
+			// spies installed on the log instance keep observing them (the poison
+			// guard assertions in events.spec.ts depend on this).
+			queueCurrentReplicationStateAnnouncementRepair: () =>
+				this.queueCurrentReplicationStateAnnouncementRepair(),
+			queueCurrentReplicationStateAnnouncementRetry: (error: unknown) =>
+				this.queueCurrentReplicationStateAnnouncementRetry(error),
 			isClosed: () => this.closed,
 			getCloseSignal: () => this._closeController.signal,
 			getMyReplicationSegments: () => this.getMyReplicationSegments(),
@@ -3283,6 +3291,12 @@ export class SharedLog<
 
 	private createReplicatorLivenessMonitor(): ReplicatorLivenessMonitor {
 		return new ReplicatorLivenessMonitor({
+			// Sweep-driven probes and activity marks dispatch through the SharedLog
+			// delegators so instance stubs/spies keep intercepting them.
+			probeReplicatorLiveness: (peerHash: string) =>
+				this.probeReplicatorLiveness(peerHash),
+			markReplicatorActivity: (peerHash: string, now?: number) =>
+				this.markReplicatorActivity(peerHash, now),
 			isClosed: () => this.closed,
 			getCloseSignal: () => this._closeController.signal,
 			getReplicationLifecycleController: () =>
@@ -5111,8 +5125,12 @@ export class SharedLog<
 		return this._announcements.runCurrentReplicationStateAnnouncementRepair();
 	}
 
-	private repairCurrentReplicationStateAnnouncement(): Promise<void> {
-		return this._announcements.repairCurrentReplicationStateAnnouncement();
+	private repairCurrentReplicationStateAnnouncement(
+		context?: ReplicationAnnouncementRepairWorkerContext,
+	): Promise<void> {
+		return this._announcements.repairCurrentReplicationStateAnnouncement(
+			context,
+		);
 	}
 
 	private cancelCurrentReplicationStateAnnouncementRetry(): void {
@@ -15201,7 +15219,7 @@ export class SharedLog<
 	}
 
 	private stopReplicatorLivenessSweep() {
-		this._liveness.stopReplicatorLivenessSweep();
+		this._liveness?.stopReplicatorLivenessSweep();
 	}
 
 	private cleanupCheckedPrunePeer(
@@ -16173,8 +16191,15 @@ export class SharedLog<
 				firstError ??= error;
 			}
 		};
-		captureSync(() => this.cancelCurrentReplicationStateAnnouncementRetry());
-		this._announcements.replicationAnnouncementRetryDebounced = undefined;
+		// A borsh-deserialized instance that is closed before ever being opened
+		// has no coordinators (they are created in open()); the old inline code
+		// only touched plain fields here and never threw.
+		captureSync(() =>
+			this._announcements?.cancelCurrentReplicationStateAnnouncementRetry(),
+		);
+		if (this._announcements) {
+			this._announcements.replicationAnnouncementRetryDebounced = undefined;
+		}
 		captureSync(() => {
 			if (this._wireSyncSession) {
 				this._wireSyncSession.unregisterTopic(this.topic);
@@ -16226,7 +16251,7 @@ export class SharedLog<
 			this._repairSweepPendingModes?.clear();
 			for (const peers of this._repairSweepPendingPeersByMode?.values() ?? [])
 				peers.clear();
-			this.joinWarmup._repairSweepJoinWarmupGenerationByTarget?.clear();
+			this.joinWarmup?._repairSweepJoinWarmupGenerationByTarget?.clear();
 			this._repairSweepOptimisticGidPeersPending?.clear();
 			this._repairSweepOptimisticGidsByPeer?.clear();
 			this._entryKnownPeers?.clear();

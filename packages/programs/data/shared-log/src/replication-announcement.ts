@@ -144,7 +144,7 @@ type ReplicationAnnouncementRepairTarget = {
 	done: boolean;
 };
 
-type ReplicationAnnouncementRepairWorkerContext = {
+export type ReplicationAnnouncementRepairWorkerContext = {
 	generation: number;
 	lifecycleController: AbortController;
 	generationController: AbortController;
@@ -170,6 +170,9 @@ export type ReplicationAnnouncementDeps<R extends "u32" | "u64"> = {
 	) => void;
 	isAdaptiveReplicating: () => boolean;
 	callRebalanceParticipationDebounced: () => unknown;
+	// Host-routed so instance spies keep observing re-entrant queueing.
+	queueCurrentReplicationStateAnnouncementRepair: () => void;
+	queueCurrentReplicationStateAnnouncementRetry: (error: unknown) => boolean;
 };
 
 export class ReplicationAnnouncementCoordinator<R extends "u32" | "u64"> {
@@ -621,7 +624,7 @@ export class ReplicationAnnouncementCoordinator<R extends "u32" | "u64"> {
 					this.deps.throwIfReplicationOwnershipLifecycleInactive(
 						ownershipLifecycleController,
 					);
-					this.queueCurrentReplicationStateAnnouncementRepair();
+					this.deps.queueCurrentReplicationStateAnnouncementRepair();
 				} catch (error) {
 					// An old send can reject only after poison or close has installed a new
 					// ownership generation. Never enqueue its retry work into that generation.
@@ -632,7 +635,7 @@ export class ReplicationAnnouncementCoordinator<R extends "u32" | "u64"> {
 					// wrapper. Preserve the explicit caller's rejection, but independently
 					// schedule an authoritative snapshot so peers eventually observe the
 					// already-committed local state.
-					this.queueCurrentReplicationStateAnnouncementRetry(error);
+					this.deps.queueCurrentReplicationStateAnnouncementRetry(error);
 					throw error;
 				}
 			});
