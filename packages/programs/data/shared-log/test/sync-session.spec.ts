@@ -69,7 +69,7 @@ describe("sync-repair-session", () => {
 				);
 			}
 			const scheduled =
-				internals._joinWarmupScheduledRetriesByTarget.get("target");
+				internals.joinWarmup._joinWarmupScheduledRetriesByTarget.get("target");
 			expect(scheduled.slotsByDelay.size).to.equal(3);
 			for (const slot of scheduled.slotsByDelay.values()) {
 				expect(slot.cohorts).to.have.length(1);
@@ -82,7 +82,7 @@ describe("sync-repair-session", () => {
 				).to.equal(2);
 			}
 			expect(
-				internals._joinWarmupRetryTimersByTarget.get("target").size,
+				internals.joinWarmup._joinWarmupRetryTimersByTarget.get("target").size,
 			).to.equal(3);
 			await clock.tickAsync(30);
 
@@ -91,13 +91,13 @@ describe("sync-repair-session", () => {
 			).to.have.length(2);
 			expect(simpleEntryBatches).to.have.length(1);
 			expect(maxActiveSimpleSends).to.equal(1);
-			const blockedState = internals._joinWarmupSendStateByTarget.get("target");
+			const blockedState = internals.joinWarmup._joinWarmupSendStateByTarget.get("target");
 			expect(blockedState.pending).to.be.true;
 			expect([...blockedState.entries.keys()]).to.have.members([
 				"first",
 				"second",
 			]);
-			expect(internals._joinWarmupRetryTimersByTarget.size).to.equal(0);
+			expect(internals.joinWarmup._joinWarmupRetryTimersByTarget.size).to.equal(0);
 
 			expect(releaseFirstSimple).to.be.a("function");
 			releaseFirstSimple!();
@@ -109,7 +109,7 @@ describe("sync-repair-session", () => {
 			expect(simpleEntryBatches).to.have.length(2);
 			expect(simpleEntryBatches[1]).to.have.members(["first", "second"]);
 			expect(maxActiveSimpleSends).to.equal(1);
-			const idleState = internals._joinWarmupSendStateByTarget.get("target");
+			const idleState = internals.joinWarmup._joinWarmupSendStateByTarget.get("target");
 			expect(idleState.running).to.be.false;
 			expect(idleState.pending).to.be.false;
 			expect(idleState.entries.size).to.equal(0);
@@ -206,9 +206,9 @@ describe("sync-repair-session", () => {
 				["target-a", 1],
 				["target-b", 1],
 			]);
-			expect(internals._joinWarmupSendStateByTarget.get("target-a").pending).to
+			expect(internals.joinWarmup._joinWarmupSendStateByTarget.get("target-a").pending).to
 				.be.true;
-			expect(internals._joinWarmupSendStateByTarget.get("target-b").pending).to
+			expect(internals.joinWarmup._joinWarmupSendStateByTarget.get("target-b").pending).to
 				.be.true;
 
 			for (const release of releaseFirstSimpleByTarget.values()) {
@@ -301,7 +301,7 @@ describe("sync-repair-session", () => {
 			expect(pushedEntryBatches).to.deep.equal([
 				["still-missing", "newly-known"],
 			]);
-			expect(internals._joinWarmupSendStateByTarget.get("target").pending).to.be
+			expect(internals.joinWarmup._joinWarmupSendStateByTarget.get("target").pending).to.be
 				.true;
 			internals.markEntriesKnownByPeer(["newly-known"], "target");
 
@@ -342,7 +342,7 @@ describe("sync-repair-session", () => {
 			sinon.stub(internals, "sendRepairEntriesWithTransport").resolves();
 			const queued: string[][] = [];
 			sinon
-				.stub(internals, "queueJoinWarmupSend")
+				.stub(internals.joinWarmup, "queueJoinWarmupSend")
 				.callsFake((...args: unknown[]) => {
 					queued.push([...(args[2] as Map<string, unknown>).keys()]);
 				});
@@ -367,12 +367,12 @@ describe("sync-repair-session", () => {
 				},
 			);
 			expect(
-				internals._joinWarmupRetryTimersByTarget.get("target").size,
+				internals.joinWarmup._joinWarmupRetryTimersByTarget.get("target").size,
 			).to.equal(1);
 
 			await clock.tickAsync(1);
 			expect(queued).to.deep.equal([["early"]]);
-			const slot = internals._joinWarmupScheduledRetriesByTarget
+			const slot = internals.joinWarmup._joinWarmupScheduledRetriesByTarget
 				.get("target")
 				.slotsByDelay.get(10);
 			expect(
@@ -381,13 +381,13 @@ describe("sync-repair-session", () => {
 				]),
 			).to.deep.equal(["late"]);
 			expect(
-				internals._joinWarmupRetryTimersByTarget.get("target").size,
+				internals.joinWarmup._joinWarmupRetryTimersByTarget.get("target").size,
 			).to.equal(1);
 
 			await clock.tickAsync(9);
 			expect(queued).to.deep.equal([["early"], ["late"]]);
-			expect(internals._joinWarmupScheduledRetriesByTarget.size).to.equal(0);
-			expect(internals._joinWarmupRetryTimersByTarget.size).to.equal(0);
+			expect(internals.joinWarmup._joinWarmupScheduledRetriesByTarget.size).to.equal(0);
+			expect(internals.joinWarmup._joinWarmupRetryTimersByTarget.size).to.equal(0);
 			expect(internals._repairRetryTimers.size).to.equal(0);
 		} finally {
 			await clock.tickAsync(1_000);
@@ -451,9 +451,9 @@ describe("sync-repair-session", () => {
 			expect(simpleEntryBatches).to.deep.equal([["old"]]);
 
 			const disconnectedGeneration =
-				internals._joinWarmupGenerationByTarget.get("target");
+				internals.joinWarmup._joinWarmupGenerationByTarget.get("target");
 			internals.removeRepairFrontierTarget("target");
-			expect(internals._joinWarmupRetryTimersByTarget.size).to.equal(0);
+			expect(internals.joinWarmup._joinWarmupRetryTimersByTarget.size).to.equal(0);
 			internals.dispatchMaybeMissingEntries(
 				"target",
 				new Map([["new", { hash: "new" }]]),
@@ -465,18 +465,18 @@ describe("sync-repair-session", () => {
 			);
 			await clock.tickAsync(10);
 			const reconnectedGeneration =
-				internals._joinWarmupGenerationByTarget.get("target");
+				internals.joinWarmup._joinWarmupGenerationByTarget.get("target");
 			internals.removeRepairFrontierTarget("target", {
 				expectedJoinWarmupGeneration: disconnectedGeneration,
 			});
 
 			expect(simpleEntryBatches).to.deep.equal([["old"]]);
 			expect(maxActiveSimpleSends).to.equal(1);
-			expect(internals._joinWarmupGenerationByTarget.get("target")).to.equal(
+			expect(internals.joinWarmup._joinWarmupGenerationByTarget.get("target")).to.equal(
 				reconnectedGeneration,
 			);
 			expect([
-				...internals._joinWarmupSendStateByTarget.get("target").entries.keys(),
+				...internals.joinWarmup._joinWarmupSendStateByTarget.get("target").entries.keys(),
 			]).to.deep.equal(["new"]);
 
 			expect(releaseOldSimple).to.be.a("function");
@@ -546,7 +546,7 @@ describe("sync-repair-session", () => {
 			);
 			await clock.tickAsync(20);
 			expect(simpleEntryBatches).to.have.length(1);
-			expect(internals._joinWarmupSendStateByTarget.get("target").pending).to.be
+			expect(internals.joinWarmup._joinWarmupSendStateByTarget.get("target").pending).to.be
 				.true;
 			expect(rejectFirstSimple).to.be.a("function");
 			rejectFirstSimple!(new Error("injected warmup send failure"));
@@ -559,7 +559,7 @@ describe("sync-repair-session", () => {
 			expect(
 				internals._repairMetrics["join-warmup"].simpleFallbackPasses,
 			).to.equal(2);
-			expect(internals._joinWarmupSendStateByTarget.get("target").running).to.be
+			expect(internals.joinWarmup._joinWarmupSendStateByTarget.get("target").running).to.be
 				.false;
 			expect(internals._repairRetryTimers.size).to.equal(0);
 		} finally {
@@ -596,7 +596,7 @@ describe("sync-repair-session", () => {
 				},
 			);
 			expect(
-				internals._joinWarmupScheduledRetriesByTarget.get("target").slotsByDelay
+				internals.joinWarmup._joinWarmupScheduledRetriesByTarget.get("target").slotsByDelay
 					.size,
 			).to.equal(6);
 			await clock.tickAsync(60_000);
@@ -607,7 +607,7 @@ describe("sync-repair-session", () => {
 			expect(
 				send.getCalls().filter((call) => call.args[2] === "simple"),
 			).to.have.length(6);
-			expect(internals._joinWarmupRetryTimersByTarget.size).to.equal(0);
+			expect(internals.joinWarmup._joinWarmupRetryTimersByTarget.size).to.equal(0);
 			expect(internals._repairRetryTimers.size).to.equal(0);
 
 			await clock.tickAsync(60_001);
@@ -623,9 +623,9 @@ describe("sync-repair-session", () => {
 		log.closed = false;
 		const internals = log as any;
 		internals._repairSweepRunning = true;
-		const oldGeneration = internals.getJoinWarmupGeneration("target");
-		internals.cancelJoinWarmupTarget("target");
-		const currentGeneration = internals.getJoinWarmupGeneration("target");
+		const oldGeneration = internals.joinWarmup.getJoinWarmupGeneration("target");
+		internals.joinWarmup.cancelJoinWarmupTarget("target");
+		const currentGeneration = internals.joinWarmup.getJoinWarmupGeneration("target");
 
 		internals.scheduleRepairSweep({
 			joinWarmupGenerations: new Map([["target", oldGeneration]]),
@@ -646,10 +646,10 @@ describe("sync-repair-session", () => {
 			internals._repairSweepPendingPeersByMode.get("join-warmup").has("target"),
 		).to.be.true;
 		expect(
-			internals._repairSweepJoinWarmupGenerationByTarget.get("target"),
+			internals.joinWarmup._repairSweepJoinWarmupGenerationByTarget.get("target"),
 		).to.equal(currentGeneration);
 
-		internals.cancelJoinWarmupTarget("target");
+		internals.joinWarmup.cancelJoinWarmupTarget("target");
 		expect(internals._repairSweepPendingModes.has("join-warmup")).to.be.false;
 	});
 
@@ -686,11 +686,11 @@ describe("sync-repair-session", () => {
 			.stub(internals, "getFullReplicaRepairCandidates")
 			.resolves(new Set(["self", "target"]));
 		const dispatch = sinon.stub(internals, "dispatchMaybeMissingEntries");
-		const oldGeneration = internals.getJoinWarmupGeneration("target");
+		const oldGeneration = internals.joinWarmup.getJoinWarmupGeneration("target");
 		internals.markRepairSweepOptimisticPeer("gid", "target", oldGeneration);
 		internals._repairSweepPendingModes.add("join-warmup");
 		internals._repairSweepPendingPeersByMode.get("join-warmup").add("target");
-		internals._repairSweepJoinWarmupGenerationByTarget.set(
+		internals.joinWarmup._repairSweepJoinWarmupGenerationByTarget.set(
 			"target",
 			oldGeneration,
 		);
@@ -698,14 +698,14 @@ describe("sync-repair-session", () => {
 
 		const running = internals.runRepairSweep();
 		await planEntered;
-		internals.cancelJoinWarmupTarget("target");
-		const newGeneration = internals.getJoinWarmupGeneration("target");
+		internals.joinWarmup.cancelJoinWarmupTarget("target");
+		const newGeneration = internals.joinWarmup.getJoinWarmupGeneration("target");
 		internals.markRepairSweepOptimisticPeer("gid", "target", newGeneration);
 		releasePlan();
 		await running;
 
 		expect(dispatch.called).to.be.false;
-		expect(internals._joinWarmupGenerationByTarget.get("target")).to.equal(
+		expect(internals.joinWarmup._joinWarmupGenerationByTarget.get("target")).to.equal(
 			newGeneration,
 		);
 		expect(
@@ -767,15 +767,15 @@ describe("sync-repair-session", () => {
 
 			await trimEntered;
 			const oldGeneration =
-				internals._joinWarmupGenerationByTarget.get("target");
+				internals.joinWarmup._joinWarmupGenerationByTarget.get("target");
 			expect(oldGeneration).to.be.an("object");
-			internals.cancelJoinWarmupTarget("target");
-			const newGeneration = internals.getJoinWarmupGeneration("target");
+			internals.joinWarmup.cancelJoinWarmupTarget("target");
+			const newGeneration = internals.joinWarmup.getJoinWarmupGeneration("target");
 			releaseTrim!();
 			await changing;
 			await clock.tickAsync(250);
 
-			expect(internals._joinWarmupGenerationByTarget.get("target")).to.equal(
+			expect(internals.joinWarmup._joinWarmupGenerationByTarget.get("target")).to.equal(
 				newGeneration,
 			);
 			expect(

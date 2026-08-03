@@ -48,14 +48,12 @@ const DECL =
 // without a design note on the new field.
 const BASELINE = new Set([
 	"_checkedPruneRemoveBlocksLocalRangeMutationAdmission",
-	"_joinWarmupGenerationByTarget",
 	"_localReplicationRoleGeneration",
 	"_nativeCoordinateMutationGenerations",
 	"_receiveCleanupGateByPeer",
 	"_receiveOwnershipMutationAdmissions",
 	"_receiveOwnershipRevision",
 	"_repairLifecycleController",
-	"_repairSweepJoinWarmupGenerationByTarget",
 	"_replicationAnnouncementRepairGeneration",
 	"_replicationAnnouncementRepairGenerationController",
 	"_replicationAnnouncementRetryGeneration",
