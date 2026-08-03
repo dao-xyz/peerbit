@@ -178,6 +178,7 @@ export interface PubSub
 
 export {
 	assertCanonicalTopicRootCandidates,
+	assertTopicRootCandidateClaimsFrame,
 	assertTopicRootCandidatesFrame,
 	GetSubscribers,
 	isCanonicalTopicRootCandidate,
@@ -187,6 +188,10 @@ export {
 	Subscribe,
 	TOPIC_ROOT_CANDIDATES_MAX,
 	TOPIC_ROOT_CANDIDATES_MAX_FRAME_BYTES,
+	TOPIC_ROOT_CANDIDATE_CLAIM_MAX_BYTES,
+	TOPIC_ROOT_CANDIDATE_CLAIMS_MAX,
+	TOPIC_ROOT_CANDIDATE_CLAIMS_MAX_FRAME_BYTES,
+	TopicRootCandidateClaims,
 	TopicRootCandidates,
 	TopicRootQuery,
 	TopicRootQueryResponse,

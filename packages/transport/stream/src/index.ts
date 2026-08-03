@@ -1221,7 +1221,17 @@ export type PublishOptions = (WithMode | WithTo) &
 	PriorityOptions &
 	ResponsePriorityOptions &
 	ExpiresAtOptions &
+	ExpiresInOptions &
 	WithExtraSigners;
+
+/**
+ * Sets an expiry relative to the timestamp captured in the signed message
+ * header. This avoids caller-side clock drift between computing an absolute
+ * expiry and constructing the header.
+ */
+export type ExpiresInOptions = {
+	expiresInMs?: number;
+};
 
 export abstract class DirectStream<
 			Events extends { [s: string]: any } = StreamEvents,
@@ -3011,6 +3021,7 @@ export abstract class DirectStream<
 			PriorityOptions &
 			ResponsePriorityOptions &
 			ExpiresAtOptions &
+			ExpiresInOptions &
 			IdOptions & { skipRecipientValidation?: boolean } & WithExtraSigners,
 	) {
 		// dispatch the event if we are interested
@@ -3054,17 +3065,34 @@ export abstract class DirectStream<
 		}
 
 		setDeliveryOriginHop(mode, this.publicKeyHash);
+		const expiresInMs = options.expiresInMs;
+		if (expiresInMs != null) {
+			if (options.expiresAt != null) {
+				throw new InvalidMessageError(
+					"expiresAt and expiresInMs cannot both be specified",
+				);
+			}
+			if (!Number.isSafeInteger(expiresInMs) || expiresInMs <= 0) {
+				throw new InvalidMessageError(
+					"expiresInMs must be a positive safe integer",
+				);
+			}
+		}
 
+		const header = new MessageHeader({
+			id: options.id,
+			mode,
+			session: this.session,
+			priority: options.priority,
+			responsePriority: options.responsePriority,
+			expires: options.expiresAt,
+		});
+		if (expiresInMs != null) {
+			header.expires = header.timestamp + BigInt(expiresInMs);
+		}
 		const message = new DataMessage({
 			data,
-			header: new MessageHeader({
-				id: options.id,
-				mode,
-				session: this.session,
-				priority: options.priority,
-				responsePriority: options.responsePriority,
-				expires: options.expiresAt,
-			}),
+			header,
 		});
 
 		// TODO allow messages to also be sent unsigned (signaturePolicy property)
