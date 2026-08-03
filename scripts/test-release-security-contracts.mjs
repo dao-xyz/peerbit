@@ -202,8 +202,8 @@ assert.doesNotMatch(
 );
 assert.match(
 	pushTestJob,
-	/name: Upload coverage artifact[\s\S]*?include-hidden-files: true/,
-	"trusted push tests must hand hidden coverage files to the isolated uploader",
+	/name: Pack coverage files[\s\S]*?tar -czf[\s\S]*?name: Upload coverage artifact/,
+	"trusted push tests must pack the exact coverage file list and hand it to the isolated uploader",
 );
 const coverageJob = workflowJob(ciWorkflow, "coverage_push");
 assert.match(
