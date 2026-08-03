@@ -50,6 +50,27 @@ jobs:
         with:
           path: ~/.cargo/bin/wasm-pack
           key: ${{ runner.os }}-wasm-pack-${{ env.WASM_PACK_VERSION }}
+      # The wasm-pack builds inside "pnpm run build" recompile every cargo
+      # dependency from scratch without this: cargo target dirs live outside
+      # dist and are never part of the workspace artifact.
+      - name: Rust cache
+        if: steps.workspace_dist_cache.outputs.cache-hit != 'true'
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          cache-on-failure: true
+          # wasm-pack in ~/.cargo/bin has its own cache; rust-cache's save-time
+          # bin cleanup would delete it before that cache's post step runs.
+          cache-bin: false
+          workspaces: |
+            packages/log/rust
+            packages/programs/data/document/rust
+            packages/programs/data/shared-log/rust
+            packages/transport/network-rust
+            packages/utils/any-store/rust
+            packages/utils/indexer/core
+            packages/utils/indexer/rust
+            packages/utils/native-backbone
+            packages/utils/rateless-iblt
       - name: Install deps
         if: steps.workspace_dist_cache.outputs.cache-hit != 'true'
         run: |
@@ -464,16 +485,10 @@ jobs:
           node-version: 22.x
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
-      - name: Cache wasm-pack
-        uses: actions/cache@v4
-        with:
-          path: ~/.cargo/bin/wasm-pack
-          key: ${{ runner.os }}-wasm-pack-${{ env.WASM_PACK_VERSION }}
+      # No wasm-pack/rustup setup here: the @peerbit/pubsub... closure
+      # contains no Rust packages, so the toolchain was never used.
       - name: Install deps
         run: |
-          export PATH="$HOME/.cargo/bin:$PATH"
-          ./scripts/ci/install-wasm-pack.sh
-          rustup target add wasm32-unknown-unknown
           pnpm install --frozen-lockfile=false
       - name: Build pubsub workspace
         run: |
@@ -575,6 +590,24 @@ jobs:
         with:
           path: ~/.cargo/bin/wasm-pack
           key: ${{ runner.os }}-wasm-pack-${{ env.WASM_PACK_VERSION }}
+      # The @peerbit/shared-log... closure builds 7 wasm crates on every PR.
+      - name: Rust cache
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          cache-on-failure: true
+          # wasm-pack in ~/.cargo/bin has its own cache; rust-cache's save-time
+          # bin cleanup would delete it before that cache's post step runs.
+          cache-bin: false
+          workspaces: |
+            packages/log/rust
+            packages/programs/data/document/rust
+            packages/programs/data/shared-log/rust
+            packages/transport/network-rust
+            packages/utils/any-store/rust
+            packages/utils/indexer/core
+            packages/utils/indexer/rust
+            packages/utils/native-backbone
+            packages/utils/rateless-iblt
       - name: Install deps
         run: |
           export PATH="$HOME/.cargo/bin:$PATH"
@@ -609,6 +642,25 @@ jobs:
           node-version: 22.x
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
+      # This job is the wall-clock ceiling of every run: host cargo tests plus
+      # wasm-pack builds across all crates, previously with zero cargo caching.
+      - name: Rust cache
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          cache-on-failure: true
+          # wasm-pack in ~/.cargo/bin has its own cache; rust-cache's save-time
+          # bin cleanup would delete it before that cache's post step runs.
+          cache-bin: false
+          workspaces: |
+            packages/log/rust
+            packages/programs/data/document/rust
+            packages/programs/data/shared-log/rust
+            packages/transport/network-rust
+            packages/utils/any-store/rust
+            packages/utils/indexer/core
+            packages/utils/indexer/rust
+            packages/utils/native-backbone
+            packages/utils/rateless-iblt
       - name: Install deps
         run: |
           curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
