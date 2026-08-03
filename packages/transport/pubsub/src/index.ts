@@ -1,15 +1,13 @@
+import { type PeerId as Libp2pPeerId } from "@libp2p/interface";
 import {
-	type Connection,
-	type PeerId as Libp2pPeerId,
-} from "@libp2p/interface";
-import { PublicSignKey, getPublicKeyFromPeerId } from "@peerbit/crypto";
+	PublicSignKey,
+	getPublicKeyFromPeerId,
+	sha256Sync,
+} from "@peerbit/crypto";
 import { logger as loggerFn } from "@peerbit/logger";
 import {
-	assertCanonicalTopicRootCandidates,
-	assertTopicRootCandidatesFrame,
 	DataEvent,
 	GetSubscribers,
-	isCanonicalTopicRootCandidate,
 	PeerUnavailable,
 	type PubSub,
 	PubSubData,
@@ -20,12 +18,18 @@ import {
 	SubscriptionData,
 	SubscriptionEvent,
 	TOPIC_ROOT_CANDIDATES_MAX,
+	TOPIC_ROOT_CANDIDATE_CLAIMS_MAX,
+	TOPIC_ROOT_CANDIDATE_CLAIM_MAX_BYTES,
+	TopicRootCandidateClaims,
 	TopicRootCandidates,
 	TopicRootQuery,
 	TopicRootQueryResponse,
 	UnsubcriptionEvent,
-	type UnsubscriptionReason,
 	Unsubscribe,
+	type UnsubscriptionReason,
+	assertCanonicalTopicRootCandidates,
+	assertTopicRootCandidatesFrame,
+	isCanonicalTopicRootCandidate,
 } from "@peerbit/pubsub-interface";
 import {
 	DirectStream,
@@ -58,6 +62,7 @@ import {
 } from "@peerbit/stream-interface";
 import { AbortError, TimeoutError, delay } from "@peerbit/time";
 import { Uint8ArrayList } from "uint8arraylist";
+import { equals as bytesEqual } from "uint8arrays";
 import { toUint8Array } from "./bytes.js";
 import {
 	type DebouncedAccumulatorCounterMap,
@@ -107,7 +112,10 @@ const logErrorIfStarted = (e?: { message: string }) => {
 	e instanceof NotStartedError === false && logError(e);
 };
 
-const withAbort = async <T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> => {
+const withAbort = async <T>(
+	promise: Promise<T>,
+	signal?: AbortSignal,
+): Promise<T> => {
 	if (!signal) return promise;
 	if (signal.aborted) {
 		void promise.catch(() => {});
@@ -194,6 +202,25 @@ const DEFAULT_PUBSUB_SHARD_COUNT = 256;
 const PUBSUB_SHARD_COUNT_HARD_CAP = 16_384;
 const DEFAULT_PUBSUB_SHARD_TOPIC_PREFIX = "/peerbit/pubsub-shard/1/";
 const AUTO_TOPIC_ROOT_CANDIDATE_UPDATE_COOLDOWN_MS = 2_000;
+const TOPIC_CONTROL_PLANE_PROTOCOL_V2_1 = "/peerbit/topic-control-plane/2.1.0";
+const TOPIC_CONTROL_PLANE_PROTOCOL_V2_0 = "/peerbit/topic-control-plane/2.0.0";
+const TOPIC_ROOT_CANDIDATE_CLAIM_DOMAIN = utf8Encoder.encode(
+	"peerbit/topic-root-candidate-claim/v1\0",
+);
+const TOPIC_ROOT_CANDIDATE_SCOPE_DOMAIN =
+	"peerbit/topic-root-candidate-scope/v1";
+const TOPIC_ROOT_CANDIDATE_CLAIM_MAX_LIFETIME_MS = 90_000;
+const TOPIC_ROOT_CANDIDATE_CLAIM_FUTURE_SKEW_MS = 30_000;
+const TOPIC_ROOT_CANDIDATE_CLAIM_REFRESH_MS = 30_000;
+const TOPIC_ROOT_CANDIDATE_CLAIM_REFRESH_JITTER_MS = 5_000;
+const TOPIC_ROOT_CANDIDATE_CLAIM_REFRESH_RETRY_MS = 1_000;
+// A sparse leaf can receive a 64-origin snapshot plus two refresh waves through
+// one relay in the first minute. Keep per-relay headroom for that honest burst;
+// the separate global cap still bounds total signature work.
+const TOPIC_ROOT_CANDIDATE_CLAIM_VERIFY_BURST = 256;
+const TOPIC_ROOT_CANDIDATE_CLAIM_GLOBAL_VERIFY_BURST = 512;
+const TOPIC_ROOT_CANDIDATE_CLAIM_VERIFY_REFILL_MS = 60_000;
+const TOPIC_ROOT_CANDIDATE_CLAIM_VERIFY_PEERS_MAX = 4_096;
 const sameCandidates = (left: string[], right: string[]) =>
 	left.length === right.length &&
 	left.every((candidate, index) => candidate === right[index]);
@@ -378,8 +405,12 @@ export class TopicControlPlane
 
 	private readonly shardCount: number;
 	private readonly shardTopicPrefix: string;
+	private readonly topicRootCandidateClaimData: Uint8Array;
 	private readonly hostShards: boolean;
-	private readonly shardRootCache = new Map<string, { root: string; authoritative: boolean }>();
+	private readonly shardRootCache = new Map<
+		string,
+		{ root: string; authoritative: boolean }
+	>();
 	private readonly shardTopicCache = new Map<string, string>();
 	private readonly shardRefCounts = new Map<string, number>();
 	private readonly pinnedShards = new Set<string>();
@@ -413,10 +444,26 @@ export class TopicControlPlane
 	private topicRootCandidateResolutionAbortController = new AbortController();
 	private hostOwnedShardRootsInFlight?: Promise<void>;
 	private hostOwnedShardRootsDirty = false;
-	private autoCandidatesBroadcastTimers: Array<ReturnType<typeof setTimeout>> =
-		[];
-	private autoCandidatesGossipInterval?: ReturnType<typeof setInterval>;
-	private autoCandidatesGossipUntil = 0;
+	private readonly signedTopicRootCandidateClaims = new Map<
+		string,
+		{ bytes: Uint8Array; timestamp: bigint; expires: bigint }
+	>();
+	private localSignedTopicRootCandidateClaim?: {
+		bytes: Uint8Array;
+		timestamp: bigint;
+		expires: bigint;
+	};
+	private topicRootCandidateClaimMaintenanceTimer?: ReturnType<
+		typeof setTimeout
+	>;
+	private readonly topicRootCandidateClaimVerifyBudgets = new Map<
+		string,
+		{ remaining: number; refilledAt: number }
+	>();
+	private topicRootCandidateClaimGlobalVerifyBudget = {
+		remaining: TOPIC_ROOT_CANDIDATE_CLAIM_GLOBAL_VERIFY_BURST,
+		refilledAt: Date.now(),
+	};
 	private _onFanoutPeerUnreachable?: (
 		ev: CustomEvent<{ topic: string; root: string; publicKeyHash: string }>,
 	) => void;
@@ -459,7 +506,11 @@ export class TopicControlPlane
 		components: TopicControlPlaneComponents,
 		props?: TopicControlPlaneOptions,
 	) {
-		super(components, ["/peerbit/topic-control-plane/2.0.0"], props);
+		super(
+			components,
+			[TOPIC_CONTROL_PLANE_PROTOCOL_V2_1, TOPIC_CONTROL_PLANE_PROTOCOL_V2_0],
+			props,
+		);
 		this.subscriptions = new Map();
 		this.pendingSubscriptions = new Set();
 		this.topics = new Map();
@@ -484,8 +535,8 @@ export class TopicControlPlane
 		this.fanout = props.fanout;
 
 		// Default to a local-only shard-root candidate set so standalone peers can
-		// subscribe/publish without explicit bootstraps. We'll expand candidates
-		// opportunistically as neighbours connect.
+		// subscribe/publish without explicit bootstraps. Signed peer claims expand
+		// the set opportunistically as the ad-hoc overlay connects.
 		if (this.topicRootControlPlane.getTopicRootCandidates().length === 0) {
 			this.autoTopicRootCandidates = true;
 			this.autoTopicRootCandidateSet = new Set([this.publicKeyHash]);
@@ -499,6 +550,23 @@ export class TopicControlPlane
 		);
 		const prefix = props?.shardTopicPrefix ?? DEFAULT_PUBSUB_SHARD_TOPIC_PREFIX;
 		this.shardTopicPrefix = prefix.endsWith("/") ? prefix : prefix + "/";
+		const scopeDigest = sha256Sync(
+			utf8Encoder.encode(
+				JSON.stringify([
+					TOPIC_ROOT_CANDIDATE_SCOPE_DOMAIN,
+					this.shardTopicPrefix,
+					this.shardCount,
+				]),
+			),
+		);
+		this.topicRootCandidateClaimData = new Uint8Array(
+			TOPIC_ROOT_CANDIDATE_CLAIM_DOMAIN.byteLength + scopeDigest.byteLength,
+		);
+		this.topicRootCandidateClaimData.set(TOPIC_ROOT_CANDIDATE_CLAIM_DOMAIN, 0);
+		this.topicRootCandidateClaimData.set(
+			scopeDigest,
+			TOPIC_ROOT_CANDIDATE_CLAIM_DOMAIN.byteLength,
+		);
 		this.hostShards = props?.hostShards ?? false;
 
 		const baseFanoutChannelOptions = {
@@ -583,25 +651,21 @@ export class TopicControlPlane
 	 * candidate mode.
 	 *
 	 * Auto mode is a convenience for small ad-hoc networks where no bootstraps/
-	 * routers are configured. When an explicit candidate set is provided (e.g.
-	 * from bootstraps or a test harness), we must stop mutating/gossiping the
+	 * routers are configured. Automatic claims authenticate key ownership and
+	 * freshness, not liveness, admission, or Sybil resistance; hostile or isolated
+	 * deployments should configure explicit candidates. When an explicit candidate
+	 * set is provided (e.g. from bootstraps or a test harness), we stop mutating the
 	 * candidate set; otherwise shard root resolution can diverge and overlays can
 	 * partition (especially in sparse graphs).
 	 */
 	public setTopicRootCandidates(candidates: string[]) {
 		this.topicRootControlPlane.setTopicRootCandidates(candidates);
 
-		// Disable auto mode and stop its background gossip/timers.
+		// Disable auto mode and clear its signed-claim state/timers.
 		this.autoTopicRootCandidates = false;
 		this.autoTopicRootCandidateSet = undefined;
+		this.clearSignedTopicRootCandidateState();
 		this.clearAutoTopicRootCandidateUpdateSchedule();
-		for (const t of this.autoCandidatesBroadcastTimers) clearTimeout(t);
-		this.autoCandidatesBroadcastTimers = [];
-		if (this.autoCandidatesGossipInterval) {
-			clearInterval(this.autoCandidatesGossipInterval);
-			this.autoCandidatesGossipInterval = undefined;
-		}
-		this.autoCandidatesGossipUntil = 0;
 
 		// Re-resolve roots under the new mapping.
 		this.shardRootCache.clear();
@@ -615,18 +679,37 @@ export class TopicControlPlane
 
 	public override async start() {
 		this.topicControlPlaneStopping = false;
+		if (
+			this.autoTopicRootCandidates &&
+			!this.localSignedTopicRootCandidateClaim
+		) {
+			this.autoTopicRootCandidateSet = new Set([this.publicKeyHash]);
+			this.topicRootControlPlane.setTopicRootCandidates([this.publicKeyHash]);
+			this.shardRootCache.clear();
+		}
 		if (this.topicRootResolutionAbortController.signal.aborted) {
 			this.topicRootResolutionAbortController = new AbortController();
 		}
 		await this.fanout.start();
 		this._onFanoutPeerUnreachable =
-			this._onFanoutPeerUnreachable ||
-			this.onFanoutPeerUnreachable.bind(this);
+			this._onFanoutPeerUnreachable || this.onFanoutPeerUnreachable.bind(this);
 		await this.fanout.addEventListener(
 			"fanout:peer-unreachable",
 			this._onFanoutPeerUnreachable as any,
 		);
 		await super.start();
+		if (this.autoTopicRootCandidates) {
+			let retryDelayMs = 0;
+			try {
+				if (!(await this.refreshLocalTopicRootCandidateClaim())) {
+					retryDelayMs = TOPIC_ROOT_CANDIDATE_CLAIM_REFRESH_RETRY_MS;
+				}
+			} catch (error: any) {
+				logErrorIfStarted(error);
+				retryDelayMs = TOPIC_ROOT_CANDIDATE_CLAIM_REFRESH_RETRY_MS;
+			}
+			this.scheduleTopicRootCandidateClaimMaintenance(retryDelayMs);
+		}
 
 		if (this.hostShards) {
 			await this.hostShardRootsNow();
@@ -645,6 +728,7 @@ export class TopicControlPlane
 			new AbortError("topic control plane stopped"),
 		);
 		this.clearAutoTopicRootCandidateUpdateSchedule();
+		this.clearSignedTopicRootCandidateState();
 		this.topicControlPlaneLifecycleRevision += 1;
 		this.reconcileShardOverlaysDirty = false;
 		for (const opening of this.ensureFanoutChannelInFlight.values()) {
@@ -683,13 +767,6 @@ export class TopicControlPlane
 			}
 		}
 		this.fanoutChannels.clear();
-		for (const t of this.autoCandidatesBroadcastTimers) clearTimeout(t);
-		this.autoCandidatesBroadcastTimers = [];
-		if (this.autoCandidatesGossipInterval) {
-			clearInterval(this.autoCandidatesGossipInterval);
-			this.autoCandidatesGossipInterval = undefined;
-		}
-		this.autoCandidatesGossipUntil = 0;
 		this.hostOwnedShardRootsDirty = false;
 
 		this.subscriptions.clear();
@@ -717,25 +794,8 @@ export class TopicControlPlane
 		this.reconcileShardOverlaysDirty = false;
 	}
 
-	public override async onPeerConnected(
-		peerId: Libp2pPeerId,
-		connection: Connection,
-	) {
-		await super.onPeerConnected(peerId, connection);
-
-		// If we're in auto-candidate mode, expand the deterministic shard-root
-		// candidate set as neighbours connect, then reconcile shard overlays and
-		// re-announce subscriptions so membership knowledge converges.
-		if (!this.autoTopicRootCandidates) return;
-		let peerHash: string;
-		try {
-			peerHash = getPublicKeyFromPeerId(peerId).hashcode();
-		} catch {
-			return;
-		}
-		void this.maybeUpdateAutoTopicRootCandidates(peerHash);
-	}
-
+	// Candidate trust starts only after protocol negotiation in `addPeer()`;
+	// a transport connection alone cannot bypass signed 2.1 self-claims.
 	// Ensure auto-candidate mode converges even when libp2p topology callbacks
 	// are delayed or only fire for one side of a connection. `addPeer()` runs for
 	// both inbound + outbound protocol streams once the remote public key is known.
@@ -745,12 +805,53 @@ export class TopicControlPlane
 		protocol: string,
 		connId: string,
 	): PeerStreams {
+		const existingPeer = this.peers.get(publicKey.hashcode());
 		const peer = super.addPeer(peerId, publicKey, protocol, connId);
 		if (this.autoTopicRootCandidates) {
-			void this.maybeUpdateAutoTopicRootCandidates(publicKey.hashcode());
-			this.scheduleAutoTopicRootCandidatesBroadcast([peer]);
+			if (peer.protocol === TOPIC_CONTROL_PLANE_PROTOCOL_V2_0) {
+				this.rebuildAutoTopicRootCandidatesFromClaims();
+			}
+			if (peer.protocol === TOPIC_CONTROL_PLANE_PROTOCOL_V2_1) {
+				const sendWhenOutboundReady = () => {
+					if (
+						!this.autoTopicRootCandidates ||
+						this.peers.get(publicKey.hashcode()) !== peer
+					) {
+						return;
+					}
+					void this.sendAutoTopicRootCandidates([peer]).catch(() => {});
+				};
+				if (peer.isWritable) {
+					void this.sendAutoTopicRootCandidates([peer]).catch(() => {});
+				}
+				if (!existingPeer) {
+					peer.addEventListener("stream:outbound", sendWhenOutboundReady);
+					peer.addEventListener(
+						"close",
+						() =>
+							peer.removeEventListener(
+								"stream:outbound",
+								sendWhenOutboundReady,
+							),
+						{ once: true },
+					);
+				}
+			}
 		}
 		return peer;
+	}
+
+	protected override async _removePeer(publicKey: PublicSignKey) {
+		const hash = publicKey.hashcode();
+		const protocol = this.peers.get(hash)?.protocol;
+		const removed = await super._removePeer(publicKey);
+		if (
+			this.autoTopicRootCandidates &&
+			protocol === TOPIC_CONTROL_PLANE_PROTOCOL_V2_0
+		) {
+			this.rebuildAutoTopicRootCandidatesFromClaims();
+		}
+		return removed;
 	}
 
 	private maybeDisableAutoTopicRootCandidatesIfExternallyConfigured(): boolean {
@@ -768,6 +869,7 @@ export class TopicControlPlane
 		// intact and reconcile shard overlays under the new mapping.
 		this.autoTopicRootCandidates = false;
 		this.autoTopicRootCandidateSet = undefined;
+		this.clearSignedTopicRootCandidateState();
 		this.clearAutoTopicRootCandidateUpdateSchedule();
 		this.shardRootCache.clear();
 
@@ -780,129 +882,435 @@ export class TopicControlPlane
 		return true;
 	}
 
-	private maybeUpdateAutoTopicRootCandidates(peerHash: string) {
-		if (!this.autoTopicRootCandidates) return;
+	private clearTopicRootCandidateClaimTimer() {
+		if (this.topicRootCandidateClaimMaintenanceTimer) {
+			clearTimeout(this.topicRootCandidateClaimMaintenanceTimer);
+			this.topicRootCandidateClaimMaintenanceTimer = undefined;
+		}
+	}
+
+	private clearSignedTopicRootCandidateState() {
+		this.clearTopicRootCandidateClaimTimer();
+		this.signedTopicRootCandidateClaims.clear();
+		this.localSignedTopicRootCandidateClaim = undefined;
+		this.topicRootCandidateClaimVerifyBudgets.clear();
+		this.topicRootCandidateClaimGlobalVerifyBudget = {
+			remaining: TOPIC_ROOT_CANDIDATE_CLAIM_GLOBAL_VERIFY_BURST,
+			refilledAt: Date.now(),
+		};
+	}
+
+	private async refreshLocalTopicRootCandidateClaim(): Promise<boolean> {
 		if (
-			!isCanonicalTopicRootCandidate(peerHash) ||
-			peerHash === this.publicKeyHash
-		)
-			return;
-
-		this.queueAutoTopicRootCandidateUpdate([peerHash]);
-	}
-
-	private normalizeAutoTopicRootCandidates(candidates: string[]): string[] {
-		const canonicalCandidates = candidates.filter(
-			isCanonicalTopicRootCandidate,
-		);
-		if (this.nativeTopicControl) {
-			return this.nativeTopicControl.normalizeAutoCandidates(
-				canonicalCandidates,
-				this.publicKeyHash,
-			);
+			!this.autoTopicRootCandidates ||
+			!this.started ||
+			this.stopping ||
+			this.topicControlPlaneStopping
+		) {
+			return false;
 		}
-		const unique = new Set<string>();
-		for (const c of canonicalCandidates) {
-			unique.add(c);
-		}
-		if (isCanonicalTopicRootCandidate(this.publicKeyHash)) {
-			unique.add(this.publicKeyHash);
-		}
-		const sorted = [...unique].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
-		return sorted.slice(0, TOPIC_ROOT_CANDIDATES_MAX);
-	}
-
-	private scheduleAutoTopicRootCandidatesBroadcast(targets?: PeerStreams[]) {
-		if (!this.autoTopicRootCandidates) return;
-		if (!this.started || this.stopping) return;
-
-		if (targets && targets.length > 0) {
-			void this.sendAutoTopicRootCandidates(targets).catch(() => {});
-			return;
-		}
-
-		for (const t of this.autoCandidatesBroadcastTimers) clearTimeout(t);
-		this.autoCandidatesBroadcastTimers = [];
-
-		// Burst a few times to survive early "stream not writable yet" races.
-		const delays = [25, 500, 2_000];
-		for (const delayMs of delays) {
-			const t = setTimeout(() => {
-				void this.sendAutoTopicRootCandidates().catch(() => {});
-			}, delayMs);
-			t.unref?.();
-			this.autoCandidatesBroadcastTimers.push(t);
-		}
-
-		// Keep gossiping for a while after changes so partially connected topologies
-		// converge even under slow stream negotiation.
-		this.autoCandidatesGossipUntil = Date.now() + 60_000;
-		this.ensureAutoCandidatesGossipInterval();
-	}
-
-	private ensureAutoCandidatesGossipInterval() {
-		if (!this.autoTopicRootCandidates) return;
-		if (!this.started || this.stopping) return;
-		if (this.autoCandidatesGossipInterval) return;
-		this.autoCandidatesGossipInterval = setInterval(() => {
-			if (!this.started || this.stopping || !this.autoTopicRootCandidates)
-				return;
-			if (
-				this.autoCandidatesGossipUntil > 0 &&
-				Date.now() > this.autoCandidatesGossipUntil
-			) {
-				if (this.autoCandidatesGossipInterval) {
-					clearInterval(this.autoCandidatesGossipInterval);
-					this.autoCandidatesGossipInterval = undefined;
-				}
-				return;
-			}
-			void this.sendAutoTopicRootCandidates().catch(() => {});
-		}, 2_000);
-		this.autoCandidatesGossipInterval.unref?.();
-	}
-
-	private async sendAutoTopicRootCandidates(targets?: PeerStreams[]) {
-		if (!this.started) throw new NotStartedError();
-		const streams = targets ?? [...this.peers.values()];
-		if (streams.length === 0) return;
-
-		const candidates = this.topicRootControlPlane.getTopicRootCandidates();
-		if (candidates.length === 0) return;
-
-		const msg = new TopicRootCandidates({ candidates });
-		const embedded = await this.createMessage(this.encodePubSubMessage(msg), {
+		const lifecycleRevision = this.topicControlPlaneLifecycleRevision;
+		const now = Date.now();
+		const claim = await this.createMessage(this.topicRootCandidateClaimData, {
 			mode: new AnyWhere(),
 			priority: 1,
+			expiresAt: now + TOPIC_ROOT_CANDIDATE_CLAIM_MAX_LIFETIME_MS,
 			skipRecipientValidation: true,
 		} as any);
-		await this.publishMessageMaybe(this.publicKey, embedded, streams);
+		const bytes = toUint8Array(claim.bytes());
+		if (bytes.byteLength > TOPIC_ROOT_CANDIDATE_CLAIM_MAX_BYTES) {
+			throw new Error(
+				`Local topic-root candidate claim exceeds ${TOPIC_ROOT_CANDIDATE_CLAIM_MAX_BYTES} bytes`,
+			);
+		}
+		if (
+			lifecycleRevision !== this.topicControlPlaneLifecycleRevision ||
+			!this.autoTopicRootCandidates ||
+			!this.started ||
+			this.stopping ||
+			this.topicControlPlaneStopping
+		) {
+			return false;
+		}
+		const record = {
+			bytes,
+			timestamp: claim.header.timestamp,
+			expires: claim.header.expires,
+		};
+		const current = this.localSignedTopicRootCandidateClaim;
+		if (current && record.timestamp <= current.timestamp) {
+			return false;
+		}
+		this.localSignedTopicRootCandidateClaim = record;
+		this.retainSignedTopicRootCandidateClaim(this.publicKeyHash, record);
+		this.rebuildAutoTopicRootCandidatesFromClaims();
+		return true;
 	}
 
-	private mergeAutoTopicRootCandidatesFromPeer(candidates: string[]): boolean {
+	private scheduleTopicRootCandidateClaimMaintenance(minDelayMs = 0) {
+		if (
+			!this.autoTopicRootCandidates ||
+			!this.started ||
+			this.stopping ||
+			this.topicControlPlaneStopping
+		) {
+			return;
+		}
+		this.clearTopicRootCandidateClaimTimer();
+		const now = Date.now();
+		const local = this.localSignedTopicRootCandidateClaim;
+		const refreshDueAt = local
+			? Number(local.timestamp) +
+				TOPIC_ROOT_CANDIDATE_CLAIM_REFRESH_MS +
+				Math.floor(Math.random() * TOPIC_ROOT_CANDIDATE_CLAIM_REFRESH_JITTER_MS)
+			: now;
+		let expiryDueAt = Number.POSITIVE_INFINITY;
+		for (const claim of this.signedTopicRootCandidateClaims.values()) {
+			expiryDueAt = Math.min(expiryDueAt, Number(claim.expires) + 1);
+		}
+		if (local) expiryDueAt = Math.min(expiryDueAt, Number(local.expires) + 1);
+		const refreshDelayMs = Math.max(minDelayMs, refreshDueAt - now, 0);
+		const expiryDelayMs = Math.max(expiryDueAt - now, 0);
+		const delayMs = Math.min(2_147_483_647, refreshDelayMs, expiryDelayMs);
+		const timer = setTimeout(() => {
+			if (this.topicRootCandidateClaimMaintenanceTimer !== timer) return;
+			this.topicRootCandidateClaimMaintenanceTimer = undefined;
+			void (async () => {
+				let retryDelayMs = 0;
+				try {
+					this.rebuildAutoTopicRootCandidatesFromClaims();
+					const currentLocal = this.localSignedTopicRootCandidateClaim;
+					const refreshDue =
+						!currentLocal ||
+						Date.now() - Number(currentLocal.timestamp) >=
+							TOPIC_ROOT_CANDIDATE_CLAIM_REFRESH_MS;
+					if (refreshDue) {
+						if (await this.refreshLocalTopicRootCandidateClaim()) {
+							try {
+								await this.sendSignedTopicRootCandidateClaims([
+									this.localSignedTopicRootCandidateClaim!.bytes,
+								]);
+							} catch (error: any) {
+								// A later renewal or outbound-stream snapshot retries this
+								// best-effort advertisement; the signed lease itself is valid.
+								logErrorIfStarted(error);
+							}
+						} else {
+							retryDelayMs = TOPIC_ROOT_CANDIDATE_CLAIM_REFRESH_RETRY_MS;
+						}
+					}
+				} catch (error: any) {
+					logErrorIfStarted(error);
+					retryDelayMs = TOPIC_ROOT_CANDIDATE_CLAIM_REFRESH_RETRY_MS;
+				} finally {
+					if (!this.topicRootCandidateClaimMaintenanceTimer) {
+						this.scheduleTopicRootCandidateClaimMaintenance(retryDelayMs);
+					}
+				}
+			})();
+		}, delayMs);
+		timer.unref?.();
+		this.topicRootCandidateClaimMaintenanceTimer = timer;
+	}
+
+	private pruneExpiredTopicRootCandidateClaims(
+		now: bigint = BigInt(Date.now()),
+	) {
+		const localClaim = this.localSignedTopicRootCandidateClaim;
+		if (localClaim && localClaim.expires <= now) {
+			this.localSignedTopicRootCandidateClaim = undefined;
+		}
+		let changed = false;
+		for (const [origin, claim] of this.signedTopicRootCandidateClaims) {
+			if (claim.expires <= now) {
+				this.signedTopicRootCandidateClaims.delete(origin);
+				changed = true;
+			}
+		}
+		return changed;
+	}
+
+	private rebuildAutoTopicRootCandidatesFromClaims(
+		now: bigint = BigInt(Date.now()),
+	): boolean {
 		if (!this.autoTopicRootCandidates) return false;
-		return this.queueAutoTopicRootCandidateUpdate(candidates);
+		const removedExpired = this.pruneExpiredTopicRootCandidateClaims(now);
+		const legacyDirectCandidates = [...this.peers.values()]
+			.filter((peer) => peer.protocol === TOPIC_CONTROL_PLANE_PROTOCOL_V2_0)
+			.map((peer) => peer.publicKey.hashcode());
+		const next = [
+			...(this.localSignedTopicRootCandidateClaim ? [] : [this.publicKeyHash]),
+			...legacyDirectCandidates,
+			...this.signedTopicRootCandidateClaims.keys(),
+		]
+			.filter(isCanonicalTopicRootCandidate)
+			.filter(
+				(candidate, index, candidates) =>
+					candidates.indexOf(candidate) === index,
+			)
+			.sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))
+			.slice(0, TOPIC_ROOT_CANDIDATES_MAX);
+		return this.setAutoTopicRootCandidateSnapshot(next, {
+			// A cooldown may coalesce additions, but it must never extend an expired
+			// candidate's effective lease. The full snapshot is authoritative, so any
+			// queued pre-expiry snapshot can be discarded safely here.
+			immediate: removedExpired,
+		});
 	}
 
-	private queueAutoTopicRootCandidateUpdate(
-		candidates: readonly string[],
+	private retainSignedTopicRootCandidateClaim(
+		origin: string,
+		claim: { bytes: Uint8Array; timestamp: bigint; expires: bigint },
+	): boolean {
+		const existing = this.signedTopicRootCandidateClaims.get(origin);
+		if (existing) {
+			if (claim.timestamp <= existing.timestamp) {
+				return false;
+			}
+		} else {
+			if (
+				this.signedTopicRootCandidateClaims.size >= TOPIC_ROOT_CANDIDATES_MAX
+			) {
+				const highest = [...this.signedTopicRootCandidateClaims.keys()]
+					.sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))
+					.at(-1)!;
+				if (origin >= highest) return false;
+				this.signedTopicRootCandidateClaims.delete(highest);
+			}
+		}
+		this.signedTopicRootCandidateClaims.set(origin, claim);
+		return true;
+	}
+
+	private consumeTopicRootCandidateClaimVerifyBudget(
+		peerHash: string,
+	): boolean {
+		const now = Date.now();
+		if (
+			now - this.topicRootCandidateClaimGlobalVerifyBudget.refilledAt >=
+			TOPIC_ROOT_CANDIDATE_CLAIM_VERIFY_REFILL_MS
+		) {
+			this.topicRootCandidateClaimGlobalVerifyBudget = {
+				remaining: TOPIC_ROOT_CANDIDATE_CLAIM_GLOBAL_VERIFY_BURST,
+				refilledAt: now,
+			};
+		}
+		if (this.topicRootCandidateClaimGlobalVerifyBudget.remaining <= 0) {
+			return false;
+		}
+		let budget = this.topicRootCandidateClaimVerifyBudgets.get(peerHash);
+		if (!budget) {
+			if (
+				this.topicRootCandidateClaimVerifyBudgets.size >=
+				TOPIC_ROOT_CANDIDATE_CLAIM_VERIFY_PEERS_MAX
+			) {
+				const oldest = this.topicRootCandidateClaimVerifyBudgets.keys().next()
+					.value as string | undefined;
+				if (oldest) this.topicRootCandidateClaimVerifyBudgets.delete(oldest);
+			}
+			budget = {
+				remaining: TOPIC_ROOT_CANDIDATE_CLAIM_VERIFY_BURST,
+				refilledAt: now,
+			};
+			this.topicRootCandidateClaimVerifyBudgets.set(peerHash, budget);
+		} else if (
+			now - budget.refilledAt >=
+			TOPIC_ROOT_CANDIDATE_CLAIM_VERIFY_REFILL_MS
+		) {
+			budget.remaining = TOPIC_ROOT_CANDIDATE_CLAIM_VERIFY_BURST;
+			budget.refilledAt = now;
+			// Refresh insertion order so bounded eviction remains O(1) and LRU-like.
+			this.topicRootCandidateClaimVerifyBudgets.delete(peerHash);
+			this.topicRootCandidateClaimVerifyBudgets.set(peerHash, budget);
+		}
+		if (budget.remaining <= 0) return false;
+		budget.remaining -= 1;
+		this.topicRootCandidateClaimGlobalVerifyBudget.remaining -= 1;
+		return true;
+	}
+
+	private async importSignedTopicRootCandidateClaim(
+		rawClaim: Uint8Array,
+		outerPeerHash: string,
+	): Promise<boolean> {
+		const lifecycleRevision = this.topicControlPlaneLifecycleRevision;
+		if (
+			rawClaim.byteLength === 0 ||
+			rawClaim.byteLength > TOPIC_ROOT_CANDIDATE_CLAIM_MAX_BYTES
+		) {
+			return false;
+		}
+		let claim: DataMessage;
+		try {
+			claim = DataMessage.from(new Uint8ArrayList(rawClaim));
+		} catch {
+			return false;
+		}
+		const canonicalBytes = toUint8Array(claim.bytes());
+		if (!bytesEqual(canonicalBytes, rawClaim)) return false;
+		if (
+			!claim.data ||
+			!bytesEqual(claim.data, this.topicRootCandidateClaimData)
+		) {
+			return false;
+		}
+		const signatures = claim.header.signatures?.signatures;
+		if (!signatures || signatures.length !== 1) return false;
+		const signer = signatures[0]?.publicKey;
+		if (!signer) return false;
+		const origin = signer.hashcode();
+		if (!isCanonicalTopicRootCandidate(origin)) return false;
+		if (origin === this.publicKeyHash) return false;
+
+		const now = BigInt(Date.now());
+		const timestamp = claim.header.timestamp;
+		const expires = claim.header.expires;
+		if (
+			expires <= now ||
+			expires <= timestamp ||
+			timestamp > now + BigInt(TOPIC_ROOT_CANDIDATE_CLAIM_FUTURE_SKEW_MS) ||
+			expires - timestamp > BigInt(TOPIC_ROOT_CANDIDATE_CLAIM_MAX_LIFETIME_MS)
+		) {
+			return false;
+		}
+
+		this.rebuildAutoTopicRootCandidatesFromClaims(now);
+		const existing = this.signedTopicRootCandidateClaims.get(origin);
+		if (existing) {
+			if (bytesEqual(existing.bytes, rawClaim)) return false;
+			if (timestamp <= existing.timestamp) {
+				return false;
+			}
+		}
+
+		if (
+			!existing &&
+			this.signedTopicRootCandidateClaims.size >= TOPIC_ROOT_CANDIDATES_MAX
+		) {
+			const highest = [...this.signedTopicRootCandidateClaims.keys()].sort(
+				(a, b) => (a < b ? -1 : a > b ? 1 : 0),
+			);
+			if (origin >= highest.at(-1)!) return false;
+		}
+		if (!this.consumeTopicRootCandidateClaimVerifyBudget(outerPeerHash)) {
+			return false;
+		}
+		this.seedNativeWireVerification(claim, rawClaim);
+		let verified = false;
+		try {
+			verified = await claim.verify(true);
+		} catch {
+			return false;
+		}
+		if (!verified) return false;
+		if (
+			lifecycleRevision !== this.topicControlPlaneLifecycleRevision ||
+			expires <= BigInt(Date.now()) ||
+			!this.autoTopicRootCandidates ||
+			!this.started ||
+			this.stopping ||
+			this.topicControlPlaneStopping
+		) {
+			return false;
+		}
+
+		if (
+			!this.retainSignedTopicRootCandidateClaim(origin, {
+				bytes: rawClaim.slice(),
+				timestamp,
+				expires,
+			})
+		) {
+			return false;
+		}
+		this.scheduleTopicRootCandidateClaimMaintenance();
+		return true;
+	}
+
+	private async sendSignedTopicRootCandidateClaims(
+		claims: Uint8Array[],
+		targets?: PeerStreams[],
+	) {
+		if (claims.length === 0) return;
+		const streams = (targets ?? [...this.peers.values()]).filter(
+			(stream) => stream.protocol === TOPIC_CONTROL_PLANE_PROTOCOL_V2_1,
+		);
+		if (streams.length === 0) return;
+		for (
+			let offset = 0;
+			offset < claims.length;
+			offset += TOPIC_ROOT_CANDIDATE_CLAIMS_MAX
+		) {
+			const message = new TopicRootCandidateClaims({
+				claims: claims.slice(offset, offset + TOPIC_ROOT_CANDIDATE_CLAIMS_MAX),
+			});
+			const embedded = await this.createMessage(
+				this.encodePubSubMessage(message),
+				{
+					mode: new AnyWhere(),
+					priority: 1,
+					skipRecipientValidation: true,
+				} as any,
+			);
+			await this.publishMessageMaybe(this.publicKey, embedded, streams);
+		}
+	}
+
+	private async sendAutoTopicRootCandidates(streams: PeerStreams[]) {
+		if (!this.started) throw new NotStartedError();
+		if (streams.length === 0) return;
+
+		const signedStreams = streams.filter(
+			(stream) => stream.protocol === TOPIC_CONTROL_PLANE_PROTOCOL_V2_1,
+		);
+		if (signedStreams.length > 0) {
+			this.rebuildAutoTopicRootCandidatesFromClaims();
+			if (
+				!this.localSignedTopicRootCandidateClaim &&
+				!(await this.refreshLocalTopicRootCandidateClaim())
+			) {
+				return;
+			}
+			const localClaim = this.localSignedTopicRootCandidateClaim;
+			if (!localClaim) return;
+			const claims = [...this.signedTopicRootCandidateClaims.entries()]
+				.sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
+				.map(([, claim]) => claim.bytes);
+			await this.sendSignedTopicRootCandidateClaims(claims, signedStreams);
+			if (!this.signedTopicRootCandidateClaims.has(this.publicKeyHash)) {
+				await this.sendSignedTopicRootCandidateClaims(
+					[localClaim.bytes],
+					signedStreams,
+				);
+			}
+		}
+	}
+
+	private setAutoTopicRootCandidateSnapshot(
+		next: string[],
+		options?: { immediate?: boolean },
 	): boolean {
 		if (
 			!this.autoTopicRootCandidates ||
 			this.stopping ||
 			this.topicControlPlaneStopping
-		)
+		) {
 			return false;
-		if (this.maybeDisableAutoTopicRootCandidatesIfExternallyConfigured())
+		}
+		if (this.maybeDisableAutoTopicRootCandidatesIfExternallyConfigured()) {
 			return false;
+		}
 		const managed = this.autoTopicRootCandidateSet;
 		if (!managed) return false;
-
+		if (options?.immediate) {
+			this.clearAutoTopicRootCandidateUpdateSchedule();
+			const current = [...managed];
+			if (sameCandidates(current, next)) return false;
+			this.scheduleAutoTopicRootCandidateUpdateCooldown();
+			this.applyAutoTopicRootCandidates(next);
+			return true;
+		}
 		const before = this.pendingAutoTopicRootCandidates ?? [...managed];
-		const next = this.normalizeAutoTopicRootCandidates([
-			...before,
-			...candidates,
-		]);
 		if (sameCandidates(before, next)) return false;
 
 		if (this.autoTopicRootCandidateUpdateTimer) {
@@ -921,7 +1329,6 @@ export class TopicControlPlane
 		this.shardRootCache.clear();
 		this.scheduleReconcileShardOverlays();
 		this.scheduleHostOwnedShardRoots();
-		this.scheduleAutoTopicRootCandidatesBroadcast();
 	}
 
 	private scheduleAutoTopicRootCandidateUpdateCooldown() {
@@ -1057,11 +1464,14 @@ export class TopicControlPlane
 					topics: userTopics,
 					requestSubscribers: true,
 				});
-				const embedded = await this.createMessage(this.encodePubSubMessage(msg), {
-					mode: new AnyWhere(),
-					priority: 1,
-					skipRecipientValidation: true,
-				} as any);
+				const embedded = await this.createMessage(
+					this.encodePubSubMessage(msg),
+					{
+						mode: new AnyWhere(),
+						priority: 1,
+						skipRecipientValidation: true,
+					} as any,
+				);
 				const st = this.fanoutChannels.get(shardTopic);
 				if (!st) return;
 				await st.channel.publish(toUint8Array(embedded.bytes()));
@@ -1277,6 +1687,11 @@ export class TopicControlPlane
 		if (bytes[0] === 4) {
 			assertTopicRootCandidatesFrame(bytes);
 		}
+		// Signed candidate claims are low-frequency opaque host-side frames. Keep
+		// this explicit seam ahead of the native variants 0-7 codec.
+		if (bytes[0] === 8) {
+			return TopicRootCandidateClaims.from(bytes);
+		}
 		const native = this.nativeTopicControl;
 		if (native) {
 			const decoded = native.decodePubSubMessage(bytes);
@@ -1367,9 +1782,8 @@ export class TopicControlPlane
 		for (;;) {
 			for (const signal of terminalSignals) throwIfAborted(signal);
 			const candidateGeneration = this.getTopicRootCandidateGeneration();
-			const candidateSignal = this.syncTopicRootCandidateResolutionSignal(
-				candidateGeneration,
-			);
+			const candidateSignal =
+				this.syncTopicRootCandidateResolutionSignal(candidateGeneration);
 			const linked = linkAbortSignals([...terminalSignals, candidateSignal]);
 			try {
 				const result = await operation({
@@ -1444,7 +1858,8 @@ export class TopicControlPlane
 			return this.normalizePeerTopicRootState(topic, resolvedThroughPeers);
 		}
 
-		const deterministic = this.topicRootControlPlane.resolveDeterministicTopicRoot(topic);
+		const deterministic =
+			this.topicRootControlPlane.resolveDeterministicTopicRoot(topic);
 		if (
 			deterministic === this.publicKeyHash &&
 			this.autoTopicRootCandidates &&
@@ -1547,7 +1962,7 @@ export class TopicControlPlane
 		let requestId = this.nextTopicRootQueryId >>> 0;
 		do {
 			requestId = requestId === 0 ? 1 : requestId;
-			this.nextTopicRootQueryId = ((requestId + 1) >>> 0) || 1;
+			this.nextTopicRootQueryId = (requestId + 1) >>> 0 || 1;
 			if (!this.pendingTopicRootQueries.has(requestId)) {
 				return requestId;
 			}
@@ -1559,14 +1974,17 @@ export class TopicControlPlane
 		peer: PeerStreams,
 		pubsubMessage: PubSubMessage,
 	) {
-		const embedded = await this.createMessage(this.encodePubSubMessage(pubsubMessage), {
-			mode: new SilentDelivery({
-				to: [peer.publicKey.hashcode()],
-				redundancy: 1,
-			}),
-			priority: 1,
-			skipRecipientValidation: true,
-		} as any);
+		const embedded = await this.createMessage(
+			this.encodePubSubMessage(pubsubMessage),
+			{
+				mode: new SilentDelivery({
+					to: [peer.publicKey.hashcode()],
+					redundancy: 1,
+				}),
+				priority: 1,
+				skipRecipientValidation: true,
+			} as any,
+		);
 		await this.publishMessage(this.publicKey, embedded, [peer]);
 	}
 
@@ -1700,10 +2118,12 @@ export class TopicControlPlane
 			async ({ candidateGeneration, signal }) => {
 				throwIfAborted(signal);
 				this.assertTopicControlPlaneActive(lifecycleRevision);
-				const root =
-					await this.topicRootControlPlane.resolveCanonicalTopicRoot(topic, {
+				const root = await this.topicRootControlPlane.resolveCanonicalTopicRoot(
+					topic,
+					{
 						signal,
-					});
+					},
+				);
 				this.assertTopicControlPlaneActive(lifecycleRevision);
 				if (root !== this.publicKeyHash) {
 					return root;
@@ -1764,10 +2184,7 @@ export class TopicControlPlane
 			}
 
 			if (attempt < 2) {
-				await withAbort(
-					delay(150 * (attempt + 1), options),
-					options?.signal,
-				);
+				await withAbort(delay(150 * (attempt + 1), options), options?.signal);
 			}
 		}
 		return undefined;
@@ -2084,16 +2501,16 @@ export class TopicControlPlane
 				// stream is already established (especially in small test nets without
 				// trackers/bootstraps). Best-effort only: join can still succeed via
 				// trackers/other routing if this times out.
-					try {
-						await this.fanout.waitFor(root, {
-							target: "neighbor",
-							// Best-effort pre-check only: do not block subscribe/publish setup
-							// for long periods if the root is not yet a direct stream neighbor.
-							timeout: 1_000,
-						});
-					} catch {
-						// ignore
-					}
+				try {
+					await this.fanout.waitFor(root, {
+						target: "neighbor",
+						// Best-effort pre-check only: do not block subscribe/publish setup
+						// for long periods if the root is not yet a direct stream neighbor.
+						timeout: 1_000,
+					});
+				} catch {
+					// ignore
+				}
 				const joinOpts = options?.signal
 					? { ...(this.fanoutJoinOptions ?? {}), signal: options.signal }
 					: this.fanoutJoinOptions;
@@ -2261,11 +2678,14 @@ export class TopicControlPlane
 					topics: userTopics,
 					requestSubscribers: true,
 				});
-				const embedded = await this.createMessage(this.encodePubSubMessage(msg), {
-					mode: new AnyWhere(),
-					priority: 1,
-					skipRecipientValidation: true,
-				} as any);
+				const embedded = await this.createMessage(
+					this.encodePubSubMessage(msg),
+					{
+						mode: new AnyWhere(),
+						priority: 1,
+						skipRecipientValidation: true,
+					} as any,
+				);
 				const st = this.fanoutChannels.get(shardTopic);
 				if (!st)
 					throw new Error(`Fanout channel missing for shard: ${shardTopic}`);
@@ -2318,11 +2738,15 @@ export class TopicControlPlane
 		}
 
 		// Best-effort: do not block callers on network I/O (can hang under teardown).
-		void this.debounceUnsubscribeAggregator.add({ key: topic }).catch(logErrorIfStarted);
+		void this.debounceUnsubscribeAggregator
+			.add({ key: topic })
+			.catch(logErrorIfStarted);
 		return true;
 	}
 
-	private async _announceUnsubscribe(topics: { key: string; counter: number }[]) {
+	private async _announceUnsubscribe(
+		topics: { key: string; counter: number }[],
+	) {
 		if (!this.started) throw new NotStartedError();
 
 		const byShard = new Map<string, string[]>();
@@ -2340,11 +2764,14 @@ export class TopicControlPlane
 				// Announce first.
 				try {
 					const msg = new Unsubscribe({ topics: userTopics });
-					const embedded = await this.createMessage(this.encodePubSubMessage(msg), {
-						mode: new AnyWhere(),
-						priority: 1,
-						skipRecipientValidation: true,
-					} as any);
+					const embedded = await this.createMessage(
+						this.encodePubSubMessage(msg),
+						{
+							mode: new AnyWhere(),
+							priority: 1,
+							skipRecipientValidation: true,
+						} as any,
+					);
 					const st = this.fanoutChannels.get(shardTopic);
 					if (st) {
 						// Best-effort: do not let a stuck proxy publish stall teardown.
@@ -2413,11 +2840,14 @@ export class TopicControlPlane
 						timestamp: batch.timestamp,
 						topics: batch.topics,
 					});
-					const embedded = await this.createMessage(this.encodePubSubMessage(msg), {
-						mode: new AnyWhere(),
-						priority: 1,
-						skipRecipientValidation: true,
-					} as any);
+					const embedded = await this.createMessage(
+						this.encodePubSubMessage(msg),
+						{
+							mode: new AnyWhere(),
+							priority: 1,
+							skipRecipientValidation: true,
+						} as any,
+					);
 					await this.ensureFanoutChannel(shardTopic, { ephemeral: true });
 					const st = this.fanoutChannels.get(shardTopic);
 					if (st) {
@@ -2462,9 +2892,10 @@ export class TopicControlPlane
 	private onFanoutPeerUnreachable(
 		ev: CustomEvent<{ topic: string; root: string; publicKeyHash: string }>,
 	) {
-		void this
-			.announcePeerUnavailableOnShard(ev.detail.publicKeyHash, ev.detail.topic)
-			.catch(logErrorIfStarted);
+		void this.announcePeerUnavailableOnShard(
+			ev.detail.publicKeyHash,
+			ev.detail.topic,
+		).catch(logErrorIfStarted);
 	}
 
 	getSubscribers(topic: string): PublicSignKey[] | undefined {
@@ -2544,11 +2975,14 @@ export class TopicControlPlane
 				const persistent = (this.shardRefCounts.get(shardTopic) ?? 0) > 0;
 				await this.ensureFanoutChannel(shardTopic, { ephemeral: !persistent });
 
-				const embedded = await this.createMessage(this.encodePubSubMessage(msg), {
-					mode: new AnyWhere(),
-					priority: 1,
-					skipRecipientValidation: true,
-				} as any);
+				const embedded = await this.createMessage(
+					this.encodePubSubMessage(msg),
+					{
+						mode: new AnyWhere(),
+						priority: 1,
+						skipRecipientValidation: true,
+					} as any,
+				);
 				const payload = toUint8Array(embedded.bytes());
 
 				const st = this.fanoutChannels.get(shardTopic);
@@ -2810,9 +3244,9 @@ export class TopicControlPlane
 			}))
 			.filter((batch) => batch.topics.length > 0);
 		if (batches.length > 0) {
-			void this
-				.announcePeerUnavailable(publicKeyHash, batches)
-				.catch(logErrorIfStarted);
+			void this.announcePeerUnavailable(publicKeyHash, batches).catch(
+				logErrorIfStarted,
+			);
 		}
 	}
 
@@ -2822,7 +3256,10 @@ export class TopicControlPlane
 			return [];
 		}
 
-		const grouped = new Map<string, { session: bigint; timestamp: bigint; topics: string[] }>();
+		const grouped = new Map<
+			string,
+			{ session: bigint; timestamp: bigint; topics: string[] }
+		>();
 		for (const topic of peerTopics) {
 			const existing = this.topics.get(topic)?.get(peerHash);
 			if (!existing) {
@@ -2959,12 +3396,10 @@ export class TopicControlPlane
 			if (!this.lastSubscriptionMessages.has(subscriberKey)) {
 				this.lastSubscriptionMessages.set(subscriberKey, new Map());
 			}
-			this.lastSubscriptionMessages
-				.get(subscriberKey)!
-				.set(topic, {
-					session,
-					timestamp,
-				});
+			this.lastSubscriptionMessages.get(subscriberKey)!.set(topic, {
+				session,
+				timestamp,
+			});
 		}
 		return true;
 	}
@@ -3100,7 +3535,7 @@ export class TopicControlPlane
 		} catch {
 			// ignore and fall back
 		}
-			await st.channel.publishMaybe(payload);
+		await st.channel.publishMaybe(payload);
 	}
 
 	private async processDirectPubSubMessage(input: {
@@ -3112,6 +3547,7 @@ export class TopicControlPlane
 		const { pubsubMessage, message, from, stream } = input;
 		const isDirectRootControl =
 			pubsubMessage instanceof TopicRootCandidates ||
+			pubsubMessage instanceof TopicRootCandidateClaims ||
 			pubsubMessage instanceof TopicRootQuery ||
 			pubsubMessage instanceof TopicRootQueryResponse;
 		const directRootSigner = isDirectRootControl
@@ -3125,8 +3561,41 @@ export class TopicControlPlane
 		}
 
 		if (pubsubMessage instanceof TopicRootCandidates) {
-			// Used only to converge deterministic shard-root candidates in auto mode.
-			this.mergeAutoTopicRootCandidatesFromPeer(pubsubMessage.candidates);
+			if (stream.protocol !== TOPIC_CONTROL_PLANE_PROTOCOL_V2_0) {
+				return;
+			}
+			// `addPeer()` already admitted the authenticated direct stream identity.
+			// The advertised list is intentionally ignored.
+			return;
+		}
+
+		if (pubsubMessage instanceof TopicRootCandidateClaims) {
+			if (
+				stream.protocol !== TOPIC_CONTROL_PLANE_PROTOCOL_V2_1 ||
+				!this.autoTopicRootCandidates
+			) {
+				return;
+			}
+			const imported: Uint8Array[] = [];
+			const outerPeerHash = stream.publicKey.hashcode();
+			for (const claim of pubsubMessage.claims) {
+				if (
+					await this.importSignedTopicRootCandidateClaim(claim, outerPeerHash)
+				) {
+					imported.push(claim);
+				}
+			}
+			if (imported.length > 0) {
+				this.rebuildAutoTopicRootCandidatesFromClaims();
+				// Relay the exact nested claims; no relay signature is substituted for
+				// their origin signatures.
+				void this.sendSignedTopicRootCandidateClaims(
+					imported,
+					[...this.peers.values()].filter(
+						(peer) => peer.publicKey.hashcode() !== outerPeerHash,
+					),
+				).catch(() => {});
+			}
 			return;
 		}
 
@@ -3465,6 +3934,7 @@ export class TopicControlPlane
 		if (
 			!(pubsubMessage instanceof PubSubData) &&
 			!(pubsubMessage instanceof TopicRootCandidates) &&
+			!(pubsubMessage instanceof TopicRootCandidateClaims) &&
 			!(pubsubMessage instanceof TopicRootQuery) &&
 			!(pubsubMessage instanceof GetSubscribers) &&
 			!(pubsubMessage instanceof Subscribe) &&
@@ -3485,8 +3955,8 @@ export class TopicControlPlane
 		}
 
 		if (pubsubMessage instanceof PubSubData) {
-			const wantsTopic = pubsubMessage.topics.some((t) =>
-				this.subscriptions.has(t) || this.pendingSubscriptions.has(t),
+			const wantsTopic = pubsubMessage.topics.some(
+				(t) => this.subscriptions.has(t) || this.pendingSubscriptions.has(t),
 			);
 			isForMe = pubsubMessage.strict ? isForMe && wantsTopic : wantsTopic;
 		}
