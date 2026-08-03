@@ -1,5 +1,13 @@
 # Changelog
 
+## 5.3.10
+
+### Patch Changes
+
+- [#1154](https://github.com/dao-xyz/peerbit/pull/1154) [`0e46598`](https://github.com/dao-xyz/peerbit/commit/0e465989c80d2d0af412d4a551ea1a1e00f77aa4) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Coalesce automatic topic-root candidate generations to bound reconciliation, hosting, and gossip work under update bursts.
+
+- [#1157](https://github.com/dao-xyz/peerbit/pull/1157) [`80c033f`](https://github.com/dao-xyz/peerbit/commit/80c033f8740236e9183474d4f5daf717ba03627c) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Cancel obsolete topic-root resolver, tracker, peer-query, and shard-hosting work when callers abort, Pubsub stops, or root candidates change.
+
 ## 5.3.9
 
 ### Patch Changes
