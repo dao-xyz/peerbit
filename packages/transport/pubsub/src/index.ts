@@ -209,11 +209,15 @@ const TOPIC_ROOT_CANDIDATE_CLAIM_DOMAIN = utf8Encoder.encode(
 );
 const TOPIC_ROOT_CANDIDATE_SCOPE_DOMAIN =
 	"peerbit/topic-root-candidate-scope/v1";
-const TOPIC_ROOT_CANDIDATE_CLAIM_MAX_LIFETIME_MS = 90_000;
+const TOPIC_ROOT_CANDIDATE_CLAIM_LIFETIME_MS = 90_000;
 const TOPIC_ROOT_CANDIDATE_CLAIM_FUTURE_SKEW_MS = 30_000;
+const TOPIC_ROOT_CANDIDATE_CLAIM_RECEIVER_MAX_LIFETIME_MS =
+	TOPIC_ROOT_CANDIDATE_CLAIM_LIFETIME_MS +
+	TOPIC_ROOT_CANDIDATE_CLAIM_FUTURE_SKEW_MS;
 const TOPIC_ROOT_CANDIDATE_CLAIM_REFRESH_MS = 30_000;
 const TOPIC_ROOT_CANDIDATE_CLAIM_REFRESH_JITTER_MS = 5_000;
 const TOPIC_ROOT_CANDIDATE_CLAIM_REFRESH_RETRY_MS = 1_000;
+const TOPIC_ROOT_CANDIDATE_CLAIM_ADVERTISEMENT_TIMEOUT_MS = 10_000;
 // A sparse leaf can receive a 64-origin snapshot plus two refresh waves through
 // one relay in the first minute. Keep per-relay headroom for that honest burst;
 // the separate global cap still bounds total signature work.
@@ -221,6 +225,12 @@ const TOPIC_ROOT_CANDIDATE_CLAIM_VERIFY_BURST = 256;
 const TOPIC_ROOT_CANDIDATE_CLAIM_GLOBAL_VERIFY_BURST = 512;
 const TOPIC_ROOT_CANDIDATE_CLAIM_VERIFY_REFILL_MS = 60_000;
 const TOPIC_ROOT_CANDIDATE_CLAIM_VERIFY_PEERS_MAX = 4_096;
+type TopicRootCandidateClaimRecord = {
+	bytes: Uint8Array;
+	timestamp: bigint;
+	expires: bigint;
+	acceptUntil: number;
+};
 const sameCandidates = (left: string[], right: string[]) =>
 	left.length === right.length &&
 	left.every((candidate, index) => candidate === right[index]);
@@ -446,16 +456,21 @@ export class TopicControlPlane
 	private hostOwnedShardRootsDirty = false;
 	private readonly signedTopicRootCandidateClaims = new Map<
 		string,
-		{ bytes: Uint8Array; timestamp: bigint; expires: bigint }
+		TopicRootCandidateClaimRecord
 	>();
-	private localSignedTopicRootCandidateClaim?: {
-		bytes: Uint8Array;
-		timestamp: bigint;
-		expires: bigint;
-	};
+	// Active claims expire, but their per-origin timestamp floors survive for the
+	// auto-mode lifecycle so a frozen wall clock cannot renew a replayed lease.
+	// Retaining only the deterministic lowest origins keeps this state hard-bounded.
+	private readonly topicRootCandidateClaimReplayFloors = new Map<
+		string,
+		bigint
+	>();
+	private localSignedTopicRootCandidateClaim?: TopicRootCandidateClaimRecord;
 	private topicRootCandidateClaimMaintenanceTimer?: ReturnType<
 		typeof setTimeout
 	>;
+	private topicRootCandidateClaimRefreshNotBefore?: number;
+	private topicRootCandidateClaimMaintenanceRefreshInFlight?: Promise<void>;
 	private readonly topicRootCandidateClaimVerifyBudgets = new Map<
 		string,
 		{ remaining: number; refilledAt: number }
@@ -678,6 +693,10 @@ export class TopicControlPlane
 	}
 
 	public override async start() {
+		// Match DirectStream's idempotent start guard before mutating automatic
+		// candidates. In particular, a repeated start must not restore unsigned
+		// self while a signed-protocol peer is connected.
+		if (this.started) return;
 		this.topicControlPlaneStopping = false;
 		if (
 			this.autoTopicRootCandidates &&
@@ -805,12 +824,18 @@ export class TopicControlPlane
 		protocol: string,
 		connId: string,
 	): PeerStreams {
+		const hadSignedPeer = [...this.peers.values()].some(
+			(peer) => peer.protocol === TOPIC_CONTROL_PLANE_PROTOCOL_V2_1,
+		);
 		const existingPeer = this.peers.get(publicKey.hashcode());
 		const peer = super.addPeer(peerId, publicKey, protocol, connId);
 		if (this.autoTopicRootCandidates) {
-			if (peer.protocol === TOPIC_CONTROL_PLANE_PROTOCOL_V2_0) {
-				this.rebuildAutoTopicRootCandidatesFromClaims();
-			}
+			const hasSignedPeer = [...this.peers.values()].some(
+				(candidate) => candidate.protocol === TOPIC_CONTROL_PLANE_PROTOCOL_V2_1,
+			);
+			this.rebuildAutoTopicRootCandidatesFromClaims(BigInt(Date.now()), {
+				immediate: hadSignedPeer !== hasSignedPeer,
+			});
 			if (peer.protocol === TOPIC_CONTROL_PLANE_PROTOCOL_V2_1) {
 				const sendWhenOutboundReady = () => {
 					if (
@@ -844,12 +869,21 @@ export class TopicControlPlane
 	protected override async _removePeer(publicKey: PublicSignKey) {
 		const hash = publicKey.hashcode();
 		const protocol = this.peers.get(hash)?.protocol;
+		const hadSignedPeer = [...this.peers.values()].some(
+			(peer) => peer.protocol === TOPIC_CONTROL_PLANE_PROTOCOL_V2_1,
+		);
 		const removed = await super._removePeer(publicKey);
 		if (
 			this.autoTopicRootCandidates &&
-			protocol === TOPIC_CONTROL_PLANE_PROTOCOL_V2_0
+			(protocol === TOPIC_CONTROL_PLANE_PROTOCOL_V2_0 ||
+				protocol === TOPIC_CONTROL_PLANE_PROTOCOL_V2_1)
 		) {
-			this.rebuildAutoTopicRootCandidatesFromClaims();
+			const hasSignedPeer = [...this.peers.values()].some(
+				(peer) => peer.protocol === TOPIC_CONTROL_PLANE_PROTOCOL_V2_1,
+			);
+			this.rebuildAutoTopicRootCandidatesFromClaims(BigInt(Date.now()), {
+				immediate: hadSignedPeer !== hasSignedPeer,
+			});
 		}
 		return removed;
 	}
@@ -892,12 +926,43 @@ export class TopicControlPlane
 	private clearSignedTopicRootCandidateState() {
 		this.clearTopicRootCandidateClaimTimer();
 		this.signedTopicRootCandidateClaims.clear();
+		this.topicRootCandidateClaimReplayFloors.clear();
 		this.localSignedTopicRootCandidateClaim = undefined;
+		this.topicRootCandidateClaimRefreshNotBefore = undefined;
+		this.topicRootCandidateClaimMaintenanceRefreshInFlight = undefined;
 		this.topicRootCandidateClaimVerifyBudgets.clear();
 		this.topicRootCandidateClaimGlobalVerifyBudget = {
 			remaining: TOPIC_ROOT_CANDIDATE_CLAIM_GLOBAL_VERIFY_BURST,
 			refilledAt: Date.now(),
 		};
+	}
+
+	private isTopicRootCandidateClaimTimeValid(
+		timestamp: bigint,
+		expires: bigint,
+		now: bigint,
+	): boolean {
+		return (
+			expires > now &&
+			timestamp <= now + BigInt(TOPIC_ROOT_CANDIDATE_CLAIM_FUTURE_SKEW_MS) &&
+			expires - timestamp === BigInt(TOPIC_ROOT_CANDIDATE_CLAIM_LIFETIME_MS)
+		);
+	}
+
+	private topicRootCandidateClaimAcceptanceDeadline(
+		timestamp: bigint,
+		expires: bigint,
+		wallNow: bigint,
+		monotonicNow: number,
+		maxRemainingMs: number,
+	): number | undefined {
+		if (!this.isTopicRootCandidateClaimTimeValid(timestamp, expires, wallNow)) {
+			return undefined;
+		}
+		return (
+			monotonicNow +
+			Math.min(Number(expires - wallNow), Math.max(0, maxRemainingMs))
+		);
 	}
 
 	private async refreshLocalTopicRootCandidateClaim(): Promise<boolean> {
@@ -909,12 +974,14 @@ export class TopicControlPlane
 		) {
 			return false;
 		}
+		if (!this.canRetainTopicRootCandidateClaimOrigin(this.publicKeyHash)) {
+			return false;
+		}
 		const lifecycleRevision = this.topicControlPlaneLifecycleRevision;
-		const now = Date.now();
 		const claim = await this.createMessage(this.topicRootCandidateClaimData, {
 			mode: new AnyWhere(),
 			priority: 1,
-			expiresAt: now + TOPIC_ROOT_CANDIDATE_CLAIM_MAX_LIFETIME_MS,
+			expiresInMs: TOPIC_ROOT_CANDIDATE_CLAIM_LIFETIME_MS,
 			skipRecipientValidation: true,
 		} as any);
 		const bytes = toUint8Array(claim.bytes());
@@ -932,19 +999,35 @@ export class TopicControlPlane
 		) {
 			return false;
 		}
+		const timestamp = claim.header.timestamp;
+		const expires = claim.header.expires;
+		const acceptanceDeadline = this.topicRootCandidateClaimAcceptanceDeadline(
+			timestamp,
+			expires,
+			BigInt(Date.now()),
+			performance.now(),
+			TOPIC_ROOT_CANDIDATE_CLAIM_LIFETIME_MS,
+		);
+		if (acceptanceDeadline === undefined) {
+			return false;
+		}
 		const record = {
 			bytes,
-			timestamp: claim.header.timestamp,
-			expires: claim.header.expires,
+			timestamp,
+			expires,
+			acceptUntil: acceptanceDeadline,
 		};
 		const current = this.localSignedTopicRootCandidateClaim;
 		if (current && record.timestamp <= current.timestamp) {
 			return false;
 		}
+		if (!this.retainSignedTopicRootCandidateClaim(this.publicKeyHash, record)) {
+			return false;
+		}
 		this.localSignedTopicRootCandidateClaim = record;
-		this.retainSignedTopicRootCandidateClaim(this.publicKeyHash, record);
+		this.topicRootCandidateClaimRefreshNotBefore = undefined;
 		this.rebuildAutoTopicRootCandidatesFromClaims();
-		return true;
+		return this.localSignedTopicRootCandidateClaim === record;
 	}
 
 	private scheduleTopicRootCandidateClaimMaintenance(minDelayMs = 0) {
@@ -958,71 +1041,163 @@ export class TopicControlPlane
 		}
 		this.clearTopicRootCandidateClaimTimer();
 		const now = Date.now();
+		const monotonicNow = performance.now();
 		const local = this.localSignedTopicRootCandidateClaim;
+		const localOriginEligible = this.canRetainTopicRootCandidateClaimOrigin(
+			this.publicKeyHash,
+		);
+		if (localOriginEligible && minDelayMs > 0) {
+			this.topicRootCandidateClaimRefreshNotBefore = Math.max(
+				this.topicRootCandidateClaimRefreshNotBefore ?? 0,
+				monotonicNow + minDelayMs,
+			);
+		} else if (!localOriginEligible) {
+			this.topicRootCandidateClaimRefreshNotBefore = undefined;
+		}
+		const canScheduleLocalRefresh =
+			localOriginEligible &&
+			!this.topicRootCandidateClaimMaintenanceRefreshInFlight;
 		const refreshDueAt = local
 			? Number(local.timestamp) +
 				TOPIC_ROOT_CANDIDATE_CLAIM_REFRESH_MS +
 				Math.floor(Math.random() * TOPIC_ROOT_CANDIDATE_CLAIM_REFRESH_JITTER_MS)
-			: now;
-		let expiryDueAt = Number.POSITIVE_INFINITY;
+			: canScheduleLocalRefresh
+				? now
+				: Number.POSITIVE_INFINITY;
+		let expiryDelayMs = Number.POSITIVE_INFINITY;
 		for (const claim of this.signedTopicRootCandidateClaims.values()) {
-			expiryDueAt = Math.min(expiryDueAt, Number(claim.expires) + 1);
+			expiryDelayMs = Math.min(
+				expiryDelayMs,
+				Number(claim.expires) - now,
+				claim.acceptUntil - monotonicNow,
+			);
 		}
-		if (local) expiryDueAt = Math.min(expiryDueAt, Number(local.expires) + 1);
-		const refreshDelayMs = Math.max(minDelayMs, refreshDueAt - now, 0);
-		const expiryDelayMs = Math.max(expiryDueAt - now, 0);
+		if (local) {
+			expiryDelayMs = Math.min(
+				expiryDelayMs,
+				Number(local.expires) - now,
+				local.acceptUntil - monotonicNow,
+			);
+		}
+		const refreshDelayMs = canScheduleLocalRefresh
+			? Math.max(
+					refreshDueAt - now,
+					(this.topicRootCandidateClaimRefreshNotBefore ?? monotonicNow) -
+						monotonicNow,
+					0,
+				)
+			: Number.POSITIVE_INFINITY;
+		expiryDelayMs = Math.max(Math.ceil(expiryDelayMs), 0);
 		const delayMs = Math.min(2_147_483_647, refreshDelayMs, expiryDelayMs);
 		const timer = setTimeout(() => {
 			if (this.topicRootCandidateClaimMaintenanceTimer !== timer) return;
 			this.topicRootCandidateClaimMaintenanceTimer = undefined;
-			void (async () => {
-				let retryDelayMs = 0;
-				try {
-					this.rebuildAutoTopicRootCandidatesFromClaims();
-					const currentLocal = this.localSignedTopicRootCandidateClaim;
-					const refreshDue =
-						!currentLocal ||
+			let retryDelayMs = 0;
+			try {
+				this.rebuildAutoTopicRootCandidatesFromClaims();
+				const currentLocal = this.localSignedTopicRootCandidateClaim;
+				const refreshDue =
+					!this.topicRootCandidateClaimMaintenanceRefreshInFlight &&
+					this.canRetainTopicRootCandidateClaimOrigin(this.publicKeyHash) &&
+					performance.now() >=
+						(this.topicRootCandidateClaimRefreshNotBefore ?? 0) &&
+					(!currentLocal ||
 						Date.now() - Number(currentLocal.timestamp) >=
-							TOPIC_ROOT_CANDIDATE_CLAIM_REFRESH_MS;
-					if (refreshDue) {
-						if (await this.refreshLocalTopicRootCandidateClaim()) {
-							try {
-								await this.sendSignedTopicRootCandidateClaims([
-									this.localSignedTopicRootCandidateClaim!.bytes,
-								]);
-							} catch (error: any) {
-								// A later renewal or outbound-stream snapshot retries this
-								// best-effort advertisement; the signed lease itself is valid.
-								logErrorIfStarted(error);
-							}
-						} else {
-							retryDelayMs = TOPIC_ROOT_CANDIDATE_CLAIM_REFRESH_RETRY_MS;
-						}
-					}
-				} catch (error: any) {
-					logErrorIfStarted(error);
-					retryDelayMs = TOPIC_ROOT_CANDIDATE_CLAIM_REFRESH_RETRY_MS;
-				} finally {
-					if (!this.topicRootCandidateClaimMaintenanceTimer) {
-						this.scheduleTopicRootCandidateClaimMaintenance(retryDelayMs);
-					}
+							TOPIC_ROOT_CANDIDATE_CLAIM_REFRESH_MS);
+				if (refreshDue) {
+					this.startTopicRootCandidateClaimMaintenanceRefresh();
 				}
-			})();
+			} catch (error: any) {
+				logErrorIfStarted(error);
+				retryDelayMs = TOPIC_ROOT_CANDIDATE_CLAIM_REFRESH_RETRY_MS;
+			}
+			if (!this.topicRootCandidateClaimMaintenanceTimer) {
+				// Re-arm immediately. While refresh is in flight, its due time is
+				// treated as infinity but independent claim expiries remain scheduled.
+				this.scheduleTopicRootCandidateClaimMaintenance(retryDelayMs);
+			}
 		}, delayMs);
 		timer.unref?.();
 		this.topicRootCandidateClaimMaintenanceTimer = timer;
 	}
 
+	private startTopicRootCandidateClaimMaintenanceRefresh() {
+		if (this.topicRootCandidateClaimMaintenanceRefreshInFlight) return;
+		const lifecycleRevision = this.topicControlPlaneLifecycleRevision;
+		let task!: Promise<void>;
+		task = (async () => {
+			try {
+				const refreshed = await this.refreshLocalTopicRootCandidateClaim();
+				if (
+					this.topicRootCandidateClaimMaintenanceRefreshInFlight !== task ||
+					lifecycleRevision !== this.topicControlPlaneLifecycleRevision
+				) {
+					return;
+				}
+				const local = this.localSignedTopicRootCandidateClaim;
+				if (!refreshed || !local) {
+					if (this.canRetainTopicRootCandidateClaimOrigin(this.publicKeyHash)) {
+						this.topicRootCandidateClaimRefreshNotBefore =
+							performance.now() + TOPIC_ROOT_CANDIDATE_CLAIM_REFRESH_RETRY_MS;
+					} else {
+						this.topicRootCandidateClaimRefreshNotBefore = undefined;
+					}
+					return;
+				}
+				this.topicRootCandidateClaimRefreshNotBefore = undefined;
+				// Arm the new local lease's expiry before outbound I/O can stall.
+				this.scheduleTopicRootCandidateClaimMaintenance();
+				try {
+					await this.sendSignedTopicRootCandidateClaims(
+						[local.bytes],
+						undefined,
+						AbortSignal.timeout(
+							TOPIC_ROOT_CANDIDATE_CLAIM_ADVERTISEMENT_TIMEOUT_MS,
+						),
+					);
+				} catch (error: any) {
+					// A later renewal or outbound-stream snapshot retries this
+					// best-effort advertisement; the signed lease itself is valid.
+					logErrorIfStarted(error);
+				}
+			} catch (error: any) {
+				if (
+					this.topicRootCandidateClaimMaintenanceRefreshInFlight === task &&
+					lifecycleRevision === this.topicControlPlaneLifecycleRevision
+				) {
+					logErrorIfStarted(error);
+					this.topicRootCandidateClaimRefreshNotBefore =
+						this.canRetainTopicRootCandidateClaimOrigin(this.publicKeyHash)
+							? performance.now() + TOPIC_ROOT_CANDIDATE_CLAIM_REFRESH_RETRY_MS
+							: undefined;
+				}
+			} finally {
+				if (
+					this.topicRootCandidateClaimMaintenanceRefreshInFlight === task &&
+					lifecycleRevision === this.topicControlPlaneLifecycleRevision
+				) {
+					this.topicRootCandidateClaimMaintenanceRefreshInFlight = undefined;
+					this.scheduleTopicRootCandidateClaimMaintenance();
+				}
+			}
+		})();
+		this.topicRootCandidateClaimMaintenanceRefreshInFlight = task;
+	}
+
 	private pruneExpiredTopicRootCandidateClaims(
 		now: bigint = BigInt(Date.now()),
+		monotonicNow: number = performance.now(),
 	) {
 		const localClaim = this.localSignedTopicRootCandidateClaim;
-		if (localClaim && localClaim.expires <= now) {
+		if (
+			localClaim &&
+			(localClaim.expires <= now || localClaim.acceptUntil <= monotonicNow)
+		) {
 			this.localSignedTopicRootCandidateClaim = undefined;
 		}
 		let changed = false;
 		for (const [origin, claim] of this.signedTopicRootCandidateClaims) {
-			if (claim.expires <= now) {
+			if (claim.expires <= now || claim.acceptUntil <= monotonicNow) {
 				this.signedTopicRootCandidateClaims.delete(origin);
 				changed = true;
 			}
@@ -1032,54 +1207,101 @@ export class TopicControlPlane
 
 	private rebuildAutoTopicRootCandidatesFromClaims(
 		now: bigint = BigInt(Date.now()),
+		options?: { immediate?: boolean },
 	): boolean {
 		if (!this.autoTopicRootCandidates) return false;
 		const removedExpired = this.pruneExpiredTopicRootCandidateClaims(now);
 		const legacyDirectCandidates = [...this.peers.values()]
 			.filter((peer) => peer.protocol === TOPIC_CONTROL_PLANE_PROTOCOL_V2_0)
 			.map((peer) => peer.publicKey.hashcode());
+		const hasSignedPeer = [...this.peers.values()].some(
+			(peer) => peer.protocol === TOPIC_CONTROL_PLANE_PROTOCOL_V2_1,
+		);
 		const next = [
-			...(this.localSignedTopicRootCandidateClaim ? [] : [this.publicKeyHash]),
-			...legacyDirectCandidates,
-			...this.signedTopicRootCandidateClaims.keys(),
+			...new Set([
+				...(this.localSignedTopicRootCandidateClaim || hasSignedPeer
+					? []
+					: [this.publicKeyHash]),
+				...legacyDirectCandidates,
+				...this.signedTopicRootCandidateClaims.keys(),
+			]),
 		]
 			.filter(isCanonicalTopicRootCandidate)
-			.filter(
-				(candidate, index, candidates) =>
-					candidates.indexOf(candidate) === index,
-			)
 			.sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))
 			.slice(0, TOPIC_ROOT_CANDIDATES_MAX);
 		return this.setAutoTopicRootCandidateSnapshot(next, {
 			// A cooldown may coalesce additions, but it must never extend an expired
 			// candidate's effective lease. The full snapshot is authoritative, so any
 			// queued pre-expiry snapshot can be discarded safely here.
-			immediate: removedExpired,
+			immediate: removedExpired || options?.immediate,
 		});
 	}
 
 	private retainSignedTopicRootCandidateClaim(
 		origin: string,
-		claim: { bytes: Uint8Array; timestamp: bigint; expires: bigint },
+		claim: TopicRootCandidateClaimRecord,
 	): boolean {
+		if (
+			!this.canAdvanceTopicRootCandidateClaimReplayFloor(
+				origin,
+				claim.timestamp,
+			)
+		) {
+			return false;
+		}
 		const existing = this.signedTopicRootCandidateClaims.get(origin);
 		if (existing) {
 			if (claim.timestamp <= existing.timestamp) {
 				return false;
 			}
-		} else {
+		}
+		if (!this.topicRootCandidateClaimReplayFloors.has(origin)) {
 			if (
-				this.signedTopicRootCandidateClaims.size >= TOPIC_ROOT_CANDIDATES_MAX
+				this.topicRootCandidateClaimReplayFloors.size >=
+				TOPIC_ROOT_CANDIDATES_MAX
 			) {
-				const highest = [...this.signedTopicRootCandidateClaims.keys()]
+				const highest = [...this.topicRootCandidateClaimReplayFloors.keys()]
 					.sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))
 					.at(-1)!;
-				if (origin >= highest) return false;
+				// `canAdvance...` admitted a lower origin. Removing the displaced
+				// origin's live/local state preserves the same lowest-origin invariant;
+				// because the retained maximum only decreases, it cannot re-enter.
+				this.topicRootCandidateClaimReplayFloors.delete(highest);
 				this.signedTopicRootCandidateClaims.delete(highest);
+				if (highest === this.publicKeyHash) {
+					this.localSignedTopicRootCandidateClaim = undefined;
+				}
 			}
 		}
+		this.topicRootCandidateClaimReplayFloors.set(origin, claim.timestamp);
 		this.signedTopicRootCandidateClaims.set(origin, claim);
 		return true;
+	}
+
+	private canAdvanceTopicRootCandidateClaimReplayFloor(
+		origin: string,
+		timestamp: bigint,
+	): boolean {
+		const floor = this.topicRootCandidateClaimReplayFloors.get(origin);
+		if (floor !== undefined) {
+			return timestamp > floor;
+		}
+		return this.canRetainTopicRootCandidateClaimOrigin(origin);
+	}
+
+	private canRetainTopicRootCandidateClaimOrigin(origin: string): boolean {
+		if (this.topicRootCandidateClaimReplayFloors.has(origin)) {
+			return true;
+		}
+		if (
+			this.topicRootCandidateClaimReplayFloors.size < TOPIC_ROOT_CANDIDATES_MAX
+		) {
+			return true;
+		}
+		const highest = [...this.topicRootCandidateClaimReplayFloors.keys()]
+			.sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))
+			.at(-1)!;
+		return origin < highest;
 	}
 
 	private consumeTopicRootCandidateClaimVerifyBudget(
@@ -1163,35 +1385,24 @@ export class TopicControlPlane
 		if (origin === this.publicKeyHash) return false;
 
 		const now = BigInt(Date.now());
+		const monotonicNow = performance.now();
 		const timestamp = claim.header.timestamp;
 		const expires = claim.header.expires;
-		if (
-			expires <= now ||
-			expires <= timestamp ||
-			timestamp > now + BigInt(TOPIC_ROOT_CANDIDATE_CLAIM_FUTURE_SKEW_MS) ||
-			expires - timestamp > BigInt(TOPIC_ROOT_CANDIDATE_CLAIM_MAX_LIFETIME_MS)
-		) {
+		const acceptanceDeadline = this.topicRootCandidateClaimAcceptanceDeadline(
+			timestamp,
+			expires,
+			now,
+			monotonicNow,
+			TOPIC_ROOT_CANDIDATE_CLAIM_RECEIVER_MAX_LIFETIME_MS,
+		);
+		if (acceptanceDeadline === undefined) {
+			return false;
+		}
+		if (!this.canAdvanceTopicRootCandidateClaimReplayFloor(origin, timestamp)) {
 			return false;
 		}
 
 		this.rebuildAutoTopicRootCandidatesFromClaims(now);
-		const existing = this.signedTopicRootCandidateClaims.get(origin);
-		if (existing) {
-			if (bytesEqual(existing.bytes, rawClaim)) return false;
-			if (timestamp <= existing.timestamp) {
-				return false;
-			}
-		}
-
-		if (
-			!existing &&
-			this.signedTopicRootCandidateClaims.size >= TOPIC_ROOT_CANDIDATES_MAX
-		) {
-			const highest = [...this.signedTopicRootCandidateClaims.keys()].sort(
-				(a, b) => (a < b ? -1 : a > b ? 1 : 0),
-			);
-			if (origin >= highest.at(-1)!) return false;
-		}
 		if (!this.consumeTopicRootCandidateClaimVerifyBudget(outerPeerHash)) {
 			return false;
 		}
@@ -1205,7 +1416,12 @@ export class TopicControlPlane
 		if (!verified) return false;
 		if (
 			lifecycleRevision !== this.topicControlPlaneLifecycleRevision ||
-			expires <= BigInt(Date.now()) ||
+			!this.isTopicRootCandidateClaimTimeValid(
+				timestamp,
+				expires,
+				BigInt(Date.now()),
+			) ||
+			performance.now() >= acceptanceDeadline ||
 			!this.autoTopicRootCandidates ||
 			!this.started ||
 			this.stopping ||
@@ -1219,6 +1435,7 @@ export class TopicControlPlane
 				bytes: rawClaim.slice(),
 				timestamp,
 				expires,
+				acceptUntil: acceptanceDeadline,
 			})
 		) {
 			return false;
@@ -1230,6 +1447,7 @@ export class TopicControlPlane
 	private async sendSignedTopicRootCandidateClaims(
 		claims: Uint8Array[],
 		targets?: PeerStreams[],
+		signal?: AbortSignal,
 	) {
 		if (claims.length === 0) return;
 		const streams = (targets ?? [...this.peers.values()]).filter(
@@ -1241,48 +1459,58 @@ export class TopicControlPlane
 			offset < claims.length;
 			offset += TOPIC_ROOT_CANDIDATE_CLAIMS_MAX
 		) {
+			throwIfAborted(signal);
 			const message = new TopicRootCandidateClaims({
 				claims: claims.slice(offset, offset + TOPIC_ROOT_CANDIDATE_CLAIMS_MAX),
 			});
-			const embedded = await this.createMessage(
-				this.encodePubSubMessage(message),
-				{
+			const embedded = await withAbort(
+				this.createMessage(this.encodePubSubMessage(message), {
 					mode: new AnyWhere(),
 					priority: 1,
 					skipRecipientValidation: true,
-				} as any,
+				} as any),
+				signal,
 			);
-			await this.publishMessageMaybe(this.publicKey, embedded, streams);
+			throwIfAborted(signal);
+			await this.publishMessageMaybe(
+				this.publicKey,
+				embedded,
+				streams,
+				undefined,
+				signal,
+			);
 		}
 	}
 
 	private async sendAutoTopicRootCandidates(streams: PeerStreams[]) {
 		if (!this.started) throw new NotStartedError();
-		if (streams.length === 0) return;
-
 		const signedStreams = streams.filter(
 			(stream) => stream.protocol === TOPIC_CONTROL_PLANE_PROTOCOL_V2_1,
 		);
-		if (signedStreams.length > 0) {
-			this.rebuildAutoTopicRootCandidatesFromClaims();
-			if (
-				!this.localSignedTopicRootCandidateClaim &&
-				!(await this.refreshLocalTopicRootCandidateClaim())
-			) {
-				return;
+		if (signedStreams.length === 0) return;
+		this.rebuildAutoTopicRootCandidatesFromClaims();
+		if (!this.localSignedTopicRootCandidateClaim) {
+			try {
+				await this.refreshLocalTopicRootCandidateClaim();
+			} catch (error: any) {
+				// Failure to refresh the nested local claim must not suppress
+				// authenticated remote claims; outer-envelope signing is still tried.
+				logErrorIfStarted(error);
 			}
-			const localClaim = this.localSignedTopicRootCandidateClaim;
-			if (!localClaim) return;
-			const claims = [...this.signedTopicRootCandidateClaims.entries()]
-				.sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
-				.map(([, claim]) => claim.bytes);
-			await this.sendSignedTopicRootCandidateClaims(claims, signedStreams);
-			if (!this.signedTopicRootCandidateClaims.has(this.publicKeyHash)) {
-				await this.sendSignedTopicRootCandidateClaims(
-					[localClaim.bytes],
-					signedStreams,
-				);
-			}
+		}
+		const claims = [...this.signedTopicRootCandidateClaims.entries()]
+			.sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
+			.map(([, claim]) => claim.bytes);
+		await this.sendSignedTopicRootCandidateClaims(claims, signedStreams);
+		const localClaim = this.localSignedTopicRootCandidateClaim;
+		if (
+			localClaim &&
+			!this.signedTopicRootCandidateClaims.has(this.publicKeyHash)
+		) {
+			await this.sendSignedTopicRootCandidateClaims(
+				[localClaim.bytes],
+				signedStreams,
+			);
 		}
 	}
 
