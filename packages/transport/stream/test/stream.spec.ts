@@ -423,6 +423,38 @@ describe("streams", function () {
 			expect(await message.verify(true)).to.equal(true);
 		});
 
+		it("signs expiries relative to the captured header timestamp", async () => {
+			const sender = stream(session, 0);
+			const message = await sender.createMessage(new Uint8Array([1, 2, 3]), {
+				expiresInMs: 12_345,
+				mode: new AcknowledgeAnyWhere({ redundancy: 1 }),
+			});
+
+			expect(message.header.expires - message.header.timestamp).to.equal(
+				12_345n,
+			);
+			expect(await message.verify(true)).to.equal(true);
+			await expect(
+				sender.createMessage(new Uint8Array(), {
+					expiresAt: Date.now() + 1_000,
+					expiresInMs: 1_000,
+					mode: new AcknowledgeAnyWhere({ redundancy: 1 }),
+				}),
+			).rejectedWith(
+				InvalidMessageError,
+				"expiresAt and expiresInMs cannot both be specified",
+			);
+			await expect(
+				sender.createMessage(new Uint8Array(), {
+					expiresInMs: -1,
+					mode: new AcknowledgeAnyWhere({ redundancy: 1 }),
+				}),
+			).rejectedWith(
+				InvalidMessageError,
+				"expiresInMs must be a positive safe integer",
+			);
+		});
+
 		it("relays acknowledged messages by extending the hop trace instead of adding signatures", async () => {
 			await session.stop();
 			session = await disconnected(3, {
