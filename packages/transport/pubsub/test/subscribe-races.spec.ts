@@ -3,12 +3,14 @@ import { getPublicKeyFromPeerId, sha256Base64Sync } from "@peerbit/crypto";
 import { TestSession } from "@peerbit/libp2p-test-utils";
 import {
 	TOPIC_ROOT_CANDIDATES_MAX,
+	TopicRootCandidateClaims,
 	TopicRootCandidates,
 	TopicRootQuery,
 	TopicRootQueryResponse,
 } from "@peerbit/pubsub-interface";
 import { waitForNeighbour } from "@peerbit/stream";
 import {
+	AnyWhere,
 	DataMessage,
 	type DeliveryMode,
 	MessageHeader,
@@ -197,6 +199,25 @@ describe("pubsub (subscribe race regressions)", function () {
 
 	const canonicalCandidate = (label: string) =>
 		sha256Base64Sync(new TextEncoder().encode(label));
+	const nextAutoTopicRootCandidateSnapshot = (
+		pubsub: TopicControlPlane,
+		additions: readonly string[],
+	) => {
+		const internals = pubsub as any;
+		const before =
+			internals.pendingAutoTopicRootCandidates ??
+			pubsub.topicRootControlPlane.getTopicRootCandidates();
+		return [...new Set([...before, ...additions])]
+			.sort((left, right) => (left < right ? -1 : left > right ? 1 : 0))
+			.slice(0, TOPIC_ROOT_CANDIDATES_MAX);
+	};
+	const addAutoTopicRootCandidatesForTest = (
+		pubsub: TopicControlPlane,
+		additions: readonly string[],
+	) =>
+		(pubsub as any).setAutoTopicRootCandidateSnapshot(
+			nextAutoTopicRootCandidateSnapshot(pubsub, additions),
+		);
 	const preparePendingAutoTopicRootCandidateUpdate = (
 		pubsub: TopicControlPlane,
 		label: string,
@@ -204,14 +225,13 @@ describe("pubsub (subscribe race regressions)", function () {
 		const internals = pubsub as any;
 		internals.scheduleReconcileShardOverlays = () => {};
 		internals.scheduleHostOwnedShardRoots = () => {};
-		internals.scheduleAutoTopicRootCandidatesBroadcast = () => {};
 		expect(
-			internals.mergeAutoTopicRootCandidatesFromPeer([
+			addAutoTopicRootCandidatesForTest(pubsub, [
 				canonicalCandidate(`${label}-leading`),
 			]),
 		).to.equal(true);
 		expect(
-			internals.mergeAutoTopicRootCandidatesFromPeer([
+			addAutoTopicRootCandidatesForTest(pubsub, [
 				canonicalCandidate(`${label}-pending`),
 			]),
 		).to.equal(true);
@@ -335,7 +355,6 @@ describe("pubsub (subscribe race regressions)", function () {
 		const queryEntered = deferred();
 		internals.scheduleReconcileShardOverlays = () => {};
 		internals.scheduleHostOwnedShardRoots = () => {};
-		internals.scheduleAutoTopicRootCandidatesBroadcast = () => {};
 		internals.getConnectedTopicRootTrackers = () => [{}];
 		let queryCalls = 0;
 		internals.resolveTopicRootThroughPeers = async () => {
@@ -349,7 +368,7 @@ describe("pubsub (subscribe race regressions)", function () {
 		const resolving = internals.resolveTopicRootState(topic);
 		await queryEntered.promise;
 		expect(
-			internals.mergeAutoTopicRootCandidatesFromPeer([addedCandidate]),
+			addAutoTopicRootCandidatesForTest(pubsub, [addedCandidate]),
 		).to.equal(true);
 		queryGate.resolve();
 
@@ -372,7 +391,6 @@ describe("pubsub (subscribe race regressions)", function () {
 
 		internals.scheduleReconcileShardOverlays = () => {};
 		internals.scheduleHostOwnedShardRoots = () => {};
-		internals.scheduleAutoTopicRootCandidatesBroadcast = () => {};
 		let queryCalls = 0;
 		internals.resolveTopicRootThroughPeers = async () => {
 			queryCalls += 1;
@@ -399,54 +417,13 @@ describe("pubsub (subscribe race regressions)", function () {
 			.then((state: { root: string }) => state.root);
 		await firstStateReady.promise;
 		expect(
-			internals.mergeAutoTopicRootCandidatesFromPeer([addedCandidate]),
+			addAutoTopicRootCandidatesForTest(pubsub, [addedCandidate]),
 		).to.equal(true);
 		firstStateGate.resolve();
 
 		expect(await resolving).to.equal(currentRoot);
 		expect(internals.shardRootCache.get(topic)?.root).to.equal(currentRoot);
 		expect(stateCalls).to.equal(2);
-	});
-
-	it("bounds the managed auto-candidate set when normalization is a no-op", async () => {
-		session = await createDisconnectedSessionWithPerPeerRoots(1);
-		const pubsub = session.peers[0]!.services.pubsub;
-		const internals = pubsub as any;
-		const base64Alphabet =
-			"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-		const lowCandidates = [...base64Alphabet].map(
-			(character) => "A".repeat(41) + character + "A=",
-		);
-		const discardedHighCandidates = [...base64Alphabet].map(
-			(character) => "z".repeat(41) + character + "8=",
-		);
-
-		const scheduled = { broadcast: 0, host: 0, reconcile: 0 };
-		internals.scheduleReconcileShardOverlays = () => scheduled.reconcile++;
-		internals.scheduleHostOwnedShardRoots = () => scheduled.host++;
-		internals.scheduleAutoTopicRootCandidatesBroadcast = () =>
-			scheduled.broadcast++;
-		expect(
-			internals.mergeAutoTopicRootCandidatesFromPeer(lowCandidates),
-		).to.equal(true);
-		const before = pubsub.topicRootControlPlane.getTopicRootCandidates();
-		expect(before).to.have.length(64);
-
-		expect(
-			internals.mergeAutoTopicRootCandidatesFromPeer(discardedHighCandidates),
-		).to.equal(false);
-		expect(pubsub.topicRootControlPlane.getTopicRootCandidates()).to.deep.equal(
-			before,
-		);
-		expect(internals.autoTopicRootCandidateSet.size).to.equal(64);
-		expect([...internals.autoTopicRootCandidateSet]).to.have.members(before);
-
-		const afterMerge = { ...scheduled };
-		const discardedDirectPeer = discardedHighCandidates[0]!;
-		expect(before).not.to.include(discardedDirectPeer);
-		internals.maybeUpdateAutoTopicRootCandidates(discardedDirectPeer);
-		expect(scheduled).to.deep.equal(afterMerge);
-		expect(internals.autoTopicRootCandidateSet.size).to.equal(64);
 	});
 
 	it("coalesces auto-candidate generations globally on a fixed cooldown", async () => {
@@ -457,84 +434,68 @@ describe("pubsub (subscribe race regressions)", function () {
 			now: Date.now(),
 			toFake: ["Date", "clearTimeout", "setTimeout"],
 		});
-		const scheduled = { broadcast: 0, host: 0, reconcile: 0 };
+		const scheduled = { host: 0, reconcile: 0 };
 		internals.scheduleReconcileShardOverlays = () => scheduled.reconcile++;
 		internals.scheduleHostOwnedShardRoots = () => scheduled.host++;
-		internals.scheduleAutoTopicRootCandidatesBroadcast = () =>
-			scheduled.broadcast++;
-
-		const candidates = Array.from({ length: 160 }, (_, index) =>
+		const candidates = Array.from({ length: 4 }, (_, index) =>
 			canonicalCandidate(`coalesced-auto-root-${index}`),
-		).sort((left, right) => (left < right ? 1 : left > right ? -1 : 0));
+		);
+		const initial = pubsub.topicRootControlPlane.getTopicRootCandidates();
+		const leading = [...initial, candidates[0]!].sort();
+		const interim = [...leading, candidates[1]!].sort();
+		const trailing = [...interim, candidates[2]!].sort();
+		const final = [...trailing, candidates[3]!].sort();
 
 		try {
-			expect(
-				internals.mergeAutoTopicRootCandidatesFromPeer([candidates[0]]),
-			).to.equal(true);
-			expect(scheduled).to.deep.equal({ broadcast: 1, host: 1, reconcile: 1 });
+			expect(internals.setAutoTopicRootCandidateSnapshot(leading)).to.equal(
+				true,
+			);
+			expect(scheduled).to.deep.equal({ host: 1, reconcile: 1 });
 			expect(internals.pendingAutoTopicRootCandidates).to.equal(undefined);
 			const leadingTimer = internals.autoTopicRootCandidateUpdateTimer;
 			expect(leadingTimer).to.not.equal(undefined);
 
-			for (let index = 1; index < candidates.length; index++) {
-				if (index % 2 === 0) {
-					internals.maybeUpdateAutoTopicRootCandidates(candidates[index]);
-				} else {
-					expect(
-						internals.mergeAutoTopicRootCandidatesFromPeer([candidates[index]]),
-					).to.equal(true);
-				}
-				expect(internals.autoTopicRootCandidateUpdateTimer).to.equal(
-					leadingTimer,
-				);
-				expect(internals.pendingAutoTopicRootCandidates.length).to.be.at.most(
-					TOPIC_ROOT_CANDIDATES_MAX,
-				);
-			}
-
-			const expectedTrailing = internals.normalizeAutoTopicRootCandidates([
-				...candidates,
-				pubsub.publicKeyHash,
-			]);
-			expect(internals.pendingAutoTopicRootCandidates).to.deep.equal(
-				expectedTrailing,
+			expect(internals.setAutoTopicRootCandidateSnapshot(interim)).to.equal(
+				true,
 			);
-			expect(internals.pendingAutoTopicRootCandidates).to.have.length(
-				TOPIC_ROOT_CANDIDATES_MAX,
+			expect(internals.setAutoTopicRootCandidateSnapshot(trailing)).to.equal(
+				true,
 			);
+			expect(internals.autoTopicRootCandidateUpdateTimer).to.equal(
+				leadingTimer,
+			);
+			expect(internals.pendingAutoTopicRootCandidates).to.deep.equal(trailing);
 			expect(
 				internals.maybeDisableAutoTopicRootCandidatesIfExternallyConfigured(),
 			).to.equal(false);
 			expect([...internals.autoTopicRootCandidateSet]).to.deep.equal(
 				pubsub.topicRootControlPlane.getTopicRootCandidates(),
 			);
-			expect(scheduled).to.deep.equal({ broadcast: 1, host: 1, reconcile: 1 });
+			expect(scheduled).to.deep.equal({ host: 1, reconcile: 1 });
 
 			clock.tick(1_999);
-			expect(scheduled).to.deep.equal({ broadcast: 1, host: 1, reconcile: 1 });
+			expect(scheduled).to.deep.equal({ host: 1, reconcile: 1 });
 			clock.tick(1);
 			expect(
 				pubsub.topicRootControlPlane.getTopicRootCandidates(),
-			).to.deep.equal(expectedTrailing);
-			expect(scheduled).to.deep.equal({ broadcast: 2, host: 2, reconcile: 2 });
+			).to.deep.equal(trailing);
+			expect(scheduled).to.deep.equal({ host: 2, reconcile: 2 });
 			expect(internals.pendingAutoTopicRootCandidates).to.equal(undefined);
 
 			const trailingTimer = internals.autoTopicRootCandidateUpdateTimer;
 			expect(trailingTimer).to.not.equal(undefined);
 			expect(trailingTimer).to.not.equal(leadingTimer);
-			const nextCandidate = "A".repeat(43) + "=";
-			expect(expectedTrailing).not.to.include(nextCandidate);
-			internals.maybeUpdateAutoTopicRootCandidates(nextCandidate);
+			expect(internals.setAutoTopicRootCandidateSnapshot(final)).to.equal(true);
 			expect(internals.autoTopicRootCandidateUpdateTimer).to.equal(
 				trailingTimer,
 			);
-			expect(scheduled).to.deep.equal({ broadcast: 2, host: 2, reconcile: 2 });
+			expect(scheduled).to.deep.equal({ host: 2, reconcile: 2 });
 
 			clock.tick(2_000);
-			expect(pubsub.topicRootControlPlane.getTopicRootCandidates()).to.include(
-				nextCandidate,
-			);
-			expect(scheduled).to.deep.equal({ broadcast: 3, host: 3, reconcile: 3 });
+			expect(
+				pubsub.topicRootControlPlane.getTopicRootCandidates(),
+			).to.deep.equal(final);
+			expect(scheduled).to.deep.equal({ host: 3, reconcile: 3 });
 		} finally {
 			internals.clearAutoTopicRootCandidateUpdateSchedule();
 			clock.restore();
@@ -601,30 +562,6 @@ describe("pubsub (subscribe race regressions)", function () {
 		);
 	});
 
-	it("filters non-canonical candidates only from auto mode", async () => {
-		session = await createDisconnectedSessionWithPerPeerRoots(1);
-		const pubsub = session.peers[0]!.services.pubsub;
-		const internals = pubsub as any;
-		const nonCanonicalCandidate = "A".repeat(42) + "B=";
-		const before = pubsub.topicRootControlPlane.getTopicRootCandidates();
-
-		expect(
-			internals.mergeAutoTopicRootCandidatesFromPeer([nonCanonicalCandidate]),
-		).to.equal(false);
-		expect(pubsub.topicRootControlPlane.getTopicRootCandidates()).to.deep.equal(
-			before,
-		);
-		expect(
-			internals.autoTopicRootCandidateSet.has(nonCanonicalCandidate),
-		).to.equal(false);
-
-		pubsub.setTopicRootCandidates([nonCanonicalCandidate]);
-		expect(pubsub.topicRootControlPlane.getTopicRootCandidates()).to.deep.equal(
-			[nonCanonicalCandidate],
-		);
-		expect(internals.autoTopicRootCandidates).to.equal(false);
-	});
-
 	it("does not let an old opener block or overwrite the current generation", async () => {
 		session = await createDisconnectedSessionWithPerPeerRoots(1);
 		const pubsub = session.peers[0]!.services.pubsub;
@@ -635,10 +572,7 @@ describe("pubsub (subscribe race regressions)", function () {
 
 		internals.scheduleReconcileShardOverlays = () => {};
 		internals.scheduleHostOwnedShardRoots = () => {};
-		internals.scheduleAutoTopicRootCandidatesBroadcast = () => {};
-		expect(internals.mergeAutoTopicRootCandidatesFromPeer([oldRoot])).to.equal(
-			true,
-		);
+		expect(addAutoTopicRootCandidatesForTest(pubsub, [oldRoot])).to.equal(true);
 		// The first merge only establishes this race's stale generation. Expire its
 		// cooldown so the later merge remains the immediate generation change under test.
 		internals.clearAutoTopicRootCandidateUpdateSchedule();
@@ -689,7 +623,7 @@ describe("pubsub (subscribe race regressions)", function () {
 		try {
 			await confirmationEntered.promise;
 			expect(
-				internals.mergeAutoTopicRootCandidatesFromPeer([addedCandidate]),
+				addAutoTopicRootCandidatesForTest(pubsub, [addedCandidate]),
 			).to.equal(true);
 			const currentGeneration = internals.getTopicRootCandidateGeneration();
 			internals.resolveShardRootState = async () => {
@@ -735,9 +669,8 @@ describe("pubsub (subscribe race regressions)", function () {
 		const addedCandidate = canonicalCandidate("moved-root");
 
 		internals.scheduleHostOwnedShardRoots = () => {};
-		internals.scheduleAutoTopicRootCandidatesBroadcast = () => {};
 		expect(
-			internals.mergeAutoTopicRootCandidatesFromPeer([staleRoot]),
+			addAutoTopicRootCandidatesForTest(pubsub, [staleRoot]),
 		).to.equal(true);
 		// The first merge only establishes this race's stale generation. Expire its
 		// cooldown so the later merge remains the immediate generation change under test.
@@ -770,7 +703,7 @@ describe("pubsub (subscribe race regressions)", function () {
 			await staleJoin.started;
 
 			expect(
-				internals.mergeAutoTopicRootCandidatesFromPeer([addedCandidate]),
+				addAutoTopicRootCandidatesForTest(pubsub, [addedCandidate]),
 			).to.equal(true);
 			await Promise.race([
 				staleJoin.aborted,
@@ -800,15 +733,13 @@ describe("pubsub (subscribe race regressions)", function () {
 		const staleRoot = canonicalCandidate("queued-stale-join");
 		const addedCandidate = canonicalCandidate("queued-moved-root");
 		internals.scheduleHostOwnedShardRoots = () => {};
-		internals.scheduleAutoTopicRootCandidatesBroadcast = () => {};
 
 		expect(
-			internals.mergeAutoTopicRootCandidatesFromPeer([staleRoot]),
+			addAutoTopicRootCandidatesForTest(pubsub, [staleRoot]),
 		).to.equal(true);
 		const beforeCandidates =
 			pubsub.topicRootControlPlane.getTopicRootCandidates();
-		const afterCandidates = internals.normalizeAutoTopicRootCandidates([
-			...beforeCandidates,
+		const afterCandidates = nextAutoTopicRootCandidateSnapshot(pubsub, [
 			addedCandidate,
 		]);
 		const { topic } = findCandidateTransitionTopic(
@@ -839,7 +770,7 @@ describe("pubsub (subscribe race regressions)", function () {
 			await staleJoin.started;
 
 			expect(
-				internals.mergeAutoTopicRootCandidatesFromPeer([addedCandidate]),
+				addAutoTopicRootCandidatesForTest(pubsub, [addedCandidate]),
 			).to.equal(true);
 			expect(internals.getTopicRootCandidateGeneration()).to.equal(
 				staleGeneration,
@@ -887,10 +818,9 @@ describe("pubsub (subscribe race regressions)", function () {
 		const addedCandidate = canonicalCandidate("transient-root");
 
 		internals.scheduleHostOwnedShardRoots = () => {};
-		internals.scheduleAutoTopicRootCandidatesBroadcast = () => {};
 		internals.reconcileShardOverlays = async () => {};
 		expect(
-			internals.mergeAutoTopicRootCandidatesFromPeer([staleRoot]),
+			addAutoTopicRootCandidatesForTest(pubsub, [staleRoot]),
 		).to.equal(true);
 		const originalCandidates =
 			pubsub.topicRootControlPlane.getTopicRootCandidates();
@@ -1070,9 +1000,7 @@ describe("pubsub (subscribe race regressions)", function () {
 		const pubsub = session.peers[0]!.services.pubsub;
 		const internals = pubsub as any;
 		const autoPeer = canonicalCandidate("stale-auto-peer");
-		expect(internals.mergeAutoTopicRootCandidatesFromPeer([autoPeer])).to.equal(
-			true,
-		);
+		expect(addAutoTopicRootCandidatesForTest(pubsub, [autoPeer])).to.equal(true);
 		const candidates = pubsub.topicRootControlPlane.getTopicRootCandidates();
 		const { afterRoot: deterministicRoot, topic: shardTopic } =
 			findCandidateTransitionTopic(
@@ -1210,6 +1138,447 @@ describe("pubsub (subscribe race regressions)", function () {
 		expect(receiver.topicRootControlPlane.getTopicRootCandidates()).to.deep.equal(
 			candidatesBefore,
 		);
+	});
+
+	it("imports a relayed 2.1 candidate only from its nested self-signature", async () => {
+		session = await createDisconnectedSessionWithPerPeerRoots(3);
+		const receiver = session.peers[0]!.services.pubsub;
+		const origin = session.peers[1]!.services.pubsub;
+		const relay = session.peers[2]!.services.pubsub;
+		const originInternals = origin as any;
+		const receiverInternals = receiver as any;
+		await originInternals.refreshLocalTopicRootCandidateClaim();
+		const rawClaim = originInternals.signedTopicRootCandidateClaims.get(
+			origin.publicKeyHash,
+		).bytes;
+		const relayDelta = sinon
+			.stub(receiverInternals, "sendSignedTopicRootCandidateClaims")
+			.resolves();
+		const relaySnapshot = sinon
+			.stub(receiverInternals, "sendAutoTopicRootCandidates")
+			.resolves();
+
+		await receiverInternals.processDirectPubSubMessage({
+			pubsubMessage: new TopicRootCandidateClaims({ claims: [rawClaim] }),
+			message: {
+				header: { signatures: { publicKeys: [relay.publicKey] } },
+			},
+			from: relay.publicKey,
+			stream: {
+				protocol: "/peerbit/topic-control-plane/2.1.0",
+				publicKey: relay.publicKey,
+			},
+		});
+
+		expect(receiver.topicRootControlPlane.getTopicRootCandidates()).to.include(
+			origin.publicKeyHash,
+		);
+		expect(
+			receiverInternals.signedTopicRootCandidateClaims.get(origin.publicKeyHash)
+				?.bytes,
+		).to.deep.equal(rawClaim);
+		expect(relayDelta.calledOnce).to.equal(true);
+		expect(relayDelta.firstCall.args[0]).to.deep.equal([rawClaim]);
+		expect(relaySnapshot.called).to.equal(false);
+	});
+
+	it("advertises 2.1 first and keeps signed claims outside the native variants codec", async () => {
+		session = await createDisconnectedSessionWithPerPeerRoots(1);
+		const pubsub = session.peers[0]!.services.pubsub;
+		const internals = pubsub as any;
+		expect(pubsub.multicodecs).to.deep.equal([
+			"/peerbit/topic-control-plane/2.1.0",
+			"/peerbit/topic-control-plane/2.0.0",
+		]);
+		internals.nativeTopicControl = {
+			decodePubSubMessage: () => {
+				throw new Error("variant 8 reached native variants codec");
+			},
+		};
+		const encoded = internals.encodePubSubMessage(
+			new TopicRootCandidateClaims({ claims: [] }),
+		);
+
+		expect(encoded[0]).to.equal(8);
+		expect(internals.decodePubSubMessage(encoded)).to.be.instanceOf(
+			TopicRootCandidateClaims,
+		);
+	});
+
+	it("sends the signed snapshot on each outbound stream", async () => {
+		session = await createDisconnectedSessionWithPerPeerRoots(2);
+		const receiver = session.peers[0]!.services.pubsub;
+		const sender = session.peers[1]!.services.pubsub;
+		const internals = receiver as any;
+		const send = sinon
+			.stub(internals, "sendAutoTopicRootCandidates")
+			.resolves();
+
+		const stream = receiver.addPeer(
+			sender.peerId,
+			sender.publicKey,
+			"/peerbit/topic-control-plane/2.1.0",
+			"outbound-ready-retry-test",
+		);
+		expect(send.called).to.equal(false);
+		stream.dispatchEvent(new CustomEvent("stream:outbound"));
+		await waitForResolved(() => expect(send.callCount).to.equal(1), {
+			timeout: 1_000,
+			delayInterval: 10,
+		});
+		stream.dispatchEvent(new CustomEvent("stream:outbound"));
+		await waitForResolved(() => expect(send.callCount).to.equal(2), {
+			timeout: 1_000,
+			delayInterval: 10,
+		});
+	});
+
+	it("rejects tampered, wrong-scope, expired, and multisigned 2.1 claims", async () => {
+		session = await createDisconnectedSessionWithPerPeerRoots(3);
+		const receiver = session.peers[0]!.services.pubsub;
+		const origin = session.peers[1]!.services.pubsub;
+		const extraSigner = session.peers[2]!.services.pubsub;
+		const receiverInternals = receiver as any;
+		const originInternals = origin as any;
+		const encode = (message: DataMessage) => {
+			const bytes = message.bytes();
+			return bytes instanceof Uint8Array ? bytes : bytes.subarray();
+		};
+		const makeClaim = async (options?: {
+			data?: Uint8Array;
+			expiresAt?: number;
+			extraSigners?: any[];
+		}) =>
+			encode(
+				await originInternals.createMessage(
+					options?.data ?? originInternals.topicRootCandidateClaimData,
+					{
+						expiresAt: options?.expiresAt,
+						extraSigners: options?.extraSigners,
+						mode: new AnyWhere(),
+						priority: 1,
+						skipRecipientValidation: true,
+					},
+				),
+			);
+
+		const valid = await makeClaim();
+		const tampered = valid.slice();
+		tampered[tampered.length - 1] ^= 1;
+		const wrongScope = originInternals.topicRootCandidateClaimData.slice();
+		wrongScope[wrongScope.length - 1] ^= 1;
+		const future = await originInternals.createMessage(
+			originInternals.topicRootCandidateClaimData,
+			{
+				mode: new AnyWhere(),
+				priority: 1,
+				skipRecipientValidation: true,
+			},
+		);
+		future.header.timestamp = BigInt(Date.now() + 60_000);
+		future.header.expires = future.header.timestamp + 60_000n;
+		future.header.signatures = undefined;
+		await future.sign(origin.sign);
+		const unsupportedPrehash = await originInternals.createMessage(
+			originInternals.topicRootCandidateClaimData,
+			{
+				mode: new AnyWhere(),
+				priority: 1,
+				skipRecipientValidation: true,
+			},
+		);
+		unsupportedPrehash.header.signatures!.signatures[0]!.prehash = 2 as any;
+		const cases = [
+			tampered,
+			await makeClaim({ data: wrongScope }),
+			await makeClaim({ expiresAt: Date.now() - 1 }),
+			await makeClaim({ expiresAt: Date.now() + 10 * 60_000 }),
+			encode(future),
+			await makeClaim({ extraSigners: [extraSigner.sign] }),
+			encode(unsupportedPrehash),
+		];
+
+		for (const claim of cases) {
+			expect(
+				await receiverInternals.importSignedTopicRootCandidateClaim(
+					claim,
+					extraSigner.publicKeyHash,
+				),
+			).to.equal(false);
+		}
+		expect(
+			receiverInternals.signedTopicRootCandidateClaims.has(
+				origin.publicKeyHash,
+			),
+		).to.equal(false);
+	});
+
+	it("does not let a legacy peer inject its advertised candidate list", async () => {
+		session = await createDisconnectedSessionWithPerPeerRoots(2);
+		const receiver = session.peers[0]!.services.pubsub;
+		const sender = session.peers[1]!.services.pubsub;
+		const receiverInternals = receiver as any;
+		const injected = Array.from(
+			{ length: TOPIC_ROOT_CANDIDATES_MAX },
+			(_, index) => canonicalCandidate(`legacy-injected-${index}`),
+		);
+		receiver.addPeer(
+			sender.peerId,
+			sender.publicKey,
+			"/peerbit/topic-control-plane/2.0.0",
+			"legacy-injection-test",
+		);
+		const admitted = receiver.topicRootControlPlane.getTopicRootCandidates();
+		expect(admitted).to.include(sender.publicKeyHash);
+
+		await receiverInternals.processDirectPubSubMessage({
+			pubsubMessage: new TopicRootCandidates({ candidates: injected }),
+			message: {
+				header: { signatures: { publicKeys: [sender.publicKey] } },
+			},
+			from: sender.publicKey,
+			stream: {
+				protocol: "/peerbit/topic-control-plane/2.0.0",
+				publicKey: sender.publicKey,
+			},
+		});
+
+		const after = receiver.topicRootControlPlane.getTopicRootCandidates();
+		expect(after).to.deep.equal(admitted);
+		expect(
+			after.filter((candidate) => injected.includes(candidate)),
+		).to.deep.equal([]);
+
+		await receiverInternals.processDirectPubSubMessage({
+			pubsubMessage: new TopicRootCandidates({ candidates: injected }),
+			message: {
+				header: { signatures: { publicKeys: [sender.publicKey] } },
+			},
+			from: sender.publicKey,
+			stream: {
+				protocol: "/peerbit/topic-control-plane/2.1.0",
+				publicKey: sender.publicKey,
+			},
+		});
+		expect(
+			receiver.topicRootControlPlane.getTopicRootCandidates(),
+		).to.deep.equal(admitted);
+	});
+
+	it("selects the same lowest 64 signed origins without preferring self", async () => {
+		session = await createDisconnectedSessionWithPerPeerRoots(2);
+		const left = session.peers[0]!.services.pubsub;
+		const right = session.peers[1]!.services.pubsub;
+		const origins = [
+			left.publicKeyHash,
+			right.publicKeyHash,
+			...Array.from({ length: 63 }, (_, index) =>
+				canonicalCandidate(`signed-cap-${index}`),
+			),
+		];
+		const expected = [...origins].sort().slice(0, TOPIC_ROOT_CANDIDATES_MAX);
+		const record = (index: number) => ({
+			bytes: new Uint8Array([index]),
+			expires: BigInt(Date.now() + 60_000),
+			timestamp: BigInt(Date.now()),
+		});
+
+		for (const [peer, ordered] of [
+			[left, origins],
+			[right, [...origins].reverse()],
+		] as const) {
+			const internals = peer as any;
+			internals.signedTopicRootCandidateClaims.clear();
+			for (const [index, origin] of ordered.entries()) {
+				internals.retainSignedTopicRootCandidateClaim(origin, record(index));
+			}
+			expect(internals.signedTopicRootCandidateClaims.size).to.equal(
+				TOPIC_ROOT_CANDIDATES_MAX,
+			);
+			internals.rebuildAutoTopicRootCandidatesFromClaims();
+			expect(peer.topicRootControlPlane.getTopicRootCandidates()).to.deep.equal(
+				expected,
+			);
+		}
+	});
+
+	it("does not retain a claim whose verification finishes after stop", async () => {
+		session = await createDisconnectedSessionWithPerPeerRoots(2);
+		const receiver = session.peers[0]!.services.pubsub;
+		const origin = session.peers[1]!.services.pubsub;
+		const receiverInternals = receiver as any;
+		const originInternals = origin as any;
+		await originInternals.refreshLocalTopicRootCandidateClaim();
+		const rawClaim = originInternals.localSignedTopicRootCandidateClaim.bytes;
+		const verification = deferred();
+		const verify = sinon
+			.stub(DataMessage.prototype, "verify")
+			.callsFake(async () => {
+				await verification.promise;
+				return true;
+			});
+
+		try {
+			const importing = receiverInternals.importSignedTopicRootCandidateClaim(
+				rawClaim,
+				origin.publicKeyHash,
+			);
+			await waitForResolved(() => expect(verify.calledOnce).to.equal(true), {
+				timeout: 1_000,
+				delayInterval: 10,
+			});
+			await receiver.stop();
+			verification.resolve();
+
+			expect(await importing).to.equal(false);
+			expect(receiverInternals.signedTopicRootCandidateClaims.size).to.equal(0);
+			expect(receiverInternals.localSignedTopicRootCandidateClaim).to.equal(
+				undefined,
+			);
+		} finally {
+			verification.resolve();
+			verify.restore();
+		}
+	});
+
+	it("does not retain an old claim after stop and restart", async () => {
+		session = await createDisconnectedSessionWithPerPeerRoots(2);
+		const receiver = session.peers[0]!.services.pubsub;
+		const origin = session.peers[1]!.services.pubsub;
+		const receiverInternals = receiver as any;
+		const originInternals = origin as any;
+		await originInternals.refreshLocalTopicRootCandidateClaim();
+		const rawClaim = originInternals.localSignedTopicRootCandidateClaim.bytes;
+		const verification = deferred();
+		const verify = sinon
+			.stub(DataMessage.prototype, "verify")
+			.callsFake(async () => {
+				await verification.promise;
+				return true;
+			});
+
+		try {
+			const importing = receiverInternals.importSignedTopicRootCandidateClaim(
+				rawClaim,
+				origin.publicKeyHash,
+			);
+			await waitForResolved(() => expect(verify.calledOnce).to.equal(true), {
+				timeout: 1_000,
+				delayInterval: 10,
+			});
+			await receiver.stop();
+			await receiver.start();
+			verification.resolve();
+
+			expect(await importing).to.equal(false);
+			expect(
+				receiverInternals.signedTopicRootCandidateClaims.has(
+					origin.publicKeyHash,
+				),
+			).to.equal(false);
+		} finally {
+			verification.resolve();
+			verify.restore();
+		}
+	});
+
+	it("keeps the newest local claim when signing finishes out of order", async () => {
+		session = await createDisconnectedSessionWithPerPeerRoots(1);
+		const pubsub = session.peers[0]!.services.pubsub;
+		const internals = pubsub as any;
+		const originalCreate = internals.createMessage.bind(pubsub);
+		const makeClaim = () =>
+			originalCreate(internals.topicRootCandidateClaimData, {
+				expiresAt: Date.now() + 5 * 60_000,
+				mode: new AnyWhere(),
+				priority: 1,
+				skipRecipientValidation: true,
+			});
+		const older = await makeClaim();
+		await delay(5);
+		const newer = await makeClaim();
+		let resolveOlder!: (claim: DataMessage) => void;
+		let resolveNewer!: (claim: DataMessage) => void;
+		const olderPending = new Promise<DataMessage>((resolve) => {
+			resolveOlder = resolve;
+		});
+		const newerPending = new Promise<DataMessage>((resolve) => {
+			resolveNewer = resolve;
+		});
+		const create = sinon.stub(internals, "createMessage");
+		create.onFirstCall().returns(olderPending);
+		create.onSecondCall().returns(newerPending);
+
+		try {
+			const first = internals.refreshLocalTopicRootCandidateClaim();
+			const second = internals.refreshLocalTopicRootCandidateClaim();
+			resolveNewer(newer);
+			expect(await second).to.equal(true);
+			resolveOlder(older);
+			expect(await first).to.equal(false);
+			expect(internals.localSignedTopicRootCandidateClaim.timestamp).to.equal(
+				newer.header.timestamp,
+			);
+		} finally {
+			resolveNewer(newer);
+			resolveOlder(older);
+			create.restore();
+		}
+	});
+
+	it("bounds claim verification globally and across reconnects", async () => {
+		session = await createDisconnectedSessionWithPerPeerRoots(2);
+		const receiver = session.peers[0]!.services.pubsub;
+		const sender = session.peers[1]!.services.pubsub;
+		const internals = receiver as any;
+		receiver.addPeer(
+			sender.peerId,
+			sender.publicKey,
+			"/peerbit/topic-control-plane/2.1.0",
+			"verification-budget-test",
+		);
+		for (let index = 0; index < 128; index++) {
+			expect(
+				internals.consumeTopicRootCandidateClaimVerifyBudget(
+					sender.publicKeyHash,
+				),
+			).to.equal(true);
+		}
+		expect(
+			internals.consumeTopicRootCandidateClaimVerifyBudget(
+				sender.publicKeyHash,
+			),
+		).to.equal(false);
+		await internals._removePeer(sender.publicKey);
+		receiver.addPeer(
+			sender.peerId,
+			sender.publicKey,
+			"/peerbit/topic-control-plane/2.1.0",
+			"verification-budget-reconnect-test",
+		);
+		expect(
+			internals.consumeTopicRootCandidateClaimVerifyBudget(
+				sender.publicKeyHash,
+			),
+		).to.equal(false);
+
+		internals.topicRootCandidateClaimVerifyBudgets.clear();
+		internals.topicRootCandidateClaimGlobalVerifyBudget = {
+			remaining: 512,
+			refilledAt: Date.now(),
+		};
+		for (let index = 0; index < 512; index++) {
+			expect(
+				internals.consumeTopicRootCandidateClaimVerifyBudget(
+					canonicalCandidate(`global-budget-${index}`),
+				),
+			).to.equal(true);
+		}
+		expect(
+			internals.consumeTopicRootCandidateClaimVerifyBudget(
+				canonicalCandidate("global-budget-exhausted"),
+			),
+		).to.equal(false);
 	});
 
 	it("clears a pending peer root query immediately when cancelled", async () => {
