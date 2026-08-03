@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.0.7
+
+### Patch Changes
+
+- [#1165](https://github.com/dao-xyz/peerbit/pull/1165) [`fca4485`](https://github.com/dao-xyz/peerbit/commit/fca4485aeb16b9a4640048bff88175f75fe9f37b) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Stop shipping compiled benchmark suites in npm tarballs, and slim @peerbit/indexer-sqlite3 by 65% (drop an unreferenced bundle, unused sqlite main-thread loaders and worker1 helpers, and the broken ./sqlite.org export whose target was never published).
+
+- Updated dependencies []:
+  - @peerbit/indexer-interface@3.0.9
+
 ## 1.0.6
 
 ### Patch Changes

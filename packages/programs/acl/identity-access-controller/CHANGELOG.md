@@ -1,5 +1,16 @@
 # Changelog
 
+## 6.0.71
+
+### Patch Changes
+
+- Updated dependencies [[`fca4485`](https://github.com/dao-xyz/peerbit/commit/fca4485aeb16b9a4640048bff88175f75fe9f37b), [`64813c2`](https://github.com/dao-xyz/peerbit/commit/64813c237699fd31488f380ddab20f4bd17c96e2)]:
+  - @peerbit/document@13.1.26
+  - @peerbit/shared-log@13.2.24
+  - @peerbit/crypto@3.1.5
+  - @peerbit/trusted-network@6.0.71
+  - @peerbit/program@6.0.48
+
 ## 6.0.70
 
 ### Patch Changes

@@ -1,5 +1,27 @@
 # Changelog
 
+## 13.2.24
+
+### Patch Changes
+
+- [#1165](https://github.com/dao-xyz/peerbit/pull/1165) [`fca4485`](https://github.com/dao-xyz/peerbit/commit/fca4485aeb16b9a4640048bff88175f75fe9f37b) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Stop shipping compiled benchmark suites in npm tarballs, and slim @peerbit/indexer-sqlite3 by 65% (drop an unreferenced bundle, unused sqlite main-thread loaders and worker1 helpers, and the broken ./sqlite.org export whose target was never published).
+
+- [#1170](https://github.com/dao-xyz/peerbit/pull/1170) [`64813c2`](https://github.com/dao-xyz/peerbit/commit/64813c237699fd31488f380ddab20f4bd17c96e2) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Copy coordinate metadata into exact-sized owned buffers, compact leader-selection recheck inputs, and isolate receive-role observer closures so replication state does not retain oversized exchange-message backing stores.
+
+- Updated dependencies [[`fca4485`](https://github.com/dao-xyz/peerbit/commit/fca4485aeb16b9a4640048bff88175f75fe9f37b), [`9782bb7`](https://github.com/dao-xyz/peerbit/commit/9782bb7f6f0b628f11d35fcedd0c8be257e2e57b)]:
+  - @peerbit/log@6.2.14
+  - @peerbit/blocks@4.2.10
+  - @peerbit/pubsub@5.4.0
+  - @peerbit/crypto@3.1.5
+  - @peerbit/indexer-sqlite3@3.0.12
+  - @peerbit/pubsub-interface@5.2.0
+  - @peerbit/rpc@6.1.16
+  - @peerbit/program@6.0.48
+  - @peerbit/blocks-interface@2.1.5
+  - @peerbit/stream-interface@6.0.15
+  - @peerbit/any-store@2.2.14
+  - @peerbit/indexer-interface@3.0.9
+
 ## 13.2.23
 
 ### Patch Changes

@@ -1,5 +1,12 @@
 # Changelog
 
+## 6.0.15
+
+### Patch Changes
+
+- Updated dependencies [[`fca4485`](https://github.com/dao-xyz/peerbit/commit/fca4485aeb16b9a4640048bff88175f75fe9f37b)]:
+  - @peerbit/crypto@3.1.5
+
 ## 6.0.14
 
 ### Patch Changes

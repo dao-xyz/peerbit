@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2.12
+
+### Patch Changes
+
+- Updated dependencies [[`fca4485`](https://github.com/dao-xyz/peerbit/commit/fca4485aeb16b9a4640048bff88175f75fe9f37b)]:
+  - @peerbit/crypto@3.1.5
+  - @peerbit/indexer-interface@3.0.9
+
 ## 0.2.11
 
 ### Patch Changes

@@ -1,5 +1,18 @@
 # Changelog
 
+## 4.2.10
+
+### Patch Changes
+
+- [#1165](https://github.com/dao-xyz/peerbit/pull/1165) [`fca4485`](https://github.com/dao-xyz/peerbit/commit/fca4485aeb16b9a4640048bff88175f75fe9f37b) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Stop shipping compiled benchmark suites in npm tarballs, and slim @peerbit/indexer-sqlite3 by 65% (drop an unreferenced bundle, unused sqlite main-thread loaders and worker1 helpers, and the broken ./sqlite.org export whose target was never published).
+
+- Updated dependencies [[`fca4485`](https://github.com/dao-xyz/peerbit/commit/fca4485aeb16b9a4640048bff88175f75fe9f37b), [`9782bb7`](https://github.com/dao-xyz/peerbit/commit/9782bb7f6f0b628f11d35fcedd0c8be257e2e57b)]:
+  - @peerbit/stream@5.2.0
+  - @peerbit/crypto@3.1.5
+  - @peerbit/blocks-interface@2.1.5
+  - @peerbit/stream-interface@6.0.15
+  - @peerbit/any-store@2.2.14
+
 ## 4.2.9
 
 ### Patch Changes
