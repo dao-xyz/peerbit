@@ -1,3 +1,24 @@
+import { NotStartedError as IndexNotStartedError } from "@peerbit/indexer-interface";
+import { ClosedError } from "@peerbit/program";
+import { NotStartedError } from "@peerbit/stream-interface";
+import { AbortError } from "@peerbit/time";
+
+export const isNotStartedError = (e: Error) => {
+	if (e instanceof AbortError) {
+		return true;
+	}
+	if (e instanceof NotStartedError) {
+		return true;
+	}
+	if (e instanceof IndexNotStartedError) {
+		return true;
+	}
+	if (e instanceof ClosedError) {
+		return true;
+	}
+	return false;
+};
+
 export class NoPeersError extends Error {
 	constructor(topic: string) {
 		super(

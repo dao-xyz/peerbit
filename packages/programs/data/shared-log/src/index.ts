@@ -103,13 +103,11 @@ import type {
 	SharedLogRangePlanner,
 } from "@peerbit/shared-log-rust";
 import {
-	ACK_CONTROL_PRIORITY,
 	AcknowledgeDelivery,
 	AnyWhere,
 	BACKGROUND_MESSAGE_PRIORITY,
 	CONVERGENCE_MESSAGE_PRIORITY,
 	DataMessage,
-	DeliveryError,
 	MessageHeader,
 	NotStartedError,
 	type RouteHint,
@@ -140,7 +138,11 @@ import {
 	type DebouncedAccumulatorMap,
 	debouncedAccumulatorMap,
 } from "./debounce.js";
-import { NativeDurableCommitError, NoPeersError } from "./errors.js";
+import {
+	NativeDurableCommitError,
+	NoPeersError,
+	isNotStartedError,
+} from "./errors.js";
 import {
 	EXCHANGE_HEADS_REPAIR_HINT,
 	EntryWithRefs,
@@ -219,6 +221,10 @@ import {
 	toRebalance,
 } from "./ranges.js";
 import {
+	ReplicationAnnouncementCoordinator,
+	isTransientReplicationAnnouncementError,
+} from "./replication-announcement.js";
+import {
 	type ReplicationDomainHash,
 	createReplicationDomainHash,
 } from "./replication-domain-hash.js";
@@ -247,6 +253,7 @@ import {
 	encodeReplicas,
 	maxReplicas,
 } from "./replication.js";
+import { ReplicatorLivenessMonitor } from "./replicator-liveness.js";
 import { Observer, Replicator } from "./role.js";
 import type {
 	SharedLogNativeWireSync,
@@ -1033,130 +1040,6 @@ const isReplicationOptionsDependentOnPreviousState = async (
 	return false;
 };
 
-const isNotStartedError = (e: Error) => {
-	if (e instanceof AbortError) {
-		return true;
-	}
-	if (e instanceof NotStartedError) {
-		return true;
-	}
-	if (e instanceof IndexNotStartedError) {
-		return true;
-	}
-	if (e instanceof ClosedError) {
-		return true;
-	}
-	return false;
-};
-
-/**
- * Replication announcements are best-effort convergence messages. A detached
- * fanout shard can time out even though the shared log itself remains open.
- * Keep retries deliberately limited to concrete TimeoutErrors: abort/close and
- * unexpected programming/data errors must retain their existing semantics.
- *
- * Exact constructor/name checks complement `instanceof` for errors crossing
- * worker or duplicate-package boundaries in browsers.
- */
-const isTransientReplicationAnnouncementError = (
-	error: unknown,
-	seen = new Set<unknown>(),
-): boolean => {
-	if (
-		error != null &&
-		(typeof error === "object" || typeof error === "function")
-	) {
-		if (seen.has(error)) {
-			return false;
-		}
-		seen.add(error);
-	}
-
-	if (error instanceof TimeoutError) {
-		return true;
-	}
-
-	const nested = (error as { errors?: unknown })?.errors;
-	if (Array.isArray(nested) && nested.length > 0) {
-		return nested.every((item) =>
-			isTransientReplicationAnnouncementError(item, new Set(seen)),
-		);
-	}
-
-	const cause = (error as { cause?: unknown })?.cause;
-	if (cause != null && isTransientReplicationAnnouncementError(cause, seen)) {
-		return true;
-	}
-
-	const constructorName =
-		typeof (error as { constructor?: { name?: unknown } })?.constructor
-			?.name === "string"
-			? (error as { constructor: { name: string } }).constructor.name
-			: "";
-	const name =
-		typeof (error as { name?: unknown })?.name === "string"
-			? (error as { name: string }).name
-			: "";
-	return constructorName === "TimeoutError" || name === "TimeoutError";
-};
-
-/**
- * Directed transport-delivery repair is allowed to retry explicit delivery
- * failures in addition to timeouts. A DirectStream ACK confirms receipt of the
- * signed envelope, not successful application by the receiver. Keep this
- * separate from the primary fanout classifier above so replicate() rejection
- * semantics remain unchanged for programming, serialization, and lifecycle
- * errors.
- */
-const isTransientReplicationAnnouncementRepairError = (
-	error: unknown,
-	seen = new Set<unknown>(),
-): boolean => {
-	if (
-		error != null &&
-		(typeof error === "object" || typeof error === "function")
-	) {
-		if (seen.has(error)) {
-			return false;
-		}
-		seen.add(error);
-	}
-
-	if (error instanceof DeliveryError || error instanceof TimeoutError) {
-		return true;
-	}
-
-	const nested = (error as { errors?: unknown })?.errors;
-	if (Array.isArray(nested) && nested.length > 0) {
-		return nested.every((item) =>
-			isTransientReplicationAnnouncementRepairError(item, new Set(seen)),
-		);
-	}
-
-	const cause = (error as { cause?: unknown })?.cause;
-	if (
-		cause != null &&
-		isTransientReplicationAnnouncementRepairError(cause, seen)
-	) {
-		return true;
-	}
-
-	const constructorName =
-		typeof (error as { constructor?: { name?: unknown } })?.constructor
-			?.name === "string"
-			? (error as { constructor: { name: string } }).constructor.name
-			: "";
-	const name =
-		typeof (error as { name?: unknown })?.name === "string"
-			? (error as { name: string }).name
-			: "";
-	return (
-		constructorName === "DeliveryError" ||
-		name === "DeliveryError" ||
-		constructorName === "TimeoutError" ||
-		name === "TimeoutError"
-	);
-};
 
 interface IndexableDomain<R extends "u32" | "u64"> {
 	numbers: Numbers<R>;
@@ -1473,15 +1356,6 @@ const CHECKED_PRUNE_AUDIT_BATCH_SIZE = 128;
 
 // DONT SET THIS ANY LOWER, because it will make the pid controller unstable as the system responses are not fast enough to updates from the pid controller
 const RECALCULATE_PARTICIPATION_DEBOUNCE_INTERVAL = 1000;
-const REPLICATION_ANNOUNCEMENT_RETRY_INTERVAL = 1000;
-const REPLICATION_ANNOUNCEMENT_REPAIR_INTERVAL = 1000;
-const REPLICATION_ANNOUNCEMENT_REPAIR_MAX_ATTEMPTS = 3;
-// Repair one bounded cohort per mutation generation. The subscriber snapshot
-// is a best-effort cache and can contain thousands of entries, so attempting
-// the whole cache after every role mutation would turn convergence repair into
-// an unbounded burst of separately signed, acknowledged messages. A cursor
-// retained across generations rotates best-effort coverage over later changes.
-const REPLICATION_ANNOUNCEMENT_REPAIR_TARGETS_PER_GENERATION = 8;
 // Index backends flatten logical queries before execution and have practical
 // expression limits well below a large local range set. Keep exact range
 // lookups/deletes bounded while the mutation lane preserves operation ordering.
@@ -1535,19 +1409,6 @@ const hasPreverifiedSignature = (entry: Entry<any>) =>
 	(entry as { __peerbitSignatureVerified?: unknown })
 		.__peerbitSignatureVerified === true;
 
-type ReplicationAnnouncementRepairTarget = {
-	key: PublicSignKey;
-	generation: number;
-	attempts: number;
-	done: boolean;
-};
-// In sparse topologies (browser/relay), peers can learn about replicators via broadcast
-// replication announcements without having a direct connection that emits unsubscribe
-// on abrupt churn. Probe conservatively so a single missed ACK does not evict a
-// healthy replicator, and rely on replication-info refresh to recover membership.
-const REPLICATOR_LIVENESS_SWEEP_INTERVAL_MS = 2_000;
-const REPLICATOR_LIVENESS_IDLE_THRESHOLD_MS = 8_000;
-const REPLICATOR_LIVENESS_PROBE_FAILURES_TO_EVICT = 2;
 // Churn/join repair can race with pruning and transient missed sync requests under
 // heavy event-loop load. Keep retries alive with a longer tail so reassigned
 // entries are retried after short bursts and slower recovery windows.
@@ -2193,13 +2054,13 @@ export class SharedLog<
 	// replicator. Carry that leave obligation to the transition that ultimately
 	// wins, while a winning reconnect clears it without emitting a stale leave.
 	private _pendingReplicatorLeaveByPeer!: Set<string>;
-	private _replicatorLivenessSweepRunning!: boolean;
-	private _replicatorLivenessTimer?: ReturnType<typeof setInterval>;
-	private _replicatorLivenessTargets!: string[];
-	private _replicatorLivenessTargetsSize!: number;
-	private _replicatorLivenessCursor!: number;
-	private _replicatorLivenessFailures!: Map<string, number>;
-	private _replicatorLastActivityAt!: Map<string, number>;
+	private _liveness!: ReplicatorLivenessMonitor;
+	private get _replicatorLivenessFailures() {
+		return this._liveness._replicatorLivenessFailures;
+	}
+	private get _replicatorLastActivityAt() {
+		return this._liveness._replicatorLastActivityAt;
+	}
 
 	private remoteBlocks!: RemoteBlocks;
 
@@ -3260,33 +3121,16 @@ export class SharedLog<
 	private rebalanceParticipationDebounced:
 		| ReturnType<typeof debounceFixedInterval>
 		| undefined;
-	private replicationAnnouncementRetryDebounced:
-		| ReturnType<typeof debounceFixedInterval>
-		| undefined;
-	private _replicationAnnouncementRetryPending!: boolean;
-	private _replicationAnnouncementRetryGeneration!: number;
-	private _replicationAnnouncementRetryController!: AbortController;
-	// Publish local ownership announcements in committed mutation order. This
-	// prevents an older Added message with a delayed transport completion from
-	// overtaking a newer authoritative empty snapshot.
-	private _replicationAnnouncementSendTails?: WeakMap<
-		AbortController,
-		Promise<void>
-	>;
-	private replicationAnnouncementRepairDebounced:
-		| ReturnType<typeof debounceFixedInterval>
-		| undefined;
-	private _replicationAnnouncementRepairPending!: boolean;
-	private _replicationAnnouncementRepairGeneration!: number;
-	private _replicationAnnouncementRepairGenerationController!: AbortController;
-	private _replicationAnnouncementRepairTargets!: Map<
-		string,
-		ReplicationAnnouncementRepairTarget
-	>;
-	private _replicationAnnouncementRepairCohortSelected!: boolean;
-	private _replicationAnnouncementRepairFairCursorHash!: string | undefined;
-	private _replicationAnnouncementRepairMaxAttempts!: number;
-	private _replicationAnnouncementRepairController!: AbortController;
+	private _announcements!: ReplicationAnnouncementCoordinator<R>;
+	private get _replicationAnnouncementRetryPending() {
+		return this._announcements._replicationAnnouncementRetryPending;
+	}
+	private get _replicationAnnouncementRepairPending() {
+		return this._announcements._replicationAnnouncementRepairPending;
+	}
+	private set _replicationAnnouncementRepairPending(pending: boolean) {
+		this._announcements._replicationAnnouncementRepairPending = pending;
+	}
 
 	// A fn for debouncing the calls for pruning
 	pruneDebouncedFn!: DebouncedAccumulatorMap<{
@@ -3416,6 +3260,65 @@ export class SharedLog<
 		});
 	}
 
+	private createReplicationAnnouncementCoordinator(): ReplicationAnnouncementCoordinator<R> {
+		return new ReplicationAnnouncementCoordinator<R>({
+			isClosed: () => this.closed,
+			getCloseSignal: () => this._closeController.signal,
+			getMyReplicationSegments: () => this.getMyReplicationSegments(),
+			validatePersistedReplicationRangeSnapshot: (ranges) =>
+				this.validatePersistedReplicationRangeSnapshot(ranges),
+			getSubscribers: () => this.node.services.pubsub.getSubscribers(this.topic),
+			getSelfHash: () => this.node.identity.publicKey.hashcode(),
+			isBlockedPeer: (hash) => this._replicationInfoBlockedPeers.has(hash),
+			getRpc: () => this.rpc,
+			captureReplicationOwnershipLifecycle: () =>
+				this.captureReplicationOwnershipLifecycle(),
+			throwIfReplicationOwnershipLifecycleInactive: (controller) =>
+				this.throwIfReplicationOwnershipLifecycleInactive(controller),
+			isAdaptiveReplicating: () => this._isAdaptiveReplicating,
+			callRebalanceParticipationDebounced: () =>
+				this.rebalanceParticipationDebounced?.call(),
+		});
+	}
+
+	private createReplicatorLivenessMonitor(): ReplicatorLivenessMonitor {
+		return new ReplicatorLivenessMonitor({
+			isClosed: () => this.closed,
+			getCloseSignal: () => this._closeController.signal,
+			getReplicationLifecycleController: () =>
+				this._replicationLifecycleController,
+			isReplicationLifecycleActive: (controller) =>
+				this.isReplicationLifecycleActive(controller),
+			getSelfHash: () => this.node.identity.publicKey.hashcode(),
+			getUniqueReplicators: () => this.uniqueReplicators,
+			getSubscriptionEpoch: (peerHash) => this.getSubscriptionEpoch(peerHash),
+			isCurrentSubscriptionEpoch: (peerHash, epoch) =>
+				this.isCurrentSubscriptionEpoch(peerHash, epoch),
+			resolvePublicKeyFromHash: (hash) => this._resolvePublicKeyFromHash(hash),
+			removeReplicator: (key, options) => this.removeReplicator(key, options),
+			getRpc: () => this.rpc,
+			getPendingReplicatorLeaveByPeer: () => this._pendingReplicatorLeaveByPeer,
+			dispatchReplicatorLeave: (publicKey) => {
+				this.events.dispatchEvent(
+					new CustomEvent<ReplicatorLeaveEvent>("replicator:leave", {
+						detail: { publicKey },
+					}),
+				);
+			},
+			isBlockedPeer: (hash) => this._replicationInfoBlockedPeers.has(hash),
+			scheduleReplicationInfoRequests: (peer, replicationLifecycleController) =>
+				this.scheduleReplicationInfoRequests(
+					peer,
+					replicationLifecycleController,
+				),
+			getTopicSubscribers: (topic) => this._getTopicSubscribers(topic),
+			confirmReplicatorSubscriberPresence: (peerHash) =>
+				this.confirmReplicatorSubscriberPresence(peerHash),
+			getNode: () => this.node,
+			getWaitForReplicatorTimeout: () => this.waitForReplicatorTimeout,
+		});
+	}
+
 	constructor(properties?: { id?: Uint8Array }) {
 		super();
 		this.ensureNativeDurabilityRuntimeState();
@@ -3468,26 +3371,8 @@ export class SharedLog<
 		this.uniqueReplicators = new Set();
 		this._replicatorJoinEmitted = new Set();
 		this._replicatorsReconciled = false;
-		this._replicatorLivenessSweepRunning = false;
-		this._replicatorLivenessTargets = [];
-		this._replicatorLivenessTargetsSize = 0;
-		this._replicatorLivenessCursor = 0;
-		this._replicatorLivenessFailures = new Map();
-		this._replicatorLastActivityAt = new Map();
-		this._replicationAnnouncementRetryPending = false;
-		this._replicationAnnouncementRetryGeneration = 0;
-		this._replicationAnnouncementRetryController = new AbortController();
-		this._replicationAnnouncementSendTails = new WeakMap();
-		this._replicationAnnouncementRepairPending = false;
-		this._replicationAnnouncementRepairGeneration = 0;
-		this._replicationAnnouncementRepairGenerationController =
-			new AbortController();
-		this._replicationAnnouncementRepairTargets = new Map();
-		this._replicationAnnouncementRepairCohortSelected = false;
-		this._replicationAnnouncementRepairFairCursorHash = undefined;
-		this._replicationAnnouncementRepairMaxAttempts =
-			REPLICATION_ANNOUNCEMENT_REPAIR_MAX_ATTEMPTS;
-		this._replicationAnnouncementRepairController = new AbortController();
+		this._liveness = this.createReplicatorLivenessMonitor();
+		this._announcements = this.createReplicationAnnouncementCoordinator();
 		this.pendingMaturity = new Map();
 		this._closeController = new AbortController();
 	}
@@ -5183,18 +5068,9 @@ export class SharedLog<
 	private queueCurrentReplicationStateAnnouncementRetry(
 		error: unknown,
 	): boolean {
-		if (
-			this.closed ||
-			this._closeController.signal.aborted ||
-			this._replicationAnnouncementRetryController.signal.aborted ||
-			!isTransientReplicationAnnouncementError(error)
-		) {
-			return false;
-		}
-
-		this._replicationAnnouncementRetryPending = true;
-		void this.replicationAnnouncementRetryDebounced?.call();
-		return true;
+		return this._announcements.queueCurrentReplicationStateAnnouncementRetry(
+			error,
+		);
 	}
 
 	private onRebalanceParticipationError(error: Error): void {
@@ -5213,488 +5089,53 @@ export class SharedLog<
 		logger.error(error);
 	}
 
-	private setupReplicationAnnouncementRetryFunction(
-		interval = REPLICATION_ANNOUNCEMENT_RETRY_INTERVAL,
-	): void {
-		this.replicationAnnouncementRetryDebounced?.close();
-		this._replicationAnnouncementRetryController?.abort();
-		this._replicationAnnouncementRetryController = new AbortController();
-		this.replicationAnnouncementRetryDebounced = debounceFixedInterval(
-			() => this.retryCurrentReplicationStateAnnouncement(),
-			interval,
-			{
-				leading: false,
-				onError: (error) => {
-					if (
-						this.closed ||
-						this._closeController.signal.aborted ||
-						isNotStartedError(error)
-					) {
-						return;
-					}
-					logger.error(error);
-				},
-			},
-		);
+	private setupReplicationAnnouncementRetryFunction(interval?: number): void {
+		this._announcements.setupReplicationAnnouncementRetryFunction(interval);
 	}
 
 	private setupReplicationAnnouncementRepairFunction(
-		interval = REPLICATION_ANNOUNCEMENT_REPAIR_INTERVAL,
-		maxAttempts = REPLICATION_ANNOUNCEMENT_REPAIR_MAX_ATTEMPTS,
+		interval?: number,
+		maxAttempts?: number,
 	): void {
-		if (!Number.isSafeInteger(maxAttempts) || maxAttempts <= 0) {
-			throw new RangeError(
-				"Replication announcement repair attempts must be positive",
-			);
-		}
-		this.replicationAnnouncementRepairDebounced?.close();
-		this._replicationAnnouncementRepairController?.abort();
-		this._replicationAnnouncementRepairGenerationController?.abort();
-		this._replicationAnnouncementRepairController = new AbortController();
-		this._replicationAnnouncementRepairGenerationController =
-			new AbortController();
-		this._replicationAnnouncementRepairPending = false;
-		this._replicationAnnouncementRepairGeneration =
-			this._replicationAnnouncementRetryGeneration;
-		this._replicationAnnouncementRepairTargets = new Map();
-		this._replicationAnnouncementRepairCohortSelected = false;
-		this._replicationAnnouncementRepairFairCursorHash = undefined;
-		this._replicationAnnouncementRepairMaxAttempts = maxAttempts;
-		this.replicationAnnouncementRepairDebounced = debounceFixedInterval(
-			() => this.runCurrentReplicationStateAnnouncementRepair(),
+		this._announcements.setupReplicationAnnouncementRepairFunction(
 			interval,
-			{
-				leading: false,
-				// The wrapper catches worker failures while it still owns the generation
-				// context. Keep this boundary visibility-only: it must never mutate a
-				// possibly newer generation's pending state.
-				onError: (error) => logger.error(error),
-			},
+			maxAttempts,
 		);
-	}
-
-	private cancelCurrentReplicationStateAnnouncementRepair(): void {
-		this._replicationAnnouncementRepairPending = false;
-		this._replicationAnnouncementRepairController?.abort();
-		this._replicationAnnouncementRepairGenerationController?.abort();
-		this.replicationAnnouncementRepairDebounced?.close();
-		this._replicationAnnouncementRepairTargets?.clear();
-	}
-
-	private advanceCurrentReplicationStateAnnouncementRepairGeneration(): void {
-		const generation = this._replicationAnnouncementRetryGeneration;
-		if (generation === this._replicationAnnouncementRepairGeneration) {
-			return;
-		}
-
-		// Abort acknowledged sends carrying the old full-state snapshot before the
-		// primary announcement for the new mutation waits on transport. Otherwise a
-		// stale batch can hold the current state behind DirectStream's seek timeout.
-		this._replicationAnnouncementRepairGenerationController?.abort();
-		this._replicationAnnouncementRepairGenerationController =
-			new AbortController();
-		this._replicationAnnouncementRepairGeneration = generation;
-		this._replicationAnnouncementRepairPending = false;
-		this._replicationAnnouncementRepairTargets.clear();
-		this._replicationAnnouncementRepairCohortSelected = false;
 	}
 
 	private queueCurrentReplicationStateAnnouncementRepair(): void {
-		if (
-			this.closed ||
-			this._closeController.signal.aborted ||
-			this._replicationAnnouncementRepairController.signal.aborted ||
-			!this.replicationAnnouncementRepairDebounced
-		) {
-			return;
-		}
-
-		this.advanceCurrentReplicationStateAnnouncementRepairGeneration();
-		this._replicationAnnouncementRepairPending = true;
-		void this.replicationAnnouncementRepairDebounced.call();
+		this._announcements.queueCurrentReplicationStateAnnouncementRepair();
 	}
 
-	/**
-	 * Single validity predicate for announcement-repair workers. "stale":
-	 * the store closed or a lifecycle controller aborted — exit silently.
-	 * "superseded": a newer announcement generation took over — the worker
-	 * must requeue so the current generation gets serviced. The
-	 * generation-controller identity comparison stays at the one call site
-	 * that historically required it; folding it in here is a stage-5
-	 * semantic decision, not a consolidation.
-	 */
-	private announcementRepairWorkerStatus(worker: {
-		generation: number;
-		lifecycleController: AbortController;
-		generationController: AbortController;
-	}): "current" | "stale" | "superseded" {
-		if (
-			this.closed ||
-			this._closeController.signal.aborted ||
-			worker.lifecycleController.signal.aborted ||
-			worker.generationController.signal.aborted
-		) {
-			return "stale";
-		}
-		if (worker.generation !== this._replicationAnnouncementRetryGeneration) {
-			return "superseded";
-		}
-		return "current";
+	private runCurrentReplicationStateAnnouncementRepair(): Promise<void> {
+		return this._announcements.runCurrentReplicationStateAnnouncementRepair();
 	}
 
-	private async runCurrentReplicationStateAnnouncementRepair(): Promise<void> {
-		const generation = this._replicationAnnouncementRetryGeneration;
-		const lifecycleController = this._replicationAnnouncementRepairController;
-		const generationController =
-			this._replicationAnnouncementRepairGenerationController;
-		try {
-			await this.repairCurrentReplicationStateAnnouncement({
-				generation,
-				lifecycleController,
-				generationController,
-			});
-		} catch (error) {
-			if (
-				this.announcementRepairWorkerStatus({
-					generation,
-					lifecycleController,
-					generationController,
-				}) !== "current" ||
-				generationController !==
-					this._replicationAnnouncementRepairGenerationController
-			) {
-				return;
-			}
-			if (isNotStartedError(error as Error)) {
-				return;
-			}
-
-			// Only the worker that still owns the current generation may conclude
-			// that its repair failed. A stale worker must not clear a newer call's
-			// pending flag or attribute its error to the new generation.
-			this._replicationAnnouncementRepairPending = false;
-			logger.error(error);
-		}
-	}
-
-	private async repairCurrentReplicationStateAnnouncement(context?: {
-		generation: number;
-		lifecycleController: AbortController;
-		generationController: AbortController;
-	}): Promise<void> {
-		if (!this._replicationAnnouncementRepairPending) {
-			return;
-		}
-		const generation =
-			context?.generation ?? this._replicationAnnouncementRetryGeneration;
-		const lifecycleController =
-			context?.lifecycleController ??
-			this._replicationAnnouncementRepairController;
-		const generationController =
-			context?.generationController ??
-			this._replicationAnnouncementRepairGenerationController;
-		const segments = (await this.getMyReplicationSegments()).map((range) =>
-			range.toReplicationRange(),
-		);
-		switch (
-			this.announcementRepairWorkerStatus({
-				generation,
-				lifecycleController,
-				generationController,
-			})
-		) {
-			case "stale":
-				return;
-			case "superseded":
-				this.queueCurrentReplicationStateAnnouncementRepair();
-				return;
-		}
-		this.validatePersistedReplicationRangeSnapshot(segments);
-
-		const subscribers =
-			(await this.node.services.pubsub.getSubscribers(this.topic)) ?? [];
-		switch (
-			this.announcementRepairWorkerStatus({
-				generation,
-				lifecycleController,
-				generationController,
-			})
-		) {
-			case "stale":
-				return;
-			case "superseded":
-				this.queueCurrentReplicationStateAnnouncementRepair();
-				return;
-		}
-
-		const selfHash = this.node.identity.publicKey.hashcode();
-		const currentTargets = new Map<string, PublicSignKey>();
-		for (const key of subscribers) {
-			const hash = key.hashcode();
-			if (
-				hash !== selfHash &&
-				!this._replicationInfoBlockedPeers.has(hash) &&
-				!currentTargets.has(hash)
-			) {
-				currentTargets.set(hash, key);
-			}
-		}
-
-		for (const [hash, target] of this._replicationAnnouncementRepairTargets) {
-			if (target.generation !== generation || !currentTargets.has(hash)) {
-				this._replicationAnnouncementRepairTargets.delete(hash);
-			} else {
-				target.key = currentTargets.get(hash)!;
-			}
-		}
-		if (!this._replicationAnnouncementRepairCohortSelected) {
-			const candidates = [...currentTargets.entries()].sort(([left], [right]) =>
-				left.localeCompare(right),
-			);
-			const cursorIndex = this._replicationAnnouncementRepairFairCursorHash
-				? candidates.findIndex(
-						([hash]) =>
-							hash.localeCompare(
-								this._replicationAnnouncementRepairFairCursorHash!,
-							) > 0,
-					)
-				: 0;
-			const fairStart = cursorIndex < 0 ? 0 : cursorIndex;
-			const fairOrder = [
-				...candidates.slice(fairStart),
-				...candidates.slice(0, fairStart),
-			];
-			const cohort = fairOrder.slice(
-				0,
-				REPLICATION_ANNOUNCEMENT_REPAIR_TARGETS_PER_GENERATION,
-			);
-			for (const [hash, key] of cohort) {
-				this._replicationAnnouncementRepairTargets.set(hash, {
-					key,
-					generation,
-					attempts: 0,
-					done: false,
-				});
-			}
-			if (cohort.length > 0) {
-				this._replicationAnnouncementRepairFairCursorHash =
-					cohort[cohort.length - 1][0];
-			}
-			this._replicationAnnouncementRepairCohortSelected = true;
-		}
-
-		const batch = [
-			...this._replicationAnnouncementRepairTargets.entries(),
-		].filter(([, target]) => !target.done);
-		const snapshot = new AllReplicatingSegmentsMessage({ segments });
-		const results = await Promise.allSettled(
-			batch.map(([, target]) =>
-				this.rpc.send(snapshot, {
-					mode: new AcknowledgeDelivery({
-						to: [target.key],
-						redundancy: 1,
-					}),
-					priority: CONVERGENCE_MESSAGE_PRIORITY,
-					signal: generationController.signal,
-				}),
-			),
-		);
-		switch (
-			this.announcementRepairWorkerStatus({
-				generation,
-				lifecycleController,
-				generationController,
-			})
-		) {
-			case "stale":
-				return;
-			case "superseded":
-				this.queueCurrentReplicationStateAnnouncementRepair();
-				return;
-		}
-
-		for (const [index, result] of results.entries()) {
-			const [hash, attemptedTarget] = batch[index];
-			const target = this._replicationAnnouncementRepairTargets.get(hash);
-			if (target !== attemptedTarget || target.generation !== generation) {
-				continue;
-			}
-			if (result.status === "fulfilled") {
-				// DirectStream ACKs confirm that the signed transport envelope reached
-				// the target. Applying the contained replication state remains a
-				// receiver-local, best-effort operation.
-				target.done = true;
-				continue;
-			}
-
-			target.attempts += 1;
-			if (!isTransientReplicationAnnouncementRepairError(result.reason)) {
-				target.done = true;
-				logger.error(result.reason);
-			} else if (
-				target.attempts >= this._replicationAnnouncementRepairMaxAttempts
-			) {
-				target.done = true;
-				logger.trace(
-					"Acknowledged replication announcement repair exhausted for %s",
-					hash,
-				);
-			}
-		}
-
-		if (generation !== this._replicationAnnouncementRetryGeneration) {
-			this.queueCurrentReplicationStateAnnouncementRepair();
-			return;
-		}
-		if (
-			[...this._replicationAnnouncementRepairTargets.values()].some(
-				(target) => !target.done,
-			)
-		) {
-			void this.replicationAnnouncementRepairDebounced?.call();
-			return;
-		}
-
-		this._replicationAnnouncementRepairPending = false;
-		this._replicationAnnouncementRepairTargets.clear();
+	private repairCurrentReplicationStateAnnouncement(): Promise<void> {
+		return this._announcements.repairCurrentReplicationStateAnnouncement();
 	}
 
 	private cancelCurrentReplicationStateAnnouncementRetry(): void {
-		this._replicationAnnouncementRetryGeneration += 1;
-		this._replicationAnnouncementRetryPending = false;
-		this._replicationAnnouncementRetryController?.abort();
-		this.replicationAnnouncementRetryDebounced?.close();
-		this.cancelCurrentReplicationStateAnnouncementRepair();
+		this._announcements.cancelCurrentReplicationStateAnnouncementRetry();
 	}
 
-	private async sendReplicationAnnouncement(
+	private sendReplicationAnnouncement(
 		message:
 			| AllReplicatingSegmentsMessage
 			| AddedReplicationSegmentMessage
 			| StoppedReplicating,
-		ownershipLifecycleController = this.captureReplicationOwnershipLifecycle(),
+		ownershipLifecycleController?: AbortController,
 		options?: { shouldSend?: () => boolean },
 	): Promise<void> {
-		const tails = (this._replicationAnnouncementSendTails ??= new WeakMap<
-			AbortController,
-			Promise<void>
-		>());
-		const previous =
-			tails.get(ownershipLifecycleController) ?? Promise.resolve();
-		const send = previous
-			.catch(() => {})
-			.then(async () => {
-				this.throwIfReplicationOwnershipLifecycleInactive(
-					ownershipLifecycleController,
-				);
-				if (options?.shouldSend && !options.shouldSend()) {
-					return;
-				}
-				// Advance before every post-mutation send, including successful ones. An
-				// authoritative retry already in flight may have captured the previous
-				// local state; the generation mismatch forces one more current snapshot
-				// after that stale send settles.
-				this._replicationAnnouncementRetryGeneration += 1;
-				this.advanceCurrentReplicationStateAnnouncementRepairGeneration();
-				try {
-					await this.rpc.send(message, {
-						priority: CONVERGENCE_MESSAGE_PRIORITY,
-						signal: ownershipLifecycleController.signal,
-					});
-					this.throwIfReplicationOwnershipLifecycleInactive(
-						ownershipLifecycleController,
-					);
-					this.queueCurrentReplicationStateAnnouncementRepair();
-				} catch (error) {
-					// An old send can reject only after poison or close has installed a new
-					// ownership generation. Never enqueue its retry work into that generation.
-					this.throwIfReplicationOwnershipLifecycleInactive(
-						ownershipLifecycleController,
-					);
-					// The local replication-index mutation precedes all calls to this
-					// wrapper. Preserve the explicit caller's rejection, but independently
-					// schedule an authoritative snapshot so peers eventually observe the
-					// already-committed local state.
-					this.queueCurrentReplicationStateAnnouncementRetry(error);
-					throw error;
-				}
-			});
-		// Keep the ordering barrier usable after a caller-observed send rejection.
-		tails.set(
+		return this._announcements.sendReplicationAnnouncement(
+			message,
 			ownershipLifecycleController,
-			send.catch(() => {}),
+			options,
 		);
-		return send;
 	}
 
-	private async retryCurrentReplicationStateAnnouncement(): Promise<void> {
-		const generation = this._replicationAnnouncementRetryGeneration;
-		const controller = this._replicationAnnouncementRetryController;
-		try {
-			const segments = (await this.getMyReplicationSegments()).map((range) =>
-				range.toReplicationRange(),
-			);
-			if (
-				this.closed ||
-				this._closeController.signal.aborted ||
-				controller.signal.aborted
-			) {
-				return;
-			}
-			if (generation !== this._replicationAnnouncementRetryGeneration) {
-				void this.replicationAnnouncementRetryDebounced?.call();
-				return;
-			}
-			this.validatePersistedReplicationRangeSnapshot(segments);
-
-			await this.rpc.send(new AllReplicatingSegmentsMessage({ segments }), {
-				priority: CONVERGENCE_MESSAGE_PRIORITY,
-				signal: controller.signal,
-			});
-			this.queueCurrentReplicationStateAnnouncementRepair();
-		} catch (error) {
-			if (
-				this.closed ||
-				this._closeController.signal.aborted ||
-				controller.signal.aborted
-			) {
-				return;
-			}
-			if (this.queueCurrentReplicationStateAnnouncementRetry(error)) {
-				return;
-			}
-			if (generation === this._replicationAnnouncementRetryGeneration) {
-				this._replicationAnnouncementRetryPending = false;
-			} else {
-				void this.replicationAnnouncementRetryDebounced?.call();
-			}
-			throw error;
-		}
-		if (
-			this.closed ||
-			this._closeController.signal.aborted ||
-			controller.signal.aborted
-		) {
-			return;
-		}
-
-		// A newer mutation announcement may have started while this snapshot was
-		// in flight. In that case keep the repair pending so the newer current
-		// state is also announced in full, regardless of whether its incremental
-		// send succeeded or failed.
-		if (generation === this._replicationAnnouncementRetryGeneration) {
-			this._replicationAnnouncementRetryPending = false;
-			if (
-				!this.closed &&
-				!this._closeController.signal.aborted &&
-				!controller.signal.aborted &&
-				this._isAdaptiveReplicating
-			) {
-				void this.rebalanceParticipationDebounced?.call();
-			}
-		} else {
-			void this.replicationAnnouncementRetryDebounced?.call();
-		}
+	private retryCurrentReplicationStateAnnouncement(): Promise<void> {
+		return this._announcements.retryCurrentReplicationStateAnnouncement();
 	}
 
 	private markLocalAppendActivity(timestamp = Date.now()) {
@@ -14324,16 +13765,14 @@ export class SharedLog<
 		this.uniqueReplicators = new Set();
 		this._replicatorJoinEmitted = new Set();
 		this._replicatorsReconciled = false;
-		this._replicatorLivenessSweepRunning = false;
-		this._replicatorLivenessTimer = undefined;
-		this._replicatorLivenessTargets = [];
-		this._replicatorLivenessTargetsSize = 0;
-		this._replicatorLivenessCursor = 0;
-		this._replicatorLivenessFailures = new Map();
-		this._replicatorLastActivityAt = new Map();
+		// Deserialized instances never ran the constructor; create the monitor and
+		// coordinator lazily on first open. Reopens keep the SAME instances so
+		// stale async continuations observe resets via property lookup.
+		this._liveness ??= this.createReplicatorLivenessMonitor();
+		this._liveness.resetForOpen();
 		this._lastLocalAppendAt = 0;
-		this._replicationAnnouncementRetryPending = false;
-		this._replicationAnnouncementRetryGeneration = 0;
+		this._announcements ??= this.createReplicationAnnouncementCoordinator();
+		this._announcements.resetForOpen();
 		const adaptiveReplicateOptions =
 			options?.replicate && isAdaptiveReplicatorOption(options.replicate)
 				? options.replicate
@@ -15852,63 +15291,11 @@ export class SharedLog<
 	}
 
 	private startReplicatorLivenessSweep() {
-		if (this._replicatorLivenessTimer) {
-			return;
-		}
-		this._replicatorLivenessTimer = setInterval(() => {
-			void this.runReplicatorLivenessSweep();
-		}, REPLICATOR_LIVENESS_SWEEP_INTERVAL_MS);
-		this._replicatorLivenessTimer.unref?.();
+		this._liveness.startReplicatorLivenessSweep();
 	}
 
 	private stopReplicatorLivenessSweep() {
-		if (this._replicatorLivenessTimer) {
-			clearInterval(this._replicatorLivenessTimer);
-			this._replicatorLivenessTimer = undefined;
-		}
-		this._replicatorLivenessSweepRunning = false;
-		this._replicatorLivenessTargets = [];
-		this._replicatorLivenessTargetsSize = 0;
-		this._replicatorLivenessCursor = 0;
-		this._replicatorLivenessFailures.clear();
-		this._replicatorLastActivityAt.clear();
-	}
-
-	private rebuildReplicatorLivenessTargets() {
-		const selfHash = this.node.identity.publicKey.hashcode();
-		this._replicatorLivenessTargets = [...this.uniqueReplicators].filter(
-			(hash) => hash !== selfHash,
-		);
-		this._replicatorLivenessTargetsSize = this.uniqueReplicators.size;
-		if (
-			this._replicatorLivenessCursor >= this._replicatorLivenessTargets.length
-		) {
-			this._replicatorLivenessCursor = 0;
-		}
-	}
-
-	private getReplicatorLivenessTargets() {
-		const selfHash = this.node.identity.publicKey.hashcode();
-		const expected =
-			this.uniqueReplicators.size -
-			(this.uniqueReplicators.has(selfHash) ? 1 : 0);
-
-		if (this._replicatorLivenessTargets.length > 0) {
-			// Keep the cursor stable, but purge stale hashes (membership can change while
-			// the total size stays constant).
-			this._replicatorLivenessTargets = this._replicatorLivenessTargets.filter(
-				(hash) => hash !== selfHash && this.uniqueReplicators.has(hash),
-			);
-		}
-
-		if (
-			this._replicatorLivenessTargetsSize !== this.uniqueReplicators.size ||
-			this._replicatorLivenessTargets.length !== expected
-		) {
-			this.rebuildReplicatorLivenessTargets();
-		}
-
-		return this._replicatorLivenessTargets;
+		this._liveness.stopReplicatorLivenessSweep();
 	}
 
 	private cleanupCheckedPrunePeer(
@@ -15982,26 +15369,8 @@ export class SharedLog<
 		}
 	}
 
-	private markReplicatorActivity(peerHash: string, now = Date.now()) {
-		this._replicatorLastActivityAt.set(peerHash, now);
-		// Any recent authenticated activity is positive liveness evidence. Reset the
-		// consecutive miss streak immediately, including while an eviction is
-		// waiting in the per-peer mutation lane.
-		if (Date.now() - now < REPLICATOR_LIVENESS_IDLE_THRESHOLD_MS) {
-			this._replicatorLivenessFailures.delete(peerHash);
-		}
-	}
-
-	private hasRecentReplicatorActivity(peerHash: string, now = Date.now()) {
-		const lastActivityAt = this._replicatorLastActivityAt.get(peerHash);
-		if (
-			lastActivityAt != null &&
-			now - lastActivityAt < REPLICATOR_LIVENESS_IDLE_THRESHOLD_MS
-		) {
-			this._replicatorLivenessFailures.delete(peerHash);
-			return true;
-		}
-		return false;
+	private markReplicatorActivity(peerHash: string, now?: number) {
+		this._liveness.markReplicatorActivity(peerHash, now);
 	}
 
 	private advanceReplicationInfoRecoveryEpoch(peerHash: string) {
@@ -16011,58 +15380,6 @@ export class SharedLog<
 		// accepted without comparing its clock to this receiver's clock.
 		this.advanceReplicationInfoReceiveEpoch(peerHash);
 		this.latestReplicationInfoMessage.delete(peerHash);
-	}
-
-	private async evictReplicatorFromLiveness(
-		peerHash: string,
-		publicKey: PublicSignKey,
-		replicationLifecycleController: AbortController,
-		subscriptionEpoch: object | null,
-		observedActivityAt: number | undefined,
-	) {
-		try {
-			await this.removeReplicator(publicKey, {
-				noEvent: true,
-				replicationLifecycleController,
-				shouldRemove: () =>
-					this._replicatorLastActivityAt.get(peerHash) === observedActivityAt,
-				subscriptionEpoch,
-				onRemoved: ({ wasReplicator }) => {
-					if (wasReplicator) {
-						this._pendingReplicatorLeaveByPeer.add(peerHash);
-					}
-					// A newer subscription/lifecycle may have started while the admitted
-					// removal was completing. Its reconnect barrier owns all later effects.
-					if (
-						!this.isReplicationLifecycleActive(
-							replicationLifecycleController,
-						) ||
-						!this.isCurrentSubscriptionEpoch(peerHash, subscriptionEpoch)
-					) {
-						return;
-					}
-					if (this._pendingReplicatorLeaveByPeer.delete(peerHash)) {
-						this.events.dispatchEvent(
-							new CustomEvent<ReplicatorLeaveEvent>("replicator:leave", {
-								detail: { publicKey },
-							}),
-						);
-					}
-
-					if (!this._replicationInfoBlockedPeers.has(peerHash)) {
-						this.scheduleReplicationInfoRequests(
-							publicKey,
-							replicationLifecycleController,
-						);
-					}
-					this._replicatorLivenessTargetsSize = -1;
-				},
-			});
-		} catch (error) {
-			if (!isNotStartedError(error as Error)) {
-				throw error;
-			}
-		}
 	}
 
 	private async resolveCandidatePeersForHash(
@@ -16141,196 +15458,16 @@ export class SharedLog<
 		return pickDeterministicSubset(peers, seed, maxPeers);
 	}
 
-	private async runReplicatorLivenessSweep() {
-		const replicationLifecycleController = this._replicationLifecycleController;
-		if (
-			this.closed ||
-			this._closeController.signal.aborted ||
-			!this.isReplicationLifecycleActive(replicationLifecycleController)
-		) {
-			return;
-		}
-		if (this._replicatorLivenessSweepRunning) {
-			return;
-		}
-
-		const targets = this.getReplicatorLivenessTargets();
-		if (targets.length === 0) {
-			return;
-		}
-
-		this._replicatorLivenessSweepRunning = true;
-		try {
-			if (this._replicatorLivenessCursor >= targets.length) {
-				this._replicatorLivenessCursor = 0;
-			}
-			const peerHash = targets[this._replicatorLivenessCursor]!;
-			this._replicatorLivenessCursor =
-				(this._replicatorLivenessCursor + 1) % targets.length;
-			await this.probeReplicatorLiveness(peerHash);
-		} catch (error) {
-			if (!isNotStartedError(error as Error)) {
-				logger.error((error as any)?.toString?.() ?? String(error));
-			}
-		} finally {
-			if (
-				this._replicationLifecycleController === replicationLifecycleController
-			) {
-				this._replicatorLivenessSweepRunning = false;
-			}
-		}
+	private runReplicatorLivenessSweep() {
+		return this._liveness.runReplicatorLivenessSweep();
 	}
 
-	private async probeReplicatorLiveness(peerHash: string) {
-		const replicationLifecycleController = this._replicationLifecycleController;
-		if (
-			this.closed ||
-			this._closeController.signal.aborted ||
-			!replicationLifecycleController ||
-			!this.isReplicationLifecycleActive(replicationLifecycleController)
-		) {
-			return;
-		}
-		const subscriptionEpoch = this.getSubscriptionEpoch(peerHash);
-		const ownsProbe = () =>
-			this.isReplicationLifecycleActive(replicationLifecycleController) &&
-			this.isCurrentSubscriptionEpoch(peerHash, subscriptionEpoch);
-		if (!this.uniqueReplicators.has(peerHash)) {
-			this._replicatorLivenessFailures.delete(peerHash);
-			return;
-		}
-		if (this.hasRecentReplicatorActivity(peerHash)) {
-			return;
-		}
-		const observedActivityAt = this._replicatorLastActivityAt.get(peerHash);
-
-		const publicKey = await this._resolvePublicKeyFromHash(peerHash);
-		if (!ownsProbe()) {
-			return;
-		}
-		if (this.hasRecentReplicatorActivity(peerHash)) {
-			return;
-		}
-		if (!publicKey) {
-			try {
-				await this.removeReplicator(peerHash, {
-					noEvent: true,
-					replicationLifecycleController,
-					shouldRemove: () =>
-						this._replicatorLastActivityAt.get(peerHash) === observedActivityAt,
-					subscriptionEpoch,
-					onRemoved: () => {
-						if (!ownsProbe()) {
-							return;
-						}
-						this._replicatorLivenessTargetsSize = -1;
-					},
-				});
-			} catch (error) {
-				if (!isNotStartedError(error as Error)) {
-					throw error;
-				}
-			}
-			return;
-		}
-
-		try {
-			// Explicit ping (ACKed) instead of RequestReplicationInfoMessage to avoid
-			// triggering large segment snapshots just to prove liveness.
-			await this.rpc.send(new ReplicationPingMessage(), {
-				mode: new AcknowledgeDelivery({ redundancy: 1, to: [publicKey] }),
-				priority: ACK_CONTROL_PRIORITY,
-				responsePriority: ACK_CONTROL_PRIORITY,
-			});
-			if (!ownsProbe()) {
-				return;
-			}
-			this.markReplicatorActivity(peerHash);
-			this._replicatorLivenessFailures.delete(peerHash);
-			return;
-		} catch (error) {
-			if (isNotStartedError(error as Error)) {
-				return;
-			}
-		}
-		if (!ownsProbe()) {
-			return;
-		}
-		if (this.hasRecentReplicatorActivity(peerHash)) {
-			return;
-		}
-
-		// Relay-backed prod paths can keep a peer subscribed/reachable even if an
-		// ACKed liveness ping gets delayed or dropped under load. Treat observed
-		// topic presence as a positive liveness signal before evicting the peer.
-		if (await this.confirmReplicatorSubscriberPresence(peerHash)) {
-			if (!ownsProbe()) {
-				return;
-			}
-			this.markReplicatorActivity(peerHash);
-			this._replicatorLivenessFailures.delete(peerHash);
-			return;
-		}
-		if (!ownsProbe()) {
-			return;
-		}
-		if (this.hasRecentReplicatorActivity(peerHash)) {
-			return;
-		}
-
-		const failures = (this._replicatorLivenessFailures.get(peerHash) ?? 0) + 1;
-		this._replicatorLivenessFailures.set(peerHash, failures);
-		this.scheduleReplicationInfoRequests(
-			publicKey,
-			replicationLifecycleController,
-		);
-
-		if (failures < REPLICATOR_LIVENESS_PROBE_FAILURES_TO_EVICT) {
-			return;
-		}
-		if (!ownsProbe() || !this.uniqueReplicators.has(peerHash)) {
-			this._replicatorLivenessFailures.delete(peerHash);
-			return;
-		}
-
-		await this.evictReplicatorFromLiveness(
-			peerHash,
-			publicKey,
-			replicationLifecycleController,
-			subscriptionEpoch,
-			observedActivityAt,
-		);
+	private probeReplicatorLiveness(peerHash: string) {
+		return this._liveness.probeReplicatorLiveness(peerHash);
 	}
 
-	private async confirmReplicatorSubscriberPresence(peerHash: string) {
-		try {
-			const subscribers = await this._getTopicSubscribers(this.rpc.topic);
-			if (
-				subscribers?.some((subscriber) => subscriber.hashcode() === peerHash)
-			) {
-				return true;
-			}
-		} catch (error) {
-			if (isNotStartedError(error as Error)) {
-				return false;
-			}
-		}
-
-		try {
-			await waitForSubscribers(this.node, peerHash, this.rpc.topic, {
-				signal: this._closeController.signal,
-				timeout: Math.max(
-					1_000,
-					Math.min(5_000, Math.floor(this.waitForReplicatorTimeout / 4)),
-				),
-			});
-			return true;
-		} catch (error) {
-			if (isNotStartedError(error as Error)) {
-				return false;
-			}
-			return false;
-		}
+	private confirmReplicatorSubscriberPresence(peerHash: string) {
+		return this._liveness.confirmReplicatorSubscriberPresence(peerHash);
 	}
 
 	async getMemoryUsage() {
@@ -17131,7 +16268,7 @@ export class SharedLog<
 			}
 		};
 		captureSync(() => this.cancelCurrentReplicationStateAnnouncementRetry());
-		this.replicationAnnouncementRetryDebounced = undefined;
+		this._announcements.replicationAnnouncementRetryDebounced = undefined;
 		captureSync(() => {
 			if (this._wireSyncSession) {
 				this._wireSyncSession.unregisterTopic(this.topic);
