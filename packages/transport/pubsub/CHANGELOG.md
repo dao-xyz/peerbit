@@ -1,5 +1,11 @@
 # Changelog
 
+## 5.3.11
+
+### Patch Changes
+
+- [#1159](https://github.com/dao-xyz/peerbit/pull/1159) [`45e1ed5`](https://github.com/dao-xyz/peerbit/commit/45e1ed513c6dc8326adbc3c9c8ef361e7be3b413) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Cancel fanout provider announce, provider watch, and channel background-loop sleeps during close and stop.
+
 ## 5.3.10
 
 ### Patch Changes
