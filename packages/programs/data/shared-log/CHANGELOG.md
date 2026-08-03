@@ -1,5 +1,15 @@
 # Changelog
 
+## 13.2.22
+
+### Patch Changes
+
+- Updated dependencies [[`45e1ed5`](https://github.com/dao-xyz/peerbit/commit/45e1ed513c6dc8326adbc3c9c8ef361e7be3b413)]:
+  - @peerbit/pubsub@5.3.11
+  - @peerbit/program@6.0.46
+  - @peerbit/rpc@6.1.14
+  - @peerbit/log@6.2.12
+
 ## 13.2.21
 
 ### Patch Changes
