@@ -181,6 +181,7 @@ import {
 	materializeVerifiedRawExchangeHeadsMessage,
 } from "./exchange-heads.js";
 import { FanoutEnvelope } from "./fanout-envelope.js";
+import { InstanceLifecycle } from "./instance-lifecycle.js";
 import {
 	MAX_U32,
 	MAX_U64,
@@ -2028,7 +2029,16 @@ export class SharedLog<
 	// Explicit changes to the local replication role invalidate adaptive planners
 	// that were admitted under the previous role. The ownership lifecycle alone
 	// is insufficient because unreplicate() deliberately keeps the store open.
-	private _localReplicationRoleGeneration = 0;
+	// Stage 2: physically owned by the per-open InstanceLifecycle (role
+	// sub-generation); these accessors keep every legacy site verbatim.
+	private get _localReplicationRoleGeneration(): number {
+		return this._instanceLifecycle?.roleGeneration as number;
+	}
+	private set _localReplicationRoleGeneration(value: number) {
+		if (this._instanceLifecycle) {
+			this._instanceLifecycle.roleGeneration = value;
+		}
+	}
 	// If durable post-state cannot be reconciled to every native/runtime mirror,
 	// reject later writers and planners until reopen rehydrates those mirrors.
 	private _replicationRangeMutationFailure?: unknown;
@@ -2036,6 +2046,12 @@ export class SharedLog<
 	// opaque token on poison and every terminal/open boundary so an older runner
 	// can neither dispatch nor mutate a freshly opened lifecycle.
 	private _repairLifecycleController = new AbortController();
+	// design-note: not a new fence — this is the per-open identity object the
+	// fence ratchet is migrating TOWARD (stage 2 of the session/lifecycle
+	// refactor). It wraps the controllers, poison latch, terminal fences, and
+	// coordinator/debouncer identities via late-bound readers; stage 3 drains
+	// those fences into it one at a time.
+	private _instanceLifecycle?: InstanceLifecycle;
 	// Local receive generations fence replication-info handlers that were admitted
 	// before a liveness eviction but reach the per-peer apply lane after it. Unlike
 	// message timestamps, these tokens never compare clocks from different peers.
@@ -2113,6 +2129,7 @@ export class SharedLog<
 
 	private poisonReplicationOwnership(failure: unknown): unknown {
 		this._replicationRangeMutationFailure ??= failure;
+		this._instanceLifecycle?.markPoisoned(failure);
 		this.stopRepairLifecycle();
 		// Pending aggregate changes belong to the poisoned ownership generation.
 		// Closing also resolves ignored `add()` promises, while the guarded
@@ -3333,6 +3350,24 @@ export class SharedLog<
 		});
 	}
 
+	private createInstanceLifecycle(): InstanceLifecycle {
+		return new InstanceLifecycle({
+			getCurrentLifecycle: () => this._instanceLifecycle,
+			getOwnershipController: () => this._repairLifecycleController,
+			getMembershipController: () => this._replicationLifecycleController,
+			getCloseController: () => this._closeController,
+			getPoisonFailure: () => this._replicationRangeMutationFailure,
+			isHostClosed: () => this.closed,
+			isHostTerminating: () => this.isTerminating(),
+			getCheckedPruneCoordinator: () => this._checkedPrune,
+			areRangeMutationsClosing: () => this._replicationRangeMutationsClosing,
+			arePruneRemovesClosing: () => this._pruneRemovesClosing,
+			getPruneDebouncer: () => this.pruneDebouncedFn,
+			getReplicationChangeDebouncer: () => this.replicationChangeDebounceFn,
+			getRebalanceDebouncer: () => this.rebalanceParticipationDebounced,
+		});
+	}
+
 	constructor(properties?: { id?: Uint8Array }) {
 		super();
 		this.ensureNativeDurabilityRuntimeState();
@@ -3389,6 +3424,7 @@ export class SharedLog<
 		this._announcements = this.createReplicationAnnouncementCoordinator();
 		this.pendingMaturity = new Map();
 		this._closeController = new AbortController();
+		this._instanceLifecycle = this.createInstanceLifecycle();
 	}
 
 	private ensureNativeDurabilityRuntimeState(): void {
@@ -13682,12 +13718,20 @@ export class SharedLog<
 		this._replicationRangeMutationsClosing = false;
 		this._checkedPruneRemoveBlocksLocalRangeMutationAdmission = 0;
 		this._checkedPruneRemovalCallbackInvocationDepth = 0;
-		this._localReplicationRoleGeneration = 0;
 		this._receiveOwnershipRevision = 0;
 		this._receiveOwnershipMutationAdmissions = 0;
 		this._pruneRemovesClosing = false;
 		this._replicationRangeMutationFailure = undefined;
 		this.startRepairLifecycle();
+		// One InstanceLifecycle per open(): fresh identity, rotated together
+		// with the ownership controller above. Late-bound readers make it
+		// insensitive to the resets that follow (membership controller at
+		// resetSubscriptionChangeCallbackTracking below, _checkedPrune and
+		// _closeController and the debouncers in the setup blocks further
+		// down). The fresh object also supersedes the old per-open
+		// `_localReplicationRoleGeneration = 0` reset: roleGeneration starts
+		// at 0 on the incoming lifecycle.
+		this._instanceLifecycle = this.createInstanceLifecycle();
 		this._replicationRangeMutationTail = Promise.resolve();
 		this.resetSubscriptionChangeCallbackTracking();
 		const recoveringNativeDurableFailure =
@@ -14381,6 +14425,8 @@ export class SharedLog<
 		this.interval = setInterval(() => {
 			void this.rebalanceParticipationDebounced?.call();
 		}, RECALCULATE_PARTICIPATION_DEBOUNCE_INTERVAL);
+
+		this._instanceLifecycle!.markOpenComplete();
 	}
 
 	private toNativeReplicationRange(
@@ -16174,6 +16220,7 @@ export class SharedLog<
 
 	private async _close(options?: { preserveDropRetryResources?: boolean }) {
 		this.stopRepairLifecycle();
+		this._instanceLifecycle?.beginTerminal("internal-close");
 		const preserveDropRetryResources =
 			options?.preserveDropRetryResources === true;
 		let firstError: unknown;
@@ -16371,6 +16418,7 @@ export class SharedLog<
 		// SharedLog-specific await or observable teardown can admit a new owner.
 		this.preventParentAttachments();
 		this.stopRepairLifecycle();
+		this._instanceLifecycle?.beginTerminal("close");
 		const replicationRangeTerminalFence =
 			this.acquireReplicationRangeMutationTerminalFence();
 		const pruneRemoveTerminalFence = this.acquirePruneRemoveTerminalFence();
@@ -16511,6 +16559,7 @@ export class SharedLog<
 		// the terminal fence only after that precondition succeeds.
 		this.preventParentAttachments();
 		this.stopRepairLifecycle();
+		this._instanceLifecycle?.beginTerminal("drop");
 		const replicationRangeTerminalFence =
 			this.acquireReplicationRangeMutationTerminalFence();
 		const pruneRemoveTerminalFence = this.acquirePruneRemoveTerminalFence();

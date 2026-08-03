@@ -21,7 +21,7 @@ const TARGETS = new Map([
 		"packages/programs/data/shared-log/src/index.ts",
 		[
 			"_checkedPruneRemoveBlocksLocalRangeMutationAdmission",
-			"_localReplicationRoleGeneration",
+			"_instanceLifecycle",
 			"_nativeCoordinateMutationGenerations",
 			"_receiveCleanupGateByPeer",
 			"_receiveOwnershipMutationAdmissions",
@@ -32,6 +32,10 @@ const TARGETS = new Map([
 			"_subscriptionEpochByPeer",
 			"_subscriptionOpeningEpochByPeer",
 		],
+	],
+	[
+		"packages/programs/data/shared-log/src/instance-lifecycle.ts",
+		["roleGeneration"],
 	],
 	[
 		"packages/programs/data/shared-log/src/native-write-through-block-store.ts",
