@@ -215,7 +215,12 @@ jobs:
 
       - name: Install wasm-pack
         if: steps.pr.outputs.same_repo == 'true' && steps.pr.outputs.run_any == 'true'
-        run: cargo install wasm-pack --version '=0.13.1' --locked
+        run: |
+          cargo install wasm-pack --version '=0.13.1' --locked
+          # Pre-install the wasm target once: concurrent wasm-pack builds
+          # otherwise race their own `rustup target add` and fail on a
+          # component conflict (observed in run 30832179916).
+          rustup target add wasm32-unknown-unknown
 
       - name: Install deps (base)
         if: steps.pr.outputs.same_repo == 'true' && steps.pr.outputs.run_any == 'true'
