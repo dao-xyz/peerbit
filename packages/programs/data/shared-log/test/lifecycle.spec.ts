@@ -89,18 +89,18 @@ describe("lifecycle", () => {
 				);
 				await oldSimpleStarted;
 				const runningState =
-					sharedLog._joinWarmupSendStateByTarget.get("target");
+					sharedLog.joinWarmup._joinWarmupSendStateByTarget.get("target");
 				const oldGeneration = runningState.generation;
 
 				sharedLog.poisonReplicationOwnership(
 					new Error("forced ownership poison"),
 				);
 				await db.close();
-				expect(sharedLog._joinWarmupSendStateByTarget.get("target")).to.equal(
+				expect(sharedLog.joinWarmup._joinWarmupSendStateByTarget.get("target")).to.equal(
 					runningState,
 				);
 				await session.peers[0].open(db);
-				expect(sharedLog._joinWarmupSendStateByTarget.get("target")).to.be
+				expect(sharedLog.joinWarmup._joinWarmupSendStateByTarget.get("target")).to.be
 					.undefined;
 
 				sharedLog.dispatchMaybeMissingEntries(
@@ -116,9 +116,9 @@ describe("lifecycle", () => {
 					expect(simpleEntryBatches).to.deep.equal([["old"], ["new"]]),
 				);
 				const reopenedState =
-					sharedLog._joinWarmupSendStateByTarget.get("target");
+					sharedLog.joinWarmup._joinWarmupSendStateByTarget.get("target");
 				expect(reopenedState.generation).to.not.equal(oldGeneration);
-				expect(sharedLog._joinWarmupGenerationByTarget.get("target")).to.equal(
+				expect(sharedLog.joinWarmup._joinWarmupGenerationByTarget.get("target")).to.equal(
 					reopenedState.generation,
 				);
 				expect(maxActiveSimpleSends).to.equal(2);
@@ -270,33 +270,33 @@ describe("lifecycle", () => {
 			const drainSubscriptionCallbacks = sinon
 				.stub(sharedLog, "drainSubscriptionChangeCallbacks")
 				.callsFake(async () => {
-					const generation = sharedLog.getJoinWarmupGeneration(target);
-					sharedLog.scheduleJoinWarmupRetries(
+					const generation = sharedLog.joinWarmup.getJoinWarmupGeneration(target);
+					sharedLog.joinWarmup.scheduleJoinWarmupRetries(
 						target,
 						generation,
 						[60_000],
 						new Map([["late-entry", { hash: "late-entry" }]]),
 						false,
 					);
-					expect(sharedLog._joinWarmupGenerationByTarget.get(target)).to.equal(
+					expect(sharedLog.joinWarmup._joinWarmupGenerationByTarget.get(target)).to.equal(
 						generation,
 					);
-					expect(sharedLog._joinWarmupRetryTimersByTarget.has(target)).to.be
+					expect(sharedLog.joinWarmup._joinWarmupRetryTimersByTarget.has(target)).to.be
 						.false;
-					expect(sharedLog._joinWarmupScheduledRetriesByTarget.has(target)).to
+					expect(sharedLog.joinWarmup._joinWarmupScheduledRetriesByTarget.has(target)).to
 						.be.false;
 				});
 			const drainReceiveHandlers = sinon
 				.stub(sharedLog, "drainReceiveHandlers")
 				.callsFake(async () => {
 					expect(
-						sharedLog._joinWarmupGenerationByTarget.has(target),
+						sharedLog.joinWarmup._joinWarmupGenerationByTarget.has(target),
 					).to.be.false;
 					expect(
-						sharedLog._joinWarmupRetryTimersByTarget.has(target),
+						sharedLog.joinWarmup._joinWarmupRetryTimersByTarget.has(target),
 					).to.be.false;
 					expect(
-						sharedLog._joinWarmupScheduledRetriesByTarget.has(target),
+						sharedLog.joinWarmup._joinWarmupScheduledRetriesByTarget.has(target),
 					).to.be.false;
 				});
 

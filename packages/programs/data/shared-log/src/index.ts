@@ -103,13 +103,11 @@ import type {
 	SharedLogRangePlanner,
 } from "@peerbit/shared-log-rust";
 import {
-	ACK_CONTROL_PRIORITY,
 	AcknowledgeDelivery,
 	AnyWhere,
 	BACKGROUND_MESSAGE_PRIORITY,
 	CONVERGENCE_MESSAGE_PRIORITY,
 	DataMessage,
-	DeliveryError,
 	MessageHeader,
 	NotStartedError,
 	type RouteHint,
@@ -140,7 +138,11 @@ import {
 	type DebouncedAccumulatorMap,
 	debouncedAccumulatorMap,
 } from "./debounce.js";
-import { NativeDurableCommitError, NoPeersError } from "./errors.js";
+import {
+	NativeDurableCommitError,
+	NoPeersError,
+	isNotStartedError,
+} from "./errors.js";
 import {
 	EXCHANGE_HEADS_REPAIR_HINT,
 	EntryWithRefs,
@@ -186,8 +188,10 @@ import {
 	type Numbers,
 	createNumbers,
 } from "./integers.js";
+import { JoinWarmupCoordinator } from "./join-warmup.js";
 import { LeaderPlanCache } from "./leader-plan-cache.js";
 import { TransportMessage } from "./message.js";
+import { NativeBackboneWriteThroughBlockStore } from "./native-write-through-block-store.js";
 import { PIDReplicationController } from "./pid.js";
 import {
 	type EntryReplicated,
@@ -217,6 +221,11 @@ import {
 	toRebalance,
 } from "./ranges.js";
 import {
+	ReplicationAnnouncementCoordinator,
+	isTransientReplicationAnnouncementError,
+	type ReplicationAnnouncementRepairWorkerContext,
+} from "./replication-announcement.js";
+import {
 	type ReplicationDomainHash,
 	createReplicationDomainHash,
 } from "./replication-domain-hash.js";
@@ -245,7 +254,9 @@ import {
 	encodeReplicas,
 	maxReplicas,
 } from "./replication.js";
+import { ReplicatorLivenessMonitor } from "./replicator-liveness.js";
 import { Observer, Replicator } from "./role.js";
+import { createSyncronizer } from "./sync/factory.js";
 import type {
 	SharedLogNativeWireSync,
 	SyncEntryCoordinates,
@@ -259,7 +270,6 @@ import {
 	emitSyncProfileEvent,
 	syncProfileStart,
 } from "./sync/profile.js";
-import { RatelessIBLTSynchronizer } from "./sync/rateless-iblt.js";
 import {
 	ConfirmEntriesMessage,
 	SYNC_MESSAGE_PRIORITY,
@@ -452,1165 +462,6 @@ const createDefaultDurableBlockStore = async (
 			compactOnClose: true,
 		}),
 	);
-
-/** The native backbone's in-wasm-memory block store. */
-type NativeBackboneBlocks = NativePeerbitBackbone["blocks"];
-
-type NativeCommitOwnershipToken = {
-	id: number;
-	rows: Map<
-		string,
-		{
-			generation: number;
-			durableExistedBefore?: boolean;
-			shared: boolean;
-		}
-	>;
-};
-
-/**
- * Write-through block store bridging the native backbone's in-wasm-memory block
- * store to a durable per-program {@link AnyBlockStore}.
- *
- * WHY: when the native backbone is active the log's entry blocks live only in
- * the native wasm block map (`NativeBackboneBlockStore.persisted() === false`).
- * On a restart that map is empty, so the native graph cannot reload heads the
- * durable heads index still lists ("Failed to load entry from head"). This
- * wrapper mirrors every write into the same durable `blocks` sublevel the
- * non-native path uses. On a native miss, reads fall through to durable storage
- * and lazily repopulate the wasm map so the native graph can walk the DAG again.
- *
- * The native store stays the authoritative hot store the native graph reads
- * from: reads hit native first and only fall back to durable (repopulating
- * native on a hit so subsequent native-graph reads succeed).
- *
- * METHOD SURFACE (see #1006): `RemoteBlocks` and the log feature-detect the
- * optional batch methods (`putMany`/`putKnown`/`putKnownMany`/
- * `putKnownManyColumns`/`rmMany`). To keep the receive-fusion / columnar fast
- * paths engaged this wrapper preserves the native store's optional write
- * methods — including `putKnownManyColumns`, which `AnyBlockStore` does not have
- * — and delegates each. It adds only local durability/trim coordination hooks
- * consumed by `RemoteBlocks` and the log; protocol/native-handle capabilities
- * such as `getBlockResponsePayload`/`getNativeLogBlockStoreHandle` stay absent,
- * so their optional-chained probes keep the existing fallback behavior.
- */
-class NativeBackboneWriteThroughBlockStore {
-	constructor(
-		private readonly native: NativeBackboneBlocks,
-		private readonly durable: AnyBlockStore,
-	) {}
-
-	// A durable mirror write that cannot be awaited at its call site (the
-	// columnar putKnownManyColumns fast path must return a synchronous string[]
-	// because RemoteBlocks.putKnownManyColumns treats the result as sync) is
-	// tracked here instead of being silently `void`ed. Its rejection is stored
-	// and re-thrown on the next awaited wrapper method (and on stop()), so a
-	// failed durable write (IO/disk-full) surfaces as an error rather than
-	// vanishing and leaving the block out of durable while native/log report
-	// success. `.catch` also prevents unhandled-rejection noise.
-	private readonly pendingDurableWrites = new Set<Promise<unknown>>();
-	private nativeDurableCommitFailure?: NativeDurableCommitError;
-	private stopCompleted = false;
-	private readonly nativeDeleteTombstones = new Map<string, number>();
-	private nativeDeleteEpoch = 0;
-	private readonly nativeBlockWriteGenerations = new Map<string, number>();
-	private readonly pendingNativeDeleteCleanup = new Map<string, number>();
-	private readonly stagedNativeDeleteCleanups = new Map<
-		number,
-		Map<string, number>
-	>();
-	private nextNativeDeleteCleanupToken = 0;
-	private nativeDeleteCleanupRunning: Promise<void> | undefined;
-	private nextNativeCommitOwnershipToken = 0;
-	private readonly nativeCommitOwnerships = new Map<
-		number,
-		NativeCommitOwnershipToken
-	>();
-	private readonly nativeCommitOwnershipsByCid = new Map<string, Set<number>>();
-
-	getNativeDurableCommitFailure(): NativeDurableCommitError | undefined {
-		return this.nativeDurableCommitFailure;
-	}
-
-	private recordNativeDurableCommitFailure(
-		cause: unknown,
-		options?: {
-			committedCids?: Iterable<string>;
-			failedCids?: Iterable<string>;
-		},
-	): NativeDurableCommitError {
-		if (this.nativeDurableCommitFailure) {
-			this.nativeDurableCommitFailure.addCommitContext(options);
-			return this.nativeDurableCommitFailure;
-		}
-		this.nativeDurableCommitFailure =
-			cause instanceof NativeDurableCommitError
-				? cause
-				: new NativeDurableCommitError(cause, options);
-		if (cause instanceof NativeDurableCommitError) {
-			cause.addCommitContext(options);
-		}
-		return this.nativeDurableCommitFailure;
-	}
-
-	private throwIfNativeDurableCommitFailed(): void {
-		if (this.nativeDurableCommitFailure) {
-			throw this.nativeDurableCommitFailure;
-		}
-	}
-
-	throwIfDurableWritesFailed(): void {
-		this.throwIfNativeDurableCommitFailed();
-	}
-
-	private async commitDurableMutation<T>(
-		operation: () => MaybePromise<T>,
-		committedCids: Iterable<string>,
-		failedCids?: Iterable<string>,
-	): Promise<T> {
-		this.throwIfNativeDurableCommitFailed();
-		const committedCidList = [...committedCids];
-		const failedCidList = failedCids ? [...failedCids] : committedCidList;
-		let result: T;
-		const operationResult = Promise.resolve().then(operation);
-		this.trackAwaitedDurable(operationResult);
-		try {
-			result = await operationResult;
-		} catch (error) {
-			throw this.recordNativeDurableCommitFailure(error, {
-				committedCids: committedCidList,
-				failedCids: failedCidList,
-			});
-		}
-		// A different concurrent native mutation may have poisoned the wrapper
-		// while this durable call was in flight. Include this operation among the
-		// native-applied facts, but not among durable calls that actually failed.
-		if (this.nativeDurableCommitFailure) {
-			this.nativeDurableCommitFailure.addCommitContext({
-				committedCids: committedCidList,
-				failedCids: [],
-			});
-			throw this.nativeDurableCommitFailure;
-		}
-		return result;
-	}
-
-	private beginNativeDelete(cids: string[]): void {
-		this.nativeDeleteEpoch++;
-		for (const cid of cids) {
-			this.nativeDeleteTombstones.set(
-				cid,
-				(this.nativeDeleteTombstones.get(cid) ?? 0) + 1,
-			);
-		}
-	}
-
-	private endNativeDelete(cids: string[]): void {
-		for (const cid of cids) {
-			const remaining = (this.nativeDeleteTombstones.get(cid) ?? 1) - 1;
-			if (remaining <= 0) {
-				this.nativeDeleteTombstones.delete(cid);
-			} else {
-				this.nativeDeleteTombstones.set(cid, remaining);
-			}
-		}
-	}
-
-	private isNativeDeletePending(cid: string): boolean {
-		return this.nativeDeleteTombstones.has(cid);
-	}
-
-	// A CID can be legitimately re-added after a native trim (content addressing
-	// makes the bytes identical, but its liveness is new). Cancel any queued trim
-	// for that CID and advance its generation before the write is exposed. An
-	// already-running cleanup uses the generation/pending map to avoid deleting
-	// the new native value; synchronous columnar writes also chain their durable
-	// mirror behind that cleanup below.
-	private noteNativeBlockWrite(cids: string[]): Map<string, number> {
-		const generations = new Map<string, number>();
-		for (const cid of new Set(cids)) {
-			const generation = (this.nativeBlockWriteGenerations.get(cid) ?? 0) + 1;
-			this.nativeBlockWriteGenerations.set(cid, generation);
-			generations.set(cid, generation);
-			if (this.pendingNativeDeleteCleanup.delete(cid)) {
-				this.endNativeDelete([cid]);
-			}
-			for (const staged of this.stagedNativeDeleteCleanups.values()) {
-				if (staged.delete(cid)) {
-					this.endNativeDelete([cid]);
-				}
-			}
-		}
-		return generations;
-	}
-
-	private beginNativeCommitOwnership(
-		generations: Map<string, number>,
-	): NativeCommitOwnershipToken | undefined {
-		if (generations.size === 0) {
-			return undefined;
-		}
-		const token: NativeCommitOwnershipToken = {
-			id: ++this.nextNativeCommitOwnershipToken,
-			rows: new Map(),
-		};
-		for (const [cid, generation] of generations) {
-			const owners = this.nativeCommitOwnershipsByCid.get(cid) ?? new Set();
-			const shared = owners.size > 0;
-			for (const ownerId of owners) {
-				const owner = this.nativeCommitOwnerships.get(ownerId);
-				const row = owner?.rows.get(cid);
-				if (row) row.shared = true;
-			}
-			owners.add(token.id);
-			this.nativeCommitOwnershipsByCid.set(cid, owners);
-			token.rows.set(cid, { generation, shared });
-		}
-		this.nativeCommitOwnerships.set(token.id, token);
-		return token;
-	}
-
-	private releaseNativeCommitOwnership(token: unknown): void {
-		if (
-			!token ||
-			typeof token !== "object" ||
-			typeof (token as NativeCommitOwnershipToken).id !== "number"
-		) {
-			return;
-		}
-		const owned = this.nativeCommitOwnerships.get(
-			(token as NativeCommitOwnershipToken).id,
-		);
-		if (owned !== token) {
-			return;
-		}
-		this.nativeCommitOwnerships.delete(owned.id);
-		for (const cid of owned.rows.keys()) {
-			const owners = this.nativeCommitOwnershipsByCid.get(cid);
-			owners?.delete(owned.id);
-			if (owners?.size === 0) {
-				this.nativeCommitOwnershipsByCid.delete(cid);
-			}
-		}
-	}
-
-	acknowledgeNativeCommitOwnership(token: unknown): void {
-		this.releaseNativeCommitOwnership(token);
-	}
-
-	private enqueueNativeDeleteCleanup(cids: string[]): void {
-		for (const cid of new Set(cids)) {
-			if (!this.pendingNativeDeleteCleanup.has(cid)) {
-				this.pendingNativeDeleteCleanup.set(
-					cid,
-					this.nativeBlockWriteGenerations.get(cid) ?? 0,
-				);
-				this.beginNativeDelete([cid]);
-			}
-		}
-	}
-
-	private releaseStagedNativeDeleteCleanup(token: number): boolean {
-		const staged = this.stagedNativeDeleteCleanups.get(token);
-		if (!staged) {
-			return false;
-		}
-		this.stagedNativeDeleteCleanups.delete(token);
-		for (const [cid] of staged) {
-			this.endNativeDelete([cid]);
-		}
-		return true;
-	}
-
-	private discardStagedNativeDeleteCleanups(): void {
-		for (const token of [...this.stagedNativeDeleteCleanups.keys()]) {
-			this.releaseStagedNativeDeleteCleanup(token);
-		}
-	}
-
-	// Native commit callbacks call this immediately after the native transaction
-	// returns, before awaiting the new block's durable mirror. This stages read
-	// tombstones only. Durable deletion is promoted later by the exact EntryIndex
-	// consume token, so an unacknowledged/failed append cannot delete the old
-	// durable head that the lower log still publishes.
-	beginNativeDeleteCleanup(cids: string[]): number | undefined {
-		this.throwIfNativeDurableCommitFailed();
-		const uniqueCids = [...new Set(cids)];
-		if (uniqueCids.length === 0) {
-			return undefined;
-		}
-		const token = ++this.nextNativeDeleteCleanupToken;
-		const staged = new Map(
-			uniqueCids.map((cid) => [
-				cid,
-				this.nativeBlockWriteGenerations.get(cid) ?? 0,
-			]),
-		);
-		this.stagedNativeDeleteCleanups.set(token, staged);
-		this.beginNativeDelete(uniqueCids);
-		return token;
-	}
-
-	cancelNativeDeleteCleanup(cleanupToken: unknown): void {
-		if (typeof cleanupToken === "number") {
-			this.releaseStagedNativeDeleteCleanup(cleanupToken);
-		}
-	}
-
-	private async waitForNativeDeleteCleanup(): Promise<void> {
-		while (this.nativeDeleteCleanupRunning) {
-			await this.nativeDeleteCleanupRunning;
-		}
-	}
-
-	private async waitForTrackedDurableWrites(): Promise<void> {
-		while (this.pendingDurableWrites.size > 0) {
-			await Promise.allSettled([...this.pendingDurableWrites]);
-		}
-	}
-
-	private async retryNativeDeleteCleanup(options?: {
-		allowPoisoned?: boolean;
-		throwOnFailure?: boolean;
-	}): Promise<void> {
-		await this.waitForNativeDeleteCleanup();
-		if (this.nativeDurableCommitFailure && !options?.allowPoisoned) {
-			throw this.nativeDurableCommitFailure;
-		}
-		// A synchronous columnar write may already have scheduled its durable
-		// mirror. Let it settle before deleting queued CIDs, but leave any recorded
-		// error for drainDurable() to surface to its owning operation/stop.
-		await this.waitForTrackedDurableWrites();
-		await this.waitForNativeDeleteCleanup();
-		// A tracked mirror or the cleanup we just waited for may have poisoned the
-		// wrapper. Do not begin another durable mutation on the ordinary path after
-		// that asynchronous boundary. stop() alone opts into one cleanup retry so a
-		// transient delete failure can still release its tombstones and resources.
-		if (this.nativeDurableCommitFailure && !options?.allowPoisoned) {
-			throw this.nativeDurableCommitFailure;
-		}
-		if (this.pendingNativeDeleteCleanup.size === 0) {
-			return;
-		}
-		const cleanupEntries = [...this.pendingNativeDeleteCleanup].filter(
-			([cid, generation]) =>
-				(this.nativeBlockWriteGenerations.get(cid) ?? 0) === generation,
-		);
-		if (cleanupEntries.length === 0) {
-			return;
-		}
-		const cids = cleanupEntries.map(([cid]) => cid);
-		let cleanupFailure: unknown;
-		const running = (async () => {
-			let durableRemoved = false;
-			let nativeRemoved = false;
-			try {
-				await this.durable.rmMany(cids);
-				durableRemoved = true;
-			} catch (error) {
-				cleanupFailure = error;
-				// The new entry blocks are already durable at this point and the native
-				// transaction has selected the new graph/index state. Old content-addressed
-				// blocks are therefore harmless unreachable orphans. Keep this cleanup as
-				// retryable debt instead of poisoning/rolling back a fully durable append;
-				// a partial rmMany is safe for the same reason.
-				warn(
-					`Failed durable native-trim cleanup; retaining retry debt: ${String(error)}`,
-				);
-			} finally {
-				// A read that began in the native-transaction -> cleanup-hook gap may
-				// have repopulated native. Always repeat the native removal, even when
-				// durable rm failed. Exclude CIDs re-added while durable IO was pending;
-				// their generation change cancelled the queued delete.
-				const stillDeleted = cids.filter((cid) =>
-					this.pendingNativeDeleteCleanup.has(cid),
-				);
-				try {
-					if (stillDeleted.length > 0) {
-						await this.native.rmMany(stillDeleted);
-					}
-					nativeRemoved = true;
-				} catch (error) {
-					cleanupFailure ??= error;
-					warn(
-						`Failed to repeat native-trim hot block removal: ${String(error)}`,
-					);
-				}
-			}
-			if (durableRemoved && nativeRemoved) {
-				for (const [cid, generation] of cleanupEntries) {
-					if (this.pendingNativeDeleteCleanup.get(cid) === generation) {
-						this.pendingNativeDeleteCleanup.delete(cid);
-						this.nativeBlockWriteGenerations.delete(cid);
-						this.endNativeDelete([cid]);
-					}
-				}
-			}
-		})();
-		this.nativeDeleteCleanupRunning = running;
-		try {
-			await running;
-		} finally {
-			if (this.nativeDeleteCleanupRunning === running) {
-				this.nativeDeleteCleanupRunning = undefined;
-			}
-		}
-		if (options?.throwOnFailure && cleanupFailure !== undefined) {
-			throw cleanupFailure;
-		}
-	}
-
-	private trackDurable(result: unknown, cids: string[]): void {
-		// The durable store may answer synchronously (an in-memory or already
-		// resolved store); only a real pending promise needs tracking. A sync
-		// success is already durable; a sync throw would have propagated already.
-		if (!isPromiseLike(result)) {
-			return;
-		}
-		const tracked = Promise.resolve(result).then(
-			() => {
-				this.pendingDurableWrites.delete(tracked);
-			},
-			(error) => {
-				this.pendingDurableWrites.delete(tracked);
-				this.recordNativeDurableCommitFailure(error, {
-					committedCids: cids,
-					failedCids: cids,
-				});
-			},
-		);
-		this.pendingDurableWrites.add(tracked);
-	}
-
-	// Awaited mirror writes surface their own rejection to the append that
-	// created them. Track a non-rejecting settlement companion as well so stop()
-	// and later wrapper operations cannot close/use durable storage while that
-	// append barrier is still in flight.
-	private trackAwaitedDurable(result: Promise<unknown>): void {
-		const tracked = result.then(
-			() => {
-				this.pendingDurableWrites.delete(tracked);
-			},
-			() => {
-				this.pendingDurableWrites.delete(tracked);
-			},
-		);
-		this.pendingDurableWrites.add(tracked);
-	}
-
-	// Wait for every tracked (sync-path) durable write to settle, then surface
-	// the first failure. Awaited methods call this so a prior columnar durable
-	// failure propagates as back-pressure to the next caller.
-	private async drainDurable(): Promise<void> {
-		await this.waitForTrackedDurableWrites();
-		this.throwIfNativeDurableCommitFailed();
-	}
-
-	// --- lifecycle -------------------------------------------------------
-	// The native store's lifecycle hooks are no-ops; only the durable store
-	// needs starting/stopping. The wasm map is NOT eagerly rehydrated from disk:
-	// entry blocks are pulled back lazily on demand through the read fallback in
-	// getMany()/get() (durable hit -> repopulate the wasm map), which is what the
-	// log's DAG walk (EntryIndex.resolveMany -> store.getMany) exercises. Keeping
-	// the wasm map cold on open is required by the strict-native resident
-	// coordinate-state optimization: a reopened non-replicating native node must
-	// report hasBlock(head) === false and answer a same-signer append from the
-	// persisted coordinate + signer facts without resolving the entry block.
-	async start(): Promise<void> {
-		await this.durable.start();
-		this.stopCompleted = false;
-	}
-
-	async stop(): Promise<void> {
-		if (this.stopCompleted) {
-			return;
-		}
-		// Surface any tracked (sync-path) durable write failure and ensure all
-		// mirror writes have settled before the durable store is torn down. Closing
-		// the durable store is unconditional: a prior columnar mirror failure must
-		// not leak the store lifecycle resource.
-		let firstError: unknown;
-		let shutdownError: unknown;
-		try {
-			await this.drainDurable();
-		} catch (error) {
-			firstError = error;
-		}
-		// Tokens not consumed by EntryIndex belong to native prepares that never
-		// published their lower-log trim. Release their read tombstones, but never
-		// promote them to durable deletion during shutdown.
-		this.discardStagedNativeDeleteCleanups();
-		try {
-			await this.retryNativeDeleteCleanup({ allowPoisoned: true });
-		} catch (error) {
-			firstError ??= error;
-			shutdownError ??= error;
-		}
-		try {
-			await this.durable.stop();
-		} catch (error) {
-			firstError ??= error;
-			shutdownError ??= error;
-		}
-		if (shutdownError === undefined) {
-			// A durable poison belongs to the generation being closed. Report it once
-			// so the owning terminal call observes the failed append, but remember that
-			// every mandatory shutdown stage completed. Conservative content-addressed
-			// trim debt may remain in this retired wrapper after best-effort cleanup; a
-			// fresh generation gets a new wrapper and must not be wedged by that debt.
-			// The exact terminal retry may therefore finish parent bookkeeping without
-			// rethrowing the same latched poison forever.
-			this.stopCompleted = true;
-		}
-		if (firstError !== undefined) {
-			throw firstError;
-		}
-	}
-
-	status() {
-		return this.durable.status();
-	}
-
-	waitFor(): Promise<string[]> {
-		return Promise.resolve([]);
-	}
-
-	// Native commit APIs must keep their block-store callback synchronous. The
-	// lower log calls this barrier after that callback reports committed blocks
-	// and before publishing index/head facts.
-	waitForDurableWrites(): Promise<void> {
-		return this.drainDurable();
-	}
-
-	// Mirror a single already-committed block (present in the wasm map) to the
-	// durable store ONLY. Used by the native commit-only append fast path: the
-	// native prepare commits the entry block into the wasm map and returns no raw
-	// bytes, and the strict-native resident-coordinate path deliberately does NOT
-	// route the block through the log's finishBlocks/putKnown* (that would disturb
-	// the commit-only append path the RCS optimization depends on). Instead the
-	// caller reads the committed bytes back and calls this so the block lands in
-	// durable directly. The caller awaits this method before acknowledging its
-	// append, so a failed write rejects the append that produced the block.
-	async mirrorToDurable(
-		cid: string,
-		bytes: Uint8Array,
-		options?: { nativeTrimmed?: boolean },
-	): Promise<unknown> {
-		this.throwIfNativeDurableCommitFailed();
-		// The native commit happened before this call. Mark the CID live before
-		// awaiting anything so a concurrent retry of an older trim cannot remove
-		// the newly committed hot block.
-		let ownership: NativeCommitOwnershipToken | undefined;
-		if (options?.nativeTrimmed !== true) {
-			ownership = this.beginNativeCommitOwnership(
-				this.noteNativeBlockWrite([cid]),
-			);
-			await this.waitForNativeDeleteCleanup();
-		}
-		try {
-			await this.drainDurable();
-			if (ownership) {
-				const existed = await this.durable.hasMany([...ownership.rows.keys()]);
-				let index = 0;
-				for (const row of ownership.rows.values()) {
-					row.durableExistedBefore = existed[index++] === true;
-				}
-			}
-			const result = this.commitDurableMutation(
-				() => this.durable.putKnown(cid, bytes),
-				[cid],
-			);
-			await result;
-			await this.retryNativeDeleteCleanup();
-			this.throwIfNativeDurableCommitFailed();
-			return ownership;
-		} catch (error) {
-			// The caller never receives an ownership token for an indeterminate write.
-			// Release the in-memory claim and preserve any bytes the backend may have
-			// applied before rejecting.
-			this.releaseNativeCommitOwnership(ownership);
-			throw error;
-		}
-	}
-
-	async mirrorManyToDurable(
-		blocks: Array<readonly [cid: string, bytes: Uint8Array]>,
-		options?: { nativeTrimmedCids?: ReadonlySet<string> },
-	): Promise<unknown> {
-		this.throwIfNativeDurableCommitFailed();
-		const cids = blocks.map(([cid]) => cid);
-		// Rows trimmed later in the same native batch deliberately remain owned by
-		// that batch's staged cleanup; only mark surviving rows live.
-		const liveCids = cids.filter(
-			(cid) => !options?.nativeTrimmedCids?.has(cid),
-		);
-		const ownership = this.beginNativeCommitOwnership(
-			this.noteNativeBlockWrite(liveCids),
-		);
-		if (liveCids.length > 0) {
-			await this.waitForNativeDeleteCleanup();
-		}
-		try {
-			await this.drainDurable();
-			if (ownership) {
-				const existed = await this.durable.hasMany([...ownership.rows.keys()]);
-				let index = 0;
-				for (const row of ownership.rows.values()) {
-					row.durableExistedBefore = existed[index++] === true;
-				}
-			}
-			if (blocks.length > 0) {
-				await this.commitDurableMutation(
-					() => this.durable.putKnownMany(blocks),
-					cids,
-				);
-			}
-			await this.retryNativeDeleteCleanup();
-			this.throwIfNativeDurableCommitFailed();
-			return ownership;
-		} catch (error) {
-			this.releaseNativeCommitOwnership(ownership);
-			throw error;
-		}
-	}
-
-	async rollbackFailedNativeCommits(
-		cids: string[],
-		restoreNativeCids: string[] = [],
-		ownershipToken?: unknown,
-	): Promise<void> {
-		// This is the sole mutation allowed after poison: it removes a native
-		// transaction that the lower log never published. Do not route through the
-		// guarded rmMany path, and settle the failed mirror before compensating it.
-		await this.waitForTrackedDurableWrites();
-		// A failed replacement never published its trim. Reassert the restored CIDs
-		// as live before any compensation IO so staged/pending delete intents cannot
-		// remove the last acknowledged blocks during stop or reopen.
-		const ownership =
-			ownershipToken && typeof ownershipToken === "object"
-				? this.nativeCommitOwnerships.get(
-						(ownershipToken as NativeCommitOwnershipToken).id,
-					)
-				: undefined;
-		const verifiedOwnership =
-			ownership && ownership === ownershipToken ? ownership : undefined;
-		const restoreSet = new Set(restoreNativeCids);
-		const safeDurableDeletes = verifiedOwnership
-			? [...new Set(cids)].filter((cid) => {
-					const row = verifiedOwnership.rows.get(cid);
-					const owners = this.nativeCommitOwnershipsByCid.get(cid);
-					return (
-						!restoreSet.has(cid) &&
-						row?.durableExistedBefore === false &&
-						row.shared === false &&
-						(this.nativeBlockWriteGenerations.get(cid) ?? 0) ===
-							row.generation &&
-						owners?.size === 1 &&
-						owners.has(verifiedOwnership.id)
-					);
-				})
-			: [];
-		this.noteNativeBlockWrite(restoreNativeCids);
-		let firstError: unknown;
-		try {
-			if (safeDurableDeletes.length > 0) {
-				await this.durable.rmMany(safeDurableDeletes);
-			}
-		} catch (error) {
-			firstError = error;
-		}
-		// A native prepare runs before ownership can observe the hot map, so it cannot
-		// prove that a CID was absent there before this operation. Keep native bytes as
-		// unreachable orphans rather than deleting acknowledged/shared/restored data.
-		if (restoreNativeCids.length > 0) {
-			try {
-				const values = await this.durable.getMany(restoreNativeCids);
-				const restore: Array<readonly [string, Uint8Array]> = [];
-				for (let index = 0; index < restoreNativeCids.length; index++) {
-					const value = values[index];
-					if (value) restore.push([restoreNativeCids[index]!, value]);
-				}
-				if (restore.length > 0) {
-					this.native.putKnownMany(restore);
-				}
-			} catch (error) {
-				firstError ??= error;
-			}
-		}
-		this.releaseNativeCommitOwnership(ownershipToken);
-		if (firstError !== undefined) throw firstError;
-	}
-
-	/**
-	 * Compensate a native prepare that failed before its durable mirror began.
-	 * Durable presence proves a same-CID acknowledged owner; an active ownership
-	 * token proves a concurrent mirror. Only an unowned, non-durable hot block is
-	 * exclusively attributable to the failed prepare and safe to remove.
-	 */
-	async rollbackUnmirroredNativeCommits(
-		cids: string[],
-		restoreNativeCids: string[] = [],
-	): Promise<void> {
-		const unique = [...new Set(cids)];
-		// Native prepares bypass this wrapper. Any observed wrapper generation is
-		// therefore evidence of a generic/same-CID writer, not of the failed prepare.
-		// Snapshot before the first await and require both absence and stability so a
-		// write starting before or during durable.hasMany cannot lose its hot value to
-		// a stale `false` result.
-		const genericWriteGenerations = new Map(
-			unique.map((cid) => [cid, this.nativeBlockWriteGenerations.get(cid)]),
-		);
-		await this.rollbackFailedNativeCommits(cids, restoreNativeCids);
-		const durablePresence = await this.durable.hasMany(unique);
-		const restore = new Set(restoreNativeCids);
-		const safeNativeDeletes = unique.filter(
-			(cid, index) =>
-				!restore.has(cid) &&
-				durablePresence[index] !== true &&
-				genericWriteGenerations.get(cid) === undefined &&
-				this.nativeBlockWriteGenerations.get(cid) === undefined &&
-				(this.nativeCommitOwnershipsByCid.get(cid)?.size ?? 0) === 0,
-		);
-		if (safeNativeDeletes.length > 0) {
-			await this.native.rmMany(safeNativeDeletes);
-		}
-	}
-
-	// --- writes (apply to BOTH: native first for the hot path, then durable) ---
-	async put(
-		data: Uint8Array | { block: { bytes: Uint8Array }; cid: string },
-	): Promise<string> {
-		await this.drainDurable();
-		const cid = await this.native.put(data as any);
-		// The native store computes a raw-codec CID for a `Uint8Array`, storing
-		// the bytes verbatim (raw codec is identity), and stores `block.bytes`
-		// for the pre-CIDed object form. Either way the input bytes match what
-		// native stored, so feed durable the known cid+bytes without recomputing.
-		const value =
-			data instanceof Uint8Array
-				? data
-				: (data as { block: { bytes: Uint8Array } }).block.bytes;
-		this.noteNativeBlockWrite([cid]);
-		await this.waitForNativeDeleteCleanup();
-		// put() may have yielded while calculating the CID. Restore the hot value
-		// after any older cleanup that was already in flight.
-		this.throwIfNativeDurableCommitFailed();
-		this.native.putKnown(cid, value);
-		await this.commitDurableMutation(
-			() => this.durable.putKnown(cid, value),
-			[cid],
-		);
-		return cid;
-	}
-
-	async putMany(
-		blocks: Array<Uint8Array | { block: { bytes: Uint8Array }; cid: string }>,
-	): Promise<string[]> {
-		await this.drainDurable();
-		const cids = await this.native.putMany(blocks as any);
-		const durableBlocks: Array<readonly [string, Uint8Array]> = cids.map(
-			(cid, index) => {
-				const block = blocks[index]!;
-				const value =
-					block instanceof Uint8Array
-						? block
-						: (block as { block: { bytes: Uint8Array } }).block.bytes;
-				return [cid, value] as const;
-			},
-		);
-		this.noteNativeBlockWrite(cids);
-		await this.waitForNativeDeleteCleanup();
-		this.throwIfNativeDurableCommitFailed();
-		this.native.putKnownMany(durableBlocks);
-		await this.commitDurableMutation(
-			() => this.durable.putKnownMany(durableBlocks),
-			cids,
-		);
-		return cids;
-	}
-
-	// Native put is synchronous (the authoritative hot store); the durable mirror
-	// is awaited so the returned promise resolves only after BOTH native and
-	// durable succeed and a durable IO/disk-full failure rejects here instead of
-	// being swallowed. RemoteBlocks.putKnown and the log's putKnownEntryBytesBatch
-	// both await this method, so returning a promise is compatible.
-	async putKnown(cid: string, bytes: Uint8Array): Promise<string> {
-		await this.drainDurable();
-		await this.waitForNativeDeleteCleanup();
-		this.throwIfNativeDurableCommitFailed();
-		const stored = this.native.putKnown(cid, bytes);
-		this.noteNativeBlockWrite([cid]);
-		await this.commitDurableMutation(
-			() => this.durable.putKnown(cid, bytes),
-			[cid],
-		);
-		return stored;
-	}
-
-	async putKnownMany(
-		blocks: Array<readonly [cid: string, bytes: Uint8Array]>,
-	): Promise<string[]> {
-		await this.drainDurable();
-		await this.waitForNativeDeleteCleanup();
-		this.throwIfNativeDurableCommitFailed();
-		const cids = this.native.putKnownMany(blocks);
-		this.noteNativeBlockWrite(cids);
-		await this.commitDurableMutation(
-			() => this.durable.putKnownMany(blocks),
-			cids,
-		);
-		return cids;
-	}
-
-	putKnownManyColumns(cids: string[], bytes: Uint8Array[]): string[] {
-		this.throwIfNativeDurableCommitFailed();
-		if (cids.length !== bytes.length) {
-			throw new Error("Expected equal block column lengths");
-		}
-		const cleanupBarrier = this.nativeDeleteCleanupRunning;
-		const stored = this.native.putKnownManyColumns(cids, bytes);
-		this.noteNativeBlockWrite(cids);
-		// AnyBlockStore has no columnar method; mirror via putKnownMany, which
-		// takes [cid, bytes] tuples and hits the same batched store path.
-		// This method must return a synchronous string[] (RemoteBlocks.putKnownManyColumns
-		// consumes the result synchronously), so the durable write cannot be awaited
-		// inline. Track it instead of `void`ing it so a durable rejection surfaces
-		// on the next awaited wrapper method / stop() rather than being swallowed.
-		const durableBlocks = cids.map(
-			(cid, index) => [cid, bytes[index]!] as const,
-		);
-		let durableResult: unknown;
-		try {
-			durableResult = cleanupBarrier
-				? cleanupBarrier.then(() => this.durable.putKnownMany(durableBlocks))
-				: this.durable.putKnownMany(durableBlocks);
-		} catch (error) {
-			throw this.recordNativeDurableCommitFailure(error, {
-				committedCids: cids,
-				failedCids: cids,
-			});
-		}
-		this.trackDurable(durableResult, cids);
-		return stored;
-	}
-
-	// --- reads (native/wasm first; on miss, durable fallback + repopulate) ---
-	// RemoteBlocks.get awaits this single-get, so on a native miss consult the
-	// durable store (like getMany does) and repopulate the native map, rather
-	// than returning undefined and only scheduling a background repopulate. That
-	// avoids a spurious miss (which would otherwise fall through to a remote
-	// read) for a block that is present on disk.
-	async get(cid: string, _options?: unknown): Promise<Uint8Array | undefined> {
-		if (this.nativeDurableCommitFailure) {
-			// After poison, durable storage is the last acknowledged authority. Do not
-			// repopulate or otherwise mutate the native store until reopen.
-			return this.isNativeDeletePending(cid)
-				? undefined
-				: this.durable.get(cid);
-		}
-		const deleteEpoch = this.nativeDeleteEpoch;
-		if (this.isNativeDeletePending(cid)) {
-			return undefined;
-		}
-		const local = this.native.get(cid);
-		if (local != null) {
-			return deleteEpoch === this.nativeDeleteEpoch ? local : this.get(cid);
-		}
-		const durableValue = await this.durable.get(cid);
-		if (this.nativeDurableCommitFailure) {
-			return this.isNativeDeletePending(cid) ? undefined : durableValue;
-		}
-		if (deleteEpoch !== this.nativeDeleteEpoch) {
-			return this.get(cid);
-		}
-		if (durableValue != null) {
-			// Repopulate the native map so the native graph reads it next time.
-			this.native.putKnownManyColumns([cid], [durableValue]);
-			return durableValue;
-		}
-		return undefined;
-	}
-
-	async getMany(cids: string[]): Promise<Array<Uint8Array | undefined>> {
-		if (this.nativeDurableCommitFailure) {
-			const values = await this.durable.getMany(cids);
-			for (let index = 0; index < cids.length; index++) {
-				if (this.isNativeDeletePending(cids[index]!)) {
-					values[index] = undefined;
-				}
-			}
-			return values;
-		}
-		const deleteEpoch = this.nativeDeleteEpoch;
-		const results = await this.native.getMany(cids);
-		if (deleteEpoch !== this.nativeDeleteEpoch) {
-			return this.getMany(cids);
-		}
-		const missing: string[] = [];
-		const missingIndexes: number[] = [];
-		for (let i = 0; i < results.length; i++) {
-			if (this.isNativeDeletePending(cids[i]!)) {
-				results[i] = undefined;
-			} else if (results[i] == null) {
-				missing.push(cids[i]!);
-				missingIndexes.push(i);
-			}
-		}
-		if (missing.length === 0) {
-			return results;
-		}
-		const durableValues = await this.durable.getMany(missing);
-		if (this.nativeDurableCommitFailure) {
-			const values = await this.durable.getMany(cids);
-			for (let index = 0; index < cids.length; index++) {
-				if (this.isNativeDeletePending(cids[index]!)) {
-					values[index] = undefined;
-				}
-			}
-			return values;
-		}
-		if (deleteEpoch !== this.nativeDeleteEpoch) {
-			return this.getMany(cids);
-		}
-		const repopulateCids: string[] = [];
-		const repopulateBytes: Uint8Array[] = [];
-		for (
-			let missingIndex = 0;
-			missingIndex < missingIndexes.length;
-			missingIndex++
-		) {
-			const i = missingIndexes[missingIndex]!;
-			const value = durableValues[missingIndex];
-			if (value != null) {
-				results[i] = value;
-				repopulateCids.push(cids[i]!);
-				repopulateBytes.push(value);
-			}
-		}
-		if (repopulateCids.length > 0) {
-			// Repopulate the native map so the native graph sees these blocks.
-			this.native.putKnownManyColumns(repopulateCids, repopulateBytes);
-		}
-		return results;
-	}
-
-	async has(cid: string): Promise<boolean> {
-		if (this.nativeDurableCommitFailure) {
-			return this.isNativeDeletePending(cid) ? false : this.durable.has(cid);
-		}
-		const deleteEpoch = this.nativeDeleteEpoch;
-		if (this.isNativeDeletePending(cid)) {
-			return false;
-		}
-		if (this.native.has(cid)) {
-			return deleteEpoch === this.nativeDeleteEpoch ? true : this.has(cid);
-		}
-		// Mirror getMany/hasMany: a block absent from the native wasm map may still
-		// be present in the durable store (e.g. persisted on disk but not yet
-		// repopulated into wasm). Consult durable on a native miss so presence
-		// checks agree with the resolves that getMany/hasMany already durable-fall
-		// back on. `Blocks.has` is declared `MaybePromise<boolean>`, so returning a
-		// promise here is contract-compatible.
-		const durableHas = await this.durable.has(cid);
-		return deleteEpoch === this.nativeDeleteEpoch ? durableHas : this.has(cid);
-	}
-
-	async hasMany(cids: string[]): Promise<boolean[]> {
-		if (this.nativeDurableCommitFailure) {
-			const values = await this.durable.hasMany(cids);
-			for (let index = 0; index < cids.length; index++) {
-				if (this.isNativeDeletePending(cids[index]!)) {
-					values[index] = false;
-				}
-			}
-			return values;
-		}
-		const deleteEpoch = this.nativeDeleteEpoch;
-		const nativeHas = await this.native.hasMany(cids);
-		if (deleteEpoch !== this.nativeDeleteEpoch) {
-			return this.hasMany(cids);
-		}
-		const missing: string[] = [];
-		const missingIndexes: number[] = [];
-		for (let i = 0; i < nativeHas.length; i++) {
-			if (this.isNativeDeletePending(cids[i]!)) {
-				nativeHas[i] = false;
-			} else if (!nativeHas[i]) {
-				missing.push(cids[i]!);
-				missingIndexes.push(i);
-			}
-		}
-		if (missing.length === 0) {
-			return nativeHas;
-		}
-		const durableHas = await this.durable.hasMany(missing);
-		if (deleteEpoch !== this.nativeDeleteEpoch) {
-			return this.hasMany(cids);
-		}
-		for (
-			let missingIndex = 0;
-			missingIndex < missingIndexes.length;
-			missingIndex++
-		) {
-			nativeHas[missingIndexes[missingIndex]!] = durableHas[missingIndex]!;
-		}
-		return nativeHas;
-	}
-
-	// --- removes (apply to BOTH) ----------------------------------------
-	// Native rm is synchronous; the durable rm is awaited so the returned promise
-	// resolves only after both succeed and a durable failure rejects here rather
-	// than being swallowed. All rm callers (RemoteBlocks.rm, the log) await it.
-	async rm(cid: string): Promise<void> {
-		this.throwIfNativeDurableCommitFailed();
-		const writeGeneration = this.nativeBlockWriteGenerations.get(cid);
-		this.beginNativeDelete([cid]);
-		try {
-			await this.drainDurable();
-			this.native.rm(cid);
-			await this.commitDurableMutation(() => this.durable.rm(cid), [cid]);
-			// A durable read that began before the tombstone may have repopulated
-			// native while durable rm was pending. Remove it idempotently again.
-			this.native.rm(cid);
-			if (
-				this.nativeBlockWriteGenerations.get(cid) === writeGeneration &&
-				!this.pendingNativeDeleteCleanup.has(cid)
-			) {
-				this.nativeBlockWriteGenerations.delete(cid);
-			}
-		} finally {
-			this.endNativeDelete([cid]);
-		}
-	}
-
-	del(cid: string): Promise<void> {
-		return this.rm(cid);
-	}
-
-	async rmMany(cids: string[]): Promise<number> {
-		this.throwIfNativeDurableCommitFailed();
-		const writeGenerations = new Map(
-			cids.map((cid) => [cid, this.nativeBlockWriteGenerations.get(cid)]),
-		);
-		this.beginNativeDelete(cids);
-		try {
-			await this.drainDurable();
-			const removed = await this.native.rmMany(cids);
-			await this.commitDurableMutation(() => this.durable.rmMany(cids), cids);
-			await this.native.rmMany(cids);
-			for (const cid of cids) {
-				if (
-					this.nativeBlockWriteGenerations.get(cid) ===
-						writeGenerations.get(cid) &&
-					!this.pendingNativeDeleteCleanup.has(cid)
-				) {
-					this.nativeBlockWriteGenerations.delete(cid);
-				}
-			}
-			return removed;
-		} finally {
-			this.endNativeDelete(cids);
-		}
-	}
-
-	// Native trim may already have removed the hot wasm blocks. Queue the durable
-	// copy for cleanup, retaining read tombstones until removal succeeds; a
-	// cleanup failure is retried and never fed into ordinary append rollback.
-	// EntryIndex feature-detects this hook.
-	async rmManyAfterNativeDelete(
-		cids: string[],
-		cleanupToken?: unknown,
-	): Promise<void> {
-		if (this.nativeDurableCommitFailure) {
-			this.cancelNativeDeleteCleanup(cleanupToken);
-			throw this.nativeDurableCommitFailure;
-		}
-		let preannounced = false;
-		if (typeof cleanupToken === "number") {
-			const staged = this.stagedNativeDeleteCleanups.get(cleanupToken);
-			if (staged) {
-				preannounced = true;
-				this.stagedNativeDeleteCleanups.delete(cleanupToken);
-				for (const [cid, generation] of staged) {
-					if ((this.nativeBlockWriteGenerations.get(cid) ?? 0) !== generation) {
-						this.endNativeDelete([cid]);
-						continue;
-					}
-					if (this.pendingNativeDeleteCleanup.has(cid)) {
-						// Another delete already owns a tombstone for this CID.
-						this.endNativeDelete([cid]);
-					} else {
-						// Transfer the staged tombstone to the now-published cleanup.
-						this.pendingNativeDeleteCleanup.set(cid, generation);
-					}
-				}
-			}
-		}
-		if (!preannounced) {
-			this.enqueueNativeDeleteCleanup(cids);
-		}
-		await this.retryNativeDeleteCleanup();
-	}
-
-	/** Finish committed trim GC before its durable recovery intent is retired. */
-	async completeCommittedNativeDeleteCleanup(
-		cids: string[],
-		options?: { reconstructMissing?: boolean },
-	): Promise<void> {
-		this.throwIfNativeDurableCommitFailed();
-		const uniqueCids = [...new Set(cids.filter(Boolean))];
-		if (uniqueCids.length === 0) {
-			return;
-		}
-		// Only restart recovery reconstructs missing debt. On the live path, an
-		// absent row may mean the CID was legitimately re-added after its original
-		// generation-owned trim completed or was cancelled; re-enqueueing it here
-		// would capture the new generation and delete live content.
-		if (options?.reconstructMissing) {
-			this.enqueueNativeDeleteCleanup(uniqueCids);
-		}
-		if (!uniqueCids.some((cid) => this.pendingNativeDeleteCleanup.has(cid))) {
-			return;
-		}
-		await this.retryNativeDeleteCleanup({ throwOnFailure: true });
-		const remaining = uniqueCids.filter((cid) =>
-			this.pendingNativeDeleteCleanup.has(cid),
-		);
-		if (remaining.length > 0) {
-			throw new Error(
-				`Committed native trim cleanup remains incomplete: ${remaining.join(", ")}`,
-			);
-		}
-	}
-
-	// --- misc ------------------------------------------------------------
-	async *iterator(): AsyncGenerator<[string, Uint8Array], void, void> {
-		if (this.nativeDurableCommitFailure) {
-			for await (const block of this.durable.iterator()) {
-				if (!this.isNativeDeletePending(block[0])) {
-					yield block;
-				}
-			}
-			return;
-		}
-		yield* this.native.iterator();
-	}
-
-	async size(): Promise<number> {
-		// The hot wasm map is intentionally cold after reopen, so it cannot be the
-		// storage-budget authority. Settle synchronous columnar mirrors first, then
-		// report durable bytes; pending trim cleanup remains conservatively counted
-		// until its durable deletion succeeds.
-		await this.drainDurable();
-		return this.durable.size();
-	}
-
-	persisted(): boolean {
-		// The blocks are now mirrored to a durable store, so report persisted so
-		// callers that gate durable-only behavior on this flag behave correctly.
-		return true;
-	}
-}
 
 type LeaderMap = Map<string, { intersecting: boolean }>;
 
@@ -2190,130 +1041,6 @@ const isReplicationOptionsDependentOnPreviousState = async (
 	return false;
 };
 
-const isNotStartedError = (e: Error) => {
-	if (e instanceof AbortError) {
-		return true;
-	}
-	if (e instanceof NotStartedError) {
-		return true;
-	}
-	if (e instanceof IndexNotStartedError) {
-		return true;
-	}
-	if (e instanceof ClosedError) {
-		return true;
-	}
-	return false;
-};
-
-/**
- * Replication announcements are best-effort convergence messages. A detached
- * fanout shard can time out even though the shared log itself remains open.
- * Keep retries deliberately limited to concrete TimeoutErrors: abort/close and
- * unexpected programming/data errors must retain their existing semantics.
- *
- * Exact constructor/name checks complement `instanceof` for errors crossing
- * worker or duplicate-package boundaries in browsers.
- */
-const isTransientReplicationAnnouncementError = (
-	error: unknown,
-	seen = new Set<unknown>(),
-): boolean => {
-	if (
-		error != null &&
-		(typeof error === "object" || typeof error === "function")
-	) {
-		if (seen.has(error)) {
-			return false;
-		}
-		seen.add(error);
-	}
-
-	if (error instanceof TimeoutError) {
-		return true;
-	}
-
-	const nested = (error as { errors?: unknown })?.errors;
-	if (Array.isArray(nested) && nested.length > 0) {
-		return nested.every((item) =>
-			isTransientReplicationAnnouncementError(item, new Set(seen)),
-		);
-	}
-
-	const cause = (error as { cause?: unknown })?.cause;
-	if (cause != null && isTransientReplicationAnnouncementError(cause, seen)) {
-		return true;
-	}
-
-	const constructorName =
-		typeof (error as { constructor?: { name?: unknown } })?.constructor
-			?.name === "string"
-			? (error as { constructor: { name: string } }).constructor.name
-			: "";
-	const name =
-		typeof (error as { name?: unknown })?.name === "string"
-			? (error as { name: string }).name
-			: "";
-	return constructorName === "TimeoutError" || name === "TimeoutError";
-};
-
-/**
- * Directed transport-delivery repair is allowed to retry explicit delivery
- * failures in addition to timeouts. A DirectStream ACK confirms receipt of the
- * signed envelope, not successful application by the receiver. Keep this
- * separate from the primary fanout classifier above so replicate() rejection
- * semantics remain unchanged for programming, serialization, and lifecycle
- * errors.
- */
-const isTransientReplicationAnnouncementRepairError = (
-	error: unknown,
-	seen = new Set<unknown>(),
-): boolean => {
-	if (
-		error != null &&
-		(typeof error === "object" || typeof error === "function")
-	) {
-		if (seen.has(error)) {
-			return false;
-		}
-		seen.add(error);
-	}
-
-	if (error instanceof DeliveryError || error instanceof TimeoutError) {
-		return true;
-	}
-
-	const nested = (error as { errors?: unknown })?.errors;
-	if (Array.isArray(nested) && nested.length > 0) {
-		return nested.every((item) =>
-			isTransientReplicationAnnouncementRepairError(item, new Set(seen)),
-		);
-	}
-
-	const cause = (error as { cause?: unknown })?.cause;
-	if (
-		cause != null &&
-		isTransientReplicationAnnouncementRepairError(cause, seen)
-	) {
-		return true;
-	}
-
-	const constructorName =
-		typeof (error as { constructor?: { name?: unknown } })?.constructor
-			?.name === "string"
-			? (error as { constructor: { name: string } }).constructor.name
-			: "";
-	const name =
-		typeof (error as { name?: unknown })?.name === "string"
-			? (error as { name: string }).name
-			: "";
-	return (
-		constructorName === "DeliveryError" ||
-		name === "DeliveryError" ||
-		constructorName === "TimeoutError" ||
-		name === "TimeoutError"
-	);
-};
 
 interface IndexableDomain<R extends "u32" | "u64"> {
 	numbers: Numbers<R>;
@@ -2630,15 +1357,6 @@ const CHECKED_PRUNE_AUDIT_BATCH_SIZE = 128;
 
 // DONT SET THIS ANY LOWER, because it will make the pid controller unstable as the system responses are not fast enough to updates from the pid controller
 const RECALCULATE_PARTICIPATION_DEBOUNCE_INTERVAL = 1000;
-const REPLICATION_ANNOUNCEMENT_RETRY_INTERVAL = 1000;
-const REPLICATION_ANNOUNCEMENT_REPAIR_INTERVAL = 1000;
-const REPLICATION_ANNOUNCEMENT_REPAIR_MAX_ATTEMPTS = 3;
-// Repair one bounded cohort per mutation generation. The subscriber snapshot
-// is a best-effort cache and can contain thousands of entries, so attempting
-// the whole cache after every role mutation would turn convergence repair into
-// an unbounded burst of separately signed, acknowledged messages. A cursor
-// retained across generations rotates best-effort coverage over later changes.
-const REPLICATION_ANNOUNCEMENT_REPAIR_TARGETS_PER_GENERATION = 8;
 // Index backends flatten logical queries before execution and have practical
 // expression limits well below a large local range set. Keep exact range
 // lookups/deletes bounded while the mutation lane preserves operation ordering.
@@ -2692,19 +1410,6 @@ const hasPreverifiedSignature = (entry: Entry<any>) =>
 	(entry as { __peerbitSignatureVerified?: unknown })
 		.__peerbitSignatureVerified === true;
 
-type ReplicationAnnouncementRepairTarget = {
-	key: PublicSignKey;
-	generation: number;
-	attempts: number;
-	done: boolean;
-};
-// In sparse topologies (browser/relay), peers can learn about replicators via broadcast
-// replication announcements without having a direct connection that emits unsubscribe
-// on abrupt churn. Probe conservatively so a single missed ACK does not evict a
-// healthy replicator, and rely on replication-info refresh to recover membership.
-const REPLICATOR_LIVENESS_SWEEP_INTERVAL_MS = 2_000;
-const REPLICATOR_LIVENESS_IDLE_THRESHOLD_MS = 8_000;
-const REPLICATOR_LIVENESS_PROBE_FAILURES_TO_EVICT = 2;
 // Churn/join repair can race with pruning and transient missed sync requests under
 // heavy event-loop load. Keep retries alive with a longer tail so reassigned
 // entries are retried after short bursts and slower recovery windows.
@@ -2717,7 +1422,6 @@ const CHURN_REPAIR_RETRY_SCHEDULE_MS = [
 const JOIN_WARMUP_RETRY_SCHEDULE_MS = [
 	0, 1_000, 3_000, 7_000, 15_000, 30_000, 60_000,
 ];
-const JOIN_WARMUP_SEND_SPACING_MS = 250;
 const JOIN_AUTHORITATIVE_RETRY_SCHEDULE_MS = [
 	0, 1_000, 3_000, 7_000, 15_000, 30_000, 60_000,
 ];
@@ -2747,43 +1451,6 @@ type RepairMetricBucket = {
 	simpleFallbackPasses: number;
 };
 type RepairMetrics = Record<RepairDispatchMode, RepairMetricBucket>;
-
-type JoinWarmupSendState<R extends "u32" | "u64"> = {
-	bypassKnownPeerHints: boolean;
-	entries: Map<string, RepairDispatchEntry<R>>;
-	generation: object;
-	lastCompletedAt: number;
-	pending: boolean;
-	running: boolean;
-};
-
-type JoinWarmupRetryTimer = {
-	handle: ReturnType<typeof setTimeout>;
-	resolve?: () => void;
-};
-
-type JoinWarmupScheduledRetryBatch<R extends "u32" | "u64"> = {
-	bypassKnownPeerHints: boolean;
-	entries: Map<string, RepairDispatchEntry<R>>;
-	remainingAttempts: number;
-};
-
-type JoinWarmupScheduledRetryCohort<R extends "u32" | "u64"> = {
-	batches: JoinWarmupScheduledRetryBatch<R>[];
-	dueAt: number;
-};
-
-type JoinWarmupScheduledRetrySlot<R extends "u32" | "u64"> = {
-	cohorts: JoinWarmupScheduledRetryCohort<R>[];
-	head: number;
-	timer?: JoinWarmupRetryTimer;
-	timerDueAt?: number;
-};
-
-type JoinWarmupScheduledRetries<R extends "u32" | "u64"> = {
-	generation: object;
-	slotsByDelay: Map<number, JoinWarmupScheduledRetrySlot<R>>;
-};
 
 type RepairSweepOptimisticPeerState = {
 	count: number;
@@ -3388,13 +2055,13 @@ export class SharedLog<
 	// replicator. Carry that leave obligation to the transition that ultimately
 	// wins, while a winning reconnect clears it without emitting a stale leave.
 	private _pendingReplicatorLeaveByPeer!: Set<string>;
-	private _replicatorLivenessSweepRunning!: boolean;
-	private _replicatorLivenessTimer?: ReturnType<typeof setInterval>;
-	private _replicatorLivenessTargets!: string[];
-	private _replicatorLivenessTargetsSize!: number;
-	private _replicatorLivenessCursor!: number;
-	private _replicatorLivenessFailures!: Map<string, number>;
-	private _replicatorLastActivityAt!: Map<string, number>;
+	private _liveness!: ReplicatorLivenessMonitor;
+	private get _replicatorLivenessFailures() {
+		return this._liveness._replicatorLivenessFailures;
+	}
+	private get _replicatorLastActivityAt() {
+		return this._liveness._replicatorLastActivityAt;
+	}
 
 	private remoteBlocks!: RemoteBlocks;
 
@@ -3458,7 +2125,7 @@ export class SharedLog<
 			this._checkedPrune.clearRetry(hash);
 		}
 		this.cancelCurrentReplicationStateAnnouncementRetry();
-		this.cancelAllJoinWarmupTargets();
+		this.joinWarmup.cancelAllJoinWarmupTargets();
 		for (const timer of this._repairRetryTimers) {
 			clearTimeout(timer);
 		}
@@ -3472,7 +2139,7 @@ export class SharedLog<
 		for (const peers of this._repairSweepPendingPeersByMode.values()) {
 			peers.clear();
 		}
-		this._repairSweepJoinWarmupGenerationByTarget.clear();
+		this.joinWarmup._repairSweepJoinWarmupGenerationByTarget.clear();
 		this._repairSweepOptimisticGidPeersPending.clear();
 		this._repairSweepOptimisticGidsByPeer.clear();
 		for (const targets of this._repairFrontierByMode.values()) {
@@ -4455,33 +3122,16 @@ export class SharedLog<
 	private rebalanceParticipationDebounced:
 		| ReturnType<typeof debounceFixedInterval>
 		| undefined;
-	private replicationAnnouncementRetryDebounced:
-		| ReturnType<typeof debounceFixedInterval>
-		| undefined;
-	private _replicationAnnouncementRetryPending!: boolean;
-	private _replicationAnnouncementRetryGeneration!: number;
-	private _replicationAnnouncementRetryController!: AbortController;
-	// Publish local ownership announcements in committed mutation order. This
-	// prevents an older Added message with a delayed transport completion from
-	// overtaking a newer authoritative empty snapshot.
-	private _replicationAnnouncementSendTails?: WeakMap<
-		AbortController,
-		Promise<void>
-	>;
-	private replicationAnnouncementRepairDebounced:
-		| ReturnType<typeof debounceFixedInterval>
-		| undefined;
-	private _replicationAnnouncementRepairPending!: boolean;
-	private _replicationAnnouncementRepairGeneration!: number;
-	private _replicationAnnouncementRepairGenerationController!: AbortController;
-	private _replicationAnnouncementRepairTargets!: Map<
-		string,
-		ReplicationAnnouncementRepairTarget
-	>;
-	private _replicationAnnouncementRepairCohortSelected!: boolean;
-	private _replicationAnnouncementRepairFairCursorHash!: string | undefined;
-	private _replicationAnnouncementRepairMaxAttempts!: number;
-	private _replicationAnnouncementRepairController!: AbortController;
+	private _announcements!: ReplicationAnnouncementCoordinator<R>;
+	private get _replicationAnnouncementRetryPending() {
+		return this._announcements._replicationAnnouncementRetryPending;
+	}
+	private get _replicationAnnouncementRepairPending() {
+		return this._announcements._replicationAnnouncementRepairPending;
+	}
+	private set _replicationAnnouncementRepairPending(pending: boolean) {
+		this._announcements._replicationAnnouncementRepairPending = pending;
+	}
 
 	// A fn for debouncing the calls for pruning
 	pruneDebouncedFn!: DebouncedAccumulatorMap<{
@@ -4509,7 +3159,6 @@ export class SharedLog<
 	private _repairSweepRunning!: boolean;
 	private _repairSweepPendingModes!: Set<RepairDispatchMode>;
 	private _repairSweepPendingPeersByMode!: Map<RepairDispatchMode, Set<string>>;
-	private _repairSweepJoinWarmupGenerationByTarget!: Map<string, object>;
 	private _repairFrontierByMode!: Map<
 		RepairDispatchMode,
 		Map<string, Map<string, RepairDispatchEntry<R>>>
@@ -4522,16 +3171,7 @@ export class SharedLog<
 		RepairDispatchMode,
 		Set<string>
 	>;
-	private _joinWarmupGenerationByTarget!: Map<string, object>;
-	private _joinWarmupSendStateByTarget!: Map<string, JoinWarmupSendState<R>>;
-	private _joinWarmupRetryTimersByTarget!: Map<
-		string,
-		Set<JoinWarmupRetryTimer>
-	>;
-	private _joinWarmupScheduledRetriesByTarget!: Map<
-		string,
-		JoinWarmupScheduledRetries<R>
-	>;
+	private joinWarmup!: JoinWarmupCoordinator<RepairDispatchEntry<R>>;
 	private _repairSweepOptimisticGidPeersPending!: Map<
 		string,
 		Map<string, RepairSweepOptimisticPeerState>
@@ -4594,6 +3234,105 @@ export class SharedLog<
 	indexableDomain!: IndexableDomain<R>;
 	interval: any;
 
+	private createJoinWarmupCoordinator(): JoinWarmupCoordinator<
+		RepairDispatchEntry<R>
+	> {
+		return new JoinWarmupCoordinator<RepairDispatchEntry<R>>({
+			isLifecycleActive: (controller) =>
+				this.isRepairLifecycleActive(controller),
+			getCurrentLifecycleController: () => this._repairLifecycleController,
+			getRepairRetryTimers: () => this._repairRetryTimers,
+			isClosed: () => this.closed,
+			onTargetCancelled: (target) => {
+				const pendingWarmupPeers =
+					this._repairSweepPendingPeersByMode.get("join-warmup");
+				pendingWarmupPeers?.delete(target);
+				if (pendingWarmupPeers?.size === 0) {
+					this._repairSweepPendingModes.delete("join-warmup");
+				}
+				this.clearRepairSweepOptimisticPeer(target);
+			},
+			bumpSimpleFallbackPasses: () => {
+				this._repairMetrics["join-warmup"].simpleFallbackPasses += 1;
+			},
+			sendEntriesSimple: (target, entries, options) =>
+				this.sendRepairEntriesWithTransport(target, entries, "simple", options),
+			logError: (error) => logger.error(error),
+		});
+	}
+
+	private createReplicationAnnouncementCoordinator(): ReplicationAnnouncementCoordinator<R> {
+		return new ReplicationAnnouncementCoordinator<R>({
+			// Route re-entrant queueing through the SharedLog delegators so sinon
+			// spies installed on the log instance keep observing them (the poison
+			// guard assertions in events.spec.ts depend on this).
+			queueCurrentReplicationStateAnnouncementRepair: () =>
+				this.queueCurrentReplicationStateAnnouncementRepair(),
+			queueCurrentReplicationStateAnnouncementRetry: (error: unknown) =>
+				this.queueCurrentReplicationStateAnnouncementRetry(error),
+			isClosed: () => this.closed,
+			getCloseSignal: () => this._closeController.signal,
+			getMyReplicationSegments: () => this.getMyReplicationSegments(),
+			validatePersistedReplicationRangeSnapshot: (ranges) =>
+				this.validatePersistedReplicationRangeSnapshot(ranges),
+			getSubscribers: () => this.node.services.pubsub.getSubscribers(this.topic),
+			getSelfHash: () => this.node.identity.publicKey.hashcode(),
+			isBlockedPeer: (hash) => this._replicationInfoBlockedPeers.has(hash),
+			getRpc: () => this.rpc,
+			captureReplicationOwnershipLifecycle: () =>
+				this.captureReplicationOwnershipLifecycle(),
+			throwIfReplicationOwnershipLifecycleInactive: (controller) =>
+				this.throwIfReplicationOwnershipLifecycleInactive(controller),
+			isAdaptiveReplicating: () => this._isAdaptiveReplicating,
+			callRebalanceParticipationDebounced: () =>
+				this.rebalanceParticipationDebounced?.call(),
+		});
+	}
+
+	private createReplicatorLivenessMonitor(): ReplicatorLivenessMonitor {
+		return new ReplicatorLivenessMonitor({
+			// Sweep-driven probes and activity marks dispatch through the SharedLog
+			// delegators so instance stubs/spies keep intercepting them.
+			probeReplicatorLiveness: (peerHash: string) =>
+				this.probeReplicatorLiveness(peerHash),
+			markReplicatorActivity: (peerHash: string, now?: number) =>
+				this.markReplicatorActivity(peerHash, now),
+			isClosed: () => this.closed,
+			getCloseSignal: () => this._closeController.signal,
+			getReplicationLifecycleController: () =>
+				this._replicationLifecycleController,
+			isReplicationLifecycleActive: (controller) =>
+				this.isReplicationLifecycleActive(controller),
+			getSelfHash: () => this.node.identity.publicKey.hashcode(),
+			getUniqueReplicators: () => this.uniqueReplicators,
+			getSubscriptionEpoch: (peerHash) => this.getSubscriptionEpoch(peerHash),
+			isCurrentSubscriptionEpoch: (peerHash, epoch) =>
+				this.isCurrentSubscriptionEpoch(peerHash, epoch),
+			resolvePublicKeyFromHash: (hash) => this._resolvePublicKeyFromHash(hash),
+			removeReplicator: (key, options) => this.removeReplicator(key, options),
+			getRpc: () => this.rpc,
+			getPendingReplicatorLeaveByPeer: () => this._pendingReplicatorLeaveByPeer,
+			dispatchReplicatorLeave: (publicKey) => {
+				this.events.dispatchEvent(
+					new CustomEvent<ReplicatorLeaveEvent>("replicator:leave", {
+						detail: { publicKey },
+					}),
+				);
+			},
+			isBlockedPeer: (hash) => this._replicationInfoBlockedPeers.has(hash),
+			scheduleReplicationInfoRequests: (peer, replicationLifecycleController) =>
+				this.scheduleReplicationInfoRequests(
+					peer,
+					replicationLifecycleController,
+				),
+			getTopicSubscribers: (topic) => this._getTopicSubscribers(topic),
+			confirmReplicatorSubscriberPresence: (peerHash) =>
+				this.confirmReplicatorSubscriberPresence(peerHash),
+			getNode: () => this.node,
+			getWaitForReplicatorTimeout: () => this.waitForReplicatorTimeout,
+		});
+	}
+
 	constructor(properties?: { id?: Uint8Array }) {
 		super();
 		this.ensureNativeDurabilityRuntimeState();
@@ -4622,7 +3361,6 @@ export class SharedLog<
 		this._repairSweepRunning = false;
 		this._repairSweepPendingModes = new Set();
 		this._repairSweepPendingPeersByMode = createRepairPendingPeersByMode();
-		this._repairSweepJoinWarmupGenerationByTarget = new Map();
 		this._repairFrontierByMode = createRepairFrontierByMode() as Map<
 			RepairDispatchMode,
 			Map<string, Map<string, RepairDispatchEntry<R>>>
@@ -4630,10 +3368,7 @@ export class SharedLog<
 		this._repairFrontierActiveTargetsByMode = createRepairActiveTargetsByMode();
 		this._repairFrontierBypassKnownPeersByMode =
 			createRepairFrontierBypassKnownPeersByMode();
-		this._joinWarmupGenerationByTarget = new Map();
-		this._joinWarmupSendStateByTarget = new Map();
-		this._joinWarmupRetryTimersByTarget = new Map();
-		this._joinWarmupScheduledRetriesByTarget = new Map();
+		this.joinWarmup = this.createJoinWarmupCoordinator();
 		this._repairSweepOptimisticGidPeersPending = new Map();
 		this._repairSweepOptimisticGidsByPeer = new Map();
 		this._entryKnownPeers = new Map();
@@ -4650,26 +3385,8 @@ export class SharedLog<
 		this.uniqueReplicators = new Set();
 		this._replicatorJoinEmitted = new Set();
 		this._replicatorsReconciled = false;
-		this._replicatorLivenessSweepRunning = false;
-		this._replicatorLivenessTargets = [];
-		this._replicatorLivenessTargetsSize = 0;
-		this._replicatorLivenessCursor = 0;
-		this._replicatorLivenessFailures = new Map();
-		this._replicatorLastActivityAt = new Map();
-		this._replicationAnnouncementRetryPending = false;
-		this._replicationAnnouncementRetryGeneration = 0;
-		this._replicationAnnouncementRetryController = new AbortController();
-		this._replicationAnnouncementSendTails = new WeakMap();
-		this._replicationAnnouncementRepairPending = false;
-		this._replicationAnnouncementRepairGeneration = 0;
-		this._replicationAnnouncementRepairGenerationController =
-			new AbortController();
-		this._replicationAnnouncementRepairTargets = new Map();
-		this._replicationAnnouncementRepairCohortSelected = false;
-		this._replicationAnnouncementRepairFairCursorHash = undefined;
-		this._replicationAnnouncementRepairMaxAttempts =
-			REPLICATION_ANNOUNCEMENT_REPAIR_MAX_ATTEMPTS;
-		this._replicationAnnouncementRepairController = new AbortController();
+		this._liveness = this.createReplicatorLivenessMonitor();
+		this._announcements = this.createReplicationAnnouncementCoordinator();
 		this.pendingMaturity = new Map();
 		this._closeController = new AbortController();
 	}
@@ -6365,18 +5082,9 @@ export class SharedLog<
 	private queueCurrentReplicationStateAnnouncementRetry(
 		error: unknown,
 	): boolean {
-		if (
-			this.closed ||
-			this._closeController.signal.aborted ||
-			this._replicationAnnouncementRetryController.signal.aborted ||
-			!isTransientReplicationAnnouncementError(error)
-		) {
-			return false;
-		}
-
-		this._replicationAnnouncementRetryPending = true;
-		void this.replicationAnnouncementRetryDebounced?.call();
-		return true;
+		return this._announcements.queueCurrentReplicationStateAnnouncementRetry(
+			error,
+		);
 	}
 
 	private onRebalanceParticipationError(error: Error): void {
@@ -6395,488 +5103,57 @@ export class SharedLog<
 		logger.error(error);
 	}
 
-	private setupReplicationAnnouncementRetryFunction(
-		interval = REPLICATION_ANNOUNCEMENT_RETRY_INTERVAL,
-	): void {
-		this.replicationAnnouncementRetryDebounced?.close();
-		this._replicationAnnouncementRetryController?.abort();
-		this._replicationAnnouncementRetryController = new AbortController();
-		this.replicationAnnouncementRetryDebounced = debounceFixedInterval(
-			() => this.retryCurrentReplicationStateAnnouncement(),
-			interval,
-			{
-				leading: false,
-				onError: (error) => {
-					if (
-						this.closed ||
-						this._closeController.signal.aborted ||
-						isNotStartedError(error)
-					) {
-						return;
-					}
-					logger.error(error);
-				},
-			},
-		);
+	private setupReplicationAnnouncementRetryFunction(interval?: number): void {
+		this._announcements.setupReplicationAnnouncementRetryFunction(interval);
 	}
 
 	private setupReplicationAnnouncementRepairFunction(
-		interval = REPLICATION_ANNOUNCEMENT_REPAIR_INTERVAL,
-		maxAttempts = REPLICATION_ANNOUNCEMENT_REPAIR_MAX_ATTEMPTS,
+		interval?: number,
+		maxAttempts?: number,
 	): void {
-		if (!Number.isSafeInteger(maxAttempts) || maxAttempts <= 0) {
-			throw new RangeError(
-				"Replication announcement repair attempts must be positive",
-			);
-		}
-		this.replicationAnnouncementRepairDebounced?.close();
-		this._replicationAnnouncementRepairController?.abort();
-		this._replicationAnnouncementRepairGenerationController?.abort();
-		this._replicationAnnouncementRepairController = new AbortController();
-		this._replicationAnnouncementRepairGenerationController =
-			new AbortController();
-		this._replicationAnnouncementRepairPending = false;
-		this._replicationAnnouncementRepairGeneration =
-			this._replicationAnnouncementRetryGeneration;
-		this._replicationAnnouncementRepairTargets = new Map();
-		this._replicationAnnouncementRepairCohortSelected = false;
-		this._replicationAnnouncementRepairFairCursorHash = undefined;
-		this._replicationAnnouncementRepairMaxAttempts = maxAttempts;
-		this.replicationAnnouncementRepairDebounced = debounceFixedInterval(
-			() => this.runCurrentReplicationStateAnnouncementRepair(),
+		this._announcements.setupReplicationAnnouncementRepairFunction(
 			interval,
-			{
-				leading: false,
-				// The wrapper catches worker failures while it still owns the generation
-				// context. Keep this boundary visibility-only: it must never mutate a
-				// possibly newer generation's pending state.
-				onError: (error) => logger.error(error),
-			},
+			maxAttempts,
 		);
-	}
-
-	private cancelCurrentReplicationStateAnnouncementRepair(): void {
-		this._replicationAnnouncementRepairPending = false;
-		this._replicationAnnouncementRepairController?.abort();
-		this._replicationAnnouncementRepairGenerationController?.abort();
-		this.replicationAnnouncementRepairDebounced?.close();
-		this._replicationAnnouncementRepairTargets?.clear();
-	}
-
-	private advanceCurrentReplicationStateAnnouncementRepairGeneration(): void {
-		const generation = this._replicationAnnouncementRetryGeneration;
-		if (generation === this._replicationAnnouncementRepairGeneration) {
-			return;
-		}
-
-		// Abort acknowledged sends carrying the old full-state snapshot before the
-		// primary announcement for the new mutation waits on transport. Otherwise a
-		// stale batch can hold the current state behind DirectStream's seek timeout.
-		this._replicationAnnouncementRepairGenerationController?.abort();
-		this._replicationAnnouncementRepairGenerationController =
-			new AbortController();
-		this._replicationAnnouncementRepairGeneration = generation;
-		this._replicationAnnouncementRepairPending = false;
-		this._replicationAnnouncementRepairTargets.clear();
-		this._replicationAnnouncementRepairCohortSelected = false;
 	}
 
 	private queueCurrentReplicationStateAnnouncementRepair(): void {
-		if (
-			this.closed ||
-			this._closeController.signal.aborted ||
-			this._replicationAnnouncementRepairController.signal.aborted ||
-			!this.replicationAnnouncementRepairDebounced
-		) {
-			return;
-		}
-
-		this.advanceCurrentReplicationStateAnnouncementRepairGeneration();
-		this._replicationAnnouncementRepairPending = true;
-		void this.replicationAnnouncementRepairDebounced.call();
+		this._announcements.queueCurrentReplicationStateAnnouncementRepair();
 	}
 
-	/**
-	 * Single validity predicate for announcement-repair workers. "stale":
-	 * the store closed or a lifecycle controller aborted — exit silently.
-	 * "superseded": a newer announcement generation took over — the worker
-	 * must requeue so the current generation gets serviced. The
-	 * generation-controller identity comparison stays at the one call site
-	 * that historically required it; folding it in here is a stage-5
-	 * semantic decision, not a consolidation.
-	 */
-	private announcementRepairWorkerStatus(worker: {
-		generation: number;
-		lifecycleController: AbortController;
-		generationController: AbortController;
-	}): "current" | "stale" | "superseded" {
-		if (
-			this.closed ||
-			this._closeController.signal.aborted ||
-			worker.lifecycleController.signal.aborted ||
-			worker.generationController.signal.aborted
-		) {
-			return "stale";
-		}
-		if (worker.generation !== this._replicationAnnouncementRetryGeneration) {
-			return "superseded";
-		}
-		return "current";
+	private runCurrentReplicationStateAnnouncementRepair(): Promise<void> {
+		return this._announcements.runCurrentReplicationStateAnnouncementRepair();
 	}
 
-	private async runCurrentReplicationStateAnnouncementRepair(): Promise<void> {
-		const generation = this._replicationAnnouncementRetryGeneration;
-		const lifecycleController = this._replicationAnnouncementRepairController;
-		const generationController =
-			this._replicationAnnouncementRepairGenerationController;
-		try {
-			await this.repairCurrentReplicationStateAnnouncement({
-				generation,
-				lifecycleController,
-				generationController,
-			});
-		} catch (error) {
-			if (
-				this.announcementRepairWorkerStatus({
-					generation,
-					lifecycleController,
-					generationController,
-				}) !== "current" ||
-				generationController !==
-					this._replicationAnnouncementRepairGenerationController
-			) {
-				return;
-			}
-			if (isNotStartedError(error as Error)) {
-				return;
-			}
-
-			// Only the worker that still owns the current generation may conclude
-			// that its repair failed. A stale worker must not clear a newer call's
-			// pending flag or attribute its error to the new generation.
-			this._replicationAnnouncementRepairPending = false;
-			logger.error(error);
-		}
-	}
-
-	private async repairCurrentReplicationStateAnnouncement(context?: {
-		generation: number;
-		lifecycleController: AbortController;
-		generationController: AbortController;
-	}): Promise<void> {
-		if (!this._replicationAnnouncementRepairPending) {
-			return;
-		}
-		const generation =
-			context?.generation ?? this._replicationAnnouncementRetryGeneration;
-		const lifecycleController =
-			context?.lifecycleController ??
-			this._replicationAnnouncementRepairController;
-		const generationController =
-			context?.generationController ??
-			this._replicationAnnouncementRepairGenerationController;
-		const segments = (await this.getMyReplicationSegments()).map((range) =>
-			range.toReplicationRange(),
+	private repairCurrentReplicationStateAnnouncement(
+		context?: ReplicationAnnouncementRepairWorkerContext,
+	): Promise<void> {
+		return this._announcements.repairCurrentReplicationStateAnnouncement(
+			context,
 		);
-		switch (
-			this.announcementRepairWorkerStatus({
-				generation,
-				lifecycleController,
-				generationController,
-			})
-		) {
-			case "stale":
-				return;
-			case "superseded":
-				this.queueCurrentReplicationStateAnnouncementRepair();
-				return;
-		}
-		this.validatePersistedReplicationRangeSnapshot(segments);
-
-		const subscribers =
-			(await this.node.services.pubsub.getSubscribers(this.topic)) ?? [];
-		switch (
-			this.announcementRepairWorkerStatus({
-				generation,
-				lifecycleController,
-				generationController,
-			})
-		) {
-			case "stale":
-				return;
-			case "superseded":
-				this.queueCurrentReplicationStateAnnouncementRepair();
-				return;
-		}
-
-		const selfHash = this.node.identity.publicKey.hashcode();
-		const currentTargets = new Map<string, PublicSignKey>();
-		for (const key of subscribers) {
-			const hash = key.hashcode();
-			if (
-				hash !== selfHash &&
-				!this._replicationInfoBlockedPeers.has(hash) &&
-				!currentTargets.has(hash)
-			) {
-				currentTargets.set(hash, key);
-			}
-		}
-
-		for (const [hash, target] of this._replicationAnnouncementRepairTargets) {
-			if (target.generation !== generation || !currentTargets.has(hash)) {
-				this._replicationAnnouncementRepairTargets.delete(hash);
-			} else {
-				target.key = currentTargets.get(hash)!;
-			}
-		}
-		if (!this._replicationAnnouncementRepairCohortSelected) {
-			const candidates = [...currentTargets.entries()].sort(([left], [right]) =>
-				left.localeCompare(right),
-			);
-			const cursorIndex = this._replicationAnnouncementRepairFairCursorHash
-				? candidates.findIndex(
-						([hash]) =>
-							hash.localeCompare(
-								this._replicationAnnouncementRepairFairCursorHash!,
-							) > 0,
-					)
-				: 0;
-			const fairStart = cursorIndex < 0 ? 0 : cursorIndex;
-			const fairOrder = [
-				...candidates.slice(fairStart),
-				...candidates.slice(0, fairStart),
-			];
-			const cohort = fairOrder.slice(
-				0,
-				REPLICATION_ANNOUNCEMENT_REPAIR_TARGETS_PER_GENERATION,
-			);
-			for (const [hash, key] of cohort) {
-				this._replicationAnnouncementRepairTargets.set(hash, {
-					key,
-					generation,
-					attempts: 0,
-					done: false,
-				});
-			}
-			if (cohort.length > 0) {
-				this._replicationAnnouncementRepairFairCursorHash =
-					cohort[cohort.length - 1][0];
-			}
-			this._replicationAnnouncementRepairCohortSelected = true;
-		}
-
-		const batch = [
-			...this._replicationAnnouncementRepairTargets.entries(),
-		].filter(([, target]) => !target.done);
-		const snapshot = new AllReplicatingSegmentsMessage({ segments });
-		const results = await Promise.allSettled(
-			batch.map(([, target]) =>
-				this.rpc.send(snapshot, {
-					mode: new AcknowledgeDelivery({
-						to: [target.key],
-						redundancy: 1,
-					}),
-					priority: CONVERGENCE_MESSAGE_PRIORITY,
-					signal: generationController.signal,
-				}),
-			),
-		);
-		switch (
-			this.announcementRepairWorkerStatus({
-				generation,
-				lifecycleController,
-				generationController,
-			})
-		) {
-			case "stale":
-				return;
-			case "superseded":
-				this.queueCurrentReplicationStateAnnouncementRepair();
-				return;
-		}
-
-		for (const [index, result] of results.entries()) {
-			const [hash, attemptedTarget] = batch[index];
-			const target = this._replicationAnnouncementRepairTargets.get(hash);
-			if (target !== attemptedTarget || target.generation !== generation) {
-				continue;
-			}
-			if (result.status === "fulfilled") {
-				// DirectStream ACKs confirm that the signed transport envelope reached
-				// the target. Applying the contained replication state remains a
-				// receiver-local, best-effort operation.
-				target.done = true;
-				continue;
-			}
-
-			target.attempts += 1;
-			if (!isTransientReplicationAnnouncementRepairError(result.reason)) {
-				target.done = true;
-				logger.error(result.reason);
-			} else if (
-				target.attempts >= this._replicationAnnouncementRepairMaxAttempts
-			) {
-				target.done = true;
-				logger.trace(
-					"Acknowledged replication announcement repair exhausted for %s",
-					hash,
-				);
-			}
-		}
-
-		if (generation !== this._replicationAnnouncementRetryGeneration) {
-			this.queueCurrentReplicationStateAnnouncementRepair();
-			return;
-		}
-		if (
-			[...this._replicationAnnouncementRepairTargets.values()].some(
-				(target) => !target.done,
-			)
-		) {
-			void this.replicationAnnouncementRepairDebounced?.call();
-			return;
-		}
-
-		this._replicationAnnouncementRepairPending = false;
-		this._replicationAnnouncementRepairTargets.clear();
 	}
 
 	private cancelCurrentReplicationStateAnnouncementRetry(): void {
-		this._replicationAnnouncementRetryGeneration += 1;
-		this._replicationAnnouncementRetryPending = false;
-		this._replicationAnnouncementRetryController?.abort();
-		this.replicationAnnouncementRetryDebounced?.close();
-		this.cancelCurrentReplicationStateAnnouncementRepair();
+		this._announcements.cancelCurrentReplicationStateAnnouncementRetry();
 	}
 
-	private async sendReplicationAnnouncement(
+	private sendReplicationAnnouncement(
 		message:
 			| AllReplicatingSegmentsMessage
 			| AddedReplicationSegmentMessage
 			| StoppedReplicating,
-		ownershipLifecycleController = this.captureReplicationOwnershipLifecycle(),
+		ownershipLifecycleController?: AbortController,
 		options?: { shouldSend?: () => boolean },
 	): Promise<void> {
-		const tails = (this._replicationAnnouncementSendTails ??= new WeakMap<
-			AbortController,
-			Promise<void>
-		>());
-		const previous =
-			tails.get(ownershipLifecycleController) ?? Promise.resolve();
-		const send = previous
-			.catch(() => {})
-			.then(async () => {
-				this.throwIfReplicationOwnershipLifecycleInactive(
-					ownershipLifecycleController,
-				);
-				if (options?.shouldSend && !options.shouldSend()) {
-					return;
-				}
-				// Advance before every post-mutation send, including successful ones. An
-				// authoritative retry already in flight may have captured the previous
-				// local state; the generation mismatch forces one more current snapshot
-				// after that stale send settles.
-				this._replicationAnnouncementRetryGeneration += 1;
-				this.advanceCurrentReplicationStateAnnouncementRepairGeneration();
-				try {
-					await this.rpc.send(message, {
-						priority: CONVERGENCE_MESSAGE_PRIORITY,
-						signal: ownershipLifecycleController.signal,
-					});
-					this.throwIfReplicationOwnershipLifecycleInactive(
-						ownershipLifecycleController,
-					);
-					this.queueCurrentReplicationStateAnnouncementRepair();
-				} catch (error) {
-					// An old send can reject only after poison or close has installed a new
-					// ownership generation. Never enqueue its retry work into that generation.
-					this.throwIfReplicationOwnershipLifecycleInactive(
-						ownershipLifecycleController,
-					);
-					// The local replication-index mutation precedes all calls to this
-					// wrapper. Preserve the explicit caller's rejection, but independently
-					// schedule an authoritative snapshot so peers eventually observe the
-					// already-committed local state.
-					this.queueCurrentReplicationStateAnnouncementRetry(error);
-					throw error;
-				}
-			});
-		// Keep the ordering barrier usable after a caller-observed send rejection.
-		tails.set(
+		return this._announcements.sendReplicationAnnouncement(
+			message,
 			ownershipLifecycleController,
-			send.catch(() => {}),
+			options,
 		);
-		return send;
 	}
 
-	private async retryCurrentReplicationStateAnnouncement(): Promise<void> {
-		const generation = this._replicationAnnouncementRetryGeneration;
-		const controller = this._replicationAnnouncementRetryController;
-		try {
-			const segments = (await this.getMyReplicationSegments()).map((range) =>
-				range.toReplicationRange(),
-			);
-			if (
-				this.closed ||
-				this._closeController.signal.aborted ||
-				controller.signal.aborted
-			) {
-				return;
-			}
-			if (generation !== this._replicationAnnouncementRetryGeneration) {
-				void this.replicationAnnouncementRetryDebounced?.call();
-				return;
-			}
-			this.validatePersistedReplicationRangeSnapshot(segments);
-
-			await this.rpc.send(new AllReplicatingSegmentsMessage({ segments }), {
-				priority: CONVERGENCE_MESSAGE_PRIORITY,
-				signal: controller.signal,
-			});
-			this.queueCurrentReplicationStateAnnouncementRepair();
-		} catch (error) {
-			if (
-				this.closed ||
-				this._closeController.signal.aborted ||
-				controller.signal.aborted
-			) {
-				return;
-			}
-			if (this.queueCurrentReplicationStateAnnouncementRetry(error)) {
-				return;
-			}
-			if (generation === this._replicationAnnouncementRetryGeneration) {
-				this._replicationAnnouncementRetryPending = false;
-			} else {
-				void this.replicationAnnouncementRetryDebounced?.call();
-			}
-			throw error;
-		}
-		if (
-			this.closed ||
-			this._closeController.signal.aborted ||
-			controller.signal.aborted
-		) {
-			return;
-		}
-
-		// A newer mutation announcement may have started while this snapshot was
-		// in flight. In that case keep the repair pending so the newer current
-		// state is also announced in full, regardless of whether its incremental
-		// send succeeded or failed.
-		if (generation === this._replicationAnnouncementRetryGeneration) {
-			this._replicationAnnouncementRetryPending = false;
-			if (
-				!this.closed &&
-				!this._closeController.signal.aborted &&
-				!controller.signal.aborted &&
-				this._isAdaptiveReplicating
-			) {
-				void this.rebalanceParticipationDebounced?.call();
-			}
-		} else {
-			void this.replicationAnnouncementRetryDebounced?.call();
-		}
+	private retryCurrentReplicationStateAnnouncement(): Promise<void> {
+		return this._announcements.retryCurrentReplicationStateAnnouncement();
 	}
 
 	private markLocalAppendActivity(timestamp = Date.now()) {
@@ -7669,7 +5946,7 @@ export class SharedLog<
 		const expectedJoinWarmupGeneration =
 			options?.expectedJoinWarmupGeneration !== undefined
 				? options.expectedJoinWarmupGeneration
-				: (this._joinWarmupGenerationByTarget.get(keyHash) ?? null);
+				: (this.joinWarmup._joinWarmupGenerationByTarget.get(keyHash) ?? null);
 		const ownsSubscriptionEpoch = () =>
 			options?.subscriptionEpoch === undefined ||
 			this.isCurrentSubscriptionEpoch(keyHash, options.subscriptionEpoch);
@@ -7681,10 +5958,10 @@ export class SharedLog<
 		const cancelExpectedJoinWarmupTarget = () => {
 			if (
 				expectedJoinWarmupGeneration !== null &&
-				this._joinWarmupGenerationByTarget.get(keyHash) ===
+				this.joinWarmup._joinWarmupGenerationByTarget.get(keyHash) ===
 					expectedJoinWarmupGeneration
 			) {
-				this.cancelJoinWarmupTarget(keyHash);
+				this.joinWarmup.cancelJoinWarmupTarget(keyHash);
 			}
 		};
 		const isMe = this.node.identity.publicKey.hashcode() === keyHash;
@@ -9257,277 +7534,6 @@ export class SharedLog<
 		}
 	}
 
-	private getJoinWarmupGeneration(target: string) {
-		let generation = this._joinWarmupGenerationByTarget.get(target);
-		if (!generation) {
-			generation = {};
-			this._joinWarmupGenerationByTarget.set(target, generation);
-		}
-		return generation;
-	}
-
-	private trackJoinWarmupTimer(target: string, timer: JoinWarmupRetryTimer) {
-		let timers = this._joinWarmupRetryTimersByTarget.get(target);
-		if (!timers) {
-			timers = new Set();
-			this._joinWarmupRetryTimersByTarget.set(target, timers);
-		}
-		timers.add(timer);
-		this._repairRetryTimers.add(timer.handle);
-	}
-
-	private untrackJoinWarmupTimer(target: string, timer: JoinWarmupRetryTimer) {
-		this._repairRetryTimers.delete(timer.handle);
-		const timers = this._joinWarmupRetryTimersByTarget.get(target);
-		if (!timers) {
-			return;
-		}
-		timers.delete(timer);
-		if (timers.size === 0) {
-			this._joinWarmupRetryTimersByTarget.delete(target);
-		}
-	}
-
-	private cancelJoinWarmupTimers(target: string) {
-		const timers = this._joinWarmupRetryTimersByTarget.get(target);
-		if (!timers) {
-			return;
-		}
-		for (const timer of [...timers]) {
-			clearTimeout(timer.handle);
-			timer.resolve?.();
-			this.untrackJoinWarmupTimer(target, timer);
-		}
-	}
-
-	private cancelJoinWarmupTarget(target: string) {
-		this._joinWarmupGenerationByTarget.delete(target);
-		const pendingWarmupPeers =
-			this._repairSweepPendingPeersByMode.get("join-warmup");
-		pendingWarmupPeers?.delete(target);
-		if (pendingWarmupPeers?.size === 0) {
-			this._repairSweepPendingModes.delete("join-warmup");
-		}
-		this._repairSweepJoinWarmupGenerationByTarget.delete(target);
-		this.clearRepairSweepOptimisticPeer(target);
-		this.cancelJoinWarmupTimers(target);
-		this._joinWarmupScheduledRetriesByTarget.delete(target);
-		const state = this._joinWarmupSendStateByTarget.get(target);
-		if (!state) {
-			return;
-		}
-		state.bypassKnownPeerHints = false;
-		state.entries.clear();
-		state.pending = false;
-		if (!state.running) {
-			this._joinWarmupSendStateByTarget.delete(target);
-		}
-	}
-
-	private cancelAllJoinWarmupTargets() {
-		const targets = new Set([
-			...this._joinWarmupGenerationByTarget.keys(),
-			...this._joinWarmupRetryTimersByTarget.keys(),
-			...this._joinWarmupScheduledRetriesByTarget.keys(),
-			...this._joinWarmupSendStateByTarget.keys(),
-		]);
-		for (const target of targets) {
-			this.cancelJoinWarmupTarget(target);
-		}
-	}
-
-	private async sleepJoinWarmupTracked(
-		target: string,
-		delayMs: number,
-		repairLifecycleController: AbortController,
-	) {
-		if (delayMs <= 0) {
-			return;
-		}
-		await new Promise<void>((resolve) => {
-			let settled = false;
-			let trackedTimer!: JoinWarmupRetryTimer;
-			const settle = () => {
-				if (settled) {
-					return;
-				}
-				settled = true;
-				if (repairLifecycleController === this._repairLifecycleController) {
-					this.untrackJoinWarmupTimer(target, trackedTimer);
-				}
-				resolve();
-			};
-			const handle = setTimeout(settle, delayMs);
-			handle.unref?.();
-			trackedTimer = { handle, resolve: settle };
-			this.trackJoinWarmupTimer(target, trackedTimer);
-		});
-	}
-
-	private scheduleJoinWarmupRetries(
-		target: string,
-		generation: object,
-		delaysMs: Iterable<number>,
-		entries: ReadonlyMap<string, RepairDispatchEntry<R>>,
-		bypassKnownPeerHints: boolean,
-		repairLifecycleController: AbortController = this
-			._repairLifecycleController,
-	) {
-		if (
-			!this.isRepairLifecycleActive(repairLifecycleController) ||
-			this._joinWarmupGenerationByTarget.get(target) !== generation
-		) {
-			return;
-		}
-		let scheduled = this._joinWarmupScheduledRetriesByTarget.get(target);
-		if (scheduled?.generation !== generation) {
-			this.cancelJoinWarmupTimers(target);
-			this._joinWarmupScheduledRetriesByTarget.delete(target);
-			scheduled = undefined;
-		}
-		if (!scheduled) {
-			scheduled = {
-				generation,
-				slotsByDelay: new Map(),
-			};
-			this._joinWarmupScheduledRetriesByTarget.set(target, scheduled);
-		}
-		const delays = [...new Set(delaysMs)];
-		const batch: JoinWarmupScheduledRetryBatch<R> = {
-			bypassKnownPeerHints,
-			entries: new Map(entries),
-			remainingAttempts: delays.length,
-		};
-		const now = Date.now();
-		for (const delayMs of delays) {
-			let slot = scheduled.slotsByDelay.get(delayMs);
-			if (!slot) {
-				slot = { cohorts: [], head: 0 };
-				scheduled.slotsByDelay.set(delayMs, slot);
-			}
-			const tail = slot.cohorts.at(-1);
-			const dueAt = Math.max(tail?.dueAt ?? 0, now + delayMs);
-			if (tail?.dueAt === dueAt) {
-				tail.batches.push(batch);
-			} else {
-				slot.cohorts.push({
-					batches: [batch],
-					dueAt,
-				});
-			}
-			this.armJoinWarmupRetrySlot(
-				target,
-				scheduled,
-				delayMs,
-				slot,
-				repairLifecycleController,
-			);
-		}
-	}
-
-	private armJoinWarmupRetrySlot(
-		target: string,
-		scheduled: JoinWarmupScheduledRetries<R>,
-		delayMs: number,
-		slot: JoinWarmupScheduledRetrySlot<R>,
-		repairLifecycleController: AbortController,
-	) {
-		if (!this.isRepairLifecycleActive(repairLifecycleController)) {
-			return;
-		}
-		const nextDueAt = slot.cohorts[slot.head]?.dueAt;
-		if (nextDueAt == null) {
-			return;
-		}
-		if (slot.timer && slot.timerDueAt === nextDueAt) {
-			return;
-		}
-		if (slot.timer) {
-			clearTimeout(slot.timer.handle);
-			this.untrackJoinWarmupTimer(target, slot.timer);
-		}
-		let trackedTimer!: JoinWarmupRetryTimer;
-		const handle = setTimeout(
-			() => {
-				if (!this.isRepairLifecycleActive(repairLifecycleController)) {
-					return;
-				}
-				this.untrackJoinWarmupTimer(target, trackedTimer);
-				if (slot.timer !== trackedTimer) {
-					return;
-				}
-				slot.timer = undefined;
-				slot.timerDueAt = undefined;
-				const current = this._joinWarmupScheduledRetriesByTarget.get(target);
-				if (
-					current !== scheduled ||
-					current.slotsByDelay.get(delayMs) !== slot
-				) {
-					return;
-				}
-
-				const dueEntries = new Map<string, RepairDispatchEntry<R>>();
-				let bypassKnownPeerHints = false;
-				const now = Date.now();
-				while (
-					slot.head < slot.cohorts.length &&
-					slot.cohorts[slot.head].dueAt <= now
-				) {
-					const cohort = slot.cohorts[slot.head++];
-					for (const batch of cohort.batches) {
-						for (const [hash, entry] of batch.entries) {
-							dueEntries.set(hash, entry);
-						}
-						bypassKnownPeerHints ||= batch.bypassKnownPeerHints;
-						batch.remainingAttempts -= 1;
-						if (batch.remainingAttempts === 0) {
-							batch.entries.clear();
-						}
-					}
-					cohort.batches.length = 0;
-				}
-				if (
-					dueEntries.size > 0 &&
-					!this.closed &&
-					this._joinWarmupGenerationByTarget.get(target) ===
-						scheduled.generation
-				) {
-					this.queueJoinWarmupSend(
-						target,
-						scheduled.generation,
-						dueEntries,
-						bypassKnownPeerHints,
-						repairLifecycleController,
-					);
-				}
-				if (slot.head === slot.cohorts.length) {
-					current.slotsByDelay.delete(delayMs);
-					if (current.slotsByDelay.size === 0) {
-						this._joinWarmupScheduledRetriesByTarget.delete(target);
-					}
-					return;
-				}
-				if (slot.head >= 1_024 && slot.head * 2 >= slot.cohorts.length) {
-					slot.cohorts = slot.cohorts.slice(slot.head);
-					slot.head = 0;
-				}
-				this.armJoinWarmupRetrySlot(
-					target,
-					current,
-					delayMs,
-					slot,
-					repairLifecycleController,
-				);
-			},
-			Math.max(0, nextDueAt - Date.now()),
-		);
-		handle.unref?.();
-		trackedTimer = { handle };
-		slot.timer = trackedTimer;
-		slot.timerDueAt = nextDueAt;
-		this.trackJoinWarmupTimer(target, trackedTimer);
-	}
-
 	private async getFullReplicaRepairCandidates(
 		extraPeers?: Iterable<string>,
 		options?: { includeSubscribers?: boolean },
@@ -9568,10 +7574,10 @@ export class SharedLog<
 		if (
 			options?.expectedJoinWarmupGeneration === undefined ||
 			(options.expectedJoinWarmupGeneration !== null &&
-				this._joinWarmupGenerationByTarget.get(target) ===
+				this.joinWarmup._joinWarmupGenerationByTarget.get(target) ===
 					options.expectedJoinWarmupGeneration)
 		) {
-			this.cancelJoinWarmupTarget(target);
+			this.joinWarmup.cancelJoinWarmupTarget(target);
 		}
 		for (const mode of REPAIR_DISPATCH_MODES) {
 			this._repairFrontierByMode.get(mode)?.delete(target);
@@ -9720,138 +7726,6 @@ export class SharedLog<
 			targets: [target],
 			signal: options?.signal,
 		});
-	}
-
-	private queueJoinWarmupSend(
-		target: string,
-		generation: object,
-		entries: ReadonlyMap<string, RepairDispatchEntry<R>>,
-		bypassKnownPeerHints: boolean,
-		repairLifecycleController: AbortController = this
-			._repairLifecycleController,
-	) {
-		if (
-			!this.isRepairLifecycleActive(repairLifecycleController) ||
-			this._joinWarmupGenerationByTarget.get(target) !== generation
-		) {
-			return;
-		}
-		let state = this._joinWarmupSendStateByTarget.get(target);
-		if (!state) {
-			state = {
-				bypassKnownPeerHints: false,
-				entries: new Map(),
-				generation,
-				lastCompletedAt: Number.NEGATIVE_INFINITY,
-				pending: false,
-				running: false,
-			};
-			this._joinWarmupSendStateByTarget.set(target, state);
-		} else if (state.generation !== generation) {
-			state.bypassKnownPeerHints = false;
-			state.entries.clear();
-			state.pending = false;
-		}
-		for (const [hash, entry] of entries) {
-			state.entries.set(hash, entry);
-		}
-		state.bypassKnownPeerHints ||= bypassKnownPeerHints;
-		state.generation = generation;
-		state.pending = true;
-		if (state.running) {
-			return;
-		}
-		void this.drainJoinWarmupSends(
-			target,
-			state,
-			repairLifecycleController,
-		).catch((error: any) => {
-			if (this.isRepairLifecycleActive(repairLifecycleController)) {
-				logger.error(error);
-			}
-		});
-	}
-
-	private async drainJoinWarmupSends(
-		target: string,
-		state: JoinWarmupSendState<R>,
-		repairLifecycleController: AbortController,
-	) {
-		if (
-			state.running ||
-			!this.isRepairLifecycleActive(repairLifecycleController)
-		) {
-			return;
-		}
-		state.running = true;
-		try {
-			while (state.pending) {
-				if (!this.isRepairLifecycleActive(repairLifecycleController)) {
-					return;
-				}
-				state.pending = false;
-				const generation = state.generation;
-				const entries = new Map(state.entries);
-				state.entries.clear();
-				const bypassKnownPeerHints = state.bypassKnownPeerHints;
-				state.bypassKnownPeerHints = false;
-				const spacingMs = Math.max(
-					0,
-					state.lastCompletedAt + JOIN_WARMUP_SEND_SPACING_MS - Date.now(),
-				);
-				await this.sleepJoinWarmupTracked(
-					target,
-					spacingMs,
-					repairLifecycleController,
-				);
-				if (
-					!this.isRepairLifecycleActive(repairLifecycleController) ||
-					state.generation !== generation ||
-					this._joinWarmupGenerationByTarget.get(target) !== generation
-				) {
-					continue;
-				}
-				if (entries.size === 0) {
-					continue;
-				}
-				this._repairMetrics["join-warmup"].simpleFallbackPasses += 1;
-				try {
-					await this.sendRepairEntriesWithTransport(target, entries, "simple", {
-						bypassKnownPeers: bypassKnownPeerHints,
-						bypassRecentKnownPeers: bypassKnownPeerHints,
-						isStillCurrent: () =>
-							this.isRepairLifecycleActive(repairLifecycleController),
-						signal: repairLifecycleController.signal,
-					});
-				} catch (error: any) {
-					if (this.isRepairLifecycleActive(repairLifecycleController)) {
-						logger.error(error);
-					}
-				} finally {
-					if (this.isRepairLifecycleActive(repairLifecycleController)) {
-						state.lastCompletedAt = Date.now();
-					}
-				}
-			}
-		} finally {
-			state.running = false;
-			if (this._joinWarmupSendStateByTarget.get(target) === state) {
-				const currentRepairLifecycleController =
-					this._repairLifecycleController;
-				if (
-					state.pending &&
-					this.isRepairLifecycleActive(currentRepairLifecycleController)
-				) {
-					void this.drainJoinWarmupSends(
-						target,
-						state,
-						currentRepairLifecycleController,
-					).catch((error: any) => logger.error(error));
-				} else if (!this._joinWarmupGenerationByTarget.has(target)) {
-					this._joinWarmupSendStateByTarget.delete(target);
-				}
-			}
-		}
 	}
 
 	private async sendMaybeMissingEntriesNow(
@@ -10219,7 +8093,7 @@ export class SharedLog<
 		bucket.entries += filteredEntries.size;
 		const joinWarmupGeneration =
 			options.mode === "join-warmup"
-				? this.getJoinWarmupGeneration(target)
+				? this.joinWarmup.getJoinWarmupGeneration(target)
 				: undefined;
 		const bypassKnownPeerHints = this.shouldBypassKnownPeerHints(
 			options.mode,
@@ -10235,7 +8109,7 @@ export class SharedLog<
 				options.mode === "join-warmup" &&
 				joinWarmupGeneration
 			) {
-				this.queueJoinWarmupSend(
+				this.joinWarmup.queueJoinWarmupSend(
 					target,
 					joinWarmupGeneration,
 					filteredEntries,
@@ -10293,7 +8167,7 @@ export class SharedLog<
 			this._repairRetryTimers.add(timer);
 		});
 		if (joinWarmupGeneration && delayedJoinWarmupRetries.length > 0) {
-			this.scheduleJoinWarmupRetries(
+			this.joinWarmup.scheduleJoinWarmupRetries(
 				target,
 				joinWarmupGeneration,
 				delayedJoinWarmupRetries,
@@ -10322,11 +8196,11 @@ export class SharedLog<
 				if (options.mode === "join-warmup") {
 					const generation =
 						options.joinWarmupGenerations?.get(peer) ??
-						this.getJoinWarmupGeneration(peer);
-					if (this._joinWarmupGenerationByTarget.get(peer) !== generation) {
+						this.joinWarmup.getJoinWarmupGeneration(peer);
+					if (this.joinWarmup._joinWarmupGenerationByTarget.get(peer) !== generation) {
 						continue;
 					}
-					this._repairSweepJoinWarmupGenerationByTarget.set(peer, generation);
+					this.joinWarmup._repairSweepJoinWarmupGenerationByTarget.set(peer, generation);
 				}
 				pendingPeers.add(peer);
 			}
@@ -10410,13 +8284,13 @@ export class SharedLog<
 					this._repairSweepPendingPeersByMode,
 				);
 				const pendingJoinWarmupGenerations = new Map(
-					this._repairSweepJoinWarmupGenerationByTarget,
+					this.joinWarmup._repairSweepJoinWarmupGenerationByTarget,
 				);
 				this._repairSweepPendingModes.clear();
 				for (const peers of this._repairSweepPendingPeersByMode.values()) {
 					peers.clear();
 				}
-				this._repairSweepJoinWarmupGenerationByTarget.clear();
+				this.joinWarmup._repairSweepJoinWarmupGenerationByTarget.clear();
 				const pendingJoinWarmupPeers = pendingPeersByMode.get("join-warmup");
 				const pruneStaleJoinWarmupPeers = () => {
 					if (!this.isRepairLifecycleActive(repairLifecycleController)) {
@@ -10424,7 +8298,7 @@ export class SharedLog<
 					}
 					for (const peer of [...(pendingJoinWarmupPeers ?? [])]) {
 						if (
-							this._joinWarmupGenerationByTarget.get(peer) !==
+							this.joinWarmup._joinWarmupGenerationByTarget.get(peer) !==
 							pendingJoinWarmupGenerations.get(peer)
 						) {
 							pendingJoinWarmupPeers?.delete(peer);
@@ -10528,7 +8402,7 @@ export class SharedLog<
 					}
 					if (
 						mode === "join-warmup" &&
-						this._joinWarmupGenerationByTarget.get(target) !==
+						this.joinWarmup._joinWarmupGenerationByTarget.get(target) !==
 							pendingJoinWarmupGenerations.get(target)
 					) {
 						targets?.delete(target);
@@ -10564,7 +8438,7 @@ export class SharedLog<
 					}
 					if (
 						mode === "join-warmup" &&
-						this._joinWarmupGenerationByTarget.get(target) !==
+						this.joinWarmup._joinWarmupGenerationByTarget.get(target) !==
 							pendingJoinWarmupGenerations.get(target)
 					) {
 						pendingJoinWarmupPeers?.delete(target);
@@ -15871,7 +13745,6 @@ export class SharedLog<
 		this._repairSweepRunning = false;
 		this._repairSweepPendingModes = new Set();
 		this._repairSweepPendingPeersByMode = createRepairPendingPeersByMode();
-		this._repairSweepJoinWarmupGenerationByTarget = new Map();
 		this._repairFrontierByMode = createRepairFrontierByMode() as Map<
 			RepairDispatchMode,
 			Map<string, Map<string, RepairDispatchEntry<R>>>
@@ -15879,10 +13752,12 @@ export class SharedLog<
 		this._repairFrontierActiveTargetsByMode = createRepairActiveTargetsByMode();
 		this._repairFrontierBypassKnownPeersByMode =
 			createRepairFrontierBypassKnownPeersByMode();
-		this._joinWarmupGenerationByTarget = new Map();
-		this._joinWarmupSendStateByTarget = new Map();
-		this._joinWarmupRetryTimersByTarget = new Map();
-		this._joinWarmupScheduledRetriesByTarget = new Map();
+		// Deserialized instances never ran the constructor; create the coordinator
+		// lazily on first open. Reopens keep the SAME coordinator instance so a
+		// still-running drain from a previous lifecycle observes reset()'s map
+		// swaps via property lookup.
+		this.joinWarmup ??= this.createJoinWarmupCoordinator();
+		this.joinWarmup.reset();
 		this._repairSweepOptimisticGidPeersPending = new Map();
 		this._repairSweepOptimisticGidsByPeer = new Map();
 		this._entryKnownPeers = new Map();
@@ -15908,16 +13783,14 @@ export class SharedLog<
 		this.uniqueReplicators = new Set();
 		this._replicatorJoinEmitted = new Set();
 		this._replicatorsReconciled = false;
-		this._replicatorLivenessSweepRunning = false;
-		this._replicatorLivenessTimer = undefined;
-		this._replicatorLivenessTargets = [];
-		this._replicatorLivenessTargetsSize = 0;
-		this._replicatorLivenessCursor = 0;
-		this._replicatorLivenessFailures = new Map();
-		this._replicatorLastActivityAt = new Map();
+		// Deserialized instances never ran the constructor; create the monitor and
+		// coordinator lazily on first open. Reopens keep the SAME instances so
+		// stale async continuations observe resets via property lookup.
+		this._liveness ??= this.createReplicatorLivenessMonitor();
+		this._liveness.resetForOpen();
 		this._lastLocalAppendAt = 0;
-		this._replicationAnnouncementRetryPending = false;
-		this._replicationAnnouncementRetryGeneration = 0;
+		this._announcements ??= this.createReplicationAnnouncementCoordinator();
+		this._announcements.resetForOpen();
 		const adaptiveReplicateOptions =
 			options?.replicate && isAdaptiveReplicatorOption(options.replicate)
 				? options.replicate
@@ -16411,123 +14284,29 @@ export class SharedLog<
 			this._nativeDurableRecoveryReadyForReopen = false;
 			this._nativeDurableRecoveryCids.clear();
 		}
-		const resolveHashesForSymbols = (
-			symbols: readonly bigint[] | BigUint64Array,
-		) => {
-			const nativeState = this._nativeBackbone ?? this._nativeSharedLogState;
-			if (!nativeState) {
-				return undefined;
-			}
-			if (
-				typeof BigUint64Array !== "undefined" &&
-				typeof nativeState.getEntryHashesForHashNumbersU64 === "function"
-			) {
-				return nativeState.getEntryHashesForHashNumbersU64(
-					symbols instanceof BigUint64Array
-						? symbols
-						: BigUint64Array.from(symbols),
-				);
-			}
-			return nativeState.getEntryHashesForHashNumbers(symbols);
-		};
-		const resolveHashListForSymbols = (
-			symbols: readonly bigint[] | BigUint64Array,
-		) => {
-			const nativeState = this._nativeBackbone ?? this._nativeSharedLogState;
-			if (
-				!nativeState ||
-				typeof BigUint64Array === "undefined" ||
-				typeof nativeState.getEntryHashListForHashNumbersU64 !== "function"
-			) {
-				return undefined;
-			}
-			return nativeState.getEntryHashListForHashNumbersU64(
-				symbols instanceof BigUint64Array
-					? symbols
-					: BigUint64Array.from(symbols),
-			);
-		};
-		const resolveHashNumbersInRange = (range: {
-			start1: bigint | number;
-			end1: bigint | number;
-			start2: bigint | number;
-			end2: bigint | number;
-		}) => {
-			const nativeState = this._nativeBackbone ?? this._nativeSharedLogState;
-			return (
-				nativeState?.getEntryHashNumbersInRangeU64?.(range) ??
-				nativeState?.getEntryHashNumbersInRange(range)
-			);
-		};
-
-		const sendRawExchangeHeads = (
-			hashes: string[],
-			to: string[],
-			sendOptions?: { priority?: number; signal?: AbortSignal },
-		) => this.trySendFusedRawExchangeHeads(hashes, to, sendOptions);
-		if (options?.syncronizer) {
-			this.syncronizer = new options.syncronizer({
-				numbers: this.indexableDomain.numbers,
-				entryIndex: this.entryCoordinatesIndex,
-				log: this.log,
-				rangeIndex: this._replicationRangeIndex,
-				rpc: this.rpc,
-				coordinateToHash: this.coordinateToHash,
-				resolveHashesForSymbols,
-				resolveHashListForSymbols,
-				resolveHashNumbersInRange,
-				sync: options?.sync,
-				isEntryRecentlyKnownByPeer: (hash, peer, maxAgeMs) =>
-					this.isEntryRecentlyKnownByPeer(hash, peer, maxAgeMs),
-				peerSupportsRawExchangeHeads: (peer) =>
-					this.peerSupportsRawExchangeHeads(peer),
-				sendRawExchangeHeads,
-			});
-		} else {
-			if (
-				this._logProperties?.compatibility &&
-				this._logProperties.compatibility < 10
-			) {
-				this.syncronizer = new SimpleSyncronizer({
-					log: this.log,
-					rpc: this.rpc,
-					entryIndex: this.entryCoordinatesIndex,
-					coordinateToHash: this.coordinateToHash,
-					resolveHashesForSymbols,
-					resolveHashListForSymbols,
-					sync: options?.sync,
-					isEntryRecentlyKnownByPeer: (hash, peer, maxAgeMs) =>
-						this.isEntryRecentlyKnownByPeer(hash, peer, maxAgeMs),
-					peerSupportsRawExchangeHeads: (peer) =>
-						this.peerSupportsRawExchangeHeads(peer),
-					sendRawExchangeHeads,
-				});
-			} else {
-				if (this.domain.resolution === "u32") {
-					warn(
-						"u32 resolution is not recommended for RatelessIBLTSynchronizer",
-					);
-				}
-
-				this.syncronizer = new RatelessIBLTSynchronizer<R>({
-					numbers: this.indexableDomain.numbers,
-					entryIndex: this.entryCoordinatesIndex,
-					log: this.log,
-					rangeIndex: this._replicationRangeIndex,
-					rpc: this.rpc,
-					coordinateToHash: this.coordinateToHash,
-					resolveHashesForSymbols,
-					resolveHashListForSymbols,
-					resolveHashNumbersInRange,
-					sync: options?.sync,
-					isEntryRecentlyKnownByPeer: (hash, peer, maxAgeMs) =>
-						this.isEntryRecentlyKnownByPeer(hash, peer, maxAgeMs),
-					peerSupportsRawExchangeHeads: (peer) =>
-						this.peerSupportsRawExchangeHeads(peer),
-					sendRawExchangeHeads,
-				}) as Syncronizer<R>;
-			}
-		}
+		this.syncronizer = createSyncronizer<R>({
+			numbers: this.indexableDomain.numbers,
+			entryIndex: this.entryCoordinatesIndex,
+			rangeIndex: this._replicationRangeIndex,
+			log: this.log,
+			rpc: this.rpc,
+			coordinateToHash: this.coordinateToHash,
+			getNativeState: () => this._nativeBackbone ?? this._nativeSharedLogState,
+			isEntryRecentlyKnownByPeer: (hash, peer, maxAgeMs) =>
+				this.isEntryRecentlyKnownByPeer(hash, peer, maxAgeMs),
+			peerSupportsRawExchangeHeads: (peer) =>
+				this.peerSupportsRawExchangeHeads(peer),
+			sendRawExchangeHeads: (
+				hashes: string[],
+				to: string[],
+				sendOptions?: { priority?: number; signal?: AbortSignal },
+			) => this.trySendFusedRawExchangeHeads(hashes, to, sendOptions),
+			warn,
+			compatibility: this._logProperties?.compatibility,
+			resolution: this.domain.resolution,
+			sync: options?.sync,
+			syncronizer: options?.syncronizer,
+		});
 
 		// Open for communcation
 		this._onSubscriptionFn =
@@ -17436,63 +15215,11 @@ export class SharedLog<
 	}
 
 	private startReplicatorLivenessSweep() {
-		if (this._replicatorLivenessTimer) {
-			return;
-		}
-		this._replicatorLivenessTimer = setInterval(() => {
-			void this.runReplicatorLivenessSweep();
-		}, REPLICATOR_LIVENESS_SWEEP_INTERVAL_MS);
-		this._replicatorLivenessTimer.unref?.();
+		this._liveness.startReplicatorLivenessSweep();
 	}
 
 	private stopReplicatorLivenessSweep() {
-		if (this._replicatorLivenessTimer) {
-			clearInterval(this._replicatorLivenessTimer);
-			this._replicatorLivenessTimer = undefined;
-		}
-		this._replicatorLivenessSweepRunning = false;
-		this._replicatorLivenessTargets = [];
-		this._replicatorLivenessTargetsSize = 0;
-		this._replicatorLivenessCursor = 0;
-		this._replicatorLivenessFailures.clear();
-		this._replicatorLastActivityAt.clear();
-	}
-
-	private rebuildReplicatorLivenessTargets() {
-		const selfHash = this.node.identity.publicKey.hashcode();
-		this._replicatorLivenessTargets = [...this.uniqueReplicators].filter(
-			(hash) => hash !== selfHash,
-		);
-		this._replicatorLivenessTargetsSize = this.uniqueReplicators.size;
-		if (
-			this._replicatorLivenessCursor >= this._replicatorLivenessTargets.length
-		) {
-			this._replicatorLivenessCursor = 0;
-		}
-	}
-
-	private getReplicatorLivenessTargets() {
-		const selfHash = this.node.identity.publicKey.hashcode();
-		const expected =
-			this.uniqueReplicators.size -
-			(this.uniqueReplicators.has(selfHash) ? 1 : 0);
-
-		if (this._replicatorLivenessTargets.length > 0) {
-			// Keep the cursor stable, but purge stale hashes (membership can change while
-			// the total size stays constant).
-			this._replicatorLivenessTargets = this._replicatorLivenessTargets.filter(
-				(hash) => hash !== selfHash && this.uniqueReplicators.has(hash),
-			);
-		}
-
-		if (
-			this._replicatorLivenessTargetsSize !== this.uniqueReplicators.size ||
-			this._replicatorLivenessTargets.length !== expected
-		) {
-			this.rebuildReplicatorLivenessTargets();
-		}
-
-		return this._replicatorLivenessTargets;
+		this._liveness?.stopReplicatorLivenessSweep();
 	}
 
 	private cleanupCheckedPrunePeer(
@@ -17566,26 +15293,8 @@ export class SharedLog<
 		}
 	}
 
-	private markReplicatorActivity(peerHash: string, now = Date.now()) {
-		this._replicatorLastActivityAt.set(peerHash, now);
-		// Any recent authenticated activity is positive liveness evidence. Reset the
-		// consecutive miss streak immediately, including while an eviction is
-		// waiting in the per-peer mutation lane.
-		if (Date.now() - now < REPLICATOR_LIVENESS_IDLE_THRESHOLD_MS) {
-			this._replicatorLivenessFailures.delete(peerHash);
-		}
-	}
-
-	private hasRecentReplicatorActivity(peerHash: string, now = Date.now()) {
-		const lastActivityAt = this._replicatorLastActivityAt.get(peerHash);
-		if (
-			lastActivityAt != null &&
-			now - lastActivityAt < REPLICATOR_LIVENESS_IDLE_THRESHOLD_MS
-		) {
-			this._replicatorLivenessFailures.delete(peerHash);
-			return true;
-		}
-		return false;
+	private markReplicatorActivity(peerHash: string, now?: number) {
+		this._liveness.markReplicatorActivity(peerHash, now);
 	}
 
 	private advanceReplicationInfoRecoveryEpoch(peerHash: string) {
@@ -17595,58 +15304,6 @@ export class SharedLog<
 		// accepted without comparing its clock to this receiver's clock.
 		this.advanceReplicationInfoReceiveEpoch(peerHash);
 		this.latestReplicationInfoMessage.delete(peerHash);
-	}
-
-	private async evictReplicatorFromLiveness(
-		peerHash: string,
-		publicKey: PublicSignKey,
-		replicationLifecycleController: AbortController,
-		subscriptionEpoch: object | null,
-		observedActivityAt: number | undefined,
-	) {
-		try {
-			await this.removeReplicator(publicKey, {
-				noEvent: true,
-				replicationLifecycleController,
-				shouldRemove: () =>
-					this._replicatorLastActivityAt.get(peerHash) === observedActivityAt,
-				subscriptionEpoch,
-				onRemoved: ({ wasReplicator }) => {
-					if (wasReplicator) {
-						this._pendingReplicatorLeaveByPeer.add(peerHash);
-					}
-					// A newer subscription/lifecycle may have started while the admitted
-					// removal was completing. Its reconnect barrier owns all later effects.
-					if (
-						!this.isReplicationLifecycleActive(
-							replicationLifecycleController,
-						) ||
-						!this.isCurrentSubscriptionEpoch(peerHash, subscriptionEpoch)
-					) {
-						return;
-					}
-					if (this._pendingReplicatorLeaveByPeer.delete(peerHash)) {
-						this.events.dispatchEvent(
-							new CustomEvent<ReplicatorLeaveEvent>("replicator:leave", {
-								detail: { publicKey },
-							}),
-						);
-					}
-
-					if (!this._replicationInfoBlockedPeers.has(peerHash)) {
-						this.scheduleReplicationInfoRequests(
-							publicKey,
-							replicationLifecycleController,
-						);
-					}
-					this._replicatorLivenessTargetsSize = -1;
-				},
-			});
-		} catch (error) {
-			if (!isNotStartedError(error as Error)) {
-				throw error;
-			}
-		}
 	}
 
 	private async resolveCandidatePeersForHash(
@@ -17725,196 +15382,16 @@ export class SharedLog<
 		return pickDeterministicSubset(peers, seed, maxPeers);
 	}
 
-	private async runReplicatorLivenessSweep() {
-		const replicationLifecycleController = this._replicationLifecycleController;
-		if (
-			this.closed ||
-			this._closeController.signal.aborted ||
-			!this.isReplicationLifecycleActive(replicationLifecycleController)
-		) {
-			return;
-		}
-		if (this._replicatorLivenessSweepRunning) {
-			return;
-		}
-
-		const targets = this.getReplicatorLivenessTargets();
-		if (targets.length === 0) {
-			return;
-		}
-
-		this._replicatorLivenessSweepRunning = true;
-		try {
-			if (this._replicatorLivenessCursor >= targets.length) {
-				this._replicatorLivenessCursor = 0;
-			}
-			const peerHash = targets[this._replicatorLivenessCursor]!;
-			this._replicatorLivenessCursor =
-				(this._replicatorLivenessCursor + 1) % targets.length;
-			await this.probeReplicatorLiveness(peerHash);
-		} catch (error) {
-			if (!isNotStartedError(error as Error)) {
-				logger.error((error as any)?.toString?.() ?? String(error));
-			}
-		} finally {
-			if (
-				this._replicationLifecycleController === replicationLifecycleController
-			) {
-				this._replicatorLivenessSweepRunning = false;
-			}
-		}
+	private runReplicatorLivenessSweep() {
+		return this._liveness.runReplicatorLivenessSweep();
 	}
 
-	private async probeReplicatorLiveness(peerHash: string) {
-		const replicationLifecycleController = this._replicationLifecycleController;
-		if (
-			this.closed ||
-			this._closeController.signal.aborted ||
-			!replicationLifecycleController ||
-			!this.isReplicationLifecycleActive(replicationLifecycleController)
-		) {
-			return;
-		}
-		const subscriptionEpoch = this.getSubscriptionEpoch(peerHash);
-		const ownsProbe = () =>
-			this.isReplicationLifecycleActive(replicationLifecycleController) &&
-			this.isCurrentSubscriptionEpoch(peerHash, subscriptionEpoch);
-		if (!this.uniqueReplicators.has(peerHash)) {
-			this._replicatorLivenessFailures.delete(peerHash);
-			return;
-		}
-		if (this.hasRecentReplicatorActivity(peerHash)) {
-			return;
-		}
-		const observedActivityAt = this._replicatorLastActivityAt.get(peerHash);
-
-		const publicKey = await this._resolvePublicKeyFromHash(peerHash);
-		if (!ownsProbe()) {
-			return;
-		}
-		if (this.hasRecentReplicatorActivity(peerHash)) {
-			return;
-		}
-		if (!publicKey) {
-			try {
-				await this.removeReplicator(peerHash, {
-					noEvent: true,
-					replicationLifecycleController,
-					shouldRemove: () =>
-						this._replicatorLastActivityAt.get(peerHash) === observedActivityAt,
-					subscriptionEpoch,
-					onRemoved: () => {
-						if (!ownsProbe()) {
-							return;
-						}
-						this._replicatorLivenessTargetsSize = -1;
-					},
-				});
-			} catch (error) {
-				if (!isNotStartedError(error as Error)) {
-					throw error;
-				}
-			}
-			return;
-		}
-
-		try {
-			// Explicit ping (ACKed) instead of RequestReplicationInfoMessage to avoid
-			// triggering large segment snapshots just to prove liveness.
-			await this.rpc.send(new ReplicationPingMessage(), {
-				mode: new AcknowledgeDelivery({ redundancy: 1, to: [publicKey] }),
-				priority: ACK_CONTROL_PRIORITY,
-				responsePriority: ACK_CONTROL_PRIORITY,
-			});
-			if (!ownsProbe()) {
-				return;
-			}
-			this.markReplicatorActivity(peerHash);
-			this._replicatorLivenessFailures.delete(peerHash);
-			return;
-		} catch (error) {
-			if (isNotStartedError(error as Error)) {
-				return;
-			}
-		}
-		if (!ownsProbe()) {
-			return;
-		}
-		if (this.hasRecentReplicatorActivity(peerHash)) {
-			return;
-		}
-
-		// Relay-backed prod paths can keep a peer subscribed/reachable even if an
-		// ACKed liveness ping gets delayed or dropped under load. Treat observed
-		// topic presence as a positive liveness signal before evicting the peer.
-		if (await this.confirmReplicatorSubscriberPresence(peerHash)) {
-			if (!ownsProbe()) {
-				return;
-			}
-			this.markReplicatorActivity(peerHash);
-			this._replicatorLivenessFailures.delete(peerHash);
-			return;
-		}
-		if (!ownsProbe()) {
-			return;
-		}
-		if (this.hasRecentReplicatorActivity(peerHash)) {
-			return;
-		}
-
-		const failures = (this._replicatorLivenessFailures.get(peerHash) ?? 0) + 1;
-		this._replicatorLivenessFailures.set(peerHash, failures);
-		this.scheduleReplicationInfoRequests(
-			publicKey,
-			replicationLifecycleController,
-		);
-
-		if (failures < REPLICATOR_LIVENESS_PROBE_FAILURES_TO_EVICT) {
-			return;
-		}
-		if (!ownsProbe() || !this.uniqueReplicators.has(peerHash)) {
-			this._replicatorLivenessFailures.delete(peerHash);
-			return;
-		}
-
-		await this.evictReplicatorFromLiveness(
-			peerHash,
-			publicKey,
-			replicationLifecycleController,
-			subscriptionEpoch,
-			observedActivityAt,
-		);
+	private probeReplicatorLiveness(peerHash: string) {
+		return this._liveness.probeReplicatorLiveness(peerHash);
 	}
 
-	private async confirmReplicatorSubscriberPresence(peerHash: string) {
-		try {
-			const subscribers = await this._getTopicSubscribers(this.rpc.topic);
-			if (
-				subscribers?.some((subscriber) => subscriber.hashcode() === peerHash)
-			) {
-				return true;
-			}
-		} catch (error) {
-			if (isNotStartedError(error as Error)) {
-				return false;
-			}
-		}
-
-		try {
-			await waitForSubscribers(this.node, peerHash, this.rpc.topic, {
-				signal: this._closeController.signal,
-				timeout: Math.max(
-					1_000,
-					Math.min(5_000, Math.floor(this.waitForReplicatorTimeout / 4)),
-				),
-			});
-			return true;
-		} catch (error) {
-			if (isNotStartedError(error as Error)) {
-				return false;
-			}
-			return false;
-		}
+	private confirmReplicatorSubscriberPresence(peerHash: string) {
+		return this._liveness.confirmReplicatorSubscriberPresence(peerHash);
 	}
 
 	async getMemoryUsage() {
@@ -18714,8 +16191,15 @@ export class SharedLog<
 				firstError ??= error;
 			}
 		};
-		captureSync(() => this.cancelCurrentReplicationStateAnnouncementRetry());
-		this.replicationAnnouncementRetryDebounced = undefined;
+		// A borsh-deserialized instance that is closed before ever being opened
+		// has no coordinators (they are created in open()); the old inline code
+		// only touched plain fields here and never threw.
+		captureSync(() =>
+			this._announcements?.cancelCurrentReplicationStateAnnouncementRetry(),
+		);
+		if (this._announcements) {
+			this._announcements.replicationAnnouncementRetryDebounced = undefined;
+		}
 		captureSync(() => {
 			if (this._wireSyncSession) {
 				this._wireSyncSession.unregisterTopic(this.topic);
@@ -18758,7 +16242,7 @@ export class SharedLog<
 			),
 		);
 		captureSync(() => {
-			this.cancelAllJoinWarmupTargets();
+			this.joinWarmup.cancelAllJoinWarmupTargets();
 			this.clearCheckedPruneAuditTimer();
 			for (const timer of this._repairRetryTimers ?? []) clearTimeout(timer);
 			this._repairRetryTimers?.clear();
@@ -18767,7 +16251,7 @@ export class SharedLog<
 			this._repairSweepPendingModes?.clear();
 			for (const peers of this._repairSweepPendingPeersByMode?.values() ?? [])
 				peers.clear();
-			this._repairSweepJoinWarmupGenerationByTarget?.clear();
+			this.joinWarmup?._repairSweepJoinWarmupGenerationByTarget?.clear();
 			this._repairSweepOptimisticGidPeersPending?.clear();
 			this._repairSweepOptimisticGidsByPeer?.clear();
 			this._entryKnownPeers?.clear();
@@ -18892,11 +16376,11 @@ export class SharedLog<
 		const pruneRemoveTerminalFence = this.acquirePruneRemoveTerminalFence();
 		try {
 			this.stopSubscriptionChangeCallbackAdmission();
-			this.cancelAllJoinWarmupTargets();
+			this.joinWarmup.cancelAllJoinWarmupTargets();
 			await this.drainSubscriptionChangeCallbacks();
 			// An already-admitted subscription callback can create a fresh warmup
 			// generation while the first cancellation is draining.
-			this.cancelAllJoinWarmupTargets();
+			this.joinWarmup.cancelAllJoinWarmupTargets();
 			await this.drainReceiveHandlers();
 			await this.drainReplicationInfoApplyQueues();
 			await replicationRangeTerminalFence.drained;
@@ -19032,11 +16516,11 @@ export class SharedLog<
 		const pruneRemoveTerminalFence = this.acquirePruneRemoveTerminalFence();
 		try {
 			this.stopSubscriptionChangeCallbackAdmission();
-			this.cancelAllJoinWarmupTargets();
+			this.joinWarmup.cancelAllJoinWarmupTargets();
 			await this.drainSubscriptionChangeCallbacks();
 			// An already-admitted subscription callback can create a fresh warmup
 			// generation while the first cancellation is draining.
-			this.cancelAllJoinWarmupTargets();
+			this.joinWarmup.cancelAllJoinWarmupTargets();
 			await this.drainReceiveHandlers();
 			await this.drainReplicationInfoApplyQueues();
 			await replicationRangeTerminalFence.drained;
@@ -26473,8 +23957,8 @@ export class SharedLog<
 			this._openingSyncCapabilitiesByPeer.delete(peerHash);
 			this._replicationInfoBlockedPeers.add(peerHash);
 			const disconnectedJoinWarmupGeneration =
-				this._joinWarmupGenerationByTarget.get(peerHash) ?? null;
-			this.cancelJoinWarmupTarget(peerHash);
+				this.joinWarmup._joinWarmupGenerationByTarget.get(peerHash) ?? null;
+			this.joinWarmup.cancelJoinWarmupTarget(peerHash);
 
 			const now = BigInt(+new Date());
 			const previous = this.latestReplicationInfoMessage.get(peerHash);
@@ -27517,7 +25001,7 @@ export class SharedLog<
 			if (change.type === "added" && change.range.hash !== selfHash) {
 				joinWarmupGenerations.set(
 					change.range.hash,
-					this.getJoinWarmupGeneration(change.range.hash),
+					this.joinWarmup.getJoinWarmupGeneration(change.range.hash),
 				);
 			}
 		}
@@ -27613,7 +25097,7 @@ export class SharedLog<
 		const isCurrentJoinWarmupTarget = (target: string) =>
 			isOwnershipLifecycleCurrent() &&
 			warmupPeers.has(target) &&
-			this._joinWarmupGenerationByTarget.get(target) ===
+			this.joinWarmup._joinWarmupGenerationByTarget.get(target) ===
 				joinWarmupGenerations.get(target);
 		const areJoinWarmupGenerationsCurrent = () =>
 			isOwnershipLifecycleCurrent() &&
