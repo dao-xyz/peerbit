@@ -13,6 +13,13 @@ const TOPIC_ROOT_CANDIDATE_LENGTH = 44;
 export const TOPIC_ROOT_CANDIDATES_MAX_FRAME_BYTES =
 	1 + 4 + TOPIC_ROOT_CANDIDATES_MAX * (4 + TOPIC_ROOT_CANDIDATE_LENGTH);
 
+export const TOPIC_ROOT_CANDIDATE_CLAIMS_MAX = 64;
+export const TOPIC_ROOT_CANDIDATE_CLAIM_MAX_BYTES = 512;
+export const TOPIC_ROOT_CANDIDATE_CLAIMS_MAX_FRAME_BYTES =
+	1 +
+	4 +
+	TOPIC_ROOT_CANDIDATE_CLAIMS_MAX * (4 + TOPIC_ROOT_CANDIDATE_CLAIM_MAX_BYTES);
+
 // A SHA-256 digest in canonical, padded RFC 4648 Base64 is 44 ASCII bytes.
 // The final data character has two zero padding bits, so only these Base64
 // indices can precede the trailing `=`.
@@ -71,6 +78,60 @@ export const assertTopicRootCandidatesFrame = (
 	}
 };
 
+export const assertTopicRootCandidateClaimsFrame = (
+	bytes: Uint8Array | Uint8ArrayList,
+): void => {
+	const byteLength = frameByteLength(bytes);
+	if (byteLength > TOPIC_ROOT_CANDIDATE_CLAIMS_MAX_FRAME_BYTES) {
+		throw new Error(
+			`Topic-root candidate claims frame exceeds ${TOPIC_ROOT_CANDIDATE_CLAIMS_MAX_FRAME_BYTES} bytes`,
+		);
+	}
+	if (byteLength < 5) {
+		throw new Error("Topic-root candidate claims frame is truncated");
+	}
+	if (frameByteAt(bytes, 0) !== 8) {
+		throw new Error("Invalid topic-root candidate claims frame variant");
+	}
+
+	const count =
+		frameByteAt(bytes, 1) |
+		(frameByteAt(bytes, 2) << 8) |
+		(frameByteAt(bytes, 3) << 16) |
+		(frameByteAt(bytes, 4) << 24);
+	if (count >>> 0 > TOPIC_ROOT_CANDIDATE_CLAIMS_MAX) {
+		throw new Error(
+			`Topic-root candidate claim count exceeds ${TOPIC_ROOT_CANDIDATE_CLAIMS_MAX}`,
+		);
+	}
+
+	let offset = 5;
+	for (let index = 0; index < count >>> 0; index++) {
+		if (offset + 4 > byteLength) {
+			throw new Error("Topic-root candidate claims frame is truncated");
+		}
+		const claimByteLength =
+			frameByteAt(bytes, offset) |
+			(frameByteAt(bytes, offset + 1) << 8) |
+			(frameByteAt(bytes, offset + 2) << 16) |
+			(frameByteAt(bytes, offset + 3) << 24);
+		offset += 4;
+		if (claimByteLength >>> 0 > TOPIC_ROOT_CANDIDATE_CLAIM_MAX_BYTES) {
+			throw new Error(
+				`Topic-root candidate claim exceeds ${TOPIC_ROOT_CANDIDATE_CLAIM_MAX_BYTES} bytes`,
+			);
+		}
+		if (offset + (claimByteLength >>> 0) > byteLength) {
+			throw new Error("Topic-root candidate claims frame is truncated");
+		}
+		offset += claimByteLength >>> 0;
+	}
+
+	if (offset !== byteLength) {
+		throw new Error("Topic-root candidate claims frame has trailing bytes");
+	}
+};
+
 export abstract class PubSubMessage {
 	abstract bytes(): Uint8Array | Uint8ArrayList;
 	static from(bytes: Uint8Array) {
@@ -103,6 +164,10 @@ export abstract class PubSubMessage {
 
 		if (first === 7) {
 			return TopicRootQueryResponse.from(bytes);
+		}
+
+		if (first === 8) {
+			return TopicRootCandidateClaims.from(bytes);
 		}
 
 		throw new Error("Unsupported");
@@ -283,6 +348,44 @@ export class TopicRootCandidates extends PubSubMessage {
 			TopicRootCandidates,
 		);
 		assertCanonicalTopicRootCandidates(ret.candidates);
+		if (bytes instanceof Uint8ArrayList) {
+			ret._serialized = bytes;
+		}
+		return ret;
+	}
+}
+
+/**
+ * Bounded aggregate of opaque, independently signed topic-root candidate
+ * claims. Each element is a serialized transport `DataMessage`; claim
+ * semantics and signature verification remain the responsibility of the
+ * topic-control-plane runtime.
+ */
+@variant(8)
+export class TopicRootCandidateClaims extends PubSubMessage {
+	@field({ type: vec(Uint8Array) })
+	claims: Uint8Array[];
+
+	constructor(options: { claims: Uint8Array[] }) {
+		super();
+		this.claims = options.claims;
+	}
+
+	private _serialized!: Uint8ArrayList;
+
+	bytes() {
+		if (this._serialized) {
+			return this._serialized;
+		}
+		return serialize(this);
+	}
+
+	static from(bytes: Uint8Array | Uint8ArrayList): TopicRootCandidateClaims {
+		assertTopicRootCandidateClaimsFrame(bytes);
+		const ret = deserialize(
+			bytes instanceof Uint8Array ? bytes : bytes.subarray(),
+			TopicRootCandidateClaims,
+		);
 		if (bytes instanceof Uint8ArrayList) {
 			ret._serialized = bytes;
 		}
