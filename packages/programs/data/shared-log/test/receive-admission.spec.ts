@@ -1,5 +1,6 @@
+import { serialize } from "@dao-xyz/borsh";
 import { randomBytes } from "@peerbit/crypto";
-import { Entry } from "@peerbit/log";
+import { Entry, ShallowEntry } from "@peerbit/log";
 import { TestSession } from "@peerbit/test-utils";
 import { waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
@@ -548,6 +549,108 @@ describe("receive admission", () => {
 			expect(await waiting).to.be.false;
 		} finally {
 			releaseCheck.resolve();
+			await session.stop();
+		}
+	});
+
+	it("compacts entries retained by leader-selection rechecks", async () => {
+		const session = await TestSession.disconnected(1);
+		try {
+			const target = await session.peers[0].open(
+				new EventStore<string, any>(),
+				{
+					args: { replicate: false, setup },
+				},
+			);
+			const { entry } = await target.add(uuid(), { meta: { next: [] } });
+			const sharedLog = target.log as any;
+			const originalNativeBackbone = sharedLog._nativeBackbone;
+			const originalReserved = (entry as any)._reserved;
+			(entry as any)._reserved = new Uint8Array(1024 * 1024);
+			const oversizedBacking = new Uint8Array(1024 * 1024);
+			const shallow = entry.toShallow(true);
+			shallow.meta.data = oversizedBacking.subarray(16, 48);
+			shallow.meta.clock.id = oversizedBacking.subarray(64, 96);
+			(shallow as any).getMetaBytes = () => oversizedBacking;
+			const compactShallowByteLength = serialize(shallow).byteLength;
+			sharedLog._nativeBackbone = {};
+
+			const planningEntries: unknown[] = [];
+			const leaders = new Map([["leader", { intersecting: true }]]);
+			const planEntryLeaders = sinon
+				.stub(sharedLog, "planEntryLeaders")
+				.callsFake(async (candidate: unknown) => {
+					planningEntries.push(candidate);
+					return { coordinates: [1], leaders, isLeader: true };
+				});
+			const waitForLeaderSelection = sinon
+				.stub(sharedLog, "waitForLeaderSelection")
+				.callsFake(async (...args: unknown[]) => {
+					const options = args[1];
+					const checkLeaders = args[2] as (
+						options: unknown,
+					) => Promise<Map<string, unknown>>;
+					return checkLeaders(options);
+				});
+
+			try {
+				expect(
+					await sharedLog._waitForEntryReplicators(
+						entry,
+						1,
+						[{ key: "leader", replicator: true }],
+						{ timeout: 1_000 },
+					),
+				).to.equal(leaders);
+				expect(
+					await sharedLog._waitForEntryReplicators(
+						shallow,
+						1,
+						[{ key: "leader", replicator: true }],
+						{ timeout: 1_000 },
+					),
+				).to.equal(leaders);
+			} finally {
+				waitForLeaderSelection.restore();
+				planEntryLeaders.restore();
+				sharedLog._nativeBackbone = originalNativeBackbone;
+				(entry as any)._reserved = originalReserved;
+			}
+
+			expect(planningEntries).to.have.length(2);
+			const [fullPlanningEntry, shallowPlanningEntry] =
+				planningEntries as any[];
+			expect(fullPlanningEntry).to.be.instanceOf(ShallowEntry);
+			expect(fullPlanningEntry).to.not.equal(entry);
+			expect(fullPlanningEntry.hash).to.equal(entry.hash);
+			expect(fullPlanningEntry.meta.gid).to.equal(entry.meta.gid);
+			expect(fullPlanningEntry.meta.next).to.deep.equal(entry.meta.next);
+			expect(fullPlanningEntry.meta.type).to.equal(entry.meta.type);
+			expect(fullPlanningEntry.meta.data).to.deep.equal(entry.meta.data);
+			expect(fullPlanningEntry.meta.clock).to.deep.equal(entry.meta.clock);
+			expect(fullPlanningEntry._reserved).to.equal(undefined);
+
+			expect(shallowPlanningEntry).to.be.instanceOf(ShallowEntry);
+			expect(shallowPlanningEntry).to.not.equal(shallow);
+			expect(shallowPlanningEntry.hash).to.equal(shallow.hash);
+			expect(shallowPlanningEntry.meta.data).to.deep.equal(shallow.meta.data);
+			expect(shallowPlanningEntry.meta.data.buffer).to.not.equal(
+				oversizedBacking.buffer,
+			);
+			expect(shallowPlanningEntry.meta.data.buffer.byteLength).to.equal(
+				compactShallowByteLength,
+			);
+			expect(shallowPlanningEntry.meta.clock.id).to.deep.equal(
+				shallow.meta.clock.id,
+			);
+			expect(shallowPlanningEntry.meta.clock.id.buffer).to.not.equal(
+				oversizedBacking.buffer,
+			);
+			expect(shallowPlanningEntry.meta.clock.id.buffer.byteLength).to.equal(
+				compactShallowByteLength,
+			);
+			expect(shallowPlanningEntry.getMetaBytes).to.equal(undefined);
+		} finally {
 			await session.stop();
 		}
 	});

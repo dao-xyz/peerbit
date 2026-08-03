@@ -1632,6 +1632,20 @@ type WaitForReplicatorsOptions<R extends "u32" | "u64"> =
 
 type WaitForReplicator = { key: string; replicator: boolean };
 
+type ReceiveLeaderObservation = {
+	isLeader: boolean;
+	fromIsLeader: boolean;
+};
+
+// Keep long-lived role callbacks outside the receive activation so event-target
+// wrappers cannot retain decoded entries through the callback's closure context.
+const createReceiveLeaderObserver =
+	(observation: ReceiveLeaderObservation, localKey: string, fromKey: string) =>
+	(key: string) => {
+		observation.isLeader ||= localKey === key;
+		observation.fromIsLeader ||= fromKey === key;
+	};
+
 type PendingMaturityRecord<R extends "u32" | "u64"> = {
 	range: ReplicationChange<ReplicationRangeIndexable<R>>;
 	timeout: ReturnType<typeof setTimeout>;
@@ -20473,6 +20487,10 @@ export class SharedLog<
 										isLeader = true;
 										fromIsLeader = leaders.has(contextFromHash);
 									} else {
+										const leaderObservation: ReceiveLeaderObservation = {
+											isLeader: false,
+											fromIsLeader: false,
+										};
 										leaders = await this._waitForEntryReplicators(
 											latestEntry,
 											maxMaxReplicas,
@@ -20486,15 +20504,15 @@ export class SharedLog<
 												// Let raw receive confirm immediate leadership against the current replicator set.
 												roleAge: 0,
 												timeout: 2e4,
-												onLeader: (key) => {
-													isLeader =
-														isLeader ||
-														this.node.identity.publicKey.hashcode() === key;
-													fromIsLeader =
-														fromIsLeader || contextFromHash === key;
-												},
+												onLeader: createReceiveLeaderObserver(
+													leaderObservation,
+													this.node.identity.publicKey.hashcode(),
+													contextFromHash,
+												),
 											},
 										);
+										isLeader = leaderObservation.isLeader;
+										fromIsLeader = leaderObservation.fromIsLeader;
 									}
 								} else {
 									if (plannedLeaders) {
@@ -22280,8 +22298,20 @@ export class SharedLog<
 			timeout: this.waitForReplicatorTimeout,
 		},
 	): Promise<LeaderMap | false> {
+		// Leader rechecks can outlive the receive call while replication roles
+		// settle. Keep the metadata they need, not the decoded entry's serialized
+		// backing buffer (which can be as large as the transferred block).
+		const leaderSelectionEntry =
+			entry instanceof Entry
+				? deserialize(
+						Uint8Array.from(serialize(entry.toShallow(true))),
+						ShallowEntry,
+					)
+				: entry instanceof ShallowEntry
+					? deserialize(Uint8Array.from(serialize(entry)), ShallowEntry)
+					: entry;
 		if (
-			this.canPlanNativeHashGid(entry) &&
+			this.canPlanNativeHashGid(leaderSelectionEntry) &&
 			(this._nativeBackbone ??
 				this._nativeSharedLogState ??
 				this._nativeRangePlanner)
@@ -22291,7 +22321,7 @@ export class SharedLog<
 				options,
 				async (checkOptions) => {
 					const plan = await this.planEntryLeaders(
-						entry,
+						leaderSelectionEntry,
 						replicas,
 						checkOptions,
 					);
@@ -22301,8 +22331,8 @@ export class SharedLog<
 		}
 
 		return this._waitForReplicators(
-			await this.createCoordinates(entry, replicas),
-			entry,
+			await this.createCoordinates(leaderSelectionEntry, replicas),
+			leaderSelectionEntry,
 			waitFor,
 			options,
 		);
