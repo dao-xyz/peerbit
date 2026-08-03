@@ -1,5 +1,15 @@
 # Changelog
 
+## 5.3.19
+
+### Patch Changes
+
+- Updated dependencies [[`2a59f05`](https://github.com/dao-xyz/peerbit/commit/2a59f05cfd40b4f9b05d7ef200b256597877cb91)]:
+  - @peerbit/stream@5.1.6
+  - @peerbit/blocks@4.2.9
+  - @peerbit/pubsub@5.3.12
+  - @peerbit/program@6.0.47
+
 ## 5.3.18
 
 ### Patch Changes

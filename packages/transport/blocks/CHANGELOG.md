@@ -1,5 +1,12 @@
 # Changelog
 
+## 4.2.9
+
+### Patch Changes
+
+- Updated dependencies [[`2a59f05`](https://github.com/dao-xyz/peerbit/commit/2a59f05cfd40b4f9b05d7ef200b256597877cb91)]:
+  - @peerbit/stream@5.1.6
+
 ## 4.2.8
 
 ### Patch Changes
