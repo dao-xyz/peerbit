@@ -63,8 +63,6 @@ const BASELINE = new Set([
 	"_replicationLifecycleController",
 	"_subscriptionEpochByPeer",
 	"_subscriptionOpeningEpochByPeer",
-	"nativeBlockWriteGenerations",
-	"nativeDeleteEpoch",
 ]);
 
 const root = process.cwd();
