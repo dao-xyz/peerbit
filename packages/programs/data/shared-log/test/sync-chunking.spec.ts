@@ -2680,7 +2680,7 @@ describe("sync-chunking", () => {
 		}
 	});
 
-	it("retains coordinate lookup permits across disconnect until work settles", async () => {
+	it("returns coordinate lookup permits when their peer disconnects", async () => {
 		const releases: ((hashes: string[]) => void)[] = [];
 		const resolveHashListForSymbols = sinon.stub().callsFake(
 			() =>
@@ -2722,23 +2722,20 @@ describe("sync-chunking", () => {
 				new RequestMaybeSyncCoordinate({ hashNumbers: [100n] }),
 				{ from: peerA } as any,
 			);
-			sync.onPeerDisconnected(peerA);
-			await sync.onMessage(
-				new RequestMaybeSyncCoordinate({ hashNumbers: [101n] }),
-				{ from: peerA } as any,
-			);
 			expect(resolveHashListForSymbols.callCount).to.equal(
 				MAX_PENDING_SIMPLE_SYNC_LOOKUPS_PER_PEER,
 			);
-			expect((sync as any).pendingCoordinateLookupCount).to.equal(
-				MAX_PENDING_SIMPLE_SYNC_LOOKUPS_PER_PEER,
-			);
 
-			releases.shift()!([]);
-			await pending.shift();
+			// Disconnect returns the peer's whole lookup quota immediately even
+			// though the resolver work is still alive; the detached slots settle
+			// aggregate-neutrally later.
+			sync.onPeerDisconnected(peerA);
+			expect((sync as any).pendingCoordinateLookupCount).to.equal(0);
+			expect((sync as any).pendingCoordinateLookupCountByPeer.size).to.equal(0);
+
 			pending.push(
 				sync.onMessage(
-					new RequestMaybeSyncCoordinate({ hashNumbers: [102n] }),
+					new RequestMaybeSyncCoordinate({ hashNumbers: [101n] }),
 					{ from: peerA } as any,
 				),
 			);
@@ -2747,6 +2744,16 @@ describe("sync-chunking", () => {
 					resolveHashListForSymbols.callCount ===
 					MAX_PENDING_SIMPLE_SYNC_LOOKUPS_PER_PEER + 1,
 			);
+			expect((sync as any).pendingCoordinateLookupCount).to.equal(1);
+
+			// A pre-disconnect lookup settling late never decrements the
+			// reconnected peer's fresh accounting.
+			releases.shift()!([]);
+			await pending.shift();
+			expect((sync as any).pendingCoordinateLookupCount).to.equal(1);
+			expect(
+				(sync as any).pendingCoordinateLookupCountByPeer.get(peerA.hashcode()),
+			).to.equal(1);
 		} finally {
 			for (const release of releases) {
 				release([]);

@@ -64,6 +64,15 @@ const TARGETS = new Map([
 	["packages/programs/data/shared-log/src/replication-announcement.ts", []],
 	["packages/programs/data/shared-log/src/replicator-liveness.ts", []],
 	["packages/programs/data/shared-log/src/sync/factory.ts", []],
+	// Stage 4: the pending-sync record store moved the simple synchronizer's
+	// admission/claim state file-to-file. Its fields are deliberately plain
+	// (no visibility modifier, no _-prefix), so any future fence-pattern
+	// declaration matching DECL here is new growth and needs a design-note.
+	["packages/programs/data/shared-log/src/sync/pending-sync-store.ts", []],
+	// Stage 4: the shared dispatch-lifecycle registry moved the simple and
+	// rateless synchronizers' duplicated lifecycle mechanics file-to-file.
+	["packages/programs/data/shared-log/src/sync/dispatch-lifecycle.ts", []],
+	["packages/programs/data/shared-log/src/sync/sync-peer-state.ts", []],
 ]);
 // Token match is per camelCase/underscore segment so "generationOfLastPrune"
 // and "epochCounter" are caught while "aggregateTotals" is not.
