@@ -19,7 +19,14 @@ import path from "node:path";
 const TARGETS = new Map([
 	[
 		"packages/programs/data/shared-log/src/index.ts",
-		["_instanceLifecycle", "_nativeCoordinateMutationGenerations"],
+		["_instanceLifecycle"],
+	],
+	[
+		"packages/programs/data/shared-log/src/coordinate-persistence.ts",
+		// The index.ts _nativeCoordinateMutationGenerations entry moved
+		// file-to-file (stage 4.5: the coordinate persistence coordinator owns
+		// its state), not fence growth.
+		["_nativeCoordinateMutationGenerations"],
 	],
 	[
 		"packages/programs/data/shared-log/src/checked-prune.ts",

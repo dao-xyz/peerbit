@@ -181,6 +181,7 @@ import {
 	materializeVerifiedRawExchangeHeadsMessage,
 } from "./exchange-heads.js";
 import { FanoutEnvelope } from "./fanout-envelope.js";
+import { CoordinatePersistenceCoordinator } from "./coordinate-persistence.js";
 import { InstanceLifecycle } from "./instance-lifecycle.js";
 import {
 	MAX_U32,
@@ -534,7 +535,7 @@ type ReusableReceiveCoordinatePlan<R extends "u32" | "u64"> = {
 };
 
 type DecodedReplicaCountMap = ReadonlyMap<string, number>;
-type SharedLogCoordinateNativeFields<R extends "u32" | "u64"> = {
+export type SharedLogCoordinateNativeFields<R extends "u32" | "u64"> = {
 	hash: string;
 	hashNumber: NumberFromType<R>;
 	hashNumberString?: string;
@@ -553,7 +554,7 @@ type PreparedCoordinatePersistence<R extends "u32" | "u64"> = {
 	fields: SharedLogCoordinateNativeFields<R>;
 };
 
-type ResidentCoordinateEntry<R extends "u32" | "u64"> =
+export type ResidentCoordinateEntry<R extends "u32" | "u64"> =
 	| EntryReplicated<R>
 	| SharedLogCoordinateNativeFields<R>;
 
@@ -681,7 +682,7 @@ type NativeBackboneCoordinatePersistenceOptions =
 		compactMaxJournalRecords?: number;
 	};
 
-type NativeBackboneCoordinatePersistenceStore = {
+export type NativeBackboneCoordinatePersistenceStore = {
 	read(name: string): Promise<Uint8Array | undefined>;
 	write(name: string, bytes: Uint8Array): Promise<void>;
 	append(name: string, bytes: Uint8Array): Promise<void>;
@@ -692,7 +693,7 @@ type NativeBackboneCoordinatePersistenceStore = {
 	close?(options?: { flush?: boolean }): Promise<void>;
 };
 
-type NativeBackboneCoordinatePersistenceAdapter = {
+export type NativeBackboneCoordinatePersistenceAdapter = {
 	/** Explicit capability required by durable strict-native operation intents. */
 	intentStore?: NativeBackboneCoordinatePersistenceStore;
 	flushOnAppend?: boolean;
@@ -1932,10 +1933,8 @@ export class SharedLog<
 	private _nativeDurableRecoveryReadyForReopen = false;
 	private _nativeDurableRecoveryCids = new Set<string>();
 	private _wireSyncSession?: SharedLogNativeWireSync;
-	private _nativeBackboneCoordinatePersistence?: NativeBackboneCoordinatePersistenceAdapter;
 	private _nativeBackboneCoordinatePersistenceStore?: NativeBackboneCoordinatePersistenceStore;
 	private _nativeBackboneDropStarted = false;
-	private _nativeBackboneCoordinateJournalLastFlushMs = 0;
 	private _nativeStrictDurableTransactionTail?: Promise<void>;
 	private _nativeStrictDurableTransactions?: Set<NativeStrictDurableTransactionHandle>;
 	private _nativeStrictDurableTransactionJournalState?: NativeStrictDurableTransactionJournalState;
@@ -1947,11 +1946,72 @@ export class SharedLog<
 		value: number;
 		bytes: Uint8Array;
 	};
-	private _residentEntryCoordinatesByHash?: Map<
-		string,
-		ResidentCoordinateEntry<R>
-	>;
-	private _nativeCoordinateMutationGenerations?: Map<string, number>;
+	// Stage 4.5: the four coordinate state fields
+	// (_residentEntryCoordinatesByHash, _nativeBackboneCoordinatePersistence,
+	// _nativeCoordinateMutationGenerations,
+	// _nativeBackboneCoordinateJournalLastFlushMs) are physically owned by the
+	// CoordinatePersistenceCoordinator under their historical names (the
+	// _nativeCoordinateMutationGenerations ratchet entry moved file-to-file —
+	// see src/coordinate-persistence.ts). Constructed by
+	// ensureNativeDurabilityRuntimeState (constructor + every clone-hydration
+	// site where the legacy `??=` defaults ran); all internal readers use
+	// direct property hops (`this._coordinates.<field>`), never the compat
+	// accessors below.
+	private _coordinates!: CoordinatePersistenceCoordinator<R>;
+	// Test-visible compat accessors under the historical field names. The
+	// getters mirror the legacy never-opened-clone reads (`undefined` before
+	// the coordinator exists); the setters hydrate the coordinator exactly
+	// like the legacy field writes did.
+	get _residentEntryCoordinatesByHash():
+		| Map<string, ResidentCoordinateEntry<R>>
+		| undefined {
+		return this._coordinates?._residentEntryCoordinatesByHash;
+	}
+
+	set _residentEntryCoordinatesByHash(
+		value: Map<string, ResidentCoordinateEntry<R>> | undefined,
+	) {
+		(this._coordinates ??=
+			new CoordinatePersistenceCoordinator<R>())._residentEntryCoordinatesByHash =
+			value;
+	}
+
+	get _nativeBackboneCoordinatePersistence():
+		| NativeBackboneCoordinatePersistenceAdapter
+		| undefined {
+		return this._coordinates?._nativeBackboneCoordinatePersistence;
+	}
+
+	set _nativeBackboneCoordinatePersistence(
+		value: NativeBackboneCoordinatePersistenceAdapter | undefined,
+	) {
+		(this._coordinates ??=
+			new CoordinatePersistenceCoordinator<R>())._nativeBackboneCoordinatePersistence =
+			value;
+	}
+
+	get _nativeCoordinateMutationGenerations(): Map<string, number> | undefined {
+		return this._coordinates?._nativeCoordinateMutationGenerations;
+	}
+
+	set _nativeCoordinateMutationGenerations(
+		value: Map<string, number> | undefined,
+	) {
+		(this._coordinates ??=
+			new CoordinatePersistenceCoordinator<R>())._nativeCoordinateMutationGenerations =
+			value;
+	}
+
+	get _nativeBackboneCoordinateJournalLastFlushMs(): number {
+		return this._coordinates?._nativeBackboneCoordinateJournalLastFlushMs as number;
+	}
+
+	set _nativeBackboneCoordinateJournalLastFlushMs(value: number) {
+		(this._coordinates ??=
+			new CoordinatePersistenceCoordinator<R>())._nativeBackboneCoordinateJournalLastFlushMs =
+			value;
+	}
+
 	private coordinateToHash!: Cache<string>;
 	private recentlyRebalanced!: Cache<string>;
 
@@ -3074,7 +3134,7 @@ export class SharedLog<
 		if (!lowerMarkerCommitted) {
 			if (intent.coordinates.length > 0) {
 				const mutationGenerations =
-					(this._nativeCoordinateMutationGenerations ??= new Map());
+					(this._coordinates._nativeCoordinateMutationGenerations ??= new Map());
 				const rollback: NativeBackboneCoordinateRollback<R> = {
 					hashes: new Set(),
 					entries: new Map(),
@@ -3532,7 +3592,10 @@ export class SharedLog<
 		this._nativeDurableRecoveryReadyForReopen ??= false;
 		this._nativeDurableRecoveryCids ??= new Set();
 		this._nativeBackboneDropStarted ??= false;
-		this._nativeBackboneCoordinateJournalLastFlushMs ??= 0;
+		// Constructing the coordinator supplies the same fresh defaults the
+		// legacy field initializers did (`journal last-flush ??= 0` included):
+		// coordinator instances are always `new`ed, never borsh-cloned.
+		this._coordinates ??= new CoordinatePersistenceCoordinator<R>();
 		this._nativeStrictDurableDocumentRecoveryDeferred ??= false;
 		this._nativeStrictDurableTransactionsClosing ??= false;
 	}
@@ -5393,9 +5456,9 @@ export class SharedLog<
 	}
 
 	private forgetResidentCoordinateStateForHashValues(values: string[]) {
-		if (this._residentEntryCoordinatesByHash) {
+		if (this._coordinates._residentEntryCoordinatesByHash) {
 			for (const hash of values) {
-				this._residentEntryCoordinatesByHash.delete(hash);
+				this._coordinates._residentEntryCoordinatesByHash.delete(hash);
 			}
 		}
 	}
@@ -8605,7 +8668,7 @@ export class SharedLog<
 					}
 				};
 
-				const residentEntriesByHash = this._residentEntryCoordinatesByHash;
+				const residentEntriesByHash = this._coordinates._residentEntryCoordinatesByHash;
 				if (
 					(this._nativeBackbone ?? this._nativeSharedLogState) &&
 					residentEntriesByHash &&
@@ -14666,7 +14729,7 @@ export class SharedLog<
 		state: SharedLogNativeState,
 	): Promise<void> {
 		state.clearEntryCoordinates();
-		this._residentEntryCoordinatesByHash = new Map();
+		this._coordinates._residentEntryCoordinatesByHash = new Map();
 		const iterator = this.entryCoordinatesIndex.iterate({});
 		try {
 			for (;;) {
@@ -14684,7 +14747,7 @@ export class SharedLog<
 						requestedReplicas,
 						result.value.hashNumber,
 					);
-					this._residentEntryCoordinatesByHash.set(
+					this._coordinates._residentEntryCoordinatesByHash.set(
 						result.value.hash,
 						result.value,
 					);
@@ -14713,17 +14776,17 @@ export class SharedLog<
 		} finally {
 			await rangeIterator.close();
 		}
-		if (this._nativeBackboneCoordinatePersistence) {
+		if (this._coordinates._nativeBackboneCoordinatePersistence) {
 			// A previous explicit drop may have been interrupted after its durable
 			// tombstone was written. Complete that erase before the adapter can expose
 			// any stale coordinate or document state to this backbone.
-			await this._nativeBackboneCoordinatePersistence.resumeDrop?.();
-			await this._nativeBackboneCoordinatePersistence.hydrate(backbone);
-			this._nativeBackboneCoordinateJournalLastFlushMs = Date.now();
+			await this._coordinates._nativeBackboneCoordinatePersistence.resumeDrop?.();
+			await this._coordinates._nativeBackboneCoordinatePersistence.hydrate(backbone);
+			this._coordinates._nativeBackboneCoordinateJournalLastFlushMs = Date.now();
 			this.hydrateNativeCoordinateStateFromBackbone(backbone);
 			return;
 		}
-		this._residentEntryCoordinatesByHash ??= new Map();
+		this._coordinates._residentEntryCoordinatesByHash ??= new Map();
 		const iterator = this.entryCoordinatesIndex.iterate({});
 		try {
 			for (;;) {
@@ -14741,7 +14804,7 @@ export class SharedLog<
 						requestedReplicas,
 						result.value.hashNumber,
 					);
-					this._residentEntryCoordinatesByHash.set(
+					this._coordinates._residentEntryCoordinatesByHash.set(
 						result.value.hash,
 						result.value,
 					);
@@ -14759,7 +14822,7 @@ export class SharedLog<
 		if (!this._nativeBackbone) {
 			return;
 		}
-		const hashes = new Set(this._residentEntryCoordinatesByHash?.keys() ?? []);
+		const hashes = new Set(this._coordinates._residentEntryCoordinatesByHash?.keys() ?? []);
 		const iterator = this.entryCoordinatesIndex.iterate({});
 		try {
 			for (;;) {
@@ -14804,7 +14867,7 @@ export class SharedLog<
 		for (const hash of orphaned) {
 			this._nativeBackbone.deleteEntryCoordinates(hash);
 			this._nativeSharedLogState?.deleteEntryCoordinates(hash);
-			this._residentEntryCoordinatesByHash?.delete(hash);
+			this._coordinates._residentEntryCoordinatesByHash?.delete(hash);
 		}
 		const flushed = this.flushNativeBackboneCoordinateJournal();
 		if (isPromiseLike(flushed)) {
@@ -14817,7 +14880,7 @@ export class SharedLog<
 	): void {
 		const fields = backbone.getEntryCoordinateFields();
 		this._nativeSharedLogState?.clearEntryCoordinates();
-		this._residentEntryCoordinatesByHash = new Map();
+		this._coordinates._residentEntryCoordinatesByHash = new Map();
 		for (const coordinate of fields) {
 			const sharedFields =
 				this.nativeBackboneCoordinateFieldsToSharedLogFields(coordinate);
@@ -14829,7 +14892,7 @@ export class SharedLog<
 				coordinate.requestedReplicas,
 				sharedFields.hashNumber,
 			);
-			this._residentEntryCoordinatesByHash.set(sharedFields.hash, sharedFields);
+			this._coordinates._residentEntryCoordinatesByHash.set(sharedFields.hash, sharedFields);
 			for (const value of sharedFields.coordinates) {
 				this.coordinateToHash.add(value, sharedFields.hash);
 			}
@@ -14867,9 +14930,9 @@ export class SharedLog<
 		this._nativeRangePlanner = undefined;
 		this._nativeSharedLogState = undefined;
 		this._nativeBackbone = undefined;
-		this._nativeBackboneCoordinatePersistence = undefined;
-		this._nativeBackboneCoordinateJournalLastFlushMs = 0;
-		this._residentEntryCoordinatesByHash = undefined;
+		this._coordinates._nativeBackboneCoordinatePersistence = undefined;
+		this._coordinates._nativeBackboneCoordinateJournalLastFlushMs = 0;
+		this._coordinates._residentEntryCoordinatesByHash = undefined;
 		if (options === false) {
 			return;
 		}
@@ -14898,7 +14961,7 @@ export class SharedLog<
 			this._nativeRangePlanner = planner;
 			this._nativeSharedLogState = state;
 		} catch (error) {
-			this._residentEntryCoordinatesByHash = undefined;
+			this._coordinates._residentEntryCoordinatesByHash = undefined;
 			if (options?.optional === false) {
 				throw error;
 			}
@@ -14913,10 +14976,10 @@ export class SharedLog<
 	private async openNativeBackbone(
 		options: SharedLogOptions<T, D, R>["nativeBackbone"],
 	): Promise<NativePeerbitBackbone | undefined> {
-		this._nativeBackboneCoordinatePersistence = undefined;
+		this._coordinates._nativeBackboneCoordinatePersistence = undefined;
 		this._nativeBackboneCoordinatePersistenceStore = undefined;
 		this._nativeBackboneDropStarted = false;
-		this._nativeBackboneCoordinateJournalLastFlushMs = 0;
+		this._coordinates._nativeBackboneCoordinateJournalLastFlushMs = 0;
 		this._nativeStrictDurableTransactionJournalState = undefined;
 		if (!options) {
 			return undefined;
@@ -14973,22 +15036,22 @@ export class SharedLog<
 						"Durable nativeBackbone.coordinatePersistence adapters must expose intentStore",
 					);
 				}
-				this._nativeBackboneCoordinatePersistence =
+				this._coordinates._nativeBackboneCoordinatePersistence =
 					createNativeBackboneCoordinatePersistence(
 						options.coordinatePersistence as RuntimeNativeBackboneCoordinatePersistenceConfig,
 					);
 			} else {
-				this._nativeBackboneCoordinatePersistence =
+				this._coordinates._nativeBackboneCoordinatePersistence =
 					await this.createAutoDerivedCoordinatePersistence(
 						nativeBackboneModule,
 					);
 			}
 			if (
 				this.node.directory != null &&
-				this._nativeBackboneCoordinatePersistence
+				this._coordinates._nativeBackboneCoordinatePersistence
 			) {
 				if (
-					this._nativeBackboneCoordinatePersistence.durableBarrier !== true ||
+					this._coordinates._nativeBackboneCoordinatePersistence.durableBarrier !== true ||
 					typeof this._nativeBackboneCoordinatePersistenceStore
 						?.durableBarrier !== "function"
 				) {
@@ -14998,12 +15061,12 @@ export class SharedLog<
 				}
 			}
 			if (
-				this._nativeBackboneCoordinatePersistence &&
-				(this._nativeBackboneCoordinatePersistence.compactMaxJournalBytes !=
+				this._coordinates._nativeBackboneCoordinatePersistence &&
+				(this._coordinates._nativeBackboneCoordinatePersistence.compactMaxJournalBytes !=
 					null ||
-					this._nativeBackboneCoordinatePersistence.compactMaxJournalRecords !=
+					this._coordinates._nativeBackboneCoordinatePersistence.compactMaxJournalRecords !=
 						null) &&
-				this._nativeBackboneCoordinatePersistence.crashSafeCompaction !== true
+				this._coordinates._nativeBackboneCoordinatePersistence.crashSafeCompaction !== true
 			) {
 				// Durable custom adapters must explicitly advertise an atomic generation
 				// protocol before SharedLog permits automatic WAL compaction.
@@ -16538,7 +16601,7 @@ export class SharedLog<
 		}
 		this._nativeRangePlanner = undefined;
 		this._nativeSharedLogState = undefined;
-		this._residentEntryCoordinatesByHash = undefined;
+		this._coordinates._residentEntryCoordinatesByHash = undefined;
 		captureSync(() => this.cpuUsage?.stop?.());
 
 		if (firstError !== undefined) {
@@ -16697,7 +16760,7 @@ export class SharedLog<
 		}
 		this.throwIfCheckedPruneRemoveBlocksLocalOperation("drop");
 		this.ensureNativeDurabilityRuntimeState();
-		const nativePersistence = this._nativeBackboneCoordinatePersistence;
+		const nativePersistence = this._coordinates._nativeBackboneCoordinatePersistence;
 		if (
 			nativePersistence &&
 			(typeof nativePersistence.drop !== "function" ||
@@ -20389,12 +20452,12 @@ export class SharedLog<
 		let deleteCount = 0;
 		for (const { item, prepared, fields, deleteHashes } of batch.rows) {
 			persistedHashes.add(item.entry.hash);
-			this._residentEntryCoordinatesByHash?.set(
+			this._coordinates._residentEntryCoordinatesByHash?.set(
 				item.entry.hash,
 				prepared.coordinateEntry ?? fields,
 			);
 			for (const deletedHash of deleteHashes) {
-				this._residentEntryCoordinatesByHash?.delete(deletedHash);
+				this._coordinates._residentEntryCoordinatesByHash?.delete(deletedHash);
 				deleteCount++;
 			}
 			for (const coordinate of item.coordinates) {
@@ -20894,13 +20957,13 @@ export class SharedLog<
 		}
 		const entries = new Map<string, ResidentCoordinateEntry<R>>();
 		const generations = new Map<string, number>();
-		const mutationGenerations = (this._nativeCoordinateMutationGenerations ??=
+		const mutationGenerations = (this._coordinates._nativeCoordinateMutationGenerations ??=
 			new Map());
 		for (const hash of uniqueHashes) {
 			const generation = (mutationGenerations.get(hash) ?? 0) + 1;
 			mutationGenerations.set(hash, generation);
 			generations.set(hash, generation);
-			const entry = this._residentEntryCoordinatesByHash?.get(hash);
+			const entry = this._coordinates._residentEntryCoordinatesByHash?.get(hash);
 			if (entry) {
 				entries.set(hash, entry);
 			}
@@ -20917,7 +20980,7 @@ export class SharedLog<
 			return;
 		}
 		const hashes = rollback?.hashes ?? new Set([appendHash]);
-		const mutationGenerations = (this._nativeCoordinateMutationGenerations ??=
+		const mutationGenerations = (this._coordinates._nativeCoordinateMutationGenerations ??=
 			new Map());
 		for (const hash of hashes) {
 			const expectedGeneration = rollback?.generations.get(hash);
@@ -20929,7 +20992,7 @@ export class SharedLog<
 			}
 			backbone.deleteEntryCoordinates(hash);
 			this._nativeSharedLogState?.deleteEntryCoordinates(hash);
-			this._residentEntryCoordinatesByHash?.delete(hash);
+			this._coordinates._residentEntryCoordinatesByHash?.delete(hash);
 			const entry = rollback?.entries.get(hash);
 			if (!entry) {
 				continue;
@@ -20962,7 +21025,7 @@ export class SharedLog<
 				requestedReplicas,
 				fields.hashNumber,
 			);
-			this._residentEntryCoordinatesByHash?.set(hash, entry);
+			this._coordinates._residentEntryCoordinatesByHash?.set(hash, entry);
 		}
 	}
 
@@ -20975,7 +21038,7 @@ export class SharedLog<
 			EntryReplicated<R>
 		>;
 		const hashes = rollback?.hashes ?? new Set([appendHash]);
-		const mutationGenerations = (this._nativeCoordinateMutationGenerations ??=
+		const mutationGenerations = (this._coordinates._nativeCoordinateMutationGenerations ??=
 			new Map());
 		for (const hash of hashes) {
 			const expectedGeneration = rollback?.generations.get(hash);
@@ -21121,13 +21184,13 @@ export class SharedLog<
 					fields.hashNumber,
 				);
 			}
-			if (this._residentEntryCoordinatesByHash) {
-				this._residentEntryCoordinatesByHash.set(
+			if (this._coordinates._residentEntryCoordinatesByHash) {
+				this._coordinates._residentEntryCoordinatesByHash.set(
 					properties.hash,
 					properties.prepared.coordinateEntry ?? fields,
 				);
 				for (const nextHash of nativeDeleteHashes) {
-					this._residentEntryCoordinatesByHash.delete(nextHash);
+					this._coordinates._residentEntryCoordinatesByHash.delete(nextHash);
 				}
 			}
 
@@ -21209,13 +21272,13 @@ export class SharedLog<
 					fields.hashNumber,
 				);
 			}
-			if (this._residentEntryCoordinatesByHash) {
-				this._residentEntryCoordinatesByHash.set(
+			if (this._coordinates._residentEntryCoordinatesByHash) {
+				this._coordinates._residentEntryCoordinatesByHash.set(
 					properties.hash,
 					properties.prepared.coordinateEntry ?? fields,
 				);
 				for (const nextHash of nativeDeleteHashes) {
-					this._residentEntryCoordinatesByHash.delete(nextHash);
+					this._coordinates._residentEntryCoordinatesByHash.delete(nextHash);
 				}
 			}
 			for (const coordinate of properties.coordinates) {
@@ -21256,16 +21319,16 @@ export class SharedLog<
 				properties.coordinates.length,
 				fields.hashNumber,
 			);
-			if (this._residentEntryCoordinatesByHash) {
-				this._residentEntryCoordinatesByHash.set(properties.hash, fields);
+			if (this._coordinates._residentEntryCoordinatesByHash) {
+				this._coordinates._residentEntryCoordinatesByHash.set(properties.hash, fields);
 				for (const deletedHash of properties.deleteHashes) {
-					this._residentEntryCoordinatesByHash.delete(deletedHash);
+					this._coordinates._residentEntryCoordinatesByHash.delete(deletedHash);
 				}
 			}
 			for (const coordinate of properties.coordinates) {
 				this.coordinateToHash.add(coordinate, properties.hash);
 			}
-			if (this._nativeBackboneCoordinatePersistence) {
+			if (this._coordinates._nativeBackboneCoordinatePersistence) {
 				const flushed = this.flushNativeBackboneCoordinateJournalOnAppend();
 				if (isPromiseLike(flushed)) {
 					return mapMaybePromise(flushed, () => true);
@@ -21301,7 +21364,7 @@ export class SharedLog<
 
 	private flushNativeBackboneCoordinateJournal(): MaybePromise<void> {
 		const backbone = this._nativeBackbone;
-		const persistence = this._nativeBackboneCoordinatePersistence;
+		const persistence = this._coordinates._nativeBackboneCoordinatePersistence;
 		if (!backbone || !persistence || this._nativeBackboneDropStarted) {
 			return undefined;
 		}
@@ -21313,14 +21376,14 @@ export class SharedLog<
 			return undefined;
 		}
 		return mapMaybePromise(persistence.flushJournal(backbone), () => {
-			this._nativeBackboneCoordinateJournalLastFlushMs = Date.now();
+			this._coordinates._nativeBackboneCoordinateJournalLastFlushMs = Date.now();
 			return undefined;
 		});
 	}
 
 	private flushNativeBackboneCoordinateJournalOnAppend(): MaybePromise<void> {
 		const backbone = this._nativeBackbone;
-		const persistence = this._nativeBackboneCoordinatePersistence;
+		const persistence = this._coordinates._nativeBackboneCoordinatePersistence;
 		if (!backbone || !persistence || this._nativeBackboneDropStarted) {
 			return undefined;
 		}
@@ -21340,7 +21403,7 @@ export class SharedLog<
 	}
 
 	private shouldFlushNativeBackboneCoordinateJournalOnAppend(): boolean {
-		const persistence = this._nativeBackboneCoordinatePersistence;
+		const persistence = this._coordinates._nativeBackboneCoordinatePersistence;
 		if (!persistence || persistence.flushOnAppend !== false) {
 			return true;
 		}
@@ -21357,13 +21420,13 @@ export class SharedLog<
 		}
 		return (
 			persistence.flushIntervalMs != null &&
-			Date.now() - this._nativeBackboneCoordinateJournalLastFlushMs >=
+			Date.now() - this._coordinates._nativeBackboneCoordinateJournalLastFlushMs >=
 				persistence.flushIntervalMs
 		);
 	}
 
 	private async closeNativeBackboneCoordinatePersistence(): Promise<void> {
-		const persistence = this._nativeBackboneCoordinatePersistence;
+		const persistence = this._coordinates._nativeBackboneCoordinatePersistence;
 		if (!persistence) {
 			return;
 		}
@@ -21392,7 +21455,7 @@ export class SharedLog<
 
 	private canUseBackboneOnlyCoordinatePersistence(): boolean {
 		return (
-			!!this._nativeBackboneCoordinatePersistence &&
+			!!this._coordinates._nativeBackboneCoordinatePersistence &&
 			this.canUseNativeBackboneResidentCoordinateState()
 		);
 	}
@@ -21400,7 +21463,7 @@ export class SharedLog<
 	private canUseNativeBackboneResidentCoordinateState(): boolean {
 		return (
 			!!this._nativeBackbone &&
-			!!this._residentEntryCoordinatesByHash &&
+			!!this._coordinates._residentEntryCoordinatesByHash &&
 			!this.hasCustomFindLeaders()
 		);
 	}
@@ -21630,13 +21693,13 @@ export class SharedLog<
 		}
 
 		for (const { item, prepared } of changed) {
-			if (this._residentEntryCoordinatesByHash) {
-				this._residentEntryCoordinatesByHash.set(
+			if (this._coordinates._residentEntryCoordinatesByHash) {
+				this._coordinates._residentEntryCoordinatesByHash.set(
 					item.entry.hash,
 					prepared.coordinateEntry ?? prepared.fields,
 				);
 				for (const nextHash of item.entry.meta.next) {
-					this._residentEntryCoordinatesByHash.delete(nextHash);
+					this._coordinates._residentEntryCoordinatesByHash.delete(nextHash);
 				}
 			}
 			for (const coordinate of item.coordinates) {
@@ -21661,7 +21724,7 @@ export class SharedLog<
 		}
 		this._nativeSharedLogState?.deleteEntryCoordinates(properties.hash);
 		this._nativeBackbone?.deleteEntryCoordinates(properties.hash);
-		this._residentEntryCoordinatesByHash?.delete(properties.hash);
+		this._coordinates._residentEntryCoordinatesByHash?.delete(properties.hash);
 		const coordinateIndex = this.entryCoordinatesIndex as PutAndDeleteIndex<
 			EntryReplicated<R>
 		>;

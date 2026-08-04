@@ -50,9 +50,13 @@ const setup = {
 };
 
 // The persistence internals live on the SharedLog host today and on its
-// coordinate-persistence coordinator after the stage-4.5 move; the state
-// fields stay reachable through host compat accessors either way.
-const coordinateInternals = (log: any): any => log._coordinates ?? log;
+// coordinate-persistence coordinator after the stage-4.5 method move (the
+// state-only coordinator of the intermediate commit has no methods yet);
+// the state fields stay reachable through host compat accessors either way.
+const coordinateInternals = (log: any): any =>
+	typeof log._coordinates?.deleteCoordinatesForHashes === "function"
+		? log._coordinates
+		: log;
 
 describe("coordinate persistence journal flush pins", () => {
 	let log: any;
