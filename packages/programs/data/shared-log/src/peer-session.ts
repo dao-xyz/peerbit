@@ -23,7 +23,6 @@ export type PeerSessionDeps = {
 	) => boolean;
 	getReplicationLifecycleController: () => AbortController | undefined;
 	isReplicationInfoBlocked: (peerHash: string) => boolean;
-	getReceiveCleanupGate: (peerHash: string) => number;
 };
 
 export type PeerReceiveAdmissionOptions = {
@@ -128,6 +127,15 @@ export class PeerSessionRegistry {
 	// session. Unlike sessions this map IS cleared at _close (see
 	// clearReceiveEpochsForClose) and replaced at open.
 	_replicationInfoReceiveEpochByPeer!: Map<string, object>;
+	// Moved from SharedLog (fence B6, same name — the sanctioned file-to-file
+	// ratchet move). Refcount of in-flight destructive peer cleanups: while
+	// non-zero, receive admission for the peer is closed and prune final
+	// confirmations ignore the peer. Per-PEER, not per-session, on purpose:
+	// the gate is held across removeReplicator's awaited lanes while a
+	// reconnect may rotate the session; a fresh session with a zero gate
+	// would reopen receive admission mid-drain. The map instance is replaced
+	// only at open (resetForOpen) and cleared in place at _close.
+	_receiveCleanupGateByPeer!: Map<string, number>;
 
 	constructor(readonly deps: PeerSessionDeps) {
 		this.resetForOpen();
@@ -143,6 +151,7 @@ export class PeerSessionRegistry {
 	resetForOpen(): void {
 		this._subscriptionEpochByPeer = new Map();
 		this._replicationInfoReceiveEpochByPeer = new Map();
+		this._receiveCleanupGateByPeer = new Map();
 	}
 
 	/** _close counterpart of the legacy
@@ -153,6 +162,47 @@ export class PeerSessionRegistry {
 	 *  receive-epoch check site makes the ordering unobservable either way. */
 	clearReceiveEpochsForClose(): void {
 		this._replicationInfoReceiveEpochByPeer.clear();
+	}
+
+	/** _close counterpart of the legacy
+	 *  `this._receiveCleanupGateByPeer?.clear()`: an in-place clear (NOT a
+	 *  map replacement) so an in-flight removal's captured release still
+	 *  drains the instance it incremented — see acquireReceiveCleanupGate. */
+	clearCleanupGatesForClose(): void {
+		this._receiveCleanupGateByPeer.clear();
+	}
+
+	/** ≡ removeReplicator's inline `blockPeerReceiveAdmission` +
+	 *  release-in-`finally` pair (fence B6). Acquire captures the CURRENT
+	 *  gate-map instance and increments once; the returned release is
+	 *  idempotent and decrements the captured map, deleting the entry at 0.
+	 *  The map-instance capture is load-bearing: close/reopen replaces the
+	 *  map (resetForOpen), and a late release must drain the exact map it
+	 *  incremented — a release against a fresh open's map would corrupt that
+	 *  open's refcounts. The `?? 1` mirrors the legacy release: an entry
+	 *  cleared at _close decrements to 0 and stays deleted. */
+	acquireReceiveCleanupGate(peerHash: string): () => void {
+		const gates = this._receiveCleanupGateByPeer;
+		gates.set(peerHash, (gates.get(peerHash) ?? 0) + 1);
+		let released = false;
+		return () => {
+			if (released) {
+				return;
+			}
+			released = true;
+			const remaining = (gates.get(peerHash) ?? 1) - 1;
+			if (remaining > 0) {
+				gates.set(peerHash, remaining);
+			} else {
+				gates.delete(peerHash);
+			}
+		};
+	}
+
+	/** ≡ the legacy `(this._receiveCleanupGateByPeer.get(peer) ?? 0) === 0`
+	 *  read (receive-admission term and prune final-confirmation filter). */
+	isReceiveCleanupGateOpen(peerHash: string): boolean {
+		return (this._receiveCleanupGateByPeer.get(peerHash) ?? 0) === 0;
 	}
 
 	/** ≡ legacy SharedLog.advanceReplicationInfoReceiveEpoch. Advances
@@ -250,7 +300,7 @@ export class PeerSessionRegistry {
 			(options?.allowReplicationInfoBlocked === true ||
 				!this.deps.isReplicationInfoBlocked(peerHash)) &&
 			(options?.allowCleanupGate === true ||
-				this.deps.getReceiveCleanupGate(peerHash) === 0)
+				this.isReceiveCleanupGateOpen(peerHash))
 		);
 	}
 }

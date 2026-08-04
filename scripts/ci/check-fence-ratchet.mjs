@@ -23,7 +23,6 @@ const TARGETS = new Map([
 			"_checkedPruneRemoveBlocksLocalRangeMutationAdmission",
 			"_instanceLifecycle",
 			"_nativeCoordinateMutationGenerations",
-			"_receiveCleanupGateByPeer",
 			"_receiveOwnershipMutationAdmissions",
 			"_receiveOwnershipRevision",
 			"_repairLifecycleController",
@@ -40,7 +39,11 @@ const TARGETS = new Map([
 	],
 	[
 		"packages/programs/data/shared-log/src/peer-session.ts",
-		["_replicationInfoReceiveEpochByPeer", "_subscriptionEpochByPeer"],
+		[
+			"_receiveCleanupGateByPeer",
+			"_replicationInfoReceiveEpochByPeer",
+			"_subscriptionEpochByPeer",
+		],
 	],
 	[
 		"packages/programs/data/shared-log/src/join-warmup.ts",

@@ -103,7 +103,8 @@ describe("receive admission", () => {
 
 				releaseCleanup.resolve();
 				await unsubscribe;
-				expect(sharedLog._receiveCleanupGateByPeer.has(sourceHash)).to.be.false;
+				expect(sharedLog._peerSessions._receiveCleanupGateByPeer.has(sourceHash))
+					.to.be.false;
 			} finally {
 				releaseCleanup.resolve();
 				disconnected.restore();
@@ -363,7 +364,8 @@ describe("receive admission", () => {
 				expect(sharedLog._activeReceiveHandlersByPeer.has(sourceHash)).to.be
 					.false;
 				expect(sharedLog._receiveHandlerDrainByPeer.has(sourceHash)).to.be.false;
-				expect(sharedLog._receiveCleanupGateByPeer.has(sourceHash)).to.be.false;
+				expect(sharedLog._peerSessions._receiveCleanupGateByPeer.has(sourceHash))
+					.to.be.false;
 			} finally {
 				releaseHasMany.resolve();
 				confirmation.restore();
@@ -491,7 +493,8 @@ describe("receive admission", () => {
 				}
 				expect(sharedLog._activeReceiveHandlersByPeer.has(sourceHash)).to.be
 					.false;
-				expect(sharedLog._receiveCleanupGateByPeer.has(sourceHash)).to.be.false;
+				expect(sharedLog._peerSessions._receiveCleanupGateByPeer.has(sourceHash))
+					.to.be.false;
 			} finally {
 				releasePendingResponse.resolve();
 				releaseLateResponse.resolve();

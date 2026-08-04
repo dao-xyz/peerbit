@@ -19,14 +19,12 @@ type StubHost = {
 	replicationLifecycleController?: AbortController;
 	terminating: boolean;
 	blockedPeers: Set<string>;
-	cleanupGateByPeer: Map<string, number>;
 };
 
 const createHost = (): StubHost => ({
 	replicationLifecycleController: new AbortController(),
 	terminating: false,
 	blockedPeers: new Set(),
-	cleanupGateByPeer: new Map(),
 });
 
 // Mirrors SharedLog.isReplicationLifecycleActive term for term.
@@ -44,7 +42,6 @@ const createDeps = (host: StubHost): PeerSessionDeps => ({
 		isReplicationLifecycleActive(host, controller),
 	getReplicationLifecycleController: () => host.replicationLifecycleController,
 	isReplicationInfoBlocked: (hash) => host.blockedPeers.has(hash),
-	getReceiveCleanupGate: (hash) => host.cleanupGateByPeer.get(hash) ?? 0,
 });
 
 // Literal transcription of the legacy (pre-stage-3) body of
@@ -53,6 +50,7 @@ const createDeps = (host: StubHost): PeerSessionDeps => ({
 // to the registry, so this inline replica is the regression oracle.
 const legacyIsPeerReceiveAdmissionOpen = (
 	host: StubHost,
+	cleanupGateByPeer: Map<string, number>,
 	peerHash: string,
 	replicationLifecycleController: AbortController | undefined,
 	subscriptionEpoch: object | null,
@@ -64,7 +62,7 @@ const legacyIsPeerReceiveAdmissionOpen = (
 	(options?.allowReplicationInfoBlocked === true ||
 		!host.blockedPeers.has(peerHash)) &&
 	(options?.allowCleanupGate === true ||
-		(host.cleanupGateByPeer.get(peerHash) ?? 0) === 0);
+		(cleanupGateByPeer.get(peerHash) ?? 0) === 0);
 
 const PEER = "peer-a";
 
@@ -183,7 +181,10 @@ describe("receive admission peer session parity", () => {
 								if (blocked) {
 									host.blockedPeers.add(PEER);
 								}
-								host.cleanupGateByPeer.set(PEER, gate);
+								// The gate refcounts moved into the registry (fence B6);
+								// seed its map directly, mirroring the legacy host-map
+								// write.
+								registry._receiveCleanupGateByPeer.set(PEER, gate);
 								const options: PeerReceiveAdmissionOptions = {
 									allowReplicationInfoBlocked,
 									allowCleanupGate,
@@ -191,6 +192,7 @@ describe("receive admission peer session parity", () => {
 
 								const expected = legacyIsPeerReceiveAdmissionOpen(
 									host,
+									registry._receiveCleanupGateByPeer,
 									PEER,
 									controller,
 									session,
@@ -314,5 +316,57 @@ describe("receive admission peer session parity", () => {
 		registry.resetForOpen();
 		expect(registry.isReceiveEpochCurrent(PEER, third)).to.be.false;
 		expect(registry.isReceiveEpochCurrent(PEER, null)).to.be.true;
+	});
+
+	it("refcounts the receive cleanup gate with idempotent releases", () => {
+		const host = createHost();
+		const registry = new PeerSessionRegistry(createDeps(host));
+
+		expect(registry.isReceiveCleanupGateOpen(PEER)).to.be.true;
+		const releaseFirst = registry.acquireReceiveCleanupGate(PEER);
+		const releaseSecond = registry.acquireReceiveCleanupGate(PEER);
+		expect(registry._receiveCleanupGateByPeer.get(PEER)).to.equal(2);
+		expect(registry.isReceiveCleanupGateOpen(PEER)).to.be.false;
+
+		releaseFirst();
+		// Idempotent: a double release must not decrement twice.
+		releaseFirst();
+		expect(registry._receiveCleanupGateByPeer.get(PEER)).to.equal(1);
+		expect(registry.isReceiveCleanupGateOpen(PEER)).to.be.false;
+
+		releaseSecond();
+		// Entry deleted at zero, matching the legacy decrement-or-delete.
+		expect(registry._receiveCleanupGateByPeer.has(PEER)).to.be.false;
+		expect(registry.isReceiveCleanupGateOpen(PEER)).to.be.true;
+	});
+
+	it("binds a cleanup-gate release to the map instance it incremented", () => {
+		const host = createHost();
+		const registry = new PeerSessionRegistry(createDeps(host));
+
+		// Reopen during an in-flight removeReplicator: the release captured
+		// before resetForOpen must drain the OLD map, never the fresh open's.
+		const release = registry.acquireReceiveCleanupGate(PEER);
+		const mapBefore = registry._receiveCleanupGateByPeer;
+		registry.resetForOpen();
+		expect(registry._receiveCleanupGateByPeer).to.not.equal(mapBefore);
+		expect(registry.isReceiveCleanupGateOpen(PEER)).to.be.true;
+
+		const freshRelease = registry.acquireReceiveCleanupGate(PEER);
+		release();
+		// The late release drained the stale map without corrupting the fresh
+		// open's refcount.
+		expect(mapBefore.has(PEER)).to.be.false;
+		expect(registry._receiveCleanupGateByPeer.get(PEER)).to.equal(1);
+		freshRelease();
+		expect(registry.isReceiveCleanupGateOpen(PEER)).to.be.true;
+
+		// _close clears in place; a release straddling close decrements the
+		// cleared entry to zero (legacy `?? 1` shape) and stays deleted.
+		const releaseAcrossClose = registry.acquireReceiveCleanupGate(PEER);
+		registry.clearCleanupGatesForClose();
+		expect(registry._receiveCleanupGateByPeer.has(PEER)).to.be.false;
+		releaseAcrossClose();
+		expect(registry._receiveCleanupGateByPeer.has(PEER)).to.be.false;
 	});
 });

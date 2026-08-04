@@ -1971,7 +1971,11 @@ export class SharedLog<
 	private _replicationLifecycleController?: AbortController;
 	private _activeReceiveHandlersByPeer!: Map<string, PeerReceiveLeaseState>;
 	private _receiveHandlerDrainByPeer!: Map<string, Set<Promise<void>>>;
-	private _receiveCleanupGateByPeer!: Map<string, number>;
+	// The per-peer receive cleanup-gate refcounts now live on the
+	// PeerSessionRegistry (_receiveCleanupGateByPeer moved file-to-file; see
+	// src/peer-session.ts): acquired via acquireReceiveCleanupGate, read via
+	// isReceiveCleanupGateOpen, cleared at _close via
+	// clearCleanupGatesForClose.
 	// One-shot capability adverts staged while a peer's opening barrier is
 	// running (window truth = the session's openingBarrierActive sub-state;
 	// the legacy _subscriptionOpeningEpochByPeer map is gone). `epoch` is the
@@ -3388,8 +3392,6 @@ export class SharedLog<
 				this._replicationLifecycleController,
 			isReplicationInfoBlocked: (hash) =>
 				this._replicationInfoBlockedPeers.has(hash),
-			getReceiveCleanupGate: (hash) =>
-				this._receiveCleanupGateByPeer.get(hash) ?? 0,
 		});
 	}
 
@@ -3429,7 +3431,6 @@ export class SharedLog<
 		this._pendingReplicatorLeaveByPeer = new Set();
 		this._activeReceiveHandlersByPeer = new Map();
 		this._receiveHandlerDrainByPeer = new Map();
-		this._receiveCleanupGateByPeer = new Map();
 		this._openingSyncCapabilitiesByPeer = new Map();
 		this._gidPeersHistory = new Map();
 		this._repairRetryTimers = new Set();
@@ -6052,12 +6053,13 @@ export class SharedLog<
 			}
 		};
 		const isMe = this.node.identity.publicKey.hashcode() === keyHash;
-		let receiveAdmissionBlocked = false;
-		// Capture the gate map instance: close/reopen replaces the map, and the
-		// release in this call's finally must drain the exact map it
-		// incremented — a late release against a fresh open's map would
-		// corrupt that open's refcounts.
-		const receiveCleanupGateByPeer = this._receiveCleanupGateByPeer;
+		// The registry acquire captures the gate-map instance: close/reopen
+		// replaces the map, and the release in this call's finally must drain
+		// the exact map it incremented — a late release against a fresh open's
+		// map would corrupt that open's refcounts. (Every path to the acquire
+		// runs behind an ownership-lifecycle throw, so the map current at
+		// acquisition is the map that was current at this call's entry.)
+		let releaseReceiveCleanupGate: (() => void) | undefined;
 		const checkedPruneCoordinator = this._checkedPrune;
 		const isSpeculativePeerRemoval =
 			!isMe && options?.shouldRemove !== undefined;
@@ -6065,14 +6067,8 @@ export class SharedLog<
 			? checkedPruneCoordinator.fencePeerRemoval(keyHash)
 			: undefined;
 		const blockPeerReceiveAdmission = () => {
-			if (receiveAdmissionBlocked) {
-				return;
-			}
-			receiveCleanupGateByPeer.set(
-				keyHash,
-				(receiveCleanupGateByPeer.get(keyHash) ?? 0) + 1,
-			);
-			receiveAdmissionBlocked = true;
+			releaseReceiveCleanupGate ??=
+				this._peerSessions.acquireReceiveCleanupGate(keyHash);
 		};
 		if (!isMe && !isSpeculativePeerRemoval) {
 			// Revoke this peer's receipts synchronously, before this removal can
@@ -6304,14 +6300,7 @@ export class SharedLog<
 			});
 			removalCallCompleted = true;
 		} finally {
-			if (receiveAdmissionBlocked) {
-				const remaining = (receiveCleanupGateByPeer.get(keyHash) ?? 1) - 1;
-				if (remaining > 0) {
-					receiveCleanupGateByPeer.set(keyHash, remaining);
-				} else {
-					receiveCleanupGateByPeer.delete(keyHash);
-				}
-			}
+			releaseReceiveCleanupGate?.();
 			if (isSpeculativePeerRemoval) {
 				const cancelledByFreshActivity =
 					removalCallCompleted &&
@@ -13858,14 +13847,15 @@ export class SharedLog<
 		// Deserialized instances never ran the constructor; create the session
 		// registry lazily on first open. Reopens keep the SAME registry so stale
 		// continuations observe resetForOpen()'s map swap via property lookup.
-		// resetForOpen also replaces the per-peer receive-epoch map, matching
-		// the legacy open()-time `_replicationInfoReceiveEpochByPeer = new Map()`.
+		// resetForOpen also replaces the per-peer receive-epoch and receive
+		// cleanup-gate maps, matching the legacy open()-time
+		// `_replicationInfoReceiveEpochByPeer = new Map()` and
+		// `_receiveCleanupGateByPeer = new Map()`.
 		this._peerSessions ??= this.createPeerSessionRegistry();
 		this._peerSessions.resetForOpen();
 		this._pendingReplicatorLeaveByPeer = new Set();
 		this._activeReceiveHandlersByPeer = new Map();
 		this._receiveHandlerDrainByPeer = new Map();
-		this._receiveCleanupGateByPeer = new Map();
 		this._openingSyncCapabilitiesByPeer = new Map();
 		this._repairRetryTimers = new Set();
 		this._recentRepairDispatch = new Map();
@@ -16437,9 +16427,9 @@ export class SharedLog<
 			this._pendingIHaveCallbacks?.clear();
 			this.latestReplicationInfoMessage?.clear();
 			this._peerSessions?.clearReceiveEpochsForClose();
+			this._peerSessions?.clearCleanupGatesForClose();
 			this._activeReceiveHandlersByPeer?.clear();
 			this._receiveHandlerDrainByPeer?.clear();
-			this._receiveCleanupGateByPeer?.clear();
 			this._openingSyncCapabilitiesByPeer?.clear();
 			this._gidPeersHistory?.clear();
 			this._peerSyncCapabilities?.clear();
@@ -24766,7 +24756,7 @@ export class SharedLog<
 											if (
 												finalOwnership.leaders.has(peer) &&
 												!this._replicationInfoBlockedPeers.has(peer) &&
-												(this._receiveCleanupGateByPeer.get(peer) ?? 0) === 0
+												this._peerSessions.isReceiveCleanupGateOpen(peer)
 											) {
 												finalConfirmationCount += 1;
 											}
