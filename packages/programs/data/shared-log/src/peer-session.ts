@@ -139,15 +139,31 @@ export class PeerSessionRegistry {
 	 *  the expected token was superseded meanwhile. */
 	markOpen(peerHash: string, expectedSession: object): void {
 		const current = this._subscriptionEpochByPeer.get(peerHash);
-		if (current === expectedSession && current.kind === "opening") {
+		if (
+			current !== undefined &&
+			current === expectedSession &&
+			current.kind === "opening"
+		) {
 			current.phase = "open";
 		}
 	}
 
-	/** Destructive removal committed for this peer's CURRENT epoch. */
-	noteReplicatorRemoved(peerHash: string): void {
+	/** Destructive removal committed for this peer. Mirrors the removal
+	 *  funnel's epoch scoping: an epoch-scoped removal only stamps the
+	 *  session it was scoped to — a reconnect during the removal's awaited
+	 *  lanes must not inherit the stamp. Undefined = unscoped removal,
+	 *  which stamps the current session as before; null scopes to "peer had
+	 *  no session at capture", so a session created meanwhile is never
+	 *  stamped. */
+	noteReplicatorRemoved(
+		peerHash: string,
+		expectedSession?: object | null,
+	): void {
 		const current = this._subscriptionEpochByPeer.get(peerHash);
-		if (current) {
+		if (
+			current &&
+			(expectedSession === undefined || current === expectedSession)
+		) {
 			current.replicatorRemoved = true;
 		}
 	}

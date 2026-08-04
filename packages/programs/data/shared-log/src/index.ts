@@ -2033,7 +2033,7 @@ export class SharedLog<
 	// Stage 2: physically owned by the per-open InstanceLifecycle (role
 	// sub-generation); these accessors keep every legacy site verbatim.
 	private get _localReplicationRoleGeneration(): number {
-		return this._instanceLifecycle?.roleGeneration as number;
+		return this._instanceLifecycle?.roleGeneration ?? 0;
 	}
 	private set _localReplicationRoleGeneration(value: number) {
 		if (this._instanceLifecycle) {
@@ -6237,7 +6237,10 @@ export class SharedLog<
 					this.rebalanceParticipationDebounced?.call();
 				}
 				removed = true;
-				this._peerSessions?.noteReplicatorRemoved(keyHash);
+				this._peerSessions?.noteReplicatorRemoved(
+					keyHash,
+					options?.subscriptionEpoch,
+				);
 				if (!ownerHasRanges) {
 					options?.onRemoved?.({ wasReplicator });
 				}
@@ -13740,16 +13743,18 @@ export class SharedLog<
 		this._receiveOwnershipMutationAdmissions = 0;
 		this._pruneRemovesClosing = false;
 		this._replicationRangeMutationFailure = undefined;
-		this.startRepairLifecycle();
-		// One InstanceLifecycle per open(): fresh identity, rotated together
-		// with the ownership controller above. Late-bound readers make it
-		// insensitive to the resets that follow (membership controller at
+		// One InstanceLifecycle per open(): fresh identity, installed before
+		// the ownership-controller rotation so no statement in this reset
+		// block can observe the previous lifecycle's roleGeneration.
+		// Late-bound readers make it insensitive to the resets that follow
+		// (ownership controller next, membership controller at
 		// resetSubscriptionChangeCallbackTracking below, _checkedPrune and
 		// _closeController and the debouncers in the setup blocks further
 		// down). The fresh object also supersedes the old per-open
 		// `_localReplicationRoleGeneration = 0` reset: roleGeneration starts
 		// at 0 on the incoming lifecycle.
 		this._instanceLifecycle = this.createInstanceLifecycle();
+		this.startRepairLifecycle();
 		this._replicationRangeMutationTail = Promise.resolve();
 		this.resetSubscriptionChangeCallbackTracking();
 		const recoveringNativeDurableFailure =
