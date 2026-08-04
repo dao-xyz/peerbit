@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.0.69
+
+### Patch Changes
+
+- Updated dependencies [[`e3af5bc`](https://github.com/dao-xyz/peerbit/commit/e3af5bc7974ccd8ef3e7effe819c3a9bbefa4337), [`c28d40e`](https://github.com/dao-xyz/peerbit/commit/c28d40e988f6958df373269a22c6fb75c1fec4e7)]:
+  - @peerbit/shared-log@13.2.25
+
 ## 2.0.68
 
 ### Patch Changes
