@@ -1,0 +1,372 @@
+import { Cache } from "@peerbit/cache";
+import { Ed25519Keypair } from "@peerbit/crypto";
+import { expect } from "chai";
+import sinon from "sinon";
+import {
+	PENDING_SIMPLE_SYNC_KEY_TTL_MS,
+	SimpleSyncronizer,
+} from "../src/sync/simple.js";
+
+// Stage-4 sync-unification pins. These freeze the observable behavior of the
+// pending-sync structures (the syncInFlightQueue lockstep family) before the
+// record-store fold so every remove path can be proven equivalent:
+// TTL expiry, entry-added, per-peer claim removal (disconnect), coordinate
+// alias reconciliation, and close().
+describe("sync-chunking memory pins", () => {
+	let peerA: Awaited<ReturnType<typeof Ed25519Keypair.create>>["publicKey"];
+	let peerB: Awaited<ReturnType<typeof Ed25519Keypair.create>>["publicKey"];
+	let peerC: Awaited<ReturnType<typeof Ed25519Keypair.create>>["publicKey"];
+
+	before(async () => {
+		[peerA, peerB, peerC] = await Promise.all([
+			Ed25519Keypair.create().then((keypair) => keypair.publicKey),
+			Ed25519Keypair.create().then((keypair) => keypair.publicKey),
+			Ed25519Keypair.create().then((keypair) => keypair.publicKey),
+		]);
+	});
+
+	const createSync = (overrides?: {
+		log?: any;
+		coordinateToHash?: Cache<string>;
+		send?: sinon.SinonStub;
+	}) => {
+		const send = overrides?.send ?? sinon.stub().resolves();
+		const sync = new SimpleSyncronizer<"u64">({
+			rpc: { send } as any,
+			entryIndex: {} as any,
+			log: overrides?.log ?? ({ has: async () => false } as any),
+			coordinateToHash:
+				overrides?.coordinateToHash ?? new Cache<string>({ max: 1_000 }),
+		});
+		return { sync, send };
+	};
+
+	// The full census of the pending-sync key family. Every remove path must
+	// leave all of these empty; any structure that survives one of the five
+	// paths is a leak.
+	const expectPendingSyncCensusEmpty = (sync: SimpleSyncronizer<"u64">) => {
+		const anySync = sync as any;
+		expect(sync.syncInFlightQueue.size, "syncInFlightQueue").to.equal(0);
+		expect(
+			sync.syncInFlightQueueInverted.size,
+			"syncInFlightQueueInverted",
+		).to.equal(0);
+		expect(
+			anySync.syncInFlightQueueExpiresAt.size,
+			"syncInFlightQueueExpiresAt",
+		).to.equal(0);
+		expect(
+			anySync.pendingSyncExpiryHeap.length,
+			"pendingSyncExpiryHeap",
+		).to.equal(0);
+		expect(
+			anySync.pendingSyncKeyExpiryNodes.size,
+			"pendingSyncKeyExpiryNodes",
+		).to.equal(0);
+		expect(
+			anySync.pendingSyncAdmissionExpiryNodes.size,
+			"pendingSyncAdmissionExpiryNodes",
+		).to.equal(0);
+		expect(
+			anySync.syncInFlightQueueClaimants.size,
+			"syncInFlightQueueClaimants",
+		).to.equal(0);
+		expect(
+			anySync.syncInFlightQueueClaimantIndexes.size,
+			"syncInFlightQueueClaimantIndexes",
+		).to.equal(0);
+		expect(
+			anySync.syncInFlightQueueRoundRobinCursor.size,
+			"syncInFlightQueueRoundRobinCursor",
+		).to.equal(0);
+		expect(
+			anySync.syncInFlightQueuedCoordinates.size,
+			"syncInFlightQueuedCoordinates",
+		).to.equal(0);
+		expect(
+			anySync.syncInFlightQueuedHashByCoordinate.size,
+			"syncInFlightQueuedHashByCoordinate",
+		).to.equal(0);
+		expect(
+			anySync.syncInFlightQueuedCoordinatesByHash.size,
+			"syncInFlightQueuedCoordinatesByHash",
+		).to.equal(0);
+		expect(anySync.pendingSyncClaimCount, "pendingSyncClaimCount").to.equal(0);
+		expect(
+			anySync.pendingSyncAdmissionCount,
+			"pendingSyncAdmissionCount",
+		).to.equal(0);
+		expect(
+			anySync.pendingSyncAdmissionReservations.size,
+			"pendingSyncAdmissionReservations",
+		).to.equal(0);
+		expect(
+			anySync.pendingSyncAdmissionReservationsByPeer.size,
+			"pendingSyncAdmissionReservationsByPeer",
+		).to.equal(0);
+		expect(
+			anySync.pendingSyncAdmissionReservationsByIdentity.size,
+			"pendingSyncAdmissionReservationsByIdentity",
+		).to.equal(0);
+		expect(
+			anySync.pendingSyncAdmissionCountByPeer.size,
+			"pendingSyncAdmissionCountByPeer",
+		).to.equal(0);
+		expect(
+			anySync.pendingSyncAdmissionIdentitiesByPeer.size,
+			"pendingSyncAdmissionIdentitiesByPeer",
+		).to.equal(0);
+		expect(sync.syncInFlight.size, "syncInFlight").to.equal(0);
+		expect(
+			anySync.syncInFlightTargetsByKey.size,
+			"syncInFlightTargetsByKey",
+		).to.equal(0);
+	};
+
+	const expectClaimCountMatchesClaimants = (sync: SimpleSyncronizer<"u64">) => {
+		const anySync = sync as any;
+		let sum = 0;
+		for (const claimants of anySync.syncInFlightQueueClaimants.values()) {
+			sum += (claimants as Set<string>).size;
+		}
+		expect(anySync.pendingSyncClaimCount).to.equal(sum);
+	};
+
+	it("empties every pending-sync structure on TTL expiry", async () => {
+		const clock = sinon.useFakeTimers({
+			now: 100_000,
+			toFake: ["Date", "setTimeout", "clearTimeout"],
+		});
+		const { sync } = createSync();
+		try {
+			await sync.queueSync(["expiry-hash", 5n], peerA, { skipCheck: true });
+			expect(sync.syncInFlightQueue.size).to.equal(2);
+			expectClaimCountMatchesClaimants(sync);
+
+			await clock.tickAsync(PENDING_SIMPLE_SYNC_KEY_TTL_MS - 1);
+			expect(sync.syncInFlightQueue.size).to.equal(2);
+
+			await clock.tickAsync(1);
+			expectPendingSyncCensusEmpty(sync);
+			expect((sync as any).syncInFlightQueueExpiryTimer).to.equal(undefined);
+		} finally {
+			await sync.close();
+			clock.restore();
+		}
+	});
+
+	it("empties every pending-sync structure when entries arrive", async () => {
+		const { sync } = createSync();
+		try {
+			await sync.queueSync(["added-one", "added-two"], peerA, {
+				skipCheck: true,
+			});
+			await sync.queueSync(["added-one"], peerB, { skipCheck: true });
+			expectClaimCountMatchesClaimants(sync);
+
+			sync.onEntryAddedHash("added-one");
+			expect(sync.syncInFlightQueue.has("added-one")).to.equal(false);
+			expect(sync.syncInFlightQueue.has("added-two")).to.equal(true);
+			expectClaimCountMatchesClaimants(sync);
+
+			sync.onEntryAddedHashes(["added-two"]);
+			expectPendingSyncCensusEmpty(sync);
+		} finally {
+			await sync.close();
+		}
+	});
+
+	it("empties every pending-sync structure through per-peer claim removal", async () => {
+		const { sync } = createSync();
+		try {
+			await sync.queueSync(["shared-key"], peerA, { skipCheck: true });
+			await sync.queueSync(["shared-key"], peerB, { skipCheck: true });
+			expect(sync.syncInFlightQueue.get("shared-key")!.length).to.equal(2);
+
+			sync.onPeerDisconnected(peerA);
+			expect(
+				sync.syncInFlightQueue
+					.get("shared-key")!
+					.map((peer) => peer.hashcode()),
+			).to.deep.equal([peerB.hashcode()]);
+			expect(sync.syncInFlightQueueInverted.has(peerA.hashcode())).to.equal(
+				false,
+			);
+			expect((sync as any).pendingSyncClaimCount).to.equal(1);
+			expectClaimCountMatchesClaimants(sync);
+
+			sync.onPeerDisconnected(peerB);
+			expectPendingSyncCensusEmpty(sync);
+		} finally {
+			await sync.close();
+		}
+	});
+
+	it("empties every pending-sync structure on close", async () => {
+		const { sync } = createSync();
+		try {
+			await sync.queueSync(["close-hash", 9n], peerA, { skipCheck: true });
+			await sync.queueSync(["close-hash"], peerB, { skipCheck: true });
+			expect(sync.pending).to.be.greaterThan(0);
+
+			await sync.close();
+			expectPendingSyncCensusEmpty(sync);
+		} finally {
+			await sync.close();
+		}
+	});
+
+	it("preserves the earliest deadline when a coordinate alias transplants claims", async () => {
+		const clock = sinon.useFakeTimers({
+			now: 100_000,
+			toFake: ["Date", "setTimeout", "clearTimeout"],
+		});
+		const coordinateToHash = new Cache<string>({ max: 1_000 });
+		const { sync } = createSync({ coordinateToHash });
+		const coordinate = 7n;
+		const lateHash = "late-alias-hash";
+		try {
+			await sync.queueSync([coordinate], peerA, { skipCheck: true });
+			const coordinateDeadline = (sync as any).syncInFlightQueueExpiresAt.get(
+				coordinate,
+			);
+			expect(coordinateDeadline).to.equal(
+				100_000 + PENDING_SIMPLE_SYNC_KEY_TTL_MS,
+			);
+
+			await clock.tickAsync(10_000);
+			await sync.queueSync([lateHash], peerB, { skipCheck: true });
+			expect(sync.syncInFlightQueue.has(lateHash)).to.equal(true);
+
+			coordinateToHash.add(coordinate, lateHash);
+			await sync.queueSync([lateHash], peerB, { skipCheck: true });
+
+			// The hash record folded into the coordinate record.
+			expect(sync.syncInFlightQueue.has(lateHash)).to.equal(false);
+			expect(
+				sync.syncInFlightQueue.get(coordinate)!.map((peer) => peer.hashcode()),
+			).to.deep.equal([peerA.hashcode(), peerB.hashcode()]);
+			// The transplanted claim inherits the earlier (coordinate) deadline;
+			// repeated claims and additional peers must not slide it.
+			expect((sync as any).syncInFlightQueueExpiresAt.get(coordinate)).to.equal(
+				coordinateDeadline,
+			);
+			expectClaimCountMatchesClaimants(sync);
+
+			await clock.tickAsync(PENDING_SIMPLE_SYNC_KEY_TTL_MS - 10_000);
+			expectPendingSyncCensusEmpty(sync);
+		} finally {
+			await sync.close();
+			clock.restore();
+		}
+	});
+
+	it("keeps exact round-robin cursor semantics on swap-remove of a middle claimant", async () => {
+		const { sync } = createSync();
+		try {
+			await sync.queueSync(["rr-key"], peerA, { skipCheck: true });
+			await sync.queueSync(["rr-key"], peerB, { skipCheck: true });
+			await sync.queueSync(["rr-key"], peerC, { skipCheck: true });
+			expect(
+				sync.syncInFlightQueue.get("rr-key")!.map((peer) => peer.hashcode()),
+			).to.deep.equal([peerA.hashcode(), peerB.hashcode(), peerC.hashcode()]);
+
+			// Cursor at the last slot, middle claimant removed: the last claimant
+			// swaps into the removed slot and the cursor follows it.
+			(sync as any).syncInFlightQueueRoundRobinCursor.set("rr-key", 2);
+			(sync as any).removePendingSyncClaim("rr-key", peerB.hashcode());
+			expect(
+				sync.syncInFlightQueue.get("rr-key")!.map((peer) => peer.hashcode()),
+			).to.deep.equal([peerA.hashcode(), peerC.hashcode()]);
+			expect(
+				(sync as any).syncInFlightQueueRoundRobinCursor.get("rr-key"),
+			).to.equal(1);
+			expectClaimCountMatchesClaimants(sync);
+
+			// Cursor before the removed slot stays put (modulo the new length).
+			await sync.queueSync(["rr-key"], peerB, { skipCheck: true });
+			(sync as any).syncInFlightQueueRoundRobinCursor.set("rr-key", 0);
+			(sync as any).removePendingSyncClaim("rr-key", peerC.hashcode());
+			expect(
+				sync.syncInFlightQueue.get("rr-key")!.map((peer) => peer.hashcode()),
+			).to.deep.equal([peerA.hashcode(), peerB.hashcode()]);
+			expect(
+				(sync as any).syncInFlightQueueRoundRobinCursor.get("rr-key"),
+			).to.equal(0);
+		} finally {
+			await sync.close();
+		}
+	});
+
+	it("hydrates directly seeded public queue maps and keeps counts exact", async () => {
+		const { sync } = createSync();
+		try {
+			// Tests and integrations seed the public maps directly; the defensive
+			// hydration branches must keep working through the record-store fold.
+			sync.syncInFlightQueue.set("seeded", [peerA]);
+			sync.syncInFlightQueueInverted.set(peerA.hashcode(), new Set(["seeded"]));
+			expect(
+				(sync as any).hasPendingSyncClaim("seeded", peerA.hashcode()),
+			).to.equal(true);
+			expect((sync as any).pendingSyncClaimCount).to.equal(1);
+
+			await sync.queueSync(["seeded"], peerB, { skipCheck: true });
+			expect(
+				sync.syncInFlightQueue.get("seeded")!.map((peer) => peer.hashcode()),
+			).to.deep.equal([peerA.hashcode(), peerB.hashcode()]);
+			expect((sync as any).pendingSyncClaimCount).to.equal(2);
+			expectClaimCountMatchesClaimants(sync);
+
+			sync.onEntryAddedHash("seeded");
+			expectPendingSyncCensusEmpty(sync);
+		} finally {
+			await sync.close();
+		}
+	});
+
+	it("sweeps a directly seeded in-flight row through the defensive scan", async () => {
+		const { sync } = createSync();
+		try {
+			// A directly seeded in-flight row has no reverse-index entry; the
+			// defensive scan must still find and remove it.
+			sync.syncInFlight.set(
+				peerA.hashcode(),
+				new Map([["only-inflight", { timestamp: Date.now() }]]),
+			);
+			sync.onEntryAddedHash("only-inflight");
+			expectPendingSyncCensusEmpty(sync);
+		} finally {
+			await sync.close();
+		}
+	});
+
+	it("does not dispatch claims captured under a rotated dispatch epoch", async () => {
+		let releaseHasMany!: (hashes: string[]) => void;
+		const hasMany = sinon.stub().returns(
+			new Promise<string[]>((resolve) => {
+				releaseHasMany = resolve;
+			}),
+		);
+		const { sync, send } = createSync({
+			log: { has: async () => false, hasMany } as any,
+		});
+		try {
+			const handling = sync.queueSync(["epoch-hash"], peerA);
+			await new Promise<void>((resolve) => setImmediate(resolve));
+			expect(hasMany.calledOnce).to.equal(true);
+
+			// The peer disconnects while its admission lookup is still blocked:
+			// the captured dispatch epoch is deleted, so the resumed queueSync
+			// must not dispatch or retain claims for the stale epoch.
+			sync.onPeerDisconnected(peerA);
+			releaseHasMany([]);
+			await handling;
+
+			expect(send.called).to.equal(false);
+			expect(sync.syncInFlightQueue.size).to.equal(0);
+			expectPendingSyncCensusEmpty(sync);
+		} finally {
+			await sync.close();
+		}
+	});
+});
