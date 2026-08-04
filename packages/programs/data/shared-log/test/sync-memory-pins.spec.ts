@@ -2,8 +2,13 @@ import { Cache } from "@peerbit/cache";
 import { Ed25519Keypair } from "@peerbit/crypto";
 import { expect } from "chai";
 import sinon from "sinon";
+import { RatelessIBLTSynchronizer } from "../src/sync/rateless-iblt.js";
 import {
+	MAX_PENDING_SIMPLE_SYNC_LOOKUPS_PER_PEER,
 	PENDING_SIMPLE_SYNC_KEY_TTL_MS,
+	RequestMaybeSyncCoordinate,
+	ResponseMaybeSync,
+	ResponseMaybeSyncCapabilities,
 	SimpleSyncronizer,
 } from "../src/sync/simple.js";
 
@@ -366,6 +371,340 @@ describe("sync-chunking memory pins", () => {
 			expect(sync.syncInFlightQueue.size).to.equal(0);
 			expectPendingSyncCensusEmpty(sync);
 		} finally {
+			await sync.close();
+		}
+	});
+});
+
+// Stage-4 memory-growth pins (the leak fix). Storage resolvers and transport
+// sends are not universally abortable: a call that never settles after its
+// peer disconnected must not pin the peer's (or the global) slot quota. The
+// release closures capture per-peer slot rows; disconnect detaches the row.
+describe("sync-chunking slot-quota pins", () => {
+	let peerA: Awaited<ReturnType<typeof Ed25519Keypair.create>>["publicKey"];
+
+	before(async () => {
+		peerA = (await Ed25519Keypair.create()).publicKey;
+	});
+
+	const waitFor = async (condition: () => boolean) => {
+		for (let i = 0; i < 1_000; i++) {
+			if (condition()) {
+				return;
+			}
+			await Promise.resolve();
+		}
+		throw new Error("condition was not reached");
+	};
+
+	it("releases a disconnected peer's mid-lookup slots and restores the full quota", async () => {
+		const resolveHashesForSymbols = sinon.stub().returns(new Promise(() => {}));
+		const sync = new SimpleSyncronizer<"u64">({
+			rpc: { send: sinon.stub().resolves() } as any,
+			entryIndex: {} as any,
+			log: {} as any,
+			coordinateToHash: new Cache<string>({ max: 100 }),
+			resolveHashesForSymbols,
+		});
+		try {
+			void sync.onMessage(
+				new RequestMaybeSyncCoordinate({ hashNumbers: [1n] }),
+				{ from: peerA } as any,
+			);
+			await waitFor(() => resolveHashesForSymbols.callCount === 1);
+			expect((sync as any).pendingCoordinateLookupCount).to.equal(1);
+			expect(
+				(sync as any).pendingCoordinateLookupCountByPeer.get(peerA.hashcode()),
+			).to.equal(1);
+
+			sync.onPeerDisconnected(peerA);
+			expect((sync as any).pendingCoordinateLookupCount).to.equal(0);
+			expect((sync as any).pendingCoordinateLookupCountByPeer.size).to.equal(0);
+			expect((sync as any).syncResponseSlotRows.size).to.equal(0);
+
+			// The reconnected peer gets its full lookup quota back even though
+			// the old resolver calls never settle.
+			for (
+				let index = 0;
+				index < MAX_PENDING_SIMPLE_SYNC_LOOKUPS_PER_PEER;
+				index += 1
+			) {
+				void sync.onMessage(
+					new RequestMaybeSyncCoordinate({
+						hashNumbers: [BigInt(10 + index)],
+					}),
+					{ from: peerA } as any,
+				);
+			}
+			await waitFor(
+				() =>
+					resolveHashesForSymbols.callCount ===
+					1 + MAX_PENDING_SIMPLE_SYNC_LOOKUPS_PER_PEER,
+			);
+			expect((sync as any).pendingCoordinateLookupCount).to.equal(
+				MAX_PENDING_SIMPLE_SYNC_LOOKUPS_PER_PEER,
+			);
+
+			await sync.onMessage(
+				new RequestMaybeSyncCoordinate({ hashNumbers: [99n] }),
+				{ from: peerA } as any,
+			);
+			expect(resolveHashesForSymbols.callCount).to.equal(
+				1 + MAX_PENDING_SIMPLE_SYNC_LOOKUPS_PER_PEER,
+			);
+		} finally {
+			await sync.close();
+		}
+	});
+
+	it("nets slot accounting to zero and drops the idle row when work settles", async () => {
+		const sync = new SimpleSyncronizer<"u64">({
+			rpc: { send: sinon.stub().resolves() } as any,
+			entryIndex: {} as any,
+			log: {} as any,
+			coordinateToHash: new Cache<string>({ max: 100 }),
+			resolveHashListForSymbols: sinon.stub().returns(["settled-hash"]),
+		});
+		const ship = sinon.stub(sync as any, "shipExchangeHeads").resolves({
+			messages: 1,
+			fused: false,
+		});
+		try {
+			await sync.onMessage(
+				new RequestMaybeSyncCoordinate({ hashNumbers: [1n] }),
+				{ from: peerA } as any,
+			);
+			expect(ship.calledOnce).to.equal(true);
+			expect((sync as any).pendingCoordinateLookupCount).to.equal(0);
+			expect((sync as any).pendingCoordinateResponseCount).to.equal(0);
+			expect((sync as any).pendingCoordinateLookupCountByPeer.size).to.equal(0);
+			expect((sync as any).pendingCoordinateResponseCountByPeer.size).to.equal(
+				0,
+			);
+			expect((sync as any).syncResponseSlotRows.size).to.equal(0);
+		} finally {
+			await sync.close();
+		}
+	});
+
+	it("releases a blocked response-ship slot when the peer disconnects", async () => {
+		let releaseShip!: () => void;
+		const blockedShip = new Promise<{ messages: number; fused: boolean }>(
+			(resolve) => {
+				releaseShip = () => resolve({ messages: 1, fused: false });
+			},
+		);
+		const sync = new SimpleSyncronizer<"u64">({
+			rpc: { send: sinon.stub().resolves() } as any,
+			entryIndex: {} as any,
+			log: {} as any,
+			coordinateToHash: new Cache<string>({ max: 100 }),
+			resolveHashListForSymbols: sinon.stub().returns(["ship-hash"]),
+		});
+		const ship = sinon
+			.stub(sync as any, "shipExchangeHeads")
+			.returns(blockedShip);
+		try {
+			const handling = sync.onMessage(
+				new RequestMaybeSyncCoordinate({ hashNumbers: [1n] }),
+				{ from: peerA } as any,
+			);
+			await waitFor(() => ship.callCount === 1);
+			expect((sync as any).pendingCoordinateLookupCount).to.equal(0);
+			expect((sync as any).pendingCoordinateResponseCount).to.equal(1);
+
+			sync.onPeerDisconnected(peerA);
+			expect((sync as any).pendingCoordinateResponseCount).to.equal(0);
+			expect((sync as any).pendingCoordinateResponseCountByPeer.size).to.equal(
+				0,
+			);
+			expect((sync as any).syncResponseSlotRows.size).to.equal(0);
+
+			// The blocked ship settling late is aggregate-neutral.
+			releaseShip();
+			await handling;
+			expect((sync as any).pendingCoordinateResponseCount).to.equal(0);
+			expect((sync as any).pendingCoordinateResponseCountByPeer.size).to.equal(
+				0,
+			);
+		} finally {
+			releaseShip();
+			await sync.close();
+		}
+	});
+
+	it("releases a disconnected peer's active response slots without touching a successor", async () => {
+		const releases: (() => void)[] = [];
+		const sendRawExchangeHeads = sinon.stub().callsFake(
+			() =>
+				new Promise<number>((resolve) => {
+					releases.push(() => resolve(1));
+				}),
+		);
+		const sync = new SimpleSyncronizer<"u64">({
+			rpc: { send: sinon.stub().resolves() } as any,
+			entryIndex: {} as any,
+			log: {} as any,
+			coordinateToHash: new Cache<string>({ max: 10 }),
+			sendRawExchangeHeads,
+		});
+		const active: Promise<boolean>[] = [];
+		try {
+			const first = sync.expectMaybeSyncResponse({
+				hashes: ["slot-hash-0"],
+				targets: [peerA.hashcode()],
+			});
+			active.push(
+				sync.onMessage(
+					new ResponseMaybeSyncCapabilities({ hashes: ["slot-hash-0"] }),
+					{ from: peerA } as any,
+				),
+			);
+			await waitFor(() => sendRawExchangeHeads.callCount === 1);
+			expect((sync as any).activeMaybeSyncResponseCount).to.equal(1);
+
+			sync.onPeerDisconnected(peerA);
+			expect((sync as any).activeMaybeSyncResponseCount).to.equal(0);
+			expect((sync as any).activeMaybeSyncResponseCountByPeer.size).to.equal(0);
+
+			// The reconnected peer's fresh response work uses a fresh row.
+			const second = sync.expectMaybeSyncResponse({
+				hashes: ["slot-hash-1"],
+				targets: [peerA.hashcode()],
+			});
+			active.push(
+				sync.onMessage(
+					new ResponseMaybeSyncCapabilities({ hashes: ["slot-hash-1"] }),
+					{ from: peerA } as any,
+				),
+			);
+			await waitFor(() => sendRawExchangeHeads.callCount === 2);
+			expect((sync as any).activeMaybeSyncResponseCount).to.equal(1);
+
+			// The pre-disconnect ship settling late never decrements the
+			// successor's accounting.
+			releases.shift()!();
+			await active.shift();
+			expect((sync as any).activeMaybeSyncResponseCount).to.equal(1);
+			expect(
+				(sync as any).activeMaybeSyncResponseCountByPeer.get(peerA.hashcode()),
+			).to.equal(1);
+
+			releases.shift()!();
+			await active.shift();
+			expect((sync as any).activeMaybeSyncResponseCount).to.equal(0);
+			expect((sync as any).activeMaybeSyncResponseCountByPeer.size).to.equal(0);
+			first?.release();
+			second?.release();
+		} finally {
+			for (const release of releases) {
+				release();
+			}
+			await Promise.all(active);
+			await sync.close();
+		}
+	});
+});
+
+describe("rateless-iblt-syncronizer slot-quota pins", () => {
+	const waitFor = async (condition: () => boolean) => {
+		for (let i = 0; i < 1_000; i++) {
+			if (condition()) {
+				return;
+			}
+			await Promise.resolve();
+		}
+		throw new Error("condition was not reached");
+	};
+
+	const createRateless = () =>
+		new RatelessIBLTSynchronizer<"u64">({
+			rpc: { send: sinon.stub().resolves() } as any,
+			rangeIndex: {} as any,
+			entryIndex: {} as any,
+			log: {} as any,
+			coordinateToHash: new Cache<string>({ max: 1000, ttl: 1000 }),
+			numbers: { maxValue: 2n ** 64n - 1n } as any,
+		} as any);
+
+	const createEntries = (count = 400) => {
+		const entries = new Map<string, any>();
+		for (let index = 0; index < count; index += 1) {
+			const hash = `hash-${index}`;
+			entries.set(hash, {
+				hash,
+				hashNumber: BigInt(index + 1),
+				assignedToRangeBoundary: false,
+			});
+		}
+		return entries;
+	};
+
+	it("frees a disconnected peer's response slots while open keeps accounting", async () => {
+		const sync = createRateless();
+		const releases: (() => void)[] = [];
+		let blockShipments = true;
+		const ship = sinon
+			.stub(sync.simple, "shipAuthorizedMaybeSyncResponse")
+			.callsFake(async () => {
+				if (blockShipments) {
+					await new Promise<void>((resolve) => releases.push(resolve));
+				}
+				return { messages: 1, fused: false, entries: 1 };
+			});
+		const from = { hashcode: () => "peer-a" } as any;
+		const handlings: Promise<boolean>[] = [];
+		try {
+			await sync.onMaybeMissingEntries({
+				entries: createEntries(),
+				targets: ["peer-a"],
+			});
+			handlings.push(
+				sync.onMessage(new ResponseMaybeSync({ hashes: ["hash-0"] }), {
+					from,
+				} as any),
+			);
+			await waitFor(() => ship.callCount === 1);
+			expect((sync as any).activeRatelessResponseCount).to.equal(1);
+
+			sync.onPeerDisconnected("peer-a");
+			expect((sync as any).activeRatelessResponseCount).to.equal(0);
+			expect((sync as any).activeRatelessResponseCountByPeer.size).to.equal(0);
+			expect((sync as any).outgoingSyncProcessByTarget.size).to.equal(0);
+			expect((sync as any).ratelessResponseSlotRows.size).to.equal(0);
+
+			// The reconnected peer's fresh process gets a fresh row.
+			await sync.onMaybeMissingEntries({
+				entries: createEntries(),
+				targets: ["peer-a"],
+			});
+			handlings.push(
+				sync.onMessage(new ResponseMaybeSync({ hashes: ["hash-1"] }), {
+					from,
+				} as any),
+			);
+			await waitFor(() => ship.callCount === 2);
+			expect((sync as any).activeRatelessResponseCount).to.equal(1);
+
+			// open() rotation deliberately does NOT clear slot accounting:
+			// cross-generation ship work is charged until it settles.
+			await sync.open();
+			expect((sync as any).activeRatelessResponseCount).to.equal(1);
+
+			blockShipments = false;
+			for (const release of releases) {
+				release();
+			}
+			await Promise.all(handlings);
+			// The pre-disconnect lease settles aggregate-neutrally; the live
+			// lease returns its slot.
+			expect((sync as any).activeRatelessResponseCount).to.equal(0);
+			expect((sync as any).activeRatelessResponseCountByPeer.size).to.equal(0);
+		} finally {
+			blockShipments = false;
+			for (const release of releases) {
+				release();
+			}
 			await sync.close();
 		}
 	});

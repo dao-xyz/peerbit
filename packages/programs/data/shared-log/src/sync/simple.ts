@@ -438,6 +438,21 @@ export type AuthorizedMaybeSyncResponseLease = {
 	release: (options?: { fulfilled?: boolean }) => void;
 };
 
+// Per-peer slot accounting for coordinate lookups, coordinate responses and
+// active maybe-sync responses. The underlying storage resolvers are not
+// universally abortable, so a release closure may settle long after the peer
+// disconnected (or never). Release closures capture the row object: once a
+// disconnect or close() detaches the row, the peer's slots return to the
+// aggregate quota immediately, and a late release only settles the detached
+// row — it never touches a reconnected successor's quota or the globals.
+type SyncResponseSlotRow = {
+	peer: string;
+	attached: boolean;
+	lookups: number;
+	responses: number;
+	active: number;
+};
+
 type SyncDispatchLifecycle = {
 	ownershipLifecycleController: AbortController;
 	callerSignal?: AbortSignal;
@@ -541,6 +556,7 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 	private pendingCoordinateLookupCountByPeer: Map<string, number>;
 	private pendingCoordinateResponseCount: number;
 	private pendingCoordinateResponseCountByPeer: Map<string, number>;
+	private syncResponseSlotRows: Map<string, SyncResponseSlotRow>;
 
 	// map of hash to public keys that we have asked for entries
 	syncInFlight!: Map<string, Map<SyncableKey, { timestamp: number }>>;
@@ -630,6 +646,7 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 		this.pendingCoordinateLookupCountByPeer = new Map();
 		this.pendingCoordinateResponseCount = 0;
 		this.pendingCoordinateResponseCountByPeer = new Map();
+		this.syncResponseSlotRows = new Map();
 		this.syncInFlight = new Map();
 		this.syncInFlightTargetsByKey = new Map();
 		this.rpc = properties.rpc;
@@ -2048,6 +2065,8 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 		if (acceptedByLifecycle.size === 0) {
 			return [];
 		}
+		const slotRow = this.getOrCreateSyncResponseSlotRow(fromHash);
+		slotRow.active += 1;
 		this.activeMaybeSyncResponseCount += 1;
 		this.activeMaybeSyncResponseCountByPeer.set(
 			fromHash,
@@ -2086,17 +2105,21 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 						targetLifecycle.lifecycle.retainedWork -= 1;
 						remainingLeases -= 1;
 						if (remainingLeases === 0) {
-							this.activeMaybeSyncResponseCount -= 1;
-							const activeForPeer =
-								(this.activeMaybeSyncResponseCountByPeer.get(fromHash) ?? 1) -
-								1;
-							if (activeForPeer === 0) {
-								this.activeMaybeSyncResponseCountByPeer.delete(fromHash);
-							} else {
-								this.activeMaybeSyncResponseCountByPeer.set(
-									fromHash,
-									activeForPeer,
-								);
+							slotRow.active -= 1;
+							if (slotRow.attached) {
+								this.activeMaybeSyncResponseCount -= 1;
+								const activeForPeer =
+									(this.activeMaybeSyncResponseCountByPeer.get(fromHash) ?? 1) -
+									1;
+								if (activeForPeer === 0) {
+									this.activeMaybeSyncResponseCountByPeer.delete(fromHash);
+								} else {
+									this.activeMaybeSyncResponseCountByPeer.set(
+										fromHash,
+										activeForPeer,
+									);
+								}
+								this.maybeDropIdleSyncResponseSlotRow(slotRow);
 							}
 						}
 						this.schedulePendingMaybeSyncResponseWaiter();
@@ -3152,10 +3175,53 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 		);
 	}
 
+	private getOrCreateSyncResponseSlotRow(peer: string): SyncResponseSlotRow {
+		let row = this.syncResponseSlotRows.get(peer);
+		if (!row) {
+			row = { peer, attached: true, lookups: 0, responses: 0, active: 0 };
+			this.syncResponseSlotRows.set(peer, row);
+		}
+		return row;
+	}
+
+	private detachSyncResponseSlotRow(peer: string): void {
+		const row = this.syncResponseSlotRows.get(peer);
+		if (!row) {
+			return;
+		}
+		row.attached = false;
+		this.syncResponseSlotRows.delete(peer);
+		if (row.lookups > 0) {
+			this.pendingCoordinateLookupCount -= row.lookups;
+			this.pendingCoordinateLookupCountByPeer.delete(peer);
+		}
+		if (row.responses > 0) {
+			this.pendingCoordinateResponseCount -= row.responses;
+			this.pendingCoordinateResponseCountByPeer.delete(peer);
+		}
+		if (row.active > 0) {
+			this.activeMaybeSyncResponseCount -= row.active;
+			this.activeMaybeSyncResponseCountByPeer.delete(peer);
+		}
+	}
+
+	private maybeDropIdleSyncResponseSlotRow(row: SyncResponseSlotRow): void {
+		if (
+			row.attached &&
+			row.lookups === 0 &&
+			row.responses === 0 &&
+			row.active === 0
+		) {
+			this.syncResponseSlotRows.delete(row.peer);
+		}
+	}
+
 	private tryAcquireCoordinateLookup(peer: string): (() => void) | undefined {
 		if (!this.canStartPendingSyncLookup(peer)) {
 			return undefined;
 		}
+		const row = this.getOrCreateSyncResponseSlotRow(peer);
+		row.lookups += 1;
 		this.pendingCoordinateLookupCount += 1;
 		this.pendingCoordinateLookupCountByPeer.set(
 			peer,
@@ -3167,6 +3233,11 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 				return;
 			}
 			released = true;
+			row.lookups -= 1;
+			if (!row.attached) {
+				// The quota already returned in aggregate when the row detached.
+				return;
+			}
 			this.pendingCoordinateLookupCount -= 1;
 			const remaining =
 				(this.pendingCoordinateLookupCountByPeer.get(peer) ?? 1) - 1;
@@ -3175,6 +3246,7 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 			} else {
 				this.pendingCoordinateLookupCountByPeer.set(peer, remaining);
 			}
+			this.maybeDropIdleSyncResponseSlotRow(row);
 		};
 	}
 
@@ -3187,6 +3259,8 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 		) {
 			return undefined;
 		}
+		const row = this.getOrCreateSyncResponseSlotRow(peer);
+		row.responses += 1;
 		this.pendingCoordinateResponseCount += 1;
 		this.pendingCoordinateResponseCountByPeer.set(
 			peer,
@@ -3198,6 +3272,11 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 				return;
 			}
 			released = true;
+			row.responses -= 1;
+			if (!row.attached) {
+				// The quota already returned in aggregate when the row detached.
+				return;
+			}
 			this.pendingCoordinateResponseCount -= 1;
 			const remaining =
 				(this.pendingCoordinateResponseCountByPeer.get(peer) ?? 1) - 1;
@@ -3206,6 +3285,7 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 			} else {
 				this.pendingCoordinateResponseCountByPeer.set(peer, remaining);
 			}
+			this.maybeDropIdleSyncResponseSlotRow(row);
 		};
 	}
 
@@ -4643,6 +4723,11 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 			}
 			this.syncInFlightQueueInverted.delete(publicKeyHash);
 		}
+		// Storage lookups and response ships for this peer may never settle
+		// (the resolvers are not universally abortable). Detach the slot row so
+		// the peer's quota returns immediately; the captured closures settle
+		// against the detached row without touching a successor's quota.
+		this.detachSyncResponseSlotRow(publicKeyHash);
 	}
 
 	get pending() {
