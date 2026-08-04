@@ -200,17 +200,47 @@ export class InstanceLifecycle {
 	// ---- checked-prune identity (seams 4 and 7) ----
 
 	/** ≡ prune()'s isCheckedPruneLifecycleCurrent triple for captures taken
-	 * at the same admission point. */
+	 * at the same admission point. Stage 3 extension: an omitted
+	 * `closeController` SKIPS that term (the non-prune() checked-prune seats
+	 * never compared it — adding the compare would strengthen their
+	 * predicates), and `controller` lets a seat honor an explicitly threaded
+	 * (possibly stale) ownership capture instead of the current one. */
 	isCheckedPruneCurrent(
 		coordinator: object | undefined,
-		closeController: AbortController | undefined,
+		closeController?: AbortController,
+		controller: AbortController | undefined = this.deps.getOwnershipController(),
 	): boolean {
 		return (
 			this.isCurrent() &&
-			this.isActiveFor(this.deps.getOwnershipController()) &&
+			this.isActiveFor(controller) &&
 			coordinator === this.deps.getCheckedPruneCoordinator() &&
-			closeController === this.deps.getCloseController()
+			(closeController === undefined ||
+				closeController === this.deps.getCloseController())
 		);
+	}
+
+	/** Exact fold of prune()'s throwIfCheckedPruneLifecycleInactive and of
+	 * revalidateCheckedPruneOwnership's controller branch (there with the
+	 * closeController term omitted). Error order MUST stay: poison Error →
+	 * ownership TerminalOperationNotStartedError ("Replication ownership
+	 * lifecycle is no longer active") → checked-prune
+	 * TerminalOperationNotStartedError ("Checked prune lifecycle is no
+	 * longer active"). */
+	throwIfCheckedPruneInactive(
+		coordinator: object | undefined,
+		closeController?: AbortController,
+		controller: AbortController | undefined = this.deps.getOwnershipController(),
+	): void {
+		this.throwIfInactive(controller);
+		if (
+			coordinator !== this.deps.getCheckedPruneCoordinator() ||
+			(closeController !== undefined &&
+				closeController !== this.deps.getCloseController())
+		) {
+			throw new TerminalOperationNotStartedError(
+				"Checked prune lifecycle is no longer active",
+			);
+		}
 	}
 
 	// ---- terminal lane fences (A4): exposed, NOT folded into isActive ----
