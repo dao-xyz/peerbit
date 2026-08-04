@@ -224,6 +224,73 @@ describe("lifecycle instance identity", () => {
 			host.ownership!.abort();
 			expect(lifecycle.isCheckedPruneCurrent(coordinator, closeController)).to
 				.be.false;
+
+			// Stage-3 signature extension: an omitted closeController SKIPS that
+			// term (the non-prune seats never compared it), and an explicitly
+			// threaded stale controller vetoes even while the current one is live.
+			const host2 = createHost();
+			const lifecycle2 = createCurrentLifecycle(host2);
+			expect(lifecycle2.isCheckedPruneCurrent(host2.checkedPrune)).to.be.true;
+			host2.closeController = new AbortController();
+			expect(lifecycle2.isCheckedPruneCurrent(host2.checkedPrune)).to.be.true;
+			expect(
+				lifecycle2.isCheckedPruneCurrent(
+					host2.checkedPrune,
+					undefined,
+					new AbortController(),
+				),
+			).to.be.false;
+			expect(
+				lifecycle2.isCheckedPruneCurrent(
+					host2.checkedPrune,
+					undefined,
+					host2.ownership,
+				),
+			).to.be.true;
+		});
+
+		it("throwIfCheckedPruneInactive throws poison, then ownership-inactive, then checked-prune-inactive, with legacy messages", () => {
+			const host = createHost();
+			const lifecycle = createCurrentLifecycle(host);
+			const coordinator = host.checkedPrune;
+			const closeController = host.closeController;
+			expect(() =>
+				lifecycle.throwIfCheckedPruneInactive(coordinator, closeController),
+			).to.not.throw();
+			// closeController omitted => term skipped even when it would mismatch.
+			host.closeController = new AbortController();
+			expect(() =>
+				lifecycle.throwIfCheckedPruneInactive(coordinator),
+			).to.not.throw();
+			expect(() =>
+				lifecycle.throwIfCheckedPruneInactive(coordinator, closeController),
+			).to.throw(
+				TerminalOperationNotStartedError,
+				"Checked prune lifecycle is no longer active",
+			);
+			expect(() => lifecycle.throwIfCheckedPruneInactive({})).to.throw(
+				TerminalOperationNotStartedError,
+				"Checked prune lifecycle is no longer active",
+			);
+			// Ownership inactivity wins over the checked-prune mismatch.
+			host.ownership!.abort();
+			expect(() => lifecycle.throwIfCheckedPruneInactive({})).to.throw(
+				TerminalOperationNotStartedError,
+				"Replication ownership lifecycle is no longer active",
+			);
+			// Poison wins over everything and carries the failure as `cause`.
+			const failure = new Error("boom");
+			host.poison = failure;
+			try {
+				lifecycle.throwIfCheckedPruneInactive(coordinator, closeController);
+				expect.fail("expected throw");
+			} catch (error: any) {
+				expect(error).to.not.be.instanceOf(TerminalOperationNotStartedError);
+				expect(error.message).to.equal(
+					"Replication ownership recovery is required before further planning",
+				);
+				expect(error.cause).to.equal(failure);
+			}
 		});
 
 		it("terminal lane fences are exposed without being folded into isActive", () => {

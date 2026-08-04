@@ -2077,13 +2077,26 @@ export class SharedLog<
 
 	private remoteBlocks!: RemoteBlocks;
 
+	// Stage 3 (seam 8): the ownership-fence helper family below delegates to
+	// InstanceLifecycle, whose folds are documented byte-identical in error
+	// type, message, and `cause` (src/instance-lifecycle.ts). The helpers
+	// stay instance methods — extracted-module deps closures and test spies
+	// depend on them. The `lifecycle === undefined` fallbacks preserve the
+	// legacy semantics verbatim for borsh-deserialized never-opened clones,
+	// which skip constructors (no lifecycle, no controllers) — including the
+	// legacy TypeError a capture attempt raises on such a clone.
 	private throwIfReplicationOwnershipPoisoned(): void {
-		if (this._replicationRangeMutationFailure !== undefined) {
-			throw new Error(
-				"Replication ownership recovery is required before further planning",
-				{ cause: this._replicationRangeMutationFailure },
-			);
+		const lifecycle = this._instanceLifecycle;
+		if (lifecycle === undefined) {
+			if (this._replicationRangeMutationFailure !== undefined) {
+				throw new Error(
+					"Replication ownership recovery is required before further planning",
+					{ cause: this._replicationRangeMutationFailure },
+				);
+			}
+			return;
 		}
+		lifecycle.throwIfPoisoned();
 	}
 
 	private startRepairLifecycle(): AbortController {
@@ -2098,12 +2111,16 @@ export class SharedLog<
 	}
 
 	private isRepairLifecycleActive(controller: AbortController): boolean {
-		return (
-			controller === this._repairLifecycleController &&
-			!controller.signal.aborted &&
-			this._replicationRangeMutationFailure === undefined &&
-			!this.closed
-		);
+		const lifecycle = this._instanceLifecycle;
+		if (lifecycle === undefined) {
+			return (
+				controller === this._repairLifecycleController &&
+				!controller.signal.aborted &&
+				this._replicationRangeMutationFailure === undefined &&
+				!this.closed
+			);
+		}
+		return lifecycle.isActiveFor(controller);
 	}
 
 	private captureReplicationOwnershipLifecycle(): AbortController {
@@ -2115,12 +2132,20 @@ export class SharedLog<
 	private throwIfReplicationOwnershipLifecycleInactive(
 		controller: AbortController,
 	): void {
-		this.throwIfReplicationOwnershipPoisoned();
-		if (!this.isRepairLifecycleActive(controller)) {
-			throw new TerminalOperationNotStartedError(
-				"Replication ownership lifecycle is no longer active",
-			);
+		const lifecycle = this._instanceLifecycle;
+		if (lifecycle === undefined) {
+			this.throwIfReplicationOwnershipPoisoned();
+			if (!this.isRepairLifecycleActive(controller)) {
+				throw new TerminalOperationNotStartedError(
+					"Replication ownership lifecycle is no longer active",
+				);
+			}
+			return;
 		}
+		// `lifecycle` is the current instance fetched synchronously above, so
+		// throwIfInactive's isCurrent() term is trivially true and this reduces
+		// to the legacy poison-then-active sequence with identical errors.
+		lifecycle.throwIfInactive(controller);
 	}
 
 	private poisonReplicationOwnership(failure: unknown): unknown {
@@ -5995,14 +6020,22 @@ export class SharedLog<
 			options?.expectedJoinWarmupGeneration !== undefined
 				? options.expectedJoinWarmupGeneration
 				: (this.joinWarmup._joinWarmupGenerationByTarget.get(keyHash) ?? null);
+		// Stage 3 (seam 1): the three ownership predicates delegate onto the
+		// session registry / instance lifecycle. `undefined` keeps meaning
+		// "removal not scoped to that identity" — the guards stay in the
+		// caller expressions exactly as before.
 		const ownsSubscriptionEpoch = () =>
 			options?.subscriptionEpoch === undefined ||
-			this.isCurrentSubscriptionEpoch(keyHash, options.subscriptionEpoch);
+			this._peerSessions.isCurrent(keyHash, options.subscriptionEpoch);
 		const ownsReplicationLifecycle = () =>
 			options?.replicationLifecycleController === undefined ||
-			this.isReplicationLifecycleActive(options.replicationLifecycleController);
+			this._instanceLifecycle!.isMembershipActiveFor(
+				options.replicationLifecycleController,
+			);
 		const ownsReplicationOwnershipLifecycle = () =>
-			this.isRepairLifecycleActive(replicationOwnershipLifecycleController);
+			this._instanceLifecycle!.isActiveFor(
+				replicationOwnershipLifecycleController,
+			);
 		const cancelExpectedJoinWarmupTarget = () => {
 			if (
 				expectedJoinWarmupGeneration !== null &&
@@ -8728,10 +8761,15 @@ export class SharedLog<
 		}
 		const checkedPruneCoordinator = this._checkedPrune;
 		const pruneDebouncedFn = this.pruneDebouncedFn;
+		const lifecycle = this._instanceLifecycle!;
 		const isCurrent = () =>
-			this.isRepairLifecycleActive(ownershipLifecycleController) &&
-			this._checkedPrune === checkedPruneCoordinator &&
-			this.pruneDebouncedFn === pruneDebouncedFn &&
+			// closeController omitted: this seat never compared it.
+			lifecycle.isCheckedPruneCurrent(
+				checkedPruneCoordinator,
+				undefined,
+				ownershipLifecycleController,
+			) &&
+			lifecycle.isPruneDebouncerCurrent(pruneDebouncedFn) &&
 			(additionalCurrentCheck?.() ?? true);
 		if (!isCurrent()) {
 			return false;
@@ -8914,7 +8952,15 @@ export class SharedLog<
 			args.checkedPruneCoordinator ?? this._checkedPrune;
 		const throwIfInactive = () => {
 			if (args.ownershipLifecycleController) {
-				this.throwIfReplicationOwnershipLifecycleInactive(
+				// Stage 3 (seam 7): lifecycle.throwIfInactive + an EXPLICIT
+				// coordinator compare. Deliberately NOT isCheckedPruneCurrent /
+				// throwIfCheckedPruneInactive with a closeController term: the
+				// legacy predicate here never compared _closeController, and
+				// folding it in would strengthen this fence. The lifecycle is
+				// re-fetched per invocation, matching the legacy re-read of
+				// this._checkedPrune against the older captured coordinator
+				// (mixed-window semantics are intentional).
+				this._instanceLifecycle!.throwIfInactive(
 					args.ownershipLifecycleController,
 				);
 				if (this._checkedPrune !== checkedPruneCoordinator) {
@@ -9449,9 +9495,14 @@ export class SharedLog<
 		ownershipLifecycleController = this.captureReplicationOwnershipLifecycle(),
 	) {
 		const checkedPruneCoordinator = this._checkedPrune;
+		const lifecycle = this._instanceLifecycle!;
 		const isCurrent = () =>
-			this.isRepairLifecycleActive(ownershipLifecycleController) &&
-			this._checkedPrune === checkedPruneCoordinator;
+			// closeController omitted: this seat never compared it.
+			lifecycle.isCheckedPruneCurrent(
+				checkedPruneCoordinator,
+				undefined,
+				ownershipLifecycleController,
+			);
 		if (!isCurrent() || this._checkedPruneAuditTimer) {
 			return;
 		}
@@ -9507,9 +9558,14 @@ export class SharedLog<
 		ownershipLifecycleController = this.captureReplicationOwnershipLifecycle(),
 	) {
 		const checkedPruneCoordinator = this._checkedPrune;
+		const lifecycle = this._instanceLifecycle!;
 		const isCurrent = () =>
-			this.isRepairLifecycleActive(ownershipLifecycleController) &&
-			this._checkedPrune === checkedPruneCoordinator;
+			// closeController omitted: this seat never compared it.
+			lifecycle.isCheckedPruneCurrent(
+				checkedPruneCoordinator,
+				undefined,
+				ownershipLifecycleController,
+			);
 		if (!isCurrent()) return;
 		if (checkedPruneCoordinator.hasPendingDelete(args.entry.hash)) return;
 
@@ -14135,11 +14191,15 @@ export class SharedLog<
 		const pruneOwnershipLifecycleController =
 			this.captureReplicationOwnershipLifecycle();
 		const checkedPruneCoordinator = this._checkedPrune;
+		const pruneLifecycle = this._instanceLifecycle!;
 		let pruneDebouncedFn!: typeof this.pruneDebouncedFn;
 		const isPruneDebounceCurrent = () =>
-			this.isRepairLifecycleActive(pruneOwnershipLifecycleController) &&
-			this._checkedPrune === checkedPruneCoordinator &&
-			this.pruneDebouncedFn === pruneDebouncedFn;
+			// closeController omitted: this seat never compared it.
+			pruneLifecycle.isCheckedPruneCurrent(
+				checkedPruneCoordinator,
+				undefined,
+				pruneOwnershipLifecycleController,
+			) && pruneLifecycle.isPruneDebouncerCurrent(pruneDebouncedFn);
 		pruneDebouncedFn = debouncedAccumulatorMap(
 			async (map) => {
 				if (!isPruneDebounceCurrent()) {
@@ -15294,12 +15354,19 @@ export class SharedLog<
 		ownershipLifecycleController: AbortController,
 		checkedPruneCoordinator = this._checkedPrune,
 	) {
+		const lifecycle = this._instanceLifecycle!;
 		const invalidated = checkedPruneCoordinator.cleanupPeer(peerHash);
 		for (const generation of invalidated) {
 			const canRetry =
 				generation.pending.retryOnInvalidation === true &&
-				this._checkedPrune === checkedPruneCoordinator &&
-				this.isRepairLifecycleActive(ownershipLifecycleController);
+				// closeController omitted: this seat never compared it. The
+				// coordinator here is a parameter — the compare stays
+				// param-vs-current exactly as before.
+				lifecycle.isCheckedPruneCurrent(
+					checkedPruneCoordinator,
+					undefined,
+					ownershipLifecycleController,
+				);
 			try {
 				void generation.pending.reject(
 					new Error(
@@ -15313,8 +15380,11 @@ export class SharedLog<
 			}
 			if (
 				canRetry &&
-				this._checkedPrune === checkedPruneCoordinator &&
-				this.isRepairLifecycleActive(ownershipLifecycleController) &&
+				lifecycle.isCheckedPruneCurrent(
+					checkedPruneCoordinator,
+					undefined,
+					ownershipLifecycleController,
+				) &&
 				!checkedPruneCoordinator.hasPendingDelete(generation.hash)
 			) {
 				try {
@@ -24241,12 +24311,15 @@ export class SharedLog<
 			return { admitted: [], missing: [] };
 		}
 		const checkedPruneCoordinator = this._checkedPrune;
+		const lifecycle = this._instanceLifecycle!;
 		const ownershipLifecycleController =
 			this.captureReplicationOwnershipLifecycle();
 		const admission = await this.withReplicationRangeMutationQueue(async () => {
 			this.throwIfReplicationOwnershipLifecycleInactive(
 				ownershipLifecycleController,
 			);
+			// KEEP-OLD (stage 3): a coordinator mismatch here returns empty, it
+			// does not throw — the shape stays a bare identity compare.
 			if (this._checkedPrune !== checkedPruneCoordinator) {
 				return {
 					admitted: [] as typeof requests,
@@ -24387,6 +24460,10 @@ export class SharedLog<
 			};
 		}
 		try {
+			// KEEP-OLD (stage 3): this send guard is deliberately WEAKER than the
+			// checked-prune triple — it omits the poison and `closed` terms so an
+			// already-admitted grant response still goes out. Do not migrate it to
+			// isCheckedPruneCurrent (that would strengthen the predicate).
 			if (
 				this._checkedPrune === checkedPruneCoordinator &&
 				!ownershipLifecycleController.signal.aborted
@@ -24406,8 +24483,12 @@ export class SharedLog<
 				retryIdentity,
 			} of admission.restartCandidates) {
 				if (
-					this._checkedPrune !== checkedPruneCoordinator ||
-					!this.isRepairLifecycleActive(ownershipLifecycleController)
+					// closeController omitted: this seat never compared it.
+					!lifecycle.isCheckedPruneCurrent(
+						checkedPruneCoordinator,
+						undefined,
+						ownershipLifecycleController,
+					)
 				) {
 					checkedPruneCoordinator.cancelRestartReservation(
 						candidate.hash,
@@ -24483,23 +24564,21 @@ export class SharedLog<
 
 		const checkedPruneCoordinator = this._checkedPrune;
 		const closeController = this._closeController;
+		const lifecycle = this._instanceLifecycle!;
+		// Stage 3 (seam 4): prune() is the one checked-prune seat that always
+		// compared the co-captured _closeController identity — keep that term.
 		const isCheckedPruneLifecycleCurrent = () =>
-			this.isRepairLifecycleActive(ownershipLifecycleController) &&
-			this._checkedPrune === checkedPruneCoordinator &&
-			this._closeController === closeController;
-		const throwIfCheckedPruneLifecycleInactive = () => {
-			this.throwIfReplicationOwnershipLifecycleInactive(
+			lifecycle.isCheckedPruneCurrent(
+				checkedPruneCoordinator,
+				closeController,
 				ownershipLifecycleController,
 			);
-			if (
-				this._checkedPrune !== checkedPruneCoordinator ||
-				this._closeController !== closeController
-			) {
-				throw new TerminalOperationNotStartedError(
-					"Checked prune lifecycle is no longer active",
-				);
-			}
-		};
+		const throwIfCheckedPruneLifecycleInactive = () =>
+			lifecycle.throwIfCheckedPruneInactive(
+				checkedPruneCoordinator,
+				closeController,
+				ownershipLifecycleController,
+			);
 
 		// ask network if they have they entry,
 		// so I can delete it
