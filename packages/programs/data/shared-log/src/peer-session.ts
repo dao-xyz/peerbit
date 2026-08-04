@@ -22,7 +22,6 @@ export type PeerSessionDeps = {
 		controller: AbortController | undefined,
 	) => boolean;
 	getReplicationLifecycleController: () => AbortController | undefined;
-	isReplicationInfoBlocked: (peerHash: string) => boolean;
 };
 
 export type PeerReceiveAdmissionOptions = {
@@ -136,6 +135,22 @@ export class PeerSessionRegistry {
 	// would reopen receive admission mid-drain. The map instance is replaced
 	// only at open (resetForOpen) and cleared in place at _close.
 	_receiveCleanupGateByPeer!: Map<string, number>;
+	// Moved from SharedLog (fence B5, same name). Peers whose replication-info
+	// is fenced: added when a departure/unsubscribe rotation or a reconnect
+	// barrier starts, removed only when an opening barrier commits. Per-PEER,
+	// not per-session, on purpose (same reasoning as B2/B6 above): the block
+	// is set under one session (the departing rotation) and cleared under a
+	// LATER one (the opening barrier), so its lifetime deliberately spans
+	// session identities; readers (prune final-confirmation filter,
+	// announcement repair targeting, pruneOfflineReplicators) ask about peers
+	// that may have no session at all; and the `??`-fallback rotation in
+	// handleSubscriptionChange rotates WITHOUT touching blocked state — a
+	// per-session flag would silently reset it there. Replaced only at open
+	// (resetForOpen); deliberately NOT cleared at _close, matching the legacy
+	// host field site-for-site. Kept as a public field so existing tests can
+	// keep instrumenting the raw Set instance (events.spec.ts spies on its
+	// `delete`).
+	_replicationInfoBlockedPeers!: Set<string>;
 
 	constructor(readonly deps: PeerSessionDeps) {
 		this.resetForOpen();
@@ -152,6 +167,23 @@ export class PeerSessionRegistry {
 		this.sessions = new Map();
 		this._replicationInfoReceiveEpochByPeer = new Map();
 		this._receiveCleanupGateByPeer = new Map();
+		this._replicationInfoBlockedPeers = new Set();
+	}
+
+	/** ≡ the legacy `this._replicationInfoBlockedPeers.add(peerHash)` (host
+	 *  Set, fence B5). */
+	blockReplicationInfo(peerHash: string): void {
+		this._replicationInfoBlockedPeers.add(peerHash);
+	}
+
+	/** ≡ the legacy `this._replicationInfoBlockedPeers.delete(peerHash)`. */
+	unblockReplicationInfo(peerHash: string): void {
+		this._replicationInfoBlockedPeers.delete(peerHash);
+	}
+
+	/** ≡ the legacy `this._replicationInfoBlockedPeers.has(peerHash)`. */
+	isReplicationInfoBlocked(peerHash: string): boolean {
+		return this._replicationInfoBlockedPeers.has(peerHash);
 	}
 
 	/** _close counterpart of the legacy
@@ -298,7 +330,7 @@ export class PeerSessionRegistry {
 			this.deps.isReplicationLifecycleActive(replicationLifecycleController) &&
 			this.isCurrent(peerHash, session) &&
 			(options?.allowReplicationInfoBlocked === true ||
-				!this.deps.isReplicationInfoBlocked(peerHash)) &&
+				!this.isReplicationInfoBlocked(peerHash)) &&
 			(options?.allowCleanupGate === true ||
 				this.isReceiveCleanupGateOpen(peerHash))
 		);

@@ -18,13 +18,11 @@ import {
 type StubHost = {
 	replicationLifecycleController?: AbortController;
 	terminating: boolean;
-	blockedPeers: Set<string>;
 };
 
 const createHost = (): StubHost => ({
 	replicationLifecycleController: new AbortController(),
 	terminating: false,
-	blockedPeers: new Set(),
 });
 
 // Mirrors SharedLog.isReplicationLifecycleActive term for term.
@@ -41,7 +39,6 @@ const createDeps = (host: StubHost): PeerSessionDeps => ({
 	isReplicationLifecycleActive: (controller) =>
 		isReplicationLifecycleActive(host, controller),
 	getReplicationLifecycleController: () => host.replicationLifecycleController,
-	isReplicationInfoBlocked: (hash) => host.blockedPeers.has(hash),
 });
 
 // Literal transcription of the legacy (pre-stage-3) body of
@@ -180,7 +177,10 @@ describe("receive admission peer session parity", () => {
 									host.terminating = true;
 								}
 								if (blocked) {
-									host.blockedPeers.add(PEER);
+									// The blocked set moved into the registry (fence B5);
+									// seed it through the registry's block method, mirroring
+									// the legacy host-set add.
+									registry.blockReplicationInfo(PEER);
 								}
 								// The gate refcounts moved into the registry (fence B6);
 								// seed its map directly, mirroring the legacy host-map
@@ -193,7 +193,7 @@ describe("receive admission peer session parity", () => {
 
 								const expected = legacyIsPeerReceiveAdmissionOpen(
 									host,
-									host.blockedPeers,
+									registry._replicationInfoBlockedPeers,
 									registry._receiveCleanupGateByPeer,
 									PEER,
 									controller,

@@ -2015,10 +2015,9 @@ export class SharedLog<
 	pendingMaturity!: Map<string, Map<string, PendingMaturityRecord<R>>>; // map of peerId to timeout
 
 	private latestReplicationInfoMessage!: Map<string, bigint>;
-	// Peers that have unsubscribed from this log's topic. We ignore replication-info
-	// messages from them until we see a new subscription, to avoid re-introducing
-	// stale membership state during close/unsubscribe races.
-	private _replicationInfoBlockedPeers!: Set<string>;
+	// The replication-info blocked set (fence B5) lives on the peer-session
+	// registry: unsubscribed peers whose replication-info is ignored until a
+	// reconnect barrier commits. See PeerSessionRegistry._replicationInfoBlockedPeers.
 	private _replicationInfoRequestByPeer!: Map<
 		string,
 		{ attempts: number; timer?: ReturnType<typeof setTimeout> }
@@ -3345,7 +3344,7 @@ export class SharedLog<
 				this.validatePersistedReplicationRangeSnapshot(ranges),
 			getSubscribers: () => this.node.services.pubsub.getSubscribers(this.topic),
 			getSelfHash: () => this.node.identity.publicKey.hashcode(),
-			isBlockedPeer: (hash) => this._replicationInfoBlockedPeers.has(hash),
+			isBlockedPeer: (hash) => this._peerSessions.isReplicationInfoBlocked(hash),
 			getRpc: () => this.rpc,
 			captureReplicationOwnershipLifecycle: () =>
 				this.captureReplicationOwnershipLifecycle(),
@@ -3387,7 +3386,7 @@ export class SharedLog<
 					}),
 				);
 			},
-			isBlockedPeer: (hash) => this._replicationInfoBlockedPeers.has(hash),
+			isBlockedPeer: (hash) => this._peerSessions.isReplicationInfoBlocked(hash),
 			scheduleReplicationInfoRequests: (peer, replicationLifecycleController) =>
 				this.scheduleReplicationInfoRequests(
 					peer,
@@ -3408,8 +3407,6 @@ export class SharedLog<
 				this.isReplicationLifecycleActive(controller),
 			getReplicationLifecycleController: () =>
 				this._replicationLifecycleController,
-			isReplicationInfoBlocked: (hash) =>
-				this._replicationInfoBlockedPeers.has(hash),
 		});
 	}
 
@@ -3442,9 +3439,11 @@ export class SharedLog<
 		this._pendingIHave = new Map();
 		this._pendingIHaveCallbacks = new Set();
 		this.latestReplicationInfoMessage = new Map();
-		this._replicationInfoBlockedPeers = new Set();
 		this._replicationInfoRequestByPeer = new Map();
 		this._replicationInfoApplyQueueByPeer = new Map();
+		// The registry constructor runs resetForOpen(), which creates the
+		// replication-info blocked set (fence B5) alongside the session maps —
+		// the legacy inline `new Set()` that sat above moved there.
 		this._peerSessions = this.createPeerSessionRegistry();
 		this._pendingReplicatorLeaveByPeer = new Set();
 		this._activeReceiveHandlersByPeer = new Map();
@@ -13862,7 +13861,6 @@ export class SharedLog<
 		this._pendingIHave = new Map();
 		this._pendingIHaveCallbacks = new Set();
 		this.latestReplicationInfoMessage = new Map();
-		this._replicationInfoBlockedPeers = new Set();
 		this._replicationInfoRequestByPeer = new Map();
 		// Terminal close/drop drains the previous lifecycle before another open can
 		// install fresh lanes and opaque per-subscription ownership tokens.
@@ -13871,9 +13869,11 @@ export class SharedLog<
 		// registry lazily on first open. Reopens keep the SAME registry so stale
 		// continuations observe resetForOpen()'s map swap via property lookup.
 		// resetForOpen also replaces the per-peer receive-epoch and receive
-		// cleanup-gate maps, matching the legacy open()-time
-		// `_replicationInfoReceiveEpochByPeer = new Map()` and
-		// `_receiveCleanupGateByPeer = new Map()`.
+		// cleanup-gate maps and the replication-info blocked set (fence B5),
+		// matching the legacy open()-time
+		// `_replicationInfoReceiveEpochByPeer = new Map()`,
+		// `_receiveCleanupGateByPeer = new Map()` and
+		// `_replicationInfoBlockedPeers = new Set()`.
 		this._peerSessions ??= this.createPeerSessionRegistry();
 		this._peerSessions.resetForOpen();
 		this._pendingReplicatorLeaveByPeer = new Set();
@@ -15290,7 +15290,7 @@ export class SharedLog<
 											replicationLifecycleController,
 										) ||
 										this.closed ||
-										this._replicationInfoBlockedPeers.has(keyHash)
+										this._peerSessions.isReplicationInfoBlocked(keyHash)
 									) {
 										return;
 									}
@@ -15303,7 +15303,7 @@ export class SharedLog<
 										!this.isReplicationLifecycleActive(
 											replicationLifecycleController,
 										) ||
-										this._replicationInfoBlockedPeers.has(keyHash)
+										this._peerSessions.isReplicationInfoBlocked(keyHash)
 									) {
 										return;
 									}
@@ -19010,7 +19010,7 @@ export class SharedLog<
 					// window state is exact: the legacy re-read of the opening map here
 					// could never observe a different value.
 					if (
-						this._replicationInfoBlockedPeers.has(receiveFromHash) &&
+						this._peerSessions.isReplicationInfoBlocked(receiveFromHash) &&
 						isOpeningSubscriptionReceive
 					) {
 						// A prior unsubscribe cleanup may still be ahead of this reconnect
@@ -19162,7 +19162,7 @@ export class SharedLog<
 						receiveFromHash,
 						receiveReplicationInfoReceiveEpoch,
 					) ||
-					this._replicationInfoBlockedPeers.has(fromHash)
+					this._peerSessions.isReplicationInfoBlocked(fromHash)
 				) {
 					return;
 				}
@@ -19183,7 +19183,7 @@ export class SharedLog<
 								fromHash,
 								receiveReplicationInfoReceiveEpoch,
 							) ||
-							this._replicationInfoBlockedPeers.has(fromHash)
+							this._peerSessions.isReplicationInfoBlocked(fromHash)
 						) {
 							return;
 						}
@@ -19250,7 +19250,7 @@ export class SharedLog<
 						receiveFromHash,
 						receiveReplicationInfoReceiveEpoch,
 					) ||
-					this._replicationInfoBlockedPeers.has(fromHash)
+					this._peerSessions.isReplicationInfoBlocked(fromHash)
 				) {
 					return;
 				}
@@ -19267,7 +19267,7 @@ export class SharedLog<
 							fromHash,
 							receiveReplicationInfoReceiveEpoch,
 						) ||
-						this._replicationInfoBlockedPeers.has(fromHash)
+						this._peerSessions.isReplicationInfoBlocked(fromHash)
 					) {
 						return;
 					}
@@ -24082,7 +24082,7 @@ export class SharedLog<
 			// subscription, then wait behind every queued replication mutation. A
 			// reconnect must not inherit metadata or ranges from the old connection.
 			try {
-				this._replicationInfoBlockedPeers.add(peerHash);
+				this._peerSessions.blockReplicationInfo(peerHash);
 				await this.drainPeerReceiveHandlers(peerHash);
 				await this.withReplicationInfoApplyQueue(peerHash, async () => {});
 				if (
@@ -24105,7 +24105,7 @@ export class SharedLog<
 					);
 					this._openingSyncCapabilitiesByPeer.delete(peerHash);
 				}
-				this._replicationInfoBlockedPeers.delete(peerHash);
+				this._peerSessions.unblockReplicationInfo(peerHash);
 			} finally {
 				if (
 					this._openingSyncCapabilitiesByPeer.get(peerHash)?.epoch ===
@@ -24127,7 +24127,7 @@ export class SharedLog<
 			// superseded — readers key off the CURRENT session, so that flag is
 			// unreachable, and its own barrier `finally` still clears it.
 			this._openingSyncCapabilitiesByPeer.delete(peerHash);
-			this._replicationInfoBlockedPeers.add(peerHash);
+			this._peerSessions.blockReplicationInfo(peerHash);
 			const disconnectedWarmupSession =
 				this.joinWarmup._warmupSessionsByTarget.get(peerHash) ?? null;
 			this.joinWarmup.cancelJoinWarmupTarget(peerHash);
@@ -24177,7 +24177,7 @@ export class SharedLog<
 			return;
 		}
 
-		this._replicationInfoBlockedPeers.delete(peerHash);
+		this._peerSessions.unblockReplicationInfo(peerHash);
 		this._replicatorLivenessFailures.delete(peerHash);
 		this.markReplicatorActivity(peerHash);
 		this._peerSessions.markOpen(peerHash, expectedSubscriptionEpoch);
@@ -24778,7 +24778,7 @@ export class SharedLog<
 										for (const peer of exactConfirmations) {
 											if (
 												finalOwnership.leaders.has(peer) &&
-												!this._replicationInfoBlockedPeers.has(peer) &&
+												!this._peerSessions.isReplicationInfoBlocked(peer) &&
 												this._peerSessions.isReceiveCleanupGateOpen(peer)
 											) {
 												finalConfirmationCount += 1;
@@ -25687,7 +25687,7 @@ export class SharedLog<
 			fromHash,
 			"departing",
 		);
-		this._replicationInfoBlockedPeers.add(fromHash);
+		this._peerSessions.blockReplicationInfo(fromHash);
 		this._recentRepairDispatch.delete(fromHash);
 
 		// Keep a per-peer timestamp watermark when we observe an unsubscribe. This
@@ -25721,7 +25721,7 @@ export class SharedLog<
 		const fromHash = evt.detail.from.hashcode();
 		const subscriptionEpoch = this.advanceSubscriptionEpoch(fromHash);
 		this.remoteBlocks.onReachable(evt.detail.from);
-		this._replicationInfoBlockedPeers.add(fromHash);
+		this._peerSessions.blockReplicationInfo(fromHash);
 		this.invalidateSharedLogTopicSubscribersCache();
 
 		await this.handleSubscriptionChange(

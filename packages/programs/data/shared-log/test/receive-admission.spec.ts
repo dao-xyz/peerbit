@@ -136,7 +136,7 @@ describe("receive admission", () => {
 				const subscription = sharedLog._onSubscription({
 					detail: { from: sourceKey, topics: [target.log.topic] },
 				});
-				expect(sharedLog._replicationInfoBlockedPeers.has(sourceHash)).to.be
+				expect(sharedLog._peerSessions.isReplicationInfoBlocked(sourceHash)).to.be
 					.true;
 
 				await target.log.onMessage(new SyncCapabilitiesMessage(), {
@@ -148,7 +148,7 @@ describe("receive admission", () => {
 				expect(
 					sharedLog._peerSessions.current(sourceHash)?.openingBarrierActive,
 				).to.be.false;
-				expect(sharedLog._replicationInfoBlockedPeers.has(sourceHash)).to.be
+				expect(sharedLog._peerSessions.isReplicationInfoBlocked(sourceHash)).to.be
 					.false;
 			} finally {
 				scheduleRequests.restore();
@@ -183,7 +183,7 @@ describe("receive admission", () => {
 				const subscription = sharedLog._onSubscription({
 					detail: { from: sourceKey, topics: [target.log.topic] },
 				});
-				expect(sharedLog._replicationInfoBlockedPeers.has(sourceHash)).to.be
+				expect(sharedLog._peerSessions.isReplicationInfoBlocked(sourceHash)).to.be
 					.true;
 
 				await target.log.onMessage(new RequestMaybeSync({ hashes: [] }), {
@@ -192,7 +192,7 @@ describe("receive admission", () => {
 				await subscription;
 
 				expect(synchronizerOnMessage.calledOnce).to.be.true;
-				expect(sharedLog._replicationInfoBlockedPeers.has(sourceHash)).to.be
+				expect(sharedLog._peerSessions.isReplicationInfoBlocked(sourceHash)).to.be
 					.false;
 			} finally {
 				synchronizerOnMessage.restore();
@@ -242,11 +242,11 @@ describe("receive admission", () => {
 				const unsubscribe = sharedLog._onUnsubscription({
 					detail: { from: sourceKey, topics: [target.log.topic] },
 				});
-				expect(sharedLog._replicationInfoBlockedPeers.has(sourceHash)).to.be
+				expect(sharedLog._peerSessions.isReplicationInfoBlocked(sourceHash)).to.be
 					.true;
 				await unsubscribe;
 				// …and the committed cleanup does not lift it.
-				expect(sharedLog._replicationInfoBlockedPeers.has(sourceHash)).to.be
+				expect(sharedLog._peerSessions.isReplicationInfoBlocked(sourceHash)).to.be
 					.true;
 				expect(
 					await target.log.replicationIndex.count({
@@ -283,7 +283,7 @@ describe("receive admission", () => {
 				);
 				// Mid-barrier the peer stays fenced (the opening rotation must NOT
 				// have reset the block)…
-				expect(sharedLog._replicationInfoBlockedPeers.has(sourceHash)).to.be
+				expect(sharedLog._peerSessions.isReplicationInfoBlocked(sourceHash)).to.be
 					.true;
 				expect(subscriptionSettled).to.be.false;
 				// …and replication-info admitted mid-barrier is dropped whole,
@@ -307,13 +307,13 @@ describe("receive admission", () => {
 				expect(sharedLog.latestReplicationInfoMessage.get(sourceHash)).to.equal(
 					watermarkBefore,
 				);
-				expect(sharedLog._replicationInfoBlockedPeers.has(sourceHash)).to.be
+				expect(sharedLog._peerSessions.isReplicationInfoBlocked(sourceHash)).to.be
 					.true;
 
 				releaseLane.resolve();
 				await Promise.all([parkedLane, subscription]);
 				// The committed barrier is the only unblock site.
-				expect(sharedLog._replicationInfoBlockedPeers.has(sourceHash)).to.be
+				expect(sharedLog._peerSessions.isReplicationInfoBlocked(sourceHash)).to.be
 					.false;
 			} finally {
 				releaseLane.resolve();
