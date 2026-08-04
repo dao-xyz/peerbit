@@ -2693,7 +2693,7 @@ describe("sync-chunking", () => {
 		}
 	});
 
-	it("returns coordinate lookup permits when their peer disconnects", async () => {
+	it("keeps coordinate lookup permits globally charged across disconnect", async () => {
 		const releases: ((hashes: string[]) => void)[] = [];
 		const resolveHashListForSymbols = sinon.stub().callsFake(
 			() =>
@@ -2739,11 +2739,12 @@ describe("sync-chunking", () => {
 				MAX_PENDING_SIMPLE_SYNC_LOOKUPS_PER_PEER,
 			);
 
-			// Disconnect returns the peer's whole lookup quota immediately even
-			// though the resolver work is still alive; the detached slots settle
-			// aggregate-neutrally later.
+			// Disconnect returns the current peer generation's quota immediately,
+			// but the non-abortable resolver work remains globally charged.
 			sync.onPeerDisconnected(peerA);
-			expect((sync as any).pendingCoordinateLookupCount).to.equal(0);
+			expect((sync as any).pendingCoordinateLookupCount).to.equal(
+				MAX_PENDING_SIMPLE_SYNC_LOOKUPS_PER_PEER,
+			);
 			expect((sync as any).pendingCoordinateLookupCountByPeer.size).to.equal(0);
 
 			pending.push(
@@ -2757,13 +2758,17 @@ describe("sync-chunking", () => {
 					resolveHashListForSymbols.callCount ===
 					MAX_PENDING_SIMPLE_SYNC_LOOKUPS_PER_PEER + 1,
 			);
-			expect((sync as any).pendingCoordinateLookupCount).to.equal(1);
+			expect((sync as any).pendingCoordinateLookupCount).to.equal(
+				MAX_PENDING_SIMPLE_SYNC_LOOKUPS_PER_PEER + 1,
+			);
 
-			// A pre-disconnect lookup settling late never decrements the
-			// reconnected peer's fresh accounting.
+			// A pre-disconnect lookup settling late returns its global permit but
+			// never decrements the reconnected peer's fresh per-peer accounting.
 			releases.shift()!([]);
 			await pending.shift();
-			expect((sync as any).pendingCoordinateLookupCount).to.equal(1);
+			expect((sync as any).pendingCoordinateLookupCount).to.equal(
+				MAX_PENDING_SIMPLE_SYNC_LOOKUPS_PER_PEER,
+			);
 			expect(
 				(sync as any).pendingCoordinateLookupCountByPeer.get(peerA.hashcode()),
 			).to.equal(1);

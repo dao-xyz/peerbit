@@ -865,8 +865,9 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 	private activeRatelessResponseCountByPeer: Map<string, number>;
 	// Per-peer slot rows for active rateless responses (shared registry; see
 	// sync-peer-state.ts for the lifetime policy). Release closures capture
-	// the row: after a disconnect detaches it, the peer's quota returns
-	// immediately and a late release only settles the detached row.
+	// the row: disconnect returns current-generation quota and logical
+	// ownership immediately, while the global physical permit remains charged
+	// until the shipment actually settles.
 	private readonly ratelessPeerSlotRows: SyncPeerSlotRegistry;
 	private ratelessClosed: boolean;
 
@@ -2265,36 +2266,49 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 			target,
 			(this.activeRatelessResponseCountByPeer.get(target) ?? 0) + 1,
 		);
-		let released = false;
+		let logicalReleased = false;
+		let physicalReleased = false;
+		const releaseLogical = () => {
+			if (logicalReleased) {
+				return;
+			}
+			logicalReleased = true;
+			slotRow.activeReleases.delete(releaseLogical);
+			targetLifecycle.responseLeases -= 1;
+			this.maybeDisposeRatelessDispatchLifecycle(targetLifecycle.lifecycle);
+		};
+		slotRow.activeReleases.add(releaseLogical);
 		return {
 			process,
 			authorized,
 			remaining,
 			signal: targetLifecycle.controller.signal,
 			release: (options) => {
-				if (released) {
+				if (physicalReleased) {
 					return;
 				}
-				released = true;
-				if (options?.rollback) {
-					for (const hash of authorized) {
-						process.consumedResponseHashes.delete(hash);
+				physicalReleased = true;
+				try {
+					releaseLogical();
+				} finally {
+					if (options?.rollback) {
+						for (const hash of authorized) {
+							process.consumedResponseHashes.delete(hash);
+						}
 					}
-				}
-				targetLifecycle.responseLeases -= 1;
-				slotRow.active -= 1;
-				if (slotRow.attached) {
 					this.activeRatelessResponseCount -= 1;
-					const activeForPeer =
-						(this.activeRatelessResponseCountByPeer.get(target) ?? 1) - 1;
-					if (activeForPeer === 0) {
-						this.activeRatelessResponseCountByPeer.delete(target);
-					} else {
-						this.activeRatelessResponseCountByPeer.set(target, activeForPeer);
+					slotRow.active -= 1;
+					if (slotRow.attached) {
+						const activeForPeer =
+							(this.activeRatelessResponseCountByPeer.get(target) ?? 1) - 1;
+						if (activeForPeer === 0) {
+							this.activeRatelessResponseCountByPeer.delete(target);
+						} else {
+							this.activeRatelessResponseCountByPeer.set(target, activeForPeer);
+						}
+						this.ratelessPeerSlotRows.maybeDropIdle(slotRow);
 					}
-					this.ratelessPeerSlotRows.maybeDropIdle(slotRow);
 				}
-				this.maybeDisposeRatelessDispatchLifecycle(targetLifecycle.lifecycle);
 			},
 		};
 	}
@@ -2308,9 +2322,11 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 		if (!row) {
 			return;
 		}
-		if (row.active > 0) {
-			this.activeRatelessResponseCount -= row.active;
-			this.activeRatelessResponseCountByPeer.delete(peer);
+		this.activeRatelessResponseCountByPeer.delete(peer);
+		// Release logical lifecycle ownership immediately. Each underlying
+		// shipment retains its global physical-work permit until its own finally.
+		for (const releaseLogical of [...row.activeReleases]) {
+			releaseLogical();
 		}
 	}
 
@@ -3217,10 +3233,9 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 				new Error("rateless sync target disconnected"),
 			);
 		}
-		// A response ship for this peer may never settle. Detach the slot row so
-		// the quota returns immediately; late releases settle against the
-		// detached row. Note: open() deliberately does NOT clear this
-		// accounting — cross-generation work is still charged until it settles.
+		// A response ship for this peer may never settle. Detach current-generation
+		// quota and logical ownership, but keep its global physical permit charged
+		// until settlement. open() likewise preserves physical accounting.
 		this.detachRatelessResponseSlotRow(target);
 		return this.simple.onPeerDisconnected(target);
 	}

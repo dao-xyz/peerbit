@@ -8,26 +8,27 @@
 //
 // | field                        | created            | cleared                    |
 // |------------------------------|--------------------|----------------------------|
-// | lookups / responses / active | first slot acquire | release closure settles;   |
-// |                              |                    | row DETACHES at peer       |
-// |                              |                    | disconnect (quota returns  |
-// |                              |                    | in aggregate; late         |
-// |                              |                    | releases settle against    |
-// |                              |                    | the detached row)          |
+// | lookups / responses / active | first slot acquire | physical release settles;  |
+// |                              |                    | row DETACH only removes    |
+// |                              |                    | current peer-generation    |
+// |                              |                    | quota (global quota stays  |
+// |                              |                    | charged until settlement)  |
 // | pendingResponseHashes        | consume accepts an | lease release settles      |
 // | (simple synchronizer only)   | authorization      | while attached; row        |
 // |                              | (custody moves     | DETACHES at peer           |
 // |                              | batch -> row)      | disconnect (budget returns |
 // |                              |                    | in aggregate)              |
-// | activeReleases               | consume creates an | release settles (self-     |
-// | (simple synchronizer only)   | active-response    | removal); detach invokes   |
-// |                              | lease              | the outstanding releases   |
-// |                              |                    | so retained work drains    |
+// | activeReleases               | active-response or | logical release settles    |
+// |                              | coordinate         | (self-removal); detach     |
+// |                              | dispatch starts    | invokes outstanding        |
+// |                              |                    | logical releases so        |
+// |                              |                    | retained work drains       |
 //
-// Slot accounting deliberately SURVIVES close()/open() generation rotation
-// on both synchronizers: the underlying storage resolvers and transport
-// sends are not universally abortable, so cross-generation work stays
-// charged until it settles. Only a peer disconnect detaches a row.
+// Global physical-work accounting deliberately SURVIVES both close()/open()
+// generation rotation and peer disconnect: the underlying storage resolvers
+// and transport sends are not universally abortable, so cross-generation
+// work stays charged until it settles. Disconnect only detaches the row from
+// the current peer generation and releases logical lifecycle ownership.
 //
 // Deliberately host-side this stage (stage-5 folds them into the host peer
 // sessions): dispatch epochs and dispatch-target sets (benchmark-gated hot
@@ -47,11 +48,11 @@ export type SyncPeerSlotRow = {
 	// disconnect can return the budget even when the response ship never
 	// settles. Always 0 on rateless rows.
 	pendingResponseHashes: number;
-	// Outstanding active-response lease releases (simple synchronizer only).
-	// Releases self-remove when the ship settles; detach invokes the
-	// remainder so responseLeases/retainedWork drain and the dispatch
-	// lifecycle can dispose — the released-guard makes the eventual late
-	// ship-side release inert. Always empty on rateless rows.
+	// Outstanding disconnect-time LOGICAL releases. Both synchronizers put
+	// active-response lifecycle cleanup here; Simple also puts coordinate
+	// dispatch completion here. Detach invokes the remainder so retained work
+	// and dispatch listeners drain. Each eventual async completion separately
+	// returns its global physical permit exactly once.
 	activeReleases: Set<() => void>;
 };
 
@@ -75,10 +76,10 @@ export class SyncPeerSlotRegistry {
 		return row;
 	}
 
-	// Detaches and returns the peer's row (or undefined when the peer holds
-	// no slots). The caller subtracts the returned counters from its
-	// aggregate quota; release closures that still hold the row settle
-	// against it aggregate-neutrally.
+	// Detaches and returns the peer's row (or undefined when the peer holds no
+	// slots). The caller drops only current-generation/per-peer accounting and
+	// logical ownership. Physical release closures retain this row by identity
+	// and return global quota only when the underlying work actually settles.
 	detach(peer: string): SyncPeerSlotRow | undefined {
 		const row = this.rows.get(peer);
 		if (!row) {
