@@ -168,11 +168,24 @@ describe("sync-chunking memory pins", () => {
 	});
 
 	it("empties every pending-sync structure through per-peer claim removal", async () => {
-		const { sync } = createSync();
+		const coordinateToHash = new Cache<string>({ max: 1_000 });
+		const { sync } = createSync({ coordinateToHash });
 		try {
 			await sync.queueSync(["shared-key"], peerA, { skipCheck: true });
 			await sync.queueSync(["shared-key"], peerB, { skipCheck: true });
 			expect(sync.syncInFlightQueue.get("shared-key")!.length).to.equal(2);
+
+			// A bigint-keyed claim with populated coordinate alias mappings whose
+			// LAST claimant leaves through disconnect: last-claimant removal must
+			// clear the alias structures, not only clearSyncProcessKey.
+			await sync.queueSync([41n], peerB, { skipCheck: true });
+			coordinateToHash.add(41n, "alias-only-hash");
+			(sync as any).refreshQueuedSyncCoordinateAliases();
+			expect((sync as any).syncInFlightQueuedCoordinates.size).to.equal(1);
+			expect((sync as any).syncInFlightQueuedHashByCoordinate.size).to.equal(1);
+			expect(
+				(sync as any).syncInFlightQueuedCoordinatesByHash.size,
+			).to.equal(1);
 
 			sync.onPeerDisconnected(peerA);
 			expect(
@@ -183,10 +196,15 @@ describe("sync-chunking memory pins", () => {
 			expect(sync.syncInFlightQueueInverted.has(peerA.hashcode())).to.equal(
 				false,
 			);
-			expect((sync as any).pendingSyncClaimCount).to.equal(1);
+			expect((sync as any).pendingSyncClaimCount).to.equal(2);
 			expectClaimCountMatchesClaimants(sync);
 
 			sync.onPeerDisconnected(peerB);
+			expect((sync as any).syncInFlightQueuedCoordinates.size).to.equal(0);
+			expect((sync as any).syncInFlightQueuedHashByCoordinate.size).to.equal(0);
+			expect(
+				(sync as any).syncInFlightQueuedCoordinatesByHash.size,
+			).to.equal(0);
 			expectPendingSyncCensusEmpty(sync);
 		} finally {
 			await sync.close();
@@ -657,6 +675,10 @@ describe("sync-chunking slot-quota pins", () => {
 			await active.shift();
 			expect((sync as any).activeMaybeSyncResponseCount).to.equal(0);
 			expect((sync as any).activeMaybeSyncResponseCountByPeer.size).to.equal(0);
+			// The successor's lease settled while ATTACHED (no disconnect): the
+			// idle row must drop eagerly from the registry, not linger until the
+			// next disconnect.
+			expect((sync as any).syncResponseSlotRows.size).to.equal(0);
 			first?.release();
 			second?.release();
 		} finally {
@@ -685,6 +707,11 @@ describe("sync-chunking dispatch-lifecycle pins", () => {
 		});
 		try {
 			const controller = new AbortController();
+			const addListener = sinon.spy(controller.signal, "addEventListener");
+			const removeListener = sinon.spy(
+				controller.signal,
+				"removeEventListener",
+			);
 			const reservation = sync.expectMaybeSyncResponse({
 				hashes: ["disposal-hash"],
 				targets: [peerA.hashcode()],
@@ -692,17 +719,42 @@ describe("sync-chunking dispatch-lifecycle pins", () => {
 			});
 			expect(reservation).to.not.equal(undefined);
 			expect((sync as any).syncDispatchTargets.size).to.equal(1);
+			const targetLifecycle = [
+				...(sync as any).syncDispatchTargets.get(peerA.hashcode()),
+			][0] as any;
 
 			controller.abort(new Error("caller aborted"));
 			reservation!.release();
 
-			// The disposed lifecycle leaves no reachable target lifecycles and
-			// its abort listeners are unpaired.
+			// The disposed lifecycle leaves no reachable target lifecycles, its
+			// raw retention counters settle at exactly zero, and every abort
+			// listener added on the caller signal has been removed.
 			expect((sync as any).syncDispatchTargets.size).to.equal(0);
+			expect(targetLifecycle.lifecycle.disposed).to.equal(true);
+			expect(targetLifecycle.lifecycle.retainedWork).to.equal(0);
+			expect(targetLifecycle.responseLeases).to.equal(0);
+			const addedAbortListeners = addListener
+				.getCalls()
+				.filter((call) => call.args[0] === "abort")
+				.map((call) => call.args[1]);
+			expect(addedAbortListeners.length).to.be.greaterThan(0);
+			const removedAbortListeners = removeListener
+				.getCalls()
+				.filter((call) => call.args[0] === "abort")
+				.map((call) => call.args[1]);
+			for (const listener of addedAbortListeners) {
+				expect(removedAbortListeners).to.include(listener);
+			}
 
-			// A double release stays inert.
+			// A double release stays inert: the released-guard keeps the raw
+			// counters at exactly zero (an unguarded second release would drive
+			// responseLeases/retainedWork negative and allow premature disposal
+			// with live retained work) and leaves the disposed state unchanged.
 			reservation!.release();
 			expect((sync as any).syncDispatchTargets.size).to.equal(0);
+			expect(targetLifecycle.lifecycle.disposed).to.equal(true);
+			expect(targetLifecycle.lifecycle.retainedWork).to.equal(0);
+			expect(targetLifecycle.responseLeases).to.equal(0);
 		} finally {
 			await sync.close();
 		}
@@ -803,6 +855,10 @@ describe("rateless-iblt-syncronizer slot-quota pins", () => {
 			// lease returns its slot.
 			expect((sync as any).activeRatelessResponseCount).to.equal(0);
 			expect((sync as any).activeRatelessResponseCountByPeer.size).to.equal(0);
+			// The successor's lease settled while ATTACHED (no disconnect): the
+			// idle row must drop eagerly from the registry, not linger until the
+			// next disconnect.
+			expect((sync as any).ratelessResponseSlotRows.size).to.equal(0);
 		} finally {
 			blockShipments = false;
 			for (const release of releases) {
