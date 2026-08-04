@@ -264,7 +264,7 @@ describe("checked prune correlated handoff", () => {
 			const firstPending = log._checkedPrune.getPendingDelete(entry.hash);
 			const firstId = firstPending.requestId.slice();
 
-			log.removePruneRequestSent(entry.hash, remoteHash);
+			log._checkedPrune.removeRequestSent(entry.hash, remoteHash);
 			[second] = log.prune(new Map([[entry.hash, { entry, leaders }]]));
 			void second!.catch(() => {});
 
@@ -467,7 +467,7 @@ describe("checked prune correlated handoff", () => {
 			},
 		);
 		const drain = sinon.spy(log, "drainPeerReceiveHandlers");
-		const observedActivityAt = log._replicatorLastActivityAt.get(remoteHash);
+		const observedActivityAt = log._liveness._replicatorLastActivityAt.get(remoteHash);
 		let fencedPruning: Promise<unknown> | undefined;
 		let resumedPruning: Promise<unknown> | undefined;
 		let removing: Promise<boolean> | undefined;
@@ -502,7 +502,7 @@ describe("checked prune correlated handoff", () => {
 
 			removing = log.removeReplicator(remoteKey, {
 				shouldRemove: () =>
-					log._replicatorLastActivityAt.get(remoteHash) === observedActivityAt,
+					log._liveness._replicatorLastActivityAt.get(remoteHash) === observedActivityAt,
 			});
 			expect(log._peerSessions._receiveCleanupGateByPeer.has(remoteHash)).to.be
 				.false;
@@ -560,7 +560,7 @@ describe("checked prune correlated handoff", () => {
 			expect(remove.calledOnce).true;
 			expect(await log.log.has(resumedEntry.hash)).to.be.false;
 		} finally {
-			log.markReplicatorActivity(remoteHash);
+			log._liveness.markReplicatorActivity(remoteHash);
 			releaseApplyQueue.resolve();
 			await Promise.allSettled([
 				applyQueueBlocker,
@@ -743,7 +743,7 @@ describe("checked prune correlated handoff", () => {
 				).true;
 			});
 
-			const staleLifecycle = log._repairLifecycleController;
+			const staleLifecycle = log._instanceLifecycle?.ownershipLifecycleController;
 			log.startRepairLifecycle();
 			log.cleanupCheckedPrunePeer(
 				remoteHash,
@@ -805,7 +805,7 @@ describe("checked prune correlated handoff", () => {
 			expect(log._checkedPrune.getRetry(entry.hash)?.timer).to.exist;
 
 			log.rearmCheckedPruneAfterTemporaryReceive("never-admitted-hash");
-			expect(log.hasActiveCheckedPruneWork("never-admitted-hash")).to.be.false;
+			expect(log._checkedPrune.hasActiveWork("never-admitted-hash")).to.be.false;
 		} finally {
 			log._checkedPrune.clearRetry(entry.hash);
 			log.clearCheckedPruneAuditTimer();
@@ -1751,7 +1751,7 @@ describe("checked prune correlated handoff", () => {
 			expect(log._checkedPrune.hasRetry(entry.hash)).to.be.true;
 			expect(log._checkedPrune.getRetry(entry.hash)?.timer).to.be.undefined;
 			expect(log._checkedPruneAuditTimer).to.exist;
-			expect(log.hasActiveCheckedPruneWork(entry.hash)).to.be.true;
+			expect(log._checkedPrune.hasActiveWork(entry.hash)).to.be.true;
 
 			await clock.tickAsync(30_000);
 			expect(log._checkedPruneAuditTimer).to.be.undefined;
@@ -1845,7 +1845,7 @@ describe("checked prune correlated handoff", () => {
 			await clock.tickAsync(1_500);
 
 			expect(log._checkedPrune.hasRetry(entry.hash)).to.be.false;
-			expect(log.hasActiveCheckedPruneWork(entry.hash)).to.be.false;
+			expect(log._checkedPrune.hasActiveWork(entry.hash)).to.be.false;
 		} finally {
 			clock.restore();
 			log._checkedPrune.clearRetry(entry.hash);
@@ -1985,7 +1985,7 @@ describe("checked prune correlated handoff", () => {
 
 			expect(enqueue.called).to.be.false;
 			expect(log._checkedPrune.hasRetry(entry.hash)).to.be.false;
-			expect(log.hasActiveCheckedPruneWork(entry.hash)).to.be.false;
+			expect(log._checkedPrune.hasActiveWork(entry.hash)).to.be.false;
 		} finally {
 			releasePlanning.resolve();
 			clock.restore();
@@ -2041,7 +2041,7 @@ describe("checked prune correlated handoff", () => {
 			expect(revalidate.called).to.be.false;
 			expect(log._checkedPrune.hasPendingDelete(entry.hash)).to.be.false;
 			expect(log._checkedPrune.hasRetry(entry.hash)).to.be.false;
-			expect(log.hasActiveCheckedPruneWork(entry.hash)).to.be.false;
+			expect(log._checkedPrune.hasActiveWork(entry.hash)).to.be.false;
 		} finally {
 			releasePlanning.resolve();
 			await Promise.allSettled(flushing ? [flushing] : []);

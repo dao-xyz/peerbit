@@ -5303,8 +5303,8 @@ testSetups.forEach((setup) => {
 					await waitForResolved(
 						() => {
 							for (const log of [db1.log, db2.log, db3.log] as any[]) {
-								expect(log._pendingDeletes.size).to.equal(0);
-								expect(log._checkedPruneRetries.size).to.equal(0);
+								expect(log._checkedPrune.pendingDeletes.size).to.equal(0);
+								expect(log._checkedPrune.retries.size).to.equal(0);
 							}
 						},
 						{ timeout: 60_000, delayInterval: 500 },

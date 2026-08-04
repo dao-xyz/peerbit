@@ -324,6 +324,27 @@ describe("receive admission peer session parity", () => {
 		expect(registry.isReceiveEpochCurrent(PEER, null)).to.be.true;
 	});
 
+	it("keeps receive epochs and cleanup gates isolated per peer", () => {
+		const host = createHost();
+		const registry = new PeerSessionRegistry(createDeps(host));
+		const otherPeer = "peer-b";
+
+		const peerAEpoch = registry.advanceReceiveEpoch(PEER);
+		expect(registry.isReceiveEpochCurrent(PEER, peerAEpoch)).to.be.true;
+		expect(registry.receiveEpoch(otherPeer)).to.equal(null);
+		expect(registry.isReceiveEpochCurrent(otherPeer, null)).to.be.true;
+
+		const peerBEpoch = registry.advanceReceiveEpoch(otherPeer);
+		expect(registry.isReceiveEpochCurrent(PEER, peerAEpoch)).to.be.true;
+		expect(registry.isReceiveEpochCurrent(otherPeer, peerBEpoch)).to.be.true;
+
+		const releasePeerA = registry.acquireReceiveCleanupGate(PEER);
+		expect(registry.isReceiveCleanupGateOpen(PEER)).to.be.false;
+		expect(registry.isReceiveCleanupGateOpen(otherPeer)).to.be.true;
+		releasePeerA();
+		expect(registry.isReceiveCleanupGateOpen(PEER)).to.be.true;
+	});
+
 	it("refcounts the receive cleanup gate with idempotent releases", () => {
 		const host = createHost();
 		const registry = new PeerSessionRegistry(createDeps(host));

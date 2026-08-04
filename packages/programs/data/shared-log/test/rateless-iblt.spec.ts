@@ -1549,7 +1549,7 @@ describe("rateless-iblt-syncronizer", () => {
 				),
 			).to.equal(true);
 			expect((sync.simple as any).pendingMaybeSyncResponseCount).to.equal(0);
-			expect((sync.simple as any).syncDispatchTargets.size).to.equal(0);
+			expect((sync.simple as any).syncDispatchRegistry.activeTargets.size).to.equal(0);
 		} finally {
 			ship.restore();
 			await sync.close();

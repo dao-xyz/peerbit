@@ -206,26 +206,33 @@ describe("checked prune coordinator", () => {
 			pending,
 			pending.requestId,
 		);
+		coordinator.addRequestSent("hash", "other-peer", pending);
+		coordinator.addConfirmedReplicator(
+			"hash",
+			"other-peer",
+			pending,
+			pending.requestId,
+		);
 
 		const releaseFirst = coordinator.fencePeerRemoval("peer");
 		const releaseSecond = coordinator.fencePeerRemoval("peer");
 		expect(coordinator.isPeerRemovalFenced("peer")).true;
 		expect(
-			coordinator.getExactConfirmedReplicators("hash", pending).size,
-		).equal(0);
+			coordinator.getExactConfirmedReplicators("hash", pending),
+		).deep.equal(new Set(["other-peer"]));
 
 		releaseFirst();
 		releaseFirst();
 		expect(coordinator.isPeerRemovalFenced("peer")).true;
 		expect(
-			coordinator.getExactConfirmedReplicators("hash", pending).size,
-		).equal(0);
+			coordinator.getExactConfirmedReplicators("hash", pending),
+		).deep.equal(new Set(["other-peer"]));
 
 		releaseSecond();
 		expect(coordinator.isPeerRemovalFenced("peer")).false;
 		expect(
 			coordinator.getExactConfirmedReplicators("hash", pending),
-		).deep.equal(new Set(["peer"]));
+		).deep.equal(new Set(["peer", "other-peer"]));
 	});
 
 	it("waits for every grant send and releases rejected barriers", async () => {

@@ -139,7 +139,7 @@ describe("receive admission replication-info recovery epoch", () => {
 				await liveness.evictReplicatorFromLiveness(
 					sourceHash,
 					sourceKey,
-					sharedLog._replicationLifecycleController,
+					sharedLog._instanceLifecycle?.membershipLifecycleController,
 					sharedLog._peerSessions.current(sourceHash),
 					liveness._replicatorLastActivityAt.get(sourceHash),
 				);
@@ -152,7 +152,7 @@ describe("receive admission replication-info recovery epoch", () => {
 					}),
 				).to.equal(0);
 				expect(
-					sharedLog.getReplicationInfoReceiveEpoch(sourceHash),
+					sharedLog._peerSessions.receiveEpoch(sourceHash),
 				).to.not.equal(null);
 				expect(sharedLog.latestReplicationInfoMessage.has(sourceHash)).to.be
 					.false;
@@ -195,16 +195,16 @@ describe("receive admission replication-info recovery epoch", () => {
 			const sharedLog = db.log as any;
 			const peerHash = "remote-peer-recovery-epoch";
 
-			const captured = sharedLog.advanceReplicationInfoReceiveEpoch(peerHash);
+			const captured = sharedLog._peerSessions.advanceReceiveEpoch(peerHash);
 			expect(
-				sharedLog.isCurrentReplicationInfoReceiveEpoch(peerHash, captured),
+				sharedLog._peerSessions.isReceiveEpochCurrent(peerHash, captured),
 			).to.be.true;
 
 			await db.close();
 			// The epoch map is cleared at close: a capture held across close
 			// compares against null, never against a surviving token.
 			expect(
-				sharedLog.isCurrentReplicationInfoReceiveEpoch(peerHash, captured),
+				sharedLog._peerSessions.isReceiveEpochCurrent(peerHash, captured),
 			).to.be.false;
 
 			await session.peers[0].open(db, {
@@ -213,12 +213,12 @@ describe("receive admission replication-info recovery epoch", () => {
 			// After reopen the pre-close capture must still fail the current-check:
 			// close()+open() is a hard fence for every outstanding capture.
 			expect(
-				sharedLog.isCurrentReplicationInfoReceiveEpoch(peerHash, captured),
+				sharedLog._peerSessions.isReceiveEpochCurrent(peerHash, captured),
 			).to.be.false;
 
 			// Sanity: the reopened instance issues fresh, current tokens.
-			const fresh = sharedLog.advanceReplicationInfoReceiveEpoch(peerHash);
-			expect(sharedLog.isCurrentReplicationInfoReceiveEpoch(peerHash, fresh)).to
+			const fresh = sharedLog._peerSessions.advanceReceiveEpoch(peerHash);
+			expect(sharedLog._peerSessions.isReceiveEpochCurrent(peerHash, fresh)).to
 				.be.true;
 			expect(fresh).to.not.equal(captured);
 		} finally {
@@ -245,7 +245,7 @@ describe("receive admission opening-barrier windows", () => {
 			// The opening-barrier truth is a WINDOW (map entry set at barrier
 			// start), not a phase: rotate a session to "opening" WITHOUT starting
 			// its barrier.
-			sharedLog.advanceSubscriptionEpoch(sourceHash, "opening");
+			sharedLog._peerSessions.rotate(sourceHash, "opening");
 
 			// An advert arriving now takes the plain path: applied directly, never
 			// staged in the opening stash.
@@ -349,7 +349,7 @@ describe("receive admission opening-barrier windows", () => {
 
 				// Abort the barrier mid-drain: a newer rotation supersedes its
 				// subscription epoch before the drain settles.
-				sharedLog.advanceSubscriptionEpoch(sourceHash, "departing");
+				sharedLog._peerSessions.rotate(sourceHash, "departing");
 				expect(subscriptionSettled).to.be.false;
 
 				releasePark.resolve();
@@ -413,7 +413,7 @@ describe("receive admission control-plane dispatch precedence", () => {
 			const sharedLog = target.log as any;
 			const sourceKey = source.node.identity.publicKey;
 			const sourceHash = sourceKey.hashcode();
-			sharedLog.advanceSubscriptionEpoch(sourceHash, "opening");
+			sharedLog._peerSessions.rotate(sourceHash, "opening");
 
 			const synchronizer = sinon.spy(sharedLog.syncronizer, "onMessage");
 			const removeKnown = sinon.spy(sharedLog, "removeEntriesKnownByPeer");
@@ -478,7 +478,7 @@ describe("receive admission control-plane dispatch precedence", () => {
 			const sharedLog = target.log as any;
 			const sourceKey = source.node.identity.publicKey;
 			const sourceHash = sourceKey.hashcode();
-			sharedLog.advanceSubscriptionEpoch(sourceHash, "opening");
+			sharedLog._peerSessions.rotate(sourceHash, "opening");
 
 			const send = sinon.stub(sharedLog.rpc, "send").resolves();
 			const segments = sinon.spy(sharedLog, "getMyReplicationSegments");
@@ -562,7 +562,7 @@ describe("receive admission control-plane lease one-shot", () => {
 				// visibly different from the pinned steady state of 1.
 				const extraRelease = sharedLog.acquirePeerReceiveLease(
 					sourceHash,
-					sharedLog._replicationLifecycleController,
+					sharedLog._instanceLifecycle?.membershipLifecycleController,
 					sharedLog._peerSessions.current(sourceHash),
 				);
 				expect(extraRelease).to.exist;
@@ -665,7 +665,7 @@ describe("receive admission receive error envelope", () => {
 			const sharedLog = target.log as any;
 			const sourceKey = source.node.identity.publicKey;
 			const sourceHash = sourceKey.hashcode();
-			sharedLog.advanceSubscriptionEpoch(sourceHash, "opening");
+			sharedLog._peerSessions.rotate(sourceHash, "opening");
 			const send = sinon.stub(sharedLog.rpc, "send").resolves();
 			try {
 				// AccessError from inside the prune arm is swallowed.

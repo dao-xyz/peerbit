@@ -16,12 +16,19 @@ type LivenessTestStore = EventStore<string, any>;
 type LivenessTestHooks = {
 	probeReplicatorLiveness(peerHash: string): Promise<void>;
 	markReplicatorActivity(peerHash: string, now?: number): void;
-	_getTopicSubscribers(topic: string): Promise<PublicSignKey[] | undefined>;
 	confirmReplicatorSubscriberPresence(peerHash: string): Promise<boolean>;
 };
 
 const getLivenessTestHooks = (store: LivenessTestStore): LivenessTestHooks =>
-	store.log as unknown as LivenessTestHooks;
+	(store.log as any)._liveness as LivenessTestHooks;
+
+type SubscriberTestHooks = {
+	_getTopicSubscribers(topic: string): Promise<PublicSignKey[] | undefined>;
+};
+
+const getSubscriberTestHooks = (
+	store: LivenessTestStore,
+): SubscriberTestHooks => store.log as unknown as SubscriberTestHooks;
 
 describe("waitForReplicator liveness", () => {
 	let session: TestSession;
@@ -236,7 +243,7 @@ describe("waitForReplicator liveness", () => {
 
 			expect(disconnected.notCalled).to.be.true;
 			expect(db0.log.uniqueReplicators.has(peerHash)).to.be.true;
-			expect(log._replicatorLivenessFailures.has(peerHash)).to.be.false;
+			expect(log._liveness._replicatorLivenessFailures.has(peerHash)).to.be.false;
 			expect(
 				await db0.log.replicationIndex.count({ query: { hash: peerHash } }),
 			).to.be.greaterThan(0);
@@ -368,9 +375,9 @@ describe("waitForReplicator liveness", () => {
 			await blockerStarted.promise;
 			const blockerTail = log._replicationInfoApplyQueueByPeer.get(peerHash);
 
-			log._replicatorLastActivityAt.set(peerHash, Date.now() - 60_000);
+			log._liveness._replicatorLastActivityAt.set(peerHash, Date.now() - 60_000);
 			// Seed one prior miss so this probe reaches the eviction threshold.
-			log._replicatorLivenessFailures.set(peerHash, 1);
+			log._liveness._replicatorLivenessFailures.set(peerHash, 1);
 			const eviction = hooks.probeReplicatorLiveness(peerHash);
 			await waitForResolved(() =>
 				expect(log._replicationInfoApplyQueueByPeer.get(peerHash)).not.to.equal(
@@ -386,7 +393,7 @@ describe("waitForReplicator liveness", () => {
 
 			expect(disconnected.notCalled).to.be.true;
 			expect(db0.log.uniqueReplicators.has(peerHash)).to.be.true;
-			expect(log._replicatorLivenessFailures.has(peerHash)).to.be.false;
+			expect(log._liveness._replicatorLivenessFailures.has(peerHash)).to.be.false;
 			expect(
 				await db0.log.replicationIndex.count({ query: { hash: peerHash } }),
 			).to.be.greaterThan(0);
@@ -474,10 +481,11 @@ describe("waitForReplicator liveness", () => {
 		);
 
 		const hooks = getLivenessTestHooks(db0);
+		const subscriberHooks = getSubscriberTestHooks(db0);
 		const pubsub = session.peers[0].services.pubsub;
 		const originalGetSubscribers = pubsub.getSubscribers.bind(pubsub);
 		const originalGetTopicSubscribers =
-			hooks._getTopicSubscribers.bind(hooks);
+			subscriberHooks._getTopicSubscribers.bind(subscriberHooks);
 		const originalSend = db0.log.rpc.send.bind(db0.log.rpc);
 		let pingFailuresLeft = 2;
 		let failRecoveryRequests = true;
@@ -487,7 +495,7 @@ describe("waitForReplicator liveness", () => {
 			}
 			return originalGetSubscribers(topic);
 		};
-		hooks._getTopicSubscribers = async (topic: string) => {
+		subscriberHooks._getTopicSubscribers = async (topic: string) => {
 			if (topic === db0.log.rpc.topic) {
 				return [session.peers[1].identity.publicKey];
 			}
@@ -517,7 +525,7 @@ describe("waitForReplicator liveness", () => {
 			expect((await db0.log.getReplicators()).size).to.equal(2);
 		} finally {
 			pubsub.getSubscribers = originalGetSubscribers;
-			hooks._getTopicSubscribers = originalGetTopicSubscribers;
+			subscriberHooks._getTopicSubscribers = originalGetTopicSubscribers;
 			db0.log.rpc.send = originalSend;
 		}
 	});
@@ -527,8 +535,9 @@ describe("waitForReplicator liveness", () => {
 
 		const store = new EventStore<string, any>();
 		const hooks = getLivenessTestHooks(store);
+		const subscriberHooks = getSubscriberTestHooks(store);
 		const originalGetTopicSubscribers =
-			hooks._getTopicSubscribers.bind(hooks);
+			subscriberHooks._getTopicSubscribers.bind(subscriberHooks);
 		const originalRebalanceParticipation =
 			store.log.rebalanceParticipation.bind(store.log);
 
@@ -539,7 +548,7 @@ describe("waitForReplicator liveness", () => {
 			releaseRebalance = resolve;
 		});
 
-		hooks._getTopicSubscribers = async (topic: string) => {
+		subscriberHooks._getTopicSubscribers = async (topic: string) => {
 			subscribersStarted = true;
 			return originalGetTopicSubscribers(topic);
 		};
@@ -567,7 +576,7 @@ describe("waitForReplicator liveness", () => {
 			});
 		} finally {
 			releaseRebalance();
-			hooks._getTopicSubscribers = originalGetTopicSubscribers;
+			subscriberHooks._getTopicSubscribers = originalGetTopicSubscribers;
 			store.log.rebalanceParticipation = originalRebalanceParticipation;
 		}
 
@@ -593,6 +602,7 @@ describe("waitForReplicator liveness", () => {
 
 		const peerHash = session.peers[1].identity.publicKey.hashcode();
 		const hooks = getLivenessTestHooks(db0);
+		const subscriberHooks = getSubscriberTestHooks(db0);
 		const syntheticTopic = `${db0.log.topic}/synthetic-cache`;
 		const pubsub = session.peers[0].services.pubsub;
 		const originalGetSubscribers = pubsub.getSubscribers.bind(pubsub);
@@ -605,7 +615,7 @@ describe("waitForReplicator liveness", () => {
 		}) as typeof pubsub.getSubscribers;
 
 		try {
-			const cachedHashes = (await hooks._getTopicSubscribers(syntheticTopic))?.map(
+			const cachedHashes = (await subscriberHooks._getTopicSubscribers(syntheticTopic))?.map(
 				(key) => key.hashcode(),
 			);
 			expect(cachedHashes).to.include(peerHash);
@@ -619,7 +629,7 @@ describe("waitForReplicator liveness", () => {
 				return originalGetSubscribers(topic);
 			}) as typeof pubsub.getSubscribers;
 
-			const stillCached = (await hooks._getTopicSubscribers(syntheticTopic))?.map(
+			const stillCached = (await subscriberHooks._getTopicSubscribers(syntheticTopic))?.map(
 				(key) => key.hashcode(),
 			);
 			expect(stillCached).to.include(peerHash);
@@ -809,7 +819,7 @@ describe("waitForReplicator liveness", () => {
 
 			// Exercise the separate hash-only removal path used after pubsub loses
 			// the public-key mapping for a previously learned/relayed replicator.
-			log._replicatorLastActivityAt.set(peerHash, Date.now() - 60_000);
+			log._liveness._replicatorLastActivityAt.set(peerHash, Date.now() - 60_000);
 			const eviction = hooks.probeReplicatorLiveness(peerHash);
 			releaseSnapshotSynchronizer.resolve();
 			releaseStoppedSynchronizer.resolve();

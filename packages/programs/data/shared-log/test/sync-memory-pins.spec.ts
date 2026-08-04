@@ -58,58 +58,58 @@ describe("sync-chunking memory pins", () => {
 			"syncInFlightQueueInverted",
 		).to.equal(0);
 		expect(
-			anySync.syncInFlightQueueExpiresAt.size,
+			anySync.pendingSync.syncInFlightQueueExpiresAt.size,
 			"syncInFlightQueueExpiresAt",
 		).to.equal(0);
 		expect(
-			anySync.pendingSyncExpiryHeap.length,
+			anySync.pendingSync.pendingSyncExpiryHeap.length,
 			"pendingSyncExpiryHeap",
 		).to.equal(0);
 		expect(anySync.pendingSync.records.size, "pendingSync.records").to.equal(0);
 		expect(
-			anySync.pendingSyncAdmissionExpiryNodes.size,
+			anySync.pendingSync.pendingSyncAdmissionExpiryNodes.size,
 			"pendingSyncAdmissionExpiryNodes",
 		).to.equal(0);
 		expect(
-			anySync.syncInFlightQueuedCoordinates.size,
+			anySync.pendingSync.syncInFlightQueuedCoordinates.size,
 			"syncInFlightQueuedCoordinates",
 		).to.equal(0);
 		expect(
-			anySync.syncInFlightQueuedHashByCoordinate.size,
+			anySync.pendingSync.syncInFlightQueuedHashByCoordinate.size,
 			"syncInFlightQueuedHashByCoordinate",
 		).to.equal(0);
 		expect(
-			anySync.syncInFlightQueuedCoordinatesByHash.size,
+			anySync.pendingSync.syncInFlightQueuedCoordinatesByHash.size,
 			"syncInFlightQueuedCoordinatesByHash",
 		).to.equal(0);
-		expect(anySync.pendingSyncClaimCount, "pendingSyncClaimCount").to.equal(0);
+		expect(anySync.pendingSync.pendingSyncClaimCount, "pendingSyncClaimCount").to.equal(0);
 		expect(
-			anySync.pendingSyncAdmissionCount,
+			anySync.pendingSync.pendingSyncAdmissionCount,
 			"pendingSyncAdmissionCount",
 		).to.equal(0);
 		expect(
-			anySync.pendingSyncAdmissionReservations.size,
+			anySync.pendingSync.pendingSyncAdmissionReservations.size,
 			"pendingSyncAdmissionReservations",
 		).to.equal(0);
 		expect(
-			anySync.pendingSyncAdmissionReservationsByPeer.size,
+			anySync.pendingSync.pendingSyncAdmissionReservationsByPeer.size,
 			"pendingSyncAdmissionReservationsByPeer",
 		).to.equal(0);
 		expect(
-			anySync.pendingSyncAdmissionReservationsByIdentity.size,
+			anySync.pendingSync.pendingSyncAdmissionReservationsByIdentity.size,
 			"pendingSyncAdmissionReservationsByIdentity",
 		).to.equal(0);
 		expect(
-			anySync.pendingSyncAdmissionCountByPeer.size,
+			anySync.pendingSync.pendingSyncAdmissionCountByPeer.size,
 			"pendingSyncAdmissionCountByPeer",
 		).to.equal(0);
 		expect(
-			anySync.pendingSyncAdmissionIdentitiesByPeer.size,
+			anySync.pendingSync.pendingSyncAdmissionIdentitiesByPeer.size,
 			"pendingSyncAdmissionIdentitiesByPeer",
 		).to.equal(0);
 		expect(sync.syncInFlight.size, "syncInFlight").to.equal(0);
 		expect(
-			anySync.syncInFlightTargetsByKey.size,
+			anySync.pendingSync.syncInFlightTargetsByKey.size,
 			"syncInFlightTargetsByKey",
 		).to.equal(0);
 	};
@@ -120,7 +120,7 @@ describe("sync-chunking memory pins", () => {
 		for (const record of anySync.pendingSync.records.values()) {
 			sum += (record.claimants as Set<string>).size;
 		}
-		expect(anySync.pendingSyncClaimCount).to.equal(sum);
+		expect(anySync.pendingSync.pendingSyncClaimCount).to.equal(sum);
 	};
 
 	it("empties every pending-sync structure on TTL expiry", async () => {
@@ -139,7 +139,7 @@ describe("sync-chunking memory pins", () => {
 
 			await clock.tickAsync(1);
 			expectPendingSyncCensusEmpty(sync);
-			expect((sync as any).syncInFlightQueueExpiryTimer).to.equal(undefined);
+			expect((sync as any).pendingSync.syncInFlightQueueExpiryTimer).to.equal(undefined);
 		} finally {
 			await sync.close();
 			clock.restore();
@@ -181,10 +181,10 @@ describe("sync-chunking memory pins", () => {
 			await sync.queueSync([41n], peerB, { skipCheck: true });
 			coordinateToHash.add(41n, "alias-only-hash");
 			(sync as any).refreshQueuedSyncCoordinateAliases();
-			expect((sync as any).syncInFlightQueuedCoordinates.size).to.equal(1);
-			expect((sync as any).syncInFlightQueuedHashByCoordinate.size).to.equal(1);
+			expect((sync as any).pendingSync.syncInFlightQueuedCoordinates.size).to.equal(1);
+			expect((sync as any).pendingSync.syncInFlightQueuedHashByCoordinate.size).to.equal(1);
 			expect(
-				(sync as any).syncInFlightQueuedCoordinatesByHash.size,
+				(sync as any).pendingSync.syncInFlightQueuedCoordinatesByHash.size,
 			).to.equal(1);
 
 			sync.onPeerDisconnected(peerA);
@@ -196,14 +196,14 @@ describe("sync-chunking memory pins", () => {
 			expect(sync.syncInFlightQueueInverted.has(peerA.hashcode())).to.equal(
 				false,
 			);
-			expect((sync as any).pendingSyncClaimCount).to.equal(2);
+			expect((sync as any).pendingSync.pendingSyncClaimCount).to.equal(2);
 			expectClaimCountMatchesClaimants(sync);
 
 			sync.onPeerDisconnected(peerB);
-			expect((sync as any).syncInFlightQueuedCoordinates.size).to.equal(0);
-			expect((sync as any).syncInFlightQueuedHashByCoordinate.size).to.equal(0);
+			expect((sync as any).pendingSync.syncInFlightQueuedCoordinates.size).to.equal(0);
+			expect((sync as any).pendingSync.syncInFlightQueuedHashByCoordinate.size).to.equal(0);
 			expect(
-				(sync as any).syncInFlightQueuedCoordinatesByHash.size,
+				(sync as any).pendingSync.syncInFlightQueuedCoordinatesByHash.size,
 			).to.equal(0);
 			expectPendingSyncCensusEmpty(sync);
 		} finally {
@@ -236,7 +236,7 @@ describe("sync-chunking memory pins", () => {
 		const lateHash = "late-alias-hash";
 		try {
 			await sync.queueSync([coordinate], peerA, { skipCheck: true });
-			const coordinateDeadline = (sync as any).syncInFlightQueueExpiresAt.get(
+			const coordinateDeadline = (sync as any).pendingSync.syncInFlightQueueExpiresAt.get(
 				coordinate,
 			);
 			expect(coordinateDeadline).to.equal(
@@ -257,7 +257,7 @@ describe("sync-chunking memory pins", () => {
 			).to.deep.equal([peerA.hashcode(), peerB.hashcode()]);
 			// The transplanted claim inherits the earlier (coordinate) deadline;
 			// repeated claims and additional peers must not slide it.
-			expect((sync as any).syncInFlightQueueExpiresAt.get(coordinate)).to.equal(
+			expect((sync as any).pendingSync.syncInFlightQueueExpiresAt.get(coordinate)).to.equal(
 				coordinateDeadline,
 			);
 			expectClaimCountMatchesClaimants(sync);
@@ -317,13 +317,13 @@ describe("sync-chunking memory pins", () => {
 			expect(
 				(sync as any).hasPendingSyncClaim("seeded", peerA.hashcode()),
 			).to.equal(true);
-			expect((sync as any).pendingSyncClaimCount).to.equal(1);
+			expect((sync as any).pendingSync.pendingSyncClaimCount).to.equal(1);
 
 			await sync.queueSync(["seeded"], peerB, { skipCheck: true });
 			expect(
 				sync.syncInFlightQueue.get("seeded")!.map((peer) => peer.hashcode()),
 			).to.deep.equal([peerA.hashcode(), peerB.hashcode()]);
-			expect((sync as any).pendingSyncClaimCount).to.equal(2);
+			expect((sync as any).pendingSync.pendingSyncClaimCount).to.equal(2);
 			expectClaimCountMatchesClaimants(sync);
 
 			sync.onEntryAddedHash("seeded");
@@ -428,7 +428,7 @@ describe("sync-chunking slot-quota pins", () => {
 			sync.onPeerDisconnected(peerA);
 			expect((sync as any).pendingCoordinateLookupCount).to.equal(0);
 			expect((sync as any).pendingCoordinateLookupCountByPeer.size).to.equal(0);
-			expect((sync as any).syncResponseSlotRows.size).to.equal(0);
+			expect((sync as any).peerSlotRows.rows.size).to.equal(0);
 
 			// The reconnected peer gets its full lookup quota back even though
 			// the old resolver calls never settle.
@@ -489,7 +489,7 @@ describe("sync-chunking slot-quota pins", () => {
 			expect((sync as any).pendingCoordinateResponseCountByPeer.size).to.equal(
 				0,
 			);
-			expect((sync as any).syncResponseSlotRows.size).to.equal(0);
+			expect((sync as any).peerSlotRows.rows.size).to.equal(0);
 		} finally {
 			await sync.close();
 		}
@@ -526,7 +526,7 @@ describe("sync-chunking slot-quota pins", () => {
 			expect((sync as any).pendingCoordinateResponseCountByPeer.size).to.equal(
 				0,
 			);
-			expect((sync as any).syncResponseSlotRows.size).to.equal(0);
+			expect((sync as any).peerSlotRows.rows.size).to.equal(0);
 
 			// The blocked ship settling late is aggregate-neutral.
 			releaseShip();
@@ -591,7 +591,7 @@ describe("sync-chunking slot-quota pins", () => {
 				expect((sync as any).pendingMaybeSyncResponses.size).to.equal(0);
 				// ...and the settled leases drain retained work so the dispatch
 				// lifecycle disposes out of the registry.
-				expect((sync as any).syncDispatchTargets.size).to.equal(0);
+				expect((sync as any).syncDispatchRegistry.activeTargets.size).to.equal(0);
 			}
 
 			// The full authorization window is reservable again after the flaps.
@@ -678,7 +678,7 @@ describe("sync-chunking slot-quota pins", () => {
 			// The successor's lease settled while ATTACHED (no disconnect): the
 			// idle row must drop eagerly from the registry, not linger until the
 			// next disconnect.
-			expect((sync as any).syncResponseSlotRows.size).to.equal(0);
+			expect((sync as any).peerSlotRows.rows.size).to.equal(0);
 			first?.release();
 			second?.release();
 		} finally {
@@ -718,9 +718,9 @@ describe("sync-chunking dispatch-lifecycle pins", () => {
 				signal: controller.signal,
 			});
 			expect(reservation).to.not.equal(undefined);
-			expect((sync as any).syncDispatchTargets.size).to.equal(1);
+			expect((sync as any).syncDispatchRegistry.activeTargets.size).to.equal(1);
 			const targetLifecycle = [
-				...(sync as any).syncDispatchTargets.get(peerA.hashcode()),
+				...(sync as any).syncDispatchRegistry.activeTargets.get(peerA.hashcode()),
 			][0] as any;
 
 			controller.abort(new Error("caller aborted"));
@@ -729,7 +729,7 @@ describe("sync-chunking dispatch-lifecycle pins", () => {
 			// The disposed lifecycle leaves no reachable target lifecycles, its
 			// raw retention counters settle at exactly zero, and every abort
 			// listener added on the caller signal has been removed.
-			expect((sync as any).syncDispatchTargets.size).to.equal(0);
+			expect((sync as any).syncDispatchRegistry.activeTargets.size).to.equal(0);
 			expect(targetLifecycle.lifecycle.disposed).to.equal(true);
 			expect(targetLifecycle.lifecycle.retainedWork).to.equal(0);
 			expect(targetLifecycle.responseLeases).to.equal(0);
@@ -751,7 +751,7 @@ describe("sync-chunking dispatch-lifecycle pins", () => {
 			// responseLeases/retainedWork negative and allow premature disposal
 			// with live retained work) and leaves the disposed state unchanged.
 			reservation!.release();
-			expect((sync as any).syncDispatchTargets.size).to.equal(0);
+			expect((sync as any).syncDispatchRegistry.activeTargets.size).to.equal(0);
 			expect(targetLifecycle.lifecycle.disposed).to.equal(true);
 			expect(targetLifecycle.lifecycle.retainedWork).to.equal(0);
 			expect(targetLifecycle.responseLeases).to.equal(0);
@@ -826,7 +826,7 @@ describe("rateless-iblt-syncronizer slot-quota pins", () => {
 			expect((sync as any).activeRatelessResponseCount).to.equal(0);
 			expect((sync as any).activeRatelessResponseCountByPeer.size).to.equal(0);
 			expect((sync as any).outgoingSyncProcessByTarget.size).to.equal(0);
-			expect((sync as any).ratelessResponseSlotRows.size).to.equal(0);
+			expect((sync as any).ratelessPeerSlotRows.rows.size).to.equal(0);
 
 			// The reconnected peer's fresh process gets a fresh row.
 			await sync.onMaybeMissingEntries({
@@ -858,7 +858,7 @@ describe("rateless-iblt-syncronizer slot-quota pins", () => {
 			// The successor's lease settled while ATTACHED (no disconnect): the
 			// idle row must drop eagerly from the registry, not linger until the
 			// next disconnect.
-			expect((sync as any).ratelessResponseSlotRows.size).to.equal(0);
+			expect((sync as any).ratelessPeerSlotRows.rows.size).to.equal(0);
 		} finally {
 			blockShipments = false;
 			for (const release of releases) {

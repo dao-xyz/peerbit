@@ -132,7 +132,7 @@ describe("durable native block store restart (non-replicating)", function () {
 		// FIX-1 code path. It is the branch that, before FIX-1, committed the block to
 		// the wasm map only and never wrote it through to durable.
 		const residentStub = sinon
-			.stub(log1, "canUseNativeBackboneResidentCoordinateState")
+			.stub(log1._coordinates, "canUseNativeBackboneResidentCoordinateState")
 			.returns(false);
 
 		const entryHashes: string[] = [];
