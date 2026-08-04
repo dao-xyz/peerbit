@@ -358,13 +358,18 @@ describe("coordinate persistence rollback and receive-batch pins", function () {
 
 		// Ratchet: a snapshot superseded by a newer mutation generation must
 		// not roll anything back (`_nativeCoordinateMutationGenerations` is
-		// generation-checked per hash).
+		// generation-checked per hash). The newer state must be visibly
+		// DIFFERENT from the stale snapshot (here: the row deleted) so an
+		// unconditional rollback would clobber it — with identical states a
+		// no-op and an always-rollback are indistinguishable and the pin
+		// has no teeth.
 		const stale = internals.snapshotResidentCoordinateEntries([hash]);
 		internals.snapshotResidentCoordinateEntries([hash]); // newer generation
+		await internals.deleteCoordinatesForHashes([hash]); // newer visible state
 		await internals.rollbackNativeBackboneCoordinateAppendDurably(hash, stale);
-		expect(await countIndexed(log, hash)).to.equal(1);
-		expect(log._residentEntryCoordinatesByHash.has(hash)).to.be.true;
-		expect(backboneHas(log, hash)).to.be.true;
+		expect(await countIndexed(log, hash)).to.equal(0);
+		expect(log._residentEntryCoordinatesByHash.has(hash)).to.be.false;
+		expect(backboneHas(log, hash)).to.be.false;
 	});
 
 	it("P4: the backbone-only receive batch commits exactly the planned rows and rolls back atomically", async () => {

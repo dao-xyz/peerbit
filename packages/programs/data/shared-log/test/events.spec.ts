@@ -1970,7 +1970,7 @@ describe("events", () => {
 				await releaseLowerAppend.promise;
 				return { entries: [entry], removed: [] };
 			});
-		const deleteCoordinates = sinon.spy(log, "deleteCoordinatesForHashes");
+		const deleteCoordinates = sinon.spy((log as any)._coordinates, "deleteCoordinatesForHashes");
 		const coalesced = sinon.spy(log, "processLocalAppendManyCoalesced");
 		const planLocal = sinon.spy(log, "planNativeLocalAppendEntries");
 		const planDelivery = sinon.spy(log, "planNativeAppendEntries");
@@ -2183,7 +2183,7 @@ describe("events", () => {
 				return {} as any;
 			});
 		const applyChange = sinon.spy(log, "applyChange");
-		const deleteCoordinates = sinon.spy(log, "deleteCoordinatesForHashes");
+		const deleteCoordinates = sinon.spy((log as any)._coordinates, "deleteCoordinatesForHashes");
 		const planLocal = sinon.spy(log, "planNativeLocalAppendEntries");
 		const planDelivery = sinon.spy(log, "planNativeAppendEntries");
 		const processLocalAppend = sinon.spy(log, "processLocalAppend");
@@ -2885,7 +2885,7 @@ describe("events", () => {
 				staleLatestCommit,
 		};
 		const canUseResidentState = sinon
-			.stub(log, "canUseNativeBackboneResidentCoordinateState")
+			.stub((log as any)._coordinates, "canUseNativeBackboneResidentCoordinateState")
 			.returns(true);
 		const context = sinon.stub(log, "createLeaderSelectionContext").resolves({
 			roleAge: 0,
@@ -2992,7 +2992,7 @@ describe("events", () => {
 			await session.peers[0].open(db, {
 				args: { replicate: false, timeUntilRoleMaturity: 0 },
 			});
-			const deleteCoordinates = sinon.spy(log, "deleteCoordinatesForHashes");
+			const deleteCoordinates = sinon.spy((log as any)._coordinates, "deleteCoordinatesForHashes");
 			const planHeads = sinon.spy(log, "planEntryLeaderBatch");
 
 			try {

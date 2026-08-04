@@ -186,15 +186,15 @@ describe("raw exchange-head sync", () => {
 				"putSharedLogCoordinateFieldsAndDeleteHashesBatchNoReturn",
 			);
 			const persistBatchSpy = sinon.spy(
-				db2.log as any,
+				(db2.log as any)._coordinates,
 				"persistCoordinatesBatch",
 			);
 			const coordinatePrepareSpy = sinon.spy(
-				db2.log as any,
+				(db2.log as any)._coordinates,
 				"createCoordinatePersistenceEntryFromNativePlan",
 			);
 			const coordinatePrepareFromLeaderPlanSpy = sinon.spy(
-				db2.log as any,
+				(db2.log as any)._coordinates,
 				"createCoordinatePersistenceEntryFromLeaderPlan",
 			);
 			const sharedOnChangeSpy = sinon.spy(db2.log as any, "onChange");
@@ -1314,7 +1314,7 @@ describe("raw exchange-head sync", () => {
 				"commitEntryCoordinatesColumnsBatch",
 			);
 			const backboneOnlyPersistSpy = sinon.spy(
-				sharedLog,
+				(sharedLog as any)._coordinates,
 				"persistBackboneOnlyReceiveCoordinateBatch",
 			);
 			const flushOnAppendSpy = sinon.spy(
@@ -1344,7 +1344,7 @@ describe("raw exchange-head sync", () => {
 						persist: false,
 					});
 					const prepared =
-						sharedLog.createCoordinatePersistenceEntryFromLeaderPlan({
+						sharedLog._coordinates.createCoordinatePersistenceEntryFromLeaderPlan({
 							entry,
 							plan,
 							replicas,
@@ -1487,11 +1487,11 @@ describe("raw exchange-head sync", () => {
 				"commitEntryCoordinatesColumnsBatch",
 			);
 			const backboneOnlyPersistSpy = sinon.spy(
-				sharedLog,
+				(sharedLog as any)._coordinates,
 				"persistBackboneOnlyReceiveCoordinateBatch",
 			);
 			const finishSpy = sinon.spy(
-				sharedLog,
+				(sharedLog as any)._coordinates,
 				"finishBackboneOnlyReceiveCoordinateBatch",
 			);
 			try {
@@ -1677,11 +1677,11 @@ describe("raw exchange-head sync", () => {
 						"putNativeCommittedAppendFactsBatch",
 					);
 					const persistCoordinatesBatchSpy = sinon.spy(
-						sharedLog,
+						(sharedLog as any)._coordinates,
 						"persistCoordinatesBatch",
 				);
 				const finishBackboneOnlyCoordinateSpy = sinon.spy(
-					sharedLog,
+					(sharedLog as any)._coordinates,
 					"finishBackboneOnlyReceiveCoordinateBatch",
 				);
 				const coordinateIndex = sharedLog.entryCoordinatesIndex as any;
@@ -3026,7 +3026,7 @@ describe("raw exchange-head sync", () => {
 				.stub(db.log.log.blocks as any, "hasMany")
 				.resolves(hashes.map(() => true));
 			const nativeMetadata = sinon
-				.stub(log, "getNativeLogEntryMetadataBatch")
+				.stub((log as any)._coordinates, "getNativeLogEntryMetadataBatch")
 				.returns(
 					entries.map((entry) => ({
 						hash: entry.hash,

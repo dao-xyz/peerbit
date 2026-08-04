@@ -219,7 +219,7 @@ describe("append", () => {
 			"putSharedLogCoordinateAndDeleteIds",
 		);
 		const createSpy = sinon.spy(
-			store.log as any,
+			(store.log as any)._coordinates,
 			"createCoordinatePersistenceEntry",
 		);
 		const createFactsSpy = sinon.spy(
@@ -227,7 +227,7 @@ describe("append", () => {
 			"createCoordinatePersistenceEntryFromNativePlanFacts",
 		);
 		const materializeCoordinateSpy = sinon.spy(
-			store.log as any,
+			(store.log as any)._coordinates,
 			"createCoordinateEntryFromNativeFields",
 		);
 		const planEntrySpy = sinon.spy(
@@ -244,11 +244,11 @@ describe("append", () => {
 		);
 		const genericProcessSpy = sinon.spy(store.log as any, "processLocalAppend");
 		const persistCoordinateSpy = sinon.spy(
-			store.log as any,
+			(store.log as any)._coordinates,
 			"persistCoordinate",
 		);
 		const persistPreparedSpy = sinon.spy(
-			store.log as any,
+			(store.log as any)._coordinates,
 			"persistPreparedCoordinate",
 		);
 		try {
@@ -402,7 +402,7 @@ describe("append", () => {
 			"processNativePreparedTargetNoneAppend",
 		);
 			const nativePersistSpy = sinon.spy(
-				store.log as any,
+				(store.log as any)._coordinates,
 				"persistPreparedCoordinateNativeTransaction",
 			);
 			const coordinateIndex = store.log.entryCoordinatesIndex as any;
@@ -411,7 +411,7 @@ describe("append", () => {
 				"putSharedLogCoordinateFieldsEncodedAndDeleteHashesNoReturn",
 			);
 			const genericPersistSpy = sinon.spy(
-				store.log as any,
+				(store.log as any)._coordinates,
 				"persistPreparedCoordinate",
 			);
 		const materializeSpy = sinon.spy(
@@ -476,7 +476,7 @@ describe("append", () => {
 		expect(residentEntry.getMetaBytes).equal(undefined);
 
 		const materializeSpy = sinon.spy(
-			store.log as any,
+			(store.log as any)._coordinates,
 			"materializeResidentCoordinateEntry",
 		);
 		const syncStub = sinon
