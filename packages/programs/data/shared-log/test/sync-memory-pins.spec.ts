@@ -4,6 +4,7 @@ import { expect } from "chai";
 import sinon from "sinon";
 import { RatelessIBLTSynchronizer } from "../src/sync/rateless-iblt.js";
 import {
+	MAX_PENDING_SIMPLE_SYNC_KEYS_PER_PEER,
 	MAX_PENDING_SIMPLE_SYNC_LOOKUPS_PER_PEER,
 	PENDING_SIMPLE_SYNC_KEY_TTL_MS,
 	RequestMaybeSyncCoordinate,
@@ -367,9 +368,13 @@ describe("sync-chunking memory pins", () => {
 // release closures capture per-peer slot rows; disconnect detaches the row.
 describe("sync-chunking slot-quota pins", () => {
 	let peerA: Awaited<ReturnType<typeof Ed25519Keypair.create>>["publicKey"];
+	let peerB: Awaited<ReturnType<typeof Ed25519Keypair.create>>["publicKey"];
 
 	before(async () => {
-		peerA = (await Ed25519Keypair.create()).publicKey;
+		[peerA, peerB] = await Promise.all([
+			Ed25519Keypair.create().then((keypair) => keypair.publicKey),
+			Ed25519Keypair.create().then((keypair) => keypair.publicKey),
+		]);
 	});
 
 	const waitFor = async (condition: () => boolean) => {
@@ -514,6 +519,79 @@ describe("sync-chunking slot-quota pins", () => {
 			);
 		} finally {
 			releaseShip();
+			await sync.close();
+		}
+	});
+
+	it("returns a flapping peer's active authorization hash budget on disconnect", async () => {
+		// Storage/transport ships are not universally abortable: a peer whose
+		// accepted (active) response authorizations never ship must not retain
+		// its pendingMaybeSyncResponseCount contribution past disconnect, and
+		// repeated acquire-hang-disconnect cycles must not ratchet the budget
+		// toward permanent global rejection.
+		const hangs: (() => void)[] = [];
+		const sendRawExchangeHeads = sinon.stub().callsFake(
+			() =>
+				new Promise<number>((resolve) => {
+					hangs.push(() => resolve(1));
+				}),
+		);
+		const sync = new SimpleSyncronizer<"u64">({
+			rpc: { send: sinon.stub().resolves() } as any,
+			entryIndex: {} as any,
+			log: {} as any,
+			coordinateToHash: new Cache<string>({ max: 10 }),
+			sendRawExchangeHeads,
+		});
+		const active: Promise<boolean>[] = [];
+		try {
+			expect((sync as any).pendingMaybeSyncResponseCount).to.equal(0);
+			for (let cycle = 0; cycle < 2; cycle += 1) {
+				const hashes = [0, 1, 2].map((index) => `flap-${cycle}-${index}`);
+				const reservation = sync.expectMaybeSyncResponse({
+					hashes,
+					targets: [peerA.hashcode()],
+				});
+				expect(reservation).to.not.equal(undefined);
+				active.push(
+					sync.onMessage(new ResponseMaybeSyncCapabilities({ hashes }), {
+						from: peerA,
+					} as any),
+				);
+				await waitFor(() => sendRawExchangeHeads.callCount === cycle + 1);
+				// The caller gives up its reservation; only the hung ship's active
+				// authorizations remain charged against the hash budget.
+				reservation!.release();
+				expect((sync as any).pendingMaybeSyncResponseCount).to.equal(
+					hashes.length,
+				);
+
+				sync.onPeerDisconnected(peerA);
+				// The active authorizations' budget returns with the row (no
+				// ratchet across flap cycles)...
+				expect((sync as any).pendingMaybeSyncResponseCount).to.equal(0);
+				expect((sync as any).pendingMaybeSyncResponses.size).to.equal(0);
+				// ...and the settled leases drain retained work so the dispatch
+				// lifecycle disposes out of the registry.
+				expect((sync as any).syncDispatchTargets.size).to.equal(0);
+			}
+
+			// The full authorization window is reservable again after the flaps.
+			const reclaimed = sync.expectMaybeSyncResponse({
+				hashes: Array.from(
+					{ length: MAX_PENDING_SIMPLE_SYNC_KEYS_PER_PEER },
+					(_, index) => `flap-reclaimed-${index}`,
+				),
+				targets: [peerB.hashcode()],
+			});
+			expect(reclaimed).to.not.equal(undefined);
+			reclaimed!.release();
+			expect((sync as any).pendingMaybeSyncResponseCount).to.equal(0);
+		} finally {
+			for (const hang of hangs) {
+				hang();
+			}
+			await Promise.all(active);
 			await sync.close();
 		}
 	});

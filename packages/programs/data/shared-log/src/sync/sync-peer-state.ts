@@ -14,6 +14,15 @@
 // |                              |                    | in aggregate; late         |
 // |                              |                    | releases settle against    |
 // |                              |                    | the detached row)          |
+// | pendingResponseHashes        | consume accepts an | lease release settles      |
+// | (simple synchronizer only)   | authorization      | while attached; row        |
+// |                              | (custody moves     | DETACHES at peer           |
+// |                              | batch -> row)      | disconnect (budget returns |
+// |                              |                    | in aggregate)              |
+// | activeReleases               | consume creates an | release settles (self-     |
+// | (simple synchronizer only)   | active-response    | removal); detach invokes   |
+// |                              | lease              | the outstanding releases   |
+// |                              |                    | so retained work drains    |
 //
 // Slot accounting deliberately SURVIVES close()/open() generation rotation
 // on both synchronizers: the underlying storage resolvers and transport
@@ -32,6 +41,18 @@ export type SyncPeerSlotRow = {
 	lookups: number;
 	responses: number;
 	active: number;
+	// Portion of the simple synchronizer's global pending-response hash budget
+	// held by this peer's ACTIVE (consumed) authorizations. Batch-resident
+	// hashes stay charged against the batch; consume moves custody here so a
+	// disconnect can return the budget even when the response ship never
+	// settles. Always 0 on rateless rows.
+	pendingResponseHashes: number;
+	// Outstanding active-response lease releases (simple synchronizer only).
+	// Releases self-remove when the ship settles; detach invokes the
+	// remainder so responseLeases/retainedWork drain and the dispatch
+	// lifecycle can dispose — the released-guard makes the eventual late
+	// ship-side release inert. Always empty on rateless rows.
+	activeReleases: Set<() => void>;
 };
 
 export class SyncPeerSlotRegistry {
@@ -40,7 +61,15 @@ export class SyncPeerSlotRegistry {
 	ensure(peer: string): SyncPeerSlotRow {
 		let row = this.rows.get(peer);
 		if (!row) {
-			row = { peer, attached: true, lookups: 0, responses: 0, active: 0 };
+			row = {
+				peer,
+				attached: true,
+				lookups: 0,
+				responses: 0,
+				active: 0,
+				pendingResponseHashes: 0,
+				activeReleases: new Set(),
+			};
 			this.rows.set(peer, row);
 		}
 		return row;
@@ -67,7 +96,9 @@ export class SyncPeerSlotRegistry {
 			row.attached &&
 			row.lookups === 0 &&
 			row.responses === 0 &&
-			row.active === 0
+			row.active === 0 &&
+			row.pendingResponseHashes === 0 &&
+			row.activeReleases.size === 0
 		) {
 			this.rows.delete(row.peer);
 		}

@@ -376,6 +376,12 @@ type PendingMaybeSyncResponseAuthorization = {
 	deliveryInFlight?: boolean;
 	settled?: "fulfilled" | "released";
 	active?: boolean;
+	// Set when consume accepts the authorization: the peer slot row that holds
+	// this authorization's pending-response hash-budget unit whenever
+	// deliveryInFlight !== true (deliveryInFlight custody belongs to
+	// finishDelivery). Row identity, not peer hash: a late settle never
+	// touches a reconnected successor's row.
+	slotRow?: SyncPeerSlotRow;
 };
 
 type PendingMaybeSyncResponseReservation = {
@@ -1663,6 +1669,16 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 				beginDelivery: () => {
 					for (const authorization of addedAuthorizations) {
 						if (!authorization.settled) {
+							if (
+								authorization.deliveryInFlight !== true &&
+								authorization.active === true &&
+								authorization.slotRow?.attached === true
+							) {
+								// The response was accepted before the request send began:
+								// custody of the hash-budget unit moves from the slot row to
+								// finishDelivery for the duration of the send.
+								authorization.slotRow.pendingResponseHashes -= 1;
+							}
 							authorization.deliveryInFlight = true;
 						}
 					}
@@ -1681,6 +1697,14 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 								?.get(authorization.hash) !== authorization
 						) {
 							releasedCount += 1;
+						} else if (
+							authorization.active === true &&
+							authorization.slotRow?.attached === true
+						) {
+							// The response was accepted while the request send was in
+							// flight; custody of the hash-budget unit returns to the
+							// active lease's slot row.
+							authorization.slotRow.pendingResponseHashes += 1;
 						}
 					}
 					if (releasedCount > 0) {
@@ -2021,59 +2045,80 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 			fromHash,
 			(this.activeMaybeSyncResponseCountByPeer.get(fromHash) ?? 0) + 1,
 		);
+		// Accepted authorizations leave their batch (above) but stay charged
+		// against the global hash budget. Move that charge into row custody so a
+		// disconnect can return it even when the response ship never settles;
+		// units currently owned by finishDelivery (deliveryInFlight) stay out.
+		for (const { authorizations } of acceptedByLifecycle.values()) {
+			for (const authorization of authorizations) {
+				authorization.slotRow = slotRow;
+				if (authorization.deliveryInFlight !== true) {
+					slotRow.pendingResponseHashes += 1;
+				}
+			}
+		}
 		let remainingLeases = acceptedByLifecycle.size;
 		return [...acceptedByLifecycle].map(
 			([targetLifecycle, { hashes: acceptedHashes, authorizations }]) => {
 				let released = false;
+				const release = (options?: { fulfilled?: boolean }) => {
+					if (released) {
+						return;
+					}
+					released = true;
+					slotRow.activeReleases.delete(release);
+					const pendingForTarget = this.pendingMaybeSyncResponses.get(fromHash);
+					for (const authorization of authorizations) {
+						this.settlePendingMaybeSyncResponseAuthorization(
+							authorization,
+							options?.fulfilled === true,
+						);
+						if (pendingForTarget?.get(authorization.hash) === authorization) {
+							pendingForTarget.delete(authorization.hash);
+						}
+					}
+					if (pendingForTarget?.size === 0) {
+						this.pendingMaybeSyncResponses.delete(fromHash);
+					}
+					const chargedToRow = authorizations.filter(
+						(authorization) => authorization.deliveryInFlight !== true,
+					).length;
+					if (slotRow.attached) {
+						this.pendingMaybeSyncResponseCount -= chargedToRow;
+						slotRow.pendingResponseHashes -= chargedToRow;
+					}
+					// else: the hash budget already returned in aggregate when the row
+					// detached; only the deliveryInFlight units (owned by
+					// finishDelivery) remain charged.
+					targetLifecycle.responseLeases -= 1;
+					targetLifecycle.lifecycle.retainedWork -= 1;
+					remainingLeases -= 1;
+					if (remainingLeases === 0) {
+						slotRow.active -= 1;
+						if (slotRow.attached) {
+							this.activeMaybeSyncResponseCount -= 1;
+							const activeForPeer =
+								(this.activeMaybeSyncResponseCountByPeer.get(fromHash) ?? 1) -
+								1;
+							if (activeForPeer === 0) {
+								this.activeMaybeSyncResponseCountByPeer.delete(fromHash);
+							} else {
+								this.activeMaybeSyncResponseCountByPeer.set(
+									fromHash,
+									activeForPeer,
+								);
+							}
+							this.maybeDropIdleSyncResponseSlotRow(slotRow);
+						}
+					}
+					this.schedulePendingMaybeSyncResponseWaiter();
+					this.maybeDisposeSyncDispatchLifecycle(targetLifecycle.lifecycle);
+				};
+				slotRow.activeReleases.add(release);
 				return {
 					hashes: acceptedHashes,
 					signal: targetLifecycle.controller.signal,
-					release: (options?: { fulfilled?: boolean }) => {
-						if (released) {
-							return;
-						}
-						released = true;
-						const pendingForTarget =
-							this.pendingMaybeSyncResponses.get(fromHash);
-						for (const authorization of authorizations) {
-							this.settlePendingMaybeSyncResponseAuthorization(
-								authorization,
-								options?.fulfilled === true,
-							);
-							if (pendingForTarget?.get(authorization.hash) === authorization) {
-								pendingForTarget.delete(authorization.hash);
-							}
-						}
-						if (pendingForTarget?.size === 0) {
-							this.pendingMaybeSyncResponses.delete(fromHash);
-						}
-						this.pendingMaybeSyncResponseCount -= authorizations.filter(
-							(authorization) => authorization.deliveryInFlight !== true,
-						).length;
-						targetLifecycle.responseLeases -= 1;
-						targetLifecycle.lifecycle.retainedWork -= 1;
-						remainingLeases -= 1;
-						if (remainingLeases === 0) {
-							slotRow.active -= 1;
-							if (slotRow.attached) {
-								this.activeMaybeSyncResponseCount -= 1;
-								const activeForPeer =
-									(this.activeMaybeSyncResponseCountByPeer.get(fromHash) ?? 1) -
-									1;
-								if (activeForPeer === 0) {
-									this.activeMaybeSyncResponseCountByPeer.delete(fromHash);
-								} else {
-									this.activeMaybeSyncResponseCountByPeer.set(
-										fromHash,
-										activeForPeer,
-									);
-								}
-								this.maybeDropIdleSyncResponseSlotRow(slotRow);
-							}
-						}
-						this.schedulePendingMaybeSyncResponseWaiter();
-						this.maybeDisposeSyncDispatchLifecycle(targetLifecycle.lifecycle);
-					},
+					release,
 				};
 			},
 		);
@@ -2884,6 +2929,23 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 		if (row.active > 0) {
 			this.activeMaybeSyncResponseCount -= row.active;
 			this.activeMaybeSyncResponseCountByPeer.delete(peer);
+		}
+		if (row.pendingResponseHashes > 0) {
+			// Active authorizations' hash budget returns in aggregate with the
+			// row. The settled releases below (and any late ship-side release)
+			// see the detached row and skip the global budget.
+			this.pendingMaybeSyncResponseCount -= row.pendingResponseHashes;
+			row.pendingResponseHashes = 0;
+			this.schedulePendingMaybeSyncResponseWaiter();
+		}
+		// Counters are settled; now settle the outstanding active-response
+		// leases so their authorizations leave pendingMaybeSyncResponses and
+		// responseLeases/retainedWork drain, letting the dispatch lifecycle
+		// dispose. The released-guard makes the eventual ship-side release
+		// inert, and the closures captured THIS row (identity, not peer hash),
+		// so a reconnected successor's row is never touched.
+		for (const release of [...row.activeReleases]) {
+			release();
 		}
 	}
 
