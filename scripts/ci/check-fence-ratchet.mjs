@@ -29,7 +29,6 @@ const TARGETS = new Map([
 			"_repairLifecycleController",
 			"_replicationInfoReceiveEpochByPeer",
 			"_replicationLifecycleController",
-			"_subscriptionEpochByPeer",
 			"_subscriptionOpeningEpochByPeer",
 		],
 	],
@@ -40,6 +39,10 @@ const TARGETS = new Map([
 	[
 		"packages/programs/data/shared-log/src/native-write-through-block-store.ts",
 		["nativeBlockWriteGenerations", "nativeDeleteEpoch"],
+	],
+	[
+		"packages/programs/data/shared-log/src/peer-session.ts",
+		["_subscriptionEpochByPeer"],
 	],
 	[
 		"packages/programs/data/shared-log/src/join-warmup.ts",
