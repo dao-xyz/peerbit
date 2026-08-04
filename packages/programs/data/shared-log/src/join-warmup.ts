@@ -1,9 +1,33 @@
 const JOIN_WARMUP_SEND_SPACING_MS = 250;
 
+/**
+ * One WarmupSession per join-warmup attempt window for a target. The
+ * instance IS the legacy opaque generation token — always compared by
+ * identity, never inspected — now carrying diagnostics. Rotation points are
+ * unchanged: created on demand, dropped at cancelJoinWarmupTarget so the
+ * next touch mints a fresh identity. Deliberately NOT hosted on
+ * PeerSession: warmup windows rotate independently of subscription epochs
+ * (poison and committed removals leave the subscription session alone), and
+ * a warmup target may have no session at all — auto-creating one as a
+ * warmup side effect would flip `isCurrent(peer, null)` from true to false
+ * at every receive-admission seat.
+ */
+export class WarmupSession {
+	readonly target: string;
+	readonly createdAt = Date.now(); // diagnostics only
+
+	constructor(target: string) {
+		this.target = target;
+	}
+}
+
 export type JoinWarmupSendState<E> = {
 	bypassKnownPeerHints: boolean;
 	entries: Map<string, E>;
-	generation: object;
+	// Per-TARGET send state adopts the session it is currently draining for.
+	// lastCompletedAt spacing survives session rotation by design; do NOT
+	// move send state onto the session.
+	session: WarmupSession;
 	lastCompletedAt: number;
 	pending: boolean;
 	running: boolean;
@@ -33,7 +57,7 @@ export type JoinWarmupScheduledRetrySlot<E> = {
 };
 
 export type JoinWarmupScheduledRetries<E> = {
-	generation: object;
+	session: WarmupSession;
 	slotsByDelay: Map<number, JoinWarmupScheduledRetrySlot<E>>;
 };
 
@@ -58,34 +82,39 @@ export type JoinWarmupDeps<E> = {
 };
 
 export class JoinWarmupCoordinator<E> {
-	_joinWarmupGenerationByTarget!: Map<string, object>;
+	_warmupSessionsByTarget!: Map<string, WarmupSession>;
 	_joinWarmupSendStateByTarget!: Map<string, JoinWarmupSendState<E>>;
 	_joinWarmupRetryTimersByTarget!: Map<string, Set<JoinWarmupRetryTimer>>;
 	_joinWarmupScheduledRetriesByTarget!: Map<
 		string,
 		JoinWarmupScheduledRetries<E>
 	>;
-	_repairSweepJoinWarmupGenerationByTarget!: Map<string, object>;
+	_repairSweepWarmupSessionByTarget!: Map<string, WarmupSession>;
 
 	constructor(private readonly deps: JoinWarmupDeps<E>) {
 		this.reset();
 	}
 
 	reset() {
-		this._joinWarmupGenerationByTarget = new Map();
+		this._warmupSessionsByTarget = new Map();
 		this._joinWarmupSendStateByTarget = new Map();
 		this._joinWarmupRetryTimersByTarget = new Map();
 		this._joinWarmupScheduledRetriesByTarget = new Map();
-		this._repairSweepJoinWarmupGenerationByTarget = new Map();
+		this._repairSweepWarmupSessionByTarget = new Map();
 	}
 
-	getJoinWarmupGeneration(target: string) {
-		let generation = this._joinWarmupGenerationByTarget.get(target);
-		if (!generation) {
-			generation = {};
-			this._joinWarmupGenerationByTarget.set(target, generation);
+	ensureWarmupSession(target: string): WarmupSession {
+		let session = this._warmupSessionsByTarget.get(target);
+		if (!session) {
+			session = new WarmupSession(target);
+			this._warmupSessionsByTarget.set(target, session);
 		}
-		return generation;
+		return session;
+	}
+
+
+	clearRepairSweepWarmupSessions(): void {
+		this._repairSweepWarmupSessionByTarget.clear();
 	}
 
 	trackJoinWarmupTimer(target: string, timer: JoinWarmupRetryTimer) {
@@ -123,9 +152,9 @@ export class JoinWarmupCoordinator<E> {
 	}
 
 	cancelJoinWarmupTarget(target: string) {
-		this._joinWarmupGenerationByTarget.delete(target);
+		this._warmupSessionsByTarget.delete(target);
 		this.deps.onTargetCancelled(target);
-		this._repairSweepJoinWarmupGenerationByTarget.delete(target);
+		this._repairSweepWarmupSessionByTarget.delete(target);
 		this.cancelJoinWarmupTimers(target);
 		this._joinWarmupScheduledRetriesByTarget.delete(target);
 		const state = this._joinWarmupSendStateByTarget.get(target);
@@ -142,7 +171,7 @@ export class JoinWarmupCoordinator<E> {
 
 	cancelAllJoinWarmupTargets() {
 		const targets = new Set([
-			...this._joinWarmupGenerationByTarget.keys(),
+			...this._warmupSessionsByTarget.keys(),
 			...this._joinWarmupRetryTimersByTarget.keys(),
 			...this._joinWarmupScheduledRetriesByTarget.keys(),
 			...this._joinWarmupSendStateByTarget.keys(),
@@ -185,7 +214,7 @@ export class JoinWarmupCoordinator<E> {
 
 	scheduleJoinWarmupRetries(
 		target: string,
-		generation: object,
+		session: WarmupSession,
 		delaysMs: Iterable<number>,
 		entries: ReadonlyMap<string, E>,
 		bypassKnownPeerHints: boolean,
@@ -193,19 +222,19 @@ export class JoinWarmupCoordinator<E> {
 	) {
 		if (
 			!this.deps.isLifecycleActive(repairLifecycleController) ||
-			this._joinWarmupGenerationByTarget.get(target) !== generation
+			this._warmupSessionsByTarget.get(target) !== session
 		) {
 			return;
 		}
 		let scheduled = this._joinWarmupScheduledRetriesByTarget.get(target);
-		if (scheduled?.generation !== generation) {
+		if (scheduled?.session !== session) {
 			this.cancelJoinWarmupTimers(target);
 			this._joinWarmupScheduledRetriesByTarget.delete(target);
 			scheduled = undefined;
 		}
 		if (!scheduled) {
 			scheduled = {
-				generation,
+				session,
 				slotsByDelay: new Map(),
 			};
 			this._joinWarmupScheduledRetriesByTarget.set(target, scheduled);
@@ -307,12 +336,11 @@ export class JoinWarmupCoordinator<E> {
 				if (
 					dueEntries.size > 0 &&
 					!this.deps.isClosed() &&
-					this._joinWarmupGenerationByTarget.get(target) ===
-						scheduled.generation
+					this._warmupSessionsByTarget.get(target) === scheduled.session
 				) {
 					this.queueJoinWarmupSend(
 						target,
-						scheduled.generation,
+						scheduled.session,
 						dueEntries,
 						bypassKnownPeerHints,
 						repairLifecycleController,
@@ -348,14 +376,14 @@ export class JoinWarmupCoordinator<E> {
 
 	queueJoinWarmupSend(
 		target: string,
-		generation: object,
+		session: WarmupSession,
 		entries: ReadonlyMap<string, E>,
 		bypassKnownPeerHints: boolean,
 		repairLifecycleController: AbortController = this.deps.getCurrentLifecycleController(),
 	) {
 		if (
 			!this.deps.isLifecycleActive(repairLifecycleController) ||
-			this._joinWarmupGenerationByTarget.get(target) !== generation
+			this._warmupSessionsByTarget.get(target) !== session
 		) {
 			return;
 		}
@@ -364,13 +392,13 @@ export class JoinWarmupCoordinator<E> {
 			state = {
 				bypassKnownPeerHints: false,
 				entries: new Map(),
-				generation,
+				session,
 				lastCompletedAt: Number.NEGATIVE_INFINITY,
 				pending: false,
 				running: false,
 			};
 			this._joinWarmupSendStateByTarget.set(target, state);
-		} else if (state.generation !== generation) {
+		} else if (state.session !== session) {
 			state.bypassKnownPeerHints = false;
 			state.entries.clear();
 			state.pending = false;
@@ -379,7 +407,7 @@ export class JoinWarmupCoordinator<E> {
 			state.entries.set(hash, entry);
 		}
 		state.bypassKnownPeerHints ||= bypassKnownPeerHints;
-		state.generation = generation;
+		state.session = session;
 		state.pending = true;
 		if (state.running) {
 			return;
@@ -413,7 +441,7 @@ export class JoinWarmupCoordinator<E> {
 					return;
 				}
 				state.pending = false;
-				const generation = state.generation;
+				const session = state.session;
 				const entries = new Map(state.entries);
 				state.entries.clear();
 				const bypassKnownPeerHints = state.bypassKnownPeerHints;
@@ -429,8 +457,8 @@ export class JoinWarmupCoordinator<E> {
 				);
 				if (
 					!this.deps.isLifecycleActive(repairLifecycleController) ||
-					state.generation !== generation ||
-					this._joinWarmupGenerationByTarget.get(target) !== generation
+					state.session !== session ||
+					this._warmupSessionsByTarget.get(target) !== session
 				) {
 					continue;
 				}
@@ -470,7 +498,7 @@ export class JoinWarmupCoordinator<E> {
 						state,
 						currentRepairLifecycleController,
 					).catch((error: any) => this.deps.logError(error));
-				} else if (!this._joinWarmupGenerationByTarget.has(target)) {
+				} else if (!this._warmupSessionsByTarget.has(target)) {
 					this._joinWarmupSendStateByTarget.delete(target);
 				}
 			}

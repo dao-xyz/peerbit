@@ -43,13 +43,7 @@ const TARGETS = new Map([
 		"packages/programs/data/shared-log/src/peer-session.ts",
 		["_receiveCleanupGateByPeer", "_replicationInfoReceiveEpochByPeer"],
 	],
-	[
-		"packages/programs/data/shared-log/src/join-warmup.ts",
-		[
-			"_joinWarmupGenerationByTarget",
-			"_repairSweepJoinWarmupGenerationByTarget",
-		],
-	],
+	["packages/programs/data/shared-log/src/join-warmup.ts", []],
 	["packages/programs/data/shared-log/src/replication-announcement.ts", []],
 	["packages/programs/data/shared-log/src/replicator-liveness.ts", []],
 	["packages/programs/data/shared-log/src/sync/factory.ts", []],

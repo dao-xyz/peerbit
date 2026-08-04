@@ -189,7 +189,7 @@ import {
 	type Numbers,
 	createNumbers,
 } from "./integers.js";
-import { JoinWarmupCoordinator } from "./join-warmup.js";
+import { JoinWarmupCoordinator, type WarmupSession } from "./join-warmup.js";
 import { LeaderPlanCache } from "./leader-plan-cache.js";
 import { TransportMessage } from "./message.js";
 import { NativeBackboneWriteThroughBlockStore } from "./native-write-through-block-store.js";
@@ -1460,7 +1460,7 @@ type RepairMetrics = Record<RepairDispatchMode, RepairMetricBucket>;
 
 type RepairSweepOptimisticPeerState = {
 	count: number;
-	generation: object;
+	session: WarmupSession;
 };
 
 const REPAIR_DISPATCH_MODES: RepairDispatchMode[] = [
@@ -2207,7 +2207,7 @@ export class SharedLog<
 		for (const peers of this._repairSweepPendingPeersByMode.values()) {
 			peers.clear();
 		}
-		this.joinWarmup._repairSweepJoinWarmupGenerationByTarget.clear();
+		this.joinWarmup.clearRepairSweepWarmupSessions();
 		this._repairSweepOptimisticGidPeersPending.clear();
 		this._repairSweepOptimisticGidsByPeer.clear();
 		for (const targets of this._repairFrontierByMode.values()) {
@@ -6025,7 +6025,7 @@ export class SharedLog<
 		key: PublicSignKey | string,
 		options?: {
 			cleanupIfSubscriptionSuperseded?: boolean;
-			expectedJoinWarmupGeneration?: object | null;
+			expectedWarmupSession?: WarmupSession | null;
 			noEvent?: boolean;
 			onRemoved?: (state: { wasReplicator: boolean }) => void;
 			replicationLifecycleController?: AbortController;
@@ -6041,10 +6041,10 @@ export class SharedLog<
 			replicationOwnershipLifecycleController,
 		);
 		const keyHash = typeof key === "string" ? key : key.hashcode();
-		const expectedJoinWarmupGeneration =
-			options?.expectedJoinWarmupGeneration !== undefined
-				? options.expectedJoinWarmupGeneration
-				: (this.joinWarmup._joinWarmupGenerationByTarget.get(keyHash) ?? null);
+		const expectedWarmupSession =
+			options?.expectedWarmupSession !== undefined
+				? options.expectedWarmupSession
+				: (this.joinWarmup._warmupSessionsByTarget.get(keyHash) ?? null);
 		// Stage 3 (seam 1): the three ownership predicates delegate onto the
 		// session registry / instance lifecycle. `undefined` keeps meaning
 		// "removal not scoped to that identity" — the guards stay in the
@@ -6063,9 +6063,9 @@ export class SharedLog<
 			);
 		const cancelExpectedJoinWarmupTarget = () => {
 			if (
-				expectedJoinWarmupGeneration !== null &&
-				this.joinWarmup._joinWarmupGenerationByTarget.get(keyHash) ===
-					expectedJoinWarmupGeneration
+				expectedWarmupSession !== null &&
+				this.joinWarmup._warmupSessionsByTarget.get(keyHash) ===
+					expectedWarmupSession
 			) {
 				this.joinWarmup.cancelJoinWarmupTarget(keyHash);
 			}
@@ -6117,7 +6117,7 @@ export class SharedLog<
 				replicationOwnershipLifecycleController,
 			);
 			this.removeRepairFrontierTarget(keyHash, {
-				expectedJoinWarmupGeneration,
+				expectedWarmupSession,
 			});
 			this._recentRepairDispatch.delete(keyHash);
 			if (!isMe) {
@@ -7456,7 +7456,7 @@ export class SharedLog<
 	private markRepairSweepOptimisticPeer(
 		gid: string,
 		peer: string,
-		generation: object,
+		session: WarmupSession,
 	) {
 		let peers = this._repairSweepOptimisticGidPeersPending.get(gid);
 		if (!peers) {
@@ -7465,8 +7465,8 @@ export class SharedLog<
 		}
 		const current = peers.get(peer);
 		peers.set(peer, {
-			count: current?.generation === generation ? current.count + 1 : 1,
-			generation,
+			count: current?.session === session ? current.count + 1 : 1,
+			session,
 		});
 		let gids = this._repairSweepOptimisticGidsByPeer.get(peer);
 		if (!gids) {
@@ -7667,13 +7667,13 @@ export class SharedLog<
 
 	private removeRepairFrontierTarget(
 		target: string,
-		options?: { expectedJoinWarmupGeneration?: object | null },
+		options?: { expectedWarmupSession?: WarmupSession | null },
 	) {
 		if (
-			options?.expectedJoinWarmupGeneration === undefined ||
-			(options.expectedJoinWarmupGeneration !== null &&
-				this.joinWarmup._joinWarmupGenerationByTarget.get(target) ===
-					options.expectedJoinWarmupGeneration)
+			options?.expectedWarmupSession === undefined ||
+			(options.expectedWarmupSession !== null &&
+				this.joinWarmup._warmupSessionsByTarget.get(target) ===
+					options.expectedWarmupSession)
 		) {
 			this.joinWarmup.cancelJoinWarmupTarget(target);
 		}
@@ -8189,9 +8189,9 @@ export class SharedLog<
 		const bucket = this._repairMetrics[options.mode];
 		bucket.dispatches += 1;
 		bucket.entries += filteredEntries.size;
-		const joinWarmupGeneration =
+		const warmupSession =
 			options.mode === "join-warmup"
-				? this.joinWarmup.getJoinWarmupGeneration(target)
+				? this.joinWarmup.ensureWarmupSession(target)
 				: undefined;
 		const bypassKnownPeerHints = this.shouldBypassKnownPeerHints(
 			options.mode,
@@ -8205,11 +8205,11 @@ export class SharedLog<
 			if (
 				transport === "simple" &&
 				options.mode === "join-warmup" &&
-				joinWarmupGeneration
+				warmupSession
 			) {
 				this.joinWarmup.queueJoinWarmupSend(
 					target,
-					joinWarmupGeneration,
+					warmupSession,
 					filteredEntries,
 					bypassKnownPeerHints,
 					repairLifecycleController,
@@ -8246,7 +8246,7 @@ export class SharedLog<
 			}
 			if (
 				options.mode === "join-warmup" &&
-				joinWarmupGeneration &&
+				warmupSession &&
 				transport === "simple"
 			) {
 				delayedJoinWarmupRetries.push(delayMs);
@@ -8264,10 +8264,10 @@ export class SharedLog<
 			timer.unref?.();
 			this._repairRetryTimers.add(timer);
 		});
-		if (joinWarmupGeneration && delayedJoinWarmupRetries.length > 0) {
+		if (warmupSession && delayedJoinWarmupRetries.length > 0) {
 			this.joinWarmup.scheduleJoinWarmupRetries(
 				target,
-				joinWarmupGeneration,
+				warmupSession,
 				delayedJoinWarmupRetries,
 				filteredEntries,
 				bypassKnownPeerHints,
@@ -8280,7 +8280,7 @@ export class SharedLog<
 		options: {
 			mode: RepairDispatchMode;
 			peers?: Iterable<string>;
-			joinWarmupGenerations?: ReadonlyMap<string, object>;
+			warmupSessions?: ReadonlyMap<string, WarmupSession>;
 		},
 		repairLifecycleController: AbortController = this
 			._repairLifecycleController,
@@ -8292,13 +8292,13 @@ export class SharedLog<
 		if (pendingPeers) {
 			for (const peer of options.peers ?? []) {
 				if (options.mode === "join-warmup") {
-					const generation =
-						options.joinWarmupGenerations?.get(peer) ??
-						this.joinWarmup.getJoinWarmupGeneration(peer);
-					if (this.joinWarmup._joinWarmupGenerationByTarget.get(peer) !== generation) {
+					const session =
+						options.warmupSessions?.get(peer) ??
+						this.joinWarmup.ensureWarmupSession(peer);
+					if (this.joinWarmup._warmupSessionsByTarget.get(peer) !== session) {
 						continue;
 					}
-					this.joinWarmup._repairSweepJoinWarmupGenerationByTarget.set(peer, generation);
+					this.joinWarmup._repairSweepWarmupSessionByTarget.set(peer, session);
 				}
 				pendingPeers.add(peer);
 			}
@@ -8381,14 +8381,14 @@ export class SharedLog<
 				const pendingPeersByMode = cloneRepairPendingPeersByMode(
 					this._repairSweepPendingPeersByMode,
 				);
-				const pendingJoinWarmupGenerations = new Map(
-					this.joinWarmup._repairSweepJoinWarmupGenerationByTarget,
+				const pendingWarmupSessions = new Map(
+					this.joinWarmup._repairSweepWarmupSessionByTarget,
 				);
 				this._repairSweepPendingModes.clear();
 				for (const peers of this._repairSweepPendingPeersByMode.values()) {
 					peers.clear();
 				}
-				this.joinWarmup._repairSweepJoinWarmupGenerationByTarget.clear();
+				this.joinWarmup._repairSweepWarmupSessionByTarget.clear();
 				const pendingJoinWarmupPeers = pendingPeersByMode.get("join-warmup");
 				const pruneStaleJoinWarmupPeers = () => {
 					if (!this.isRepairLifecycleActive(repairLifecycleController)) {
@@ -8396,8 +8396,8 @@ export class SharedLog<
 					}
 					for (const peer of [...(pendingJoinWarmupPeers ?? [])]) {
 						if (
-							this.joinWarmup._joinWarmupGenerationByTarget.get(peer) !==
-							pendingJoinWarmupGenerations.get(peer)
+							this.joinWarmup._warmupSessionsByTarget.get(peer) !==
+							pendingWarmupSessions.get(peer)
 						) {
 							pendingJoinWarmupPeers?.delete(peer);
 						}
@@ -8500,8 +8500,8 @@ export class SharedLog<
 					}
 					if (
 						mode === "join-warmup" &&
-						this.joinWarmup._joinWarmupGenerationByTarget.get(target) !==
-							pendingJoinWarmupGenerations.get(target)
+						this.joinWarmup._warmupSessionsByTarget.get(target) !==
+							pendingWarmupSessions.get(target)
 					) {
 						targets?.delete(target);
 						pendingJoinWarmupPeers?.delete(target);
@@ -8536,8 +8536,8 @@ export class SharedLog<
 					}
 					if (
 						mode === "join-warmup" &&
-						this.joinWarmup._joinWarmupGenerationByTarget.get(target) !==
-							pendingJoinWarmupGenerations.get(target)
+						this.joinWarmup._warmupSessionsByTarget.get(target) !==
+							pendingWarmupSessions.get(target)
 					) {
 						pendingJoinWarmupPeers?.delete(target);
 						if (pendingJoinWarmupPeers?.size === 0) {
@@ -8676,14 +8676,14 @@ export class SharedLog<
 						}
 						for (const [peer, consumed] of peerCounts) {
 							const current = pendingPeerCounts.get(peer);
-							if (!current || current.generation !== consumed.generation) {
+							if (!current || current.session !== consumed.session) {
 								continue;
 							}
 							const next = current.count - consumed.count;
 							if (next > 0) {
 								pendingPeerCounts.set(peer, {
 									count: next,
-									generation: current.generation,
+									session: current.session,
 								});
 							} else {
 								pendingPeerCounts.delete(peer);
@@ -16408,7 +16408,7 @@ export class SharedLog<
 			this._repairSweepPendingModes?.clear();
 			for (const peers of this._repairSweepPendingPeersByMode?.values() ?? [])
 				peers.clear();
-			this.joinWarmup?._repairSweepJoinWarmupGenerationByTarget?.clear();
+			this.joinWarmup?.clearRepairSweepWarmupSessions();
 			this._repairSweepOptimisticGidPeersPending?.clear();
 			this._repairSweepOptimisticGidsByPeer?.clear();
 			this._entryKnownPeers?.clear();
@@ -24128,8 +24128,8 @@ export class SharedLog<
 			// unreachable, and its own barrier `finally` still clears it.
 			this._openingSyncCapabilitiesByPeer.delete(peerHash);
 			this._replicationInfoBlockedPeers.add(peerHash);
-			const disconnectedJoinWarmupGeneration =
-				this.joinWarmup._joinWarmupGenerationByTarget.get(peerHash) ?? null;
+			const disconnectedWarmupSession =
+				this.joinWarmup._warmupSessionsByTarget.get(peerHash) ?? null;
 			this.joinWarmup.cancelJoinWarmupTarget(peerHash);
 
 			const now = BigInt(+new Date());
@@ -24144,7 +24144,7 @@ export class SharedLog<
 				// Proactively evict its ranges so leader selection doesn't keep stale owners.
 				removed = await this.removeReplicator(publicKey, {
 					cleanupIfSubscriptionSuperseded: true,
-					expectedJoinWarmupGeneration: disconnectedJoinWarmupGeneration,
+					expectedWarmupSession: disconnectedWarmupSession,
 					noEvent: true,
 					onRemoved: ({ wasReplicator }) => {
 						if (wasReplicator) {
@@ -25178,12 +25178,12 @@ export class SharedLog<
 			: [changeOrChanges as ReplicationChanges<ReplicationRangeIndexable<R>>];
 		const changes = batchedChanges.flat();
 		const selfHash = this.node.identity.publicKey.hashcode();
-		const joinWarmupGenerations = new Map<string, object>();
+		const warmupSessions = new Map<string, WarmupSession>();
 		for (const change of changes) {
 			if (change.type === "added" && change.range.hash !== selfHash) {
-				joinWarmupGenerations.set(
+				warmupSessions.set(
 					change.range.hash,
-					this.joinWarmup.getJoinWarmupGeneration(change.range.hash),
+					this.joinWarmup.ensureWarmupSession(change.range.hash),
 				);
 			}
 		}
@@ -25279,8 +25279,8 @@ export class SharedLog<
 		const isCurrentJoinWarmupTarget = (target: string) =>
 			isOwnershipLifecycleCurrent() &&
 			warmupPeers.has(target) &&
-			this.joinWarmup._joinWarmupGenerationByTarget.get(target) ===
-				joinWarmupGenerations.get(target);
+			this.joinWarmup._warmupSessionsByTarget.get(target) ===
+				warmupSessions.get(target);
 		const areJoinWarmupGenerationsCurrent = () =>
 			isOwnershipLifecycleCurrent() &&
 			[...warmupPeers].every(isCurrentJoinWarmupTarget);
@@ -25424,7 +25424,7 @@ export class SharedLog<
 								this.markRepairSweepOptimisticPeer(
 									entryReplicated.gid,
 									peer,
-									joinWarmupGenerations.get(peer)!,
+									warmupSessions.get(peer)!,
 								);
 							}
 						}
@@ -25513,7 +25513,7 @@ export class SharedLog<
 							this.markRepairSweepOptimisticPeer(
 								entryReplicated.gid,
 								peer,
-								joinWarmupGenerations.get(peer)!,
+								warmupSessions.get(peer)!,
 							);
 						}
 					}
@@ -25582,7 +25582,7 @@ export class SharedLog<
 						{
 							mode: "join-warmup",
 							peers,
-							joinWarmupGenerations,
+							warmupSessions,
 						},
 						ownershipLifecycleController,
 					);
