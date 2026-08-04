@@ -50,14 +50,7 @@ const TARGETS = new Map([
 			"_repairSweepJoinWarmupGenerationByTarget",
 		],
 	],
-	[
-		"packages/programs/data/shared-log/src/replication-announcement.ts",
-		[
-			"_replicationAnnouncementRepairGeneration",
-			"_replicationAnnouncementRepairGenerationController",
-			"_replicationAnnouncementRetryGeneration",
-		],
-	],
+	["packages/programs/data/shared-log/src/replication-announcement.ts", []],
 	["packages/programs/data/shared-log/src/replicator-liveness.ts", []],
 	["packages/programs/data/shared-log/src/sync/factory.ts", []],
 ]);

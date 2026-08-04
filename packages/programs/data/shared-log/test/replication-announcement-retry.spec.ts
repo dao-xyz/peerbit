@@ -938,4 +938,189 @@ describe("replication announcement retries", () => {
 		expect(nonEmptySnapshots).to.deep.equal([]);
 		expect(log._replicationAnnouncementRetryPending).to.equal(false);
 	});
+
+	it("does not let a repair worker outlive a repair function reconfiguration", async () => {
+		session = await TestSession.disconnected(2);
+		const store = await session.peers[0].open(new EventStore<string, any>(), {
+			args: { replicate: false, timeUntilRoleMaturity: 0 },
+		});
+		const log = store.log as any;
+		useFastAnnouncementRepair(log);
+		const target = session.peers[1].identity.publicKey;
+
+		let releaseStaleCollection!: () => void;
+		const staleCollection = new Promise<any[]>((resolve) => {
+			releaseStaleCollection = () => resolve([target]);
+		});
+		let markStaleCollectionStarted!: () => void;
+		const staleCollectionStarted = new Promise<void>((resolve) => {
+			markStaleCollectionStarted = resolve;
+		});
+		let subscriberCollections = 0;
+		sinon.stub(store.node.services.pubsub, "getSubscribers").callsFake(() => {
+			subscriberCollections += 1;
+			if (subscriberCollections === 1) {
+				markStaleCollectionStarted();
+				return staleCollection;
+			}
+			return [target];
+		});
+		let acknowledgedSnapshots = 0;
+		sinon
+			.stub(store.log.rpc, "send")
+			.callsFake(async (message: any, options?: any) => {
+				if (
+					message instanceof AllReplicatingSegmentsMessage &&
+					options?.mode instanceof AcknowledgeDelivery
+				) {
+					acknowledgedSnapshots += 1;
+				}
+			});
+
+		await store.log.replicate({ factor: 0.25, offset: 0.1 });
+		await staleCollectionStarted;
+
+		// Reconfiguration rotates the repair lifecycle out from under the
+		// in-flight worker without a new mutation generation. The old worker
+		// must neither send an acknowledged snapshot nor clear the
+		// reconfigured state's pending flag.
+		log.setupReplicationAnnouncementRepairFunction(10, 3);
+		log._replicationAnnouncementRepairPending = true;
+
+		releaseStaleCollection();
+		await delay(50);
+		expect(acknowledgedSnapshots).to.equal(0);
+		expect(log._replicationAnnouncementRepairPending).to.equal(true);
+	});
+
+	it("does not let a stale retry clear pending after retry reconfiguration", async () => {
+		const store = await openStore(false);
+		const log = store.log as any;
+		useFastAnnouncementRetry(log);
+
+		const timeout = new TimeoutError("detached shard timed out");
+		let incrementalFailed = false;
+		const snapshots: AllReplicatingSegmentsMessage[] = [];
+		sinon.stub(store.log.rpc, "send").callsFake(async (message: any) => {
+			if (
+				message instanceof AddedReplicationSegmentMessage &&
+				!incrementalFailed
+			) {
+				incrementalFailed = true;
+				throw timeout;
+			}
+			if (message instanceof AllReplicatingSegmentsMessage) {
+				snapshots.push(message);
+			}
+			return [] as any;
+		});
+
+		let hangCollections = false;
+		const heldCollections: (() => void)[] = [];
+		let markFirstCollectionHeld!: () => void;
+		const firstCollectionHeld = new Promise<void>((resolve) => {
+			markFirstCollectionHeld = resolve;
+		});
+		const originalGetSegments = store.log.getMyReplicationSegments.bind(
+			store.log,
+		);
+		sinon.stub(store.log, "getMyReplicationSegments").callsFake(async () => {
+			if (hangCollections) {
+				await new Promise<void>((resolve) => {
+					heldCollections.push(resolve);
+					markFirstCollectionHeld();
+				});
+			}
+			return originalGetSegments();
+		});
+
+		try {
+			try {
+				await store.log.replicate({ factor: 0.25, offset: 0.1 });
+			} catch (error) {
+				expect(error).to.equal(timeout);
+			}
+			expect(log._replicationAnnouncementRetryPending).to.equal(true);
+			hangCollections = true;
+			await firstCollectionHeld;
+
+			// Reconfiguration rotates the retry lifecycle out from under the
+			// in-flight worker; the mutation generation does not change. Queue a
+			// fresh retry into the reconfigured window: the stale worker must not
+			// send its snapshot nor clear the fresh pending flag.
+			log.setupReplicationAnnouncementRetryFunction(10);
+			expect(
+				log.queueCurrentReplicationStateAnnouncementRetry(
+					new TimeoutError("fresh retry after reconfiguration"),
+				),
+			).to.equal(true);
+			expect(log._replicationAnnouncementRetryPending).to.equal(true);
+
+			heldCollections.shift()!();
+			await delay(50);
+			expect(snapshots).to.deep.equal([]);
+			expect(log._replicationAnnouncementRetryPending).to.equal(true);
+		} finally {
+			hangCollections = false;
+			for (const release of heldCollections.splice(0)) {
+				release();
+			}
+		}
+	});
+
+	it("does not let a repair worker from a previous open service the reopened log", async () => {
+		session = await TestSession.disconnected(2);
+		const store = await session.peers[0].open(new EventStore<string, any>(), {
+			args: { replicate: false, timeUntilRoleMaturity: 0 },
+		});
+		const log = store.log as any;
+		useFastAnnouncementRepair(log);
+		const target = session.peers[1].identity.publicKey;
+
+		let releaseStaleCollection!: () => void;
+		const staleCollection = new Promise<any[]>((resolve) => {
+			releaseStaleCollection = () => resolve([target]);
+		});
+		let markStaleCollectionStarted!: () => void;
+		const staleCollectionStarted = new Promise<void>((resolve) => {
+			markStaleCollectionStarted = resolve;
+		});
+		let subscriberCollections = 0;
+		sinon.stub(store.node.services.pubsub, "getSubscribers").callsFake(() => {
+			subscriberCollections += 1;
+			if (subscriberCollections === 1) {
+				markStaleCollectionStarted();
+				return staleCollection;
+			}
+			return [target];
+		});
+		let reopened = false;
+		let reopenedAcknowledgedSnapshots = 0;
+		sinon
+			.stub(store.log.rpc, "send")
+			.callsFake(async (message: any, options?: any) => {
+				if (
+					reopened &&
+					message instanceof AllReplicatingSegmentsMessage &&
+					options?.mode instanceof AcknowledgeDelivery
+				) {
+					reopenedAcknowledgedSnapshots += 1;
+				}
+			});
+
+		await store.log.replicate({ factor: 0.25, offset: 0.1 });
+		await staleCollectionStarted;
+
+		await store.close();
+		await session.peers[0].open(store, {
+			args: { replicate: false, timeUntilRoleMaturity: 0 },
+		});
+		reopened = true;
+		log._replicationAnnouncementRepairPending = true;
+
+		releaseStaleCollection();
+		await delay(50);
+		expect(reopenedAcknowledgedSnapshots).to.equal(0);
+		expect(log._replicationAnnouncementRepairPending).to.equal(true);
+	});
 });
