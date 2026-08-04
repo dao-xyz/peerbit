@@ -35,8 +35,12 @@ const scaleToU64 = denormalizer("u64");
 
 describe(`replicate`, () => {
 	let session: TestSession;
-	let db1: EventStore<string, ReplicationDomainHash<"u32">>,
-		db2: EventStore<string, ReplicationDomainHash<"u32">>;
+	// Typed to match the `new EventStore<string, any>()` instantiations below:
+	// the stage-4.5 coordinate-persistence extraction reshaped SharedLog's
+	// type graph enough that the compiler now actually relates these two huge
+	// EventStore instantiations (it previously gave up at depth and let the
+	// mismatched annotation through).
+	let db1: EventStore<string, any>, db2: EventStore<string, any>;
 
 	before(async () => {
 		session = await TestSession.disconnected(3, [
