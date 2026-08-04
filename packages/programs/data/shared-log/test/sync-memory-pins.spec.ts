@@ -591,6 +591,46 @@ describe("sync-chunking slot-quota pins", () => {
 	});
 });
 
+describe("sync-chunking dispatch-lifecycle pins", () => {
+	let peerA: Awaited<ReturnType<typeof Ed25519Keypair.create>>["publicKey"];
+
+	before(async () => {
+		peerA = (await Ed25519Keypair.create()).publicKey;
+	});
+
+	it("caller-signal abort leaves no reachable dispatch target state", async () => {
+		const sync = new SimpleSyncronizer<"u64">({
+			rpc: { send: sinon.stub().resolves() } as any,
+			entryIndex: {} as any,
+			log: {} as any,
+			coordinateToHash: new Cache<string>({ max: 10 }),
+		});
+		try {
+			const controller = new AbortController();
+			const reservation = sync.expectMaybeSyncResponse({
+				hashes: ["disposal-hash"],
+				targets: [peerA.hashcode()],
+				signal: controller.signal,
+			});
+			expect(reservation).to.not.equal(undefined);
+			expect((sync as any).syncDispatchTargets.size).to.equal(1);
+
+			controller.abort(new Error("caller aborted"));
+			reservation!.release();
+
+			// The disposed lifecycle leaves no reachable target lifecycles and
+			// its abort listeners are unpaired.
+			expect((sync as any).syncDispatchTargets.size).to.equal(0);
+
+			// A double release stays inert.
+			reservation!.release();
+			expect((sync as any).syncDispatchTargets.size).to.equal(0);
+		} finally {
+			await sync.close();
+		}
+	});
+});
+
 describe("rateless-iblt-syncronizer slot-quota pins", () => {
 	const waitFor = async (condition: () => boolean) => {
 		for (let i = 0; i < 1_000; i++) {

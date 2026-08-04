@@ -25,6 +25,11 @@ import { SilentDelivery } from "@peerbit/stream-interface";
 import { type EntryWithRefs } from "../exchange-heads.js";
 import { TransportMessage } from "../message.js";
 import { type EntryReplicated } from "../ranges.js";
+import {
+	DispatchLifecycleRegistry,
+	isOwnershipGenerationActive,
+	isTrackedSessionActive,
+} from "./dispatch-lifecycle.js";
 import type {
 	HashSymbolRangeResolver,
 	RepairSession,
@@ -851,10 +856,17 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 	outgoingSyncProcesses: Map<string, OutgoingRatelessSyncProcess>;
 	private outgoingSyncProcessByTarget: Map<string, OutgoingRatelessSyncProcess>;
 	private ratelessDispatchLifecycleController: AbortController;
-	private ratelessDispatchTargets: Map<
+	private readonly ratelessDispatchRegistry: DispatchLifecycleRegistry<
+		RatelessDispatchLifecycle,
+		RatelessDispatchTargetLifecycle
+	>;
+
+	private get ratelessDispatchTargets(): Map<
 		string,
 		Set<RatelessDispatchTargetLifecycle>
-	>;
+	> {
+		return this.ratelessDispatchRegistry.activeTargets;
+	}
 	private activeRatelessResponseCount: number;
 	private activeRatelessResponseCountByPeer: Map<string, number>;
 	// Per-peer slot rows for active rateless responses (shared registry; see
@@ -875,7 +887,24 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 		this.outgoingSyncProcesses = new Map();
 		this.outgoingSyncProcessByTarget = new Map();
 		this.ratelessDispatchLifecycleController = new AbortController();
-		this.ratelessDispatchTargets = new Map();
+		this.ratelessDispatchRegistry = new DispatchLifecycleRegistry<
+			RatelessDispatchLifecycle,
+			RatelessDispatchTargetLifecycle
+		>({
+			isClosed: () => this.ratelessClosed,
+			currentOwnershipLifecycleController: () =>
+				this.ratelessDispatchLifecycleController,
+			hasRetainedWork: (lifecycle) =>
+				[...lifecycle.targets.values()].some(
+					(target) => target.retainedByProcess || target.responseLeases > 0,
+				),
+			// Target-activity strategy: set membership in the active-target
+			// registry (rateless target lifecycles carry no epochs).
+			isTargetCurrent: (targetLifecycle) =>
+				this.ratelessDispatchRegistry.activeTargets
+					.get(targetLifecycle.target)
+					?.has(targetLifecycle) === true,
+		});
 		this.activeRatelessResponseCount = 0;
 		this.activeRatelessResponseCountByPeer = new Map();
 		this.ratelessPeerSlotRows = new SyncPeerSlotRegistry();
@@ -931,15 +960,16 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 	private isRatelessRepairSessionActive(
 		session: RatelessRepairSessionLifecycle,
 	): boolean {
-		return (
-			!this.ratelessClosed &&
-			!session.cancelled &&
-			!session.controller.signal.aborted &&
-			!session.ownershipLifecycleController.signal.aborted &&
-			session.ownershipLifecycleController ===
-				this.ratelessDispatchLifecycleController &&
-			this.ratelessRepairSessions.get(session.id) === session
-		);
+		return isTrackedSessionActive({
+			closed: this.ratelessClosed,
+			cancelled: session.cancelled,
+			sessionController: session.controller,
+			ownershipLifecycleController: session.ownershipLifecycleController,
+			currentOwnershipLifecycleController:
+				this.ratelessDispatchLifecycleController,
+			session,
+			registered: this.ratelessRepairSessions.get(session.id),
+		});
 	}
 
 	private cancelRatelessRepairSession(
@@ -1423,42 +1453,17 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 			disposed: false,
 		} satisfies RatelessDispatchLifecycle;
 
-		for (const target of [...new Set(targets)]) {
-			const targetLifecycle: RatelessDispatchTargetLifecycle = {
-				lifecycle,
+		this.ratelessDispatchRegistry.register(
+			lifecycle,
+			targets,
+			(forLifecycle, target) => ({
+				lifecycle: forLifecycle,
 				target,
 				controller: new AbortController(),
 				retainedByProcess: false,
 				responseLeases: 0,
-			};
-			lifecycle.targets.set(target, targetLifecycle);
-			let activeForTarget = this.ratelessDispatchTargets.get(target);
-			if (!activeForTarget) {
-				activeForTarget = new Set();
-				this.ratelessDispatchTargets.set(target, activeForTarget);
-			}
-			activeForTarget.add(targetLifecycle);
-		}
-
-		ownershipLifecycleController.signal.addEventListener(
-			"abort",
-			lifecycle.onOwnerOrCallerAbort,
-			{ once: true },
+			}),
 		);
-		if (callerSignal && callerSignal !== ownershipLifecycleController.signal) {
-			callerSignal.addEventListener("abort", lifecycle.onOwnerOrCallerAbort, {
-				once: true,
-			});
-		}
-		if (
-			this.ratelessClosed ||
-			ownershipLifecycleController !==
-				this.ratelessDispatchLifecycleController ||
-			ownershipLifecycleController.signal.aborted ||
-			callerSignal?.aborted
-		) {
-			lifecycle.onOwnerOrCallerAbort();
-		}
 		return lifecycle;
 	}
 
@@ -1466,93 +1471,33 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 		targetLifecycle: RatelessDispatchTargetLifecycle,
 		reason?: unknown,
 	): void {
-		if (!targetLifecycle.controller.signal.aborted) {
-			targetLifecycle.controller.abort(reason);
-		}
-		this.maybeDisposeRatelessDispatchLifecycle(targetLifecycle.lifecycle);
+		this.ratelessDispatchRegistry.abortTarget(targetLifecycle, reason);
 	}
 
 	private abortRatelessDispatchLifecycle(
 		lifecycle: RatelessDispatchLifecycle,
 		reason?: unknown,
 	): void {
-		if (!lifecycle.controller.signal.aborted) {
-			lifecycle.controller.abort(reason);
-		}
-		for (const targetLifecycle of lifecycle.targets.values()) {
-			this.abortRatelessDispatchTarget(targetLifecycle, reason);
-		}
-		this.maybeDisposeRatelessDispatchLifecycle(lifecycle);
+		this.ratelessDispatchRegistry.abortLifecycle(lifecycle, reason);
 	}
 
 	private finishRatelessDispatchLifecycle(
 		lifecycle: RatelessDispatchLifecycle,
 	): void {
-		lifecycle.dispatchFinished = true;
-		this.maybeDisposeRatelessDispatchLifecycle(lifecycle);
+		this.ratelessDispatchRegistry.finish(lifecycle);
 	}
 
 	private maybeDisposeRatelessDispatchLifecycle(
 		lifecycle: RatelessDispatchLifecycle,
 	): void {
-		if (
-			lifecycle.disposed ||
-			!lifecycle.dispatchFinished ||
-			[...lifecycle.targets.values()].some(
-				(target) => target.retainedByProcess || target.responseLeases > 0,
-			)
-		) {
-			return;
-		}
-		lifecycle.disposed = true;
-		lifecycle.ownershipLifecycleController.signal.removeEventListener(
-			"abort",
-			lifecycle.onOwnerOrCallerAbort,
-		);
-		if (
-			lifecycle.callerSignal &&
-			lifecycle.callerSignal !== lifecycle.ownershipLifecycleController.signal
-		) {
-			lifecycle.callerSignal.removeEventListener(
-				"abort",
-				lifecycle.onOwnerOrCallerAbort,
-			);
-		}
-		for (const targetLifecycle of lifecycle.targets.values()) {
-			const activeForTarget = this.ratelessDispatchTargets.get(
-				targetLifecycle.target,
-			);
-			activeForTarget?.delete(targetLifecycle);
-			if (activeForTarget?.size === 0) {
-				this.ratelessDispatchTargets.delete(targetLifecycle.target);
-			}
-		}
+		this.ratelessDispatchRegistry.maybeDispose(lifecycle);
 	}
 
 	private isRatelessDispatchLifecycleActive(
 		lifecycle: RatelessDispatchLifecycle,
 		target?: string,
 	): boolean {
-		if (
-			this.ratelessClosed ||
-			lifecycle.disposed ||
-			lifecycle.ownershipLifecycleController !==
-				this.ratelessDispatchLifecycleController ||
-			lifecycle.ownershipLifecycleController.signal.aborted ||
-			lifecycle.callerSignal?.aborted ||
-			lifecycle.controller.signal.aborted
-		) {
-			return false;
-		}
-		if (target === undefined) {
-			return true;
-		}
-		const targetLifecycle = lifecycle.targets.get(target);
-		return (
-			targetLifecycle !== undefined &&
-			!targetLifecycle.controller.signal.aborted &&
-			this.ratelessDispatchTargets.get(target)?.has(targetLifecycle) === true
-		);
+		return this.ratelessDispatchRegistry.isLifecycleActive(lifecycle, target);
 	}
 
 	private getIncomingSyncProcessKey(sender: string, syncId: string): string {
@@ -1562,12 +1507,12 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 	private isIncomingSyncGenerationActive(
 		ownershipLifecycleController: AbortController,
 	): boolean {
-		return (
-			!this.ratelessClosed &&
-			ownershipLifecycleController ===
-				this.ratelessDispatchLifecycleController &&
-			!ownershipLifecycleController.signal.aborted
-		);
+		return isOwnershipGenerationActive({
+			closed: this.ratelessClosed,
+			ownershipLifecycleController,
+			currentOwnershipLifecycleController:
+				this.ratelessDispatchLifecycleController,
+		});
 	}
 
 	private isIncomingSyncProcessActive(

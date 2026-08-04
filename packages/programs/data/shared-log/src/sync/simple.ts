@@ -20,6 +20,7 @@ import {
 } from "../exchange-heads.js";
 import { TransportMessage } from "../message.js";
 import type { EntryReplicated } from "../ranges.js";
+import { DispatchLifecycleRegistry } from "./dispatch-lifecycle.js";
 import type {
 	HashSymbolHashListResolver,
 	HashSymbolResolver,
@@ -616,7 +617,17 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 	private syncDispatchLifecycleController: AbortController;
 	private syncDispatchTargetEpochCounter: number;
 	private syncDispatchTargetEpochs: Map<string, SyncDispatchTargetEpoch>;
-	private syncDispatchTargets: Map<string, Set<SyncDispatchTargetLifecycle>>;
+	private readonly syncDispatchRegistry: DispatchLifecycleRegistry<
+		SyncDispatchLifecycle,
+		SyncDispatchTargetLifecycle
+	>;
+
+	private get syncDispatchTargets(): Map<
+		string,
+		Set<SyncDispatchTargetLifecycle>
+	> {
+		return this.syncDispatchRegistry.activeTargets;
+	}
 	private repairSessionCounter: number;
 	private repairSessions: Map<string, RepairSessionState>;
 
@@ -678,7 +689,24 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 		this.syncDispatchLifecycleController = new AbortController();
 		this.syncDispatchTargetEpochCounter = 0;
 		this.syncDispatchTargetEpochs = new Map();
-		this.syncDispatchTargets = new Map();
+		this.syncDispatchRegistry = new DispatchLifecycleRegistry<
+			SyncDispatchLifecycle,
+			SyncDispatchTargetLifecycle
+		>({
+			isClosed: () => this.closed === true,
+			currentOwnershipLifecycleController: () =>
+				this.syncDispatchLifecycleController,
+			hasRetainedWork: (lifecycle) => lifecycle.retainedWork > 0,
+			// Target-activity strategy: dispatch-epoch identity.
+			isTargetCurrent: (targetLifecycle) =>
+				this.syncDispatchTargetEpochs.get(targetLifecycle.target) ===
+				targetLifecycle.epoch,
+			onTargetAborted: (targetLifecycle) => {
+				for (const batch of [...targetLifecycle.batches]) {
+					this.removePendingMaybeSyncResponseBatch(batch);
+				}
+			},
+		});
 		this.repairSessionCounter = 0;
 		this.repairSessions = new Map();
 	}
@@ -858,60 +886,43 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 			abortAllOnTargetDisconnect: options?.abortAllOnTargetDisconnect === true,
 		} satisfies SyncDispatchLifecycle;
 
-		for (const target of [...new Set(targets)]) {
-			const expectedEpoch = options?.targetEpochs?.get(target);
-			const currentEpoch = this.syncDispatchTargetEpochs.get(target);
-			const epoch =
-				expectedEpoch ??
-				currentEpoch ??
-				(options?.createTargetEpochs === false
-					? undefined
-					: this.getOrCreateSyncDispatchTargetEpoch(target));
-			if (!epoch) {
-				continue;
-			}
-			const targetLifecycle: SyncDispatchTargetLifecycle = {
-				lifecycle,
-				target,
-				epoch,
-				controller: new AbortController(),
-				batches: new Set(),
-				responseLeases: 0,
-				activeWaiters: 0,
-			};
-			lifecycle.targets.set(target, targetLifecycle);
-			let activeForTarget = this.syncDispatchTargets.get(target);
-			if (!activeForTarget) {
-				activeForTarget = new Set();
-				this.syncDispatchTargets.set(target, activeForTarget);
-			}
-			activeForTarget.add(targetLifecycle);
-			if (this.syncDispatchTargetEpochs.get(target) !== epoch) {
-				this.abortSyncDispatchTarget(
-					targetLifecycle,
-					new Error("sync target lifecycle is stale"),
-				);
-			}
-		}
-
-		ownershipLifecycleController.signal.addEventListener(
-			"abort",
-			lifecycle.onOwnerOrCallerAbort,
-			{ once: true },
+		this.syncDispatchRegistry.register(
+			lifecycle,
+			targets,
+			(forLifecycle, target) => {
+				const expectedEpoch = options?.targetEpochs?.get(target);
+				const currentEpoch = this.syncDispatchTargetEpochs.get(target);
+				const epoch =
+					expectedEpoch ??
+					currentEpoch ??
+					(options?.createTargetEpochs === false
+						? undefined
+						: this.getOrCreateSyncDispatchTargetEpoch(target));
+				if (!epoch) {
+					return undefined;
+				}
+				return {
+					lifecycle: forLifecycle,
+					target,
+					epoch,
+					controller: new AbortController(),
+					batches: new Set(),
+					responseLeases: 0,
+					activeWaiters: 0,
+				};
+			},
+			(targetLifecycle) => {
+				if (
+					this.syncDispatchTargetEpochs.get(targetLifecycle.target) !==
+					targetLifecycle.epoch
+				) {
+					this.abortSyncDispatchTarget(
+						targetLifecycle,
+						new Error("sync target lifecycle is stale"),
+					);
+				}
+			},
 		);
-		if (callerSignal && callerSignal !== ownershipLifecycleController.signal) {
-			callerSignal.addEventListener("abort", lifecycle.onOwnerOrCallerAbort, {
-				once: true,
-			});
-		}
-		if (
-			this.closed === true ||
-			ownershipLifecycleController !== this.syncDispatchLifecycleController ||
-			ownershipLifecycleController.signal.aborted ||
-			callerSignal?.aborted
-		) {
-			lifecycle.onOwnerOrCallerAbort();
-		}
 		return lifecycle;
 	}
 
@@ -919,102 +930,38 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 		targetLifecycle: SyncDispatchTargetLifecycle,
 		reason?: unknown,
 	): void {
-		if (!targetLifecycle.controller.signal.aborted) {
-			targetLifecycle.controller.abort(reason);
-		}
-		for (const batch of [...targetLifecycle.batches]) {
-			this.removePendingMaybeSyncResponseBatch(batch);
-		}
-		this.maybeDisposeSyncDispatchLifecycle(targetLifecycle.lifecycle);
+		this.syncDispatchRegistry.abortTarget(targetLifecycle, reason);
 	}
 
 	private abortSyncDispatchLifecycle(
 		lifecycle: SyncDispatchLifecycle,
 		reason?: unknown,
 	): void {
-		if (!lifecycle.controller.signal.aborted) {
-			lifecycle.controller.abort(reason);
-		}
-		for (const targetLifecycle of lifecycle.targets.values()) {
-			this.abortSyncDispatchTarget(targetLifecycle, reason);
-		}
-		this.maybeDisposeSyncDispatchLifecycle(lifecycle);
+		this.syncDispatchRegistry.abortLifecycle(lifecycle, reason);
 	}
 
 	private finishSyncDispatchLifecycle(lifecycle: SyncDispatchLifecycle): void {
-		lifecycle.dispatchFinished = true;
-		this.maybeDisposeSyncDispatchLifecycle(lifecycle);
+		this.syncDispatchRegistry.finish(lifecycle);
 	}
 
 	private maybeDisposeSyncDispatchLifecycle(
 		lifecycle: SyncDispatchLifecycle,
 	): void {
-		if (
-			lifecycle.disposed ||
-			!lifecycle.dispatchFinished ||
-			lifecycle.retainedWork > 0
-		) {
-			return;
-		}
-		lifecycle.disposed = true;
-		lifecycle.ownershipLifecycleController.signal.removeEventListener(
-			"abort",
-			lifecycle.onOwnerOrCallerAbort,
-		);
-		if (
-			lifecycle.callerSignal &&
-			lifecycle.callerSignal !== lifecycle.ownershipLifecycleController.signal
-		) {
-			lifecycle.callerSignal.removeEventListener(
-				"abort",
-				lifecycle.onOwnerOrCallerAbort,
-			);
-		}
-		for (const targetLifecycle of lifecycle.targets.values()) {
-			const activeForTarget = this.syncDispatchTargets.get(
-				targetLifecycle.target,
-			);
-			activeForTarget?.delete(targetLifecycle);
-			if (activeForTarget?.size === 0) {
-				this.syncDispatchTargets.delete(targetLifecycle.target);
-			}
-		}
+		this.syncDispatchRegistry.maybeDispose(lifecycle);
 	}
 
 	private isSyncDispatchLifecycleActive(
 		lifecycle: SyncDispatchLifecycle,
 		target?: string,
 	): boolean {
-		if (
-			this.closed === true ||
-			lifecycle.disposed ||
-			lifecycle.ownershipLifecycleController !==
-				this.syncDispatchLifecycleController ||
-			lifecycle.ownershipLifecycleController.signal.aborted ||
-			lifecycle.callerSignal?.aborted ||
-			lifecycle.controller.signal.aborted
-		) {
-			return false;
-		}
-		if (target === undefined) {
-			return true;
-		}
-		const targetLifecycle = lifecycle.targets.get(target);
-		return (
-			targetLifecycle !== undefined &&
-			!targetLifecycle.controller.signal.aborted &&
-			this.syncDispatchTargetEpochs.get(target) === targetLifecycle.epoch
-		);
+		return this.syncDispatchRegistry.isLifecycleActive(lifecycle, target);
 	}
 
 	private getSyncDispatchSignal(
 		lifecycle: SyncDispatchLifecycle,
 		target: string,
 	): AbortSignal {
-		return (
-			lifecycle.targets.get(target)?.controller.signal ??
-			lifecycle.controller.signal
-		);
+		return this.syncDispatchRegistry.getSignal(lifecycle, target);
 	}
 
 	private pendingMaybeSyncResponseWaiterBefore(
