@@ -90,7 +90,7 @@ describe("lifecycle", () => {
 				await oldSimpleStarted;
 				const runningState =
 					sharedLog.joinWarmup._joinWarmupSendStateByTarget.get("target");
-				const oldGeneration = runningState.generation;
+				const oldGeneration = runningState.session;
 
 				sharedLog.poisonReplicationOwnership(
 					new Error("forced ownership poison"),
@@ -117,9 +117,9 @@ describe("lifecycle", () => {
 				);
 				const reopenedState =
 					sharedLog.joinWarmup._joinWarmupSendStateByTarget.get("target");
-				expect(reopenedState.generation).to.not.equal(oldGeneration);
-				expect(sharedLog.joinWarmup._joinWarmupGenerationByTarget.get("target")).to.equal(
-					reopenedState.generation,
+				expect(reopenedState.session).to.not.equal(oldGeneration);
+				expect(sharedLog.joinWarmup._warmupSessionsByTarget.get("target")).to.equal(
+					reopenedState.session,
 				);
 				expect(maxActiveSimpleSends).to.equal(2);
 
@@ -270,7 +270,7 @@ describe("lifecycle", () => {
 			const drainSubscriptionCallbacks = sinon
 				.stub(sharedLog, "drainSubscriptionChangeCallbacks")
 				.callsFake(async () => {
-					const generation = sharedLog.joinWarmup.getJoinWarmupGeneration(target);
+					const generation = sharedLog.joinWarmup.ensureWarmupSession(target);
 					sharedLog.joinWarmup.scheduleJoinWarmupRetries(
 						target,
 						generation,
@@ -278,7 +278,7 @@ describe("lifecycle", () => {
 						new Map([["late-entry", { hash: "late-entry" }]]),
 						false,
 					);
-					expect(sharedLog.joinWarmup._joinWarmupGenerationByTarget.get(target)).to.equal(
+					expect(sharedLog.joinWarmup._warmupSessionsByTarget.get(target)).to.equal(
 						generation,
 					);
 					expect(sharedLog.joinWarmup._joinWarmupRetryTimersByTarget.has(target)).to.be
@@ -290,7 +290,7 @@ describe("lifecycle", () => {
 				.stub(sharedLog, "drainReceiveHandlers")
 				.callsFake(async () => {
 					expect(
-						sharedLog.joinWarmup._joinWarmupGenerationByTarget.has(target),
+						sharedLog.joinWarmup._warmupSessionsByTarget.has(target),
 					).to.be.false;
 					expect(
 						sharedLog.joinWarmup._joinWarmupRetryTimersByTarget.has(target),

@@ -1,4 +1,5 @@
 import { Cache } from "@peerbit/cache";
+import { TestSession } from "@peerbit/test-utils";
 import { expect } from "chai";
 import sinon from "sinon";
 import { SharedLog } from "../src/index.js";
@@ -6,6 +7,7 @@ import {
 	RequestMaybeSyncCoordinate,
 	SimpleSyncronizer,
 } from "../src/sync/simple.js";
+import { EventStore } from "./utils/stores/index.js";
 
 const emptyLog = {
 	has: async () => false,
@@ -451,7 +453,7 @@ describe("sync-repair-session", () => {
 			expect(simpleEntryBatches).to.deep.equal([["old"]]);
 
 			const disconnectedGeneration =
-				internals.joinWarmup._joinWarmupGenerationByTarget.get("target");
+				internals.joinWarmup._warmupSessionsByTarget.get("target");
 			internals.removeRepairFrontierTarget("target");
 			expect(internals.joinWarmup._joinWarmupRetryTimersByTarget.size).to.equal(0);
 			internals.dispatchMaybeMissingEntries(
@@ -465,14 +467,14 @@ describe("sync-repair-session", () => {
 			);
 			await clock.tickAsync(10);
 			const reconnectedGeneration =
-				internals.joinWarmup._joinWarmupGenerationByTarget.get("target");
+				internals.joinWarmup._warmupSessionsByTarget.get("target");
 			internals.removeRepairFrontierTarget("target", {
-				expectedJoinWarmupGeneration: disconnectedGeneration,
+				expectedWarmupSession: disconnectedGeneration,
 			});
 
 			expect(simpleEntryBatches).to.deep.equal([["old"]]);
 			expect(maxActiveSimpleSends).to.equal(1);
-			expect(internals.joinWarmup._joinWarmupGenerationByTarget.get("target")).to.equal(
+			expect(internals.joinWarmup._warmupSessionsByTarget.get("target")).to.equal(
 				reconnectedGeneration,
 			);
 			expect([
@@ -623,12 +625,12 @@ describe("sync-repair-session", () => {
 		log.closed = false;
 		const internals = log as any;
 		internals._repairSweepRunning = true;
-		const oldGeneration = internals.joinWarmup.getJoinWarmupGeneration("target");
+		const oldGeneration = internals.joinWarmup.ensureWarmupSession("target");
 		internals.joinWarmup.cancelJoinWarmupTarget("target");
-		const currentGeneration = internals.joinWarmup.getJoinWarmupGeneration("target");
+		const currentGeneration = internals.joinWarmup.ensureWarmupSession("target");
 
 		internals.scheduleRepairSweep({
-			joinWarmupGenerations: new Map([["target", oldGeneration]]),
+			warmupSessions: new Map([["target", oldGeneration]]),
 			mode: "join-warmup",
 			peers: ["target"],
 		});
@@ -638,7 +640,7 @@ describe("sync-repair-session", () => {
 		expect(internals._repairSweepPendingModes.has("join-warmup")).to.be.false;
 
 		internals.scheduleRepairSweep({
-			joinWarmupGenerations: new Map([["target", currentGeneration]]),
+			warmupSessions: new Map([["target", currentGeneration]]),
 			mode: "join-warmup",
 			peers: ["target"],
 		});
@@ -646,7 +648,7 @@ describe("sync-repair-session", () => {
 			internals._repairSweepPendingPeersByMode.get("join-warmup").has("target"),
 		).to.be.true;
 		expect(
-			internals.joinWarmup._repairSweepJoinWarmupGenerationByTarget.get("target"),
+			internals.joinWarmup._repairSweepWarmupSessionByTarget.get("target"),
 		).to.equal(currentGeneration);
 
 		internals.joinWarmup.cancelJoinWarmupTarget("target");
@@ -686,11 +688,11 @@ describe("sync-repair-session", () => {
 			.stub(internals, "getFullReplicaRepairCandidates")
 			.resolves(new Set(["self", "target"]));
 		const dispatch = sinon.stub(internals, "dispatchMaybeMissingEntries");
-		const oldGeneration = internals.joinWarmup.getJoinWarmupGeneration("target");
+		const oldGeneration = internals.joinWarmup.ensureWarmupSession("target");
 		internals.markRepairSweepOptimisticPeer("gid", "target", oldGeneration);
 		internals._repairSweepPendingModes.add("join-warmup");
 		internals._repairSweepPendingPeersByMode.get("join-warmup").add("target");
-		internals.joinWarmup._repairSweepJoinWarmupGenerationByTarget.set(
+		internals.joinWarmup._repairSweepWarmupSessionByTarget.set(
 			"target",
 			oldGeneration,
 		);
@@ -699,18 +701,18 @@ describe("sync-repair-session", () => {
 		const running = internals.runRepairSweep();
 		await planEntered;
 		internals.joinWarmup.cancelJoinWarmupTarget("target");
-		const newGeneration = internals.joinWarmup.getJoinWarmupGeneration("target");
+		const newGeneration = internals.joinWarmup.ensureWarmupSession("target");
 		internals.markRepairSweepOptimisticPeer("gid", "target", newGeneration);
 		releasePlan();
 		await running;
 
 		expect(dispatch.called).to.be.false;
-		expect(internals.joinWarmup._joinWarmupGenerationByTarget.get("target")).to.equal(
+		expect(internals.joinWarmup._warmupSessionsByTarget.get("target")).to.equal(
 			newGeneration,
 		);
 		expect(
 			internals._repairSweepOptimisticGidPeersPending.get("gid").get("target"),
-		).to.deep.equal({ count: 1, generation: newGeneration });
+		).to.deep.equal({ count: 1, session: newGeneration });
 		expect(
 			internals._repairSweepOptimisticGidsByPeer.get("target"),
 		).to.deep.equal(new Set(["gid"]));
@@ -767,15 +769,15 @@ describe("sync-repair-session", () => {
 
 			await trimEntered;
 			const oldGeneration =
-				internals.joinWarmup._joinWarmupGenerationByTarget.get("target");
+				internals.joinWarmup._warmupSessionsByTarget.get("target");
 			expect(oldGeneration).to.be.an("object");
 			internals.joinWarmup.cancelJoinWarmupTarget("target");
-			const newGeneration = internals.joinWarmup.getJoinWarmupGeneration("target");
+			const newGeneration = internals.joinWarmup.ensureWarmupSession("target");
 			releaseTrim!();
 			await changing;
 			await clock.tickAsync(250);
 
-			expect(internals.joinWarmup._joinWarmupGenerationByTarget.get("target")).to.equal(
+			expect(internals.joinWarmup._warmupSessionsByTarget.get("target")).to.equal(
 				newGeneration,
 			);
 			expect(
@@ -1033,5 +1035,43 @@ describe("sync-repair-session", () => {
 		expect(result[0]!.requestedTotal).to.equal(3);
 		expect(result[0]!.truncated).to.equal(true);
 		expect(result[0]!.unresolved).to.have.length(1);
+	});
+
+	it("scopes removeReplicator warmup cancellation to the captured warmup generation", async () => {
+		const testSession = await TestSession.disconnected(2);
+		try {
+			const store = await testSession.peers[0].open(
+				new EventStore<string, any>(),
+				{
+					args: { replicate: false, timeUntilRoleMaturity: 0 },
+				},
+			);
+			const log = store.log as any;
+			const peerHash = testSession.peers[1].identity.publicKey.hashcode();
+
+			const disconnectedGeneration =
+				log.joinWarmup.ensureWarmupSession(peerHash);
+			// Reconnect: the disconnected warmup window is cancelled and a fresh
+			// one is minted before the scoped removal commits.
+			log.joinWarmup.cancelJoinWarmupTarget(peerHash);
+			const reconnectedGeneration =
+				log.joinWarmup.ensureWarmupSession(peerHash);
+			expect(reconnectedGeneration).to.not.equal(disconnectedGeneration);
+
+			await log.removeReplicator(peerHash, {
+				expectedWarmupSession: disconnectedGeneration,
+			});
+			expect(
+				log.joinWarmup._warmupSessionsByTarget.get(peerHash),
+			).to.equal(reconnectedGeneration);
+
+			await log.removeReplicator(peerHash, {
+				expectedWarmupSession: reconnectedGeneration,
+			});
+			expect(log.joinWarmup._warmupSessionsByTarget.has(peerHash)).to.be
+				.false;
+		} finally {
+			await testSession.stop();
+		}
 	});
 });

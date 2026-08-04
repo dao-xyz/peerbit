@@ -137,17 +137,48 @@ const isTransientReplicationAnnouncementRepairError = (
 	);
 };
 
+/**
+ * One session per announcement window — rotated at exactly the sites that
+ * bumped the legacy retry-generation counter: construction, resetForOpen,
+ * cancelCurrentReplicationStateAnnouncementRetry, and the pre-send bump in
+ * sendReplicationAnnouncement. Identity comparison replaces every numeric
+ * generation compare. Unlike the number, identity cannot alias across open
+ * cycles (the legacy reset-to-0 was safe only by the convention that a
+ * companion controller check accompanied every compare site).
+ */
+export class AnnouncementWorkerSession {
+	readonly createdAt = Date.now(); // diagnostics only
+}
+
 type ReplicationAnnouncementRepairTarget = {
 	key: PublicSignKey;
-	generation: number;
+	session: AnnouncementWorkerSession;
 	attempts: number;
 	done: boolean;
 };
 
+/**
+ * Repair-side adoption of a session. Replaces the legacy compound of the
+ * repair generation number, its generation controller, and the repair
+ * pending / targets / cohort-selected fields. One binding per adopted
+ * session; every rotation aborts the old binding's controller FIRST, then
+ * reassigns (abort listeners run synchronously and must observe
+ * pre-rotation state, as before). The fair cursor hash and max attempts
+ * deliberately stay OUTSIDE the binding: the cursor rotates best-effort
+ * coverage ACROSS generations, and max-attempts is a setup-scoped tunable.
+ */
+export type ReplicationAnnouncementRepairBinding = {
+	session: AnnouncementWorkerSession;
+	controller: AbortController;
+	pending: boolean;
+	targets: Map<string, ReplicationAnnouncementRepairTarget>;
+	cohortSelected: boolean;
+};
+
 export type ReplicationAnnouncementRepairWorkerContext = {
-	generation: number;
+	session: AnnouncementWorkerSession;
 	lifecycleController: AbortController;
-	generationController: AbortController;
+	binding: ReplicationAnnouncementRepairBinding;
 };
 
 export type ReplicationAnnouncementDeps<R extends "u32" | "u64"> = {
@@ -180,7 +211,7 @@ export class ReplicationAnnouncementCoordinator<R extends "u32" | "u64"> {
 		| ReturnType<typeof debounceFixedInterval>
 		| undefined;
 	_replicationAnnouncementRetryPending!: boolean;
-	_replicationAnnouncementRetryGeneration!: number;
+	_announcementSession!: AnnouncementWorkerSession;
 	_replicationAnnouncementRetryController!: AbortController;
 	// Publish local ownership announcements in committed mutation order. This
 	// prevents an older Added message with a delayed transport completion from
@@ -189,38 +220,54 @@ export class ReplicationAnnouncementCoordinator<R extends "u32" | "u64"> {
 	replicationAnnouncementRepairDebounced:
 		| ReturnType<typeof debounceFixedInterval>
 		| undefined;
-	_replicationAnnouncementRepairPending!: boolean;
-	_replicationAnnouncementRepairGeneration!: number;
-	_replicationAnnouncementRepairGenerationController!: AbortController;
-	_replicationAnnouncementRepairTargets!: Map<
-		string,
-		ReplicationAnnouncementRepairTarget
-	>;
-	_replicationAnnouncementRepairCohortSelected!: boolean;
+	_announcementRepairBinding!: ReplicationAnnouncementRepairBinding;
 	_replicationAnnouncementRepairFairCursorHash!: string | undefined;
 	_replicationAnnouncementRepairMaxAttempts!: number;
 	_replicationAnnouncementRepairController!: AbortController;
 
+	// Test-visible compatibility accessors: the SharedLog instance (and the
+	// specs reaching through it) keep reading/writing the repair pending flag
+	// under its historical name.
+	get _replicationAnnouncementRepairPending(): boolean {
+		return this._announcementRepairBinding.pending;
+	}
+	set _replicationAnnouncementRepairPending(pending: boolean) {
+		this._announcementRepairBinding.pending = pending;
+	}
+
 	constructor(private readonly deps: ReplicationAnnouncementDeps<R>) {
 		this._replicationAnnouncementRetryPending = false;
-		this._replicationAnnouncementRetryGeneration = 0;
+		this._announcementSession = new AnnouncementWorkerSession();
 		this._replicationAnnouncementRetryController = new AbortController();
 		this._replicationAnnouncementSendTails = new WeakMap();
-		this._replicationAnnouncementRepairPending = false;
-		this._replicationAnnouncementRepairGeneration = 0;
-		this._replicationAnnouncementRepairGenerationController =
-			new AbortController();
-		this._replicationAnnouncementRepairTargets = new Map();
-		this._replicationAnnouncementRepairCohortSelected = false;
+		this._announcementRepairBinding = this.createRepairBinding(
+			this._announcementSession,
+		);
 		this._replicationAnnouncementRepairFairCursorHash = undefined;
 		this._replicationAnnouncementRepairMaxAttempts =
 			REPLICATION_ANNOUNCEMENT_REPAIR_MAX_ATTEMPTS;
 		this._replicationAnnouncementRepairController = new AbortController();
 	}
 
+	private rotateAnnouncementSession(): AnnouncementWorkerSession {
+		return (this._announcementSession = new AnnouncementWorkerSession());
+	}
+
+	private createRepairBinding(
+		session: AnnouncementWorkerSession,
+	): ReplicationAnnouncementRepairBinding {
+		return {
+			session,
+			controller: new AbortController(),
+			pending: false,
+			targets: new Map(),
+			cohortSelected: false,
+		};
+	}
+
 	resetForOpen(): void {
 		this._replicationAnnouncementRetryPending = false;
-		this._replicationAnnouncementRetryGeneration = 0;
+		this.rotateAnnouncementSession();
 	}
 
 	queueCurrentReplicationStateAnnouncementRetry(error: unknown): boolean {
@@ -274,15 +321,11 @@ export class ReplicationAnnouncementCoordinator<R extends "u32" | "u64"> {
 		}
 		this.replicationAnnouncementRepairDebounced?.close();
 		this._replicationAnnouncementRepairController?.abort();
-		this._replicationAnnouncementRepairGenerationController?.abort();
+		this._announcementRepairBinding?.controller.abort();
 		this._replicationAnnouncementRepairController = new AbortController();
-		this._replicationAnnouncementRepairGenerationController =
-			new AbortController();
-		this._replicationAnnouncementRepairPending = false;
-		this._replicationAnnouncementRepairGeneration =
-			this._replicationAnnouncementRetryGeneration;
-		this._replicationAnnouncementRepairTargets = new Map();
-		this._replicationAnnouncementRepairCohortSelected = false;
+		this._announcementRepairBinding = this.createRepairBinding(
+			this._announcementSession,
+		);
 		this._replicationAnnouncementRepairFairCursorHash = undefined;
 		this._replicationAnnouncementRepairMaxAttempts = maxAttempts;
 		this.replicationAnnouncementRepairDebounced = debounceFixedInterval(
@@ -299,29 +342,24 @@ export class ReplicationAnnouncementCoordinator<R extends "u32" | "u64"> {
 	}
 
 	cancelCurrentReplicationStateAnnouncementRepair(): void {
-		this._replicationAnnouncementRepairPending = false;
+		this._announcementRepairBinding.pending = false;
 		this._replicationAnnouncementRepairController?.abort();
-		this._replicationAnnouncementRepairGenerationController?.abort();
+		this._announcementRepairBinding.controller.abort();
 		this.replicationAnnouncementRepairDebounced?.close();
-		this._replicationAnnouncementRepairTargets?.clear();
+		this._announcementRepairBinding.targets.clear();
 	}
 
 	advanceCurrentReplicationStateAnnouncementRepairGeneration(): void {
-		const generation = this._replicationAnnouncementRetryGeneration;
-		if (generation === this._replicationAnnouncementRepairGeneration) {
+		const session = this._announcementSession;
+		if (session === this._announcementRepairBinding.session) {
 			return;
 		}
 
 		// Abort acknowledged sends carrying the old full-state snapshot before the
 		// primary announcement for the new mutation waits on transport. Otherwise a
 		// stale batch can hold the current state behind DirectStream's seek timeout.
-		this._replicationAnnouncementRepairGenerationController?.abort();
-		this._replicationAnnouncementRepairGenerationController =
-			new AbortController();
-		this._replicationAnnouncementRepairGeneration = generation;
-		this._replicationAnnouncementRepairPending = false;
-		this._replicationAnnouncementRepairTargets.clear();
-		this._replicationAnnouncementRepairCohortSelected = false;
+		this._announcementRepairBinding.controller.abort();
+		this._announcementRepairBinding = this.createRepairBinding(session);
 	}
 
 	queueCurrentReplicationStateAnnouncementRepair(): void {
@@ -342,11 +380,11 @@ export class ReplicationAnnouncementCoordinator<R extends "u32" | "u64"> {
 	/**
 	 * Single validity predicate for announcement-repair workers. "stale":
 	 * the store closed or a lifecycle controller aborted — exit silently.
-	 * "superseded": a newer announcement generation took over — the worker
-	 * must requeue so the current generation gets serviced. The
-	 * generation-controller identity comparison stays at the one call site
-	 * that historically required it; folding it in here is a stage-5
-	 * semantic decision, not a consolidation.
+	 * "superseded": a newer announcement session took over — the worker
+	 * must requeue so the current session gets serviced. The binding
+	 * identity comparison stays at the one call site that historically
+	 * required it; folding it in here is a stage-5 semantic decision, not a
+	 * consolidation.
 	 */
 	private announcementRepairWorkerStatus(
 		worker: ReplicationAnnouncementRepairWorkerContext,
@@ -355,36 +393,34 @@ export class ReplicationAnnouncementCoordinator<R extends "u32" | "u64"> {
 			this.deps.isClosed() ||
 			this.deps.getCloseSignal().aborted ||
 			worker.lifecycleController.signal.aborted ||
-			worker.generationController.signal.aborted
+			worker.binding.controller.signal.aborted
 		) {
 			return "stale";
 		}
-		if (worker.generation !== this._replicationAnnouncementRetryGeneration) {
+		if (worker.session !== this._announcementSession) {
 			return "superseded";
 		}
 		return "current";
 	}
 
 	async runCurrentReplicationStateAnnouncementRepair(): Promise<void> {
-		const generation = this._replicationAnnouncementRetryGeneration;
+		const session = this._announcementSession;
 		const lifecycleController = this._replicationAnnouncementRepairController;
-		const generationController =
-			this._replicationAnnouncementRepairGenerationController;
+		const binding = this._announcementRepairBinding;
 		try {
 			await this.repairCurrentReplicationStateAnnouncement({
-				generation,
+				session,
 				lifecycleController,
-				generationController,
+				binding,
 			});
 		} catch (error) {
 			if (
 				this.announcementRepairWorkerStatus({
-					generation,
+					session,
 					lifecycleController,
-					generationController,
+					binding,
 				}) !== "current" ||
-				generationController !==
-					this._replicationAnnouncementRepairGenerationController
+				binding !== this._announcementRepairBinding
 			) {
 				return;
 			}
@@ -392,10 +428,10 @@ export class ReplicationAnnouncementCoordinator<R extends "u32" | "u64"> {
 				return;
 			}
 
-			// Only the worker that still owns the current generation may conclude
+			// Only the worker that still owns the current session may conclude
 			// that its repair failed. A stale worker must not clear a newer call's
-			// pending flag or attribute its error to the new generation.
-			this._replicationAnnouncementRepairPending = false;
+			// pending flag or attribute its error to the new session.
+			this._announcementRepairBinding.pending = false;
 			logger.error(error);
 		}
 	}
@@ -403,25 +439,22 @@ export class ReplicationAnnouncementCoordinator<R extends "u32" | "u64"> {
 	async repairCurrentReplicationStateAnnouncement(
 		context?: ReplicationAnnouncementRepairWorkerContext,
 	): Promise<void> {
-		if (!this._replicationAnnouncementRepairPending) {
+		if (!this._announcementRepairBinding.pending) {
 			return;
 		}
-		const generation =
-			context?.generation ?? this._replicationAnnouncementRetryGeneration;
+		const session = context?.session ?? this._announcementSession;
 		const lifecycleController =
 			context?.lifecycleController ??
 			this._replicationAnnouncementRepairController;
-		const generationController =
-			context?.generationController ??
-			this._replicationAnnouncementRepairGenerationController;
+		const binding = context?.binding ?? this._announcementRepairBinding;
 		const segments = (await this.deps.getMyReplicationSegments()).map((range) =>
 			range.toReplicationRange(),
 		);
 		switch (
 			this.announcementRepairWorkerStatus({
-				generation,
+				session,
 				lifecycleController,
-				generationController,
+				binding,
 			})
 		) {
 			case "stale":
@@ -435,9 +468,9 @@ export class ReplicationAnnouncementCoordinator<R extends "u32" | "u64"> {
 		const subscribers = (await this.deps.getSubscribers()) ?? [];
 		switch (
 			this.announcementRepairWorkerStatus({
-				generation,
+				session,
 				lifecycleController,
-				generationController,
+				binding,
 			})
 		) {
 			case "stale":
@@ -460,14 +493,14 @@ export class ReplicationAnnouncementCoordinator<R extends "u32" | "u64"> {
 			}
 		}
 
-		for (const [hash, target] of this._replicationAnnouncementRepairTargets) {
-			if (target.generation !== generation || !currentTargets.has(hash)) {
-				this._replicationAnnouncementRepairTargets.delete(hash);
+		for (const [hash, target] of this._announcementRepairBinding.targets) {
+			if (target.session !== session || !currentTargets.has(hash)) {
+				this._announcementRepairBinding.targets.delete(hash);
 			} else {
 				target.key = currentTargets.get(hash)!;
 			}
 		}
-		if (!this._replicationAnnouncementRepairCohortSelected) {
+		if (!this._announcementRepairBinding.cohortSelected) {
 			const candidates = [...currentTargets.entries()].sort(([left], [right]) =>
 				left.localeCompare(right),
 			);
@@ -489,9 +522,9 @@ export class ReplicationAnnouncementCoordinator<R extends "u32" | "u64"> {
 				REPLICATION_ANNOUNCEMENT_REPAIR_TARGETS_PER_GENERATION,
 			);
 			for (const [hash, key] of cohort) {
-				this._replicationAnnouncementRepairTargets.set(hash, {
+				this._announcementRepairBinding.targets.set(hash, {
 					key,
-					generation,
+					session,
 					attempts: 0,
 					done: false,
 				});
@@ -500,12 +533,12 @@ export class ReplicationAnnouncementCoordinator<R extends "u32" | "u64"> {
 				this._replicationAnnouncementRepairFairCursorHash =
 					cohort[cohort.length - 1][0];
 			}
-			this._replicationAnnouncementRepairCohortSelected = true;
+			this._announcementRepairBinding.cohortSelected = true;
 		}
 
-		const batch = [
-			...this._replicationAnnouncementRepairTargets.entries(),
-		].filter(([, target]) => !target.done);
+		const batch = [...this._announcementRepairBinding.targets.entries()].filter(
+			([, target]) => !target.done,
+		);
 		const snapshot = new AllReplicatingSegmentsMessage({ segments });
 		const results = await Promise.allSettled(
 			batch.map(([, target]) =>
@@ -515,15 +548,15 @@ export class ReplicationAnnouncementCoordinator<R extends "u32" | "u64"> {
 						redundancy: 1,
 					}),
 					priority: CONVERGENCE_MESSAGE_PRIORITY,
-					signal: generationController.signal,
+					signal: binding.controller.signal,
 				}),
 			),
 		);
 		switch (
 			this.announcementRepairWorkerStatus({
-				generation,
+				session,
 				lifecycleController,
-				generationController,
+				binding,
 			})
 		) {
 			case "stale":
@@ -535,8 +568,8 @@ export class ReplicationAnnouncementCoordinator<R extends "u32" | "u64"> {
 
 		for (const [index, result] of results.entries()) {
 			const [hash, attemptedTarget] = batch[index];
-			const target = this._replicationAnnouncementRepairTargets.get(hash);
-			if (target !== attemptedTarget || target.generation !== generation) {
+			const target = this._announcementRepairBinding.targets.get(hash);
+			if (target !== attemptedTarget || target.session !== session) {
 				continue;
 			}
 			if (result.status === "fulfilled") {
@@ -562,12 +595,12 @@ export class ReplicationAnnouncementCoordinator<R extends "u32" | "u64"> {
 			}
 		}
 
-		if (generation !== this._replicationAnnouncementRetryGeneration) {
+		if (session !== this._announcementSession) {
 			this.queueCurrentReplicationStateAnnouncementRepair();
 			return;
 		}
 		if (
-			[...this._replicationAnnouncementRepairTargets.values()].some(
+			[...this._announcementRepairBinding.targets.values()].some(
 				(target) => !target.done,
 			)
 		) {
@@ -575,12 +608,12 @@ export class ReplicationAnnouncementCoordinator<R extends "u32" | "u64"> {
 			return;
 		}
 
-		this._replicationAnnouncementRepairPending = false;
-		this._replicationAnnouncementRepairTargets.clear();
+		this._announcementRepairBinding.pending = false;
+		this._announcementRepairBinding.targets.clear();
 	}
 
 	cancelCurrentReplicationStateAnnouncementRetry(): void {
-		this._replicationAnnouncementRetryGeneration += 1;
+		this.rotateAnnouncementSession();
 		this._replicationAnnouncementRetryPending = false;
 		this._replicationAnnouncementRetryController?.abort();
 		this.replicationAnnouncementRetryDebounced?.close();
@@ -612,9 +645,9 @@ export class ReplicationAnnouncementCoordinator<R extends "u32" | "u64"> {
 				}
 				// Advance before every post-mutation send, including successful ones. An
 				// authoritative retry already in flight may have captured the previous
-				// local state; the generation mismatch forces one more current snapshot
+				// local state; the session mismatch forces one more current snapshot
 				// after that stale send settles.
-				this._replicationAnnouncementRetryGeneration += 1;
+				this.rotateAnnouncementSession();
 				this.advanceCurrentReplicationStateAnnouncementRepairGeneration();
 				try {
 					await this.deps.getRpc().send(message, {
@@ -648,7 +681,7 @@ export class ReplicationAnnouncementCoordinator<R extends "u32" | "u64"> {
 	}
 
 	async retryCurrentReplicationStateAnnouncement(): Promise<void> {
-		const generation = this._replicationAnnouncementRetryGeneration;
+		const session = this._announcementSession;
 		const controller = this._replicationAnnouncementRetryController;
 		try {
 			const segments = (await this.deps.getMyReplicationSegments()).map(
@@ -661,7 +694,7 @@ export class ReplicationAnnouncementCoordinator<R extends "u32" | "u64"> {
 			) {
 				return;
 			}
-			if (generation !== this._replicationAnnouncementRetryGeneration) {
+			if (session !== this._announcementSession) {
 				void this.replicationAnnouncementRetryDebounced?.call();
 				return;
 			}
@@ -685,7 +718,7 @@ export class ReplicationAnnouncementCoordinator<R extends "u32" | "u64"> {
 			if (this.queueCurrentReplicationStateAnnouncementRetry(error)) {
 				return;
 			}
-			if (generation === this._replicationAnnouncementRetryGeneration) {
+			if (session === this._announcementSession) {
 				this._replicationAnnouncementRetryPending = false;
 			} else {
 				void this.replicationAnnouncementRetryDebounced?.call();
@@ -704,7 +737,7 @@ export class ReplicationAnnouncementCoordinator<R extends "u32" | "u64"> {
 		// in flight. In that case keep the repair pending so the newer current
 		// state is also announced in full, regardless of whether its incremental
 		// send succeeded or failed.
-		if (generation === this._replicationAnnouncementRetryGeneration) {
+		if (session === this._announcementSession) {
 			this._replicationAnnouncementRetryPending = false;
 			if (
 				!this.deps.isClosed() &&
