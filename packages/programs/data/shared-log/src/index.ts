@@ -181,6 +181,7 @@ import {
 	materializeVerifiedRawExchangeHeadsMessage,
 } from "./exchange-heads.js";
 import { FanoutEnvelope } from "./fanout-envelope.js";
+import { InstanceLifecycle } from "./instance-lifecycle.js";
 import {
 	MAX_U32,
 	MAX_U64,
@@ -192,6 +193,7 @@ import { JoinWarmupCoordinator } from "./join-warmup.js";
 import { LeaderPlanCache } from "./leader-plan-cache.js";
 import { TransportMessage } from "./message.js";
 import { NativeBackboneWriteThroughBlockStore } from "./native-write-through-block-store.js";
+import { type PeerSessionKind, PeerSessionRegistry } from "./peer-session.js";
 import { PIDReplicationController } from "./pid.js";
 import {
 	type EntryReplicated,
@@ -2028,7 +2030,16 @@ export class SharedLog<
 	// Explicit changes to the local replication role invalidate adaptive planners
 	// that were admitted under the previous role. The ownership lifecycle alone
 	// is insufficient because unreplicate() deliberately keeps the store open.
-	private _localReplicationRoleGeneration = 0;
+	// Stage 2: physically owned by the per-open InstanceLifecycle (role
+	// sub-generation); these accessors keep every legacy site verbatim.
+	private get _localReplicationRoleGeneration(): number {
+		return this._instanceLifecycle?.roleGeneration ?? 0;
+	}
+	private set _localReplicationRoleGeneration(value: number) {
+		if (this._instanceLifecycle) {
+			this._instanceLifecycle.roleGeneration = value;
+		}
+	}
 	// If durable post-state cannot be reconciled to every native/runtime mirror,
 	// reject later writers and planners until reopen rehydrates those mirrors.
 	private _replicationRangeMutationFailure?: unknown;
@@ -2036,6 +2047,12 @@ export class SharedLog<
 	// opaque token on poison and every terminal/open boundary so an older runner
 	// can neither dispatch nor mutate a freshly opened lifecycle.
 	private _repairLifecycleController = new AbortController();
+	// design-note: not a new fence — this is the per-open identity object the
+	// fence ratchet is migrating TOWARD (stage 2 of the session/lifecycle
+	// refactor). It wraps the controllers, poison latch, terminal fences, and
+	// coordinator/debouncer identities via late-bound readers; stage 3 drains
+	// those fences into it one at a time.
+	private _instanceLifecycle?: InstanceLifecycle;
 	// Local receive generations fence replication-info handlers that were admitted
 	// before a liveness eviction but reach the per-peer apply lane after it. Unlike
 	// message timestamps, these tokens never compare clocks from different peers.
@@ -2050,7 +2067,9 @@ export class SharedLog<
 	// Subscription callbacks can overlap because removing a replicator mutates the
 	// replication index asynchronously. Keep that lifecycle separate from message
 	// timestamps so a reconnect can synchronously revoke an older unsubscribe.
-	private _subscriptionEpochByPeer!: Map<string, object>;
+	// The epoch tokens are PeerSession objects (src/peer-session.ts); the map
+	// itself lives on the registry. Stage-2 of the fence refactor.
+	private _peerSessions!: PeerSessionRegistry;
 	// A superseded removal may be the queue item that actually observed an active
 	// replicator. Carry that leave obligation to the transition that ultimately
 	// wins, while a winning reconnect clears it without emitting a stale leave.
@@ -2113,6 +2132,7 @@ export class SharedLog<
 
 	private poisonReplicationOwnership(failure: unknown): unknown {
 		this._replicationRangeMutationFailure ??= failure;
+		this._instanceLifecycle?.markPoisoned(failure);
 		this.stopRepairLifecycle();
 		// Pending aggregate changes belong to the poisoned ownership generation.
 		// Closing also resolves ignored `add()` promises, while the guarded
@@ -3333,6 +3353,38 @@ export class SharedLog<
 		});
 	}
 
+	private createPeerSessionRegistry(): PeerSessionRegistry {
+		return new PeerSessionRegistry({
+			// Delegators, not bound refs — instance spies must keep observing.
+			isReplicationLifecycleActive: (controller) =>
+				this.isReplicationLifecycleActive(controller),
+			getReplicationLifecycleController: () =>
+				this._replicationLifecycleController,
+			isReplicationInfoBlocked: (hash) =>
+				this._replicationInfoBlockedPeers.has(hash),
+			getReceiveCleanupGate: (hash) =>
+				this._receiveCleanupGateByPeer.get(hash) ?? 0,
+		});
+	}
+
+	private createInstanceLifecycle(): InstanceLifecycle {
+		return new InstanceLifecycle({
+			getCurrentLifecycle: () => this._instanceLifecycle,
+			getOwnershipController: () => this._repairLifecycleController,
+			getMembershipController: () => this._replicationLifecycleController,
+			getCloseController: () => this._closeController,
+			getPoisonFailure: () => this._replicationRangeMutationFailure,
+			isHostClosed: () => this.closed,
+			isHostTerminating: () => this.isTerminating(),
+			getCheckedPruneCoordinator: () => this._checkedPrune,
+			areRangeMutationsClosing: () => this._replicationRangeMutationsClosing,
+			arePruneRemovesClosing: () => this._pruneRemovesClosing,
+			getPruneDebouncer: () => this.pruneDebouncedFn,
+			getReplicationChangeDebouncer: () => this.replicationChangeDebounceFn,
+			getRebalanceDebouncer: () => this.rebalanceParticipationDebounced,
+		});
+	}
+
 	constructor(properties?: { id?: Uint8Array }) {
 		super();
 		this.ensureNativeDurabilityRuntimeState();
@@ -3348,7 +3400,7 @@ export class SharedLog<
 		this._replicationInfoRequestByPeer = new Map();
 		this._replicationInfoApplyQueueByPeer = new Map();
 		this._replicationInfoReceiveEpochByPeer = new Map();
-		this._subscriptionEpochByPeer = new Map();
+		this._peerSessions = this.createPeerSessionRegistry();
 		this._pendingReplicatorLeaveByPeer = new Set();
 		this._activeReceiveHandlersByPeer = new Map();
 		this._receiveHandlerDrainByPeer = new Map();
@@ -3389,6 +3441,7 @@ export class SharedLog<
 		this._announcements = this.createReplicationAnnouncementCoordinator();
 		this.pendingMaturity = new Map();
 		this._closeController = new AbortController();
+		this._instanceLifecycle = this.createInstanceLifecycle();
 	}
 
 	private ensureNativeDurabilityRuntimeState(): void {
@@ -6184,6 +6237,10 @@ export class SharedLog<
 					this.rebalanceParticipationDebounced?.call();
 				}
 				removed = true;
+				this._peerSessions?.noteReplicatorRemoved(
+					keyHash,
+					options?.subscriptionEpoch,
+				);
 				if (!ownerHasRanges) {
 					options?.onRemoved?.({ wasReplicator });
 				}
@@ -13682,11 +13739,21 @@ export class SharedLog<
 		this._replicationRangeMutationsClosing = false;
 		this._checkedPruneRemoveBlocksLocalRangeMutationAdmission = 0;
 		this._checkedPruneRemovalCallbackInvocationDepth = 0;
-		this._localReplicationRoleGeneration = 0;
 		this._receiveOwnershipRevision = 0;
 		this._receiveOwnershipMutationAdmissions = 0;
 		this._pruneRemovesClosing = false;
 		this._replicationRangeMutationFailure = undefined;
+		// One InstanceLifecycle per open(): fresh identity, installed before
+		// the ownership-controller rotation so no statement in this reset
+		// block can observe the previous lifecycle's roleGeneration.
+		// Late-bound readers make it insensitive to the resets that follow
+		// (ownership controller next, membership controller at
+		// resetSubscriptionChangeCallbackTracking below, _checkedPrune and
+		// _closeController and the debouncers in the setup blocks further
+		// down). The fresh object also supersedes the old per-open
+		// `_localReplicationRoleGeneration = 0` reset: roleGeneration starts
+		// at 0 on the incoming lifecycle.
+		this._instanceLifecycle = this.createInstanceLifecycle();
 		this.startRepairLifecycle();
 		this._replicationRangeMutationTail = Promise.resolve();
 		this.resetSubscriptionChangeCallbackTracking();
@@ -13733,7 +13800,11 @@ export class SharedLog<
 		// install fresh lanes and opaque per-subscription ownership tokens.
 		this._replicationInfoApplyQueueByPeer = new Map();
 		this._replicationInfoReceiveEpochByPeer = new Map();
-		this._subscriptionEpochByPeer = new Map();
+		// Deserialized instances never ran the constructor; create the session
+		// registry lazily on first open. Reopens keep the SAME registry so stale
+		// continuations observe resetForOpen()'s map swap via property lookup.
+		this._peerSessions ??= this.createPeerSessionRegistry();
+		this._peerSessions.resetForOpen();
 		this._pendingReplicatorLeaveByPeer = new Set();
 		this._activeReceiveHandlersByPeer = new Map();
 		this._receiveHandlerDrainByPeer = new Map();
@@ -14381,6 +14452,8 @@ export class SharedLog<
 		this.interval = setInterval(() => {
 			void this.rebalanceParticipationDebounced?.call();
 		}, RECALCULATE_PARTICIPATION_DEBOUNCE_INTERVAL);
+
+		this._instanceLifecycle!.markOpenComplete();
 	}
 
 	private toNativeReplicationRange(
@@ -16174,6 +16247,7 @@ export class SharedLog<
 
 	private async _close(options?: { preserveDropRetryResources?: boolean }) {
 		this.stopRepairLifecycle();
+		this._instanceLifecycle?.beginTerminal("internal-close");
 		const preserveDropRetryResources =
 			options?.preserveDropRetryResources === true;
 		let firstError: unknown;
@@ -16371,6 +16445,7 @@ export class SharedLog<
 		// SharedLog-specific await or observable teardown can admit a new owner.
 		this.preventParentAttachments();
 		this.stopRepairLifecycle();
+		this._instanceLifecycle?.beginTerminal("close");
 		const replicationRangeTerminalFence =
 			this.acquireReplicationRangeMutationTerminalFence();
 		const pruneRemoveTerminalFence = this.acquirePruneRemoveTerminalFence();
@@ -16511,6 +16586,7 @@ export class SharedLog<
 		// the terminal fence only after that precondition succeeds.
 		this.preventParentAttachments();
 		this.stopRepairLifecycle();
+		this._instanceLifecycle?.beginTerminal("drop");
 		const replicationRangeTerminalFence =
 			this.acquireReplicationRangeMutationTerminalFence();
 		const pruneRemoveTerminalFence = this.acquirePruneRemoveTerminalFence();
@@ -23770,14 +23846,15 @@ export class SharedLog<
 		return this.getReplicationInfoReceiveEpoch(peerHash) === epoch;
 	}
 
-	private advanceSubscriptionEpoch(peerHash: string): object {
-		const next = {};
-		this._subscriptionEpochByPeer.set(peerHash, next);
-		return next;
+	private advanceSubscriptionEpoch(
+		peerHash: string,
+		kind: PeerSessionKind = "opening",
+	): object {
+		return this._peerSessions.rotate(peerHash, kind);
 	}
 
 	private getSubscriptionEpoch(peerHash: string): object | null {
-		return this._subscriptionEpochByPeer.get(peerHash) ?? null;
+		return this._peerSessions.current(peerHash);
 	}
 
 	private isCurrentSubscriptionEpoch(
@@ -23890,7 +23967,11 @@ export class SharedLog<
 
 		const peerHash = publicKey.hashcode();
 		const expectedSubscriptionEpoch =
-			subscriptionEpoch ?? this.advanceSubscriptionEpoch(peerHash);
+			subscriptionEpoch ??
+			this.advanceSubscriptionEpoch(
+				peerHash,
+				subscribed ? "opening" : "departing",
+			);
 		const ownsSubscriptionEpoch = () =>
 			this.isCurrentSubscriptionEpoch(peerHash, expectedSubscriptionEpoch);
 		if (!ownsSubscriptionEpoch()) {
@@ -24008,6 +24089,7 @@ export class SharedLog<
 		this._replicationInfoBlockedPeers.delete(peerHash);
 		this._replicatorLivenessFailures.delete(peerHash);
 		this.markReplicatorActivity(peerHash);
+		this._peerSessions.markOpen(peerHash, expectedSubscriptionEpoch);
 
 		if (this._logProperties?.sync?.rawExchangeHeads === true) {
 			// One-shot capability advertisement so live append gossip can pick
@@ -25501,7 +25583,10 @@ export class SharedLog<
 		}
 
 		const fromHash = evt.detail.from.hashcode();
-		const subscriptionEpoch = this.advanceSubscriptionEpoch(fromHash);
+		const subscriptionEpoch = this.advanceSubscriptionEpoch(
+			fromHash,
+			"departing",
+		);
 		this._replicationInfoBlockedPeers.add(fromHash);
 		this._recentRepairDispatch.delete(fromHash);
 
