@@ -1,5 +1,13 @@
 # Changelog
 
+## 13.2.25
+
+### Patch Changes
+
+- [#1186](https://github.com/dao-xyz/peerbit/pull/1186) [`e3af5bc`](https://github.com/dao-xyz/peerbit/commit/e3af5bc7974ccd8ef3e7effe819c3a9bbefa4337) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Keep global synchronization work limits charged until non-abortable lookups and response shipments settle, while releasing disconnected peers' per-generation quota and lifecycle state immediately.
+
+- [#1184](https://github.com/dao-xyz/peerbit/pull/1184) [`c28d40e`](https://github.com/dao-xyz/peerbit/commit/c28d40e988f6958df373269a22c6fb75c1fec4e7) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Remove obsolete SharedLog facade methods now that lifecycle, peer-session, announcement, liveness, coordinate, checked-prune, and synchronization state has a single owner.
+
 ## 13.2.24
 
 ### Patch Changes
