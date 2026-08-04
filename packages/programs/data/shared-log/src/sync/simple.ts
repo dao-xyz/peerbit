@@ -32,6 +32,11 @@ import type {
 	SyncableKey,
 	Syncronizer,
 } from "./index.js";
+import {
+	type PendingSyncAdmissionReservation,
+	PendingSyncStore,
+	QUEUED_SYNC_ALIAS_REFRESH_PENDING,
+} from "./pending-sync-store.js";
 import { emitSyncProfileDuration, syncProfileStart } from "./profile.js";
 
 @variant([0, 1])
@@ -332,16 +337,10 @@ export const MAX_PENDING_SIMPLE_SYNC_LOOKUPS_GLOBAL = 32;
 // Retry scanning can touch persistent indexes. Bound each pass so a full
 // adversarial queue cannot force 40,000 lookups in one event-loop turn.
 export const MAX_SIMPLE_SYNC_RETRY_KEYS_PER_TICK = 4_096;
-// Late coordinate-to-hash cache fills are discovered incrementally. Keep this
-// independent of retained queue size so an empty or repeated request cannot
-// force an O(global pending keys) reverse-alias rebuild.
-const MAX_PENDING_SIMPLE_SYNC_ALIAS_REFRESH_PER_MESSAGE = 128;
-const QUEUED_SYNC_ALIAS_REFRESH_PENDING = Symbol(
-	"queued-sync-alias-refresh-pending",
-);
-// This is an absolute first-seen lifetime. Repeated claims and additional peers
-// deliberately do not slide the deadline.
-export const PENDING_SIMPLE_SYNC_KEY_TTL_MS = 60_000;
+// The pending-claim TTL, alias-refresh bound and pending-refresh sentinel
+// moved into ./pending-sync-store.ts with the record store (stage-4 sync
+// unification). Re-exported here for compatibility.
+export { PENDING_SIMPLE_SYNC_KEY_TTL_MS } from "./pending-sync-store.js";
 // Bound retained request/response associations globally. Ten thousand hashes
 // covers several full default-size request batches while keeping adversarial or
 // abandoned requests to a small, predictable amount of heap.
@@ -350,30 +349,6 @@ export const MAX_ACTIVE_SIMPLE_SYNC_RESPONSES_PER_PEER = 4;
 export const MAX_ACTIVE_SIMPLE_SYNC_RESPONSES_GLOBAL = 32;
 const MAX_PENDING_MAYBE_SYNC_RESPONSE_WAITER_BYPASSES = 32;
 const MAX_PENDING_MAYBE_SYNC_RESPONSE_WAITERS = 10_000;
-
-type PendingSyncAdmissionReservation = {
-	peer: string;
-	remaining: number;
-	active: boolean;
-	released: boolean;
-	expiresAt: number;
-	identities: Set<SyncableKey>;
-	retainedSettled: number;
-};
-
-type PendingSyncExpiryNode =
-	| {
-			kind: "key";
-			key: SyncableKey;
-			expiresAt: number;
-			heapIndex: number;
-	  }
-	| {
-			kind: "admission";
-			reservation: PendingSyncAdmissionReservation;
-			expiresAt: number;
-			heapIndex: number;
-	  };
 
 type PendingMaybeSyncResponse = {
 	hashes: Set<string>;
@@ -513,54 +488,99 @@ type RepairSessionState = {
 export class SimpleSyncronizer<R extends "u32" | "u64">
 	implements Syncronizer<R>
 {
-	// map of hash to public keys that we can ask for entries
-	syncInFlightQueue: Map<SyncableKey, PublicSignKey[]>;
-	syncInFlightQueueInverted: Map<string, Set<SyncableKey>>;
-	private syncInFlightQueueExpiresAt: Map<SyncableKey, number>;
-	private syncInFlightQueueExpiryTimer?: ReturnType<typeof setTimeout>;
-	private pendingSyncExpiryHeap: PendingSyncExpiryNode[];
-	private pendingSyncKeyExpiryNodes: Map<SyncableKey, PendingSyncExpiryNode>;
-	private pendingSyncAdmissionExpiryNodes: Map<
-		PendingSyncAdmissionReservation,
-		PendingSyncExpiryNode
-	>;
+	// The pending-sync record store owns the claim/admission state. The
+	// legacy public map instances (syncInFlightQueue, syncInFlightQueueInverted,
+	// syncInFlight, ...) live inside it and are exposed through the accessors
+	// below under their historical names.
+	private readonly pendingSync: PendingSyncStore;
 	private syncInFlightRetryIterator?: IterableIterator<
 		[SyncableKey, PublicSignKey[]]
 	>;
 	private syncInFlightRetryRemaining = 0;
-	private syncInFlightQueueClaimants: Map<SyncableKey, Set<string>>;
-	private syncInFlightQueueClaimantIndexes: Map<
-		SyncableKey,
-		Map<string, number>
-	>;
-	private syncInFlightQueueRoundRobinCursor: Map<SyncableKey, number>;
-	private syncInFlightQueuedCoordinates: Set<bigint>;
-	private syncInFlightQueuedHashByCoordinate: Map<bigint, string>;
-	private syncInFlightQueuedCoordinatesByHash: Map<string, Set<bigint>>;
-	private syncInFlightQueuedCoordinateRefreshIterator?: IterableIterator<bigint>;
-	private pendingSyncClaimCount: number;
-	private pendingSyncAdmissionCount: number;
-	private pendingSyncActiveAdmissionReservations: number;
-	private pendingSyncAdmissionCountByPeer: Map<string, number>;
-	private pendingSyncAdmissionIdentitiesByPeer: Map<string, Set<SyncableKey>>;
-	private pendingSyncAdmissionReservations: Set<PendingSyncAdmissionReservation>;
-	private pendingSyncAdmissionReservationsByPeer: Map<
-		string,
-		Set<PendingSyncAdmissionReservation>
-	>;
-	private pendingSyncAdmissionReservationsByIdentity: Map<
-		SyncableKey,
-		Set<PendingSyncAdmissionReservation>
-	>;
 	private pendingCoordinateLookupCount: number;
 	private pendingCoordinateLookupCountByPeer: Map<string, number>;
 	private pendingCoordinateResponseCount: number;
 	private pendingCoordinateResponseCountByPeer: Map<string, number>;
 	private syncResponseSlotRows: Map<string, SyncResponseSlotRow>;
 
+	// map of hash to public keys that we can ask for entries
+	get syncInFlightQueue(): Map<SyncableKey, PublicSignKey[]> {
+		return this.pendingSync.syncInFlightQueue;
+	}
+
+	get syncInFlightQueueInverted(): Map<string, Set<SyncableKey>> {
+		return this.pendingSync.syncInFlightQueueInverted;
+	}
+
 	// map of hash to public keys that we have asked for entries
-	syncInFlight!: Map<string, Map<SyncableKey, { timestamp: number }>>;
-	private syncInFlightTargetsByKey: Map<SyncableKey, Set<string>>;
+	get syncInFlight(): Map<string, Map<SyncableKey, { timestamp: number }>> {
+		return this.pendingSync.syncInFlight;
+	}
+
+	private get syncInFlightTargetsByKey(): Map<SyncableKey, Set<string>> {
+		return this.pendingSync.syncInFlightTargetsByKey;
+	}
+
+	private get syncInFlightQueueExpiresAt(): Map<SyncableKey, number> {
+		return this.pendingSync.syncInFlightQueueExpiresAt;
+	}
+
+	private get syncInFlightQueueExpiryTimer():
+		| ReturnType<typeof setTimeout>
+		| undefined {
+		return this.pendingSync.syncInFlightQueueExpiryTimer;
+	}
+
+	private get pendingSyncExpiryHeap() {
+		return this.pendingSync.pendingSyncExpiryHeap;
+	}
+
+	private get pendingSyncAdmissionExpiryNodes() {
+		return this.pendingSync.pendingSyncAdmissionExpiryNodes;
+	}
+
+	private get syncInFlightQueuedCoordinates(): Set<bigint> {
+		return this.pendingSync.syncInFlightQueuedCoordinates;
+	}
+
+	private get syncInFlightQueuedHashByCoordinate(): Map<bigint, string> {
+		return this.pendingSync.syncInFlightQueuedHashByCoordinate;
+	}
+
+	private get syncInFlightQueuedCoordinatesByHash(): Map<string, Set<bigint>> {
+		return this.pendingSync.syncInFlightQueuedCoordinatesByHash;
+	}
+
+	private get pendingSyncClaimCount(): number {
+		return this.pendingSync.pendingSyncClaimCount;
+	}
+
+	private get pendingSyncAdmissionCount(): number {
+		return this.pendingSync.pendingSyncAdmissionCount;
+	}
+
+	private get pendingSyncAdmissionCountByPeer(): Map<string, number> {
+		return this.pendingSync.pendingSyncAdmissionCountByPeer;
+	}
+
+	private get pendingSyncAdmissionIdentitiesByPeer(): Map<
+		string,
+		Set<SyncableKey>
+	> {
+		return this.pendingSync.pendingSyncAdmissionIdentitiesByPeer;
+	}
+
+	private get pendingSyncAdmissionReservations() {
+		return this.pendingSync.pendingSyncAdmissionReservations;
+	}
+
+	private get pendingSyncAdmissionReservationsByPeer() {
+		return this.pendingSync.pendingSyncAdmissionReservationsByPeer;
+	}
+
+	private get pendingSyncAdmissionReservationsByIdentity() {
+		return this.pendingSync.pendingSyncAdmissionReservationsByIdentity;
+	}
 
 	rpc: RPC<TransportMessage, TransportMessage>;
 	log: Log<any>;
@@ -622,33 +642,16 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 		peerSupportsRawExchangeHeads?: (peer: string) => boolean;
 		sendRawExchangeHeads?: RawExchangeHeadsSender;
 	}) {
-		this.syncInFlightQueue = new Map();
-		this.syncInFlightQueueInverted = new Map();
-		this.syncInFlightQueueExpiresAt = new Map();
-		this.pendingSyncExpiryHeap = [];
-		this.pendingSyncKeyExpiryNodes = new Map();
-		this.pendingSyncAdmissionExpiryNodes = new Map();
-		this.syncInFlightQueueClaimants = new Map();
-		this.syncInFlightQueueClaimantIndexes = new Map();
-		this.syncInFlightQueueRoundRobinCursor = new Map();
-		this.syncInFlightQueuedCoordinates = new Set();
-		this.syncInFlightQueuedHashByCoordinate = new Map();
-		this.syncInFlightQueuedCoordinatesByHash = new Map();
-		this.pendingSyncClaimCount = 0;
-		this.pendingSyncAdmissionCount = 0;
-		this.pendingSyncActiveAdmissionReservations = 0;
-		this.pendingSyncAdmissionCountByPeer = new Map();
-		this.pendingSyncAdmissionIdentitiesByPeer = new Map();
-		this.pendingSyncAdmissionReservations = new Set();
-		this.pendingSyncAdmissionReservationsByPeer = new Map();
-		this.pendingSyncAdmissionReservationsByIdentity = new Map();
+		this.pendingSync = new PendingSyncStore({
+			coordinateToHash: properties.coordinateToHash,
+			isDispatchEpochCurrent: (peer, epoch) =>
+				this.syncDispatchTargetEpochs.get(peer) === epoch,
+		});
 		this.pendingCoordinateLookupCount = 0;
 		this.pendingCoordinateLookupCountByPeer = new Map();
 		this.pendingCoordinateResponseCount = 0;
 		this.pendingCoordinateResponseCountByPeer = new Map();
 		this.syncResponseSlotRows = new Map();
-		this.syncInFlight = new Map();
-		this.syncInFlightTargetsByKey = new Map();
 		this.rpc = properties.rpc;
 		this.log = properties.log;
 		this.entryIndex = properties.entryIndex;
@@ -2867,194 +2870,17 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 	}
 
 	private getPendingSyncKeyIdentity(key: SyncableKey): SyncableKey {
-		if (typeof key === "string") {
-			return key;
-		}
-		const hash = this.coordinateToHash.get(key);
-		return hash ?? key;
-	}
-
-	private removeQueuedSyncCoordinateAlias(key: bigint): void {
-		this.syncInFlightQueuedCoordinates.delete(key);
-		if (this.syncInFlightQueuedCoordinates.size === 0) {
-			this.syncInFlightQueuedCoordinateRefreshIterator = undefined;
-		}
-		const previousHash = this.syncInFlightQueuedHashByCoordinate.get(key);
-		this.syncInFlightQueuedHashByCoordinate.delete(key);
-		if (previousHash != null) {
-			const coordinates =
-				this.syncInFlightQueuedCoordinatesByHash.get(previousHash);
-			coordinates?.delete(key);
-			if (coordinates?.size === 0) {
-				this.syncInFlightQueuedCoordinatesByHash.delete(previousHash);
-			}
-		}
-	}
-
-	private refreshQueuedSyncCoordinateAlias(key: bigint): void {
-		if (!this.syncInFlightQueue.has(key)) {
-			this.removeQueuedSyncCoordinateAlias(key);
-			return;
-		}
-		this.syncInFlightQueuedCoordinates.add(key);
-		const hash = this.coordinateToHash.get(key) ?? undefined;
-		const previousHash = this.syncInFlightQueuedHashByCoordinate.get(key);
-		if (previousHash !== hash) {
-			if (previousHash != null) {
-				const coordinates =
-					this.syncInFlightQueuedCoordinatesByHash.get(previousHash);
-				coordinates?.delete(key);
-				if (coordinates?.size === 0) {
-					this.syncInFlightQueuedCoordinatesByHash.delete(previousHash);
-				}
-			}
-			if (hash == null) {
-				this.syncInFlightQueuedHashByCoordinate.delete(key);
-			} else {
-				this.syncInFlightQueuedHashByCoordinate.set(key, hash);
-			}
-		}
-		if (hash != null) {
-			let coordinates = this.syncInFlightQueuedCoordinatesByHash.get(hash);
-			if (!coordinates) {
-				coordinates = new Set();
-				this.syncInFlightQueuedCoordinatesByHash.set(hash, coordinates);
-			}
-			coordinates.add(key);
-			this.reconcileQueuedSyncCoordinateAlias(key, hash);
-		}
-	}
-
-	private reconcileQueuedSyncCoordinateAlias(
-		coordinate: bigint,
-		hash: string,
-	): void {
-		const now = Date.now();
-		const coordinateExpiresAt = this.syncInFlightQueueExpiresAt.get(coordinate);
-		if (coordinateExpiresAt != null && coordinateExpiresAt <= now) {
-			this.clearSyncProcessKey(coordinate);
-			return;
-		}
-		const hashExpiresAt = this.syncInFlightQueueExpiresAt.get(hash);
-		if (hashExpiresAt != null && hashExpiresAt <= now) {
-			this.clearSyncProcessKey(hash);
-			return;
-		}
-		const hashClaimants = this.syncInFlightQueue.get(hash);
-		if (!hashClaimants || !this.syncInFlightQueue.has(coordinate)) {
-			return;
-		}
-		const expiresAt = Math.min(
-			this.syncInFlightQueueExpiresAt.get(coordinate) ?? Infinity,
-			this.syncInFlightQueueExpiresAt.get(hash) ?? Infinity,
-		);
-		for (const claimant of [...hashClaimants]) {
-			this.addPendingSyncClaim(coordinate, claimant, expiresAt);
-		}
-		if (Number.isFinite(expiresAt)) {
-			this.movePendingSyncKeyExpiryEarlier(coordinate, expiresAt);
-		}
-		for (const target of [...(this.syncInFlightTargetsByKey.get(hash) ?? [])]) {
-			const state = this.syncInFlight.get(target)?.get(hash);
-			if (state) {
-				this.setSyncInFlightTargetKey(target, coordinate, state.timestamp);
-			}
-		}
-		this.clearSyncProcessKey(hash);
+		return this.pendingSync.getPendingSyncKeyIdentity(key);
 	}
 
 	private refreshQueuedSyncCoordinateAliases(): void {
-		if (
-			this.syncInFlightQueuedCoordinates.size === 0 &&
-			this.syncInFlightQueueClaimants.size < this.syncInFlightQueue.size
-		) {
-			// Defensive compatibility for callers/tests that seed the public queue
-			// directly. Keep hydration bounded; internal writes register coordinates
-			// when the key is first admitted.
-			let inspected = 0;
-			for (const key of this.syncInFlightQueue.keys()) {
-				if (typeof key === "bigint") {
-					this.syncInFlightQueuedCoordinates.add(key);
-				}
-				inspected += 1;
-				if (inspected >= MAX_PENDING_SIMPLE_SYNC_ALIAS_REFRESH_PER_MESSAGE) {
-					break;
-				}
-			}
-		}
-		if (this.syncInFlightQueuedCoordinates.size === 0) {
-			this.syncInFlightQueuedCoordinateRefreshIterator = undefined;
-			return;
-		}
-		this.syncInFlightQueuedCoordinateRefreshIterator ??=
-			this.syncInFlightQueuedCoordinates.values();
-		for (
-			let refreshed = 0;
-			refreshed < MAX_PENDING_SIMPLE_SYNC_ALIAS_REFRESH_PER_MESSAGE;
-			refreshed += 1
-		) {
-			const next = this.syncInFlightQueuedCoordinateRefreshIterator.next();
-			if (next.done) {
-				this.syncInFlightQueuedCoordinateRefreshIterator = undefined;
-				break;
-			}
-			this.refreshQueuedSyncCoordinateAlias(next.value);
-		}
+		this.pendingSync.refreshQueuedSyncCoordinateAliases();
 	}
 
 	private getQueuedSyncKeyForAdmission(
 		key: SyncableKey,
 	): SyncableKey | typeof QUEUED_SYNC_ALIAS_REFRESH_PENDING | undefined {
-		const getValidQueuedKey = (
-			candidate: SyncableKey,
-		): SyncableKey | undefined => {
-			if (!this.syncInFlightQueue.has(candidate)) {
-				return undefined;
-			}
-			const expiresAt = this.syncInFlightQueueExpiresAt.get(candidate);
-			if (expiresAt != null && expiresAt <= Date.now()) {
-				this.clearSyncProcessKey(candidate);
-				return undefined;
-			}
-			return candidate;
-		};
-		if (getValidQueuedKey(key) != null) {
-			if (typeof key === "bigint") {
-				this.refreshQueuedSyncCoordinateAlias(key);
-				return getValidQueuedKey(key);
-			}
-			return key;
-		}
-		if (typeof key === "string") {
-			const aliases = this.syncInFlightQueuedCoordinatesByHash.get(key);
-			if (aliases) {
-				let inspected = 0;
-				for (const alias of aliases) {
-					if (inspected >= MAX_PENDING_SIMPLE_SYNC_ALIAS_REFRESH_PER_MESSAGE) {
-						return QUEUED_SYNC_ALIAS_REFRESH_PENDING;
-					}
-					inspected += 1;
-					this.refreshQueuedSyncCoordinateAlias(alias);
-					if (
-						this.syncInFlightQueuedCoordinatesByHash.get(key)?.has(alias) ===
-						true
-					) {
-						const validAlias = getValidQueuedKey(alias);
-						if (validAlias != null) {
-							return validAlias;
-						}
-					}
-				}
-				if (
-					(this.syncInFlightQueuedCoordinatesByHash.get(key)?.size ?? 0) > 0
-				) {
-					return QUEUED_SYNC_ALIAS_REFRESH_PENDING;
-				}
-			}
-			return undefined;
-		}
-		const hash = this.coordinateToHash.get(key);
-		return hash != null ? getValidQueuedKey(hash) : undefined;
+		return this.pendingSync.getQueuedSyncKeyForAdmission(key);
 	}
 
 	private addPendingSyncClaim(
@@ -3062,80 +2888,11 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 		from: PublicSignKey,
 		expiresAt?: number,
 	): boolean {
-		const fromHash = from.hashcode();
-		let peers = this.syncInFlightQueue.get(key);
-		let claimants = this.syncInFlightQueueClaimants.get(key);
-		let claimantIndexes = this.syncInFlightQueueClaimantIndexes.get(key);
-		if (!peers) {
-			peers = [];
-			this.syncInFlightQueue.set(key, peers);
-			claimants = new Set();
-			this.syncInFlightQueueClaimants.set(key, claimants);
-			claimantIndexes = new Map();
-			this.syncInFlightQueueClaimantIndexes.set(key, claimantIndexes);
-			const deadline = expiresAt ?? Date.now() + PENDING_SIMPLE_SYNC_KEY_TTL_MS;
-			this.syncInFlightQueueExpiresAt.set(key, deadline);
-			const expiryNode: PendingSyncExpiryNode = {
-				kind: "key",
-				key,
-				expiresAt: deadline,
-				heapIndex: -1,
-			};
-			this.pendingSyncKeyExpiryNodes.set(key, expiryNode);
-			this.pushPendingSyncExpiry(expiryNode);
-			if (typeof key === "bigint") {
-				this.refreshQueuedSyncCoordinateAlias(key);
-			}
-		} else if (!claimants) {
-			// Defensive compatibility for callers/tests that seed the public queue
-			// maps directly. Internally every retained key gets this set at creation.
-			claimants = new Set(peers.map((peer) => peer.hashcode()));
-			this.syncInFlightQueueClaimants.set(key, claimants);
-			this.pendingSyncClaimCount += claimants.size;
-		}
-		if (!claimantIndexes) {
-			claimantIndexes = new Map();
-			for (let index = 0; index < peers.length; index += 1) {
-				claimantIndexes.set(peers[index]!.hashcode(), index);
-			}
-			this.syncInFlightQueueClaimantIndexes.set(key, claimantIndexes);
-		}
-		if (claimants.has(fromHash)) {
-			return false;
-		}
-
-		claimantIndexes.set(fromHash, peers.length);
-		peers.push(from);
-		claimants.add(fromHash);
-		let inverted = this.syncInFlightQueueInverted.get(fromHash);
-		if (!inverted) {
-			inverted = new Set();
-			this.syncInFlightQueueInverted.set(fromHash, inverted);
-		}
-		inverted.add(key);
-		this.pendingSyncClaimCount += 1;
-		this.schedulePendingSyncKeyExpiry();
-		return true;
+		return this.pendingSync.addPendingSyncClaim(key, from, expiresAt);
 	}
 
 	private hasPendingSyncClaim(key: SyncableKey, peer: string): boolean {
-		const claimants = this.syncInFlightQueueClaimants.get(key);
-		if (claimants) {
-			return claimants.has(peer);
-		}
-		const peers = this.syncInFlightQueue.get(key);
-		if (!peers) {
-			return false;
-		}
-		const hydrated = new Set(peers.map((candidate) => candidate.hashcode()));
-		this.syncInFlightQueueClaimants.set(key, hydrated);
-		const indexes = new Map<string, number>();
-		for (let index = 0; index < peers.length; index += 1) {
-			indexes.set(peers[index]!.hashcode(), index);
-		}
-		this.syncInFlightQueueClaimantIndexes.set(key, indexes);
-		this.pendingSyncClaimCount += hydrated.size;
-		return hydrated.has(peer);
+		return this.pendingSync.hasPendingSyncClaim(key, peer);
 	}
 
 	private filterDispatchablePendingSyncClaims(
@@ -3143,25 +2900,11 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 		peer: string,
 		epoch: SyncDispatchTargetEpoch,
 	): SyncableKey[] {
-		if (this.syncDispatchTargetEpochs.get(peer) !== epoch) {
-			return [];
-		}
-		const now = Date.now();
-		const dispatchable: SyncableKey[] = [];
-		for (const key of keys) {
-			const expiresAt = this.syncInFlightQueueExpiresAt.get(key);
-			if (expiresAt != null && expiresAt <= now) {
-				this.clearSyncProcessKey(key);
-				continue;
-			}
-			if (
-				this.syncInFlightQueue.has(key) &&
-				this.hasPendingSyncClaim(key, peer)
-			) {
-				dispatchable.push(key);
-			}
-		}
-		return dispatchable;
+		return this.pendingSync.filterDispatchablePendingSyncClaims(
+			keys,
+			peer,
+			epoch,
+		);
 	}
 
 	private canStartPendingSyncLookup(peer: string): boolean {
@@ -3293,418 +3036,53 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 		peer: string,
 		identities: SyncableKey[],
 	): PendingSyncAdmissionReservation | undefined {
-		const count = identities.length;
-		if (count <= 0) {
-			return undefined;
-		}
-		const reservation: PendingSyncAdmissionReservation = {
-			peer,
-			remaining: count,
-			active: true,
-			released: false,
-			expiresAt: Date.now() + PENDING_SIMPLE_SYNC_KEY_TTL_MS,
-			identities: new Set(identities),
-			retainedSettled: 0,
-		};
-		this.pendingSyncAdmissionReservations.add(reservation);
-		let peerReservations =
-			this.pendingSyncAdmissionReservationsByPeer.get(peer);
-		if (!peerReservations) {
-			peerReservations = new Set();
-			this.pendingSyncAdmissionReservationsByPeer.set(peer, peerReservations);
-		}
-		peerReservations.add(reservation);
-		this.pendingSyncActiveAdmissionReservations += 1;
-		this.pendingSyncAdmissionCount += count;
-		this.pendingSyncAdmissionCountByPeer.set(
-			peer,
-			(this.pendingSyncAdmissionCountByPeer.get(peer) ?? 0) + count,
-		);
-		let reservedIdentities =
-			this.pendingSyncAdmissionIdentitiesByPeer.get(peer);
-		if (!reservedIdentities) {
-			reservedIdentities = new Set();
-			this.pendingSyncAdmissionIdentitiesByPeer.set(peer, reservedIdentities);
-		}
-		for (const identity of identities) {
-			reservedIdentities.add(identity);
-			let reservationsForIdentity =
-				this.pendingSyncAdmissionReservationsByIdentity.get(identity);
-			if (!reservationsForIdentity) {
-				reservationsForIdentity = new Set();
-				this.pendingSyncAdmissionReservationsByIdentity.set(
-					identity,
-					reservationsForIdentity,
-				);
-			}
-			reservationsForIdentity.add(reservation);
-		}
-		const expiryNode: PendingSyncExpiryNode = {
-			kind: "admission",
-			reservation,
-			expiresAt: reservation.expiresAt,
-			heapIndex: -1,
-		};
-		this.pendingSyncAdmissionExpiryNodes.set(reservation, expiryNode);
-		this.pushPendingSyncExpiry(expiryNode);
-		this.schedulePendingSyncKeyExpiry();
-		return reservation;
-	}
-
-	private removePendingSyncAdmissionIdentity(
-		reservation: PendingSyncAdmissionReservation,
-		identity: SyncableKey,
-		options?: { retainQuota?: boolean },
-	): boolean {
-		if (!reservation.identities.delete(identity)) {
-			return false;
-		}
-		if (options?.retainQuota === true) {
-			reservation.retainedSettled += 1;
-		} else {
-			reservation.remaining -= 1;
-			this.pendingSyncAdmissionCount -= 1;
-			const peerCount =
-				(this.pendingSyncAdmissionCountByPeer.get(reservation.peer) ?? 0) - 1;
-			if (peerCount === 0) {
-				this.pendingSyncAdmissionCountByPeer.delete(reservation.peer);
-			} else {
-				this.pendingSyncAdmissionCountByPeer.set(reservation.peer, peerCount);
-			}
-		}
-		const reservedIdentities = this.pendingSyncAdmissionIdentitiesByPeer.get(
-			reservation.peer,
-		);
-		reservedIdentities?.delete(identity);
-		if (reservedIdentities?.size === 0) {
-			this.pendingSyncAdmissionIdentitiesByPeer.delete(reservation.peer);
-		}
-		const reservationsForIdentity =
-			this.pendingSyncAdmissionReservationsByIdentity.get(identity);
-		reservationsForIdentity?.delete(reservation);
-		if (reservationsForIdentity?.size === 0) {
-			this.pendingSyncAdmissionReservationsByIdentity.delete(identity);
-		}
-		return true;
+		return this.pendingSync.reservePendingSyncAdmission(peer, identities);
 	}
 
 	private clearPendingSyncAdmissionIdentity(identity: SyncableKey): void {
-		const reservations =
-			this.pendingSyncAdmissionReservationsByIdentity.get(identity);
-		if (!reservations) {
-			return;
-		}
-		for (const reservation of [...reservations]) {
-			this.removePendingSyncAdmissionIdentity(reservation, identity, {
-				retainQuota: true,
-			});
-		}
+		this.pendingSync.clearPendingSyncAdmissionIdentity(identity);
 	}
 
 	private consumePendingSyncAdmission(
 		reservation: PendingSyncAdmissionReservation,
 		identity: SyncableKey,
 	): "consumed" | "settled" | "invalid" {
-		if (!reservation.active || reservation.expiresAt <= Date.now()) {
-			if (reservation.expiresAt <= Date.now()) {
-				this.invalidatePendingSyncAdmission(reservation);
-			}
-			return "invalid";
-		}
-		if (!reservation.identities.has(identity)) {
-			return "settled";
-		}
-		this.removePendingSyncAdmissionIdentity(reservation, identity);
-		if (reservation.remaining === 0) {
-			this.removePendingSyncAdmissionExpiry(reservation);
-			reservation.active = false;
-			reservation.released = true;
-			this.pendingSyncActiveAdmissionReservations -= 1;
-			this.pendingSyncAdmissionReservations.delete(reservation);
-			const peerReservations = this.pendingSyncAdmissionReservationsByPeer.get(
-				reservation.peer,
-			);
-			peerReservations?.delete(reservation);
-			if (peerReservations?.size === 0) {
-				this.pendingSyncAdmissionReservationsByPeer.delete(reservation.peer);
-			}
-			this.clearPendingSyncExpiryTimerIfIdle();
-		}
-		return "consumed";
+		return this.pendingSync.consumePendingSyncAdmission(reservation, identity);
 	}
 
 	private transferPendingSyncAdmissionIdentity(
 		peer: string,
 		identity: SyncableKey,
 	): number | undefined {
-		const reservations =
-			this.pendingSyncAdmissionReservationsByIdentity.get(identity);
-		if (!reservations) {
-			return undefined;
-		}
-		for (const reservation of reservations) {
-			if (
-				reservation.peer !== peer ||
-				reservation.released ||
-				reservation.expiresAt <= Date.now() ||
-				!this.removePendingSyncAdmissionIdentity(reservation, identity, {
-					retainQuota: true,
-				})
-			) {
-				continue;
-			}
-			// The original resolver may be non-abortable and still retains its input
-			// arrays. Keep that reservation charged until its queueSync finally
-			// settles; the queued claim is counted separately and can disappear
-			// without returning the resolver's quota early.
-			return reservation.expiresAt;
-		}
-		return undefined;
-	}
-
-	private invalidatePendingSyncAdmission(
-		reservation?: PendingSyncAdmissionReservation,
-	): void {
-		if (!reservation || reservation.released || !reservation.active) {
-			return;
-		}
-		// Expiry/disconnect invalidates late lookup results, but it must not return
-		// the quota slot while the underlying storage/index work is still alive.
-		// Those lookups are not generally abortable; only queueSync's finally block
-		// may release their active-work accounting.
-		this.removePendingSyncAdmissionExpiry(reservation);
-		reservation.active = false;
-		this.pendingSyncActiveAdmissionReservations -= 1;
-		this.clearPendingSyncExpiryTimerIfIdle();
+		return this.pendingSync.transferPendingSyncAdmissionIdentity(
+			peer,
+			identity,
+		);
 	}
 
 	private releasePendingSyncAdmission(
 		reservation?: PendingSyncAdmissionReservation,
 	): void {
-		if (!reservation || reservation.released) {
-			return;
-		}
-		this.removePendingSyncAdmissionExpiry(reservation);
-		for (const identity of [...reservation.identities]) {
-			this.removePendingSyncAdmissionIdentity(reservation, identity);
-		}
-		if (reservation.retainedSettled > 0) {
-			const retainedSettled = reservation.retainedSettled;
-			reservation.retainedSettled = 0;
-			reservation.remaining -= retainedSettled;
-			this.pendingSyncAdmissionCount -= retainedSettled;
-			const peerCount =
-				(this.pendingSyncAdmissionCountByPeer.get(reservation.peer) ?? 0) -
-				retainedSettled;
-			if (peerCount === 0) {
-				this.pendingSyncAdmissionCountByPeer.delete(reservation.peer);
-			} else {
-				this.pendingSyncAdmissionCountByPeer.set(reservation.peer, peerCount);
-			}
-		}
-		if (reservation.active) {
-			this.pendingSyncActiveAdmissionReservations -= 1;
-		}
-		reservation.active = false;
-		reservation.released = true;
-		this.pendingSyncAdmissionReservations.delete(reservation);
-		const peerReservations = this.pendingSyncAdmissionReservationsByPeer.get(
-			reservation.peer,
-		);
-		peerReservations?.delete(reservation);
-		if (peerReservations?.size === 0) {
-			this.pendingSyncAdmissionReservationsByPeer.delete(reservation.peer);
-		}
-		this.clearPendingSyncExpiryTimerIfIdle();
+		this.pendingSync.releasePendingSyncAdmission(reservation);
 	}
 
 	private clearPendingSyncAdmissions(peer?: string): void {
-		const reservations =
-			peer == null
-				? this.pendingSyncAdmissionReservations
-				: this.pendingSyncAdmissionReservationsByPeer.get(peer);
-		if (!reservations) {
-			return;
-		}
-		for (const reservation of [...reservations]) {
-			this.invalidatePendingSyncAdmission(reservation);
-		}
-	}
-
-	private swapPendingSyncExpiry(left: number, right: number): void {
-		const leftNode = this.pendingSyncExpiryHeap[left]!;
-		const rightNode = this.pendingSyncExpiryHeap[right]!;
-		this.pendingSyncExpiryHeap[left] = rightNode;
-		this.pendingSyncExpiryHeap[right] = leftNode;
-		rightNode.heapIndex = left;
-		leftNode.heapIndex = right;
-	}
-
-	private pushPendingSyncExpiry(node: PendingSyncExpiryNode): void {
-		node.heapIndex = this.pendingSyncExpiryHeap.length;
-		this.pendingSyncExpiryHeap.push(node);
-		let index = node.heapIndex;
-		while (index > 0) {
-			const parent = Math.floor((index - 1) / 2);
-			if (
-				this.pendingSyncExpiryHeap[parent]!.expiresAt <=
-				this.pendingSyncExpiryHeap[index]!.expiresAt
-			) {
-				break;
-			}
-			this.swapPendingSyncExpiry(parent, index);
-			index = parent;
-		}
-	}
-
-	private removePendingSyncExpiry(node: PendingSyncExpiryNode): void {
-		const index = node.heapIndex;
-		if (
-			index < 0 ||
-			index >= this.pendingSyncExpiryHeap.length ||
-			this.pendingSyncExpiryHeap[index] !== node
-		) {
-			return;
-		}
-		const last = this.pendingSyncExpiryHeap.pop()!;
-		node.heapIndex = -1;
-		if (index >= this.pendingSyncExpiryHeap.length) {
-			return;
-		}
-		this.pendingSyncExpiryHeap[index] = last;
-		last.heapIndex = index;
-
-		let current = index;
-		while (current > 0) {
-			const parent = Math.floor((current - 1) / 2);
-			if (
-				this.pendingSyncExpiryHeap[parent]!.expiresAt <=
-				this.pendingSyncExpiryHeap[current]!.expiresAt
-			) {
-				break;
-			}
-			this.swapPendingSyncExpiry(parent, current);
-			current = parent;
-		}
-		for (;;) {
-			const left = current * 2 + 1;
-			const right = left + 1;
-			let smallest = current;
-			if (
-				left < this.pendingSyncExpiryHeap.length &&
-				this.pendingSyncExpiryHeap[left]!.expiresAt <
-					this.pendingSyncExpiryHeap[smallest]!.expiresAt
-			) {
-				smallest = left;
-			}
-			if (
-				right < this.pendingSyncExpiryHeap.length &&
-				this.pendingSyncExpiryHeap[right]!.expiresAt <
-					this.pendingSyncExpiryHeap[smallest]!.expiresAt
-			) {
-				smallest = right;
-			}
-			if (smallest === current) {
-				break;
-			}
-			this.swapPendingSyncExpiry(current, smallest);
-			current = smallest;
-		}
-	}
-
-	private removePendingSyncKeyExpiry(key: SyncableKey): void {
-		const node = this.pendingSyncKeyExpiryNodes.get(key);
-		if (!node) {
-			return;
-		}
-		this.pendingSyncKeyExpiryNodes.delete(key);
-		this.removePendingSyncExpiry(node);
+		this.pendingSync.clearPendingSyncAdmissions(peer);
 	}
 
 	private movePendingSyncKeyExpiryEarlier(
 		key: SyncableKey,
 		expiresAt: number,
 	): void {
-		const current = this.syncInFlightQueueExpiresAt.get(key);
-		if (current == null || current <= expiresAt) {
-			return;
-		}
-		this.removePendingSyncKeyExpiry(key);
-		this.syncInFlightQueueExpiresAt.set(key, expiresAt);
-		const node: PendingSyncExpiryNode = {
-			kind: "key",
-			key,
-			expiresAt,
-			heapIndex: -1,
-		};
-		this.pendingSyncKeyExpiryNodes.set(key, node);
-		this.pushPendingSyncExpiry(node);
-		this.schedulePendingSyncKeyExpiry();
-	}
-
-	private removePendingSyncAdmissionExpiry(
-		reservation: PendingSyncAdmissionReservation,
-	): void {
-		const node = this.pendingSyncAdmissionExpiryNodes.get(reservation);
-		if (!node) {
-			return;
-		}
-		this.pendingSyncAdmissionExpiryNodes.delete(reservation);
-		this.removePendingSyncExpiry(node);
+		this.pendingSync.movePendingSyncKeyExpiryEarlier(key, expiresAt);
 	}
 
 	private expirePendingSyncKeys(now = Date.now()): void {
-		for (;;) {
-			const node = this.pendingSyncExpiryHeap[0];
-			if (!node || node.expiresAt > now) {
-				break;
-			}
-			this.removePendingSyncExpiry(node);
-			if (node.kind === "key") {
-				if (this.pendingSyncKeyExpiryNodes.get(node.key) !== node) {
-					continue;
-				}
-				this.pendingSyncKeyExpiryNodes.delete(node.key);
-				this.clearSyncProcessKey(node.key);
-			} else {
-				if (
-					this.pendingSyncAdmissionExpiryNodes.get(node.reservation) !== node
-				) {
-					continue;
-				}
-				this.pendingSyncAdmissionExpiryNodes.delete(node.reservation);
-				this.invalidatePendingSyncAdmission(node.reservation);
-			}
-		}
+		this.pendingSync.expirePendingSyncKeys(now);
 	}
 
 	private clearPendingSyncExpiryTimerIfIdle(): void {
-		if (
-			this.pendingSyncExpiryHeap.length === 0 &&
-			this.syncInFlightQueueExpiryTimer != null
-		) {
-			clearTimeout(this.syncInFlightQueueExpiryTimer);
-			this.syncInFlightQueueExpiryTimer = undefined;
-		}
-	}
-
-	private schedulePendingSyncKeyExpiry(): void {
-		if (
-			this.syncInFlightQueueExpiryTimer != null ||
-			this.pendingSyncExpiryHeap.length === 0
-		) {
-			return;
-		}
-		const expiresAt = this.pendingSyncExpiryHeap[0]!.expiresAt;
-		this.syncInFlightQueueExpiryTimer = setTimeout(
-			() => {
-				this.syncInFlightQueueExpiryTimer = undefined;
-				this.expirePendingSyncKeys();
-				this.schedulePendingSyncKeyExpiry();
-			},
-			Math.max(0, expiresAt - Date.now()),
-		);
-		this.syncInFlightQueueExpiryTimer.unref?.();
+		this.pendingSync.clearPendingSyncExpiryTimerIfIdle();
 	}
 
 	async queueSync(
@@ -4286,8 +3664,7 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 						}
 
 						const cursor =
-							(this.syncInFlightQueueRoundRobinCursor.get(key) ?? 0) %
-							value.length;
+							this.pendingSync.getRoundRobinCursor(key) % value.length;
 						const candidate = value[cursor]!;
 						const publicKeyHash = candidate.hashcode();
 						const inflightTimestamp = this.syncInFlight
@@ -4308,7 +3685,7 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 							}
 							request.hashes.push(key);
 							if (value.length > 1) {
-								this.syncInFlightQueueRoundRobinCursor.set(
+								this.pendingSync.setRoundRobinCursor(
 									key,
 									(cursor + 1) % value.length,
 								);
@@ -4384,28 +3761,9 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 		this.syncDispatchLifecycleController.abort();
 		this.syncDispatchTargetEpochs.clear();
 		this.clearPendingSyncAdmissions();
-		this.syncInFlightQueue.clear();
-		this.syncInFlightQueueInverted.clear();
 		this.syncInFlightRetryIterator = undefined;
 		this.syncInFlightRetryRemaining = 0;
-		this.syncInFlightQueueExpiresAt.clear();
-		this.pendingSyncExpiryHeap.length = 0;
-		this.pendingSyncKeyExpiryNodes.clear();
-		this.pendingSyncAdmissionExpiryNodes.clear();
-		this.syncInFlightQueueClaimants.clear();
-		this.syncInFlightQueueClaimantIndexes.clear();
-		this.syncInFlightQueueRoundRobinCursor.clear();
-		this.syncInFlightQueuedCoordinates.clear();
-		this.syncInFlightQueuedHashByCoordinate.clear();
-		this.syncInFlightQueuedCoordinatesByHash.clear();
-		this.syncInFlightQueuedCoordinateRefreshIterator = undefined;
-		this.pendingSyncClaimCount = 0;
-		if (this.syncInFlightQueueExpiryTimer != null) {
-			clearTimeout(this.syncInFlightQueueExpiryTimer);
-			this.syncInFlightQueueExpiryTimer = undefined;
-		}
-		this.syncInFlight.clear();
-		this.syncInFlightTargetsByKey.clear();
+		this.pendingSync.clearForClose();
 		this.recentlySentExchangeHeads.clear();
 		this.clearPendingMaybeSyncResponses();
 		for (const sessionId of [...this.repairSessions.keys()]) {
@@ -4456,127 +3814,19 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 	}
 
 	private hasSyncProcessState(): boolean {
-		return (
-			this.syncInFlightQueue.size > 0 ||
-			this.syncInFlightQueueInverted.size > 0 ||
-			this.pendingSyncAdmissionCount > 0 ||
-			this.syncInFlight.size > 0
-		);
+		return this.pendingSync.hasSyncProcessState();
 	}
 
 	private clearSyncProcessKey(key: SyncableKey) {
-		const inflight = this.syncInFlightQueue.get(key);
-		if (inflight) {
-			for (const peer of inflight) {
-				const map = this.syncInFlightQueueInverted.get(peer.hashcode());
-				if (map) {
-					map.delete(key);
-					if (map.size === 0) {
-						this.syncInFlightQueueInverted.delete(peer.hashcode());
-					}
-				}
-			}
-
-			const trackedClaimants = this.syncInFlightQueueClaimants.get(key);
-			this.pendingSyncClaimCount = Math.max(
-				0,
-				this.pendingSyncClaimCount -
-					(trackedClaimants?.size ?? inflight.length),
-			);
-			this.syncInFlightQueue.delete(key);
-		}
-		this.syncInFlightQueueClaimants.delete(key);
-		this.syncInFlightQueueClaimantIndexes.delete(key);
-		this.syncInFlightQueueRoundRobinCursor.delete(key);
-		if (typeof key === "bigint") {
-			this.removeQueuedSyncCoordinateAlias(key);
-		}
-		this.removePendingSyncKeyExpiry(key);
-		this.syncInFlightQueueExpiresAt.delete(key);
-		this.clearPendingSyncExpiryTimerIfIdle();
-
-		this.clearSyncInFlightKey(key);
+		this.pendingSync.clearSyncProcessKey(key);
 	}
 
 	private removePendingSyncClaim(key: SyncableKey, peer: string): void {
-		const inflight = this.syncInFlightQueue.get(key);
-		if (!inflight) {
-			return;
-		}
-		let claimants = this.syncInFlightQueueClaimants.get(key);
-		let claimantIndexes = this.syncInFlightQueueClaimantIndexes.get(key);
-		if (!claimants || !claimantIndexes) {
-			claimants = new Set();
-			claimantIndexes = new Map();
-			for (let index = 0; index < inflight.length; index += 1) {
-				const claimant = inflight[index]!.hashcode();
-				claimants.add(claimant);
-				claimantIndexes.set(claimant, index);
-			}
-			if (!this.syncInFlightQueueClaimants.has(key)) {
-				this.pendingSyncClaimCount += claimants.size;
-			}
-			this.syncInFlightQueueClaimants.set(key, claimants);
-			this.syncInFlightQueueClaimantIndexes.set(key, claimantIndexes);
-		}
-		const index = claimantIndexes.get(peer);
-		if (index == null) {
-			return;
-		}
-
-		const lastIndex = inflight.length - 1;
-		if (index !== lastIndex) {
-			const lastClaimant = inflight[lastIndex]!;
-			const lastClaimantHash = lastClaimant.hashcode();
-			inflight[index] = lastClaimant;
-			claimantIndexes.set(lastClaimantHash, index);
-		}
-		inflight.pop();
-		claimantIndexes.delete(peer);
-		claimants.delete(peer);
-		this.pendingSyncClaimCount = Math.max(0, this.pendingSyncClaimCount - 1);
-		const inverted = this.syncInFlightQueueInverted.get(peer);
-		inverted?.delete(key);
-		if (inverted?.size === 0) {
-			this.syncInFlightQueueInverted.delete(peer);
-		}
-		if (inflight.length > 0) {
-			const cursor = this.syncInFlightQueueRoundRobinCursor.get(key) ?? 0;
-			this.syncInFlightQueueRoundRobinCursor.set(
-				key,
-				cursor === lastIndex
-					? index % inflight.length
-					: cursor % inflight.length,
-			);
-			return;
-		}
-
-		this.syncInFlightQueue.delete(key);
-		this.syncInFlightQueueClaimants.delete(key);
-		this.syncInFlightQueueClaimantIndexes.delete(key);
-		this.syncInFlightQueueRoundRobinCursor.delete(key);
-		if (typeof key === "bigint") {
-			this.removeQueuedSyncCoordinateAlias(key);
-		}
-		this.removePendingSyncKeyExpiry(key);
-		this.syncInFlightQueueExpiresAt.delete(key);
-		this.clearSyncInFlightKey(key);
-		this.clearPendingSyncExpiryTimerIfIdle();
+		this.pendingSync.removePendingSyncClaim(key, peer);
 	}
 
 	private removeSyncInFlightTargetKey(peer: string, key: SyncableKey): void {
-		const map = this.syncInFlight.get(peer);
-		if (!map?.delete(key)) {
-			return;
-		}
-		if (map.size === 0) {
-			this.syncInFlight.delete(peer);
-		}
-		const targets = this.syncInFlightTargetsByKey.get(key);
-		targets?.delete(peer);
-		if (targets?.size === 0) {
-			this.syncInFlightTargetsByKey.delete(key);
-		}
+		this.pendingSync.removeSyncInFlightTargetKey(peer, key);
 	}
 
 	private setSyncInFlightTargetKey(
@@ -4584,111 +3834,26 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 		key: SyncableKey,
 		timestamp: number,
 	): void {
-		let map = this.syncInFlight.get(peer);
-		if (!map) {
-			map = new Map();
-			this.syncInFlight.set(peer, map);
-		}
-		const existing = map.get(key);
-		if (!existing || existing.timestamp < timestamp) {
-			map.set(key, { timestamp });
-		}
-		let targets = this.syncInFlightTargetsByKey.get(key);
-		if (!targets) {
-			targets = new Set();
-			this.syncInFlightTargetsByKey.set(key, targets);
-		}
-		targets.add(peer);
+		this.pendingSync.setSyncInFlightTargetKey(peer, key, timestamp);
 	}
 
 	private clearSyncInFlightTarget(peer: string): void {
-		const map = this.syncInFlight.get(peer);
-		if (!map) {
-			return;
-		}
-		for (const key of map.keys()) {
-			const targets = this.syncInFlightTargetsByKey.get(key);
-			targets?.delete(peer);
-			if (targets?.size === 0) {
-				this.syncInFlightTargetsByKey.delete(key);
-			}
-		}
-		this.syncInFlight.delete(peer);
-	}
-
-	private clearSyncInFlightKey(key: SyncableKey) {
-		const targets = this.syncInFlightTargetsByKey.get(key);
-		if (!targets) {
-			// Defensive compatibility for tests or integrations that seed the public
-			// syncInFlight map directly. Internal writes always populate the index.
-			for (const [peer, map] of this.syncInFlight) {
-				if (map.has(key)) {
-					this.removeSyncInFlightTargetKey(peer, key);
-				}
-			}
-			return;
-		}
-		for (const peer of [...targets]) {
-			this.removeSyncInFlightTargetKey(peer, key);
-		}
-	}
-
-	private forEachKnownAlias(
-		hash: string,
-		callback: (key: SyncableKey) => void,
-	): void {
-		callback(hash);
-		for (const coordinate of [
-			...(this.syncInFlightQueuedCoordinatesByHash.get(hash) ?? []),
-		]) {
-			callback(coordinate);
-		}
-	}
-
-	private clearSyncInFlightForPeer(publicKeyHash: string, hash: string) {
-		const map = this.syncInFlight.get(publicKeyHash);
-		if (!map) {
-			return;
-		}
-		this.refreshQueuedSyncCoordinateAliases();
-		this.forEachKnownAlias(hash, (key) =>
-			this.removeSyncInFlightTargetKey(publicKeyHash, key),
-		);
+		this.pendingSync.clearSyncInFlightTarget(peer);
 	}
 
 	private clearSyncInFlightForPeerHashes(
 		publicKeyHash: string,
 		hashes: string[],
 	) {
-		const map = this.syncInFlight.get(publicKeyHash);
-		if (!map || hashes.length === 0) {
-			return;
-		}
-		this.refreshQueuedSyncCoordinateAliases();
-		for (const hash of hashes) {
-			this.forEachKnownAlias(hash, (key) =>
-				this.removeSyncInFlightTargetKey(publicKeyHash, key),
-			);
-		}
+		this.pendingSync.clearSyncInFlightForPeerHashes(publicKeyHash, hashes);
 	}
 
 	private clearSyncProcess(hash: string) {
-		this.refreshQueuedSyncCoordinateAliases();
-		this.forEachKnownAlias(hash, (key) => this.clearSyncProcessKey(key));
+		this.pendingSync.clearSyncProcess(hash);
 	}
 
 	private clearSyncProcesses(hashes: string[]) {
-		if (hashes.length === 0) {
-			return;
-		}
-		this.refreshQueuedSyncCoordinateAliases();
-		const keys = new Set<SyncableKey>();
-		for (const hash of hashes) {
-			this.forEachKnownAlias(hash, (key) => keys.add(key));
-		}
-		for (const key of keys) {
-			this.clearSyncProcessKey(key);
-		}
+		this.pendingSync.clearSyncProcesses(hashes);
 	}
 
 	onPeerDisconnected(key: PublicSignKey | string): Promise<void> | void {
@@ -4716,13 +3881,7 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 		this.clearSyncInFlightTarget(publicKeyHash);
 		this.recentlySentExchangeHeads.delete(publicKeyHash);
 		this.clearPendingMaybeSyncResponses(publicKeyHash);
-		const map = this.syncInFlightQueueInverted.get(publicKeyHash);
-		if (map) {
-			for (const hash of [...map]) {
-				this.removePendingSyncClaim(hash, publicKeyHash);
-			}
-			this.syncInFlightQueueInverted.delete(publicKeyHash);
-		}
+		this.pendingSync.removeClaimsForPeer(publicKeyHash);
 		// Storage lookups and response ships for this peer may never settle
 		// (the resolvers are not universally abortable). Detach the slot row so
 		// the peer's quota returns immediately; the captured closures settle

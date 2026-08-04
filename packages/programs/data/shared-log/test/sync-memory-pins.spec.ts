@@ -64,25 +64,10 @@ describe("sync-chunking memory pins", () => {
 			anySync.pendingSyncExpiryHeap.length,
 			"pendingSyncExpiryHeap",
 		).to.equal(0);
-		expect(
-			anySync.pendingSyncKeyExpiryNodes.size,
-			"pendingSyncKeyExpiryNodes",
-		).to.equal(0);
+		expect(anySync.pendingSync.records.size, "pendingSync.records").to.equal(0);
 		expect(
 			anySync.pendingSyncAdmissionExpiryNodes.size,
 			"pendingSyncAdmissionExpiryNodes",
-		).to.equal(0);
-		expect(
-			anySync.syncInFlightQueueClaimants.size,
-			"syncInFlightQueueClaimants",
-		).to.equal(0);
-		expect(
-			anySync.syncInFlightQueueClaimantIndexes.size,
-			"syncInFlightQueueClaimantIndexes",
-		).to.equal(0);
-		expect(
-			anySync.syncInFlightQueueRoundRobinCursor.size,
-			"syncInFlightQueueRoundRobinCursor",
 		).to.equal(0);
 		expect(
 			anySync.syncInFlightQueuedCoordinates.size,
@@ -131,8 +116,8 @@ describe("sync-chunking memory pins", () => {
 	const expectClaimCountMatchesClaimants = (sync: SimpleSyncronizer<"u64">) => {
 		const anySync = sync as any;
 		let sum = 0;
-		for (const claimants of anySync.syncInFlightQueueClaimants.values()) {
-			sum += (claimants as Set<string>).size;
+		for (const record of anySync.pendingSync.records.values()) {
+			sum += (record.claimants as Set<string>).size;
 		}
 		expect(anySync.pendingSyncClaimCount).to.equal(sum);
 	};
@@ -278,26 +263,26 @@ describe("sync-chunking memory pins", () => {
 
 			// Cursor at the last slot, middle claimant removed: the last claimant
 			// swaps into the removed slot and the cursor follows it.
-			(sync as any).syncInFlightQueueRoundRobinCursor.set("rr-key", 2);
+			(sync as any).pendingSync.setRoundRobinCursor("rr-key", 2);
 			(sync as any).removePendingSyncClaim("rr-key", peerB.hashcode());
 			expect(
 				sync.syncInFlightQueue.get("rr-key")!.map((peer) => peer.hashcode()),
 			).to.deep.equal([peerA.hashcode(), peerC.hashcode()]);
-			expect(
-				(sync as any).syncInFlightQueueRoundRobinCursor.get("rr-key"),
-			).to.equal(1);
+			expect((sync as any).pendingSync.getRoundRobinCursor("rr-key")).to.equal(
+				1,
+			);
 			expectClaimCountMatchesClaimants(sync);
 
 			// Cursor before the removed slot stays put (modulo the new length).
 			await sync.queueSync(["rr-key"], peerB, { skipCheck: true });
-			(sync as any).syncInFlightQueueRoundRobinCursor.set("rr-key", 0);
+			(sync as any).pendingSync.setRoundRobinCursor("rr-key", 0);
 			(sync as any).removePendingSyncClaim("rr-key", peerC.hashcode());
 			expect(
 				sync.syncInFlightQueue.get("rr-key")!.map((peer) => peer.hashcode()),
 			).to.deep.equal([peerA.hashcode(), peerB.hashcode()]);
-			expect(
-				(sync as any).syncInFlightQueueRoundRobinCursor.get("rr-key"),
-			).to.equal(0);
+			expect((sync as any).pendingSync.getRoundRobinCursor("rr-key")).to.equal(
+				0,
+			);
 		} finally {
 			await sync.close();
 		}
