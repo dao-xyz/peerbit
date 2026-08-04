@@ -2014,6 +2014,20 @@ export class SharedLog<
 	// public key hash to range id to range
 	pendingMaturity!: Map<string, Map<string, PendingMaturityRecord<R>>>; // map of peerId to timeout
 
+	// Stage-4 KEEP-OLD verdict (fence B8, split by role). The watermark's
+	// FENCING role — rejecting late replication-info across unsubscribe and
+	// eviction races — is fully subsumed by the per-peer receive epoch plus
+	// the blocked set and session identity: every unsubscribe-path `now` write
+	// is preceded in the same synchronous block by a blocked-add, so an
+	// admitted handler can never observe one. Its intra-epoch ORDERING role is
+	// NOT subsumed: within one (lifecycle, session, epoch, unblocked) regime
+	// the epoch token is constant across every message from the peer, so only
+	// the two apply-lane timestamp comparisons can drop an older reset
+	// delivered after a newer add (unordered pubsub / retransmits) — an
+	// identity token carries no order. Deletion is blocked until
+	// replication-info messages carry sender-authoritative sequence numbers
+	// (stage-5 schema change); the `receive admission replication-info
+	// ordering watermark` pins fail if the read sites are removed before then.
 	private latestReplicationInfoMessage!: Map<string, bigint>;
 	// The replication-info blocked set (fence B5) lives on the peer-session
 	// registry: unsubscribed peers whose replication-info is ignored until a

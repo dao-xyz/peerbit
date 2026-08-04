@@ -191,10 +191,14 @@ describe("receive admission peer session parity", () => {
 									allowCleanupGate,
 								};
 
+								// The oracle must not read the registry state it just
+								// seeded (a silent no-op in block/set would make oracle
+								// and implementation agree wrongly): feed it independent
+								// structures built from the loop variables.
 								const expected = legacyIsPeerReceiveAdmissionOpen(
 									host,
-									registry._replicationInfoBlockedPeers,
-									registry._receiveCleanupGateByPeer,
+									blocked ? new Set([PEER]) : new Set(),
+									new Map(gate === 0 ? [] : [[PEER, gate]]),
 									PEER,
 									controller,
 									session,
