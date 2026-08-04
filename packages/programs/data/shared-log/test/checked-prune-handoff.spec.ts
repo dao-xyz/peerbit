@@ -407,7 +407,7 @@ describe("checked prune correlated handoff", () => {
 					).true,
 			);
 			const pending = log._checkedPrune.getPendingDelete(entry.hash);
-			log._replicationInfoBlockedPeers.add(remoteHash);
+			log._peerSessions._replicationInfoBlockedPeers.add(remoteHash);
 			// Model a response that was already admitted by the receive handler just
 			// before unsubscribe blocked the peer. The final in-lane boundary must
 			// still exclude that peer from the destructive quorum.
@@ -417,7 +417,7 @@ describe("checked prune correlated handoff", () => {
 			expect(remove.called).false;
 			expect(await log.log.has(entry.hash)).true;
 		} finally {
-			log._replicationInfoBlockedPeers.delete(remoteHash);
+			log._peerSessions._replicationInfoBlockedPeers.delete(remoteHash);
 			await log.cancelCheckedPruneForLocalLeader(entry.hash).catch(() => {});
 			await Promise.allSettled(pruning ? [pruning] : []);
 			remove.restore();

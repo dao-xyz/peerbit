@@ -136,7 +136,7 @@ describe("receive admission", () => {
 				const subscription = sharedLog._onSubscription({
 					detail: { from: sourceKey, topics: [target.log.topic] },
 				});
-				expect(sharedLog._replicationInfoBlockedPeers.has(sourceHash)).to.be
+				expect(sharedLog._peerSessions.isReplicationInfoBlocked(sourceHash)).to.be
 					.true;
 
 				await target.log.onMessage(new SyncCapabilitiesMessage(), {
@@ -148,7 +148,7 @@ describe("receive admission", () => {
 				expect(
 					sharedLog._peerSessions.current(sourceHash)?.openingBarrierActive,
 				).to.be.false;
-				expect(sharedLog._replicationInfoBlockedPeers.has(sourceHash)).to.be
+				expect(sharedLog._peerSessions.isReplicationInfoBlocked(sourceHash)).to.be
 					.false;
 			} finally {
 				scheduleRequests.restore();
@@ -183,7 +183,7 @@ describe("receive admission", () => {
 				const subscription = sharedLog._onSubscription({
 					detail: { from: sourceKey, topics: [target.log.topic] },
 				});
-				expect(sharedLog._replicationInfoBlockedPeers.has(sourceHash)).to.be
+				expect(sharedLog._peerSessions.isReplicationInfoBlocked(sourceHash)).to.be
 					.true;
 
 				await target.log.onMessage(new RequestMaybeSync({ hashes: [] }), {
@@ -192,13 +192,140 @@ describe("receive admission", () => {
 				await subscription;
 
 				expect(synchronizerOnMessage.calledOnce).to.be.true;
-				expect(sharedLog._replicationInfoBlockedPeers.has(sourceHash)).to.be
+				expect(sharedLog._peerSessions.isReplicationInfoBlocked(sourceHash)).to.be
 					.false;
 			} finally {
 				synchronizerOnMessage.restore();
 				scheduleRequests.restore();
 			}
 		} finally {
+			await session.stop();
+		}
+	});
+
+	it("keeps a peer blocked across the departing-to-opening session handoff until the barrier commits", async () => {
+		// Stage-4 B5 pin: the replication-info block is set under the DEPARTING
+		// session (unsubscribe) and cleared only when a LATER opening session's
+		// reconnect barrier commits — its lifetime deliberately spans session
+		// identities. A per-session flag would silently reset at the opening
+		// rotation; this pin rules that design out.
+		const session = await TestSession.connected(2);
+		const laneEntered = pDefer<void>();
+		const releaseLane = pDefer<void>();
+		let parkedLane: Promise<void> | undefined;
+		let subscription: Promise<void> | undefined;
+		try {
+			const store = new EventStore<string, any>();
+			const target = await session.peers[0].open(store, {
+				args: { replicate: 1, setup, timeUntilRoleMaturity: 0 },
+			});
+			await session.peers[1].open(store.clone(), {
+				args: { replicate: 1, setup, timeUntilRoleMaturity: 0 },
+			});
+			const sharedLog = target.log as any;
+			const sourceKey = session.peers[1].identity.publicKey;
+			const sourceHash = sourceKey.hashcode();
+			let remoteRange: any;
+			await waitForResolved(async () => {
+				const ranges = await target.log.replicationIndex
+					.iterate({ query: { hash: sourceHash } })
+					.all();
+				expect(ranges).to.have.length.greaterThan(0);
+				remoteRange = ranges[0].value;
+			});
+			const scheduleRequests = sinon
+				.stub(sharedLog, "scheduleReplicationInfoRequests")
+				.callsFake(() => {});
+
+			try {
+				// The departing add fences the peer synchronously at unsubscribe…
+				const unsubscribe = sharedLog._onUnsubscription({
+					detail: { from: sourceKey, topics: [target.log.topic] },
+				});
+				expect(sharedLog._peerSessions.isReplicationInfoBlocked(sourceHash)).to.be
+					.true;
+				await unsubscribe;
+				// …and the committed cleanup does not lift it.
+				expect(sharedLog._peerSessions.isReplicationInfoBlocked(sourceHash)).to.be
+					.true;
+				expect(
+					await target.log.replicationIndex.count({
+						query: { hash: sourceHash },
+					}),
+				).to.equal(0);
+
+				// Park the per-peer apply lane so the reconnect barrier stalls
+				// between its drain and its commit.
+				parkedLane = sharedLog.withReplicationInfoApplyQueue(
+					sourceHash,
+					async () => {
+						laneEntered.resolve();
+						await releaseLane.promise;
+					},
+				);
+				await laneEntered.promise;
+				const parkedTail =
+					sharedLog._replicationInfoApplyQueueByPeer.get(sourceHash);
+
+				let subscriptionSettled = false;
+				subscription = sharedLog
+					._onSubscription({
+						detail: { from: sourceKey, topics: [target.log.topic] },
+					})
+					.then(() => {
+						subscriptionSettled = true;
+					});
+				// The barrier queued its commit behind the parked lane.
+				await waitForResolved(() =>
+					expect(
+						sharedLog._replicationInfoApplyQueueByPeer.get(sourceHash),
+					).to.not.equal(parkedTail),
+				);
+				// Mid-barrier the peer stays fenced (the opening rotation must NOT
+				// have reset the block)…
+				expect(sharedLog._peerSessions.isReplicationInfoBlocked(sourceHash)).to.be
+					.true;
+				expect(subscriptionSettled).to.be.false;
+				// …and replication-info admitted mid-barrier is dropped whole,
+				// before the watermark write.
+				const watermarkBefore =
+					sharedLog.latestReplicationInfoMessage.get(sourceHash);
+				await target.log.onMessage(
+					new AllReplicatingSegmentsMessage({
+						segments: [remoteRange.toReplicationRange()],
+					}),
+					{
+						from: sourceKey,
+						message: { header: { timestamp: BigInt(Date.now() + 5_000) } },
+					} as any,
+				);
+				expect(
+					await target.log.replicationIndex.count({
+						query: { hash: sourceHash },
+					}),
+				).to.equal(0);
+				expect(sharedLog.latestReplicationInfoMessage.get(sourceHash)).to.equal(
+					watermarkBefore,
+				);
+				expect(sharedLog._peerSessions.isReplicationInfoBlocked(sourceHash)).to.be
+					.true;
+
+				releaseLane.resolve();
+				await Promise.all([parkedLane, subscription]);
+				// The committed barrier is the only unblock site.
+				expect(sharedLog._peerSessions.isReplicationInfoBlocked(sourceHash)).to.be
+					.false;
+			} finally {
+				releaseLane.resolve();
+				await Promise.allSettled(
+					[parkedLane, subscription].filter(
+						(value): value is Promise<void> => value != null,
+					),
+				);
+				scheduleRequests.restore();
+			}
+		} finally {
+			releaseLane.resolve();
 			await session.stop();
 		}
 	});

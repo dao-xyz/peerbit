@@ -20,11 +20,20 @@ const TARGETS = new Map([
 	[
 		"packages/programs/data/shared-log/src/index.ts",
 		[
-			"_checkedPruneRemoveBlocksLocalRangeMutationAdmission",
 			"_instanceLifecycle",
 			"_nativeCoordinateMutationGenerations",
 			"_repairLifecycleController",
 			"_replicationLifecycleController",
+		],
+	],
+	[
+		"packages/programs/data/shared-log/src/checked-prune.ts",
+		// peerRemovalFences predates this file's TARGETS entry; it entered the
+		// baseline as existing inventory when the admission counter relocated
+		// here, not as fence growth.
+		[
+			"_checkedPruneRemoveBlocksLocalRangeMutationAdmission",
+			"peerRemovalFences",
 		],
 	],
 	[

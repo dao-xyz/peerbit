@@ -4252,7 +4252,7 @@ describe("events", () => {
 			});
 			await Promise.resolve();
 			expect(reconnectSettled).to.be.false;
-			expect(log._replicationInfoBlockedPeers.has(remoteHash)).to.be.true;
+			expect(log._peerSessions.isReplicationInfoBlocked(remoteHash)).to.be.true;
 
 			releaseDelete.resolve();
 			await Promise.all([oldUnsubscribe, reconnect]);
@@ -4271,7 +4271,7 @@ describe("events", () => {
 			expect(log._peerSyncCapabilities.get(remoteHash)).to.equal(7);
 			expect(log._replicatorLastActivityAt.has(remoteHash)).to.be.true;
 			expect(log._gidPeersHistory.get(gid)?.has(remoteHash)).to.be.true;
-			expect(log._replicationInfoBlockedPeers.has(remoteHash)).to.be.false;
+			expect(log._peerSessions.isReplicationInfoBlocked(remoteHash)).to.be.false;
 			expect(disconnected.calledOnceWith(remoteHash)).to.be.true;
 			expect(leaves).to.deep.equal([]);
 
@@ -4338,7 +4338,7 @@ describe("events", () => {
 			}
 			return originalDel(query, options);
 		}) as any);
-		const unblock = sinon.spy(log._replicationInfoBlockedPeers, "delete");
+		const unblock = sinon.spy(log._peerSessions._replicationInfoBlockedPeers, "delete");
 		const scheduleRequests = sinon.spy(log, "scheduleReplicationInfoRequests");
 		const disconnected = sinon.spy(log.syncronizer, "onPeerDisconnected");
 		const leaves: string[] = [];
@@ -4360,7 +4360,7 @@ describe("events", () => {
 			await Promise.resolve();
 			const winningUnsubscribe = log._onUnsubscription(unsubscribeEvent);
 			await Promise.resolve();
-			expect(log._replicationInfoBlockedPeers.has(remoteHash)).to.be.true;
+			expect(log._peerSessions.isReplicationInfoBlocked(remoteHash)).to.be.true;
 
 			releaseDelete.resolve();
 			await Promise.all([
@@ -4374,7 +4374,7 @@ describe("events", () => {
 			).to.have.length(0);
 			expect(log.uniqueReplicators.has(remoteHash)).to.be.false;
 			expect(log._replicatorJoinEmitted.has(remoteHash)).to.be.false;
-			expect(log._replicationInfoBlockedPeers.has(remoteHash)).to.be.true;
+			expect(log._peerSessions.isReplicationInfoBlocked(remoteHash)).to.be.true;
 			expect(unblock.neverCalledWith(remoteHash)).to.be.true;
 			expect(scheduleRequests.notCalled).to.be.true;
 			expect(disconnected.callCount).to.equal(2);

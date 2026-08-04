@@ -79,6 +79,41 @@ export class CheckedPruneCoordinator<T, R extends "u32" | "u64"> {
 	private readonly peerRemovalFences = new Map<string, number>();
 	private readonly restartReservations = new Map<string, object>();
 	private readonly candidateTokens = new Map<string, object>();
+	// Moved from SharedLog (same name — the sanctioned file-to-file ratchet
+	// move). Depth of checked-prune removals currently holding the ownership
+	// lane across a lower-log `log.remove` whose program onChange callback
+	// re-enters this instance: while non-zero, invokeProgramOnChange
+	// classifies removal-bearing changes as checked-prune-driven. Reset comes
+	// free with the per-open coordinator replacement (index.ts open() creates
+	// a fresh coordinator); deliberately NOT touched by close() — the release
+	// closures drain it, matching the legacy host counter which was reset
+	// only at open.
+	private _checkedPruneRemoveBlocksLocalRangeMutationAdmission = 0;
+
+	/** ≡ the legacy inc / `finally`-dec pair around the admitted lower-log
+	 *  remove (old SharedLog site, one synchronous block from the admission
+	 *  checks). The returned release is idempotent and drains THIS coordinator
+	 *  instance — a release that survives into a later open decrements the
+	 *  retired coordinator, never the fresh one (the legacy global counter
+	 *  could go to −1 in that window; unreachable today because close() awaits
+	 *  the prune-remove terminal fence before open() can begin, but the
+	 *  instance scoping makes the proof unnecessary and future-caller-proof). */
+	blockLocalRangeMutation(): () => void {
+		this._checkedPruneRemoveBlocksLocalRangeMutationAdmission += 1;
+		let released = false;
+		return () => {
+			if (released) {
+				return;
+			}
+			released = true;
+			this._checkedPruneRemoveBlocksLocalRangeMutationAdmission -= 1;
+		};
+	}
+
+	/** ≡ the legacy `counter !== 0` read (site: invokeProgramOnChange). */
+	isBlockingLocalRangeMutation(): boolean {
+		return this._checkedPruneRemoveBlocksLocalRangeMutationAdmission > 0;
+	}
 
 	private getOrCreateSession(hash: string): CheckedPruneSession<T, R> {
 		let session = this.sessions.get(hash);

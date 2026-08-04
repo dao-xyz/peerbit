@@ -18,13 +18,11 @@ import {
 type StubHost = {
 	replicationLifecycleController?: AbortController;
 	terminating: boolean;
-	blockedPeers: Set<string>;
 };
 
 const createHost = (): StubHost => ({
 	replicationLifecycleController: new AbortController(),
 	terminating: false,
-	blockedPeers: new Set(),
 });
 
 // Mirrors SharedLog.isReplicationLifecycleActive term for term.
@@ -41,7 +39,6 @@ const createDeps = (host: StubHost): PeerSessionDeps => ({
 	isReplicationLifecycleActive: (controller) =>
 		isReplicationLifecycleActive(host, controller),
 	getReplicationLifecycleController: () => host.replicationLifecycleController,
-	isReplicationInfoBlocked: (hash) => host.blockedPeers.has(hash),
 });
 
 // Literal transcription of the legacy (pre-stage-3) body of
@@ -50,6 +47,7 @@ const createDeps = (host: StubHost): PeerSessionDeps => ({
 // to the registry, so this inline replica is the regression oracle.
 const legacyIsPeerReceiveAdmissionOpen = (
 	host: StubHost,
+	blockedPeers: Set<string>,
 	cleanupGateByPeer: Map<string, number>,
 	peerHash: string,
 	replicationLifecycleController: AbortController | undefined,
@@ -60,7 +58,7 @@ const legacyIsPeerReceiveAdmissionOpen = (
 	isReplicationLifecycleActive(host, replicationLifecycleController) &&
 	currentEpoch === subscriptionEpoch &&
 	(options?.allowReplicationInfoBlocked === true ||
-		!host.blockedPeers.has(peerHash)) &&
+		!blockedPeers.has(peerHash)) &&
 	(options?.allowCleanupGate === true ||
 		(cleanupGateByPeer.get(peerHash) ?? 0) === 0);
 
@@ -179,7 +177,10 @@ describe("receive admission peer session parity", () => {
 									host.terminating = true;
 								}
 								if (blocked) {
-									host.blockedPeers.add(PEER);
+									// The blocked set moved into the registry (fence B5);
+									// seed it through the registry's block method, mirroring
+									// the legacy host-set add.
+									registry.blockReplicationInfo(PEER);
 								}
 								// The gate refcounts moved into the registry (fence B6);
 								// seed its map directly, mirroring the legacy host-map
@@ -190,9 +191,14 @@ describe("receive admission peer session parity", () => {
 									allowCleanupGate,
 								};
 
+								// The oracle must not read the registry state it just
+								// seeded (a silent no-op in block/set would make oracle
+								// and implementation agree wrongly): feed it independent
+								// structures built from the loop variables.
 								const expected = legacyIsPeerReceiveAdmissionOpen(
 									host,
-									registry._receiveCleanupGateByPeer,
+									blocked ? new Set([PEER]) : new Set(),
+									new Map(gate === 0 ? [] : [[PEER, gate]]),
 									PEER,
 									controller,
 									session,

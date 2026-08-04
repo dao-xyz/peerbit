@@ -244,7 +244,7 @@ describe("receive admission opening-barrier windows", () => {
 			// With the peer replication-info-blocked but still no barrier window,
 			// the advert is not admitted at all — the pre-barrier "opening" phase
 			// must not widen admission or stage the advert.
-			sharedLog._replicationInfoBlockedPeers.add(sourceHash);
+			sharedLog._peerSessions._replicationInfoBlockedPeers.add(sourceHash);
 			try {
 				await target.log.onMessage(
 					new SyncCapabilitiesMessage({ capabilities: 5 }),
@@ -254,7 +254,7 @@ describe("receive admission opening-barrier windows", () => {
 					.false;
 				expect(sharedLog._peerSyncCapabilities.get(sourceHash)).to.equal(3);
 			} finally {
-				sharedLog._replicationInfoBlockedPeers.delete(sourceHash);
+				sharedLog._peerSessions._replicationInfoBlockedPeers.delete(sourceHash);
 			}
 		} finally {
 			await session.stop();
