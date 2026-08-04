@@ -1028,17 +1028,6 @@ export class PendingSyncStore {
 		}
 	}
 
-	clearSyncInFlightForPeer(publicKeyHash: string, hash: string): void {
-		const map = this.syncInFlight.get(publicKeyHash);
-		if (!map) {
-			return;
-		}
-		this.refreshQueuedSyncCoordinateAliases();
-		this.forEachKnownAlias(hash, (key) =>
-			this.removeSyncInFlightTargetKey(publicKeyHash, key),
-		);
-	}
-
 	clearSyncInFlightForPeerHashes(
 		publicKeyHash: string,
 		hashes: string[],
