@@ -2,9 +2,16 @@ import { Cache } from "@peerbit/cache";
 import { Ed25519Keypair } from "@peerbit/crypto";
 import { expect } from "chai";
 import sinon from "sinon";
-import { RatelessIBLTSynchronizer } from "../src/sync/rateless-iblt.js";
 import {
+	MAX_ACTIVE_RATELESS_RESPONSES_GLOBAL,
+	RatelessIBLTSynchronizer,
+} from "../src/sync/rateless-iblt.js";
+import {
+	MAX_ACTIVE_SIMPLE_SYNC_RESPONSES_GLOBAL,
+	MAX_PENDING_SIMPLE_COORDINATE_RESPONSES_GLOBAL,
+	MAX_PENDING_SIMPLE_COORDINATE_RESPONSES_PER_PEER,
 	MAX_PENDING_SIMPLE_SYNC_KEYS_PER_PEER,
+	MAX_PENDING_SIMPLE_SYNC_LOOKUPS_GLOBAL,
 	MAX_PENDING_SIMPLE_SYNC_LOOKUPS_PER_PEER,
 	PENDING_SIMPLE_SYNC_KEY_TTL_MS,
 	RequestMaybeSyncCoordinate,
@@ -393,10 +400,11 @@ describe("sync-chunking memory pins", () => {
 	});
 });
 
-// Stage-4 memory-growth pins (the leak fix). Storage resolvers and transport
-// sends are not universally abortable: a call that never settles after its
-// peer disconnected must not pin the peer's (or the global) slot quota. The
-// release closures capture per-peer slot rows; disconnect detaches the row.
+// Stage-4 memory-growth pins. Storage resolvers and transport sends are not
+// universally abortable: disconnect must detach the peer generation without
+// returning the GLOBAL physical-work permit until the call actually settles.
+// Otherwise repeated reconnects bypass the global cap. Release closures
+// capture per-peer slot rows so late settlement cannot touch a successor row.
 describe("sync-chunking slot-quota pins", () => {
 	let peerA: Awaited<ReturnType<typeof Ed25519Keypair.create>>["publicKey"];
 	let peerB: Awaited<ReturnType<typeof Ed25519Keypair.create>>["publicKey"];
@@ -418,7 +426,7 @@ describe("sync-chunking slot-quota pins", () => {
 		throw new Error("condition was not reached");
 	};
 
-	it("releases a disconnected peer's mid-lookup slots and restores the full quota", async () => {
+	it("keeps disconnected never-settling lookups within the global physical-work cap", async () => {
 		const resolveHashesForSymbols = sinon.stub().returns(new Promise(() => {}));
 		const sync = new SimpleSyncronizer<"u64">({
 			rpc: { send: sinon.stub().resolves() } as any,
@@ -428,50 +436,67 @@ describe("sync-chunking slot-quota pins", () => {
 			resolveHashesForSymbols,
 		});
 		try {
+			for (
+				let cycle = 0;
+				cycle <
+				MAX_PENDING_SIMPLE_SYNC_LOOKUPS_GLOBAL /
+					MAX_PENDING_SIMPLE_SYNC_LOOKUPS_PER_PEER;
+				cycle += 1
+			) {
+				for (
+					let index = 0;
+					index < MAX_PENDING_SIMPLE_SYNC_LOOKUPS_PER_PEER;
+					index += 1
+				) {
+					void sync.onMessage(
+						new RequestMaybeSyncCoordinate({
+							hashNumbers: [BigInt(cycle * 100 + index)],
+						}),
+						{ from: peerA } as any,
+					);
+				}
+				const expected = (cycle + 1) * MAX_PENDING_SIMPLE_SYNC_LOOKUPS_PER_PEER;
+				await waitFor(() => resolveHashesForSymbols.callCount === expected);
+				expect((sync as any).pendingCoordinateLookupCount).to.equal(expected);
+				expect(
+					(sync as any).pendingCoordinateLookupCountByPeer.get(
+						peerA.hashcode(),
+					),
+				).to.equal(MAX_PENDING_SIMPLE_SYNC_LOOKUPS_PER_PEER);
+				const targetLifecycles = [
+					...((sync as any).syncDispatchRegistry.activeTargets.get(
+						peerA.hashcode(),
+					) ?? []),
+				] as any[];
+
+				sync.onPeerDisconnected(peerA);
+				// Logical/per-peer state is fresh for a reconnect, while the old
+				// non-abortable calls remain globally charged.
+				expect((sync as any).pendingCoordinateLookupCount).to.equal(expected);
+				expect((sync as any).pendingCoordinateLookupCountByPeer.size).to.equal(
+					0,
+				);
+				expect((sync as any).peerSlotRows.rows.size).to.equal(0);
+				expect(
+					(sync as any).syncDispatchRegistry.activeTargets.has(
+						peerA.hashcode(),
+					),
+				).to.equal(false);
+				for (const targetLifecycle of targetLifecycles) {
+					expect(targetLifecycle.lifecycle.disposed).to.equal(true);
+				}
+			}
+
 			void sync.onMessage(
-				new RequestMaybeSyncCoordinate({ hashNumbers: [1n] }),
+				new RequestMaybeSyncCoordinate({ hashNumbers: [999n] }),
 				{ from: peerA } as any,
 			);
-			await waitFor(() => resolveHashesForSymbols.callCount === 1);
-			expect((sync as any).pendingCoordinateLookupCount).to.equal(1);
-			expect(
-				(sync as any).pendingCoordinateLookupCountByPeer.get(peerA.hashcode()),
-			).to.equal(1);
-
-			sync.onPeerDisconnected(peerA);
-			expect((sync as any).pendingCoordinateLookupCount).to.equal(0);
-			expect((sync as any).pendingCoordinateLookupCountByPeer.size).to.equal(0);
-			expect((sync as any).peerSlotRows.rows.size).to.equal(0);
-
-			// The reconnected peer gets its full lookup quota back even though
-			// the old resolver calls never settle.
-			for (
-				let index = 0;
-				index < MAX_PENDING_SIMPLE_SYNC_LOOKUPS_PER_PEER;
-				index += 1
-			) {
-				void sync.onMessage(
-					new RequestMaybeSyncCoordinate({
-						hashNumbers: [BigInt(10 + index)],
-					}),
-					{ from: peerA } as any,
-				);
-			}
-			await waitFor(
-				() =>
-					resolveHashesForSymbols.callCount ===
-					1 + MAX_PENDING_SIMPLE_SYNC_LOOKUPS_PER_PEER,
+			await Promise.resolve();
+			expect(resolveHashesForSymbols.callCount).to.equal(
+				MAX_PENDING_SIMPLE_SYNC_LOOKUPS_GLOBAL,
 			);
 			expect((sync as any).pendingCoordinateLookupCount).to.equal(
-				MAX_PENDING_SIMPLE_SYNC_LOOKUPS_PER_PEER,
-			);
-
-			await sync.onMessage(
-				new RequestMaybeSyncCoordinate({ hashNumbers: [99n] }),
-				{ from: peerA } as any,
-			);
-			expect(resolveHashesForSymbols.callCount).to.equal(
-				1 + MAX_PENDING_SIMPLE_SYNC_LOOKUPS_PER_PEER,
+				MAX_PENDING_SIMPLE_SYNC_LOOKUPS_GLOBAL,
 			);
 		} finally {
 			await sync.close();
@@ -508,7 +533,7 @@ describe("sync-chunking slot-quota pins", () => {
 		}
 	});
 
-	it("releases a blocked response-ship slot when the peer disconnects", async () => {
+	it("keeps disconnected response ships within the global physical-work cap", async () => {
 		let releaseShip!: () => void;
 		const blockedShip = new Promise<{ messages: number; fused: boolean }>(
 			(resolve) => {
@@ -525,31 +550,74 @@ describe("sync-chunking slot-quota pins", () => {
 		const ship = sinon
 			.stub(sync as any, "shipExchangeHeads")
 			.returns(blockedShip);
+		const handlings: Promise<boolean>[] = [];
 		try {
-			const handling = sync.onMessage(
-				new RequestMaybeSyncCoordinate({ hashNumbers: [1n] }),
+			for (
+				let cycle = 0;
+				cycle <
+				MAX_PENDING_SIMPLE_COORDINATE_RESPONSES_GLOBAL /
+					MAX_PENDING_SIMPLE_COORDINATE_RESPONSES_PER_PEER;
+				cycle += 1
+			) {
+				for (
+					let index = 0;
+					index < MAX_PENDING_SIMPLE_COORDINATE_RESPONSES_PER_PEER;
+					index += 1
+				) {
+					handlings.push(
+						sync.onMessage(
+							new RequestMaybeSyncCoordinate({
+								hashNumbers: [BigInt(cycle * 100 + index)],
+							}),
+							{ from: peerA } as any,
+						),
+					);
+				}
+				const expected =
+					(cycle + 1) * MAX_PENDING_SIMPLE_COORDINATE_RESPONSES_PER_PEER;
+				await waitFor(() => ship.callCount === expected);
+				expect((sync as any).pendingCoordinateLookupCount).to.equal(0);
+				expect((sync as any).pendingCoordinateResponseCount).to.equal(expected);
+
+				const targetLifecycles = [
+					...((sync as any).syncDispatchRegistry.activeTargets.get(
+						peerA.hashcode(),
+					) ?? []),
+				] as any[];
+				sync.onPeerDisconnected(peerA);
+				expect((sync as any).pendingCoordinateResponseCount).to.equal(expected);
+				expect(
+					(sync as any).pendingCoordinateResponseCountByPeer.size,
+				).to.equal(0);
+				expect((sync as any).peerSlotRows.rows.size).to.equal(0);
+				expect(
+					(sync as any).syncDispatchRegistry.activeTargets.has(
+						peerA.hashcode(),
+					),
+				).to.equal(false);
+				for (const targetLifecycle of targetLifecycles) {
+					expect(targetLifecycle.lifecycle.disposed).to.equal(true);
+				}
+			}
+
+			await sync.onMessage(
+				new RequestMaybeSyncCoordinate({ hashNumbers: [999n] }),
 				{ from: peerA } as any,
 			);
-			await waitFor(() => ship.callCount === 1);
-			expect((sync as any).pendingCoordinateLookupCount).to.equal(0);
-			expect((sync as any).pendingCoordinateResponseCount).to.equal(1);
-
-			sync.onPeerDisconnected(peerA);
-			expect((sync as any).pendingCoordinateResponseCount).to.equal(0);
-			expect((sync as any).pendingCoordinateResponseCountByPeer.size).to.equal(
-				0,
+			expect(ship.callCount).to.equal(
+				MAX_PENDING_SIMPLE_COORDINATE_RESPONSES_GLOBAL,
 			);
-			expect((sync as any).peerSlotRows.rows.size).to.equal(0);
 
-			// The blocked ship settling late is aggregate-neutral.
+			// Only actual settlement returns the global physical-work permits.
 			releaseShip();
-			await handling;
+			await Promise.all(handlings);
 			expect((sync as any).pendingCoordinateResponseCount).to.equal(0);
 			expect((sync as any).pendingCoordinateResponseCountByPeer.size).to.equal(
 				0,
 			);
 		} finally {
 			releaseShip();
+			await Promise.all(handlings);
 			await sync.close();
 		}
 	});
@@ -577,7 +645,11 @@ describe("sync-chunking slot-quota pins", () => {
 		const active: Promise<boolean>[] = [];
 		try {
 			expect((sync as any).pendingMaybeSyncResponseCount).to.equal(0);
-			for (let cycle = 0; cycle < 2; cycle += 1) {
+			for (
+				let cycle = 0;
+				cycle < MAX_ACTIVE_SIMPLE_SYNC_RESPONSES_GLOBAL;
+				cycle += 1
+			) {
 				const hashes = [0, 1, 2].map((index) => `flap-${cycle}-${index}`);
 				const reservation = sync.expectMaybeSyncResponse({
 					hashes,
@@ -607,6 +679,12 @@ describe("sync-chunking slot-quota pins", () => {
 				expect((sync as any).syncDispatchRegistry.activeTargets.size).to.equal(
 					0,
 				);
+				// Logical cleanup is immediate, but each non-abortable shipment still
+				// owns one global physical-work permit until it settles.
+				expect((sync as any).activeMaybeSyncResponseCount).to.equal(cycle + 1);
+				expect((sync as any).activeMaybeSyncResponseCountByPeer.size).to.equal(
+					0,
+				);
 			}
 
 			// The full authorization window is reservable again after the flaps.
@@ -618,6 +696,15 @@ describe("sync-chunking slot-quota pins", () => {
 				targets: [peerB.hashcode()],
 			});
 			expect(reclaimed).to.not.equal(undefined);
+			await sync.onMessage(
+				new ResponseMaybeSyncCapabilities({ hashes: ["flap-reclaimed-0"] }),
+				{ from: peerB } as any,
+			);
+			// The logical authorization window is available, but the live physical
+			// shipments still enforce the independent global admission cap.
+			expect(sendRawExchangeHeads.callCount).to.equal(
+				MAX_ACTIVE_SIMPLE_SYNC_RESPONSES_GLOBAL,
+			);
 			reclaimed!.release();
 			expect((sync as any).pendingMaybeSyncResponseCount).to.equal(0);
 		} finally {
@@ -625,11 +712,12 @@ describe("sync-chunking slot-quota pins", () => {
 				hang();
 			}
 			await Promise.all(active);
+			expect((sync as any).activeMaybeSyncResponseCount).to.equal(0);
 			await sync.close();
 		}
 	});
 
-	it("releases a disconnected peer's active response slots without touching a successor", async () => {
+	it("keeps old active response work globally charged without touching a successor", async () => {
 		const releases: (() => void)[] = [];
 		const sendRawExchangeHeads = sinon.stub().callsFake(
 			() =>
@@ -658,10 +746,22 @@ describe("sync-chunking slot-quota pins", () => {
 			);
 			await waitFor(() => sendRawExchangeHeads.callCount === 1);
 			expect((sync as any).activeMaybeSyncResponseCount).to.equal(1);
+			first?.release();
+			const firstTargetLifecycles = [
+				...((sync as any).syncDispatchRegistry.activeTargets.get(
+					peerA.hashcode(),
+				) ?? []),
+			] as any[];
 
 			sync.onPeerDisconnected(peerA);
-			expect((sync as any).activeMaybeSyncResponseCount).to.equal(0);
+			expect((sync as any).activeMaybeSyncResponseCount).to.equal(1);
 			expect((sync as any).activeMaybeSyncResponseCountByPeer.size).to.equal(0);
+			expect(
+				(sync as any).syncDispatchRegistry.activeTargets.has(peerA.hashcode()),
+			).to.equal(false);
+			for (const targetLifecycle of firstTargetLifecycles) {
+				expect(targetLifecycle.lifecycle.disposed).to.equal(true);
+			}
 
 			// The reconnected peer's fresh response work uses a fresh row.
 			const second = sync.expectMaybeSyncResponse({
@@ -675,7 +775,8 @@ describe("sync-chunking slot-quota pins", () => {
 				),
 			);
 			await waitFor(() => sendRawExchangeHeads.callCount === 2);
-			expect((sync as any).activeMaybeSyncResponseCount).to.equal(1);
+			expect((sync as any).activeMaybeSyncResponseCount).to.equal(2);
+			second?.release();
 
 			// The pre-disconnect ship settling late never decrements the
 			// successor's accounting.
@@ -694,8 +795,6 @@ describe("sync-chunking slot-quota pins", () => {
 			// idle row must drop eagerly from the registry, not linger until the
 			// next disconnect.
 			expect((sync as any).peerSlotRows.rows.size).to.equal(0);
-			first?.release();
-			second?.release();
 		} finally {
 			for (const release of releases) {
 				release();
@@ -812,7 +911,7 @@ describe("rateless-iblt-syncronizer slot-quota pins", () => {
 		return entries;
 	};
 
-	it("frees a disconnected peer's response slots while open keeps accounting", async () => {
+	it("detaches rateless logical state while physical work stays globally charged", async () => {
 		const sync = createRateless();
 		const releases: (() => void)[] = [];
 		let blockShipments = true;
@@ -838,12 +937,20 @@ describe("rateless-iblt-syncronizer slot-quota pins", () => {
 			);
 			await waitFor(() => ship.callCount === 1);
 			expect((sync as any).activeRatelessResponseCount).to.equal(1);
+			const firstTargetLifecycle = [
+				...(sync as any).ratelessDispatchRegistry.activeTargets.get("peer-a"),
+			][0] as any;
 
 			sync.onPeerDisconnected("peer-a");
-			expect((sync as any).activeRatelessResponseCount).to.equal(0);
+			expect((sync as any).activeRatelessResponseCount).to.equal(1);
 			expect((sync as any).activeRatelessResponseCountByPeer.size).to.equal(0);
 			expect((sync as any).outgoingSyncProcessByTarget.size).to.equal(0);
 			expect((sync as any).ratelessPeerSlotRows.rows.size).to.equal(0);
+			expect(
+				(sync as any).ratelessDispatchRegistry.activeTargets.has("peer-a"),
+			).to.equal(false);
+			expect(firstTargetLifecycle.responseLeases).to.equal(0);
+			expect(firstTargetLifecycle.lifecycle.disposed).to.equal(true);
 
 			// The reconnected peer's fresh process gets a fresh row.
 			await sync.onMaybeMissingEntries({
@@ -856,20 +963,25 @@ describe("rateless-iblt-syncronizer slot-quota pins", () => {
 				} as any),
 			);
 			await waitFor(() => ship.callCount === 2);
-			expect((sync as any).activeRatelessResponseCount).to.equal(1);
+			expect((sync as any).activeRatelessResponseCount).to.equal(2);
 
 			// open() rotation deliberately does NOT clear slot accounting:
 			// cross-generation ship work is charged until it settles.
 			await sync.open();
-			expect((sync as any).activeRatelessResponseCount).to.equal(1);
+			expect((sync as any).activeRatelessResponseCount).to.equal(2);
 
 			blockShipments = false;
-			for (const release of releases) {
-				release();
-			}
-			await Promise.all(handlings);
-			// The pre-disconnect lease settles aggregate-neutrally; the live
-			// lease returns its slot.
+			releases.shift()!();
+			await handlings.shift();
+			// The old row returns only its global permit; the successor's attached
+			// per-peer accounting is untouched.
+			expect((sync as any).activeRatelessResponseCount).to.equal(1);
+			expect(
+				(sync as any).activeRatelessResponseCountByPeer.get("peer-a"),
+			).to.equal(1);
+
+			releases.shift()!();
+			await handlings.shift();
 			expect((sync as any).activeRatelessResponseCount).to.equal(0);
 			expect((sync as any).activeRatelessResponseCountByPeer.size).to.equal(0);
 			// The successor's lease settled while ATTACHED (no disconnect): the
@@ -881,6 +993,124 @@ describe("rateless-iblt-syncronizer slot-quota pins", () => {
 			for (const release of releases) {
 				release();
 			}
+			await sync.close();
+		}
+	});
+
+	it("keeps flapping rateless response ships within the global cap", async () => {
+		const sync = createRateless();
+		const releases: (() => void)[] = [];
+		const ship = sinon
+			.stub(sync.simple, "shipAuthorizedMaybeSyncResponse")
+			.callsFake(
+				() =>
+					new Promise<{ messages: number; fused: boolean; entries: number }>(
+						(resolve) => {
+							releases.push(() =>
+								resolve({ messages: 1, fused: false, entries: 1 }),
+							);
+						},
+					),
+			);
+		const from = { hashcode: () => "peer-a" } as any;
+		const handlings: Promise<boolean>[] = [];
+		try {
+			for (
+				let cycle = 0;
+				cycle < MAX_ACTIVE_RATELESS_RESPONSES_GLOBAL;
+				cycle += 1
+			) {
+				await sync.onMaybeMissingEntries({
+					entries: createEntries(),
+					targets: ["peer-a"],
+				});
+				handlings.push(
+					sync.onMessage(new ResponseMaybeSync({ hashes: ["hash-0"] }), {
+						from,
+					} as any),
+				);
+				await waitFor(() => ship.callCount === cycle + 1);
+				const targetLifecycle = [
+					...(sync as any).ratelessDispatchRegistry.activeTargets.get("peer-a"),
+				][0] as any;
+
+				sync.onPeerDisconnected("peer-a");
+				expect((sync as any).activeRatelessResponseCount).to.equal(cycle + 1);
+				expect((sync as any).activeRatelessResponseCountByPeer.size).to.equal(
+					0,
+				);
+				expect((sync as any).outgoingSyncProcessByTarget.size).to.equal(0);
+				expect((sync as any).ratelessPeerSlotRows.rows.size).to.equal(0);
+				expect(
+					(sync as any).ratelessDispatchRegistry.activeTargets.has("peer-a"),
+				).to.equal(false);
+				expect(targetLifecycle.responseLeases).to.equal(0);
+				expect(targetLifecycle.lifecycle.disposed).to.equal(true);
+			}
+
+			// A fresh process can exist, but its response is not admitted while all
+			// 32 physical shipments are still alive.
+			await sync.onMaybeMissingEntries({
+				entries: createEntries(),
+				targets: ["peer-a"],
+			});
+			await sync.onMessage(new ResponseMaybeSync({ hashes: ["hash-0"] }), {
+				from,
+			} as any);
+			expect(ship.callCount).to.equal(MAX_ACTIVE_RATELESS_RESPONSES_GLOBAL);
+			sync.onPeerDisconnected("peer-a");
+
+			// One old settlement creates exactly one global opening.
+			releases.shift()!();
+			await handlings.shift();
+			expect((sync as any).activeRatelessResponseCount).to.equal(
+				MAX_ACTIVE_RATELESS_RESPONSES_GLOBAL - 1,
+			);
+			await sync.onMaybeMissingEntries({
+				entries: createEntries(),
+				targets: ["peer-a"],
+			});
+			handlings.push(
+				sync.onMessage(new ResponseMaybeSync({ hashes: ["hash-0"] }), {
+					from,
+				} as any),
+			);
+			await waitFor(
+				() => ship.callCount === MAX_ACTIVE_RATELESS_RESPONSES_GLOBAL + 1,
+			);
+			expect((sync as any).activeRatelessResponseCount).to.equal(
+				MAX_ACTIVE_RATELESS_RESPONSES_GLOBAL,
+			);
+			expect(
+				(sync as any).activeRatelessResponseCountByPeer.get("peer-a"),
+			).to.equal(1);
+			const successorLifecycle = [
+				...(sync as any).ratelessDispatchRegistry.activeTargets.get("peer-a"),
+			][0] as any;
+
+			// A second old row settles without touching the successor's per-peer row.
+			releases.shift()!();
+			await handlings.shift();
+			expect((sync as any).activeRatelessResponseCount).to.equal(
+				MAX_ACTIVE_RATELESS_RESPONSES_GLOBAL - 1,
+			);
+			expect(
+				(sync as any).activeRatelessResponseCountByPeer.get("peer-a"),
+			).to.equal(1);
+
+			sync.onPeerDisconnected("peer-a");
+			expect((sync as any).activeRatelessResponseCountByPeer.size).to.equal(0);
+			expect(
+				(sync as any).ratelessDispatchRegistry.activeTargets.has("peer-a"),
+			).to.equal(false);
+			expect(successorLifecycle.responseLeases).to.equal(0);
+			expect(successorLifecycle.lifecycle.disposed).to.equal(true);
+		} finally {
+			for (const release of releases) {
+				release();
+			}
+			await Promise.all(handlings);
+			expect((sync as any).activeRatelessResponseCount).to.equal(0);
 			await sync.close();
 		}
 	});

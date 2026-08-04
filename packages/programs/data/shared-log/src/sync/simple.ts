@@ -1982,16 +1982,17 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 				}
 			}
 		}
-		let remainingLeases = acceptedByLifecycle.size;
+		let remainingPhysicalLeases = acceptedByLifecycle.size;
 		return [...acceptedByLifecycle].map(
 			([targetLifecycle, { hashes: acceptedHashes, authorizations }]) => {
-				let released = false;
-				const release = (options?: { fulfilled?: boolean }) => {
-					if (released) {
+				let logicalReleased = false;
+				let physicalReleased = false;
+				const releaseLogical = (options?: { fulfilled?: boolean }) => {
+					if (logicalReleased) {
 						return;
 					}
-					released = true;
-					slotRow.activeReleases.delete(release);
+					logicalReleased = true;
+					slotRow.activeReleases.delete(releaseLogical);
 					const pendingForTarget = this.pendingMaybeSyncResponses.get(fromHash);
 					for (const authorization of authorizations) {
 						this.settlePendingMaybeSyncResponseAuthorization(
@@ -2017,11 +2018,19 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 					// finishDelivery) remain charged.
 					targetLifecycle.responseLeases -= 1;
 					targetLifecycle.lifecycle.retainedWork -= 1;
-					remainingLeases -= 1;
-					if (remainingLeases === 0) {
+					this.schedulePendingMaybeSyncResponseWaiter();
+					this.maybeDisposeSyncDispatchLifecycle(targetLifecycle.lifecycle);
+				};
+				const releasePhysical = () => {
+					if (physicalReleased) {
+						return;
+					}
+					physicalReleased = true;
+					remainingPhysicalLeases -= 1;
+					if (remainingPhysicalLeases === 0) {
 						slotRow.active -= 1;
+						this.activeMaybeSyncResponseCount -= 1;
 						if (slotRow.attached) {
-							this.activeMaybeSyncResponseCount -= 1;
 							const activeForPeer =
 								(this.activeMaybeSyncResponseCountByPeer.get(fromHash) ?? 1) -
 								1;
@@ -2036,14 +2045,18 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 							this.maybeDropIdleSyncResponseSlotRow(slotRow);
 						}
 					}
-					this.schedulePendingMaybeSyncResponseWaiter();
-					this.maybeDisposeSyncDispatchLifecycle(targetLifecycle.lifecycle);
 				};
-				slotRow.activeReleases.add(release);
+				slotRow.activeReleases.add(releaseLogical);
 				return {
 					hashes: acceptedHashes,
 					signal: targetLifecycle.controller.signal,
-					release,
+					release: (options?: { fulfilled?: boolean }) => {
+						try {
+							releaseLogical(options);
+						} finally {
+							releasePhysical();
+						}
+					},
 				};
 			},
 		);
@@ -2681,11 +2694,26 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 				return true;
 			}
 			const target = from.hashcode();
-			const releaseLookup = this.tryAcquireCoordinateLookup(target);
-			if (!releaseLookup) {
+			const lookupPermit = this.tryAcquireCoordinateLookup(target);
+			if (!lookupPermit) {
 				return true;
 			}
+			const { release: releaseLookup, row: slotRow } = lookupPermit;
 			const lifecycle = this.captureSyncDispatchLifecycle([target]);
+			let lifecycleFinished = false;
+			const finishLifecycle = () => {
+				if (lifecycleFinished) {
+					return;
+				}
+				lifecycleFinished = true;
+				slotRow.activeReleases.delete(finishLifecycle);
+				this.finishSyncDispatchLifecycle(lifecycle);
+				this.maybeDropIdleSyncResponseSlotRow(slotRow);
+			};
+			// Dispatch completion is logical ownership. A disconnected peer must
+			// not retain this lifecycle/listeners while a non-abortable lookup or
+			// shipment keeps only its global physical permit alive.
+			slotRow.activeReleases.add(finishLifecycle);
 			let lookupReleased = false;
 			const finishLookup = () => {
 				if (lookupReleased) {
@@ -2757,7 +2785,7 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 				return true;
 			} finally {
 				finishLookup();
-				this.finishSyncDispatchLifecycle(lifecycle);
+				finishLifecycle();
 			}
 		} else {
 			return false; // no message was consumed
@@ -2844,18 +2872,12 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 		if (!row) {
 			return;
 		}
-		if (row.lookups > 0) {
-			this.pendingCoordinateLookupCount -= row.lookups;
-			this.pendingCoordinateLookupCountByPeer.delete(peer);
-		}
-		if (row.responses > 0) {
-			this.pendingCoordinateResponseCount -= row.responses;
-			this.pendingCoordinateResponseCountByPeer.delete(peer);
-		}
-		if (row.active > 0) {
-			this.activeMaybeSyncResponseCount -= row.active;
-			this.activeMaybeSyncResponseCountByPeer.delete(peer);
-		}
+		// Disconnect returns only the current peer generation's quota. The
+		// global counters represent physically live, potentially non-abortable
+		// work and remain charged until each captured release actually settles.
+		this.pendingCoordinateLookupCountByPeer.delete(peer);
+		this.pendingCoordinateResponseCountByPeer.delete(peer);
+		this.activeMaybeSyncResponseCountByPeer.delete(peer);
 		if (row.pendingResponseHashes > 0) {
 			// Active authorizations' hash budget returns in aggregate with the
 			// row. The settled releases below (and any late ship-side release)
@@ -2864,12 +2886,11 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 			row.pendingResponseHashes = 0;
 			this.schedulePendingMaybeSyncResponseWaiter();
 		}
-		// Counters are settled; now settle the outstanding active-response
-		// leases so their authorizations leave pendingMaybeSyncResponses and
-		// responseLeases/retainedWork drain, letting the dispatch lifecycle
-		// dispose. The released-guard makes the eventual ship-side release
-		// inert, and the closures captured THIS row (identity, not peer hash),
-		// so a reconnected successor's row is never touched.
+		// Settle only logical active-response ownership so authorizations leave
+		// pendingMaybeSyncResponses and responseLeases/retainedWork drain. The
+		// eventual ship-side release still returns its global physical permit.
+		// Closures capture THIS row (identity, not peer hash), so a reconnected
+		// successor's row is never touched.
 		for (const release of [...row.activeReleases]) {
 			release();
 		}
@@ -2879,7 +2900,9 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 		this.peerSlotRows.maybeDropIdle(row);
 	}
 
-	private tryAcquireCoordinateLookup(peer: string): (() => void) | undefined {
+	private tryAcquireCoordinateLookup(
+		peer: string,
+	): { row: SyncPeerSlotRow; release: () => void } | undefined {
 		if (!this.canStartPendingSyncLookup(peer)) {
 			return undefined;
 		}
@@ -2891,17 +2914,17 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 			(this.pendingCoordinateLookupCountByPeer.get(peer) ?? 0) + 1,
 		);
 		let released = false;
-		return () => {
+		const release = () => {
 			if (released) {
 				return;
 			}
 			released = true;
 			row.lookups -= 1;
+			this.pendingCoordinateLookupCount -= 1;
 			if (!row.attached) {
-				// The quota already returned in aggregate when the row detached.
+				// Per-peer quota returned when this generation detached.
 				return;
 			}
-			this.pendingCoordinateLookupCount -= 1;
 			const remaining =
 				(this.pendingCoordinateLookupCountByPeer.get(peer) ?? 1) - 1;
 			if (remaining === 0) {
@@ -2911,6 +2934,7 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 			}
 			this.maybeDropIdleSyncResponseSlotRow(row);
 		};
+		return { row, release };
 	}
 
 	private tryAcquireCoordinateResponse(peer: string): (() => void) | undefined {
@@ -2936,11 +2960,11 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 			}
 			released = true;
 			row.responses -= 1;
+			this.pendingCoordinateResponseCount -= 1;
 			if (!row.attached) {
-				// The quota already returned in aggregate when the row detached.
+				// Per-peer quota returned when this generation detached.
 				return;
 			}
-			this.pendingCoordinateResponseCount -= 1;
 			const remaining =
 				(this.pendingCoordinateResponseCountByPeer.get(peer) ?? 1) - 1;
 			if (remaining === 0) {
