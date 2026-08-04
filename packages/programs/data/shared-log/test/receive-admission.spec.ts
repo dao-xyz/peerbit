@@ -144,8 +144,9 @@ describe("receive admission", () => {
 				await subscription;
 
 				expect(sharedLog._peerSyncCapabilities.get(sourceHash)).to.equal(1);
-				expect(sharedLog._subscriptionOpeningEpochByPeer.has(sourceHash)).to.be
-					.false;
+				expect(
+					sharedLog._peerSessions.current(sourceHash)?.openingBarrierActive,
+				).to.be.false;
 				expect(sharedLog._replicationInfoBlockedPeers.has(sourceHash)).to.be
 					.false;
 			} finally {

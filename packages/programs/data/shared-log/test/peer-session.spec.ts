@@ -276,4 +276,43 @@ describe("receive admission peer session parity", () => {
 		expect(first.replicatorRemoved).to.be.false;
 		expect(second.replicatorRemoved).to.be.true;
 	});
+
+	it("advances the receive recovery epoch per peer, independent of sessions", () => {
+		const host = createHost();
+		const registry = new PeerSessionRegistry(createDeps(host));
+
+		// Legacy map semantics: no advance yet -> current epoch is null, and a
+		// null capture is current — including for a peer with no session.
+		expect(registry.receiveEpoch(PEER)).to.equal(null);
+		expect(registry.isReceiveEpochCurrent(PEER, null)).to.be.true;
+
+		// Advancing works for a session-less peer (removeReplicator can fence a
+		// peer that never subscribed) and fences the null capture.
+		const first = registry.advanceReceiveEpoch(PEER);
+		expect(registry.isReceiveEpochCurrent(PEER, first)).to.be.true;
+		expect(registry.isReceiveEpochCurrent(PEER, null)).to.be.false;
+
+		// Session rotation does NOT rotate the receive epoch (the fence's whole
+		// point: removeReplicator advances it while the peer stays subscribed)…
+		registry.rotate(PEER, "opening");
+		expect(registry.isReceiveEpochCurrent(PEER, first)).to.be.true;
+
+		// …and the advance does not rotate the session.
+		const session = registry.current(PEER);
+		const second = registry.advanceReceiveEpoch(PEER);
+		expect(registry.isReceiveEpochCurrent(PEER, first)).to.be.false;
+		expect(registry.isReceiveEpochCurrent(PEER, second)).to.be.true;
+		expect(registry.current(PEER)).to.equal(session);
+
+		// _close clears receive epochs (captures compare against null) while
+		// sessions deliberately survive; open() replaces the map instance.
+		registry.clearReceiveEpochsForClose();
+		expect(registry.isReceiveEpochCurrent(PEER, second)).to.be.false;
+		expect(registry.isReceiveEpochCurrent(PEER, null)).to.be.true;
+		expect(registry.current(PEER)).to.equal(session);
+		const third = registry.advanceReceiveEpoch(PEER);
+		registry.resetForOpen();
+		expect(registry.isReceiveEpochCurrent(PEER, third)).to.be.false;
+		expect(registry.isReceiveEpochCurrent(PEER, null)).to.be.true;
+	});
 });

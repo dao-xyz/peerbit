@@ -193,7 +193,11 @@ import { JoinWarmupCoordinator } from "./join-warmup.js";
 import { LeaderPlanCache } from "./leader-plan-cache.js";
 import { TransportMessage } from "./message.js";
 import { NativeBackboneWriteThroughBlockStore } from "./native-write-through-block-store.js";
-import { type PeerSessionKind, PeerSessionRegistry } from "./peer-session.js";
+import {
+	type PeerSession,
+	type PeerSessionKind,
+	PeerSessionRegistry,
+} from "./peer-session.js";
 import { PIDReplicationController } from "./pid.js";
 import {
 	type EntryReplicated,
@@ -1968,7 +1972,10 @@ export class SharedLog<
 	private _activeReceiveHandlersByPeer!: Map<string, PeerReceiveLeaseState>;
 	private _receiveHandlerDrainByPeer!: Map<string, Set<Promise<void>>>;
 	private _receiveCleanupGateByPeer!: Map<string, number>;
-	private _subscriptionOpeningEpochByPeer!: Map<string, object>;
+	// One-shot capability adverts staged while a peer's opening barrier is
+	// running (window truth = the session's openingBarrierActive sub-state;
+	// the legacy _subscriptionOpeningEpochByPeer map is gone). `epoch` is the
+	// PeerSession the advert was staged under; promote/delete key off it.
 	private _openingSyncCapabilitiesByPeer!: Map<
 		string,
 		{ epoch: object; capabilities: number }
@@ -2046,10 +2053,11 @@ export class SharedLog<
 	// coordinator/debouncer identities via late-bound readers; stage 3 drains
 	// those fences into it one at a time.
 	private _instanceLifecycle?: InstanceLifecycle;
-	// Local receive generations fence replication-info handlers that were admitted
-	// before a liveness eviction but reach the per-peer apply lane after it. Unlike
-	// message timestamps, these tokens never compare clocks from different peers.
-	private _replicationInfoReceiveEpochByPeer!: Map<string, object>;
+	// The local receive generations that fence replication-info handlers
+	// across liveness evictions now live on the PeerSessionRegistry
+	// (_replicationInfoReceiveEpochByPeer moved file-to-file; see
+	// src/peer-session.ts): advanced via advanceReplicationInfoReceiveEpoch,
+	// cleared at _close via clearReceiveEpochsForClose.
 	// Receive-side ownership plans may span lower-log joins that invoke user code.
 	// Increment synchronously with leader-cache invalidation so the handler can
 	// detect whether its pre-join plan needs one fresh post-persist audit.
@@ -3417,13 +3425,11 @@ export class SharedLog<
 		this._replicationInfoBlockedPeers = new Set();
 		this._replicationInfoRequestByPeer = new Map();
 		this._replicationInfoApplyQueueByPeer = new Map();
-		this._replicationInfoReceiveEpochByPeer = new Map();
 		this._peerSessions = this.createPeerSessionRegistry();
 		this._pendingReplicatorLeaveByPeer = new Set();
 		this._activeReceiveHandlersByPeer = new Map();
 		this._receiveHandlerDrainByPeer = new Map();
 		this._receiveCleanupGateByPeer = new Map();
-		this._subscriptionOpeningEpochByPeer = new Map();
 		this._openingSyncCapabilitiesByPeer = new Map();
 		this._gidPeersHistory = new Map();
 		this._repairRetryTimers = new Set();
@@ -13849,17 +13855,17 @@ export class SharedLog<
 		// Terminal close/drop drains the previous lifecycle before another open can
 		// install fresh lanes and opaque per-subscription ownership tokens.
 		this._replicationInfoApplyQueueByPeer = new Map();
-		this._replicationInfoReceiveEpochByPeer = new Map();
 		// Deserialized instances never ran the constructor; create the session
 		// registry lazily on first open. Reopens keep the SAME registry so stale
 		// continuations observe resetForOpen()'s map swap via property lookup.
+		// resetForOpen also replaces the per-peer receive-epoch map, matching
+		// the legacy open()-time `_replicationInfoReceiveEpochByPeer = new Map()`.
 		this._peerSessions ??= this.createPeerSessionRegistry();
 		this._peerSessions.resetForOpen();
 		this._pendingReplicatorLeaveByPeer = new Set();
 		this._activeReceiveHandlersByPeer = new Map();
 		this._receiveHandlerDrainByPeer = new Map();
 		this._receiveCleanupGateByPeer = new Map();
-		this._subscriptionOpeningEpochByPeer = new Map();
 		this._openingSyncCapabilitiesByPeer = new Map();
 		this._repairRetryTimers = new Set();
 		this._recentRepairDispatch = new Map();
@@ -16430,11 +16436,10 @@ export class SharedLog<
 			this._pendingIHave?.clear();
 			this._pendingIHaveCallbacks?.clear();
 			this.latestReplicationInfoMessage?.clear();
-			this._replicationInfoReceiveEpochByPeer?.clear();
+			this._peerSessions?.clearReceiveEpochsForClose();
 			this._activeReceiveHandlersByPeer?.clear();
 			this._receiveHandlerDrainByPeer?.clear();
 			this._receiveCleanupGateByPeer?.clear();
-			this._subscriptionOpeningEpochByPeer?.clear();
 			this._openingSyncCapabilitiesByPeer?.clear();
 			this._gidPeersHistory?.clear();
 			this._peerSyncCapabilities?.clear();
@@ -16898,17 +16903,19 @@ export class SharedLog<
 			const receiveFromHash = context.from.hashcode();
 			const receiveReplicationLifecycleController =
 				this._replicationLifecycleController;
-			const receiveSubscriptionEpoch =
-				this.getSubscriptionEpoch(receiveFromHash);
+			// ONE session capture replaces the per-peer subscription-epoch and
+			// opening-window captures: the PeerSession IS the epoch token, and
+			// the opening-barrier window is its sub-state. `null` = the peer
+			// never subscribed (a valid current value, preserved exactly).
+			const receiveSession = this._peerSessions.current(receiveFromHash);
 			const isOpeningSubscriptionReceive =
-				this._subscriptionOpeningEpochByPeer.get(receiveFromHash) ===
-				receiveSubscriptionEpoch;
+				receiveSession?.openingBarrierActive === true;
 			const isOpeningCapabilityAdvertisement =
 				msg instanceof SyncCapabilitiesMessage && isOpeningSubscriptionReceive;
 			releasePeerReceiveLease = this.acquirePeerReceiveLease(
 				receiveFromHash,
 				receiveReplicationLifecycleController,
-				receiveSubscriptionEpoch,
+				receiveSession,
 				{
 					// The replication-info fence existed before receive leases and is
 					// intentionally narrower than the subscription itself. Keep admitting
@@ -16925,7 +16932,7 @@ export class SharedLog<
 			const receiveOwnershipLifecycleController =
 				this.captureReplicationOwnershipLifecycle();
 			const receiveReplicationInfoReceiveEpoch =
-				this.getReplicationInfoReceiveEpoch(receiveFromHash);
+				this._peerSessions.receiveEpoch(receiveFromHash);
 			if (msg instanceof ResponseRoleMessage) {
 				msg = msg.toReplicationInfoMessage(); // migration
 			}
@@ -18986,17 +18993,18 @@ export class SharedLog<
 				return;
 			} else if (msg instanceof SyncCapabilitiesMessage) {
 				if (!context.from.equals(this.node.identity.publicKey)) {
-					const openingEpoch =
-						this._subscriptionOpeningEpochByPeer.get(receiveFromHash);
+					// No await separates this from the capture above, so the captured
+					// window state is exact: the legacy re-read of the opening map here
+					// could never observe a different value.
 					if (
 						this._replicationInfoBlockedPeers.has(receiveFromHash) &&
-						openingEpoch === receiveSubscriptionEpoch
+						isOpeningSubscriptionReceive
 					) {
 						// A prior unsubscribe cleanup may still be ahead of this reconnect
 						// barrier. Stage the new generation's one-shot advertisement so that
 						// cleanup cannot erase it before the opening transition commits.
 						this._openingSyncCapabilitiesByPeer.set(receiveFromHash, {
-							epoch: openingEpoch,
+							epoch: receiveSession!,
 							capabilities: msg.capabilities,
 						});
 					} else {
@@ -19024,7 +19032,7 @@ export class SharedLog<
 					!this.isPeerReceiveAdmissionOpen(
 						receiveFromHash,
 						replicationLifecycleController,
-						receiveSubscriptionEpoch,
+						receiveSession,
 					)
 				) {
 					return;
@@ -19038,7 +19046,7 @@ export class SharedLog<
 						!this.isPeerReceiveAdmissionOpen(
 							receiveFromHash,
 							replicationLifecycleController,
-							receiveSubscriptionEpoch,
+							receiveSession,
 						) &&
 						isNotStartedError(error as Error)
 					) {
@@ -19050,7 +19058,7 @@ export class SharedLog<
 					!this.isPeerReceiveAdmissionOpen(
 						receiveFromHash,
 						replicationLifecycleController,
-						receiveSubscriptionEpoch,
+						receiveSession,
 					)
 				) {
 					return;
@@ -19076,7 +19084,7 @@ export class SharedLog<
 					!this.isPeerReceiveAdmissionOpen(
 						receiveFromHash,
 						replicationLifecycleController,
-						receiveSubscriptionEpoch,
+						receiveSession,
 					)
 				) {
 					return;
@@ -19127,11 +19135,17 @@ export class SharedLog<
 				// (and downstream `waitForReplicator()` timeouts) under timing-sensitive joins.
 				const from = context.from!;
 				const fromHash = from.hashcode();
+				// Pre-lane gate: lifecycle -> receive-epoch -> blocked, exactly the
+				// legacy order. isMembershipActiveFor is the unit-pinned fold of
+				// isReplicationLifecycleActive; isReceiveEpochCurrent is the
+				// relocated `===`-with-`?? null`. The DELIBERATE absence of a
+				// subscription-epoch term is preserved: the lease already validated
+				// it, and the in-lane recheck owns post-await staleness.
 				if (
-					!this.isReplicationLifecycleActive(
+					!this._instanceLifecycle!.isMembershipActiveFor(
 						receiveReplicationLifecycleController,
 					) ||
-					!this.isCurrentReplicationInfoReceiveEpoch(
+					!this._peerSessions.isReceiveEpochCurrent(
 						receiveFromHash,
 						receiveReplicationInfoReceiveEpoch,
 					) ||
@@ -19145,15 +19159,14 @@ export class SharedLog<
 				await this.withReplicationInfoApplyQueue(fromHash, async () => {
 					try {
 						// The peer may have unsubscribed after this message was queued.
+						// In-lane gate: lifecycle -> subscription-epoch -> receive-epoch
+						// -> blocked, term for term as before the session migration.
 						if (
-							!this.isReplicationLifecycleActive(
+							!this._instanceLifecycle!.isMembershipActiveFor(
 								receiveReplicationLifecycleController,
 							) ||
-							!this.isCurrentSubscriptionEpoch(
-								fromHash,
-								receiveSubscriptionEpoch,
-							) ||
-							!this.isCurrentReplicationInfoReceiveEpoch(
+							!this._peerSessions.isCurrent(fromHash, receiveSession) ||
+							!this._peerSessions.isReceiveEpochCurrent(
 								fromHash,
 								receiveReplicationInfoReceiveEpoch,
 							) ||
@@ -19214,11 +19227,13 @@ export class SharedLog<
 					return;
 				}
 				const fromHash = from.hashcode();
+				// Same pre-lane gate shape as Added/All above (and the same
+				// intentional absence of a subscription-epoch term).
 				if (
-					!this.isReplicationLifecycleActive(
+					!this._instanceLifecycle!.isMembershipActiveFor(
 						receiveReplicationLifecycleController,
 					) ||
-					!this.isCurrentReplicationInfoReceiveEpoch(
+					!this._peerSessions.isReceiveEpochCurrent(
 						receiveFromHash,
 						receiveReplicationInfoReceiveEpoch,
 					) ||
@@ -19231,14 +19246,11 @@ export class SharedLog<
 				releasePeerReceiveLease = undefined;
 				await this.withReplicationInfoApplyQueue(fromHash, async () => {
 					if (
-						!this.isReplicationLifecycleActive(
+						!this._instanceLifecycle!.isMembershipActiveFor(
 							receiveReplicationLifecycleController,
 						) ||
-						!this.isCurrentSubscriptionEpoch(
-							fromHash,
-							receiveSubscriptionEpoch,
-						) ||
-						!this.isCurrentReplicationInfoReceiveEpoch(
+						!this._peerSessions.isCurrent(fromHash, receiveSession) ||
+						!this._peerSessions.isReceiveEpochCurrent(
 							fromHash,
 							receiveReplicationInfoReceiveEpoch,
 						) ||
@@ -23894,26 +23906,24 @@ export class SharedLog<
 	}
 
 	private advanceReplicationInfoReceiveEpoch(peerHash: string): object {
-		const next = {};
-		this._replicationInfoReceiveEpochByPeer.set(peerHash, next);
-		return next;
+		return this._peerSessions.advanceReceiveEpoch(peerHash);
 	}
 
 	private getReplicationInfoReceiveEpoch(peerHash: string): object | null {
-		return this._replicationInfoReceiveEpochByPeer.get(peerHash) ?? null;
+		return this._peerSessions.receiveEpoch(peerHash);
 	}
 
 	private isCurrentReplicationInfoReceiveEpoch(
 		peerHash: string,
 		epoch: object | null,
 	): boolean {
-		return this.getReplicationInfoReceiveEpoch(peerHash) === epoch;
+		return this._peerSessions.isReceiveEpochCurrent(peerHash, epoch);
 	}
 
 	private advanceSubscriptionEpoch(
 		peerHash: string,
 		kind: PeerSessionKind = "opening",
-	): object {
+	): PeerSession {
 		return this._peerSessions.rotate(peerHash, kind);
 	}
 
@@ -24016,7 +24026,7 @@ export class SharedLog<
 		publicKey: PublicSignKey,
 		topics: string[],
 		subscribed: boolean,
-		subscriptionEpoch?: object,
+		subscriptionEpoch?: PeerSession,
 	) {
 		if (!topics.includes(this.topic)) {
 			return;
@@ -24050,10 +24060,11 @@ export class SharedLog<
 			) {
 				this._openingSyncCapabilitiesByPeer.delete(peerHash);
 			}
-			this._subscriptionOpeningEpochByPeer.set(
-				peerHash,
-				expectedSubscriptionEpoch,
-			);
+			// Open the barrier WINDOW on the session (legacy: opening-epoch map
+			// set). Same synchronous window as the ownsSubscriptionEpoch() check
+			// above, so the flagged session is the current one — the invariant
+			// every reader's captured-session check relies on.
+			expectedSubscriptionEpoch.beginOpeningBarrier();
 			// Fence new messages immediately, drain handlers admitted by the previous
 			// subscription, then wait behind every queued replication mutation. A
 			// reconnect must not inherit metadata or ranges from the old connection.
@@ -24089,16 +24100,19 @@ export class SharedLog<
 				) {
 					this._openingSyncCapabilitiesByPeer.delete(peerHash);
 				}
-				if (
-					this._subscriptionOpeningEpochByPeer.get(peerHash) ===
-					expectedSubscriptionEpoch
-				) {
-					this._subscriptionOpeningEpochByPeer.delete(peerHash);
-				}
+				// Close the barrier window on every settle path, INCLUDING a
+				// barrier throw (legacy: identity-guarded map delete). The legacy
+				// guard only prevented deleting a newer session's entry; the
+				// per-session flag cannot collide, so the clear is unconditional.
+				expectedSubscriptionEpoch.finishOpeningBarrier();
 			}
 		}
 		if (!subscribed) {
-			this._subscriptionOpeningEpochByPeer.delete(peerHash);
+			// Legacy code also deleted the opening-epoch map entry here. The
+			// per-session equivalent is a no-op: any still-open barrier window
+			// belongs to an opening session this departing rotation already
+			// superseded — readers key off the CURRENT session, so that flag is
+			// unreachable, and its own barrier `finally` still clears it.
 			this._openingSyncCapabilitiesByPeer.delete(peerHash);
 			this._replicationInfoBlockedPeers.add(peerHash);
 			const disconnectedJoinWarmupGeneration =

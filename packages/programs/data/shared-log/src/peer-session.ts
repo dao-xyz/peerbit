@@ -43,6 +43,18 @@ export class PeerSession {
 	// Diagnostics only in stage 2: the destructive removal funnel observed a
 	// committed replicator removal under this connection-epoch.
 	replicatorRemoved = false;
+	// Reconnect-barrier WINDOW sub-state (stage-3 home of the legacy
+	// _subscriptionOpeningEpochByPeer map entry, whose value was always this
+	// session). True exactly while the barrier window is open: set when
+	// handleSubscriptionChange starts the opening barrier (same synchronous
+	// window as the rotation that made this session current), cleared in the
+	// barrier's `finally` — including the barrier-throw path — where the map
+	// entry used to be deleted. Deliberately NOT derived from
+	// `phase === "opening"`: phase is "opening" from rotate() — BEFORE the
+	// barrier starts — and stays "opening" forever if the barrier throws
+	// (markOpen never runs), which would wrongly keep granting the opening
+	// lease bypasses that today's window drops.
+	openingBarrierActive = false;
 	readonly createdAt = Date.now(); // diagnostics only
 
 	constructor(
@@ -60,6 +72,21 @@ export class PeerSession {
 	/** ≡ SharedLog.isCurrentSubscriptionEpoch(this.peerHash, this). */
 	isCurrent(): boolean {
 		return this.registry.current(this.peerHash) === this;
+	}
+
+	/** Barrier window opens — ≡ the legacy
+	 *  `_subscriptionOpeningEpochByPeer.set(peerHash, thisSession)`. */
+	beginOpeningBarrier(): void {
+		this.openingBarrierActive = true;
+	}
+
+	/** Barrier window closes — ≡ the legacy identity-guarded
+	 *  `_subscriptionOpeningEpochByPeer.delete(peerHash)`. Unconditional:
+	 *  the map guard only avoided clobbering a NEWER peer-keyed entry, and
+	 *  per-session flags cannot collide (a newer barrier flags its own,
+	 *  already-rotated session). */
+	finishOpeningBarrier(): void {
+		this.openingBarrierActive = false;
 	}
 
 	/** ≡ ownsReplicationLifecycle() && ownsSubscriptionEpoch() with both
@@ -92,19 +119,59 @@ export class PeerSessionRegistry {
 	// The values ARE the epoch tokens. Stage 3 renames this to `sessions`
 	// once the last raw-token comparison in index.ts is gone.
 	_subscriptionEpochByPeer!: Map<string, PeerSession>;
+	// Moved from SharedLog (fence B2, same name — the sanctioned file-to-file
+	// ratchet move). Local receive generations fence replication-info handlers
+	// that were admitted before a liveness eviction but reach the per-peer
+	// apply lane after it. Per-PEER, not per-session, on purpose: the token
+	// advances at removeReplicator, where the session does NOT rotate (the
+	// peer stays subscribed), and it must also fence a peer that never had a
+	// session. Unlike sessions this map IS cleared at _close (see
+	// clearReceiveEpochsForClose) and replaced at open.
+	_replicationInfoReceiveEpochByPeer!: Map<string, object>;
 
 	constructor(readonly deps: PeerSessionDeps) {
 		this.resetForOpen();
 	}
 
-	/** open()-time re-init: REPLACE the map instance, matching today's
-	 *  `this._subscriptionEpochByPeer = new Map()` (index.ts ctor / open).
-	 *  The map is intentionally NOT cleared at _close — tokens must stay
-	 *  current across close so a late continuation's epoch check resolves
+	/** open()-time re-init: REPLACE the map instances, matching today's
+	 *  `= new Map()` re-inits (index.ts ctor / open).
+	 *  The session map is intentionally NOT cleared at _close — tokens must
+	 *  stay current across close so a late continuation's epoch check resolves
 	 *  exactly as it does today (close-safety comes from the paired
-	 *  lifecycle-controller check, not the epoch). There is NO clearForClose(). */
+	 *  lifecycle-controller check, not the epoch). There is NO clearForClose()
+	 *  for sessions; the receive-epoch map, by contrast, IS cleared at close. */
 	resetForOpen(): void {
 		this._subscriptionEpochByPeer = new Map();
+		this._replicationInfoReceiveEpochByPeer = new Map();
+	}
+
+	/** _close counterpart of the legacy
+	 *  `this._replicationInfoReceiveEpochByPeer?.clear()`: a receive-epoch
+	 *  capture held across close must compare against null, never against a
+	 *  surviving token. Sessions deliberately survive close (see
+	 *  resetForOpen); the paired membership-lifecycle term at every
+	 *  receive-epoch check site makes the ordering unobservable either way. */
+	clearReceiveEpochsForClose(): void {
+		this._replicationInfoReceiveEpochByPeer.clear();
+	}
+
+	/** ≡ legacy SharedLog.advanceReplicationInfoReceiveEpoch. Advances
+	 *  WITHOUT rotating the session — the recovery fence must survive
+	 *  removeReplicator, where the peer stays subscribed. */
+	advanceReceiveEpoch(peerHash: string): object {
+		const next = {};
+		this._replicationInfoReceiveEpochByPeer.set(peerHash, next);
+		return next;
+	}
+
+	/** ≡ legacy SharedLog.getReplicationInfoReceiveEpoch (`?? null`). */
+	receiveEpoch(peerHash: string): object | null {
+		return this._replicationInfoReceiveEpochByPeer.get(peerHash) ?? null;
+	}
+
+	/** ≡ legacy SharedLog.isCurrentReplicationInfoReceiveEpoch. */
+	isReceiveEpochCurrent(peerHash: string, epoch: object | null): boolean {
+		return this.receiveEpoch(peerHash) === epoch;
 	}
 
 	current(peerHash: string): PeerSession | null {
