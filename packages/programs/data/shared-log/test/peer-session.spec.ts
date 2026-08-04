@@ -50,6 +50,7 @@ const createDeps = (host: StubHost): PeerSessionDeps => ({
 // to the registry, so this inline replica is the regression oracle.
 const legacyIsPeerReceiveAdmissionOpen = (
 	host: StubHost,
+	blockedPeers: Set<string>,
 	cleanupGateByPeer: Map<string, number>,
 	peerHash: string,
 	replicationLifecycleController: AbortController | undefined,
@@ -60,7 +61,7 @@ const legacyIsPeerReceiveAdmissionOpen = (
 	isReplicationLifecycleActive(host, replicationLifecycleController) &&
 	currentEpoch === subscriptionEpoch &&
 	(options?.allowReplicationInfoBlocked === true ||
-		!host.blockedPeers.has(peerHash)) &&
+		!blockedPeers.has(peerHash)) &&
 	(options?.allowCleanupGate === true ||
 		(cleanupGateByPeer.get(peerHash) ?? 0) === 0);
 
@@ -192,6 +193,7 @@ describe("receive admission peer session parity", () => {
 
 								const expected = legacyIsPeerReceiveAdmissionOpen(
 									host,
+									host.blockedPeers,
 									registry._receiveCleanupGateByPeer,
 									PEER,
 									controller,
