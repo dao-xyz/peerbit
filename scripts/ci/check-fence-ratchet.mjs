@@ -19,12 +19,7 @@ import path from "node:path";
 const TARGETS = new Map([
 	[
 		"packages/programs/data/shared-log/src/index.ts",
-		[
-			"_instanceLifecycle",
-			"_nativeCoordinateMutationGenerations",
-			"_repairLifecycleController",
-			"_replicationLifecycleController",
-		],
+		["_instanceLifecycle", "_nativeCoordinateMutationGenerations"],
 	],
 	[
 		"packages/programs/data/shared-log/src/checked-prune.ts",
@@ -38,9 +33,15 @@ const TARGETS = new Map([
 	],
 	[
 		"packages/programs/data/shared-log/src/instance-lifecycle.ts",
+		// membershipLifecycleController/ownershipLifecycleController are the
+		// index.ts _replicationLifecycleController/_repairLifecycleController
+		// entries moved file-to-file (stage 4: the lifecycle owns its
+		// controllers), not fence growth.
 		[
 			"_receiveOwnershipMutationAdmissions",
 			"_receiveOwnershipRevision",
+			"membershipLifecycleController",
+			"ownershipLifecycleController",
 			"roleGeneration",
 		],
 	],

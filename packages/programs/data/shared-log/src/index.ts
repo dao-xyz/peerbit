@@ -1968,7 +1968,16 @@ export class SharedLog<
 	private _onUnsubscriptionFn!: (arg: any) => any;
 	private _subscriptionChangeCallbacks?: Set<Promise<void>>;
 	private _acceptSubscriptionChangeCallbacks = false;
-	private _replicationLifecycleController?: AbortController;
+	// Stage 4: physically owned by the per-open InstanceLifecycle
+	// (membershipLifecycleController; the ratchet entry moved file-to-file —
+	// see src/instance-lifecycle.ts). The delegating accessor keeps every
+	// legacy site verbatim: undefined both for never-opened clones (no
+	// lifecycle) and pre-open lifecycles (membership begins at
+	// resetSubscriptionChangeCallbackTracking), matching the legacy
+	// `?: AbortController` field at every reachable read.
+	private get _replicationLifecycleController(): AbortController | undefined {
+		return this._instanceLifecycle?.membershipLifecycleController;
+	}
 	private _activeReceiveHandlersByPeer!: Map<string, PeerReceiveLeaseState>;
 	private _receiveHandlerDrainByPeer!: Map<string, Set<Promise<void>>>;
 	// The per-peer receive cleanup-gate refcounts now live on the
@@ -2061,15 +2070,23 @@ export class SharedLog<
 	// If durable post-state cannot be reconciled to every native/runtime mirror,
 	// reject later writers and planners until reopen rehydrates those mirrors.
 	private _replicationRangeMutationFailure?: unknown;
-	// Background repair work can outlive the await that admitted it. Replace this
-	// opaque token on poison and every terminal/open boundary so an older runner
-	// can neither dispatch nor mutate a freshly opened lifecycle.
-	private _repairLifecycleController = new AbortController();
+	// Stage 4: physically owned by the per-open InstanceLifecycle
+	// (ownershipLifecycleController; the ratchet entry and the design comment
+	// moved file-to-file — see src/instance-lifecycle.ts). The non-optional
+	// return type is the same static lie the legacy field decl told: on a
+	// borsh-deserialized never-opened clone (field initializers skipped, no
+	// lifecycle) the value is undefined at runtime in both worlds, and the
+	// clone fallbacks below preserve the legacy behavior verbatim.
+	private get _repairLifecycleController(): AbortController {
+		return this._instanceLifecycle
+			?.ownershipLifecycleController as AbortController;
+	}
 	// design-note: not a new fence — this is the per-open identity object the
-	// fence ratchet is migrating TOWARD (stage 2 of the session/lifecycle
-	// refactor). It wraps the controllers, poison latch, terminal fences, and
-	// coordinator/debouncer identities via late-bound readers; stage 3 drains
-	// those fences into it one at a time.
+	// fence ratchet is migrating TOWARD (the session/lifecycle refactor). As
+	// of stage 4 it physically owns the ownership/membership controllers (the
+	// accessors above) alongside the role sub-generation and receive counters;
+	// the poison latch, terminal fences, and coordinator/debouncer identities
+	// stay wrapped via late-bound readers until their own drain stages.
 	private _instanceLifecycle?: InstanceLifecycle;
 	// The local receive generations that fence replication-info handlers
 	// across liveness evictions now live on the PeerSessionRegistry
@@ -2143,15 +2160,24 @@ export class SharedLog<
 		lifecycle.throwIfPoisoned();
 	}
 
+	// THE single rotation point (stage 4): lifecycle + both controllers
+	// replace together by construction — a fresh InstanceLifecycle IS the
+	// rotation of the ownership controller it owns. The outgoing lifecycle's
+	// ownership controller MUST be aborted here (a re-abort no-op on every
+	// terminal path into open(), and the load-bearing abort for a direct
+	// mid-open rotation): the stale-captured-lifecycle predicates rely on
+	// non-current ⇒ aborted (see instance-lifecycle.ts). The abort runs
+	// BEFORE the fresh lifecycle is installed, preserving the legacy
+	// ordering: a synchronous abort listener observes pre-rotation state.
 	private startRepairLifecycle(): AbortController {
-		this._repairLifecycleController?.abort();
+		this._instanceLifecycle?.abortOwnership();
+		this._instanceLifecycle = this.createInstanceLifecycle();
 		this.clearCheckedPruneAuditTimer();
-		this._repairLifecycleController = new AbortController();
-		return this._repairLifecycleController;
+		return this._instanceLifecycle.ownershipLifecycleController;
 	}
 
 	private stopRepairLifecycle(): void {
-		this._repairLifecycleController?.abort();
+		this._instanceLifecycle?.abortOwnership();
 	}
 
 	private isRepairLifecycleActive(controller: AbortController): boolean {
@@ -3428,8 +3454,6 @@ export class SharedLog<
 	private createInstanceLifecycle(): InstanceLifecycle {
 		return new InstanceLifecycle({
 			getCurrentLifecycle: () => this._instanceLifecycle,
-			getOwnershipController: () => this._repairLifecycleController,
-			getMembershipController: () => this._replicationLifecycleController,
 			getCloseController: () => this._closeController,
 			getPoisonFailure: () => this._replicationRangeMutationFailure,
 			isHostClosed: () => this.closed,
@@ -4915,7 +4939,7 @@ export class SharedLog<
 	private resetSubscriptionChangeCallbackTracking() {
 		this._subscriptionChangeCallbacks = new Set();
 		this._acceptSubscriptionChangeCallbacks = true;
-		this._replicationLifecycleController = new AbortController();
+		this._instanceLifecycle!.beginMembership();
 	}
 
 	private runSubscriptionChangeCallback(
@@ -4939,11 +4963,9 @@ export class SharedLog<
 
 	private stopSubscriptionChangeCallbackAdmission() {
 		this._acceptSubscriptionChangeCallbacks = false;
-		if (!this._replicationLifecycleController?.signal.aborted) {
-			this._replicationLifecycleController?.abort(
-				new AbortError("SharedLog is terminating"),
-			);
-		}
+		this._instanceLifecycle?.abortMembership(
+			new AbortError("SharedLog is terminating"),
+		);
 		if (this._onSubscriptionFn) {
 			this.node.services.pubsub.removeEventListener(
 				"subscribe",
@@ -13828,19 +13850,24 @@ export class SharedLog<
 		// and that creation (straight-line assignments only).
 		this._pruneRemovesClosing = false;
 		this._replicationRangeMutationFailure = undefined;
-		// One InstanceLifecycle per open(): fresh identity, installed before
-		// the ownership-controller rotation so no statement in this reset
-		// block can observe the previous lifecycle's roleGeneration.
-		// Late-bound readers make it insensitive to the resets that follow
-		// (ownership controller next, membership controller at
-		// resetSubscriptionChangeCallbackTracking below, _checkedPrune and
+		// One InstanceLifecycle per open(), created inside
+		// startRepairLifecycle() (stage 4): the fresh object physically owns
+		// the ownership controller, so lifecycle and controller rotate
+		// together by construction and no statement in this reset block can
+		// observe the previous lifecycle's roleGeneration. Late-bound readers
+		// make it insensitive to the resets that follow (membership controller
+		// at resetSubscriptionChangeCallbackTracking below, _checkedPrune and
 		// _closeController and the debouncers in the setup blocks further
 		// down). The fresh object is also the per-open reset for the role
 		// sub-generation and the receive-ownership counters: roleGeneration,
 		// _receiveOwnershipRevision and _receiveOwnershipMutationAdmissions
 		// all start at 0 on the incoming lifecycle.
-		this._instanceLifecycle = this.createInstanceLifecycle();
 		this.startRepairLifecycle();
+		// Guard: between startRepairLifecycle() and
+		// resetSubscriptionChangeCallbackTracking() the fresh lifecycle's
+		// membership controller is undefined (legacy exposed the previous
+		// open's aborted controller in this window). Straight-line statements
+		// only; do not insert a _replicationLifecycleController read here.
 		this._replicationRangeMutationTail = Promise.resolve();
 		this.resetSubscriptionChangeCallbackTracking();
 		const recoveringNativeDurableFailure =
@@ -25759,8 +25786,8 @@ export class SharedLog<
 		// go stale later; its deps late-bind to the host, so the debouncer term
 		// still reads the current host field, and the role term can disagree
 		// with the current lifecycle's counter only after a rotation, where the
-		// isActiveFor term is already false (controller replaced in the same
-		// synchronous block).
+		// isActiveFor term is already false (the stale lifecycle's ownership
+		// controller is aborted in the same synchronous block).
 		const lifecycle = this._instanceLifecycle;
 		const capturedRoleGeneration = lifecycle?.roleGeneration ?? 0;
 		// update more participation rate to converge to the average expected rate or bounded by
