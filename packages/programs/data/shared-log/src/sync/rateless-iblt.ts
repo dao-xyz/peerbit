@@ -47,6 +47,10 @@ import {
 	SYNC_MESSAGE_PRIORITY,
 	SimpleSyncronizer,
 } from "./simple.js";
+import {
+	SyncPeerSlotRegistry,
+	type SyncPeerSlotRow,
+} from "./sync-peer-state.js";
 
 export const logger = loggerFn("peerbit:shared-log:rateless");
 
@@ -815,16 +819,6 @@ type IncomingRatelessProcessAdmission = {
 	sender: string;
 };
 
-// Per-peer slot accounting for active rateless responses. Release closures
-// capture the row: after a disconnect detaches it, the peer's quota returns
-// immediately and a late release only settles the detached row — it never
-// touches a reconnected successor's quota or the global aggregate.
-type RatelessResponseSlotRow = {
-	peer: string;
-	attached: boolean;
-	active: number;
-};
-
 type RatelessRepairSessionLifecycle = {
 	id: string;
 	ownershipLifecycleController: AbortController;
@@ -863,8 +857,16 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 	>;
 	private activeRatelessResponseCount: number;
 	private activeRatelessResponseCountByPeer: Map<string, number>;
-	private ratelessResponseSlotRows: Map<string, RatelessResponseSlotRow>;
+	// Per-peer slot rows for active rateless responses (shared registry; see
+	// sync-peer-state.ts for the lifetime policy). Release closures capture
+	// the row: after a disconnect detaches it, the peer's quota returns
+	// immediately and a late release only settles the detached row.
+	private readonly ratelessPeerSlotRows: SyncPeerSlotRegistry;
 	private ratelessClosed: boolean;
+
+	private get ratelessResponseSlotRows(): Map<string, SyncPeerSlotRow> {
+		return this.ratelessPeerSlotRows.rows;
+	}
 
 	constructor(readonly properties: SynchronizerComponents<D>) {
 		this.simple = new SimpleSyncronizer(properties);
@@ -876,7 +878,7 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 		this.ratelessDispatchTargets = new Map();
 		this.activeRatelessResponseCount = 0;
 		this.activeRatelessResponseCountByPeer = new Map();
-		this.ratelessResponseSlotRows = new Map();
+		this.ratelessPeerSlotRows = new SyncPeerSlotRegistry();
 		this.ratelessClosed = false;
 		this.ingoingSyncProcesses = new Map();
 		this.incomingRatelessProcessAdmissions = new Set();
@@ -2355,33 +2357,22 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 					} else {
 						this.activeRatelessResponseCountByPeer.set(target, activeForPeer);
 					}
-					if (slotRow.active === 0) {
-						this.ratelessResponseSlotRows.delete(target);
-					}
+					this.ratelessPeerSlotRows.maybeDropIdle(slotRow);
 				}
 				this.maybeDisposeRatelessDispatchLifecycle(targetLifecycle.lifecycle);
 			},
 		};
 	}
 
-	private getOrCreateRatelessResponseSlotRow(
-		peer: string,
-	): RatelessResponseSlotRow {
-		let row = this.ratelessResponseSlotRows.get(peer);
-		if (!row) {
-			row = { peer, attached: true, active: 0 };
-			this.ratelessResponseSlotRows.set(peer, row);
-		}
-		return row;
+	private getOrCreateRatelessResponseSlotRow(peer: string): SyncPeerSlotRow {
+		return this.ratelessPeerSlotRows.ensure(peer);
 	}
 
 	private detachRatelessResponseSlotRow(peer: string): void {
-		const row = this.ratelessResponseSlotRows.get(peer);
+		const row = this.ratelessPeerSlotRows.detach(peer);
 		if (!row) {
 			return;
 		}
-		row.attached = false;
-		this.ratelessResponseSlotRows.delete(peer);
 		if (row.active > 0) {
 			this.activeRatelessResponseCount -= row.active;
 			this.activeRatelessResponseCountByPeer.delete(peer);

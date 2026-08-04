@@ -38,6 +38,10 @@ import {
 	QUEUED_SYNC_ALIAS_REFRESH_PENDING,
 } from "./pending-sync-store.js";
 import { emitSyncProfileDuration, syncProfileStart } from "./profile.js";
+import {
+	SyncPeerSlotRegistry,
+	type SyncPeerSlotRow,
+} from "./sync-peer-state.js";
 
 @variant([0, 1])
 export class RequestMaybeSync extends TransportMessage {
@@ -413,21 +417,6 @@ export type AuthorizedMaybeSyncResponseLease = {
 	release: (options?: { fulfilled?: boolean }) => void;
 };
 
-// Per-peer slot accounting for coordinate lookups, coordinate responses and
-// active maybe-sync responses. The underlying storage resolvers are not
-// universally abortable, so a release closure may settle long after the peer
-// disconnected (or never). Release closures capture the row object: once a
-// disconnect or close() detaches the row, the peer's slots return to the
-// aggregate quota immediately, and a late release only settles the detached
-// row — it never touches a reconnected successor's quota or the globals.
-type SyncResponseSlotRow = {
-	peer: string;
-	attached: boolean;
-	lookups: number;
-	responses: number;
-	active: number;
-};
-
 type SyncDispatchLifecycle = {
 	ownershipLifecycleController: AbortController;
 	callerSignal?: AbortSignal;
@@ -501,7 +490,17 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 	private pendingCoordinateLookupCountByPeer: Map<string, number>;
 	private pendingCoordinateResponseCount: number;
 	private pendingCoordinateResponseCountByPeer: Map<string, number>;
-	private syncResponseSlotRows: Map<string, SyncResponseSlotRow>;
+	// Per-peer slot rows for coordinate lookups, coordinate responses and
+	// active maybe-sync responses (shared registry; see sync-peer-state.ts
+	// for the lifetime policy). Release closures capture the row object:
+	// once a disconnect detaches the row, the peer's slots return to the
+	// aggregate quota immediately, and a late release only settles the
+	// detached row — it never touches a reconnected successor's quota.
+	private readonly peerSlotRows: SyncPeerSlotRegistry;
+
+	private get syncResponseSlotRows(): Map<string, SyncPeerSlotRow> {
+		return this.peerSlotRows.rows;
+	}
 
 	// map of hash to public keys that we can ask for entries
 	get syncInFlightQueue(): Map<SyncableKey, PublicSignKey[]> {
@@ -651,7 +650,7 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 		this.pendingCoordinateLookupCountByPeer = new Map();
 		this.pendingCoordinateResponseCount = 0;
 		this.pendingCoordinateResponseCountByPeer = new Map();
-		this.syncResponseSlotRows = new Map();
+		this.peerSlotRows = new SyncPeerSlotRegistry();
 		this.rpc = properties.rpc;
 		this.log = properties.log;
 		this.entryIndex = properties.entryIndex;
@@ -2918,22 +2917,15 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 		);
 	}
 
-	private getOrCreateSyncResponseSlotRow(peer: string): SyncResponseSlotRow {
-		let row = this.syncResponseSlotRows.get(peer);
-		if (!row) {
-			row = { peer, attached: true, lookups: 0, responses: 0, active: 0 };
-			this.syncResponseSlotRows.set(peer, row);
-		}
-		return row;
+	private getOrCreateSyncResponseSlotRow(peer: string): SyncPeerSlotRow {
+		return this.peerSlotRows.ensure(peer);
 	}
 
 	private detachSyncResponseSlotRow(peer: string): void {
-		const row = this.syncResponseSlotRows.get(peer);
+		const row = this.peerSlotRows.detach(peer);
 		if (!row) {
 			return;
 		}
-		row.attached = false;
-		this.syncResponseSlotRows.delete(peer);
 		if (row.lookups > 0) {
 			this.pendingCoordinateLookupCount -= row.lookups;
 			this.pendingCoordinateLookupCountByPeer.delete(peer);
@@ -2948,15 +2940,8 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 		}
 	}
 
-	private maybeDropIdleSyncResponseSlotRow(row: SyncResponseSlotRow): void {
-		if (
-			row.attached &&
-			row.lookups === 0 &&
-			row.responses === 0 &&
-			row.active === 0
-		) {
-			this.syncResponseSlotRows.delete(row.peer);
-		}
+	private maybeDropIdleSyncResponseSlotRow(row: SyncPeerSlotRow): void {
+		this.peerSlotRows.maybeDropIdle(row);
 	}
 
 	private tryAcquireCoordinateLookup(peer: string): (() => void) | undefined {
