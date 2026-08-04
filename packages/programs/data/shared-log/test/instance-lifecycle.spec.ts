@@ -357,12 +357,14 @@ describe("lifecycle instance identity", () => {
 			const log = db.log as any;
 			const lifecycle = log._instanceLifecycle as InstanceLifecycle;
 			const initial = lifecycle.roleGeneration;
-			// Legacy accessor and the physically-moved field stay in lockstep.
-			expect(log._localReplicationRoleGeneration).to.equal(initial);
+			// Stage 3 deleted the legacy _localReplicationRoleGeneration accessor
+			// shim: the lifecycle's counter is the only home, and isRoleCurrent
+			// pins the captured-generation comparison.
+			expect(lifecycle.isRoleCurrent(initial)).to.be.true;
 
 			await db.log.replicate({ factor: 0.5 });
 			expect(lifecycle.roleGeneration).to.equal(initial + 1);
-			expect(log._localReplicationRoleGeneration).to.equal(initial + 1);
+			expect(lifecycle.isRoleCurrent(initial)).to.be.false;
 
 			await db.log.unreplicate();
 			expect(lifecycle.roleGeneration).to.equal(initial + 2);

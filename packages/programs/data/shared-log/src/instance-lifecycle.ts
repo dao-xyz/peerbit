@@ -49,8 +49,9 @@ export type InstanceLifecycleDeps = {
 };
 
 export class InstanceLifecycle {
-	// The ONLY state that physically moves in stage 2 (absorbs
-	// SharedLog._localReplicationRoleGeneration). Bumped by replicate()'s
+	// The ONLY state that physically moved in stage 2 (absorbed the former
+	// SharedLog._localReplicationRoleGeneration; the accessor shim was deleted
+	// in stage 3). Bumped by replicate()'s
 	// fixed-role replacement and by full unreplication WITHOUT rotating the
 	// lifecycle: unreplicate() deliberately keeps the store open, so admitted
 	// adaptive planners are invalidated by this sub-generation, not by

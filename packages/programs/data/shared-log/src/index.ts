@@ -2027,19 +2027,12 @@ export class SharedLog<
 	// that yields before re-entering is still part of the same deadlock cycle.
 	// Remote/internal mutations bypass these public-operation admission checks.
 	private _checkedPruneRemovalCallbackInvocationDepth = 0;
-	// Explicit changes to the local replication role invalidate adaptive planners
-	// that were admitted under the previous role. The ownership lifecycle alone
-	// is insufficient because unreplicate() deliberately keeps the store open.
-	// Stage 2: physically owned by the per-open InstanceLifecycle (role
-	// sub-generation); these accessors keep every legacy site verbatim.
-	private get _localReplicationRoleGeneration(): number {
-		return this._instanceLifecycle?.roleGeneration ?? 0;
-	}
-	private set _localReplicationRoleGeneration(value: number) {
-		if (this._instanceLifecycle) {
-			this._instanceLifecycle.roleGeneration = value;
-		}
-	}
+	// The local replication role sub-generation lives on the per-open
+	// InstanceLifecycle (roleGeneration): explicit role changes invalidate
+	// adaptive planners admitted under the previous role, because the ownership
+	// lifecycle alone is insufficient — unreplicate() deliberately keeps the
+	// store open. Bumped via lifecycle.bumpRoleGeneration(), checked via
+	// lifecycle.isRoleCurrent(); the stage-2 accessor shim is gone.
 	// If durable post-state cannot be reconciled to every native/runtime mirror,
 	// reject later writers and planners until reopen rehydrates those mirrors.
 	private _replicationRangeMutationFailure?: unknown;
@@ -3325,9 +3318,9 @@ export class SharedLog<
 				this.isReplicationLifecycleActive(controller),
 			getSelfHash: () => this.node.identity.publicKey.hashcode(),
 			getUniqueReplicators: () => this.uniqueReplicators,
-			getSubscriptionEpoch: (peerHash) => this.getSubscriptionEpoch(peerHash),
-			isCurrentSubscriptionEpoch: (peerHash, epoch) =>
-				this.isCurrentSubscriptionEpoch(peerHash, epoch),
+			getPeerSession: (peerHash) => this._peerSessions.current(peerHash),
+			isPeerSessionCurrent: (peerHash, session) =>
+				this._peerSessions.isCurrent(peerHash, session),
 			resolvePublicKeyFromHash: (hash) => this._resolvePublicKeyFromHash(hash),
 			removeReplicator: (key, options) => this.removeReplicator(key, options),
 			getRpc: () => this.rpc,
@@ -4917,13 +4910,17 @@ export class SharedLog<
 			allowCleanupGate?: boolean;
 		},
 	) {
-		return (
-			this.isReplicationLifecycleActive(replicationLifecycleController) &&
-			this.isCurrentSubscriptionEpoch(peerHash, subscriptionEpoch) &&
-			(options?.allowReplicationInfoBlocked === true ||
-				!this._replicationInfoBlockedPeers.has(peerHash)) &&
-			(options?.allowCleanupGate === true ||
-				(this._receiveCleanupGateByPeer.get(peerHash) ?? 0) === 0)
+		// Stage 3: the registry owns the 4-term predicate (lifecycle -> epoch ->
+		// blocked -> gate, same short-circuit order); the registry deps are
+		// delegating closures back into this instance, so spies keep observing.
+		// The truth-table proof lives in test/peer-session.spec.ts against an
+		// inline transcription of the legacy predicate (NOT this method, which
+		// would be tautological now).
+		return this._peerSessions.isReceiveAdmissionOpen(
+			peerHash,
+			subscriptionEpoch,
+			replicationLifecycleController,
+			options,
 		);
 	}
 
@@ -5756,8 +5753,7 @@ export class SharedLog<
 			// entry-coordinate resolution or the ownership lane can yield, and
 			// prevent a new adaptive planner from starting while the fixed
 			// replacement is being committed.
-			this._localReplicationRoleGeneration =
-				(this._localReplicationRoleGeneration ?? 0) + 1;
+			this._instanceLifecycle?.bumpRoleGeneration();
 			this._isAdaptiveReplicating = false;
 		}
 		const entryRangeId = (entry: Entry<T>) =>
@@ -5878,8 +5874,7 @@ export class SharedLog<
 			// this operation waits for the ownership lane. Otherwise a planner
 			// that passed its preliminary role checks can enqueue a stale dynamic
 			// range after this full unreplication removes the previous role.
-			this._localReplicationRoleGeneration =
-				(this._localReplicationRoleGeneration ?? 0) + 1;
+			this._instanceLifecycle?.bumpRoleGeneration();
 			this._isReplicating = false;
 			this._isAdaptiveReplicating = false;
 			await this.removeReplicator(this.node.identity.publicKey, {
@@ -13750,9 +13745,8 @@ export class SharedLog<
 		// (ownership controller next, membership controller at
 		// resetSubscriptionChangeCallbackTracking below, _checkedPrune and
 		// _closeController and the debouncers in the setup blocks further
-		// down). The fresh object also supersedes the old per-open
-		// `_localReplicationRoleGeneration = 0` reset: roleGeneration starts
-		// at 0 on the incoming lifecycle.
+		// down). The fresh object is also the per-open role reset:
+		// roleGeneration starts at 0 on the incoming lifecycle.
 		this._instanceLifecycle = this.createInstanceLifecycle();
 		this.startRepairLifecycle();
 		this._replicationRangeMutationTail = Promise.resolve();
@@ -25636,15 +25630,21 @@ export class SharedLog<
 		ownershipLifecycleController = this.captureReplicationOwnershipLifecycle(),
 		rebalanceParticipationDebounced = this.rebalanceParticipationDebounced,
 	) {
-		const localReplicationRoleGeneration =
-			this._localReplicationRoleGeneration ?? 0;
+		// Stage 3: the lifecycle owns all three identity terms. `lifecycle` may
+		// go stale later; its deps late-bind to the host, so the debouncer term
+		// still reads the current host field, and the role term can disagree
+		// with the current lifecycle's counter only after a rotation, where the
+		// isActiveFor term is already false (controller replaced in the same
+		// synchronous block).
+		const lifecycle = this._instanceLifecycle;
+		const capturedRoleGeneration = lifecycle?.roleGeneration ?? 0;
 		// update more participation rate to converge to the average expected rate or bounded by
 		// resources such as memory and or cpu
 		const isCurrent = () =>
-			this.isRepairLifecycleActive(ownershipLifecycleController) &&
-			this.rebalanceParticipationDebounced ===
-				rebalanceParticipationDebounced &&
-			this._localReplicationRoleGeneration === localReplicationRoleGeneration;
+			lifecycle != null &&
+			lifecycle.isActiveFor(ownershipLifecycleController) &&
+			lifecycle.isRebalanceDebouncerCurrent(rebalanceParticipationDebounced) &&
+			lifecycle.isRoleCurrent(capturedRoleGeneration);
 
 		const isClosedStoreRace = (error: any) => {
 			const message =
