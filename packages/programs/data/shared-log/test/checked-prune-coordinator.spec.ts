@@ -387,4 +387,38 @@ describe("checked prune coordinator", () => {
 		expect(coordinator.requestIPruneSent.size).equal(0);
 		expect(coordinator.responseReplicatorSet.size).equal(0);
 	});
+
+	it("local-range-mutation block release is idempotent and instance-scoped", () => {
+		const coordinator = new CheckedPruneCoordinator<Uint8Array, "u32">();
+		expect(coordinator.isBlockingLocalRangeMutation()).to.be.false;
+
+		const releaseFirst = coordinator.blockLocalRangeMutation();
+		const releaseSecond = coordinator.blockLocalRangeMutation();
+		expect(coordinator.isBlockingLocalRangeMutation()).to.be.true;
+
+		releaseFirst();
+		// Idempotent: a double release must not decrement twice.
+		releaseFirst();
+		expect(coordinator.isBlockingLocalRangeMutation()).to.be.true;
+
+		// close() must NOT zero the counter — the legacy host counter was reset
+		// only at open; the release closures are the only drain.
+		coordinator.close();
+		expect(coordinator.isBlockingLocalRangeMutation()).to.be.true;
+
+		releaseSecond();
+		expect(coordinator.isBlockingLocalRangeMutation()).to.be.false;
+
+		// A release captured from one coordinator drains that instance only: a
+		// straddling release must never drive a fresh open's counter negative.
+		const retired = new CheckedPruneCoordinator<Uint8Array, "u32">();
+		const straddlingRelease = retired.blockLocalRangeMutation();
+		const fresh = new CheckedPruneCoordinator<Uint8Array, "u32">();
+		const freshRelease = fresh.blockLocalRangeMutation();
+		straddlingRelease();
+		expect(retired.isBlockingLocalRangeMutation()).to.be.false;
+		expect(fresh.isBlockingLocalRangeMutation()).to.be.true;
+		freshRelease();
+		expect(fresh.isBlockingLocalRangeMutation()).to.be.false;
+	});
 });

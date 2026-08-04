@@ -2028,9 +2028,10 @@ export class SharedLog<
 	private _replicationRangeMutationTail: Promise<void> = Promise.resolve();
 	private _replicationRangeMutationsClosing = false;
 	// Log.remove awaits program onChange callbacks before its physical delete.
-	// Track when checked prune holds the ownership lane across that lower-log
-	// removal so the callback wrapper can identify its direct invocation.
-	private _checkedPruneRemoveBlocksLocalRangeMutationAdmission = 0;
+	// The counter tracking when checked prune holds the ownership lane across
+	// that lower-log removal lives on the CheckedPruneCoordinator
+	// (blockLocalRangeMutation / isBlockingLocalRangeMutation) so the callback
+	// wrapper can identify its direct invocation.
 	// Reject public local role/terminal operations invoked directly by that
 	// program callback rather than letting it await the lane that is awaiting the
 	// callback. Keep the guard for the callback's full async lifetime: a callback
@@ -13800,7 +13801,11 @@ export class SharedLog<
 		this.ensureNativeDurabilityRuntimeState();
 		this._nativeStrictDurableTransactionsClosing = false;
 		this._replicationRangeMutationsClosing = false;
-		this._checkedPruneRemoveBlocksLocalRangeMutationAdmission = 0;
+		// The legacy `_checkedPruneRemoveBlocksLocalRangeMutationAdmission = 0`
+		// reset that sat here comes free with the fresh CheckedPruneCoordinator
+		// created below: the counter physically lives on it now, and nothing
+		// between this point and that creation invokes invokeProgramOnChange
+		// (its only reader) or any log mutation.
 		this._checkedPruneRemovalCallbackInvocationDepth = 0;
 		// The legacy `_receiveOwnershipRevision = 0` and
 		// `_receiveOwnershipMutationAdmissions = 0` resets that sat here come
@@ -23395,7 +23400,7 @@ export class SharedLog<
 		}
 		if (
 			change.removed.length === 0 ||
-			this._checkedPruneRemoveBlocksLocalRangeMutationAdmission === 0
+			!this._checkedPrune.isBlockingLocalRangeMutation()
 		) {
 			return onChange(change);
 		}
@@ -24801,7 +24806,8 @@ export class SharedLog<
 										checkedPruneCoordinator.clearConfirmedReplicators(
 											entry.hash,
 										);
-										this._checkedPruneRemoveBlocksLocalRangeMutationAdmission++;
+										const releaseLocalRangeMutationBlock =
+											checkedPruneCoordinator.blockLocalRangeMutation();
 										try {
 											await this.trackAdmittedPruneRemove(
 												() =>
@@ -24811,8 +24817,7 @@ export class SharedLog<
 												ownershipLifecycleController,
 											);
 										} finally {
-											this
-												._checkedPruneRemoveBlocksLocalRangeMutationAdmission--;
+											releaseLocalRangeMutationBlock();
 										}
 										if (
 											!checkedPruneCoordinator.markDone(entry.hash, pending)
