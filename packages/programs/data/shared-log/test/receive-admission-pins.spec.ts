@@ -14,8 +14,11 @@
 //    stash capability adverts, and a barrier superseded mid-drain must not
 //    promote what it stashed.
 //
-// Both tests pass against current behavior and must keep passing, unchanged,
-// after the seam-2 migration.
+// Both tests were written (and passed) against the pre-migration fences; the
+// behavioral assertions are unchanged after the seam-2 migration — only the
+// internal window probes were re-pointed to the fences' stage-3 homes (the
+// receive-epoch map on the PeerSessionRegistry, the opening-barrier flag on
+// the PeerSession).
 import { TestSession } from "@peerbit/test-utils";
 import { waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
@@ -311,9 +314,10 @@ describe("receive admission opening-barrier windows", () => {
 					expect(sharedLog._receiveHandlerDrainByPeer.has(sourceHash)).to.be
 						.true,
 				);
-				const barrierEpoch =
-					sharedLog._subscriptionOpeningEpochByPeer.get(sourceHash);
-				expect(barrierEpoch).to.exist;
+				// Window-open probe (stage-3 home: the barrier flags its session).
+				const barrierSession = sharedLog._peerSessions.current(sourceHash);
+				expect(barrierSession).to.exist;
+				expect(barrierSession.openingBarrierActive).to.be.true;
 
 				// An advert arriving inside the barrier window is stashed for the
 				// opening generation, not applied.
@@ -340,8 +344,7 @@ describe("receive admission opening-barrier windows", () => {
 				expect(sharedLog._peerSyncCapabilities.has(sourceHash)).to.be.false;
 				expect(sharedLog._openingSyncCapabilitiesByPeer.has(sourceHash)).to.be
 					.false;
-				expect(sharedLog._subscriptionOpeningEpochByPeer.has(sourceHash)).to.be
-					.false;
+				expect(barrierSession.openingBarrierActive).to.be.false;
 			} finally {
 				releasePark.resolve();
 				await Promise.allSettled(

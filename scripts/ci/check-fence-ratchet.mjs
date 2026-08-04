@@ -27,9 +27,7 @@ const TARGETS = new Map([
 			"_receiveOwnershipMutationAdmissions",
 			"_receiveOwnershipRevision",
 			"_repairLifecycleController",
-			"_replicationInfoReceiveEpochByPeer",
 			"_replicationLifecycleController",
-			"_subscriptionOpeningEpochByPeer",
 		],
 	],
 	[
@@ -42,7 +40,7 @@ const TARGETS = new Map([
 	],
 	[
 		"packages/programs/data/shared-log/src/peer-session.ts",
-		["_subscriptionEpochByPeer"],
+		["_replicationInfoReceiveEpochByPeer", "_subscriptionEpochByPeer"],
 	],
 	[
 		"packages/programs/data/shared-log/src/join-warmup.ts",
