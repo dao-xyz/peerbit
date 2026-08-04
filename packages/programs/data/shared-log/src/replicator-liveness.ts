@@ -8,6 +8,7 @@ import {
 } from "@peerbit/stream-interface";
 import { isNotStartedError } from "./errors.js";
 import type { TransportMessage } from "./message.js";
+import type { PeerSession } from "./peer-session.js";
 import { ReplicationPingMessage } from "./replication.js";
 
 const logger = loggerFn("peerbit:shared-log");
@@ -29,10 +30,12 @@ export type ReplicatorLivenessDeps = {
 	) => boolean;
 	getSelfHash: () => string;
 	getUniqueReplicators: () => Set<string>;
-	getSubscriptionEpoch: (peerHash: string) => object | null;
-	isCurrentSubscriptionEpoch: (
+	// Stage 3: probes capture the peer's PeerSession (the opaque
+	// subscription-epoch token) and check currency through the registry.
+	getPeerSession: (peerHash: string) => PeerSession | null;
+	isPeerSessionCurrent: (
 		peerHash: string,
-		epoch: object | null,
+		session: PeerSession | null,
 	) => boolean;
 	resolvePublicKeyFromHash: (
 		hash: string,
@@ -44,7 +47,7 @@ export type ReplicatorLivenessDeps = {
 			onRemoved?: (state: { wasReplicator: boolean }) => void;
 			replicationLifecycleController?: AbortController;
 			shouldRemove?: () => boolean;
-			subscriptionEpoch?: object | null;
+			subscriptionEpoch?: PeerSession | null;
 		},
 	) => Promise<boolean>;
 	getRpc: () => RPC<TransportMessage, TransportMessage>;
@@ -183,7 +186,7 @@ export class ReplicatorLivenessMonitor {
 		peerHash: string,
 		publicKey: PublicSignKey,
 		replicationLifecycleController: AbortController,
-		subscriptionEpoch: object | null,
+		subscriptionEpoch: PeerSession | null,
 		observedActivityAt: number | undefined,
 	) {
 		try {
@@ -203,7 +206,7 @@ export class ReplicatorLivenessMonitor {
 						!this.deps.isReplicationLifecycleActive(
 							replicationLifecycleController,
 						) ||
-						!this.deps.isCurrentSubscriptionEpoch(peerHash, subscriptionEpoch)
+						!this.deps.isPeerSessionCurrent(peerHash, subscriptionEpoch)
 					) {
 						return;
 					}
@@ -282,10 +285,10 @@ export class ReplicatorLivenessMonitor {
 		) {
 			return;
 		}
-		const subscriptionEpoch = this.deps.getSubscriptionEpoch(peerHash);
+		const subscriptionEpoch = this.deps.getPeerSession(peerHash);
 		const ownsProbe = () =>
 			this.deps.isReplicationLifecycleActive(replicationLifecycleController) &&
-			this.deps.isCurrentSubscriptionEpoch(peerHash, subscriptionEpoch);
+			this.deps.isPeerSessionCurrent(peerHash, subscriptionEpoch);
 		if (!this.deps.getUniqueReplicators().has(peerHash)) {
 			this._replicatorLivenessFailures.delete(peerHash);
 			return;

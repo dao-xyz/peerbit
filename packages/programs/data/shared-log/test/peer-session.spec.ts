@@ -1,9 +1,13 @@
-// Stage-2 lifecycle refactor guard: PeerSession instances ARE the opaque
+// Lifecycle refactor guard: PeerSession instances ARE the opaque
 // subscription-epoch tokens, so this spec pins the identity semantics the
 // host relies on (rotation supersedes, null is a valid current value, the
 // open()-time map swap) and proves the registry's receive-admission
-// predicate is truth-table equivalent to a literal transcription of
-// SharedLog.isPeerReceiveAdmissionOpen over every input combination.
+// predicate is truth-table equivalent to an INLINE transcription of the
+// legacy 4-term SharedLog.isPeerReceiveAdmissionOpen predicate over every
+// input combination. Since stage 3 the host method delegates to the
+// registry, so the legacy side here must stay this independent inline
+// replica (expected booleans computed in the test itself) — comparing
+// against the host method would be tautological and lose regression power.
 import { expect } from "chai";
 import {
 	type PeerReceiveAdmissionOptions,
@@ -43,8 +47,10 @@ const createDeps = (host: StubHost): PeerSessionDeps => ({
 	getReceiveCleanupGate: (hash) => host.cleanupGateByPeer.get(hash) ?? 0,
 });
 
-// Literal transcription of SharedLog.isPeerReceiveAdmissionOpen
-// (src/index.ts), reading the same host state the registry deps read.
+// Literal transcription of the legacy (pre-stage-3) body of
+// SharedLog.isPeerReceiveAdmissionOpen, reading the same host state the
+// registry deps read. Deliberately NOT the host method: that now delegates
+// to the registry, so this inline replica is the regression oracle.
 const legacyIsPeerReceiveAdmissionOpen = (
 	host: StubHost,
 	peerHash: string,
