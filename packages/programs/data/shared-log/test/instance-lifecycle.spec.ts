@@ -1,7 +1,13 @@
-// Stage-2 lifecycle refactor guard: InstanceLifecycle wraps the existing
-// fences via late-bound readers, so the pure-unit half asserts truth-table
-// equivalence with the legacy predicates it folds, and the integration half
-// asserts the per-open rotation/identity semantics against a real SharedLog.
+// Lifecycle refactor guard: the pure-unit half asserts truth-table
+// equivalence with the legacy predicates InstanceLifecycle folds (transcribed
+// inline against the owned controllers — stage 4 made the lifecycle the
+// physical owner of the ownership/membership AbortControllers), and the
+// integration half asserts the per-open rotation/identity semantics against
+// a real SharedLog. The legacy `ownership == null` truth-table arm is gone:
+// a lifecycle object owns its (readonly) ownership controller, so the
+// absent-controller state is unrepresentable by construction; the reachable
+// undefined semantics stay pinned via isActiveFor(undefined) and the
+// never-opened-clone integration cases.
 import { deserialize, serialize } from "@dao-xyz/borsh";
 import { TerminalOperationNotStartedError } from "@peerbit/program";
 import { TestSession } from "@peerbit/test-utils";
@@ -14,8 +20,6 @@ import { EventStore } from "./utils/stores/index.js";
 
 type StubHost = {
 	lifecycle?: InstanceLifecycle;
-	ownership?: AbortController;
-	membership?: AbortController;
 	closeController?: AbortController;
 	poison?: unknown;
 	closed: boolean;
@@ -29,8 +33,6 @@ type StubHost = {
 };
 
 const createHost = (): StubHost => ({
-	ownership: new AbortController(),
-	membership: new AbortController(),
 	closeController: new AbortController(),
 	closed: false,
 	terminating: false,
@@ -41,8 +43,6 @@ const createHost = (): StubHost => ({
 
 const createDeps = (host: StubHost): InstanceLifecycleDeps => ({
 	getCurrentLifecycle: () => host.lifecycle,
-	getOwnershipController: () => host.ownership,
-	getMembershipController: () => host.membership,
 	getCloseController: () => host.closeController,
 	getPoisonFailure: () => host.poison,
 	isHostClosed: () => host.closed,
@@ -72,7 +72,7 @@ describe("lifecycle instance identity", () => {
 							const lifecycle = createCurrentLifecycle(host);
 							const controller = stale
 								? new AbortController()
-								: host.ownership!;
+								: lifecycle.ownershipLifecycleController;
 							if (aborted) {
 								controller.abort();
 							}
@@ -80,9 +80,11 @@ describe("lifecycle instance identity", () => {
 								host.poison = new Error("poisoned");
 							}
 							host.closed = closed;
-							// Legacy isRepairLifecycleActive, condition for condition.
+							// Legacy isRepairLifecycleActive, condition for condition
+							// (the current-controller term reads the owned field — its
+							// only home since stage 4).
 							const legacy =
-								controller === host.ownership &&
+								controller === lifecycle.ownershipLifecycleController &&
 								!controller.signal.aborted &&
 								host.poison === undefined &&
 								!host.closed;
@@ -103,11 +105,13 @@ describe("lifecycle instance identity", () => {
 		});
 
 		it("isActiveFor rejects an absent controller", () => {
+			// The legacy `host.ownership = undefined` sub-case is gone: the
+			// lifecycle owns a readonly controller, so that state is
+			// unrepresentable by construction (clone hosts have no lifecycle
+			// at all — pinned by the integration cases below).
 			const host = createHost();
 			const lifecycle = createCurrentLifecycle(host);
 			expect(lifecycle.isActiveFor(undefined)).to.be.false;
-			host.ownership = undefined;
-			expect(lifecycle.isActive()).to.be.false;
 		});
 
 		it("isMembershipActiveFor matches the legacy membership predicate including the terminating term", () => {
@@ -116,17 +120,18 @@ describe("lifecycle instance identity", () => {
 					for (const terminating of [false, true]) {
 						const host = createHost();
 						const lifecycle = createCurrentLifecycle(host);
-						const controller = stale
-							? new AbortController()
-							: host.membership!;
+						const membership = lifecycle.beginMembership();
+						const controller = stale ? new AbortController() : membership;
 						if (aborted) {
 							controller.abort();
 						}
 						host.terminating = terminating;
-						// Legacy isReplicationLifecycleActive, condition for condition.
+						// Legacy isReplicationLifecycleActive, condition for condition
+						// (the current-controller term reads the owned field — its
+						// only home since stage 4).
 						const legacy =
 							controller != null &&
-							controller === host.membership &&
+							controller === lifecycle.membershipLifecycleController &&
 							!controller.signal.aborted &&
 							!host.terminating;
 						expect(lifecycle.isMembershipActiveFor(controller)).to.equal(
@@ -138,11 +143,14 @@ describe("lifecycle instance identity", () => {
 			}
 			const host = createHost();
 			const lifecycle = createCurrentLifecycle(host);
+			// Pre-open lifecycles have no membership controller yet.
+			expect(lifecycle.isMembershipActiveFor(undefined)).to.be.false;
+			const membership = lifecycle.beginMembership();
 			expect(lifecycle.isMembershipActiveFor(undefined)).to.be.false;
 			// The asymmetry vs the ownership half: `closed` alone does not gate
 			// membership (isTerminating() is the fence on this side).
 			host.closed = true;
-			expect(lifecycle.isMembershipActiveFor(host.membership)).to.be.true;
+			expect(lifecycle.isMembershipActiveFor(membership)).to.be.true;
 		});
 
 		it("throwIfInactive throws the legacy error types and messages", () => {
@@ -167,7 +175,7 @@ describe("lifecycle instance identity", () => {
 
 			// Aborted (unpoisoned) controller: TerminalOperationNotStartedError.
 			host.poison = undefined;
-			host.ownership!.abort();
+			lifecycle.abortOwnership();
 			try {
 				lifecycle.throwIfInactive();
 				expect.fail("expected throw");
@@ -221,7 +229,7 @@ describe("lifecycle instance identity", () => {
 			expect(lifecycle.isCheckedPruneCurrent({}, closeController)).to.be.false;
 			expect(lifecycle.isCheckedPruneCurrent(coordinator, new AbortController()))
 				.to.be.false;
-			host.ownership!.abort();
+			lifecycle.abortOwnership();
 			expect(lifecycle.isCheckedPruneCurrent(coordinator, closeController)).to
 				.be.false;
 
@@ -244,7 +252,7 @@ describe("lifecycle instance identity", () => {
 				lifecycle2.isCheckedPruneCurrent(
 					host2.checkedPrune,
 					undefined,
-					host2.ownership,
+					lifecycle2.ownershipLifecycleController,
 				),
 			).to.be.true;
 		});
@@ -273,7 +281,7 @@ describe("lifecycle instance identity", () => {
 				"Checked prune lifecycle is no longer active",
 			);
 			// Ownership inactivity wins over the checked-prune mismatch.
-			host.ownership!.abort();
+			lifecycle.abortOwnership();
 			expect(() => lifecycle.throwIfCheckedPruneInactive({})).to.throw(
 				TerminalOperationNotStartedError,
 				"Replication ownership lifecycle is no longer active",
@@ -329,14 +337,14 @@ describe("lifecycle instance identity", () => {
 			lifecycle.markOpenComplete();
 			expect(lifecycle.declaredPhase).to.equal("terminating");
 
-			// terminating: superseded identity or aborted/absent controller.
+			// terminating: superseded identity or aborted controller.
 			const staleHost = createHost();
 			const stale = createCurrentLifecycle(staleHost);
 			createCurrentLifecycle(staleHost);
 			expect(stale.phase()).to.equal("terminating");
 			const abortedHost = createHost();
 			const aborted = createCurrentLifecycle(abortedHost);
-			abortedHost.ownership!.abort();
+			aborted.abortOwnership();
 			expect(aborted.phase()).to.equal("terminating");
 
 			// closed beats terminating; poisoned beats both.
@@ -462,6 +470,106 @@ describe("lifecycle instance identity", () => {
 			expect((clone.log as any)._instanceLifecycle).to.equal(undefined);
 			await clone.close();
 			expect((clone.log as any)._instanceLifecycle).to.equal(undefined);
+			await db.close();
+		});
+
+		it("poison aborts the ownership controller in place without rotating identity", async () => {
+			session = await TestSession.connected(1);
+			const db = await session.peers[0].open(new EventStore());
+			const log = db.log as any;
+			const c0 = log._repairLifecycleController as AbortController;
+			const l0 = log._instanceLifecycle as InstanceLifecycle;
+			const m0 = log._replicationLifecycleController as AbortController;
+			expect(c0.signal.aborted).to.be.false;
+			log.poisonReplicationOwnership(new Error("boom"));
+			// The critical abort-in-place transition: the ownership controller
+			// is aborted on the SAME object, the lifecycle identity is not
+			// rotated, and the membership half is untouched.
+			expect(log._repairLifecycleController).to.equal(c0);
+			expect(c0.signal.aborted).to.be.true;
+			expect(log._instanceLifecycle).to.equal(l0);
+			expect(log._replicationLifecycleController).to.equal(m0);
+			expect(m0.signal.aborted).to.be.false;
+		});
+
+		it("reopen rotates both controllers together with the instance identity", async () => {
+			session = await TestSession.connected(1);
+			const db = await session.peers[0].open(new EventStore());
+			const log = db.log as any;
+			const c0 = log._repairLifecycleController as AbortController;
+			const l0 = log._instanceLifecycle as InstanceLifecycle;
+			const m0 = log._replicationLifecycleController as AbortController;
+			// Repeated accessor reads within one open are identity-stable.
+			expect(log._repairLifecycleController).to.equal(c0);
+			expect(log._replicationLifecycleController).to.equal(m0);
+
+			await db.close();
+			const reopened = await session.peers[0].open(db);
+			const log2 = reopened.log as any;
+			expect(log2._instanceLifecycle).to.not.equal(l0);
+			expect(log2._repairLifecycleController).to.not.equal(c0);
+			expect(log2._replicationLifecycleController).to.not.equal(m0);
+			expect(log2._repairLifecycleController).to.equal(
+				log2._repairLifecycleController,
+			);
+			expect(log2._replicationLifecycleController).to.equal(
+				log2._replicationLifecycleController,
+			);
+		});
+
+		it("a membership capture from a previous open stays inactive after reopen", async () => {
+			session = await TestSession.connected(1);
+			const db = await session.peers[0].open(new EventStore());
+			const log = db.log as any;
+			const captured = log._replicationLifecycleController as AbortController;
+			expect(log.isReplicationLifecycleActive(captured)).to.be.true;
+
+			await db.close();
+			const reopened = await session.peers[0].open(db);
+			const log2 = reopened.log as any;
+			expect(log2.isReplicationLifecycleActive(captured)).to.be.false;
+			expect(
+				(log2._instanceLifecycle as InstanceLifecycle).isMembershipActiveFor(
+					captured,
+				),
+			).to.be.false;
+		});
+
+		it("startRepairLifecycle invalidates prior ownership captures and leaves a fresh active controller", async () => {
+			session = await TestSession.connected(1);
+			const db = await session.peers[0].open(new EventStore());
+			const log = db.log as any;
+			const c0 = log._repairLifecycleController as AbortController;
+			const l0 = log._instanceLifecycle;
+			expect(log.isRepairLifecycleActive(c0)).to.be.true;
+			log.startRepairLifecycle();
+			expect(log._repairLifecycleController).to.not.equal(c0);
+			expect(log.isRepairLifecycleActive(c0)).to.be.false;
+			// The load-bearing predecessor abort: stale-captured-lifecycle
+			// predicates rely on non-current => aborted, so the rotation must
+			// abort the outgoing controller, not merely supersede it.
+			expect(c0.signal.aborted).to.be.true;
+			expect(l0.isActiveFor(c0)).to.be.false;
+			expect(log.isRepairLifecycleActive(log._repairLifecycleController)).to.be
+				.true;
+		});
+
+		it("a never-opened deserialized clone exposes no controllers and closes cleanly", async () => {
+			session = await TestSession.connected(1);
+			const store = new EventStore();
+			const db = await session.peers[0].open(store);
+			const clone = deserialize(serialize(store), EventStore);
+			const cloneLog = clone.log as any;
+			expect(cloneLog._repairLifecycleController).to.equal(undefined);
+			expect(cloneLog._replicationLifecycleController).to.equal(undefined);
+			// The legacy TypeError a capture attempt raises on such a clone
+			// (reading `.signal` of the undefined controller).
+			expect(() => cloneLog.captureReplicationOwnershipLifecycle()).to.throw(
+				TypeError,
+			);
+			await clone.close();
+			expect(cloneLog._repairLifecycleController).to.equal(undefined);
+			expect(cloneLog._replicationLifecycleController).to.equal(undefined);
 			await db.close();
 		});
 	});
