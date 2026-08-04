@@ -4452,7 +4452,8 @@ describe("events", () => {
 				});
 			releaseBlocker.resolve();
 			await cleanupStarted.promise;
-			expect(log._receiveCleanupGateByPeer.has(remoteHash)).to.be.true;
+			expect(log._peerSessions._receiveCleanupGateByPeer.has(remoteHash)).to.be
+				.true;
 			await db1.log.onMessage(new SyncCapabilitiesMessage(), {
 				from: remoteKey,
 			} as any);

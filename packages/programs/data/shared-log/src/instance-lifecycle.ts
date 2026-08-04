@@ -58,6 +58,22 @@ export class InstanceLifecycle {
 	// retiring the instance identity.
 	public roleGeneration = 0;
 
+	// Moved from SharedLog (fences C1/C2, same names — the sanctioned
+	// file-to-file ratchet move). Physically owned per-open counters read and
+	// written by the host through delegating accessors that keep every legacy
+	// site verbatim; the fresh lifecycle object at open() IS the legacy
+	// reset-to-0 (same pattern as roleGeneration above).
+	//
+	// Receive-side ownership plans may span lower-log joins that invoke user
+	// code. Incremented synchronously with leader-cache invalidation so the
+	// handler can detect whether its pre-join plan needs one fresh
+	// post-persist audit.
+	public _receiveOwnershipRevision = 0;
+	// Count of ownership-changing range mutations from queue admission
+	// through settlement, including mutations already pending when a receive
+	// starts.
+	public _receiveOwnershipMutationAdmissions = 0;
+
 	// Stage-2 bookkeeping. WRITE-ONLY in production paths: no query method
 	// consults these (phase() is derived from the wrapped fences), so a
 	// missed or doubled transition cannot change behavior. Stage 3 flips

@@ -504,7 +504,8 @@ describe("checked prune correlated handoff", () => {
 				shouldRemove: () =>
 					log._replicatorLastActivityAt.get(remoteHash) === observedActivityAt,
 			});
-			expect(log._receiveCleanupGateByPeer.has(remoteHash)).to.be.false;
+			expect(log._peerSessions._receiveCleanupGateByPeer.has(remoteHash)).to.be
+				.false;
 			expect(log._checkedPrune.isPeerRemovalFenced(remoteHash)).to.be.true;
 
 			// A receipt admitted just before/during the speculative removal cannot
@@ -527,7 +528,8 @@ describe("checked prune correlated handoff", () => {
 
 			releaseApplyQueue.resolve();
 			expect(await removing).to.be.false;
-			expect(log._receiveCleanupGateByPeer.has(remoteHash)).to.be.false;
+			expect(log._peerSessions._receiveCleanupGateByPeer.has(remoteHash)).to.be
+				.false;
 			expect(log._checkedPrune.isPeerRemovalFenced(remoteHash)).to.be.false;
 			expect(drain.called).to.be.false;
 			await applyQueueBlocker;

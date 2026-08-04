@@ -23,7 +23,6 @@ export type PeerSessionDeps = {
 	) => boolean;
 	getReplicationLifecycleController: () => AbortController | undefined;
 	isReplicationInfoBlocked: (peerHash: string) => boolean;
-	getReceiveCleanupGate: (peerHash: string) => number;
 };
 
 export type PeerReceiveAdmissionOptions = {
@@ -113,12 +112,12 @@ export class PeerSession {
 }
 
 export class PeerSessionRegistry {
-	// Historic field name kept deliberately: the fence-ratchet baseline entry
-	// moves file-to-file exactly like the stage-1 extractions did for
-	// _joinWarmupGenerationByTarget (scripts/ci/check-fence-ratchet.mjs).
-	// The values ARE the epoch tokens. Stage 3 renames this to `sessions`
-	// once the last raw-token comparison in index.ts is gone.
-	_subscriptionEpochByPeer!: Map<string, PeerSession>;
+	// The per-peer session map (formerly _subscriptionEpochByPeer; renamed
+	// once the last raw-token comparison in index.ts was gone — the values
+	// ARE the legacy epoch tokens, compared by identity and never inspected).
+	// The rename retires the map's fence-ratchet baseline entry: session
+	// identity is the mechanism the ratchet drains fences INTO, not a fence.
+	sessions!: Map<string, PeerSession>;
 	// Moved from SharedLog (fence B2, same name — the sanctioned file-to-file
 	// ratchet move). Local receive generations fence replication-info handlers
 	// that were admitted before a liveness eviction but reach the per-peer
@@ -128,6 +127,15 @@ export class PeerSessionRegistry {
 	// session. Unlike sessions this map IS cleared at _close (see
 	// clearReceiveEpochsForClose) and replaced at open.
 	_replicationInfoReceiveEpochByPeer!: Map<string, object>;
+	// Moved from SharedLog (fence B6, same name — the sanctioned file-to-file
+	// ratchet move). Refcount of in-flight destructive peer cleanups: while
+	// non-zero, receive admission for the peer is closed and prune final
+	// confirmations ignore the peer. Per-PEER, not per-session, on purpose:
+	// the gate is held across removeReplicator's awaited lanes while a
+	// reconnect may rotate the session; a fresh session with a zero gate
+	// would reopen receive admission mid-drain. The map instance is replaced
+	// only at open (resetForOpen) and cleared in place at _close.
+	_receiveCleanupGateByPeer!: Map<string, number>;
 
 	constructor(readonly deps: PeerSessionDeps) {
 		this.resetForOpen();
@@ -141,8 +149,9 @@ export class PeerSessionRegistry {
 	 *  lifecycle-controller check, not the epoch). There is NO clearForClose()
 	 *  for sessions; the receive-epoch map, by contrast, IS cleared at close. */
 	resetForOpen(): void {
-		this._subscriptionEpochByPeer = new Map();
+		this.sessions = new Map();
 		this._replicationInfoReceiveEpochByPeer = new Map();
+		this._receiveCleanupGateByPeer = new Map();
 	}
 
 	/** _close counterpart of the legacy
@@ -153,6 +162,47 @@ export class PeerSessionRegistry {
 	 *  receive-epoch check site makes the ordering unobservable either way. */
 	clearReceiveEpochsForClose(): void {
 		this._replicationInfoReceiveEpochByPeer.clear();
+	}
+
+	/** _close counterpart of the legacy
+	 *  `this._receiveCleanupGateByPeer?.clear()`: an in-place clear (NOT a
+	 *  map replacement) so an in-flight removal's captured release still
+	 *  drains the instance it incremented — see acquireReceiveCleanupGate. */
+	clearCleanupGatesForClose(): void {
+		this._receiveCleanupGateByPeer.clear();
+	}
+
+	/** ≡ removeReplicator's inline `blockPeerReceiveAdmission` +
+	 *  release-in-`finally` pair (fence B6). Acquire captures the CURRENT
+	 *  gate-map instance and increments once; the returned release is
+	 *  idempotent and decrements the captured map, deleting the entry at 0.
+	 *  The map-instance capture is load-bearing: close/reopen replaces the
+	 *  map (resetForOpen), and a late release must drain the exact map it
+	 *  incremented — a release against a fresh open's map would corrupt that
+	 *  open's refcounts. The `?? 1` mirrors the legacy release: an entry
+	 *  cleared at _close decrements to 0 and stays deleted. */
+	acquireReceiveCleanupGate(peerHash: string): () => void {
+		const gates = this._receiveCleanupGateByPeer;
+		gates.set(peerHash, (gates.get(peerHash) ?? 0) + 1);
+		let released = false;
+		return () => {
+			if (released) {
+				return;
+			}
+			released = true;
+			const remaining = (gates.get(peerHash) ?? 1) - 1;
+			if (remaining > 0) {
+				gates.set(peerHash, remaining);
+			} else {
+				gates.delete(peerHash);
+			}
+		};
+	}
+
+	/** ≡ the legacy `(this._receiveCleanupGateByPeer.get(peer) ?? 0) === 0`
+	 *  read (receive-admission term and prune final-confirmation filter). */
+	isReceiveCleanupGateOpen(peerHash: string): boolean {
+		return (this._receiveCleanupGateByPeer.get(peerHash) ?? 0) === 0;
 	}
 
 	/** ≡ legacy SharedLog.advanceReplicationInfoReceiveEpoch. Advances
@@ -175,7 +225,7 @@ export class PeerSessionRegistry {
 	}
 
 	current(peerHash: string): PeerSession | null {
-		return this._subscriptionEpochByPeer.get(peerHash) ?? null;
+		return this.sessions.get(peerHash) ?? null;
 	}
 
 	/** null is a VALID current value: a peer that never subscribed has no
@@ -188,7 +238,7 @@ export class PeerSessionRegistry {
 	/** The only creation point. Supersedes (never deletes) the previous
 	 *  session — per-peer entries are never removed, matching today's map. */
 	rotate(peerHash: string, kind: PeerSessionKind): PeerSession {
-		const previous = this._subscriptionEpochByPeer.get(peerHash);
+		const previous = this.sessions.get(peerHash);
 		if (previous) {
 			previous.phase = "superseded";
 		}
@@ -198,14 +248,14 @@ export class PeerSessionRegistry {
 			kind,
 			this.deps.getReplicationLifecycleController(),
 		);
-		this._subscriptionEpochByPeer.set(peerHash, next);
+		this.sessions.set(peerHash, next);
 		return next;
 	}
 
 	/** Reconnect barrier completed. Identity-guarded phase mark; no-op when
 	 *  the expected token was superseded meanwhile. */
 	markOpen(peerHash: string, expectedSession: object): void {
-		const current = this._subscriptionEpochByPeer.get(peerHash);
+		const current = this.sessions.get(peerHash);
 		if (
 			current !== undefined &&
 			current === expectedSession &&
@@ -226,7 +276,7 @@ export class PeerSessionRegistry {
 		peerHash: string,
 		expectedSession?: object | null,
 	): void {
-		const current = this._subscriptionEpochByPeer.get(peerHash);
+		const current = this.sessions.get(peerHash);
 		if (
 			current &&
 			(expectedSession === undefined || current === expectedSession)
@@ -250,7 +300,7 @@ export class PeerSessionRegistry {
 			(options?.allowReplicationInfoBlocked === true ||
 				!this.deps.isReplicationInfoBlocked(peerHash)) &&
 			(options?.allowCleanupGate === true ||
-				this.deps.getReceiveCleanupGate(peerHash) === 0)
+				this.isReceiveCleanupGateOpen(peerHash))
 		);
 	}
 }
