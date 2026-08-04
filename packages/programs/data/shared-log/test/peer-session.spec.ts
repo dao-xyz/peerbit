@@ -233,9 +233,9 @@ describe("receive admission peer session parity", () => {
 		const registry = new PeerSessionRegistry(createDeps(host));
 
 		const before = registry.rotate(PEER, "opening");
-		const mapBefore = registry._subscriptionEpochByPeer;
+		const mapBefore = registry.sessions;
 		registry.resetForOpen();
-		expect(registry._subscriptionEpochByPeer).to.not.equal(mapBefore);
+		expect(registry.sessions).to.not.equal(mapBefore);
 		expect(registry.current(PEER)).to.equal(null);
 		expect(before.isCurrent()).to.be.false;
 		// Late continuations still resolve their captured token against the

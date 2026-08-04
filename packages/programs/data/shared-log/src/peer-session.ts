@@ -112,12 +112,12 @@ export class PeerSession {
 }
 
 export class PeerSessionRegistry {
-	// Historic field name kept deliberately: the fence-ratchet baseline entry
-	// moves file-to-file exactly like the stage-1 extractions did for
-	// _joinWarmupGenerationByTarget (scripts/ci/check-fence-ratchet.mjs).
-	// The values ARE the epoch tokens. Stage 3 renames this to `sessions`
-	// once the last raw-token comparison in index.ts is gone.
-	_subscriptionEpochByPeer!: Map<string, PeerSession>;
+	// The per-peer session map (formerly _subscriptionEpochByPeer; renamed
+	// once the last raw-token comparison in index.ts was gone — the values
+	// ARE the legacy epoch tokens, compared by identity and never inspected).
+	// The rename retires the map's fence-ratchet baseline entry: session
+	// identity is the mechanism the ratchet drains fences INTO, not a fence.
+	sessions!: Map<string, PeerSession>;
 	// Moved from SharedLog (fence B2, same name — the sanctioned file-to-file
 	// ratchet move). Local receive generations fence replication-info handlers
 	// that were admitted before a liveness eviction but reach the per-peer
@@ -149,7 +149,7 @@ export class PeerSessionRegistry {
 	 *  lifecycle-controller check, not the epoch). There is NO clearForClose()
 	 *  for sessions; the receive-epoch map, by contrast, IS cleared at close. */
 	resetForOpen(): void {
-		this._subscriptionEpochByPeer = new Map();
+		this.sessions = new Map();
 		this._replicationInfoReceiveEpochByPeer = new Map();
 		this._receiveCleanupGateByPeer = new Map();
 	}
@@ -225,7 +225,7 @@ export class PeerSessionRegistry {
 	}
 
 	current(peerHash: string): PeerSession | null {
-		return this._subscriptionEpochByPeer.get(peerHash) ?? null;
+		return this.sessions.get(peerHash) ?? null;
 	}
 
 	/** null is a VALID current value: a peer that never subscribed has no
@@ -238,7 +238,7 @@ export class PeerSessionRegistry {
 	/** The only creation point. Supersedes (never deletes) the previous
 	 *  session — per-peer entries are never removed, matching today's map. */
 	rotate(peerHash: string, kind: PeerSessionKind): PeerSession {
-		const previous = this._subscriptionEpochByPeer.get(peerHash);
+		const previous = this.sessions.get(peerHash);
 		if (previous) {
 			previous.phase = "superseded";
 		}
@@ -248,14 +248,14 @@ export class PeerSessionRegistry {
 			kind,
 			this.deps.getReplicationLifecycleController(),
 		);
-		this._subscriptionEpochByPeer.set(peerHash, next);
+		this.sessions.set(peerHash, next);
 		return next;
 	}
 
 	/** Reconnect barrier completed. Identity-guarded phase mark; no-op when
 	 *  the expected token was superseded meanwhile. */
 	markOpen(peerHash: string, expectedSession: object): void {
-		const current = this._subscriptionEpochByPeer.get(peerHash);
+		const current = this.sessions.get(peerHash);
 		if (
 			current !== undefined &&
 			current === expectedSession &&
@@ -276,7 +276,7 @@ export class PeerSessionRegistry {
 		peerHash: string,
 		expectedSession?: object | null,
 	): void {
-		const current = this._subscriptionEpochByPeer.get(peerHash);
+		const current = this.sessions.get(peerHash);
 		if (
 			current &&
 			(expectedSession === undefined || current === expectedSession)

@@ -41,11 +41,7 @@ const TARGETS = new Map([
 	],
 	[
 		"packages/programs/data/shared-log/src/peer-session.ts",
-		[
-			"_receiveCleanupGateByPeer",
-			"_replicationInfoReceiveEpochByPeer",
-			"_subscriptionEpochByPeer",
-		],
+		["_receiveCleanupGateByPeer", "_replicationInfoReceiveEpochByPeer"],
 	],
 	[
 		"packages/programs/data/shared-log/src/join-warmup.ts",
