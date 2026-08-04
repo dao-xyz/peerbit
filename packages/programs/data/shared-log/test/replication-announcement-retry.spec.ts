@@ -33,7 +33,10 @@ describe("replication announcement retries", () => {
 	};
 
 	const useFastAnnouncementRepair = (log: any, maxAttempts = 3) => {
-		log._announcements.setupReplicationAnnouncementRepairFunction(10, maxAttempts);
+		log._announcements.setupReplicationAnnouncementRepairFunction(
+			10,
+			maxAttempts,
+		);
 	};
 
 	afterEach(async () => {
@@ -106,7 +109,9 @@ describe("replication announcement retries", () => {
 			expect(snapshots[0].segments[0].factor).to.deep.equal(
 				locallyCommitted[0].width,
 			);
-			expect(log._announcements._replicationAnnouncementRetryPending).to.equal(false);
+			expect(log._announcements._replicationAnnouncementRetryPending).to.equal(
+				false,
+			);
 			await waitForResolved(() => expect(stepCalls).to.be.greaterThan(1), {
 				timeout: 500,
 				delayInterval: 5,
@@ -153,7 +158,9 @@ describe("replication announcement retries", () => {
 		expect(locallyCommitted).to.have.length(1);
 		await delay(40);
 		expect(snapshots).to.deep.equal([]);
-		expect(log._announcements._replicationAnnouncementRetryPending).to.equal(false);
+		expect(log._announcements._replicationAnnouncementRetryPending).to.equal(
+			false,
+		);
 	});
 
 	it("repairs a silently dropped incremental through acknowledged transport delivery", async () => {
@@ -268,7 +275,10 @@ describe("replication announcement retries", () => {
 
 		await store.log.replicate({ factor: 0.25, offset: 0.1 });
 		await waitForResolved(
-			() => expect(log._announcements._replicationAnnouncementRepairPending).to.equal(false),
+			() =>
+				expect(log._announcements._announcementRepairBinding.pending).to.equal(
+					false,
+				),
 			{ timeout: 2_000, delayInterval: 5 },
 		);
 		expect(calls.get(firstHash)).to.equal(1);
@@ -315,7 +325,10 @@ describe("replication announcement retries", () => {
 			offset: 0.6,
 		});
 		await waitForResolved(
-			() => expect(log._announcements._replicationAnnouncementRepairPending).to.equal(false),
+			() =>
+				expect(log._announcements._announcementRepairBinding.pending).to.equal(
+					false,
+				),
 			{ timeout: 2_000, delayInterval: 5 },
 		);
 		expect(snapshots).to.have.length(1);
@@ -330,7 +343,10 @@ describe("replication announcement retries", () => {
 		snapshots.length = 0;
 		await store.log.replicate({ factor: 0.1, offset: 0.8 });
 		await waitForResolved(
-			() => expect(log._announcements._replicationAnnouncementRepairPending).to.equal(false),
+			() =>
+				expect(log._announcements._announcementRepairBinding.pending).to.equal(
+					false,
+				),
 			{ timeout: 2_000, delayInterval: 5 },
 		);
 		expect(snapshots).to.have.length(3);
@@ -454,7 +470,9 @@ describe("replication announcement retries", () => {
 		await waitForResolved(
 			() => {
 				expect(snapshots).to.have.length(2);
-				expect(log._announcements._replicationAnnouncementRepairPending).to.equal(false);
+				expect(log._announcements._announcementRepairBinding.pending).to.equal(
+					false,
+				);
 			},
 			{ timeout: 2_000, delayInterval: 5 },
 		);
@@ -519,14 +537,18 @@ describe("replication announcement retries", () => {
 			factor: 0.2,
 			offset: 0.6,
 		});
-		expect(log._announcements._replicationAnnouncementRepairPending).to.equal(true);
+		expect(log._announcements._announcementRepairBinding.pending).to.equal(
+			true,
+		);
 		rejectStaleCollection(new Error("stale subscriber collection failed"));
 
 		await waitForResolved(
 			() => {
 				expect(subscriberCollections).to.equal(2);
 				expect(snapshots).to.have.length(1);
-				expect(log._announcements._replicationAnnouncementRepairPending).to.equal(false);
+				expect(log._announcements._announcementRepairBinding.pending).to.equal(
+					false,
+				);
 			},
 			{ timeout: 2_000, delayInterval: 5 },
 		);
@@ -562,11 +584,15 @@ describe("replication announcement retries", () => {
 			});
 
 		await store.log.replicate({ factor: 0.25, offset: 0.1 });
-		expect(log._announcements._replicationAnnouncementRepairPending).to.equal(true);
+		expect(log._announcements._announcementRepairBinding.pending).to.equal(
+			true,
+		);
 		await store.close();
 		await delay(150);
 		expect(acknowledgedSnapshots).to.equal(0);
-		expect(log._announcements._replicationAnnouncementRepairPending).to.equal(false);
+		expect(log._announcements._announcementRepairBinding.pending).to.equal(
+			false,
+		);
 	});
 
 	it("uses exact timeout branding without retrying generic closed or mixed aggregate failures", async () => {
@@ -587,20 +613,27 @@ describe("replication announcement retries", () => {
 				new Error("fanout channel closed while detached"),
 			),
 		).to.equal(false);
-		expect(log._announcements.queueCurrentReplicationStateAnnouncementRetry(mixed)).to.equal(
+		expect(
+			log._announcements.queueCurrentReplicationStateAnnouncementRetry(mixed),
+		).to.equal(false);
+		expect(log._announcements._replicationAnnouncementRetryPending).to.equal(
 			false,
 		);
-		expect(log._announcements._replicationAnnouncementRetryPending).to.equal(false);
 
 		const crossPackageTimeout = {
 			constructor: { name: "TimeoutError" },
 			name: "Error",
 		};
 		expect(
-			log._announcements.queueCurrentReplicationStateAnnouncementRetry(crossPackageTimeout),
+			log._announcements.queueCurrentReplicationStateAnnouncementRetry(
+				crossPackageTimeout,
+			),
 		).to.equal(true);
 		await waitForResolved(
-			() => expect(log._announcements._replicationAnnouncementRetryPending).to.equal(false),
+			() =>
+				expect(
+					log._announcements._replicationAnnouncementRetryPending,
+				).to.equal(false),
 			{ timeout: 2_000, delayInterval: 5 },
 		);
 	});
@@ -680,7 +713,9 @@ describe("replication announcement retries", () => {
 			await waitForResolved(
 				() => {
 					expect(snapshots).to.have.length(2);
-					expect(log._announcements._replicationAnnouncementRetryPending).to.equal(false);
+					expect(
+						log._announcements._replicationAnnouncementRetryPending,
+					).to.equal(false);
 				},
 				{ timeout: 2_000, delayInterval: 5 },
 			);
@@ -765,7 +800,9 @@ describe("replication announcement retries", () => {
 			await waitForResolved(
 				() => {
 					expect(snapshots).to.have.length(1);
-					expect(log._announcements._replicationAnnouncementRetryPending).to.equal(false);
+					expect(
+						log._announcements._replicationAnnouncementRetryPending,
+					).to.equal(false);
 				},
 				{ timeout: 2_000, delayInterval: 5 },
 			);
@@ -813,7 +850,9 @@ describe("replication announcement retries", () => {
 		await waitForResolved(
 			() => {
 				expect(snapshotAttempts).to.equal(1);
-				expect(log._announcements._replicationAnnouncementRetryPending).to.equal(false);
+				expect(
+					log._announcements._replicationAnnouncementRetryPending,
+				).to.equal(false);
 			},
 			{ timeout: 2_000, delayInterval: 5 },
 		);
@@ -856,7 +895,9 @@ describe("replication announcement retries", () => {
 			{ timeout: 2_000, delayInterval: 5 },
 		);
 		expect(log._isReplicating).to.equal(false);
-		expect(log._announcements._replicationAnnouncementRetryPending).to.equal(false);
+		expect(log._announcements._replicationAnnouncementRetryPending).to.equal(
+			false,
+		);
 	});
 
 	it("repairs a partial removal after an aggregate delivery timeout", async () => {
@@ -897,7 +938,9 @@ describe("replication announcement retries", () => {
 			delayInterval: 5,
 		});
 		expect(snapshots[0].segments).to.deep.equal([]);
-		expect(log._announcements._replicationAnnouncementRetryPending).to.equal(false);
+		expect(log._announcements._replicationAnnouncementRetryPending).to.equal(
+			false,
+		);
 	});
 
 	it("cancels a pending authoritative retry before the close announcement", async () => {
@@ -931,12 +974,16 @@ describe("replication announcement retries", () => {
 			expect(error).to.equal(timeout);
 		}
 		expect(incrementalFailed).to.equal(true);
-		expect(log._announcements._replicationAnnouncementRetryPending).to.equal(true);
+		expect(log._announcements._replicationAnnouncementRetryPending).to.equal(
+			true,
+		);
 
 		await store.close();
 		await delay(150);
 		expect(nonEmptySnapshots).to.deep.equal([]);
-		expect(log._announcements._replicationAnnouncementRetryPending).to.equal(false);
+		expect(log._announcements._replicationAnnouncementRetryPending).to.equal(
+			false,
+		);
 	});
 
 	it("does not let a repair worker outlive a repair function reconfiguration", async () => {
@@ -985,12 +1032,14 @@ describe("replication announcement retries", () => {
 		// must neither send an acknowledged snapshot nor clear the
 		// reconfigured state's pending flag.
 		log._announcements.setupReplicationAnnouncementRepairFunction(10, 3);
-		log._announcements._replicationAnnouncementRepairPending = true;
+		log._announcements._announcementRepairBinding.pending = true;
 
 		releaseStaleCollection();
 		await delay(50);
 		expect(acknowledgedSnapshots).to.equal(0);
-		expect(log._announcements._replicationAnnouncementRepairPending).to.equal(true);
+		expect(log._announcements._announcementRepairBinding.pending).to.equal(
+			true,
+		);
 	});
 
 	it("does not let a stale retry clear pending after retry reconfiguration", async () => {
@@ -1040,7 +1089,9 @@ describe("replication announcement retries", () => {
 			} catch (error) {
 				expect(error).to.equal(timeout);
 			}
-			expect(log._announcements._replicationAnnouncementRetryPending).to.equal(true);
+			expect(log._announcements._replicationAnnouncementRetryPending).to.equal(
+				true,
+			);
 			hangCollections = true;
 			await firstCollectionHeld;
 
@@ -1054,12 +1105,16 @@ describe("replication announcement retries", () => {
 					new TimeoutError("fresh retry after reconfiguration"),
 				),
 			).to.equal(true);
-			expect(log._announcements._replicationAnnouncementRetryPending).to.equal(true);
+			expect(log._announcements._replicationAnnouncementRetryPending).to.equal(
+				true,
+			);
 
 			heldCollections.shift()!();
 			await delay(50);
 			expect(snapshots).to.deep.equal([]);
-			expect(log._announcements._replicationAnnouncementRetryPending).to.equal(true);
+			expect(log._announcements._replicationAnnouncementRetryPending).to.equal(
+				true,
+			);
 		} finally {
 			hangCollections = false;
 			for (const release of heldCollections.splice(0)) {
@@ -1116,11 +1171,13 @@ describe("replication announcement retries", () => {
 			args: { replicate: false, timeUntilRoleMaturity: 0 },
 		});
 		reopened = true;
-		log._announcements._replicationAnnouncementRepairPending = true;
+		log._announcements._announcementRepairBinding.pending = true;
 
 		releaseStaleCollection();
 		await delay(50);
 		expect(reopenedAcknowledgedSnapshots).to.equal(0);
-		expect(log._announcements._replicationAnnouncementRepairPending).to.equal(true);
+		expect(log._announcements._announcementRepairBinding.pending).to.equal(
+			true,
+		);
 	});
 });

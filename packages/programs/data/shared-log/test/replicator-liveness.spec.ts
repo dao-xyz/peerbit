@@ -243,7 +243,8 @@ describe("waitForReplicator liveness", () => {
 
 			expect(disconnected.notCalled).to.be.true;
 			expect(db0.log.uniqueReplicators.has(peerHash)).to.be.true;
-			expect(log._liveness._replicatorLivenessFailures.has(peerHash)).to.be.false;
+			expect(log._liveness._replicatorLivenessFailures.has(peerHash)).to.be
+				.false;
 			expect(
 				await db0.log.replicationIndex.count({ query: { hash: peerHash } }),
 			).to.be.greaterThan(0);
@@ -375,7 +376,10 @@ describe("waitForReplicator liveness", () => {
 			await blockerStarted.promise;
 			const blockerTail = log._replicationInfoApplyQueueByPeer.get(peerHash);
 
-			log._liveness._replicatorLastActivityAt.set(peerHash, Date.now() - 60_000);
+			log._liveness._replicatorLastActivityAt.set(
+				peerHash,
+				Date.now() - 60_000,
+			);
 			// Seed one prior miss so this probe reaches the eviction threshold.
 			log._liveness._replicatorLivenessFailures.set(peerHash, 1);
 			const eviction = hooks.probeReplicatorLiveness(peerHash);
@@ -393,7 +397,8 @@ describe("waitForReplicator liveness", () => {
 
 			expect(disconnected.notCalled).to.be.true;
 			expect(db0.log.uniqueReplicators.has(peerHash)).to.be.true;
-			expect(log._liveness._replicatorLivenessFailures.has(peerHash)).to.be.false;
+			expect(log._liveness._replicatorLivenessFailures.has(peerHash)).to.be
+				.false;
 			expect(
 				await db0.log.replicationIndex.count({ query: { hash: peerHash } }),
 			).to.be.greaterThan(0);
@@ -615,9 +620,9 @@ describe("waitForReplicator liveness", () => {
 		}) as typeof pubsub.getSubscribers;
 
 		try {
-			const cachedHashes = (await subscriberHooks._getTopicSubscribers(syntheticTopic))?.map(
-				(key) => key.hashcode(),
-			);
+			const cachedHashes = (
+				await subscriberHooks._getTopicSubscribers(syntheticTopic)
+			)?.map((key) => key.hashcode());
 			expect(cachedHashes).to.include(peerHash);
 			expect((db0.log as any)._topicSubscribersCache.has(syntheticTopic)).to.be
 				.true;
@@ -629,9 +634,9 @@ describe("waitForReplicator liveness", () => {
 				return originalGetSubscribers(topic);
 			}) as typeof pubsub.getSubscribers;
 
-			const stillCached = (await subscriberHooks._getTopicSubscribers(syntheticTopic))?.map(
-				(key) => key.hashcode(),
-			);
+			const stillCached = (
+				await subscriberHooks._getTopicSubscribers(syntheticTopic)
+			)?.map((key) => key.hashcode());
 			expect(stillCached).to.include(peerHash);
 
 			(db0.log as any).invalidateTopicSubscribersCache(syntheticTopic);
@@ -819,7 +824,10 @@ describe("waitForReplicator liveness", () => {
 
 			// Exercise the separate hash-only removal path used after pubsub loses
 			// the public-key mapping for a previously learned/relayed replicator.
-			log._liveness._replicatorLastActivityAt.set(peerHash, Date.now() - 60_000);
+			log._liveness._replicatorLastActivityAt.set(
+				peerHash,
+				Date.now() - 60_000,
+			);
 			const eviction = hooks.probeReplicatorLiveness(peerHash);
 			releaseSnapshotSynchronizer.resolve();
 			releaseStoppedSynchronizer.resolve();

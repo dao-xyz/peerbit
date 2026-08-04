@@ -201,7 +201,7 @@ export type ReplicationAnnouncementDeps<R extends "u32" | "u64"> = {
 	) => void;
 	isAdaptiveReplicating: () => boolean;
 	callRebalanceParticipationDebounced: () => unknown;
-	// Host-routed so instance spies keep observing re-entrant queueing.
+	// Owner-routed so coordinator spies keep observing re-entrant queueing.
 	queueCurrentReplicationStateAnnouncementRepair: () => void;
 	queueCurrentReplicationStateAnnouncementRetry: (error: unknown) => boolean;
 };
@@ -224,16 +224,6 @@ export class ReplicationAnnouncementCoordinator<R extends "u32" | "u64"> {
 	_replicationAnnouncementRepairFairCursorHash!: string | undefined;
 	_replicationAnnouncementRepairMaxAttempts!: number;
 	_replicationAnnouncementRepairController!: AbortController;
-
-	// Test-visible compatibility accessors: the SharedLog instance (and the
-	// specs reaching through it) keep reading/writing the repair pending flag
-	// under its historical name.
-	get _replicationAnnouncementRepairPending(): boolean {
-		return this._announcementRepairBinding.pending;
-	}
-	set _replicationAnnouncementRepairPending(pending: boolean) {
-		this._announcementRepairBinding.pending = pending;
-	}
 
 	constructor(private readonly deps: ReplicationAnnouncementDeps<R>) {
 		this._replicationAnnouncementRetryPending = false;
@@ -373,7 +363,7 @@ export class ReplicationAnnouncementCoordinator<R extends "u32" | "u64"> {
 		}
 
 		this.advanceCurrentReplicationStateAnnouncementRepairGeneration();
-		this._replicationAnnouncementRepairPending = true;
+		this._announcementRepairBinding.pending = true;
 		void this.replicationAnnouncementRepairDebounced.call();
 	}
 

@@ -4,10 +4,9 @@
 // open()-time map swap) and proves the registry's receive-admission
 // predicate is truth-table equivalent to an INLINE transcription of the
 // legacy 4-term SharedLog.isPeerReceiveAdmissionOpen predicate over every
-// input combination. Since stage 3 the host method delegates to the
-// registry, so the legacy side here must stay this independent inline
-// replica (expected booleans computed in the test itself) — comparing
-// against the host method would be tautological and lose regression power.
+// input combination. The host facade is gone, so the legacy side here stays
+// this independent inline replica (expected booleans computed in the test
+// itself) rather than becoming a tautological registry comparison.
 import { expect } from "chai";
 import {
 	type PeerReceiveAdmissionOptions,
@@ -43,8 +42,8 @@ const createDeps = (host: StubHost): PeerSessionDeps => ({
 
 // Literal transcription of the legacy (pre-stage-3) body of
 // SharedLog.isPeerReceiveAdmissionOpen, reading the same host state the
-// registry deps read. Deliberately NOT the host method: that now delegates
-// to the registry, so this inline replica is the regression oracle.
+// registry deps read. This inline replica is the regression oracle after the
+// host facade's removal.
 const legacyIsPeerReceiveAdmissionOpen = (
 	host: StubHost,
 	blockedPeers: Set<string>,

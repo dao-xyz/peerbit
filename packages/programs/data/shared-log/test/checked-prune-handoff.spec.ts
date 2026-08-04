@@ -467,7 +467,8 @@ describe("checked prune correlated handoff", () => {
 			},
 		);
 		const drain = sinon.spy(log, "drainPeerReceiveHandlers");
-		const observedActivityAt = log._liveness._replicatorLastActivityAt.get(remoteHash);
+		const observedActivityAt =
+			log._liveness._replicatorLastActivityAt.get(remoteHash);
 		let fencedPruning: Promise<unknown> | undefined;
 		let resumedPruning: Promise<unknown> | undefined;
 		let removing: Promise<boolean> | undefined;
@@ -502,7 +503,8 @@ describe("checked prune correlated handoff", () => {
 
 			removing = log.removeReplicator(remoteKey, {
 				shouldRemove: () =>
-					log._liveness._replicatorLastActivityAt.get(remoteHash) === observedActivityAt,
+					log._liveness._replicatorLastActivityAt.get(remoteHash) ===
+					observedActivityAt,
 			});
 			expect(log._peerSessions._receiveCleanupGateByPeer.has(remoteHash)).to.be
 				.false;
@@ -743,7 +745,8 @@ describe("checked prune correlated handoff", () => {
 				).true;
 			});
 
-			const staleLifecycle = log._instanceLifecycle?.ownershipLifecycleController;
+			const staleLifecycle =
+				log._instanceLifecycle?.ownershipLifecycleController;
 			log.startRepairLifecycle();
 			log.cleanupCheckedPrunePeer(
 				remoteHash,
@@ -805,7 +808,8 @@ describe("checked prune correlated handoff", () => {
 			expect(log._checkedPrune.getRetry(entry.hash)?.timer).to.exist;
 
 			log.rearmCheckedPruneAfterTemporaryReceive("never-admitted-hash");
-			expect(log._checkedPrune.hasActiveWork("never-admitted-hash")).to.be.false;
+			expect(log._checkedPrune.hasActiveWork("never-admitted-hash")).to.be
+				.false;
 		} finally {
 			log._checkedPrune.clearRetry(entry.hash);
 			log.clearCheckedPruneAuditTimer();

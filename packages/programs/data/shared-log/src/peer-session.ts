@@ -1,9 +1,8 @@
 // One PeerSession per peer connection-epoch. The session instance IS the
-// opaque subscription-epoch token introduced at index.ts advanceSubscriptionEpoch:
-// every existing `===` epoch comparison keeps working because tokens were
-// always compared by identity and never inspected. Stage 2 wraps; stage 3
-// migrates the compound predicates onto isCurrent()/isActive()/
-// isReceiveAdmissionOpen() and deletes the raw fences one at a time.
+// opaque subscription-epoch token formerly stored by SharedLog: every `===`
+// epoch comparison keeps working because tokens were always compared by
+// identity and never inspected. Compound predicates now live on
+// isCurrent()/isActive()/isReceiveAdmissionOpen().
 
 export type PeerSessionKind = "opening" | "departing";
 
@@ -67,7 +66,7 @@ export class PeerSession {
 		this.phase = kind;
 	}
 
-	/** ≡ SharedLog.isCurrentSubscriptionEpoch(this.peerHash, this). */
+	/** ≡ former SharedLog.isCurrentSubscriptionEpoch(this.peerHash, this). */
 	isCurrent(): boolean {
 		return this.registry.current(this.peerHash) === this;
 	}
@@ -98,7 +97,7 @@ export class PeerSession {
 		);
 	}
 
-	/** ≡ SharedLog.isPeerReceiveAdmissionOpen(peerHash,
+	/** ≡ former SharedLog.isPeerReceiveAdmissionOpen(peerHash,
 	 *  this.replicationLifecycleController, this, options). */
 	isReceiveAdmissionOpen(options?: PeerReceiveAdmissionOptions): boolean {
 		return this.registry.isReceiveAdmissionOpen(
@@ -261,8 +260,8 @@ export class PeerSessionRegistry {
 	}
 
 	/** null is a VALID current value: a peer that never subscribed has no
-	 *  session, and today's isCurrentSubscriptionEpoch(peer, null) === true
-	 *  admits it (the `?? null` in getSubscriptionEpoch). Preserved exactly. */
+	 *  session, and the former host predicate admitted
+	 *  isCurrent(peer, null) === true. Preserved exactly. */
 	isCurrent(peerHash: string, session: object | null): boolean {
 		return this.current(peerHash) === session;
 	}
@@ -317,9 +316,8 @@ export class PeerSessionRegistry {
 		}
 	}
 
-	/** ≡ SharedLog.isPeerReceiveAdmissionOpen, term for term. `session` may
-	 *  be null (pre-session peer). Stage 3 migrates the host method's body
-	 *  onto this; stage 2 only proves parity in tests. */
+	/** Preserves the former SharedLog.isPeerReceiveAdmissionOpen predicate term
+	 *  for term. `session` may be null (pre-session peer). */
 	isReceiveAdmissionOpen(
 		peerHash: string,
 		session: object | null,

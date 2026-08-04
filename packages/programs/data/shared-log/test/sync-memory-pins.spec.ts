@@ -82,7 +82,10 @@ describe("sync-chunking memory pins", () => {
 			anySync.pendingSync.syncInFlightQueuedCoordinatesByHash.size,
 			"syncInFlightQueuedCoordinatesByHash",
 		).to.equal(0);
-		expect(anySync.pendingSync.pendingSyncClaimCount, "pendingSyncClaimCount").to.equal(0);
+		expect(
+			anySync.pendingSync.pendingSyncClaimCount,
+			"pendingSyncClaimCount",
+		).to.equal(0);
 		expect(
 			anySync.pendingSync.pendingSyncAdmissionCount,
 			"pendingSyncAdmissionCount",
@@ -139,7 +142,9 @@ describe("sync-chunking memory pins", () => {
 
 			await clock.tickAsync(1);
 			expectPendingSyncCensusEmpty(sync);
-			expect((sync as any).pendingSync.syncInFlightQueueExpiryTimer).to.equal(undefined);
+			expect((sync as any).pendingSync.syncInFlightQueueExpiryTimer).to.equal(
+				undefined,
+			);
 		} finally {
 			await sync.close();
 			clock.restore();
@@ -181,8 +186,12 @@ describe("sync-chunking memory pins", () => {
 			await sync.queueSync([41n], peerB, { skipCheck: true });
 			coordinateToHash.add(41n, "alias-only-hash");
 			(sync as any).refreshQueuedSyncCoordinateAliases();
-			expect((sync as any).pendingSync.syncInFlightQueuedCoordinates.size).to.equal(1);
-			expect((sync as any).pendingSync.syncInFlightQueuedHashByCoordinate.size).to.equal(1);
+			expect(
+				(sync as any).pendingSync.syncInFlightQueuedCoordinates.size,
+			).to.equal(1);
+			expect(
+				(sync as any).pendingSync.syncInFlightQueuedHashByCoordinate.size,
+			).to.equal(1);
 			expect(
 				(sync as any).pendingSync.syncInFlightQueuedCoordinatesByHash.size,
 			).to.equal(1);
@@ -200,8 +209,12 @@ describe("sync-chunking memory pins", () => {
 			expectClaimCountMatchesClaimants(sync);
 
 			sync.onPeerDisconnected(peerB);
-			expect((sync as any).pendingSync.syncInFlightQueuedCoordinates.size).to.equal(0);
-			expect((sync as any).pendingSync.syncInFlightQueuedHashByCoordinate.size).to.equal(0);
+			expect(
+				(sync as any).pendingSync.syncInFlightQueuedCoordinates.size,
+			).to.equal(0);
+			expect(
+				(sync as any).pendingSync.syncInFlightQueuedHashByCoordinate.size,
+			).to.equal(0);
 			expect(
 				(sync as any).pendingSync.syncInFlightQueuedCoordinatesByHash.size,
 			).to.equal(0);
@@ -236,9 +249,9 @@ describe("sync-chunking memory pins", () => {
 		const lateHash = "late-alias-hash";
 		try {
 			await sync.queueSync([coordinate], peerA, { skipCheck: true });
-			const coordinateDeadline = (sync as any).pendingSync.syncInFlightQueueExpiresAt.get(
-				coordinate,
-			);
+			const coordinateDeadline = (
+				sync as any
+			).pendingSync.syncInFlightQueueExpiresAt.get(coordinate);
 			expect(coordinateDeadline).to.equal(
 				100_000 + PENDING_SIMPLE_SYNC_KEY_TTL_MS,
 			);
@@ -257,9 +270,9 @@ describe("sync-chunking memory pins", () => {
 			).to.deep.equal([peerA.hashcode(), peerB.hashcode()]);
 			// The transplanted claim inherits the earlier (coordinate) deadline;
 			// repeated claims and additional peers must not slide it.
-			expect((sync as any).pendingSync.syncInFlightQueueExpiresAt.get(coordinate)).to.equal(
-				coordinateDeadline,
-			);
+			expect(
+				(sync as any).pendingSync.syncInFlightQueueExpiresAt.get(coordinate),
+			).to.equal(coordinateDeadline);
 			expectClaimCountMatchesClaimants(sync);
 
 			await clock.tickAsync(PENDING_SIMPLE_SYNC_KEY_TTL_MS - 10_000);
@@ -591,7 +604,9 @@ describe("sync-chunking slot-quota pins", () => {
 				expect((sync as any).pendingMaybeSyncResponses.size).to.equal(0);
 				// ...and the settled leases drain retained work so the dispatch
 				// lifecycle disposes out of the registry.
-				expect((sync as any).syncDispatchRegistry.activeTargets.size).to.equal(0);
+				expect((sync as any).syncDispatchRegistry.activeTargets.size).to.equal(
+					0,
+				);
 			}
 
 			// The full authorization window is reservable again after the flaps.
@@ -720,7 +735,9 @@ describe("sync-chunking dispatch-lifecycle pins", () => {
 			expect(reservation).to.not.equal(undefined);
 			expect((sync as any).syncDispatchRegistry.activeTargets.size).to.equal(1);
 			const targetLifecycle = [
-				...(sync as any).syncDispatchRegistry.activeTargets.get(peerA.hashcode()),
+				...(sync as any).syncDispatchRegistry.activeTargets.get(
+					peerA.hashcode(),
+				),
 			][0] as any;
 
 			controller.abort(new Error("caller aborted"));

@@ -151,9 +151,9 @@ describe("receive admission replication-info recovery epoch", () => {
 						query: { hash: sourceHash },
 					}),
 				).to.equal(0);
-				expect(
-					sharedLog._peerSessions.receiveEpoch(sourceHash),
-				).to.not.equal(null);
+				expect(sharedLog._peerSessions.receiveEpoch(sourceHash)).to.not.equal(
+					null,
+				);
 				expect(sharedLog.latestReplicationInfoMessage.has(sourceHash)).to.be
 					.false;
 
@@ -196,25 +196,22 @@ describe("receive admission replication-info recovery epoch", () => {
 			const peerHash = "remote-peer-recovery-epoch";
 
 			const captured = sharedLog._peerSessions.advanceReceiveEpoch(peerHash);
-			expect(
-				sharedLog._peerSessions.isReceiveEpochCurrent(peerHash, captured),
-			).to.be.true;
+			expect(sharedLog._peerSessions.isReceiveEpochCurrent(peerHash, captured))
+				.to.be.true;
 
 			await db.close();
 			// The epoch map is cleared at close: a capture held across close
 			// compares against null, never against a surviving token.
-			expect(
-				sharedLog._peerSessions.isReceiveEpochCurrent(peerHash, captured),
-			).to.be.false;
+			expect(sharedLog._peerSessions.isReceiveEpochCurrent(peerHash, captured))
+				.to.be.false;
 
 			await session.peers[0].open(db, {
 				args: { replicate: false, setup },
 			});
 			// After reopen the pre-close capture must still fail the current-check:
 			// close()+open() is a hard fence for every outstanding capture.
-			expect(
-				sharedLog._peerSessions.isReceiveEpochCurrent(peerHash, captured),
-			).to.be.false;
+			expect(sharedLog._peerSessions.isReceiveEpochCurrent(peerHash, captured))
+				.to.be.false;
 
 			// Sanity: the reopened instance issues fresh, current tokens.
 			const fresh = sharedLog._peerSessions.advanceReceiveEpoch(peerHash);

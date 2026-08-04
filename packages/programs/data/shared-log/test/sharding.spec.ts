@@ -228,7 +228,7 @@ testSetups.forEach((setup) => {
 				...dbs: { log: EventStore<string, ReplicationDomainHash<any>>["log"] }[]
 			) => {
 				return dbs.reduce((total, db) => {
-					const retries = ((db.log as any)._checkedPruneRetries ??
+					const retries = ((db.log as any)._checkedPrune?.retries ??
 						new Map()) as Map<string, { timer?: NodeJS.Timeout }>;
 					const active = [...retries.values()].filter(
 						(state) => state?.timer,
@@ -290,7 +290,10 @@ testSetups.forEach((setup) => {
 						length: db.log.log.length,
 						prunable: prunable.length,
 						pendingDeletes: (
-							(log._checkedPrune.pendingDeletes ?? new Map()) as Map<string, unknown>
+							(log._checkedPrune.pendingDeletes ?? new Map()) as Map<
+								string,
+								unknown
+							>
 						).size,
 						checkedPruneRetries: (
 							(log._checkedPrune.retries ?? new Map()) as Map<string, unknown>

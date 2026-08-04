@@ -2056,7 +2056,7 @@ testSetups.forEach((setup) => {
 					);
 				} catch (error) {
 					await dbgLogs([db1.log, db2.log, db3.log]);
-					const pending = (db1.log as any)?.["_pendingDeletes"];
+					const pending = (db1.log as any)?._checkedPrune?.pendingDeletes;
 					if (pending) {
 						console.error("pending deletes", pending.size);
 					}
@@ -2089,7 +2089,7 @@ testSetups.forEach((setup) => {
 					);
 				} catch (error) {
 					await dbgLogs([db1.log, db2.log, db3.log]);
-					const pending = (db1.log as any)?.["_pendingDeletes"];
+					const pending = (db1.log as any)?._checkedPrune?.pendingDeletes;
 					if (pending) {
 						console.error("pending deletes", pending.size);
 					}

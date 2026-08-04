@@ -766,16 +766,17 @@ describe("raw exchange-head sync", () => {
 				"commitBlocksGraphAndCoordinatesBatch",
 			);
 			try {
-				const preparedCommit = sharedLog._coordinates.createNativeBackbonePreparedJoinCommit(
-					undefined,
-					undefined,
-					undefined,
-					false,
-					undefined,
-					(committedHashes: string[]) => {
-						committedHashBatches.push([...committedHashes]);
-					},
-				);
+				const preparedCommit =
+					sharedLog._coordinates.createNativeBackbonePreparedJoinCommit(
+						undefined,
+						undefined,
+						undefined,
+						false,
+						undefined,
+						(committedHashes: string[]) => {
+							committedHashBatches.push([...committedHashes]);
+						},
+					);
 				expect(preparedCommit).to.be.a("function");
 				const rawHeads = (message as RawExchangeHeadsMessage).heads;
 				const preparedEntries = rawHeads.map((head, index) => {
@@ -1306,9 +1307,9 @@ describe("raw exchange-head sync", () => {
 			const coordinateIndex = sharedLog.entryCoordinatesIndex as any;
 			expect(sharedLog._nativeBackboneCoordinatePersistence).to.exist;
 			expect(sharedLog._residentEntryCoordinatesByHash).to.be.instanceOf(Map);
-			expect(sharedLog._coordinates.canUseBackboneOnlyCoordinatePersistence()).to.equal(
-				true,
-			);
+			expect(
+				sharedLog._coordinates.canUseBackboneOnlyCoordinatePersistence(),
+			).to.equal(true);
 			const backboneCommitSpy = sinon.spy(
 				backbone,
 				"commitEntryCoordinatesColumnsBatch",

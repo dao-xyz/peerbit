@@ -477,9 +477,11 @@ describe("lifecycle instance identity", () => {
 			session = await TestSession.connected(1);
 			const db = await session.peers[0].open(new EventStore());
 			const log = db.log as any;
-			const c0 = log._instanceLifecycle?.ownershipLifecycleController as AbortController;
+			const c0 = log._instanceLifecycle
+				?.ownershipLifecycleController as AbortController;
 			const l0 = log._instanceLifecycle as InstanceLifecycle;
-			const m0 = log._instanceLifecycle?.membershipLifecycleController as AbortController;
+			const m0 = log._instanceLifecycle
+				?.membershipLifecycleController as AbortController;
 			expect(c0.signal.aborted).to.be.false;
 			log.poisonReplicationOwnership(new Error("boom"));
 			// The critical abort-in-place transition: the ownership controller
@@ -488,7 +490,9 @@ describe("lifecycle instance identity", () => {
 			expect(log._instanceLifecycle?.ownershipLifecycleController).to.equal(c0);
 			expect(c0.signal.aborted).to.be.true;
 			expect(log._instanceLifecycle).to.equal(l0);
-			expect(log._instanceLifecycle?.membershipLifecycleController).to.equal(m0);
+			expect(log._instanceLifecycle?.membershipLifecycleController).to.equal(
+				m0,
+			);
 			expect(m0.signal.aborted).to.be.false;
 		});
 
@@ -496,19 +500,27 @@ describe("lifecycle instance identity", () => {
 			session = await TestSession.connected(1);
 			const db = await session.peers[0].open(new EventStore());
 			const log = db.log as any;
-			const c0 = log._instanceLifecycle?.ownershipLifecycleController as AbortController;
+			const c0 = log._instanceLifecycle
+				?.ownershipLifecycleController as AbortController;
 			const l0 = log._instanceLifecycle as InstanceLifecycle;
-			const m0 = log._instanceLifecycle?.membershipLifecycleController as AbortController;
+			const m0 = log._instanceLifecycle
+				?.membershipLifecycleController as AbortController;
 			// Repeated accessor reads within one open are identity-stable.
 			expect(log._instanceLifecycle?.ownershipLifecycleController).to.equal(c0);
-			expect(log._instanceLifecycle?.membershipLifecycleController).to.equal(m0);
+			expect(log._instanceLifecycle?.membershipLifecycleController).to.equal(
+				m0,
+			);
 
 			await db.close();
 			const reopened = await session.peers[0].open(db);
 			const log2 = reopened.log as any;
 			expect(log2._instanceLifecycle).to.not.equal(l0);
-			expect(log2._instanceLifecycle?.ownershipLifecycleController).to.not.equal(c0);
-			expect(log2._instanceLifecycle?.membershipLifecycleController).to.not.equal(m0);
+			expect(
+				log2._instanceLifecycle?.ownershipLifecycleController,
+			).to.not.equal(c0);
+			expect(
+				log2._instanceLifecycle?.membershipLifecycleController,
+			).to.not.equal(m0);
 			expect(log2._instanceLifecycle?.ownershipLifecycleController).to.equal(
 				log2._instanceLifecycle?.ownershipLifecycleController,
 			);
@@ -521,7 +533,8 @@ describe("lifecycle instance identity", () => {
 			session = await TestSession.connected(1);
 			const db = await session.peers[0].open(new EventStore());
 			const log = db.log as any;
-			const captured = log._instanceLifecycle?.membershipLifecycleController as AbortController;
+			const captured = log._instanceLifecycle
+				?.membershipLifecycleController as AbortController;
 			expect(log.isReplicationLifecycleActive(captured)).to.be.true;
 
 			await db.close();
@@ -539,19 +552,25 @@ describe("lifecycle instance identity", () => {
 			session = await TestSession.connected(1);
 			const db = await session.peers[0].open(new EventStore());
 			const log = db.log as any;
-			const c0 = log._instanceLifecycle?.ownershipLifecycleController as AbortController;
+			const c0 = log._instanceLifecycle
+				?.ownershipLifecycleController as AbortController;
 			const l0 = log._instanceLifecycle;
 			expect(log.isRepairLifecycleActive(c0)).to.be.true;
 			log.startRepairLifecycle();
-			expect(log._instanceLifecycle?.ownershipLifecycleController).to.not.equal(c0);
+			expect(log._instanceLifecycle?.ownershipLifecycleController).to.not.equal(
+				c0,
+			);
 			expect(log.isRepairLifecycleActive(c0)).to.be.false;
 			// The load-bearing predecessor abort: stale-captured-lifecycle
 			// predicates rely on non-current => aborted, so the rotation must
 			// abort the outgoing controller, not merely supersede it.
 			expect(c0.signal.aborted).to.be.true;
 			expect(l0.isActiveFor(c0)).to.be.false;
-			expect(log.isRepairLifecycleActive(log._instanceLifecycle?.ownershipLifecycleController)).to.be
-				.true;
+			expect(
+				log.isRepairLifecycleActive(
+					log._instanceLifecycle?.ownershipLifecycleController,
+				),
+			).to.be.true;
 		});
 
 		it("a never-opened deserialized clone exposes no controllers and closes cleanly", async () => {
@@ -560,16 +579,24 @@ describe("lifecycle instance identity", () => {
 			const db = await session.peers[0].open(store);
 			const clone = deserialize(serialize(store), EventStore);
 			const cloneLog = clone.log as any;
-			expect(cloneLog._instanceLifecycle?.ownershipLifecycleController).to.equal(undefined);
-			expect(cloneLog._instanceLifecycle?.membershipLifecycleController).to.equal(undefined);
+			expect(
+				cloneLog._instanceLifecycle?.ownershipLifecycleController,
+			).to.equal(undefined);
+			expect(
+				cloneLog._instanceLifecycle?.membershipLifecycleController,
+			).to.equal(undefined);
 			// The legacy TypeError a capture attempt raises on such a clone
 			// (reading `.signal` of the undefined controller).
 			expect(() => cloneLog.captureReplicationOwnershipLifecycle()).to.throw(
 				TypeError,
 			);
 			await clone.close();
-			expect(cloneLog._instanceLifecycle?.ownershipLifecycleController).to.equal(undefined);
-			expect(cloneLog._instanceLifecycle?.membershipLifecycleController).to.equal(undefined);
+			expect(
+				cloneLog._instanceLifecycle?.ownershipLifecycleController,
+			).to.equal(undefined);
+			expect(
+				cloneLog._instanceLifecycle?.membershipLifecycleController,
+			).to.equal(undefined);
 			await db.close();
 		});
 	});

@@ -861,12 +861,6 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 		RatelessDispatchTargetLifecycle
 	>;
 
-	private get ratelessDispatchTargets(): Map<
-		string,
-		Set<RatelessDispatchTargetLifecycle>
-	> {
-		return this.ratelessDispatchRegistry.activeTargets;
-	}
 	private activeRatelessResponseCount: number;
 	private activeRatelessResponseCountByPeer: Map<string, number>;
 	// Per-peer slot rows for active rateless responses (shared registry; see
@@ -875,10 +869,6 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 	// immediately and a late release only settles the detached row.
 	private readonly ratelessPeerSlotRows: SyncPeerSlotRegistry;
 	private ratelessClosed: boolean;
-
-	private get ratelessResponseSlotRows(): Map<string, SyncPeerSlotRow> {
-		return this.ratelessPeerSlotRows.rows;
-	}
 
 	constructor(readonly properties: SynchronizerComponents<D>) {
 		this.simple = new SimpleSyncronizer(properties);
@@ -3220,7 +3210,7 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 			}
 		}
 		for (const targetLifecycle of [
-			...(this.ratelessDispatchTargets.get(target) ?? []),
+			...(this.ratelessDispatchRegistry.activeTargets.get(target) ?? []),
 		]) {
 			this.abortRatelessDispatchTarget(
 				targetLifecycle,

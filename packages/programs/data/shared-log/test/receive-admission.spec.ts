@@ -97,7 +97,8 @@ describe("receive admission", () => {
 				expect(sharedLog._entryKnownPeerObservedAt.has("late-confirm")).to.be
 					.false;
 				expect(sharedLog._peerSyncCapabilities.has(sourceHash)).to.be.false;
-				expect(sharedLog._liveness._replicatorLastActivityAt.has(sourceHash)).to.be.false;
+				expect(sharedLog._liveness._replicatorLastActivityAt.has(sourceHash)).to
+					.be.false;
 				expect(sharedLog._activeReceiveHandlersByPeer.has(sourceHash)).to.be
 					.false;
 
@@ -487,7 +488,8 @@ describe("receive admission", () => {
 				expect(
 					sharedLog._entryKnownPeerObservedAt.get(entry.hash)?.has(sourceHash),
 				).to.not.equal(true);
-				expect(sharedLog._liveness._replicatorLastActivityAt.has(sourceHash)).to.be.false;
+				expect(sharedLog._liveness._replicatorLastActivityAt.has(sourceHash)).to
+					.be.false;
 				expect(sharedLog._activeReceiveHandlersByPeer.has(sourceHash)).to.be
 					.false;
 				expect(sharedLog._receiveHandlerDrainByPeer.has(sourceHash)).to.be.false;
@@ -823,9 +825,12 @@ describe("receive admission", () => {
 				const close = target.close().then(() => {
 					closeSettled = true;
 				});
-				await waitForResolved(() =>
-					expect(sharedLog._instanceLifecycle?.membershipLifecycleController.signal.aborted).to.be
-						.true,
+				await waitForResolved(
+					() =>
+						expect(
+							sharedLog._instanceLifecycle?.membershipLifecycleController.signal
+								.aborted,
+						).to.be.true,
 				);
 				await new Promise<void>((resolve) => setTimeout(resolve, 0));
 				expect(closeSettled).to.be.false;
@@ -1188,7 +1193,9 @@ describe("receive admission", () => {
 					{ checkDuplicates: false, rebalance: false },
 				);
 				await rangePersisted.promise;
-				expect(sharedLog._instanceLifecycle._receiveOwnershipMutationAdmissions).to.equal(1);
+				expect(
+					sharedLog._instanceLifecycle._receiveOwnershipMutationAdmissions,
+				).to.equal(1);
 				await target.log.onMessage(exchange(entry), {
 					from: source.node.identity.publicKey,
 				} as any);
@@ -1208,7 +1215,9 @@ describe("receive admission", () => {
 				expect(await target.log.log.has(entry.hash)).to.equal(true);
 				releaseRangePut.resolve();
 				await adding;
-				expect(sharedLog._instanceLifecycle._receiveOwnershipMutationAdmissions).to.equal(0);
+				expect(
+					sharedLog._instanceLifecycle._receiveOwnershipMutationAdmissions,
+				).to.equal(0);
 			} finally {
 				releaseRangePut.resolve();
 				await adding;

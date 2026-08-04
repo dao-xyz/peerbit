@@ -272,7 +272,10 @@ const runScenario = async (
 					typeof writerLog.shouldDelayAdaptiveRebalance === "function"
 						? writerLog.shouldDelayAdaptiveRebalance()
 						: false;
-				return !shouldDelayAdaptiveRebalance && writerLog._pendingDeletes.size === 0;
+				return (
+					!shouldDelayAdaptiveRebalance &&
+					writerLog._checkedPrune.pendingDeletes.size === 0
+				);
 			}, {
 				timeout: args.settleTimeoutMs,
 				delayInterval: 25,

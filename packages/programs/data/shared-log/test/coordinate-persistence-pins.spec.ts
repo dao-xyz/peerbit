@@ -25,10 +25,8 @@
 //     exactly the planned rows into the resident mirror, and a failed native
 //     columns-commit rolls back leaving zero resident entries for the batch.
 //
-// The probes deliberately reach through the compat accessors under the
-// historical field names, and resolve the private persistence methods through
-// `coordinateInternals` so the assertions are identical before and after the
-// state/method moves.
+// The probes reach through the retained state accessors under the historical
+// field names and resolve persistence methods directly on their coordinator.
 import { TestSession } from "@peerbit/test-utils";
 import { expect } from "chai";
 import fs from "fs/promises";
@@ -49,14 +47,7 @@ const setup = {
 	name: "u32-simple-coordinate-persistence-pins",
 };
 
-// The persistence internals live on the SharedLog host today and on its
-// coordinate-persistence coordinator after the stage-4.5 method move (the
-// state-only coordinator of the intermediate commit has no methods yet);
-// the state fields stay reachable through host compat accessors either way.
-const coordinateInternals = (log: any): any =>
-	typeof log._coordinates?.deleteCoordinatesForHashes === "function"
-		? log._coordinates
-		: log;
+const coordinateInternals = (log: any): any => log._coordinates;
 
 describe("coordinate persistence journal flush pins", () => {
 	let log: any;
