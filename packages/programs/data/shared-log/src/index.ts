@@ -2065,10 +2065,28 @@ export class SharedLog<
 	// Receive-side ownership plans may span lower-log joins that invoke user code.
 	// Increment synchronously with leader-cache invalidation so the handler can
 	// detect whether its pre-join plan needs one fresh post-persist audit.
-	private _receiveOwnershipRevision = 0;
+	// Stage 3: physically owned by the per-open InstanceLifecycle
+	// (_receiveOwnershipRevision and _receiveOwnershipMutationAdmissions moved
+	// file-to-file; see src/instance-lifecycle.ts); these accessors keep every
+	// legacy site verbatim, and the fresh lifecycle at open() is the reset-to-0.
+	private get _receiveOwnershipRevision(): number {
+		return this._instanceLifecycle?._receiveOwnershipRevision ?? 0;
+	}
+	private set _receiveOwnershipRevision(value: number) {
+		if (this._instanceLifecycle) {
+			this._instanceLifecycle._receiveOwnershipRevision = value;
+		}
+	}
 	// Count ownership-changing range mutations from queue admission through
 	// settlement, including mutations already pending when a receive starts.
-	private _receiveOwnershipMutationAdmissions = 0;
+	private get _receiveOwnershipMutationAdmissions(): number {
+		return this._instanceLifecycle?._receiveOwnershipMutationAdmissions ?? 0;
+	}
+	private set _receiveOwnershipMutationAdmissions(value: number) {
+		if (this._instanceLifecycle) {
+			this._instanceLifecycle._receiveOwnershipMutationAdmissions = value;
+		}
+	}
 	// Subscription callbacks can overlap because removing a replicator mutates the
 	// replication index asynchronously. Keep that lifecycle separate from message
 	// timestamps so a reconnect can synchronously revoke an older unsubscribe.
@@ -13785,8 +13803,11 @@ export class SharedLog<
 		this._replicationRangeMutationsClosing = false;
 		this._checkedPruneRemoveBlocksLocalRangeMutationAdmission = 0;
 		this._checkedPruneRemovalCallbackInvocationDepth = 0;
-		this._receiveOwnershipRevision = 0;
-		this._receiveOwnershipMutationAdmissions = 0;
+		// The legacy `_receiveOwnershipRevision = 0` and
+		// `_receiveOwnershipMutationAdmissions = 0` resets that sat here come
+		// free with the fresh InstanceLifecycle created below: the counters
+		// physically live on it now, and no consumer runs between this point
+		// and that creation (straight-line assignments only).
 		this._pruneRemovesClosing = false;
 		this._replicationRangeMutationFailure = undefined;
 		// One InstanceLifecycle per open(): fresh identity, installed before
@@ -13796,8 +13817,10 @@ export class SharedLog<
 		// (ownership controller next, membership controller at
 		// resetSubscriptionChangeCallbackTracking below, _checkedPrune and
 		// _closeController and the debouncers in the setup blocks further
-		// down). The fresh object is also the per-open role reset:
-		// roleGeneration starts at 0 on the incoming lifecycle.
+		// down). The fresh object is also the per-open reset for the role
+		// sub-generation and the receive-ownership counters: roleGeneration,
+		// _receiveOwnershipRevision and _receiveOwnershipMutationAdmissions
+		// all start at 0 on the incoming lifecycle.
 		this._instanceLifecycle = this.createInstanceLifecycle();
 		this.startRepairLifecycle();
 		this._replicationRangeMutationTail = Promise.resolve();

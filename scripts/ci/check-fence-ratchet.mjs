@@ -23,15 +23,17 @@ const TARGETS = new Map([
 			"_checkedPruneRemoveBlocksLocalRangeMutationAdmission",
 			"_instanceLifecycle",
 			"_nativeCoordinateMutationGenerations",
-			"_receiveOwnershipMutationAdmissions",
-			"_receiveOwnershipRevision",
 			"_repairLifecycleController",
 			"_replicationLifecycleController",
 		],
 	],
 	[
 		"packages/programs/data/shared-log/src/instance-lifecycle.ts",
-		["roleGeneration"],
+		[
+			"_receiveOwnershipMutationAdmissions",
+			"_receiveOwnershipRevision",
+			"roleGeneration",
+		],
 	],
 	[
 		"packages/programs/data/shared-log/src/native-write-through-block-store.ts",
@@ -91,7 +93,6 @@ const matchesFenceTokens = (name) =>
 // excluded.
 const DECL =
 	/^\s*(?:(?:private|protected|public)\s+(?:static\s+)?(?:override\s+)?(?:readonly\s+)?([A-Za-z0-9_#]+)|(?:static\s+)?(?:readonly\s+)?([_#][A-Za-z0-9_]+))\s*[?!]?\s*[:=]/;
-
 
 const root = process.cwd();
 const errors = [];
