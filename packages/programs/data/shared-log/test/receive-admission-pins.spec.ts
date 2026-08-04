@@ -19,15 +19,31 @@
 // internal window probes were re-pointed to the fences' stage-3 homes (the
 // receive-epoch map on the PeerSessionRegistry, the opening-barrier flag on
 // the PeerSession).
+import { BorshError } from "@dao-xyz/borsh";
+import { AccessError } from "@peerbit/crypto";
 import { TestSession } from "@peerbit/test-utils";
-import { waitForResolved } from "@peerbit/time";
+import { AbortError, waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
 import pDefer from "p-defer";
 import sinon from "sinon";
-import { SyncCapabilitiesMessage } from "../src/exchange-heads.js";
+import { NativeDurableCommitError } from "../src/errors.js";
+import {
+	RequestIPruneV2,
+	ResponseIPruneV2,
+	StashBackedRawExchangeHeadsMessage,
+	SyncCapabilitiesMessage,
+} from "../src/exchange-heads.js";
 import { createReplicationDomainHash } from "../src/replication-domain-hash.js";
-import { AddedReplicationSegmentMessage } from "../src/replication.js";
-import { RequestMaybeSync, SimpleSyncronizer } from "../src/sync/simple.js";
+import {
+	AddedReplicationSegmentMessage,
+	AllReplicatingSegmentsMessage,
+	RequestReplicationInfoMessage,
+} from "../src/replication.js";
+import {
+	ConfirmEntriesMessage,
+	RequestMaybeSync,
+	SimpleSyncronizer,
+} from "../src/sync/simple.js";
 import { EventStore } from "./utils/stores/event-store.js";
 
 const setup = {
@@ -357,6 +373,399 @@ describe("receive admission opening-barrier windows", () => {
 			}
 		} finally {
 			releasePark.resolve();
+			await session.stop();
+		}
+	});
+});
+
+// Stage-4.5 PR-2 pinning tests (P5-P7). These pin the dispatcher facts that
+// must survive the extraction of the five cold control-plane branches out of
+// `onMessage` (both checked-prune protocol arms and the three
+// replication-info arms):
+//
+// P5. DISPATCH PRECEDENCE: the control-plane arms declared ahead of the
+//     synchronizer delegation (checked prune, ConfirmEntries,
+//     SyncCapabilities) never reach `syncronizer.onMessage`, and the arms
+//     declared behind it (RequestReplicationInfoMessage) run only when the
+//     synchronizer declines.
+//
+// P6. LEASE ONE-SHOT: a replication-info announcement releases its receive
+//     lease BEFORE joining the per-peer apply lane (a stalled lane does not
+//     hold `_activeReceiveHandlersByPeer`), and the finally's release after
+//     the mid-branch release has no effect on concurrently held leases.
+//
+// P7. ERROR ENVELOPE: control-plane handler throws traverse the shared
+//     classifier (AccessError/BorshError/AbortError swallowed while
+//     NativeDurableCommitError propagates), and the wire-stash release in
+//     the finally runs exactly once, before the poison recheck.
+
+describe("receive admission control-plane dispatch precedence", () => {
+	it("handles prune, confirm and capability messages ahead of the synchronizer", async () => {
+		const session = await TestSession.disconnected(2);
+		try {
+			const store = new EventStore<string, any>();
+			const source = await session.peers[0].open(store.clone(), {
+				args: { replicate: false, setup },
+			});
+			const target = await session.peers[1].open(store.clone(), {
+				args: { replicate: false, setup },
+			});
+			const sharedLog = target.log as any;
+			const sourceKey = source.node.identity.publicKey;
+			const sourceHash = sourceKey.hashcode();
+			sharedLog.advanceSubscriptionEpoch(sourceHash, "opening");
+
+			const synchronizer = sinon.spy(sharedLog.syncronizer, "onMessage");
+			const removeKnown = sinon.spy(sharedLog, "removeEntriesKnownByPeer");
+			const admit = sinon
+				.stub(sharedLog, "admitAndSendCheckedPruneGrants")
+				.resolves({ missing: [], admitted: [] });
+			const pendingDelete = sinon.spy(
+				sharedLog._checkedPrune,
+				"getPendingDelete",
+			);
+			const markKnown = sinon.spy(sharedLog, "markEntriesKnownByPeer");
+			try {
+				const pruneRequest = new RequestIPruneV2({
+					requests: [{ hash: "hash-a", requestId: new Uint8Array(32) }],
+				});
+				await target.log.onMessage(pruneRequest, { from: sourceKey } as any);
+				expect(removeKnown.calledOnce).to.be.true;
+				expect(admit.calledOnce).to.be.true;
+
+				const pruneResponse = new ResponseIPruneV2({
+					requests: [{ hash: "hash-a", requestId: new Uint8Array(32) }],
+				});
+				await target.log.onMessage(pruneResponse, { from: sourceKey } as any);
+				expect(pendingDelete.calledOnce).to.be.true;
+
+				const confirm = new ConfirmEntriesMessage({ hashes: ["hash-a"] });
+				await target.log.onMessage(confirm, { from: sourceKey } as any);
+				expect(markKnown.calledOnce).to.be.true;
+
+				const capabilities = new SyncCapabilitiesMessage({ capabilities: 3 });
+				await target.log.onMessage(capabilities, { from: sourceKey } as any);
+				expect(sharedLog._peerSyncCapabilities.get(sourceHash)).to.equal(3);
+
+				// None of the pre-delegation arms consulted the synchronizer.
+				const seen = synchronizer.getCalls().map((call) => call.args[0]);
+				expect(seen).to.not.include(pruneRequest);
+				expect(seen).to.not.include(pruneResponse);
+				expect(seen).to.not.include(confirm);
+				expect(seen).to.not.include(capabilities);
+			} finally {
+				synchronizer.restore();
+				removeKnown.restore();
+				admit.restore();
+				pendingDelete.restore();
+				markKnown.restore();
+			}
+		} finally {
+			await session.stop();
+		}
+	});
+
+	it("reaches the replication-info request arm only when the synchronizer declines", async () => {
+		const session = await TestSession.disconnected(2);
+		try {
+			const store = new EventStore<string, any>();
+			const source = await session.peers[0].open(store.clone(), {
+				args: { replicate: false, setup },
+			});
+			const target = await session.peers[1].open(store.clone(), {
+				args: { replicate: 1, setup },
+			});
+			const sharedLog = target.log as any;
+			const sourceKey = source.node.identity.publicKey;
+			const sourceHash = sourceKey.hashcode();
+			sharedLog.advanceSubscriptionEpoch(sourceHash, "opening");
+
+			const send = sinon.stub(sharedLog.rpc, "send").resolves();
+			const segments = sinon.spy(sharedLog, "getMyReplicationSegments");
+			let claim = true;
+			const originalSynchronizerOnMessage =
+				sharedLog.syncronizer.onMessage.bind(sharedLog.syncronizer);
+			const synchronizer = sinon
+				.stub(sharedLog.syncronizer, "onMessage")
+				.callsFake(async (message: unknown, context: unknown) => {
+					if (message instanceof RequestReplicationInfoMessage) {
+						return claim;
+					}
+					return originalSynchronizerOnMessage(message, context);
+				});
+			const sentSegmentsMessages = () =>
+				send
+					.getCalls()
+					.filter(
+						(call) => call.args[0] instanceof AllReplicatingSegmentsMessage,
+					).length;
+			try {
+				// Claimed by the synchronizer: the arm behind the delegation must
+				// not run.
+				await target.log.onMessage(new RequestReplicationInfoMessage(), {
+					from: sourceKey,
+				} as any);
+				expect(segments.called).to.be.false;
+				expect(sentSegmentsMessages()).to.equal(0);
+
+				// Declined: the arm answers with the local segments.
+				claim = false;
+				await target.log.onMessage(new RequestReplicationInfoMessage(), {
+					from: sourceKey,
+				} as any);
+				expect(segments.called).to.be.true;
+				expect(sentSegmentsMessages()).to.equal(1);
+			} finally {
+				synchronizer.restore();
+				segments.restore();
+				send.restore();
+			}
+		} finally {
+			await session.stop();
+		}
+	});
+});
+
+describe("receive admission control-plane lease one-shot", () => {
+	it("releases the receive lease before the apply lane and never twice", async () => {
+		const session = await TestSession.connected(2);
+		const laneEntered = pDefer<void>();
+		const releaseLane = pDefer<void>();
+		let parkedLane: Promise<void> | undefined;
+		let receive: Promise<void> | undefined;
+		try {
+			const store = new EventStore<string, any>();
+			const target = await session.peers[0].open(store, {
+				args: { replicate: 1, setup, timeUntilRoleMaturity: 0 },
+			});
+			await session.peers[1].open(store.clone(), {
+				args: { replicate: 1, setup, timeUntilRoleMaturity: 0 },
+			});
+			const sharedLog = target.log as any;
+			const sourceKey = session.peers[1].identity.publicKey;
+			const sourceHash = sourceKey.hashcode();
+			let remoteRange: any;
+			await waitForResolved(async () => {
+				const ranges = await target.log.replicationIndex
+					.iterate({ query: { hash: sourceHash } })
+					.all();
+				expect(ranges).to.have.length.greaterThan(0);
+				remoteRange = ranges[0].value;
+			});
+			const scheduleRequests = sinon
+				.stub(sharedLog, "scheduleReplicationInfoRequests")
+				.callsFake(() => {});
+			try {
+				// Hold a second lease in the same bucket: a lost mid-branch release
+				// would keep the bucket at 2, and any extra release (e.g. a finally
+				// that releases again) would drain this lease's slot too — both
+				// visibly different from the pinned steady state of 1.
+				const extraRelease = sharedLog.acquirePeerReceiveLease(
+					sourceHash,
+					sharedLog._replicationLifecycleController,
+					sharedLog._peerSessions.current(sourceHash),
+				);
+				expect(extraRelease).to.exist;
+				await waitForResolved(() =>
+					expect(
+						sharedLog._activeReceiveHandlersByPeer.get(sourceHash)?.current
+							.active,
+					).to.equal(1),
+				);
+
+				// Park the per-peer apply lane so the announcement's lane turn
+				// queues behind it.
+				parkedLane = sharedLog.withReplicationInfoApplyQueue(
+					sourceHash,
+					async () => {
+						laneEntered.resolve();
+						await releaseLane.promise;
+					},
+				);
+				await laneEntered.promise;
+				const parkedTail =
+					sharedLog._replicationInfoApplyQueueByPeer.get(sourceHash);
+
+				const timestamp = BigInt(Date.now() + 5_000);
+				let settled = false;
+				receive = target.log
+					.onMessage(
+						new AddedReplicationSegmentMessage({
+							segments: [remoteRange.toReplicationRange()],
+						}),
+						{
+							from: sourceKey,
+							message: { header: { timestamp } },
+						} as any,
+					)
+					.then(() => {
+						settled = true;
+					});
+				// The handler queued its apply-lane turn…
+				await waitForResolved(() =>
+					expect(
+						sharedLog._replicationInfoApplyQueueByPeer.get(sourceHash),
+					).to.not.equal(parkedTail),
+				);
+				// …and released its receive lease BEFORE that turn could run: with
+				// the lane still parked, only the concurrently held lease remains.
+				await waitForResolved(() =>
+					expect(
+						sharedLog._activeReceiveHandlersByPeer.get(sourceHash)?.current
+							.active,
+					).to.equal(1),
+				);
+				expect(settled).to.be.false;
+
+				releaseLane.resolve();
+				await receive;
+				// The announcement applied in its lane turn…
+				expect(sharedLog.latestReplicationInfoMessage.get(sourceHash)).to.equal(
+					timestamp,
+				);
+				// …and the finally's release after the mid-branch release had no
+				// effect: the concurrently held lease still occupies its slot.
+				await waitForResolved(() =>
+					expect(
+						sharedLog._activeReceiveHandlersByPeer.get(sourceHash)?.current
+							.active,
+					).to.equal(1),
+				);
+				extraRelease();
+				await waitForResolved(() =>
+					expect(sharedLog._activeReceiveHandlersByPeer.has(sourceHash)).to.be
+						.false,
+				);
+			} finally {
+				scheduleRequests.restore();
+			}
+		} finally {
+			releaseLane.resolve();
+			await Promise.allSettled(
+				[parkedLane, receive].filter(
+					(value): value is Promise<void> => value != null,
+				),
+			);
+			await session.stop();
+		}
+	});
+});
+
+describe("receive admission receive error envelope", () => {
+	it("swallows classified control-plane errors and rethrows durable poison", async () => {
+		const session = await TestSession.disconnected(2);
+		try {
+			const store = new EventStore<string, any>();
+			const source = await session.peers[0].open(store.clone(), {
+				args: { replicate: false, setup },
+			});
+			const target = await session.peers[1].open(store.clone(), {
+				args: { replicate: 1, setup },
+			});
+			const sharedLog = target.log as any;
+			const sourceKey = source.node.identity.publicKey;
+			const sourceHash = sourceKey.hashcode();
+			sharedLog.advanceSubscriptionEpoch(sourceHash, "opening");
+			const send = sinon.stub(sharedLog.rpc, "send").resolves();
+			try {
+				// AccessError from inside the prune arm is swallowed.
+				const admit = sinon
+					.stub(sharedLog, "admitAndSendCheckedPruneGrants")
+					.rejects(new AccessError("pinned"));
+				await target.log.onMessage(
+					new RequestIPruneV2({
+						requests: [{ hash: "hash-a", requestId: new Uint8Array(32) }],
+					}),
+					{ from: sourceKey } as any,
+				);
+				expect(admit.calledOnce).to.be.true;
+				admit.restore();
+
+				// BorshError from the confirm arm is swallowed.
+				const markKnown = sinon
+					.stub(sharedLog, "markEntriesKnownByPeer")
+					.throws(new BorshError("pinned"));
+				await target.log.onMessage(
+					new ConfirmEntriesMessage({ hashes: ["hash-a"] }),
+					{ from: sourceKey } as any,
+				);
+				expect(markKnown.calledOnce).to.be.true;
+				markKnown.restore();
+
+				// AbortError from the replication-info request arm is swallowed.
+				const segments = sinon
+					.stub(sharedLog, "getMyReplicationSegments")
+					.rejects(new AbortError("pinned"));
+				await target.log.onMessage(new RequestReplicationInfoMessage(), {
+					from: sourceKey,
+				} as any);
+				expect(segments.calledOnce).to.be.true;
+				segments.restore();
+
+				// NativeDurableCommitError is the one class the envelope rethrows.
+				const removeKnown = sinon
+					.stub(sharedLog, "removeEntriesKnownByPeer")
+					.throws(new NativeDurableCommitError(new Error("pinned")));
+				await expect(
+					target.log.onMessage(
+						new RequestIPruneV2({
+							requests: [{ hash: "hash-b", requestId: new Uint8Array(32) }],
+						}),
+						{ from: sourceKey } as any,
+					),
+				).to.be.rejectedWith(NativeDurableCommitError);
+				expect(removeKnown.calledOnce).to.be.true;
+				removeKnown.restore();
+			} finally {
+				send.restore();
+			}
+		} finally {
+			await session.stop();
+		}
+	});
+
+	it("releases a wire-backed raw stash exactly once, before the poison recheck", async () => {
+		const session = await TestSession.disconnected(1);
+		try {
+			const store = new EventStore<string, any>();
+			const target = await session.peers[0].open(store.clone(), {
+				args: { replicate: false, setup },
+			});
+			const sharedLog = target.log as any;
+			const order: string[] = [];
+			const stashRelease = sinon.stub().callsFake(() => {
+				order.push("stash");
+				return true;
+			});
+			const message = new StashBackedRawExchangeHeadsMessage({
+				messageId: new Uint8Array(32),
+				hashes: [],
+				gidRefrences: [],
+				byteLengths: new Uint32Array(0),
+				reserved: new Uint8Array(4),
+				stash: {
+					release: stashRelease,
+					stashedBlocks: () => undefined,
+				} as any,
+			});
+			const poison = sinon
+				.stub(sharedLog, "throwIfNativeDurableCommitFailed")
+				.callsFake(() => {
+					order.push("poison");
+				});
+			try {
+				// A context without `from` fails before any arm runs: the envelope
+				// still releases the stash exactly once, then rechecks the poison
+				// AFTER the release.
+				await target.log.onMessage(message, {} as any);
+				expect(order).to.deep.equal(["poison", "stash", "poison"]);
+				// The release is one-shot at the message level too.
+				expect(message.release()).to.be.false;
+				expect(stashRelease.calledOnce).to.be.true;
+			} finally {
+				poison.restore();
+			}
+		} finally {
 			await session.stop();
 		}
 	});
