@@ -338,6 +338,26 @@ const createOneShotPeerReceiveLease = (
 	};
 };
 
+/**
+ * Receive-scope captures shared with the extracted control-plane handlers of
+ * `onMessage` (stage 4.5). Constructed only after the Raw/ExchangeHeads fast
+ * path has returned or fallen through, so the heads path allocates nothing
+ * for it. Every field is the `onMessage` prelude capture of the same
+ * `receive*` name; the handlers re-alias them locally so their bodies stay
+ * byte-identical with the pre-extraction branches.
+ */
+type ReceiveLaneContext = {
+	fromHash: string;
+	session: PeerSession | null;
+	lifecycleController: AbortController | undefined;
+	receiveEpoch: object | null;
+	syncProfile: SyncProfileFn | undefined;
+	lease: PeerReceiveLease;
+};
+
+/** `onMessage`'s prelude throws when `from` is missing; handlers run after. */
+type ReceiveRequestContext = RequestContext & { from: PublicSignKey };
+
 const toLocalPublicSignKey = (
 	key: PublicSignKey | string,
 ): PublicSignKey | undefined => {
@@ -18900,465 +18920,90 @@ export class SharedLog<
 						}
 					}
 				}
-			} else if (msg instanceof RequestIPruneV2) {
-				const requestPruneStartedAt = syncProfileStart(syncProfile);
-				const from = context.from.hashcode();
-				const requestsByHash = new Map<string, Uint8Array>();
-				for (const request of msg.requests) {
-					if (requestsByHash.has(request.hash)) {
-						return;
-					}
-					requestsByHash.set(request.hash, request.requestId);
-				}
-				const hashes = [...requestsByHash.keys()];
-				if (hashes.length === 0) {
-					return;
-				}
-
-				const coordinatorCleanupStartedAt = syncProfileStart(syncProfile);
-				this.removeEntriesKnownByPeer(hashes, from);
-				// A prune request means the sender is preparing to stop retaining these
-				// hashes. Any receipt it gave our current generation is therefore stale,
-				// even when we cannot grant its reciprocal request.
-				this.removePruneRequestsSent(hashes, from);
-				if (syncProfile) {
-					emitSyncProfileDuration(syncProfile, coordinatorCleanupStartedAt, {
-						name: "sharedLog.receive.requestPrune.coordinatorCleanup",
-						component: "shared-log",
-						entries: hashes.length,
-						messages: 1,
-						details: { hashes: hashes.length },
-					});
-				}
-
-				const admission = await this.admitAndSendCheckedPruneGrants(
-					from,
-					msg.requests,
-				);
-				if (
-					!this.isReplicationLifecycleActive(
-						receiveReplicationLifecycleController,
-					)
-				) {
-					return;
-				}
-
-				let pendingIHaveCreated = 0;
-				let pendingIHaveExtended = 0;
-				for (const request of admission.missing) {
-					const previous = this._pendingIHave.get(request.hash);
-					if (previous) {
-						pendingIHaveExtended += 1;
-						previous.requesting.set(from, request.requestId);
-						previous.resetTimeout();
-						continue;
-					}
-
-					pendingIHaveCreated += 1;
-					const requesting = new Map([[from, request.requestId]]);
-					let pendingIHave!: PendingIHave<T>;
-					pendingIHave = {
-						requesting,
-						resetTimeout: () => this.resetPendingIHaveTimeout(pendingIHave),
-						clear: () => this.clearPendingIHaveTimeout(pendingIHave),
-						callback: async (entry: Entry<T>) => {
-							if (
-								!this.isReplicationLifecycleActive(
-									receiveReplicationLifecycleController,
-								) ||
-								requesting.size === 0
-							) {
-								return;
-							}
-							for (const requester of requesting.keys()) {
-								this.removePeerFromGidPeerHistory(requester, entry.meta.gid);
-							}
-							await Promise.all(
-								[...requesting].map(([requester, requestId]) =>
-									this.admitAndSendCheckedPruneGrants(requester, [
-										{ hash: entry.hash, requestId },
-									]),
-								),
-							);
-						},
-					};
-					this._pendingIHave.set(request.hash, pendingIHave);
-					this.resetPendingIHaveTimeout(pendingIHave);
-				}
-
-				// Close the arrival race between the in-lane presence check and
-				// installing pending-IHave. If admission completed in that window,
-				// run the same callback that onEntryAdded would have run.
-				for (const request of admission.missing) {
-					const pendingIHave = this._pendingIHave.get(request.hash);
-					if (!pendingIHave) {
-						continue;
-					}
-					let entry: Entry<T> | undefined;
-					try {
-						if (await this.log.blocks.has(request.hash)) {
-							entry = (await this.log.get(request.hash)) as
-								| Entry<T>
-								| undefined;
-						}
-					} catch {
-						// The normal entry-admission hook will retry this path.
-					}
-					if (entry && this._pendingIHave.get(request.hash) === pendingIHave) {
-						pendingIHave.clear();
-						this.runPendingIHaveCallback(pendingIHave, entry);
-					}
-				}
-
-				if (syncProfile) {
-					emitSyncProfileDuration(syncProfile, requestPruneStartedAt, {
-						name: "sharedLog.receive.requestPrune.total",
-						component: "shared-log",
-						entries: hashes.length,
-						messages: 1,
-						details: {
-							presentEntries: hashes.length - admission.missing.length,
-							leaderResponses: admission.admitted.length,
-							pendingIHaveCreated,
-							pendingIHaveExtended,
-						},
-					});
-				}
-			} else if (msg instanceof ResponseIPruneV2) {
-				const responseHashes = new Set<string>();
-				for (const request of msg.requests) {
-					if (responseHashes.has(request.hash)) {
-						return;
-					}
-					responseHashes.add(request.hash);
-				}
-				const responseTasks: Promise<void>[] = [];
-				for (const request of msg.requests) {
-					const pendingDelete = this._checkedPrune.getPendingDelete(
-						request.hash,
-					);
-					if (pendingDelete) {
-						responseTasks.push(
-							Promise.resolve(
-								pendingDelete.resolve(
-									context.from.hashcode(),
-									request.requestId,
-								),
-							),
-						);
-					}
-				}
-				const results = await Promise.allSettled(responseTasks);
-				for (const result of results) {
-					if (result.status === "rejected") {
-						logger.error(result.reason?.toString?.() ?? String(result.reason));
-					}
-				}
-			} else if (
-				msg instanceof RequestIPrune ||
-				msg instanceof ResponseIPrune
-			) {
-				// Legacy checked-prune messages are signed but uncorrelated. They cannot
-				// authorize deletion for a particular active request generation. Mixed
-				// versions intentionally retain extra copies until peers upgrade; bounded
-				// background auditing preserves convergence without weakening this gate.
-				return;
-			} else if (msg instanceof ConfirmEntriesMessage) {
-				this.markEntriesKnownByPeer(msg.hashes, context.from.hashcode());
-				this.clearRepairFrontierHashes(context.from.hashcode(), msg.hashes);
-				return;
-			} else if (msg instanceof SyncCapabilitiesMessage) {
-				if (!context.from.equals(this.node.identity.publicKey)) {
-					// No await separates this from the capture above, so the captured
-					// window state is exact: the legacy re-read of the opening map here
-					// could never observe a different value.
-					if (
-						this._peerSessions.isReplicationInfoBlocked(receiveFromHash) &&
-						isOpeningSubscriptionReceive
-					) {
-						// A prior unsubscribe cleanup may still be ahead of this reconnect
-						// barrier. Stage the new generation's one-shot advertisement so that
-						// cleanup cannot erase it before the opening transition commits.
-						this._openingSyncCapabilitiesByPeer.set(receiveFromHash, {
-							epoch: receiveSession!,
-							capabilities: msg.capabilities,
-						});
-					} else {
-						this._peerSyncCapabilities.set(receiveFromHash, msg.capabilities);
-					}
-				}
-				return;
-			} else if (await this.syncronizer.onMessage(msg, context)) {
-				return; // the syncronizer has handled the message
-			} else if (msg instanceof BlocksMessage) {
-				await this.remoteBlocks.onMessage(msg.message, {
-					from: context.from!.hashcode(),
-					transport: createRequestTransportContext(context.message),
-				});
-			} else if (msg instanceof ReplicationPingMessage) {
-				// No-op: used as an ACKed unicast liveness probe.
-			} else if (msg instanceof RequestReplicationInfoMessage) {
-				if (context.from.equals(this.node.identity.publicKey)) {
-					return;
-				}
-				const replicationLifecycleController =
-					receiveReplicationLifecycleController;
-				if (
-					!replicationLifecycleController ||
-					!this.isPeerReceiveAdmissionOpen(
-						receiveFromHash,
-						replicationLifecycleController,
-						receiveSession,
-					)
-				) {
-					return;
-				}
-
-				let replicationSegments: ReplicationRangeIndexable<R>[];
-				try {
-					replicationSegments = await this.getMyReplicationSegments();
-				} catch (error) {
-					if (
-						!this.isPeerReceiveAdmissionOpen(
-							receiveFromHash,
-							replicationLifecycleController,
-							receiveSession,
-						) &&
-						isNotStartedError(error as Error)
-					) {
-						return;
-					}
-					throw error;
-				}
-				if (
-					!this.isPeerReceiveAdmissionOpen(
-						receiveFromHash,
-						replicationLifecycleController,
-						receiveSession,
-					)
-				) {
-					return;
-				}
-				const segments = replicationSegments.map((x) => x.toReplicationRange());
-				this.validatePersistedReplicationRangeSnapshot(segments);
-
-				await this.rpc
-					.send(new AllReplicatingSegmentsMessage({ segments }), {
-						mode: new AcknowledgeDelivery({
-							to: [context.from],
-							redundancy: 1,
-						}),
-						signal: replicationLifecycleController.signal,
-					})
-					.catch((error) =>
-						this.handleReplicationLifecycleSendError(
-							error,
-							replicationLifecycleController,
-						),
-					);
-				if (
-					!this.isPeerReceiveAdmissionOpen(
-						receiveFromHash,
-						replicationLifecycleController,
-						receiveSession,
-					)
-				) {
-					return;
-				}
-
-				// for backwards compatibility (v8) remove this when we are sure that all nodes are v9+
-				if (this.v8Behaviour) {
-					const role = this.getRoleFromReplicationSegments(replicationSegments);
-					if (role instanceof Replicator) {
-						const fixedSettings = !this._isAdaptiveReplicating;
-						if (fixedSettings) {
-							await this.rpc
-								.send(
-									new ResponseRoleMessage({
-										role,
-									}),
-									{
-										mode: new SilentDelivery({
-											to: [context.from],
-											redundancy: 1,
-										}),
-										signal: replicationLifecycleController.signal,
-									},
-								)
-								.catch((error) =>
-									this.handleReplicationLifecycleSendError(
-										error,
-										replicationLifecycleController,
-									),
-								);
-						}
-					}
-				}
-			} else if (
-				msg instanceof AllReplicatingSegmentsMessage ||
-				msg instanceof AddedReplicationSegmentMessage
-			) {
-				if (context.from.equals(this.node.identity.publicKey)) {
-					return;
-				}
-
-				const replicationInfoMessage = msg as
-					| AllReplicatingSegmentsMessage
-					| AddedReplicationSegmentMessage;
-
-				// Process replication updates even if the sender isn't yet considered "ready" by
-				// `Program.waitFor()`. Dropping these messages can lead to missing replicator info
-				// (and downstream `waitForReplicator()` timeouts) under timing-sensitive joins.
-				const from = context.from!;
-				const fromHash = from.hashcode();
-				// Pre-lane gate: lifecycle -> receive-epoch -> blocked, exactly the
-				// legacy order. isMembershipActiveFor is the unit-pinned fold of
-				// isReplicationLifecycleActive; isReceiveEpochCurrent is the
-				// relocated `===`-with-`?? null`. The DELIBERATE absence of a
-				// subscription-epoch term is preserved: the lease already validated
-				// it, and the in-lane recheck owns post-await staleness.
-				if (
-					!this._instanceLifecycle!.isMembershipActiveFor(
-						receiveReplicationLifecycleController,
-					) ||
-					!this._peerSessions.isReceiveEpochCurrent(
-						receiveFromHash,
-						receiveReplicationInfoReceiveEpoch,
-					) ||
-					this._peerSessions.isReplicationInfoBlocked(fromHash)
-				) {
-					return;
-				}
-				const messageTimestamp = context.message.header.timestamp;
-				peerReceiveLease.release();
-				await this.withReplicationInfoApplyQueue(fromHash, async () => {
-					try {
-						// The peer may have unsubscribed after this message was queued.
-						// In-lane gate: lifecycle -> subscription-epoch -> receive-epoch
-						// -> blocked, term for term as before the session migration.
-						if (
-							!this._instanceLifecycle!.isMembershipActiveFor(
-								receiveReplicationLifecycleController,
-							) ||
-							!this._peerSessions.isCurrent(fromHash, receiveSession) ||
-							!this._peerSessions.isReceiveEpochCurrent(
-								fromHash,
-								receiveReplicationInfoReceiveEpoch,
-							) ||
-							this._peerSessions.isReplicationInfoBlocked(fromHash)
-						) {
-							return;
-						}
-
-						// Process in-order to avoid races where repeated reset messages arrive
-						// concurrently and trigger spurious "added" diffs / rebalancing.
-						const prev = this.latestReplicationInfoMessage.get(fromHash);
-						if (prev && prev > messageTimestamp) {
-							return;
-						}
-
-						this.latestReplicationInfoMessage.set(fromHash, messageTimestamp);
-						this._replicatorLivenessFailures.delete(fromHash);
-
-						if (this.closed) {
-							return;
-						}
-
-						const reset = msg instanceof AllReplicatingSegmentsMessage;
-						await this.addReplicationRange(
-							replicationInfoMessage.segments.map((x) =>
-								x.toReplicationRangeIndexable(from),
-							),
-							from,
-							{
-								reset,
-								checkDuplicates: true,
-								timestamp: Number(messageTimestamp),
-								allowLegacyOrderedReplacementPairs:
-									msg instanceof AddedReplicationSegmentMessage,
-							},
-						);
-
-						// If the peer reports any replication segments, stop re-requesting.
-						// (Empty reports can be transient during startup.)
-						if (replicationInfoMessage.segments.length > 0) {
-							this.cancelReplicationInfoRequests(fromHash);
-						}
-					} catch (e) {
-						if (isNotStartedError(e as Error)) {
-							return;
-						}
-						logger.error(
-							`Failed to apply replication settings from '${fromHash}': ${
-								(e as any)?.message ?? e
-							}`,
-						);
-					}
-				});
-			} else if (msg instanceof StoppedReplicating) {
-				const from = context.from!;
-				const segmentIds = msg.segmentIds;
-				if (from.equals(this.node.identity.publicKey)) {
-					return;
-				}
-				const fromHash = from.hashcode();
-				// Same pre-lane gate shape as Added/All above (and the same
-				// intentional absence of a subscription-epoch term).
-				if (
-					!this._instanceLifecycle!.isMembershipActiveFor(
-						receiveReplicationLifecycleController,
-					) ||
-					!this._peerSessions.isReceiveEpochCurrent(
-						receiveFromHash,
-						receiveReplicationInfoReceiveEpoch,
-					) ||
-					this._peerSessions.isReplicationInfoBlocked(fromHash)
-				) {
-					return;
-				}
-				const messageTimestamp = context.message.header.timestamp;
-				peerReceiveLease.release();
-				await this.withReplicationInfoApplyQueue(fromHash, async () => {
-					if (
-						!this._instanceLifecycle!.isMembershipActiveFor(
-							receiveReplicationLifecycleController,
-						) ||
-						!this._peerSessions.isCurrent(fromHash, receiveSession) ||
-						!this._peerSessions.isReceiveEpochCurrent(
-							fromHash,
-							receiveReplicationInfoReceiveEpoch,
-						) ||
-						this._peerSessions.isReplicationInfoBlocked(fromHash)
-					) {
-						return;
-					}
-
-					const previousTimestamp =
-						this.latestReplicationInfoMessage.get(fromHash);
-					if (previousTimestamp && previousTimestamp > messageTimestamp) {
-						return;
-					}
-					this.latestReplicationInfoMessage.set(fromHash, messageTimestamp);
-					this._replicatorLivenessFailures.delete(fromHash);
-					if (this.closed) {
-						return;
-					}
-
-					const rangesToRemove =
-						await this.resolveReplicationRangesFromIdsAndKey(segmentIds, from);
-
-					await this.removeReplicationRanges(rangesToRemove, from);
-					const timestamp = BigInt(+new Date());
-					for (const range of rangesToRemove) {
-						this.replicationChangeDebounceFn.add({
-							range,
-							type: "removed",
-							timestamp,
-						});
-					}
-				});
 			} else {
-				throw new Error("Unexpected message");
+				// Control-plane dispatch (stage 4.5). The lane context is built
+				// only after the Raw/ExchangeHeads fast path has returned or
+				// fallen through, so the heads path allocates nothing for it.
+				// Branch order, branch bodies and the shared catch/finally
+				// envelope are unchanged: the five extracted handlers hold the
+				// former branch bodies verbatim behind alias preambles.
+				const lane: ReceiveLaneContext = {
+					fromHash: receiveFromHash,
+					session: receiveSession,
+					lifecycleController: receiveReplicationLifecycleController,
+					receiveEpoch: receiveReplicationInfoReceiveEpoch,
+					syncProfile,
+					lease: peerReceiveLease,
+				};
+				// The prelude already threw when `context.from` was missing.
+				const laneRequestContext = context as ReceiveRequestContext;
+				if (msg instanceof RequestIPruneV2) {
+					await this.handleRequestIPruneV2(msg, laneRequestContext, lane);
+				} else if (msg instanceof ResponseIPruneV2) {
+					await this.handleResponseIPruneV2(msg, laneRequestContext, lane);
+				} else if (
+					msg instanceof RequestIPrune ||
+					msg instanceof ResponseIPrune
+				) {
+					// Legacy checked-prune messages are signed but uncorrelated. They cannot
+					// authorize deletion for a particular active request generation. Mixed
+					// versions intentionally retain extra copies until peers upgrade; bounded
+					// background auditing preserves convergence without weakening this gate.
+					return;
+				} else if (msg instanceof ConfirmEntriesMessage) {
+					this.markEntriesKnownByPeer(msg.hashes, context.from.hashcode());
+					this.clearRepairFrontierHashes(context.from.hashcode(), msg.hashes);
+					return;
+				} else if (msg instanceof SyncCapabilitiesMessage) {
+					if (!context.from.equals(this.node.identity.publicKey)) {
+						// No await separates this from the capture above, so the captured
+						// window state is exact: the legacy re-read of the opening map here
+						// could never observe a different value.
+						if (
+							this._peerSessions.isReplicationInfoBlocked(receiveFromHash) &&
+							isOpeningSubscriptionReceive
+						) {
+							// A prior unsubscribe cleanup may still be ahead of this reconnect
+							// barrier. Stage the new generation's one-shot advertisement so that
+							// cleanup cannot erase it before the opening transition commits.
+							this._openingSyncCapabilitiesByPeer.set(receiveFromHash, {
+								epoch: receiveSession!,
+								capabilities: msg.capabilities,
+							});
+						} else {
+							this._peerSyncCapabilities.set(receiveFromHash, msg.capabilities);
+						}
+					}
+					return;
+				} else if (await this.syncronizer.onMessage(msg, context)) {
+					return; // the syncronizer has handled the message
+				} else if (msg instanceof BlocksMessage) {
+					await this.remoteBlocks.onMessage(msg.message, {
+						from: context.from!.hashcode(),
+						transport: createRequestTransportContext(context.message),
+					});
+				} else if (msg instanceof ReplicationPingMessage) {
+					// No-op: used as an ACKed unicast liveness probe.
+				} else if (msg instanceof RequestReplicationInfoMessage) {
+					await this.handleRequestReplicationInfo(
+						msg,
+						laneRequestContext,
+						lane,
+					);
+				} else if (
+					msg instanceof AllReplicatingSegmentsMessage ||
+					msg instanceof AddedReplicationSegmentMessage
+				) {
+					await this.handleReplicationInfoAnnouncement(
+						msg,
+						laneRequestContext,
+						lane,
+					);
+				} else if (msg instanceof StoppedReplicating) {
+					await this.handleStoppedReplicating(msg, laneRequestContext, lane);
+				} else {
+					throw new Error("Unexpected message");
+				}
 			}
 		} catch (e: any) {
 			if (e instanceof NativeDurableCommitError) {
@@ -19414,6 +19059,471 @@ export class SharedLog<
 				this.throwIfNativeDurableCommitFailed();
 			}
 		}
+	}
+
+	// -----------------------------------------------------------------
+	// Stage-4.5 control-plane receive handlers. Each holds the former
+	// `onMessage` branch body VERBATIM behind a small alias preamble that
+	// maps the receive-lane context back onto the prelude capture names;
+	// the preamble is the only glue. Throws intentionally traverse
+	// `onMessage`'s shared catch/finally envelope (error classification,
+	// wire-stash release, lease release, durable-poison recheck).
+	// -----------------------------------------------------------------
+
+	private async handleRequestIPruneV2(
+		msg: RequestIPruneV2,
+		context: ReceiveRequestContext,
+		lane: ReceiveLaneContext,
+	): Promise<void> {
+		const syncProfile = lane.syncProfile;
+		const receiveReplicationLifecycleController = lane.lifecycleController;
+		const requestPruneStartedAt = syncProfileStart(syncProfile);
+		const from = context.from.hashcode();
+		const requestsByHash = new Map<string, Uint8Array>();
+		for (const request of msg.requests) {
+			if (requestsByHash.has(request.hash)) {
+				return;
+			}
+			requestsByHash.set(request.hash, request.requestId);
+		}
+		const hashes = [...requestsByHash.keys()];
+		if (hashes.length === 0) {
+			return;
+		}
+
+		const coordinatorCleanupStartedAt = syncProfileStart(syncProfile);
+		this.removeEntriesKnownByPeer(hashes, from);
+		// A prune request means the sender is preparing to stop retaining these
+		// hashes. Any receipt it gave our current generation is therefore stale,
+		// even when we cannot grant its reciprocal request.
+		this.removePruneRequestsSent(hashes, from);
+		if (syncProfile) {
+			emitSyncProfileDuration(syncProfile, coordinatorCleanupStartedAt, {
+				name: "sharedLog.receive.requestPrune.coordinatorCleanup",
+				component: "shared-log",
+				entries: hashes.length,
+				messages: 1,
+				details: { hashes: hashes.length },
+			});
+		}
+
+		const admission = await this.admitAndSendCheckedPruneGrants(
+			from,
+			msg.requests,
+		);
+		if (
+			!this.isReplicationLifecycleActive(
+				receiveReplicationLifecycleController,
+			)
+		) {
+			return;
+		}
+
+		let pendingIHaveCreated = 0;
+		let pendingIHaveExtended = 0;
+		for (const request of admission.missing) {
+			const previous = this._pendingIHave.get(request.hash);
+			if (previous) {
+				pendingIHaveExtended += 1;
+				previous.requesting.set(from, request.requestId);
+				previous.resetTimeout();
+				continue;
+			}
+
+			pendingIHaveCreated += 1;
+			const requesting = new Map([[from, request.requestId]]);
+			let pendingIHave!: PendingIHave<T>;
+			pendingIHave = {
+				requesting,
+				resetTimeout: () => this.resetPendingIHaveTimeout(pendingIHave),
+				clear: () => this.clearPendingIHaveTimeout(pendingIHave),
+				callback: async (entry: Entry<T>) => {
+					if (
+						!this.isReplicationLifecycleActive(
+							receiveReplicationLifecycleController,
+						) ||
+						requesting.size === 0
+					) {
+						return;
+					}
+					for (const requester of requesting.keys()) {
+						this.removePeerFromGidPeerHistory(requester, entry.meta.gid);
+					}
+					await Promise.all(
+						[...requesting].map(([requester, requestId]) =>
+							this.admitAndSendCheckedPruneGrants(requester, [
+								{ hash: entry.hash, requestId },
+							]),
+						),
+					);
+				},
+			};
+			this._pendingIHave.set(request.hash, pendingIHave);
+			this.resetPendingIHaveTimeout(pendingIHave);
+		}
+
+		// Close the arrival race between the in-lane presence check and
+		// installing pending-IHave. If admission completed in that window,
+		// run the same callback that onEntryAdded would have run.
+		for (const request of admission.missing) {
+			const pendingIHave = this._pendingIHave.get(request.hash);
+			if (!pendingIHave) {
+				continue;
+			}
+			let entry: Entry<T> | undefined;
+			try {
+				if (await this.log.blocks.has(request.hash)) {
+					entry = (await this.log.get(request.hash)) as
+						| Entry<T>
+						| undefined;
+				}
+			} catch {
+				// The normal entry-admission hook will retry this path.
+			}
+			if (entry && this._pendingIHave.get(request.hash) === pendingIHave) {
+				pendingIHave.clear();
+				this.runPendingIHaveCallback(pendingIHave, entry);
+			}
+		}
+
+		if (syncProfile) {
+			emitSyncProfileDuration(syncProfile, requestPruneStartedAt, {
+				name: "sharedLog.receive.requestPrune.total",
+				component: "shared-log",
+				entries: hashes.length,
+				messages: 1,
+				details: {
+					presentEntries: hashes.length - admission.missing.length,
+					leaderResponses: admission.admitted.length,
+					pendingIHaveCreated,
+					pendingIHaveExtended,
+				},
+			});
+		}
+	}
+
+	private async handleResponseIPruneV2(
+		msg: ResponseIPruneV2,
+		context: ReceiveRequestContext,
+		_lane: ReceiveLaneContext,
+	): Promise<void> {
+		const responseHashes = new Set<string>();
+		for (const request of msg.requests) {
+			if (responseHashes.has(request.hash)) {
+				return;
+			}
+			responseHashes.add(request.hash);
+		}
+		const responseTasks: Promise<void>[] = [];
+		for (const request of msg.requests) {
+			const pendingDelete = this._checkedPrune.getPendingDelete(
+				request.hash,
+			);
+			if (pendingDelete) {
+				responseTasks.push(
+					Promise.resolve(
+						pendingDelete.resolve(
+							context.from.hashcode(),
+							request.requestId,
+						),
+					),
+				);
+			}
+		}
+		const results = await Promise.allSettled(responseTasks);
+		for (const result of results) {
+			if (result.status === "rejected") {
+				logger.error(result.reason?.toString?.() ?? String(result.reason));
+			}
+		}
+	}
+
+	private async handleRequestReplicationInfo(
+		_msg: RequestReplicationInfoMessage,
+		context: ReceiveRequestContext,
+		lane: ReceiveLaneContext,
+	): Promise<void> {
+		const receiveFromHash = lane.fromHash;
+		const receiveSession = lane.session;
+		const receiveReplicationLifecycleController = lane.lifecycleController;
+		if (context.from.equals(this.node.identity.publicKey)) {
+			return;
+		}
+		const replicationLifecycleController =
+			receiveReplicationLifecycleController;
+		if (
+			!replicationLifecycleController ||
+			!this.isPeerReceiveAdmissionOpen(
+				receiveFromHash,
+				replicationLifecycleController,
+				receiveSession,
+			)
+		) {
+			return;
+		}
+
+		let replicationSegments: ReplicationRangeIndexable<R>[];
+		try {
+			replicationSegments = await this.getMyReplicationSegments();
+		} catch (error) {
+			if (
+				!this.isPeerReceiveAdmissionOpen(
+					receiveFromHash,
+					replicationLifecycleController,
+					receiveSession,
+				) &&
+				isNotStartedError(error as Error)
+			) {
+				return;
+			}
+			throw error;
+		}
+		if (
+			!this.isPeerReceiveAdmissionOpen(
+				receiveFromHash,
+				replicationLifecycleController,
+				receiveSession,
+			)
+		) {
+			return;
+		}
+		const segments = replicationSegments.map((x) => x.toReplicationRange());
+		this.validatePersistedReplicationRangeSnapshot(segments);
+
+		await this.rpc
+			.send(new AllReplicatingSegmentsMessage({ segments }), {
+				mode: new AcknowledgeDelivery({
+					to: [context.from],
+					redundancy: 1,
+				}),
+				signal: replicationLifecycleController.signal,
+			})
+			.catch((error) =>
+				this.handleReplicationLifecycleSendError(
+					error,
+					replicationLifecycleController,
+				),
+			);
+		if (
+			!this.isPeerReceiveAdmissionOpen(
+				receiveFromHash,
+				replicationLifecycleController,
+				receiveSession,
+			)
+		) {
+			return;
+		}
+
+		// for backwards compatibility (v8) remove this when we are sure that all nodes are v9+
+		if (this.v8Behaviour) {
+			const role = this.getRoleFromReplicationSegments(replicationSegments);
+			if (role instanceof Replicator) {
+				const fixedSettings = !this._isAdaptiveReplicating;
+				if (fixedSettings) {
+					await this.rpc
+						.send(
+							new ResponseRoleMessage({
+								role,
+							}),
+							{
+								mode: new SilentDelivery({
+									to: [context.from],
+									redundancy: 1,
+								}),
+								signal: replicationLifecycleController.signal,
+							},
+						)
+						.catch((error) =>
+							this.handleReplicationLifecycleSendError(
+								error,
+								replicationLifecycleController,
+							),
+						);
+				}
+			}
+		}
+	}
+
+	private async handleReplicationInfoAnnouncement(
+		msg: AllReplicatingSegmentsMessage | AddedReplicationSegmentMessage,
+		context: ReceiveRequestContext,
+		lane: ReceiveLaneContext,
+	): Promise<void> {
+		const receiveFromHash = lane.fromHash;
+		const receiveSession = lane.session;
+		const receiveReplicationLifecycleController = lane.lifecycleController;
+		const receiveReplicationInfoReceiveEpoch = lane.receiveEpoch;
+		const peerReceiveLease = lane.lease;
+		if (context.from.equals(this.node.identity.publicKey)) {
+			return;
+		}
+
+		const replicationInfoMessage = msg as
+			| AllReplicatingSegmentsMessage
+			| AddedReplicationSegmentMessage;
+
+		// Process replication updates even if the sender isn't yet considered "ready" by
+		// `Program.waitFor()`. Dropping these messages can lead to missing replicator info
+		// (and downstream `waitForReplicator()` timeouts) under timing-sensitive joins.
+		const from = context.from!;
+		const fromHash = from.hashcode();
+		// Pre-lane gate: lifecycle -> receive-epoch -> blocked, exactly the
+		// legacy order. isMembershipActiveFor is the unit-pinned fold of
+		// isReplicationLifecycleActive; isReceiveEpochCurrent is the
+		// relocated `===`-with-`?? null`. The DELIBERATE absence of a
+		// subscription-epoch term is preserved: the lease already validated
+		// it, and the in-lane recheck owns post-await staleness.
+		if (
+			!this._instanceLifecycle!.isMembershipActiveFor(
+				receiveReplicationLifecycleController,
+			) ||
+			!this._peerSessions.isReceiveEpochCurrent(
+				receiveFromHash,
+				receiveReplicationInfoReceiveEpoch,
+			) ||
+			this._peerSessions.isReplicationInfoBlocked(fromHash)
+		) {
+			return;
+		}
+		const messageTimestamp = context.message.header.timestamp;
+		peerReceiveLease.release();
+		await this.withReplicationInfoApplyQueue(fromHash, async () => {
+			try {
+				// The peer may have unsubscribed after this message was queued.
+				// In-lane gate: lifecycle -> subscription-epoch -> receive-epoch
+				// -> blocked, term for term as before the session migration.
+				if (
+					!this._instanceLifecycle!.isMembershipActiveFor(
+						receiveReplicationLifecycleController,
+					) ||
+					!this._peerSessions.isCurrent(fromHash, receiveSession) ||
+					!this._peerSessions.isReceiveEpochCurrent(
+						fromHash,
+						receiveReplicationInfoReceiveEpoch,
+					) ||
+					this._peerSessions.isReplicationInfoBlocked(fromHash)
+				) {
+					return;
+				}
+
+				// Process in-order to avoid races where repeated reset messages arrive
+				// concurrently and trigger spurious "added" diffs / rebalancing.
+				const prev = this.latestReplicationInfoMessage.get(fromHash);
+				if (prev && prev > messageTimestamp) {
+					return;
+				}
+
+				this.latestReplicationInfoMessage.set(fromHash, messageTimestamp);
+				this._replicatorLivenessFailures.delete(fromHash);
+
+				if (this.closed) {
+					return;
+				}
+
+				const reset = msg instanceof AllReplicatingSegmentsMessage;
+				await this.addReplicationRange(
+					replicationInfoMessage.segments.map((x) =>
+						x.toReplicationRangeIndexable(from),
+					),
+					from,
+					{
+						reset,
+						checkDuplicates: true,
+						timestamp: Number(messageTimestamp),
+						allowLegacyOrderedReplacementPairs:
+							msg instanceof AddedReplicationSegmentMessage,
+					},
+				);
+
+				// If the peer reports any replication segments, stop re-requesting.
+				// (Empty reports can be transient during startup.)
+				if (replicationInfoMessage.segments.length > 0) {
+					this.cancelReplicationInfoRequests(fromHash);
+				}
+			} catch (e) {
+				if (isNotStartedError(e as Error)) {
+					return;
+				}
+				logger.error(
+					`Failed to apply replication settings from '${fromHash}': ${
+						(e as any)?.message ?? e
+					}`,
+				);
+			}
+		});
+	}
+
+	private async handleStoppedReplicating(
+		msg: StoppedReplicating,
+		context: ReceiveRequestContext,
+		lane: ReceiveLaneContext,
+	): Promise<void> {
+		const receiveFromHash = lane.fromHash;
+		const receiveSession = lane.session;
+		const receiveReplicationLifecycleController = lane.lifecycleController;
+		const receiveReplicationInfoReceiveEpoch = lane.receiveEpoch;
+		const peerReceiveLease = lane.lease;
+		const from = context.from!;
+		const segmentIds = msg.segmentIds;
+		if (from.equals(this.node.identity.publicKey)) {
+			return;
+		}
+		const fromHash = from.hashcode();
+		// Same pre-lane gate shape as Added/All above (and the same
+		// intentional absence of a subscription-epoch term).
+		if (
+			!this._instanceLifecycle!.isMembershipActiveFor(
+				receiveReplicationLifecycleController,
+			) ||
+			!this._peerSessions.isReceiveEpochCurrent(
+				receiveFromHash,
+				receiveReplicationInfoReceiveEpoch,
+			) ||
+			this._peerSessions.isReplicationInfoBlocked(fromHash)
+		) {
+			return;
+		}
+		const messageTimestamp = context.message.header.timestamp;
+		peerReceiveLease.release();
+		await this.withReplicationInfoApplyQueue(fromHash, async () => {
+			if (
+				!this._instanceLifecycle!.isMembershipActiveFor(
+					receiveReplicationLifecycleController,
+				) ||
+				!this._peerSessions.isCurrent(fromHash, receiveSession) ||
+				!this._peerSessions.isReceiveEpochCurrent(
+					fromHash,
+					receiveReplicationInfoReceiveEpoch,
+				) ||
+				this._peerSessions.isReplicationInfoBlocked(fromHash)
+			) {
+				return;
+			}
+
+			const previousTimestamp =
+				this.latestReplicationInfoMessage.get(fromHash);
+			if (previousTimestamp && previousTimestamp > messageTimestamp) {
+				return;
+			}
+			this.latestReplicationInfoMessage.set(fromHash, messageTimestamp);
+			this._replicatorLivenessFailures.delete(fromHash);
+			if (this.closed) {
+				return;
+			}
+
+			const rangesToRemove =
+				await this.resolveReplicationRangesFromIdsAndKey(segmentIds, from);
+
+			await this.removeReplicationRanges(rangesToRemove, from);
+			const timestamp = BigInt(+new Date());
+			for (const range of rangesToRemove) {
+				this.replicationChangeDebounceFn.add({
+					range,
+					type: "removed",
+					timestamp,
+				});
+			}
+		});
 	}
 
 	async calculateTotalParticipation(options?: { sum?: boolean }) {
