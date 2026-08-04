@@ -313,6 +313,31 @@ type PeerReceiveLeaseState = {
 	activeBuckets: Set<PeerReceiveLeaseBucket>;
 };
 
+/**
+ * A one-shot handle over an acquired peer receive lease. The replication-info
+ * arms of `onMessage` release the lease BEFORE joining their apply lane and
+ * the shared finally releases it on every other path; only the first release
+ * has any effect (pinned by the stage-4.5 lease one-shot test).
+ */
+type PeerReceiveLease = {
+	release: () => void;
+};
+
+const createOneShotPeerReceiveLease = (
+	releaseFn: () => void,
+): PeerReceiveLease => {
+	let released = false;
+	return {
+		release: () => {
+			if (released) {
+				return;
+			}
+			released = true;
+			releaseFn();
+		},
+	};
+};
+
 const toLocalPublicSignKey = (
 	key: PublicSignKey | string,
 ): PublicSignKey | undefined => {
@@ -16941,7 +16966,7 @@ export class SharedLog<
 		const stashBackedRawMessage = isStashBackedRawExchangeHeadsMessage(msg)
 			? msg
 			: undefined;
-		let releasePeerReceiveLease: (() => void) | undefined;
+		let peerReceiveLease: PeerReceiveLease | undefined;
 		try {
 			this.throwIfNativeDurableCommitFailed();
 			if (!context.from) {
@@ -16962,7 +16987,7 @@ export class SharedLog<
 				receiveSession?.openingBarrierActive === true;
 			const isOpeningCapabilityAdvertisement =
 				msg instanceof SyncCapabilitiesMessage && isOpeningSubscriptionReceive;
-			releasePeerReceiveLease = this.acquirePeerReceiveLease(
+			const releasePeerReceiveLease = this.acquirePeerReceiveLease(
 				receiveFromHash,
 				receiveReplicationLifecycleController,
 				receiveSession,
@@ -16978,6 +17003,7 @@ export class SharedLog<
 			if (!releasePeerReceiveLease) {
 				return;
 			}
+			peerReceiveLease = createOneShotPeerReceiveLease(releasePeerReceiveLease);
 			const receiveOwnershipRevision = this._receiveOwnershipRevision;
 			const receiveOwnershipLifecycleController =
 				this.captureReplicationOwnershipLifecycle();
@@ -19204,8 +19230,7 @@ export class SharedLog<
 					return;
 				}
 				const messageTimestamp = context.message.header.timestamp;
-				releasePeerReceiveLease?.();
-				releasePeerReceiveLease = undefined;
+				peerReceiveLease.release();
 				await this.withReplicationInfoApplyQueue(fromHash, async () => {
 					try {
 						// The peer may have unsubscribed after this message was queued.
@@ -19292,8 +19317,7 @@ export class SharedLog<
 					return;
 				}
 				const messageTimestamp = context.message.header.timestamp;
-				releasePeerReceiveLease?.();
-				releasePeerReceiveLease = undefined;
+				peerReceiveLease.release();
 				await this.withReplicationInfoApplyQueue(fromHash, async () => {
 					if (
 						!this._instanceLifecycle!.isMembershipActiveFor(
@@ -19386,8 +19410,7 @@ export class SharedLog<
 				// Every return and every locally swallowed receive error passes this
 				// boundary. Release a native wire stash exactly once first, then surface
 				// any durable mutation poison that arose while handling the message.
-				releasePeerReceiveLease?.();
-				releasePeerReceiveLease = undefined;
+				peerReceiveLease?.release();
 				this.throwIfNativeDurableCommitFailed();
 			}
 		}
