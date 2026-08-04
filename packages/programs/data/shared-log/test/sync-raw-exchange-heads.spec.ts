@@ -766,16 +766,17 @@ describe("raw exchange-head sync", () => {
 				"commitBlocksGraphAndCoordinatesBatch",
 			);
 			try {
-				const preparedCommit = sharedLog.createNativeBackbonePreparedJoinCommit(
-					undefined,
-					undefined,
-					undefined,
-					false,
-					undefined,
-					(committedHashes: string[]) => {
-						committedHashBatches.push([...committedHashes]);
-					},
-				);
+				const preparedCommit =
+					sharedLog._coordinates.createNativeBackbonePreparedJoinCommit(
+						undefined,
+						undefined,
+						undefined,
+						false,
+						undefined,
+						(committedHashes: string[]) => {
+							committedHashBatches.push([...committedHashes]);
+						},
+					);
 				expect(preparedCommit).to.be.a("function");
 				const rawHeads = (message as RawExchangeHeadsMessage).heads;
 				const preparedEntries = rawHeads.map((head, index) => {
@@ -1306,9 +1307,9 @@ describe("raw exchange-head sync", () => {
 			const coordinateIndex = sharedLog.entryCoordinatesIndex as any;
 			expect(sharedLog._nativeBackboneCoordinatePersistence).to.exist;
 			expect(sharedLog._residentEntryCoordinatesByHash).to.be.instanceOf(Map);
-			expect(sharedLog.canUseBackboneOnlyCoordinatePersistence()).to.equal(
-				true,
-			);
+			expect(
+				sharedLog._coordinates.canUseBackboneOnlyCoordinatePersistence(),
+			).to.equal(true);
 			const backboneCommitSpy = sinon.spy(
 				backbone,
 				"commitEntryCoordinatesColumnsBatch",
@@ -1360,7 +1361,7 @@ describe("raw exchange-head sync", () => {
 					});
 				}
 				const persisted =
-					await sharedLog.persistBackboneOnlyReceiveCoordinateBatch(
+					await sharedLog._coordinates.persistBackboneOnlyReceiveCoordinateBatch(
 						persistItems,
 					);
 
@@ -3017,7 +3018,7 @@ describe("raw exchange-head sync", () => {
 			const log = db.log as any;
 			const sourceHash = session.peers[0].identity.publicKey.hashcode();
 			const removeKnown = sinon.spy(log, "removeEntriesKnownByPeer");
-			const removeOutbound = sinon.spy(log, "removePruneRequestsSent");
+			const removeOutbound = sinon.spy(log._checkedPrune, "removeRequestsSent");
 			const removeConfirmations = sinon.spy(
 				log._checkedPrune,
 				"removeConfirmedReplicators",

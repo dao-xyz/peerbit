@@ -134,9 +134,8 @@ export const combineCoordinateDeleteHashes = (
  * through these deps to HOST state, so the poison surface is unchanged.
  */
 export interface CoordinatePersistenceDeps<R extends "u32" | "u64"> {
-	/** Host-routed so sinon stubs installed on the SharedLog instance keep
-	 *  intercepting (document-package tests stub this predicate by name on
-	 *  the host to force the direct-fallback path). */
+	/** Owner-routed so tests can stub the coordinator predicate while forcing
+	 *  the direct-fallback path. */
 	canUseNativeBackboneResidentCoordinateState: () => boolean;
 	/** The SharedLog instance itself — only for `decodeReplicas(x).getValue(host)`. */
 	host(): any;
@@ -180,10 +179,9 @@ export interface CoordinatePersistenceDeps<R extends "u32" | "u64"> {
  * glue `this._coordinates.<field>` -> `this.<field>` for the owned state and
  * `this.<hostDep>` -> `this.deps.<hostDep>()` for host state (plus the single
  * `_nativeDurableRecoveryReadyForReopen = true` write, which becomes
- * `deps.setDurableRecoveryReadyForReopen(true)`). SharedLog keeps thin
- * KEEP-OLD delegators for every externally-called name so all legacy call
- * sites (and instance-level sinon spies routed through them) are untouched;
- * internal-only helpers moved without delegators.
+ * `deps.setDurableRecoveryReadyForReopen(true)`). SharedLog callers now use
+ * the coordinator directly; only the three compatibility state accessors
+ * remain on the host.
  *
  * Reset discipline is unchanged from the legacy host fields: each open/close
  * site resets exactly the subset of fields it always reset (the resident

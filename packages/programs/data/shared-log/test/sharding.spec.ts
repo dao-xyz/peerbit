@@ -76,14 +76,18 @@ type CheckedPrunePendingDelete = {
 };
 
 type CheckedPruneLocalLeaderTestLog<E> = {
-	_pendingDeletes: Map<string, CheckedPrunePendingDelete>;
+	_checkedPrune: {
+		pendingDeletes: Map<string, CheckedPrunePendingDelete>;
+	};
 	pruneJoinedEntriesNoLongerLed: (entries: E[]) => Promise<void>;
 	pruneIndexedEntriesNoLongerLed: () => Promise<void>;
 };
 
 type CheckedPruneDebounceTestLog<E> = {
-	_pendingDeletes: Map<string, CheckedPrunePendingDelete>;
-	_requestIPruneSent: { has: (hash: string) => boolean };
+	_checkedPrune: {
+		pendingDeletes: Map<string, CheckedPrunePendingDelete>;
+		requestIPruneSent: { has: (hash: string) => boolean };
+	};
 	pruneDebouncedFnAddIfNotKeeping: (args: {
 		key: string;
 		value: {
@@ -224,7 +228,7 @@ testSetups.forEach((setup) => {
 				...dbs: { log: EventStore<string, ReplicationDomainHash<any>>["log"] }[]
 			) => {
 				return dbs.reduce((total, db) => {
-					const retries = ((db.log as any)._checkedPruneRetries ??
+					const retries = ((db.log as any)._checkedPrune?.retries ??
 						new Map()) as Map<string, { timer?: NodeJS.Timeout }>;
 					const active = [...retries.values()].filter(
 						(state) => state?.timer,
@@ -286,10 +290,13 @@ testSetups.forEach((setup) => {
 						length: db.log.log.length,
 						prunable: prunable.length,
 						pendingDeletes: (
-							(log._pendingDeletes ?? new Map()) as Map<string, unknown>
+							(log._checkedPrune.pendingDeletes ?? new Map()) as Map<
+								string,
+								unknown
+							>
 						).size,
 						checkedPruneRetries: (
-							(log._checkedPruneRetries ?? new Map()) as Map<string, unknown>
+							(log._checkedPrune.retries ?? new Map()) as Map<string, unknown>
 						).size,
 						repairSweepWork: countActiveRepairSweepWork(db),
 						participation: await db.log
@@ -482,7 +489,7 @@ testSetups.forEach((setup) => {
 							).size,
 							appendBackfill: Boolean(log._appendBackfillTimer),
 							checkedPrune: [
-								...(log._checkedPruneRetries ?? new Map()).values(),
+								...(log._checkedPrune.retries ?? new Map()).values(),
 							].filter((state: { timer?: unknown }) => state.timer).length,
 						},
 						sync: {
@@ -829,14 +836,14 @@ testSetups.forEach((setup) => {
 				>;
 				const seedPendingDelete = () => {
 					let rejected: Error | undefined;
-					log._pendingDeletes.set(entry.hash, {
+					log._checkedPrune.pendingDeletes.set(entry.hash, {
 						requestId: new Uint8Array(32),
 						promise: { promise: new Promise<void>(() => {}) },
-						clear: () => log._pendingDeletes.delete(entry.hash),
+						clear: () => log._checkedPrune.pendingDeletes.delete(entry.hash),
 						resolve: () => {},
 						reject: (reason: Error) => {
 							rejected = reason;
-							log._pendingDeletes.delete(entry.hash);
+							log._checkedPrune.pendingDeletes.delete(entry.hash);
 						},
 					});
 					return () => rejected;
@@ -845,12 +852,12 @@ testSetups.forEach((setup) => {
 				let rejected = seedPendingDelete();
 				await log.pruneJoinedEntriesNoLongerLed([entry]);
 				expect(rejected()?.message).equal("Failed to delete, is leader again");
-				expect(log._pendingDeletes.has(entry.hash)).false;
+				expect(log._checkedPrune.pendingDeletes.has(entry.hash)).false;
 
 				rejected = seedPendingDelete();
 				await log.pruneIndexedEntriesNoLongerLed();
 				expect(rejected()?.message).equal("Failed to delete, is leader again");
-				expect(log._pendingDeletes.has(entry.hash)).false;
+				expect(log._checkedPrune.pendingDeletes.has(entry.hash)).false;
 			});
 
 			it("cancels existing checked prune state when debounced ownership is stale", async () => {
@@ -883,14 +890,14 @@ testSetups.forEach((setup) => {
 				const staleRemoteLeader =
 					session.peers[1].identity.publicKey.hashcode();
 				let rejected: Error | undefined;
-				log._pendingDeletes.set(entry.hash, {
+				log._checkedPrune.pendingDeletes.set(entry.hash, {
 					requestId: new Uint8Array(32),
 					promise: { promise: new Promise<void>(() => {}) },
-					clear: () => log._pendingDeletes.delete(entry.hash),
+					clear: () => log._checkedPrune.pendingDeletes.delete(entry.hash),
 					resolve: () => {},
 					reject: (reason: Error) => {
 						rejected = reason;
-						log._pendingDeletes.delete(entry.hash);
+						log._checkedPrune.pendingDeletes.delete(entry.hash);
 					},
 				});
 				await log.pruneDebouncedFnAddIfNotKeeping({
@@ -903,8 +910,8 @@ testSetups.forEach((setup) => {
 				await log.pruneDebouncedFn.flush();
 
 				expect(rejected?.message).equal("Failed to delete, is leader again");
-				expect(log._pendingDeletes.has(entry.hash)).false;
-				expect(log._requestIPruneSent.has(entry.hash)).false;
+				expect(log._checkedPrune.pendingDeletes.has(entry.hash)).false;
+				expect(log._checkedPrune.requestIPruneSent.has(entry.hash)).false;
 			});
 
 			const countIdleUnderReplicatedEntries = async (

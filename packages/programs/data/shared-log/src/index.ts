@@ -200,7 +200,6 @@ import { TransportMessage } from "./message.js";
 import { NativeBackboneWriteThroughBlockStore } from "./native-write-through-block-store.js";
 import {
 	type PeerSession,
-	type PeerSessionKind,
 	PeerSessionRegistry,
 } from "./peer-session.js";
 import { PIDReplicationController } from "./pid.js";
@@ -234,7 +233,6 @@ import {
 import {
 	ReplicationAnnouncementCoordinator,
 	isTransientReplicationAnnouncementError,
-	type ReplicationAnnouncementRepairWorkerContext,
 } from "./replication-announcement.js";
 import {
 	type ReplicationDomainHash,
@@ -1944,14 +1942,14 @@ export class SharedLog<
 	// see src/coordinate-persistence.ts). Constructed by
 	// ensureNativeDurabilityRuntimeState (constructor + every clone-hydration
 	// site where the legacy `??=` defaults ran); all internal readers use
-	// direct property hops (`this._coordinates.<field>`), never the compat
-	// accessors below.
+	// direct property hops (`this._coordinates.<field>`), never the remaining
+	// compatibility state accessors below.
 	// Typed `<any>` deliberately: the coordinator's deps closures mention R in
 	// invariant positions, and an R-typed field here would make SharedLog
 	// instantiations invariant in R (breaking the long-standing
-	// `EventStore<string, any>` assignability tests rely on). The compat
-	// accessors and KEEP-OLD delegators below re-state the precise R types at
-	// every boundary, so host-side inference is unchanged.
+	// `EventStore<string, any>` assignability tests rely on). The remaining
+	// compatibility state accessors below re-state the precise R types at their
+	// boundaries, so host-side inference is unchanged.
 	private _coordinates!: CoordinatePersistenceCoordinator<any>;
 	// Test-visible compat accessors under the historical field names. The
 	// getters mirror the legacy never-opened-clone reads (`undefined` before
@@ -1985,18 +1983,6 @@ export class SharedLog<
 			value;
 	}
 
-	get _nativeCoordinateMutationGenerations(): Map<string, number> | undefined {
-		return this._coordinates?._nativeCoordinateMutationGenerations;
-	}
-
-	set _nativeCoordinateMutationGenerations(
-		value: Map<string, number> | undefined,
-	) {
-		(this._coordinates ??=
-			this.createCoordinatePersistenceCoordinator())._nativeCoordinateMutationGenerations =
-			value;
-	}
-
 	get _nativeBackboneCoordinateJournalLastFlushMs(): number {
 		return this._coordinates?._nativeBackboneCoordinateJournalLastFlushMs as number;
 	}
@@ -2023,16 +2009,6 @@ export class SharedLog<
 	private _onUnsubscriptionFn!: (arg: any) => any;
 	private _subscriptionChangeCallbacks?: Set<Promise<void>>;
 	private _acceptSubscriptionChangeCallbacks = false;
-	// Stage 4: physically owned by the per-open InstanceLifecycle
-	// (membershipLifecycleController; the ratchet entry moved file-to-file —
-	// see src/instance-lifecycle.ts). The delegating accessor keeps every
-	// legacy site verbatim: undefined both for never-opened clones (no
-	// lifecycle) and pre-open lifecycles (membership begins at
-	// resetSubscriptionChangeCallbackTracking), matching the legacy
-	// `?: AbortController` field at every reachable read.
-	private get _replicationLifecycleController(): AbortController | undefined {
-		return this._instanceLifecycle?.membershipLifecycleController;
-	}
 	private _activeReceiveHandlersByPeer!: Map<string, PeerReceiveLeaseState>;
 	private _receiveHandlerDrainByPeer!: Map<string, Set<Promise<void>>>;
 	// The per-peer receive cleanup-gate refcounts now live on the
@@ -2068,10 +2044,6 @@ export class SharedLog<
 	private _pendingIHaveCallbacks!: Set<Promise<void>>;
 	private _pendingIHaveExpiryTimer?: ReturnType<typeof setTimeout>;
 	private _pendingIHaveExpiryDeadline = Number.POSITIVE_INFINITY;
-
-	private get _pendingDeletes() {
-		return this._checkedPrune.pendingDeletes;
-	}
 
 	private _pendingIHave!: Map<string, PendingIHave<T>>;
 
@@ -2125,54 +2097,22 @@ export class SharedLog<
 	// If durable post-state cannot be reconciled to every native/runtime mirror,
 	// reject later writers and planners until reopen rehydrates those mirrors.
 	private _replicationRangeMutationFailure?: unknown;
-	// Stage 4: physically owned by the per-open InstanceLifecycle
-	// (ownershipLifecycleController; the ratchet entry and the design comment
-	// moved file-to-file — see src/instance-lifecycle.ts). The non-optional
-	// return type is the same static lie the legacy field decl told: on a
-	// borsh-deserialized never-opened clone (field initializers skipped, no
-	// lifecycle) the value is undefined at runtime in both worlds, and the
-	// clone fallbacks below preserve the legacy behavior verbatim.
-	private get _repairLifecycleController(): AbortController {
-		return this._instanceLifecycle
-			?.ownershipLifecycleController as AbortController;
-	}
 	// design-note: not a new fence — this is the per-open identity object the
 	// fence ratchet is migrating TOWARD (the session/lifecycle refactor). As
-	// of stage 4 it physically owns the ownership/membership controllers (the
-	// accessors above) alongside the role sub-generation and receive counters;
+	// of stage 4 it physically owns the ownership/membership controllers
+	// alongside the role sub-generation and receive counters;
 	// the poison latch, terminal fences, and coordinator/debouncer identities
 	// stay wrapped via late-bound readers until their own drain stages.
 	private _instanceLifecycle?: InstanceLifecycle;
 	// The local receive generations that fence replication-info handlers
 	// across liveness evictions now live on the PeerSessionRegistry
 	// (_replicationInfoReceiveEpochByPeer moved file-to-file; see
-	// src/peer-session.ts): advanced via advanceReplicationInfoReceiveEpoch,
-	// cleared at _close via clearReceiveEpochsForClose.
+	// src/peer-session.ts): advanced through the registry and cleared at _close.
 	// Receive-side ownership plans may span lower-log joins that invoke user code.
 	// Increment synchronously with leader-cache invalidation so the handler can
 	// detect whether its pre-join plan needs one fresh post-persist audit.
-	// Stage 3: physically owned by the per-open InstanceLifecycle
-	// (_receiveOwnershipRevision and _receiveOwnershipMutationAdmissions moved
-	// file-to-file; see src/instance-lifecycle.ts); these accessors keep every
-	// legacy site verbatim, and the fresh lifecycle at open() is the reset-to-0.
-	private get _receiveOwnershipRevision(): number {
-		return this._instanceLifecycle?._receiveOwnershipRevision ?? 0;
-	}
-	private set _receiveOwnershipRevision(value: number) {
-		if (this._instanceLifecycle) {
-			this._instanceLifecycle._receiveOwnershipRevision = value;
-		}
-	}
 	// Count ownership-changing range mutations from queue admission through
 	// settlement, including mutations already pending when a receive starts.
-	private get _receiveOwnershipMutationAdmissions(): number {
-		return this._instanceLifecycle?._receiveOwnershipMutationAdmissions ?? 0;
-	}
-	private set _receiveOwnershipMutationAdmissions(value: number) {
-		if (this._instanceLifecycle) {
-			this._instanceLifecycle._receiveOwnershipMutationAdmissions = value;
-		}
-	}
 	// Subscription callbacks can overlap because removing a replicator mutates the
 	// replication index asynchronously. Keep that lifecycle separate from message
 	// timestamps so a reconnect can synchronously revoke an older unsubscribe.
@@ -2184,12 +2124,6 @@ export class SharedLog<
 	// wins, while a winning reconnect clears it without emitting a stale leave.
 	private _pendingReplicatorLeaveByPeer!: Set<string>;
 	private _liveness!: ReplicatorLivenessMonitor;
-	private get _replicatorLivenessFailures() {
-		return this._liveness._replicatorLivenessFailures;
-	}
-	private get _replicatorLastActivityAt() {
-		return this._liveness._replicatorLastActivityAt;
-	}
 
 	private remoteBlocks!: RemoteBlocks;
 
@@ -2239,7 +2173,9 @@ export class SharedLog<
 		const lifecycle = this._instanceLifecycle;
 		if (lifecycle === undefined) {
 			return (
-				controller === this._repairLifecycleController &&
+				controller ===
+					(this._instanceLifecycle
+						?.ownershipLifecycleController as AbortController) &&
 				!controller.signal.aborted &&
 				this._replicationRangeMutationFailure === undefined &&
 				!this.closed
@@ -2249,7 +2185,8 @@ export class SharedLog<
 	}
 
 	private captureReplicationOwnershipLifecycle(): AbortController {
-		const controller = this._repairLifecycleController;
+		const controller = this._instanceLifecycle
+			?.ownershipLifecycleController as AbortController;
 		this.throwIfReplicationOwnershipLifecycleInactive(controller);
 		return controller;
 	}
@@ -2287,7 +2224,7 @@ export class SharedLog<
 		for (const hash of this._checkedPrune?.retries.keys() ?? []) {
 			this._checkedPrune.clearRetry(hash);
 		}
-		this.cancelCurrentReplicationStateAnnouncementRetry();
+		this._announcements.cancelCurrentReplicationStateAnnouncementRetry();
 		this.joinWarmup.cancelAllJoinWarmupTargets();
 		for (const timer of this._repairRetryTimers) {
 			clearTimeout(timer);
@@ -2717,7 +2654,7 @@ export class SharedLog<
 						return { hash };
 					}
 					const materialized =
-						this.materializeResidentCoordinateEntry(previous);
+						this._coordinates.materializeResidentCoordinateEntry(previous);
 					return {
 						hash,
 						value: {
@@ -2860,8 +2797,8 @@ export class SharedLog<
 		if (!committed || hashes.length === 0) {
 			return;
 		}
-		await this.deleteCoordinatesForHashes(hashes);
-		const flushed = this.flushNativeBackboneCoordinateJournal();
+		await this._coordinates.deleteCoordinatesForHashes(hashes);
+		const flushed = this._coordinates.flushNativeBackboneCoordinateJournal();
 		if (isPromiseLike(flushed)) {
 			await flushed;
 		}
@@ -3161,7 +3098,7 @@ export class SharedLog<
 						);
 					}
 				}
-				await this.rollbackNativeBackboneCoordinateAppendDurably("", rollback);
+				await this._coordinates.rollbackNativeBackboneCoordinateAppendDurably("", rollback);
 			}
 			for (const document of intent.documents) {
 				this.restoreNativeBackboneDocument({
@@ -3170,7 +3107,7 @@ export class SharedLog<
 					byteElementIndexLimit: document.byteElementIndexLimit,
 				});
 			}
-			const flushed = this.flushNativeBackboneCoordinateJournal();
+			const flushed = this._coordinates.flushNativeBackboneCoordinateJournal();
 			if (isPromiseLike(flushed)) {
 				await flushed;
 			}
@@ -3228,7 +3165,7 @@ export class SharedLog<
 		) {
 			const hash = properties.committedHashes[index]!;
 			backbone.graph.delete(hash);
-			this.rollbackNativeBackboneCoordinateAppend(
+			this._coordinates.rollbackNativeBackboneCoordinateAppend(
 				hash,
 				properties.coordinateEntries,
 			);
@@ -3243,7 +3180,7 @@ export class SharedLog<
 		for (const document of properties.documents ?? []) {
 			this.restoreNativeBackboneDocument(document);
 		}
-		const flushed = this.flushNativeBackboneCoordinateJournal();
+		const flushed = this._coordinates.flushNativeBackboneCoordinateJournal();
 		if (isPromiseLike(flushed)) {
 			await flushed;
 		}
@@ -3286,15 +3223,6 @@ export class SharedLog<
 		| ReturnType<typeof debounceFixedInterval>
 		| undefined;
 	private _announcements!: ReplicationAnnouncementCoordinator<R>;
-	private get _replicationAnnouncementRetryPending() {
-		return this._announcements._replicationAnnouncementRetryPending;
-	}
-	private get _replicationAnnouncementRepairPending() {
-		return this._announcements._replicationAnnouncementRepairPending;
-	}
-	private set _replicationAnnouncementRepairPending(pending: boolean) {
-		this._announcements._replicationAnnouncementRepairPending = pending;
-	}
 
 	// A fn for debouncing the calls for pruning
 	pruneDebouncedFn!: DebouncedAccumulatorMap<{
@@ -3303,16 +3231,6 @@ export class SharedLog<
 		workToken?: object;
 	}>;
 	private _checkedPruneAuditTimer?: ReturnType<typeof setTimeout>;
-
-	private get _requestIPruneSent() {
-		return this._checkedPrune.requestIPruneSent;
-	}
-	private get _requestIPruneResponseReplicatorSet() {
-		return this._checkedPrune.responseReplicatorSet;
-	}
-	private get _checkedPruneRetries() {
-		return this._checkedPrune.retries;
-	}
 
 	private replicationChangeDebounceFn!: ReturnType<
 		typeof debounceAggregationChanges<ReplicationRangeIndexable<R>>
@@ -3403,7 +3321,9 @@ export class SharedLog<
 		return new JoinWarmupCoordinator<RepairDispatchEntry<R>>({
 			isLifecycleActive: (controller) =>
 				this.isRepairLifecycleActive(controller),
-			getCurrentLifecycleController: () => this._repairLifecycleController,
+			getCurrentLifecycleController: () =>
+				this._instanceLifecycle
+					?.ownershipLifecycleController as AbortController,
 			getRepairRetryTimers: () => this._repairRetryTimers,
 			isClosed: () => this.closed,
 			onTargetCancelled: (target) => {
@@ -3426,13 +3346,13 @@ export class SharedLog<
 
 	private createReplicationAnnouncementCoordinator(): ReplicationAnnouncementCoordinator<R> {
 		return new ReplicationAnnouncementCoordinator<R>({
-			// Route re-entrant queueing through the SharedLog delegators so sinon
-			// spies installed on the log instance keep observing them (the poison
-			// guard assertions in events.spec.ts depend on this).
+			// Route re-entrant queueing through the owner so coordinator spies keep
+			// observing it (the poison guard assertions in events.spec.ts depend on
+			// this).
 			queueCurrentReplicationStateAnnouncementRepair: () =>
-				this.queueCurrentReplicationStateAnnouncementRepair(),
+				this._announcements.queueCurrentReplicationStateAnnouncementRepair(),
 			queueCurrentReplicationStateAnnouncementRetry: (error: unknown) =>
-				this.queueCurrentReplicationStateAnnouncementRetry(error),
+				this._announcements.queueCurrentReplicationStateAnnouncementRetry(error),
 			isClosed: () => this.closed,
 			getCloseSignal: () => this._closeController.signal,
 			getMyReplicationSegments: () => this.getMyReplicationSegments(),
@@ -3454,16 +3374,16 @@ export class SharedLog<
 
 	private createReplicatorLivenessMonitor(): ReplicatorLivenessMonitor {
 		return new ReplicatorLivenessMonitor({
-			// Sweep-driven probes and activity marks dispatch through the SharedLog
-			// delegators so instance stubs/spies keep intercepting them.
+			// Sweep-driven probes and activity marks dispatch through the owner so
+			// monitor stubs/spies keep intercepting them.
 			probeReplicatorLiveness: (peerHash: string) =>
-				this.probeReplicatorLiveness(peerHash),
+				this._liveness.probeReplicatorLiveness(peerHash),
 			markReplicatorActivity: (peerHash: string, now?: number) =>
-				this.markReplicatorActivity(peerHash, now),
+				this._liveness.markReplicatorActivity(peerHash, now),
 			isClosed: () => this.closed,
 			getCloseSignal: () => this._closeController.signal,
 			getReplicationLifecycleController: () =>
-				this._replicationLifecycleController,
+				this._instanceLifecycle?.membershipLifecycleController,
 			isReplicationLifecycleActive: (controller) =>
 				this.isReplicationLifecycleActive(controller),
 			getSelfHash: () => this.node.identity.publicKey.hashcode(),
@@ -3490,7 +3410,7 @@ export class SharedLog<
 				),
 			getTopicSubscribers: (topic) => this._getTopicSubscribers(topic),
 			confirmReplicatorSubscriberPresence: (peerHash) =>
-				this.confirmReplicatorSubscriberPresence(peerHash),
+				this._liveness.confirmReplicatorSubscriberPresence(peerHash),
 			getNode: () => this.node,
 			getWaitForReplicatorTimeout: () => this.waitForReplicatorTimeout,
 		});
@@ -3502,7 +3422,7 @@ export class SharedLog<
 			isReplicationLifecycleActive: (controller) =>
 				this.isReplicationLifecycleActive(controller),
 			getReplicationLifecycleController: () =>
-				this._replicationLifecycleController,
+				this._instanceLifecycle?.membershipLifecycleController,
 		});
 	}
 
@@ -3588,9 +3508,9 @@ export class SharedLog<
 	// and the InstanceLifecycle fold depend on them).
 	private createCoordinatePersistenceCoordinator(): CoordinatePersistenceCoordinator<R> {
 		return new CoordinatePersistenceCoordinator<R>({
-			// Host-routed for stub visibility (see the deps doc comment).
+			// Owner-routed for stub visibility (see the deps doc comment).
 			canUseNativeBackboneResidentCoordinateState: () =>
-				this.canUseNativeBackboneResidentCoordinateState(),
+				this._coordinates.canUseNativeBackboneResidentCoordinateState(),
 			host: () => this,
 			nativeBackbone: () => this._nativeBackbone,
 			nativeRangePlanner: () => this._nativeRangePlanner,
@@ -4719,7 +4639,9 @@ export class SharedLog<
 			const entryFromGid = this.log.entryIndex.getHeads(gidReference, false);
 			for (const gidEntry of await entryFromGid.all()) {
 				throwIfInactive();
-				let coordinates = await this.getCoordinates(gidEntry);
+				let coordinates = (await this._coordinates.getCoordinates(
+					gidEntry,
+				)) as NumberFromType<R>[];
 				throwIfInactive();
 				let found: Map<string, { intersecting: boolean }>;
 				if (coordinates == null) {
@@ -4906,7 +4828,9 @@ export class SharedLog<
 	}
 
 	private invalidateLeaderSelectionContextCache() {
-		this._receiveOwnershipRevision++;
+		if (this._instanceLifecycle) {
+			this._instanceLifecycle._receiveOwnershipRevision++;
+		}
 		this._leaderSelectionContextCache = undefined;
 		this._leaderPlanCache?.invalidate();
 	}
@@ -4926,7 +4850,9 @@ export class SharedLog<
 		if (options?.freshLeaderPlan || options?.candidates != null) {
 			return undefined;
 		}
-		if (this._receiveOwnershipMutationAdmissions !== 0) {
+		if (
+			(this._instanceLifecycle?._receiveOwnershipMutationAdmissions ?? 0) !== 0
+		) {
 			return undefined;
 		}
 		if (options?.roleAge == null) {
@@ -4940,8 +4866,8 @@ export class SharedLog<
 
 	private isReceiveOwnershipSnapshotStable(revision: number): boolean {
 		return (
-			this._receiveOwnershipMutationAdmissions === 0 &&
-			this._receiveOwnershipRevision === revision
+			(this._instanceLifecycle?._receiveOwnershipMutationAdmissions ?? 0) === 0 &&
+			(this._instanceLifecycle?._receiveOwnershipRevision ?? 0) === revision
 		);
 	}
 
@@ -5031,7 +4957,7 @@ export class SharedLog<
 	) {
 		return (
 			controller != null &&
-			controller === this._replicationLifecycleController &&
+			controller === this._instanceLifecycle?.membershipLifecycleController &&
 			!controller.signal.aborted &&
 			!this.isTerminating()
 		);
@@ -5088,29 +5014,6 @@ export class SharedLog<
 		}
 	}
 
-	private isPeerReceiveAdmissionOpen(
-		peerHash: string,
-		replicationLifecycleController: AbortController | undefined,
-		subscriptionEpoch: object | null,
-		options?: {
-			allowReplicationInfoBlocked?: boolean;
-			allowCleanupGate?: boolean;
-		},
-	) {
-		// Stage 3: the registry owns the 4-term predicate (lifecycle -> epoch ->
-		// blocked -> gate, same short-circuit order); the registry deps are
-		// delegating closures back into this instance, so spies keep observing.
-		// The truth-table proof lives in test/peer-session.spec.ts against an
-		// inline transcription of the legacy predicate (NOT this method, which
-		// would be tautological now).
-		return this._peerSessions.isReceiveAdmissionOpen(
-			peerHash,
-			subscriptionEpoch,
-			replicationLifecycleController,
-			options,
-		);
-	}
-
 	private acquirePeerReceiveLease(
 		peerHash: string,
 		replicationLifecycleController: AbortController | undefined,
@@ -5121,10 +5024,10 @@ export class SharedLog<
 		},
 	): (() => void) | undefined {
 		if (
-			!this.isPeerReceiveAdmissionOpen(
+			!this._peerSessions.isReceiveAdmissionOpen(
 				peerHash,
-				replicationLifecycleController,
 				subscriptionEpoch,
+				replicationLifecycleController,
 				options,
 			)
 		) {
@@ -5211,7 +5114,7 @@ export class SharedLog<
 		pending: PendingIHave<T>,
 		entry: Entry<T>,
 	): void {
-		const replicationLifecycleController = this._replicationLifecycleController;
+		const replicationLifecycleController = this._instanceLifecycle?.membershipLifecycleController;
 		if (!this.isReplicationLifecycleActive(replicationLifecycleController)) {
 			if (this._pendingIHave.get(entry.hash) === pending) {
 				pending.clear();
@@ -5255,7 +5158,7 @@ export class SharedLog<
 
 	private handleReplicationLifecycleSendError(
 		error: unknown,
-		controller = this._replicationLifecycleController,
+		controller = this._instanceLifecycle?.membershipLifecycleController,
 	) {
 		if (
 			(controller?.signal.aborted ||
@@ -5316,20 +5219,12 @@ export class SharedLog<
 		this.rebalanceParticipationDebounced = rebalanceParticipationDebounced;
 	}
 
-	private queueCurrentReplicationStateAnnouncementRetry(
-		error: unknown,
-	): boolean {
-		return this._announcements.queueCurrentReplicationStateAnnouncementRetry(
-			error,
-		);
-	}
-
 	private onRebalanceParticipationError(error: Error): void {
 		if (
 			this.closed ||
 			isNotStartedError(error) ||
 			(isTransientReplicationAnnouncementError(error) &&
-				this._replicationAnnouncementRetryPending)
+				this._announcements._replicationAnnouncementRetryPending)
 		) {
 			return;
 		}
@@ -5338,59 +5233,6 @@ export class SharedLog<
 		// create an unhandled rejection (and a browser pageerror), so surface
 		// unexpected failures through the logger instead.
 		logger.error(error);
-	}
-
-	private setupReplicationAnnouncementRetryFunction(interval?: number): void {
-		this._announcements.setupReplicationAnnouncementRetryFunction(interval);
-	}
-
-	private setupReplicationAnnouncementRepairFunction(
-		interval?: number,
-		maxAttempts?: number,
-	): void {
-		this._announcements.setupReplicationAnnouncementRepairFunction(
-			interval,
-			maxAttempts,
-		);
-	}
-
-	private queueCurrentReplicationStateAnnouncementRepair(): void {
-		this._announcements.queueCurrentReplicationStateAnnouncementRepair();
-	}
-
-	private runCurrentReplicationStateAnnouncementRepair(): Promise<void> {
-		return this._announcements.runCurrentReplicationStateAnnouncementRepair();
-	}
-
-	private repairCurrentReplicationStateAnnouncement(
-		context?: ReplicationAnnouncementRepairWorkerContext,
-	): Promise<void> {
-		return this._announcements.repairCurrentReplicationStateAnnouncement(
-			context,
-		);
-	}
-
-	private cancelCurrentReplicationStateAnnouncementRetry(): void {
-		this._announcements.cancelCurrentReplicationStateAnnouncementRetry();
-	}
-
-	private sendReplicationAnnouncement(
-		message:
-			| AllReplicatingSegmentsMessage
-			| AddedReplicationSegmentMessage
-			| StoppedReplicating,
-		ownershipLifecycleController?: AbortController,
-		options?: { shouldSend?: () => boolean },
-	): Promise<void> {
-		return this._announcements.sendReplicationAnnouncement(
-			message,
-			ownershipLifecycleController,
-			options,
-		);
-	}
-
-	private retryCurrentReplicationStateAnnouncement(): Promise<void> {
-		return this._announcements.retryCurrentReplicationStateAnnouncement();
 	}
 
 	private markLocalAppendActivity(timestamp = Date.now()) {
@@ -5413,27 +5255,6 @@ export class SharedLog<
 			options?.replicate === false &&
 			options?.target === "none"
 		);
-	}
-
-	// Stage 4.5: KEEP-OLD delegators for the early coordinate helpers that
-	// moved to src/coordinate-persistence.ts (the *ForHashValues internal
-	// halves moved without delegators).
-	private deleteCoordinatesForHashes(
-		hashes: Iterable<string>,
-		ownershipLifecycleController?: AbortController,
-	): MaybePromise<void> {
-		return this._coordinates.deleteCoordinatesForHashes(
-			hashes,
-			ownershipLifecycleController,
-		);
-	}
-
-	private forgetCoordinateStateForHashes(hashes: Iterable<string>) {
-		return this._coordinates.forgetCoordinateStateForHashes(hashes);
-	}
-
-	private forgetResidentCoordinateStateForHashes(hashes: Iterable<string>) {
-		return this._coordinates.forgetResidentCoordinateStateForHashes(hashes);
 	}
 
 	private async ensureCurrentHeadCoordinatesIndexed(
@@ -5467,7 +5288,7 @@ export class SharedLog<
 		);
 
 		if (staleHashes.length > 0) {
-			await this.deleteCoordinatesForHashes(
+			await this._coordinates.deleteCoordinatesForHashes(
 				staleHashes,
 				ownershipLifecycleController,
 			);
@@ -5748,7 +5569,7 @@ export class SharedLog<
 			);
 
 			if (confirmedPreliminaryRemovals.length > 0) {
-				await this.sendReplicationAnnouncement(
+				await this._announcements.sendReplicationAnnouncement(
 					new StoppedReplicating({
 						segmentIds: confirmedPreliminaryRemovals.map((x) => x.id),
 					}),
@@ -5775,7 +5596,7 @@ export class SharedLog<
 					replicationOwnershipLifecycleController,
 				);
 				this.validatePersistedReplicationRangeSnapshot(segments);
-				await this.sendReplicationAnnouncement(
+				await this._announcements.sendReplicationAnnouncement(
 					new AllReplicatingSegmentsMessage({ segments }),
 					replicationOwnershipLifecycleController,
 				);
@@ -6072,7 +5893,7 @@ export class SharedLog<
 			return;
 		}
 		try {
-			await this.sendReplicationAnnouncement(
+			await this._announcements.sendReplicationAnnouncement(
 				new StoppedReplicating({ segmentIds: removedSegmentIds }),
 				replicationOwnershipLifecycleController,
 			);
@@ -6367,7 +6188,7 @@ export class SharedLog<
 				let announcementError: unknown;
 				if (isMe && !ownerHasRanges) {
 					try {
-						await this.sendReplicationAnnouncement(
+						await this._announcements.sendReplicationAnnouncement(
 							new AllReplicatingSegmentsMessage({ segments: [] }),
 							replicationOwnershipLifecycleController,
 						);
@@ -7267,7 +7088,7 @@ export class SharedLog<
 					replicationOwnershipLifecycleController,
 				);
 				this.validatePersistedReplicationRangeSnapshot(segments);
-				await this.sendReplicationAnnouncement(
+				await this._announcements.sendReplicationAnnouncement(
 					new AllReplicatingSegmentsMessage({ segments }),
 					replicationOwnershipLifecycleController,
 				);
@@ -7334,7 +7155,7 @@ export class SharedLog<
 				if (options.announce) {
 					return options.announce(message);
 				} else {
-					await this.sendReplicationAnnouncement(
+					await this._announcements.sendReplicationAnnouncement(
 						message,
 						replicationOwnershipLifecycleController,
 						{ shouldSend: options.shouldApply },
@@ -7651,8 +7472,8 @@ export class SharedLog<
 		target: string,
 		entries: ReadonlyMap<string, RepairDispatchEntry<R>>,
 		options?: { bypassKnownPeerHints?: boolean },
-		repairLifecycleController: AbortController = this
-			._repairLifecycleController,
+		repairLifecycleController: AbortController = this._instanceLifecycle
+			?.ownershipLifecycleController as AbortController,
 	): boolean {
 		if (!this.isRepairLifecycleActive(repairLifecycleController)) {
 			return false;
@@ -7679,8 +7500,8 @@ export class SharedLog<
 	private clearRepairFrontierHashes(
 		target: string,
 		hashes: Iterable<string>,
-		repairLifecycleController: AbortController = this
-			._repairLifecycleController,
+		repairLifecycleController: AbortController = this._instanceLifecycle
+			?.ownershipLifecycleController as AbortController,
 	) {
 		if (!this.isRepairLifecycleActive(repairLifecycleController)) {
 			return;
@@ -7886,7 +7707,9 @@ export class SharedLog<
 		}
 
 		const syncEntries = this._logProperties?.sync?.priority
-			? this.materializeRepairDispatchEntries(unknownEntries)
+			? (this._coordinates.materializeRepairDispatchEntries(
+					unknownEntries,
+				) as unknown as Map<string, SyncEntryCoordinates<R>>)
 			: (unknownEntries as Map<string, SyncEntryCoordinates<R>>);
 		if (!isStillCurrent()) {
 			return;
@@ -7907,8 +7730,8 @@ export class SharedLog<
 			bypassRecentDedupe?: boolean;
 			bypassKnownPeerHints?: boolean;
 		},
-		repairLifecycleController: AbortController = this
-			._repairLifecycleController,
+		repairLifecycleController: AbortController = this._instanceLifecycle
+			?.ownershipLifecycleController as AbortController,
 	) {
 		if (
 			entries.size === 0 ||
@@ -7987,8 +7810,8 @@ export class SharedLog<
 		mode: RepairDispatchMode,
 		target: string,
 		retryScheduleMs?: number[],
-		repairLifecycleController: AbortController = this
-			._repairLifecycleController,
+		repairLifecycleController: AbortController = this._instanceLifecycle
+			?.ownershipLifecycleController as AbortController,
 	) {
 		const activeTargets = this._repairFrontierActiveTargetsByMode.get(mode);
 		if (
@@ -8110,8 +7933,8 @@ export class SharedLog<
 	}
 
 	private flushAppendBackfill(
-		repairLifecycleController: AbortController = this
-			._repairLifecycleController,
+		repairLifecycleController: AbortController = this._instanceLifecycle
+			?.ownershipLifecycleController as AbortController,
 	) {
 		if (
 			!this.isRepairLifecycleActive(repairLifecycleController) ||
@@ -8134,7 +7957,8 @@ export class SharedLog<
 	}
 
 	private queueAppendBackfill(target: string, entry: EntryReplicated<R>) {
-		const repairLifecycleController = this._repairLifecycleController;
+		const repairLifecycleController = this._instanceLifecycle
+			?.ownershipLifecycleController as AbortController;
 		if (!this.isRepairLifecycleActive(repairLifecycleController)) {
 			return;
 		}
@@ -8175,8 +7999,8 @@ export class SharedLog<
 			bypassKnownPeerHints?: boolean;
 			retryScheduleMs?: number[];
 		},
-		repairLifecycleController: AbortController = this
-			._repairLifecycleController,
+		repairLifecycleController: AbortController = this._instanceLifecycle
+			?.ownershipLifecycleController as AbortController,
 	) {
 		if (
 			entries.size === 0 ||
@@ -8325,7 +8149,11 @@ export class SharedLog<
 				return;
 			}
 			const timer = setTimeout(() => {
-				if (repairLifecycleController === this._repairLifecycleController) {
+				if (
+					repairLifecycleController ===
+					(this._instanceLifecycle
+						?.ownershipLifecycleController as AbortController)
+				) {
 					this._repairRetryTimers.delete(timer);
 				}
 				if (!this.isRepairLifecycleActive(repairLifecycleController)) {
@@ -8354,8 +8182,8 @@ export class SharedLog<
 			peers?: Iterable<string>;
 			warmupSessions?: ReadonlyMap<string, WarmupSession>;
 		},
-		repairLifecycleController: AbortController = this
-			._repairLifecycleController,
+		repairLifecycleController: AbortController = this._instanceLifecycle
+			?.ownershipLifecycleController as AbortController,
 	) {
 		if (!this.isRepairLifecycleActive(repairLifecycleController)) {
 			return;
@@ -8387,8 +8215,8 @@ export class SharedLog<
 
 	private scheduleJoinAuthoritativeRepair(
 		peers: Set<string>,
-		repairLifecycleController: AbortController = this
-			._repairLifecycleController,
+		repairLifecycleController: AbortController = this._instanceLifecycle
+			?.ownershipLifecycleController as AbortController,
 	) {
 		if (
 			!this.isRepairLifecycleActive(repairLifecycleController) ||
@@ -8441,8 +8269,8 @@ export class SharedLog<
 	}
 
 	private async runRepairSweep(
-		repairLifecycleController: AbortController = this
-			._repairLifecycleController,
+		repairLifecycleController: AbortController = this._instanceLifecycle
+			?.ownershipLifecycleController as AbortController,
 	) {
 		try {
 			while (this.isRepairLifecycleActive(repairLifecycleController)) {
@@ -8816,7 +8644,11 @@ export class SharedLog<
 				logger.error(`Repair sweep failed: ${error?.message ?? error}`);
 			}
 		} finally {
-			if (repairLifecycleController === this._repairLifecycleController) {
+			if (
+				repairLifecycleController ===
+				(this._instanceLifecycle
+					?.ownershipLifecycleController as AbortController)
+			) {
 				this._repairSweepRunning = false;
 				if (
 					this.isRepairLifecycleActive(repairLifecycleController) &&
@@ -8938,10 +8770,6 @@ export class SharedLog<
 		}
 	}
 
-	private hasActiveCheckedPruneWork(hash: string) {
-		return this._checkedPrune.hasActiveWork(hash);
-	}
-
 	private async revalidateCheckedPruneGrantLocalLeaders(
 		hashes: string[],
 		prunePeer: string,
@@ -8953,7 +8781,7 @@ export class SharedLog<
 		const localLeaderHashes = new Set<string>();
 		const unresolvedHashes = new Set(hashes);
 		const nativePlanner = this._nativeBackbone ?? this._nativeRangePlanner;
-		const nativeEntryMetadata = this.getNativeLogEntryMetadataBatch(hashes);
+		const nativeEntryMetadata = this._coordinates.getNativeLogEntryMetadataBatch(hashes);
 
 		if (nativePlanner && !this.hasCustomFindLeaders() && nativeEntryMetadata) {
 			const nativeItems: Array<{
@@ -9565,10 +9393,6 @@ export class SharedLog<
 		return leadersMap;
 	}
 
-	private clearCheckedPruneRetry(hash: string) {
-		this._checkedPrune.clearRetry(hash);
-	}
-
 	private clearCheckedPruneAuditTimer() {
 		if (this._checkedPruneAuditTimer) {
 			clearTimeout(this._checkedPruneAuditTimer);
@@ -9930,7 +9754,7 @@ export class SharedLog<
 			);
 			if (!nativeAppendPlan) {
 				if (deferredCoordinateDeleteHashes) {
-					await this.deleteCoordinatesForHashes(
+					await this._coordinates.deleteCoordinatesForHashes(
 						deferredCoordinateDeleteHashes,
 						ownershipLifecycleController,
 					);
@@ -9962,7 +9786,7 @@ export class SharedLog<
 				})) ?? nativeAppendPlan;
 		} catch (error) {
 			if (deferredCoordinateDeleteHashes) {
-				await this.deleteCoordinatesForHashes(
+				await this._coordinates.deleteCoordinatesForHashes(
 					deferredCoordinateDeleteHashes,
 					ownershipLifecycleController,
 				);
@@ -10051,7 +9875,7 @@ export class SharedLog<
 							ownershipLifecycleController,
 						},
 					);
-			await this.persistPreparedCoordinate(
+			await this._coordinates.persistPreparedCoordinate(
 				{
 					prepared: nativeAppendPlan.preparedCoordinate,
 					hash: result.appendFacts.hash,
@@ -10071,7 +9895,7 @@ export class SharedLog<
 			);
 		} catch (error) {
 			if (deferredCoordinateDeleteHashes) {
-				await this.deleteCoordinatesForHashes(
+				await this._coordinates.deleteCoordinatesForHashes(
 					deferredCoordinateDeleteHashes,
 					ownershipLifecycleController,
 				);
@@ -10084,7 +9908,7 @@ export class SharedLog<
 			let leaders = nativeAppendPlan.leaders;
 			let pruneEntry: EntryReplicated<R> | undefined;
 			if (!leaders) {
-				pruneEntry = this.materializePreparedCoordinateEntry(
+				pruneEntry = this._coordinates.materializePreparedCoordinateEntry(
 					nativeAppendPlan.preparedCoordinate,
 				);
 				leaders = (
@@ -10101,7 +9925,7 @@ export class SharedLog<
 					ownershipLifecycleController,
 				);
 			}
-			pruneEntry ??= this.materializePreparedCoordinateEntry(
+			pruneEntry ??= this._coordinates.materializePreparedCoordinateEntry(
 				nativeAppendPlan.preparedCoordinate,
 			);
 			await this.pruneDebouncedFnAddIfNotKeeping(
@@ -10153,7 +9977,7 @@ export class SharedLog<
 			options?.replicate === true ||
 			(!this.shouldDeferHeadCoordinatePersistence(options) &&
 				!this._nativeSharedLogState &&
-				!this.canUseNativeBackboneResidentCoordinateState())
+				!this._coordinates.canUseNativeBackboneResidentCoordinateState())
 		) {
 			return undefined;
 		}
@@ -10225,7 +10049,7 @@ export class SharedLog<
 			options?.replicate === true ||
 			(!this.shouldDeferHeadCoordinatePersistence(options) &&
 				!this._nativeSharedLogState &&
-				!this.canUseNativeBackboneResidentCoordinateState())
+				!this._coordinates.canUseNativeBackboneResidentCoordinateState())
 		) {
 			return undefined;
 		}
@@ -10327,7 +10151,7 @@ export class SharedLog<
 		if (
 			options?.replicate === false &&
 			hasDocumentIndexCommit &&
-			this.canUseBackboneOnlyCoordinatePersistence()
+			this._coordinates.canUseBackboneOnlyCoordinatePersistence()
 		) {
 			return this.appendLocallyPreparedPayloadNativeBackboneStorageTransaction(
 				payloadData,
@@ -10458,7 +10282,7 @@ export class SharedLog<
 			) {
 				try {
 					this.restoreNativeBackboneDocument(nativeDocumentRollback);
-					const flushed = this.flushNativeBackboneCoordinateJournal();
+					const flushed = this._coordinates.flushNativeBackboneCoordinateJournal();
 					if (isPromiseLike(flushed)) {
 						await flushed;
 					}
@@ -10548,7 +10372,7 @@ export class SharedLog<
 								prepared.trimmedEntries as Array<{ hash?: string }> | undefined
 							)?.flatMap((entry) => (entry.hash ? [entry.hash] : [])) ??
 							[];
-						const coordinateRollback = this.snapshotResidentCoordinateEntries([
+						const coordinateRollback = this._coordinates.snapshotResidentCoordinateEntries([
 							...(preparedHash ? [preparedHash] : []),
 							...preparedNext,
 							...nativeTrimmedHashes,
@@ -10761,14 +10585,14 @@ export class SharedLog<
 					rollbackFailures.push(rollbackError);
 				}
 				try {
-					await this.rollbackNativeBackboneCoordinateAppendDurably(
+					await this._coordinates.rollbackNativeBackboneCoordinateAppendDurably(
 						prepared.appendFacts.hash,
 						lowerPublicationRollback?.coordinateEntries,
 					);
 					for (const document of lowerPublicationRollback?.documents ?? []) {
 						this.restoreNativeBackboneDocument(document);
 					}
-					const flushed = this.flushNativeBackboneCoordinateJournal();
+					const flushed = this._coordinates.flushNativeBackboneCoordinateJournal();
 					if (isPromiseLike(flushed)) {
 						await flushed;
 					}
@@ -10824,7 +10648,7 @@ export class SharedLog<
 				// Strict success cannot honor batching thresholds: native
 				// coordinate/document/signer facts must be physically durable before
 				// the lower commit marker is acknowledged and its intent is retired.
-				await this.flushNativeBackboneCoordinateJournal();
+				await this._coordinates.flushNativeBackboneCoordinateJournal();
 				await prepared.nativeCommittedAppendFinalizer.acknowledge(() =>
 					this.markNativeStrictDurableTransactionLowerMarker(
 						nativeStrictTransaction,
@@ -10863,12 +10687,12 @@ export class SharedLog<
 			ownershipLifecycleController,
 		);
 		const backbone = this._nativeBackbone;
-		if (!backbone || !this.canUseNativeBackboneResidentCoordinateState()) {
+		if (!backbone || !this._coordinates.canUseNativeBackboneResidentCoordinateState()) {
 			return undefined;
 		}
 		if (
 			properties?.nativeBackboneDocumentDeleteKey &&
-			!this.canUseBackboneOnlyCoordinatePersistence()
+			!this._coordinates.canUseBackboneOnlyCoordinatePersistence()
 		) {
 			return undefined;
 		}
@@ -11068,7 +10892,7 @@ export class SharedLog<
 					const committedHash =
 						backboneAppend.entry.cid ?? backboneAppend.entry.hash;
 					const committedNext = backboneAppend.entry.next ?? next;
-					nativeCoordinateRollback = this.snapshotResidentCoordinateEntries([
+					nativeCoordinateRollback = this._coordinates.snapshotResidentCoordinateEntries([
 						...(committedHash ? [committedHash] : []),
 						...committedNext,
 						...nativeTrimmedHashes,
@@ -11314,7 +11138,7 @@ export class SharedLog<
 					);
 					const rollbackCoordinateEntries =
 						nativeCoordinateRollback ??
-						this.snapshotResidentCoordinateEntries([
+						this._coordinates.snapshotResidentCoordinateEntries([
 							prepared.appendFacts.hash,
 							...plannedCoordinateDeleteHashes,
 						]);
@@ -11373,7 +11197,7 @@ export class SharedLog<
 							rollbackFailures.push(rollbackError);
 						}
 						try {
-							await this.rollbackNativeBackboneCoordinateAppendDurably(
+							await this._coordinates.rollbackNativeBackboneCoordinateAppendDurably(
 								prepared.appendFacts.hash,
 								rollbackCoordinateEntries,
 							);
@@ -11383,7 +11207,7 @@ export class SharedLog<
 						if (nativeDocumentRollback) {
 							try {
 								this.restoreNativeBackboneDocument(nativeDocumentRollback);
-								const flushed = this.flushNativeBackboneCoordinateJournal();
+								const flushed = this._coordinates.flushNativeBackboneCoordinateJournal();
 								if (isPromiseLike(flushed)) {
 									await flushed;
 								}
@@ -11411,11 +11235,11 @@ export class SharedLog<
 							[prepared.shallowEntry],
 						);
 						const hasNativeCoordinatePut =
-							this.canUseBackboneOnlyCoordinatePersistence() ||
+							this._coordinates.canUseBackboneOnlyCoordinatePersistence() ||
 							coordinateIndex.putSharedLogCoordinateFieldsEncodedAndDeleteHashesNoReturn ||
 							coordinateIndex.putSharedLogCoordinateFieldsAndDeleteHashesNoReturn;
 						const persisted = hasNativeCoordinatePut
-							? this.persistBackboneCoordinateFieldsNativeTransaction({
+							? this._coordinates.persistBackboneCoordinateFieldsNativeTransaction({
 									coordinateIndex,
 									fields: coordinateFields,
 									hash: prepared.appendFacts.hash,
@@ -11424,7 +11248,7 @@ export class SharedLog<
 										.coordinates as NumberFromType<R>[],
 									skipGenericTransientCoordinateIndex: runtimeOnlyCoordinates,
 								})
-							: this.persistPreparedCoordinate({
+							: this._coordinates.persistPreparedCoordinate({
 									prepared: getPreparedCoordinate(),
 									hash: prepared.appendFacts.hash,
 									nextHashes: [],
@@ -11441,7 +11265,7 @@ export class SharedLog<
 						if (!prepared.nativeCommittedAppendFinalizer) {
 							throw new Error("Missing deferred native append finalizer");
 						}
-						await this.flushNativeBackboneCoordinateJournal();
+						await this._coordinates.flushNativeBackboneCoordinateJournal();
 						await prepared.nativeCommittedAppendFinalizer.acknowledge(() =>
 							this.markNativeStrictDurableTransactionLowerMarker(
 								nativeStrictTransaction,
@@ -11477,7 +11301,7 @@ export class SharedLog<
 					if (!backboneAppend.isLeader && !delayAdaptiveRebalance) {
 						const leaders = backboneAppend.leaders;
 						if (leaders) {
-							const pruneEntry = this.materializePreparedCoordinateEntry(
+							const pruneEntry = this._coordinates.materializePreparedCoordinateEntry(
 								getPreparedCoordinate(),
 							);
 							this.pruneDebouncedFnAddIfNotKeeping({
@@ -11539,7 +11363,7 @@ export class SharedLog<
 					: result.appendFacts.next;
 			if (deleteHashes.length > 0) {
 				return mapMaybePromise(
-					this.deleteCoordinatesForHashes(
+					this._coordinates.deleteCoordinatesForHashes(
 						deleteHashes,
 						ownershipLifecycleController,
 					),
@@ -11629,7 +11453,7 @@ export class SharedLog<
 			options?.replicate === true ||
 			this.shouldDeferHeadCoordinatePersistence(options) ||
 			(!this._nativeSharedLogState &&
-				!this.canUseNativeBackboneResidentCoordinateState()) ||
+				!this._coordinates.canUseNativeBackboneResidentCoordinateState()) ||
 			!this.canPlanNativeAppendFacts(result.appendFacts)
 		) {
 			return undefined;
@@ -11737,7 +11561,7 @@ export class SharedLog<
 							ownershipLifecycleController,
 						},
 					);
-			await this.persistPreparedCoordinateNativeTransaction(
+			await this._coordinates.persistPreparedCoordinateNativeTransaction(
 				{
 					coordinateIndex: properties.coordinateIndex,
 					prepared: nativeAppendPlan.preparedCoordinate,
@@ -11757,7 +11581,7 @@ export class SharedLog<
 			);
 		} catch (error) {
 			if (deferredCoordinateDeleteHashes) {
-				await this.deleteCoordinatesForHashes(
+				await this._coordinates.deleteCoordinatesForHashes(
 					deferredCoordinateDeleteHashes,
 					ownershipLifecycleController,
 				);
@@ -11770,7 +11594,7 @@ export class SharedLog<
 			let leaders = nativeAppendPlan.leaders;
 			let pruneEntry: EntryReplicated<R> | undefined;
 			if (!leaders) {
-				pruneEntry = this.materializePreparedCoordinateEntry(
+				pruneEntry = this._coordinates.materializePreparedCoordinateEntry(
 					nativeAppendPlan.preparedCoordinate,
 				);
 				leaders = (
@@ -11787,7 +11611,7 @@ export class SharedLog<
 					ownershipLifecycleController,
 				);
 			}
-			pruneEntry ??= this.materializePreparedCoordinateEntry(
+			pruneEntry ??= this._coordinates.materializePreparedCoordinateEntry(
 				nativeAppendPlan.preparedCoordinate,
 			);
 			await this.pruneDebouncedFnAddIfNotKeeping(
@@ -11864,7 +11688,7 @@ export class SharedLog<
 			);
 			if (!nativeAppendPlan) {
 				if (deferredCoordinateDeleteHashes) {
-					await this.deleteCoordinatesForHashes(
+					await this._coordinates.deleteCoordinatesForHashes(
 						deferredCoordinateDeleteHashes,
 						ownershipLifecycleController,
 					);
@@ -11895,7 +11719,7 @@ export class SharedLog<
 				})) ?? nativeAppendPlan;
 		} catch (error) {
 			if (deferredCoordinateDeleteHashes) {
-				await this.deleteCoordinatesForHashes(
+				await this._coordinates.deleteCoordinatesForHashes(
 					deferredCoordinateDeleteHashes,
 					ownershipLifecycleController,
 				);
@@ -11962,7 +11786,7 @@ export class SharedLog<
 			options?.target !== "none" ||
 			options?.replicate === true ||
 			(options?.delivery !== undefined && options.delivery !== false) ||
-			!this.canUseNativeBackboneResidentCoordinateState() ||
+			!this._coordinates.canUseNativeBackboneResidentCoordinateState() ||
 			properties?.nexts?.some((nexts) => nexts.length > 0)
 		) {
 			return undefined;
@@ -12150,7 +11974,7 @@ export class SharedLog<
 						),
 					);
 					const nativeTrimmedHashes = [...nativeTrimmedHashSet];
-					batchCoordinateRollback = this.snapshotResidentCoordinateEntries(
+					batchCoordinateRollback = this._coordinates.snapshotResidentCoordinateEntries(
 						committedAppends.flatMap((append) => [
 							...((append.entry.cid ?? append.entry.hash)
 								? [append.entry.cid ?? append.entry.hash!]
@@ -12400,7 +12224,7 @@ export class SharedLog<
 				rollbackFailures.push(rollbackError);
 			}
 			try {
-				await this.rollbackNativeBackboneCoordinateAppendDurably(
+				await this._coordinates.rollbackNativeBackboneCoordinateAppendDurably(
 					appended.appendFacts[0]?.hash ?? "",
 					batchCoordinateRollback,
 				);
@@ -12411,7 +12235,7 @@ export class SharedLog<
 				for (const document of batchDocumentRollbacks) {
 					this.restoreNativeBackboneDocument(document);
 				}
-				const flushed = this.flushNativeBackboneCoordinateJournal();
+				const flushed = this._coordinates.flushNativeBackboneCoordinateJournal();
 				if (isPromiseLike(flushed)) {
 					await flushed;
 				}
@@ -12491,7 +12315,7 @@ export class SharedLog<
 					coordinateFields,
 					plannedCoordinateDeleteHashes,
 				});
-				const persisted = this.persistBackboneCoordinateFieldsNativeTransaction(
+				const persisted = this._coordinates.persistBackboneCoordinateFieldsNativeTransaction(
 					{
 						coordinateIndex: this.entryCoordinatesIndex as PutAndDeleteIndex<
 							EntryReplicated<R>
@@ -12515,7 +12339,7 @@ export class SharedLog<
 			if (!appended.nativeCommittedAppendFinalizer) {
 				throw new Error("Missing deferred native append batch finalizer");
 			}
-			await this.flushNativeBackboneCoordinateJournal();
+			await this._coordinates.flushNativeBackboneCoordinateJournal();
 			this.throwIfReplicationOwnershipLifecycleInactive(
 				ownershipLifecycleController,
 			);
@@ -12674,7 +12498,7 @@ export class SharedLog<
 			this.shouldDeferHeadCoordinatePersistence(options);
 
 		if (deferHeadCoordinatePersistence) {
-			await this.deleteCoordinatesForHashes(
+			await this._coordinates.deleteCoordinatesForHashes(
 				[
 					...result.entries.flatMap((entry) => entry.meta.next),
 					...result.removed.map((entry) => entry.hash),
@@ -12816,7 +12640,7 @@ export class SharedLog<
 			this.shouldDeferHeadCoordinatePersistence(options);
 
 		if (deferHeadCoordinatePersistence) {
-			await this.deleteCoordinatesForHashes(
+			await this._coordinates.deleteCoordinatesForHashes(
 				[
 					...result.entries.flatMap((entry) => entry.meta.next),
 					...result.removed.map((entry) => entry.hash),
@@ -12919,7 +12743,7 @@ export class SharedLog<
 			ownershipLifecycleController,
 		);
 		const head = result.entries[result.entries.length - 1]!;
-		await this.deleteCoordinatesForHashes(
+		await this._coordinates.deleteCoordinatesForHashes(
 			[
 				...result.entries[0]!.meta.next,
 				...result.entries.slice(0, -1).map((entry) => entry.hash),
@@ -12963,7 +12787,7 @@ export class SharedLog<
 		}
 
 		const delayAdaptiveRebalance = this.shouldDelayAdaptiveRebalance();
-		await this.persistCoordinatesBatch(
+		await this._coordinates.persistCoordinatesBatch(
 			entries.map((entry, index) => {
 				const plan = properties.nativeAppendPlans[index]!;
 				return {
@@ -13349,7 +13173,7 @@ export class SharedLog<
 		const coordinates = plan.coordinate.coordinates as NumberFromType<R>[];
 		const hashNumberFromPlan = plan.coordinate.hashNumber as NumberFromType<R>;
 		const preparedCoordinate =
-			this.createCoordinatePersistenceEntryFromNativePlan({
+			this._coordinates.createCoordinatePersistenceEntryFromNativePlan({
 				entry,
 				plan: plan.coordinate,
 			});
@@ -13406,7 +13230,7 @@ export class SharedLog<
 		const coordinates = plan.coordinate.coordinates as NumberFromType<R>[];
 		const hashNumberFromPlan = plan.coordinate.hashNumber as NumberFromType<R>;
 		const preparedCoordinate =
-			this.createCoordinatePersistenceEntryFromNativePlan({
+			this._coordinates.createCoordinatePersistenceEntryFromNativePlan({
 				entry,
 				plan: plan.coordinate,
 			});
@@ -13480,7 +13304,7 @@ export class SharedLog<
 			const hashNumberFromPlan = plan.coordinate
 				.hashNumber as NumberFromType<R>;
 			const preparedCoordinate =
-				this.createCoordinatePersistenceEntryFromNativePlan({
+				this._coordinates.createCoordinatePersistenceEntryFromNativePlan({
 					entry,
 					plan: plan.coordinate,
 				});
@@ -13571,7 +13395,7 @@ export class SharedLog<
 			const hashNumberFromPlan = plan.coordinate
 				.hashNumber as NumberFromType<R>;
 			const preparedCoordinate =
-				this.createCoordinatePersistenceEntryFromNativePlan({
+				this._coordinates.createCoordinatePersistenceEntryFromNativePlan({
 					entry,
 					plan: plan.coordinate,
 				});
@@ -13627,7 +13451,7 @@ export class SharedLog<
 		}
 
 		if (deferHeadCoordinatePersistence) {
-			await this.deleteCoordinatesForHashes(
+			await this._coordinates.deleteCoordinatesForHashes(
 				[
 					...(properties.appendFacts?.next ?? entry.meta.next),
 					...removed.map((entry) => entry.hash),
@@ -13698,7 +13522,7 @@ export class SharedLog<
 				).leaders;
 			}
 			if (properties.appendFacts) {
-				await this.persistPreparedCoordinate(
+				await this._coordinates.persistPreparedCoordinate(
 					{
 						prepared: nativeAppendPlan.preparedCoordinate,
 						hash: properties.appendFacts.hash,
@@ -13714,7 +13538,7 @@ export class SharedLog<
 					ownershipLifecycleController,
 				);
 			} else {
-				await this.persistCoordinate(
+				await this._coordinates.persistCoordinate(
 					{
 						leaders: leaders ?? false,
 						coordinates,
@@ -13903,7 +13727,7 @@ export class SharedLog<
 		// resetSubscriptionChangeCallbackTracking() the fresh lifecycle's
 		// membership controller is undefined (legacy exposed the previous
 		// open's aborted controller in this window). Straight-line statements
-		// only; do not insert a _replicationLifecycleController read here.
+		// only; do not read the membership lifecycle controller here.
 		this._replicationRangeMutationTail = Promise.resolve();
 		this.resetSubscriptionChangeCallbackTracking();
 		const recoveringNativeDurableFailure =
@@ -14071,8 +13895,8 @@ export class SharedLog<
 		}
 
 		this._closeController = new AbortController();
-		this.setupReplicationAnnouncementRetryFunction();
-		this.setupReplicationAnnouncementRepairFunction();
+		this._announcements.setupReplicationAnnouncementRetryFunction();
+		this._announcements.setupReplicationAnnouncementRepairFunction();
 		this._closeController.signal.addEventListener("abort", () => {
 			for (const [_peer, state] of this._replicationInfoRequestByPeer) {
 				if (state.timer) clearTimeout(state.timer);
@@ -14842,7 +14666,7 @@ export class SharedLog<
 			this._nativeSharedLogState?.deleteEntryCoordinates(hash);
 			this._coordinates._residentEntryCoordinatesByHash?.delete(hash);
 		}
-		const flushed = this.flushNativeBackboneCoordinateJournal();
+		const flushed = this._coordinates.flushNativeBackboneCoordinateJournal();
 		if (isPromiseLike(flushed)) {
 			await flushed;
 		}
@@ -15265,7 +15089,7 @@ export class SharedLog<
 	async afterOpen(): Promise<void> {
 		await super.afterOpen();
 		const existingSubscribersPromise = this._getTopicSubscribers(this.topic);
-		const replicationLifecycleController = this._replicationLifecycleController;
+		const replicationLifecycleController = this._instanceLifecycle?.membershipLifecycleController;
 
 		// We do this here, because these calls requires this.closed == false
 		void this.pruneOfflineReplicators()
@@ -15281,7 +15105,7 @@ export class SharedLog<
 				logger.error(error);
 			});
 
-		this.startReplicatorLivenessSweep();
+		this._liveness.startReplicatorLivenessSweep();
 
 		await this.rebalanceParticipation();
 
@@ -15306,7 +15130,7 @@ export class SharedLog<
 	async pruneOfflineReplicators() {
 		// Go through all segments and wait for replicators to become reachable;
 		// otherwise prune them away from the local membership view.
-		const replicationLifecycleController = this._replicationLifecycleController;
+		const replicationLifecycleController = this._instanceLifecycle?.membershipLifecycleController;
 		try {
 			if (
 				!replicationLifecycleController ||
@@ -15336,7 +15160,7 @@ export class SharedLog<
 
 					checkedIsAlive.add(segment.value.hash);
 					const peerHash = segment.value.hash;
-					const subscriptionEpoch = this.getSubscriptionEpoch(peerHash);
+					const subscriptionEpoch = this._peerSessions.current(peerHash);
 
 					promises.push(
 						waitForSubscribers(this.node, peerHash, this.rpc.topic, {
@@ -15442,14 +15266,6 @@ export class SharedLog<
 		}
 	}
 
-	private startReplicatorLivenessSweep() {
-		this._liveness.startReplicatorLivenessSweep();
-	}
-
-	private stopReplicatorLivenessSweep() {
-		this._liveness?.stopReplicatorLivenessSweep();
-	}
-
 	private cleanupCheckedPrunePeer(
 		peerHash: string,
 		ownershipLifecycleController: AbortController,
@@ -15510,8 +15326,8 @@ export class SharedLog<
 		ownershipLifecycleController = this.captureReplicationOwnershipLifecycle(),
 	) {
 		this.cancelReplicationInfoRequests(peerHash);
-		this._replicatorLivenessFailures.delete(peerHash);
-		this._replicatorLastActivityAt.delete(peerHash);
+		this._liveness._replicatorLivenessFailures.delete(peerHash);
+		this._liveness._replicatorLastActivityAt.delete(peerHash);
 		this._peerSyncCapabilities.delete(peerHash);
 		this.cleanupPendingIHavePeer(peerHash);
 		this.cleanupCheckedPrunePeer(
@@ -15531,16 +15347,12 @@ export class SharedLog<
 		}
 	}
 
-	private markReplicatorActivity(peerHash: string, now?: number) {
-		this._liveness.markReplicatorActivity(peerHash, now);
-	}
-
 	private advanceReplicationInfoRecoveryEpoch(peerHash: string) {
 		// Handlers admitted before a successful peer removal must not restore state
 		// when they eventually reach the apply lane. Reset the sender's
 		// ordering watermark with the local epoch so a later arrival can be
 		// accepted without comparing its clock to this receiver's clock.
-		this.advanceReplicationInfoReceiveEpoch(peerHash);
+		this._peerSessions.advanceReceiveEpoch(peerHash);
 		this.latestReplicationInfoMessage.delete(peerHash);
 	}
 
@@ -15618,18 +15430,6 @@ export class SharedLog<
 		const peers = candidates.filter((p) => p !== self);
 		if (peers.length === 0) return undefined;
 		return pickDeterministicSubset(peers, seed, maxPeers);
-	}
-
-	private runReplicatorLivenessSweep() {
-		return this._liveness.runReplicatorLivenessSweep();
-	}
-
-	private probeReplicatorLiveness(peerHash: string) {
-		return this._liveness.probeReplicatorLiveness(peerHash);
-	}
-
-	private confirmReplicatorSubscriberPresence(peerHash: string) {
-		return this._liveness.confirmReplicatorSubscriberPresence(peerHash);
 	}
 
 	async getMemoryUsage() {
@@ -15830,11 +15630,11 @@ export class SharedLog<
 		);
 		this.onEntryRemovedHashes(deferredCoordinateDeleteHashes);
 		if (options?.forgetNativeCoordinates === false) {
-			this.forgetResidentCoordinateStateForHashes(
+			this._coordinates.forgetResidentCoordinateStateForHashes(
 				deferredCoordinateDeleteHashes,
 			);
 		} else {
-			this.forgetCoordinateStateForHashes(deferredCoordinateDeleteHashes);
+			this._coordinates.forgetCoordinateStateForHashes(deferredCoordinateDeleteHashes);
 		}
 		return deferredCoordinateDeleteHashes;
 	}
@@ -15878,11 +15678,11 @@ export class SharedLog<
 			: removed.map((entry) => entry.hash);
 		this.onEntryRemovedHashes(deferredCoordinateDeleteHashes);
 		if (options?.forgetNativeCoordinates === false) {
-			this.forgetResidentCoordinateStateForHashes(
+			this._coordinates.forgetResidentCoordinateStateForHashes(
 				deferredCoordinateDeleteHashes,
 			);
 		} else {
-			this.forgetCoordinateStateForHashes(deferredCoordinateDeleteHashes);
+			this._coordinates.forgetCoordinateStateForHashes(deferredCoordinateDeleteHashes);
 		}
 		return deferredCoordinateDeleteHashes;
 	}
@@ -15897,7 +15697,7 @@ export class SharedLog<
 					ownershipLifecycleController,
 				);
 			}
-			await this.deleteCoordinates(
+			await this._coordinates.deleteCoordinates(
 				{ hash: removed.hash },
 				ownershipLifecycleController,
 			);
@@ -16445,7 +16245,7 @@ export class SharedLog<
 				this._wireSyncSession = undefined;
 			}
 		});
-		await capture(() => this.closeNativeBackboneCoordinatePersistence());
+		await capture(() => this._coordinates.closeNativeBackboneCoordinatePersistence());
 		await capture(() => this.syncronizer?.close());
 
 		captureSync(() => {
@@ -16466,7 +16266,7 @@ export class SharedLog<
 			this._topicSubscribersCache?.clear();
 			this._closeController.abort();
 			clearInterval(this.interval);
-			this.stopReplicatorLivenessSweep();
+			this._liveness?.stopReplicatorLivenessSweep();
 		});
 		captureSync(() =>
 			this.node.services.pubsub.removeEventListener(
@@ -16626,7 +16426,7 @@ export class SharedLog<
 			await pruneRemoveTerminalFence.drained;
 			await this.drainPendingIHaveCallbacks();
 			this.ensureNativeDurabilityRuntimeState();
-			this.cancelCurrentReplicationStateAnnouncementRetry();
+			this._announcements.cancelCurrentReplicationStateAnnouncementRetry();
 		} catch (error) {
 			// The terminal preamble has already disabled parent attachments and the
 			// network lifecycle. Keep mutation admission fenced for an exact retry.
@@ -16766,7 +16566,7 @@ export class SharedLog<
 			await replicationRangeTerminalFence.drained;
 			await pruneRemoveTerminalFence.drained;
 			await this.drainPendingIHaveCallbacks();
-			this.cancelCurrentReplicationStateAnnouncementRetry();
+			this._announcements.cancelCurrentReplicationStateAnnouncementRetry();
 		} catch (error) {
 			// The terminal preamble is not safely reversible. Preserve the fence until
 			// a retry finishes cleanup.
@@ -16997,7 +16797,7 @@ export class SharedLog<
 			// synchronizer declines them, and a U/S transition can happen meanwhile.
 			const receiveFromHash = context.from.hashcode();
 			const receiveReplicationLifecycleController =
-				this._replicationLifecycleController;
+				this._instanceLifecycle?.membershipLifecycleController;
 			// ONE session capture replaces the per-peer subscription-epoch and
 			// opening-window captures: the PeerSession IS the epoch token, and
 			// the opening-barrier window is its sub-state. `null` = the peer
@@ -17024,7 +16824,8 @@ export class SharedLog<
 				return;
 			}
 			peerReceiveLease = createOneShotPeerReceiveLease(releasePeerReceiveLease);
-			const receiveOwnershipRevision = this._receiveOwnershipRevision;
+			const receiveOwnershipRevision =
+				this._instanceLifecycle?._receiveOwnershipRevision ?? 0;
 			const receiveOwnershipLifecycleController =
 				this.captureReplicationOwnershipLifecycle();
 			const receiveReplicationInfoReceiveEpoch =
@@ -17045,7 +16846,7 @@ export class SharedLog<
 				this.validateStoppedReplicationAnnouncement(msg.segmentIds);
 			}
 			if (!context.from.equals(this.node.identity.publicKey)) {
-				this.markReplicatorActivity(receiveFromHash);
+				this._liveness.markReplicatorActivity(receiveFromHash);
 			}
 
 			const syncProfile = this._logProperties?.sync?.profile;
@@ -18144,7 +17945,7 @@ export class SharedLog<
 									toPersist.push(getReceiveHeadShallowOrEntry(entry));
 								}
 							}
-							this.removePruneRequestsSent(cleanupHashes);
+							this._checkedPrune.removeRequestsSent(cleanupHashes);
 							this._checkedPrune.clearConfirmedReplicatorsBatch(cleanupHashes);
 							nativeAllKeptJoinHashes = cleanupHashes;
 							joinPlans = [
@@ -18179,7 +17980,7 @@ export class SharedLog<
 												() => {},
 											);
 										}
-										this.removePruneRequestSent(hash);
+										this._checkedPrune.removeRequestSent(hash);
 										this._checkedPrune.clearConfirmedReplicators(hash);
 										toMerge.push(entry);
 										toPersist.push(getReceiveHeadShallowOrEntry(entry));
@@ -18310,7 +18111,7 @@ export class SharedLog<
 												() => {},
 											);
 										}
-										this.removePruneRequestSent(hash);
+										this._checkedPrune.removeRequestSent(hash);
 										this._checkedPrune.clearConfirmedReplicators(hash);
 									}
 									if (fromIsLeader) {
@@ -18373,11 +18174,11 @@ export class SharedLog<
 						);
 					}
 					const reusableCoordinatePlans =
-						this.createReusableReceiveCoordinatePlans(receiveGroups, {
+						this._coordinates.createReusableReceiveCoordinatePlans(receiveGroups, {
 							decodedReplicaCounts: receiveReplicaCounts,
 							allowRoleAgeZeroPlans:
 								immediateReplicatingLeaderPlans !== undefined,
-						});
+						}) as Map<string, ReusableReceiveCoordinatePlan<R>>;
 					if (syncProfile) {
 						emitSyncProfileDuration(syncProfile, joinPlanStartedAt, {
 							name: "sharedLog.receive.joinPlan",
@@ -18557,12 +18358,12 @@ export class SharedLog<
 						let nativePreparedCoordinatesFinished = false;
 						let nativeBackboneOnlyPersistedHashes: Set<string> | undefined;
 						const nativeReceiveCoordinateBatch = canUsePreparedAppendFacts
-							? this.createBackboneOnlyReceiveCoordinateBatch(
+							? this._coordinates.createBackboneOnlyReceiveCoordinateBatch(
 									reusableCoordinatePersistItems,
 								)
 							: undefined;
 						const nativePreparedJoinCommit = canUsePreparedAppendFacts
-							? this.createNativeBackbonePreparedJoinCommit(
+							? this._coordinates.createNativeBackbonePreparedJoinCommit(
 									nativeReceiveCoordinateBatch,
 									(batch) => {
 										nativePreparedCoordinateBatch = batch;
@@ -18586,13 +18387,13 @@ export class SharedLog<
 							}
 							try {
 								nativeBackboneOnlyPersistedHashes =
-									await this.finishBackboneOnlyReceiveCoordinateBatch(
+									await this._coordinates.finishBackboneOnlyReceiveCoordinateBatch(
 										nativePreparedCoordinateBatch,
 										syncProfile,
 									);
 								nativePreparedCoordinatesFinished = true;
 							} catch (error) {
-								this.rollbackBackboneOnlyReceiveCoordinateBatch(
+								this._coordinates.rollbackBackboneOnlyReceiveCoordinateBatch(
 									nativePreparedCoordinateBatch,
 								);
 								throw error;
@@ -18704,19 +18505,19 @@ export class SharedLog<
 						} else if (nativePreparedCoordinateBatch) {
 							try {
 								nativeBackboneOnlyPersistedHashes =
-									await this.finishBackboneOnlyReceiveCoordinateBatch(
+									await this._coordinates.finishBackboneOnlyReceiveCoordinateBatch(
 										nativePreparedCoordinateBatch,
 										syncProfile,
 									);
 							} catch (error) {
-								this.rollbackBackboneOnlyReceiveCoordinateBatch(
+								this._coordinates.rollbackBackboneOnlyReceiveCoordinateBatch(
 									nativePreparedCoordinateBatch,
 								);
 								throw error;
 							}
 						} else {
 							nativeBackboneOnlyPersistedHashes =
-								await this.persistBackboneOnlyReceiveCoordinateBatch(
+								await this._coordinates.persistBackboneOnlyReceiveCoordinateBatch(
 									reusableCoordinatePersistItems,
 								);
 						}
@@ -18739,7 +18540,7 @@ export class SharedLog<
 							}
 						}
 						if (reusableCoordinatePersistItems.length > 0) {
-							await this.persistCoordinatesBatch(
+							await this._coordinates.persistCoordinatesBatch(
 								reusableCoordinatePersistItems,
 							);
 						}
@@ -18776,7 +18577,8 @@ export class SharedLog<
 								receiveOwnershipRevision,
 							);
 						if (ownershipChangedDuringReceive) {
-							const freshAuditRevision = this._receiveOwnershipRevision;
+							const freshAuditRevision =
+								this._instanceLifecycle?._receiveOwnershipRevision ?? 0;
 							const armFreshAuditRetry = () => {
 								for (const entry of admittedShallowEntries) {
 									this.scheduleCheckedPruneRetry(
@@ -19096,7 +18898,7 @@ export class SharedLog<
 		// A prune request means the sender is preparing to stop retaining these
 		// hashes. Any receipt it gave our current generation is therefore stale,
 		// even when we cannot grant its reciprocal request.
-		this.removePruneRequestsSent(hashes, from);
+		this._checkedPrune.removeRequestsSent(hashes, from);
 		if (syncProfile) {
 			emitSyncProfileDuration(syncProfile, coordinatorCleanupStartedAt, {
 				name: "sharedLog.receive.requestPrune.coordinatorCleanup",
@@ -19253,10 +19055,10 @@ export class SharedLog<
 			receiveReplicationLifecycleController;
 		if (
 			!replicationLifecycleController ||
-			!this.isPeerReceiveAdmissionOpen(
+			!this._peerSessions.isReceiveAdmissionOpen(
 				receiveFromHash,
-				replicationLifecycleController,
 				receiveSession,
+				replicationLifecycleController,
 			)
 		) {
 			return;
@@ -19267,10 +19069,10 @@ export class SharedLog<
 			replicationSegments = await this.getMyReplicationSegments();
 		} catch (error) {
 			if (
-				!this.isPeerReceiveAdmissionOpen(
+				!this._peerSessions.isReceiveAdmissionOpen(
 					receiveFromHash,
-					replicationLifecycleController,
 					receiveSession,
+					replicationLifecycleController,
 				) &&
 				isNotStartedError(error as Error)
 			) {
@@ -19279,10 +19081,10 @@ export class SharedLog<
 			throw error;
 		}
 		if (
-			!this.isPeerReceiveAdmissionOpen(
+			!this._peerSessions.isReceiveAdmissionOpen(
 				receiveFromHash,
-				replicationLifecycleController,
 				receiveSession,
+				replicationLifecycleController,
 			)
 		) {
 			return;
@@ -19305,10 +19107,10 @@ export class SharedLog<
 				),
 			);
 		if (
-			!this.isPeerReceiveAdmissionOpen(
+			!this._peerSessions.isReceiveAdmissionOpen(
 				receiveFromHash,
-				replicationLifecycleController,
 				receiveSession,
+				replicationLifecycleController,
 			)
 		) {
 			return;
@@ -19414,7 +19216,7 @@ export class SharedLog<
 				}
 
 				this.latestReplicationInfoMessage.set(fromHash, messageTimestamp);
-				this._replicatorLivenessFailures.delete(fromHash);
+				this._liveness._replicatorLivenessFailures.delete(fromHash);
 
 				if (this.closed) {
 					return;
@@ -19506,7 +19308,7 @@ export class SharedLog<
 				return;
 			}
 			this.latestReplicationInfoMessage.set(fromHash, messageTimestamp);
-			this._replicatorLivenessFailures.delete(fromHash);
+			this._liveness._replicatorLivenessFailures.delete(fromHash);
 			if (this.closed) {
 				return;
 			}
@@ -19864,7 +19666,7 @@ export class SharedLog<
 			}
 
 			if (messageToSend) {
-				await this.sendReplicationAnnouncement(
+				await this._announcements.sendReplicationAnnouncement(
 					messageToSend,
 					ownershipLifecycleController,
 				);
@@ -20222,7 +20024,7 @@ export class SharedLog<
 		const timeout = options.timeout ?? this.waitForReplicatorTimeout;
 		const closeSignal = this._closeController.signal;
 		const replicationLifecycleSignal =
-			this._replicationLifecycleController?.signal;
+			this._instanceLifecycle?.membershipLifecycleController?.signal;
 
 		return new Promise((resolve, reject) => {
 			let settled = false;
@@ -20311,21 +20113,7 @@ export class SharedLog<
 		});
 	}
 
-	// Stage 4.5: the coordinate-persistence method cluster moved verbatim to
-	// src/coordinate-persistence.ts (CoordinatePersistenceCoordinator). The
-	// thin delegators below KEEP-OLD every externally-called name so all
-	// legacy call sites stay untouched; instance-level sinon spies/stubs of
-	// these names re-point to the coordinator (`_coordinates`), which every
-	// call — delegated or coordinator-internal — passes through. The
-	// internal-only helpers (nativeBackboneReceiveCoordinateRowsToColumns,
-	// emitNativeBackboneRawCommitProfile,
-	// createCoordinatePersistenceEntry{,FromLeaderPlan},
-	// createCoordinateEntryFromNativeFields,
-	// flushNativeBackboneCoordinateJournalOnAppend,
-	// shouldFlushNativeBackboneCoordinateJournalOnAppend,
-	// canUseRuntimeOnlyNativeBackboneCoordinates,
-	// forget{,Resident}CoordinateStateForHashValues) moved without
-	// delegators.
+	// Public compatibility entry point; internal persistence calls use the coordinator directly.
 	async createCoordinates(
 		entry: ShallowOrFullEntry<any> | EntryReplicated<R> | NumberFromType<R>,
 		minReplicas: number,
@@ -20334,267 +20122,6 @@ export class SharedLog<
 			entry,
 			minReplicas,
 		) as Promise<NumberFromType<R>[]>;
-	}
-
-	private async getCoordinates(entry: {
-		hash: string;
-	}): Promise<NumberFromType<R>[]> {
-		return this._coordinates.getCoordinates(entry) as Promise<
-			NumberFromType<R>[]
-		>;
-	}
-
-	private getNativeLogEntryMetadataBatch(hashes: Iterable<string>) {
-		return this._coordinates.getNativeLogEntryMetadataBatch(hashes);
-	}
-
-	private createReusableReceiveCoordinatePlans(
-		receiveGroups: Array<{
-			latestEntry: ShallowOrFullEntry<any>;
-			maxMaxReplicas: number;
-			leaderPlan?: EntryLeaderPlan<R>;
-		}>,
-		options?: {
-			decodedReplicaCounts?: DecodedReplicaCountMap;
-			allowRoleAgeZeroPlans?: boolean;
-		},
-	): Map<string, ReusableReceiveCoordinatePlan<R>> {
-		return this._coordinates.createReusableReceiveCoordinatePlans(
-			receiveGroups,
-			options,
-		);
-	}
-
-	private createBackboneOnlyReceiveCoordinateBatch(
-		items: CoordinatePersistBatchItem<R>[],
-	): NativeBackboneReceiveCoordinateBatch<R> | undefined {
-		return this._coordinates.createBackboneOnlyReceiveCoordinateBatch(items);
-	}
-
-	private async finishBackboneOnlyReceiveCoordinateBatch(
-		batch: NativeBackboneReceiveCoordinateBatch<R>,
-		profile?: SyncProfileFn,
-	): Promise<Set<string>> {
-		return this._coordinates.finishBackboneOnlyReceiveCoordinateBatch(
-			batch,
-			profile,
-		);
-	}
-
-	private rollbackBackboneOnlyReceiveCoordinateBatch(
-		batch: NativeBackboneReceiveCoordinateBatch<R>,
-	): void {
-		return this._coordinates.rollbackBackboneOnlyReceiveCoordinateBatch(batch);
-	}
-
-	private async persistBackboneOnlyReceiveCoordinateBatch(
-		items: CoordinatePersistBatchItem<R>[],
-	): Promise<Set<string> | undefined> {
-		return this._coordinates.persistBackboneOnlyReceiveCoordinateBatch(items);
-	}
-
-	private createNativeBackbonePreparedJoinCommit(
-		coordinateBatch?: NativeBackboneReceiveCoordinateBatch<R>,
-		onCoordinatesCommitted?: (
-			batch: NativeBackboneReceiveCoordinateBatch<R>,
-		) => void,
-		verifyHashes?: string[],
-		verifyAllHashes = false,
-		profile?: SyncProfileFn,
-		onPreparedEntriesCommitted?: (hashes: string[]) => void,
-	):
-		| ((input: {
-				entries: PreparedAppendJoinFacts[];
-				hashes: string[];
-				headFlags: boolean[];
-				headFlagsBytes: Uint8Array;
-				trustedMissing: boolean;
-				validatePlan?: boolean;
-		  }) => boolean)
-		| undefined {
-		return this._coordinates.createNativeBackbonePreparedJoinCommit(
-			coordinateBatch,
-			onCoordinatesCommitted,
-			verifyHashes,
-			verifyAllHashes,
-			profile,
-			onPreparedEntriesCommitted,
-		);
-	}
-
-	private createCoordinatePersistenceEntryFromNativePlan(properties: {
-		entry: ShallowOrFullEntry<any> | EntryReplicated<R>;
-		plan: NativeAppendCoordinatePlan;
-		prev?: EntryReplicated<R>;
-	}): PreparedCoordinatePersistence<R> | false {
-		return this._coordinates.createCoordinatePersistenceEntryFromNativePlan(
-			properties,
-		);
-	}
-
-	private materializePreparedCoordinateEntry(
-		prepared: PreparedCoordinatePersistence<R>,
-	): EntryReplicated<R> {
-		return this._coordinates.materializePreparedCoordinateEntry(prepared);
-	}
-
-	private materializeResidentCoordinateEntry(
-		entry: ResidentCoordinateEntry<R>,
-	): EntryReplicated<R> {
-		return this._coordinates.materializeResidentCoordinateEntry(entry);
-	}
-
-	private materializeRepairDispatchEntries(
-		entries: ReadonlyMap<string, RepairDispatchEntry<R>>,
-	): Map<string, EntryReplicated<R>> {
-		return this._coordinates.materializeRepairDispatchEntries(entries);
-	}
-
-	private snapshotResidentCoordinateEntries(
-		hashes: Iterable<string>,
-	): NativeBackboneCoordinateRollback<R> | undefined {
-		return this._coordinates.snapshotResidentCoordinateEntries(hashes);
-	}
-
-	private rollbackNativeBackboneCoordinateAppend(
-		appendHash: string,
-		rollback?: NativeBackboneCoordinateRollback<R>,
-	): void {
-		return this._coordinates.rollbackNativeBackboneCoordinateAppend(
-			appendHash,
-			rollback,
-		);
-	}
-
-	private async rollbackNativeBackboneCoordinateAppendDurably(
-		appendHash: string,
-		rollback?: NativeBackboneCoordinateRollback<R>,
-	): Promise<void> {
-		return this._coordinates.rollbackNativeBackboneCoordinateAppendDurably(
-			appendHash,
-			rollback,
-		);
-	}
-
-	private persistPreparedCoordinate(
-		properties: {
-			prepared: PreparedCoordinatePersistence<R>;
-			hash: string;
-			nextHashes: string[];
-			coordinates: NumberFromType<R>[];
-			replicas: number;
-			commitNative?: boolean;
-			commitNativeBackbone?: boolean;
-			deleteHashes?: string[];
-		},
-		ownershipLifecycleController?: AbortController,
-	): MaybePromise<boolean> {
-		return this._coordinates.persistPreparedCoordinate(
-			properties,
-			ownershipLifecycleController,
-		);
-	}
-
-	private persistPreparedCoordinateNativeTransaction(
-		properties: {
-			coordinateIndex: PutAndDeleteIndex<EntryReplicated<R>>;
-			prepared: PreparedCoordinatePersistence<R>;
-			hash: string;
-			nextHashes: string[];
-			coordinates: NumberFromType<R>[];
-			deleteHashes?: string[];
-			commitNative?: boolean;
-			commitNativeBackbone?: boolean;
-		},
-		ownershipLifecycleController?: AbortController,
-	): MaybePromise<boolean> {
-		return this._coordinates.persistPreparedCoordinateNativeTransaction(
-			properties,
-			ownershipLifecycleController,
-		);
-	}
-
-	private persistBackboneCoordinateFieldsNativeTransaction(
-		properties: {
-			coordinateIndex: PutAndDeleteIndex<EntryReplicated<R>>;
-			fields: SharedLogCoordinateNativeFields<R>;
-			hash: string;
-			coordinates: NumberFromType<R>[];
-			deleteHashes: string[];
-			skipGenericTransientCoordinateIndex?: boolean;
-		},
-		ownershipLifecycleController?: AbortController,
-	): MaybePromise<boolean> {
-		return this._coordinates.persistBackboneCoordinateFieldsNativeTransaction(
-			properties,
-			ownershipLifecycleController,
-		);
-	}
-
-	private flushNativeBackboneCoordinateJournal(): MaybePromise<void> {
-		return this._coordinates.flushNativeBackboneCoordinateJournal();
-	}
-
-	private async closeNativeBackboneCoordinatePersistence(): Promise<void> {
-		return this._coordinates.closeNativeBackboneCoordinatePersistence();
-	}
-
-	private canUseBackboneOnlyCoordinatePersistence(): boolean {
-		return this._coordinates.canUseBackboneOnlyCoordinatePersistence();
-	}
-
-	private canUseNativeBackboneResidentCoordinateState(): boolean {
-		return this._coordinates.canUseNativeBackboneResidentCoordinateState();
-	}
-
-	private async persistCoordinate(
-		properties: {
-			coordinates: NumberFromType<R>[];
-			entry: ShallowOrFullEntry<any> | EntryReplicated<R>;
-			leaders:
-				| Map<
-						string,
-						{
-							intersecting: boolean;
-						}
-				  >
-				| false;
-			replicas: number;
-			prev?: EntryReplicated<R>;
-			assignedToRangeBoundary?: boolean;
-			commitNative?: boolean;
-			commitNativeBackbone?: boolean;
-			deleteHashes?: string[];
-			hashNumber?: NumberFromType<R>;
-			nextHashes?: string[];
-			prepared?: PreparedCoordinatePersistence<R>;
-		},
-		ownershipLifecycleController?: AbortController,
-	): Promise<boolean> {
-		return this._coordinates.persistCoordinate(
-			properties,
-			ownershipLifecycleController,
-		);
-	}
-
-	private async persistCoordinatesBatch(
-		items: CoordinatePersistBatchItem<R>[],
-		ownershipLifecycleController?: AbortController,
-	): Promise<boolean[]> {
-		return this._coordinates.persistCoordinatesBatch(
-			items,
-			ownershipLifecycleController,
-		);
-	}
-
-	private async deleteCoordinates(
-		properties: { hash: string },
-		ownershipLifecycleController?: AbortController,
-	): Promise<void> {
-		return this._coordinates.deleteCoordinates(
-			properties,
-			ownershipLifecycleController,
-		);
 	}
 
 	async getDefaultMinRoleAge(): Promise<number> {
@@ -20813,7 +20340,7 @@ export class SharedLog<
 				ownershipLifecycleController,
 			);
 			!this.closed &&
-				(await this.persistCoordinate(
+				(await this._coordinates.persistCoordinate(
 					{
 						leaders,
 						coordinates: cursors,
@@ -20958,7 +20485,7 @@ export class SharedLog<
 						this.createNativeLeaderOptions(context, firstItem.options),
 					);
 				const plans: EntryLeaderPlan<R>[] = [];
-				const persistItems: Parameters<typeof this.persistCoordinatesBatch>[0] =
+				const persistItems: Parameters<typeof this._coordinates.persistCoordinatesBatch>[0] =
 					[];
 				for (let i = 0; i < itemArray.length; i++) {
 					const item = itemArray[i]!;
@@ -20977,7 +20504,7 @@ export class SharedLog<
 					});
 					if (!this.closed) {
 						const prepared =
-							this.createCoordinatePersistenceEntryFromNativePlan({
+							this._coordinates.createCoordinatePersistenceEntryFromNativePlan({
 								entry: item.entry,
 								plan: nativePlan.coordinate,
 							});
@@ -21000,7 +20527,7 @@ export class SharedLog<
 					}
 				}
 				if (!this.closed && persistItems.length > 0) {
-					await this.persistCoordinatesBatch(
+					await this._coordinates.persistCoordinatesBatch(
 						persistItems,
 						ownershipLifecycleController,
 					);
@@ -21021,7 +20548,7 @@ export class SharedLog<
 			);
 			const selfHash = this.node.identity.publicKey.hashcode();
 			const plans: EntryLeaderPlan<R>[] = [];
-			const persistItems: Parameters<typeof this.persistCoordinatesBatch>[0] =
+			const persistItems: Parameters<typeof this._coordinates.persistCoordinatesBatch>[0] =
 				[];
 			for (let i = 0; i < itemArray.length; i++) {
 				const item = itemArray[i]!;
@@ -21061,7 +20588,7 @@ export class SharedLog<
 				}
 			}
 			if (!this.closed && persistItems.length > 0) {
-				await this.persistCoordinatesBatch(
+				await this._coordinates.persistCoordinatesBatch(
 					persistItems,
 					ownershipLifecycleController,
 				);
@@ -21649,7 +21176,9 @@ export class SharedLog<
 			options,
 			ownershipLifecycleController,
 		);
-		if (this._receiveOwnershipMutationAdmissions === 0) {
+		if (
+			(this._instanceLifecycle?._receiveOwnershipMutationAdmissions ?? 0) === 0
+		) {
 			this._leaderPlanCache.put(cacheKey, leaders, capturedVersion);
 		}
 		return leaders;
@@ -22139,7 +21668,10 @@ export class SharedLog<
 			options,
 			ownershipLifecycleController,
 		);
-		if (leaders && this._receiveOwnershipMutationAdmissions === 0) {
+		if (
+			leaders &&
+			(this._instanceLifecycle?._receiveOwnershipMutationAdmissions ?? 0) === 0
+		) {
 			this._leaderPlanCache.put(cacheKey, leaders, capturedVersion);
 		}
 		return leaders;
@@ -22404,10 +21936,14 @@ export class SharedLog<
 		}
 		let releaseReceiveOwnershipMutationAdmission: (() => void) | undefined;
 		if (options?.affectsReceiveOwnership) {
-			this._receiveOwnershipMutationAdmissions++;
+			if (this._instanceLifecycle) {
+				this._instanceLifecycle._receiveOwnershipMutationAdmissions++;
+			}
 			this.invalidateLeaderSelectionContextCache();
 			releaseReceiveOwnershipMutationAdmission = () => {
-				this._receiveOwnershipMutationAdmissions--;
+				if (this._instanceLifecycle) {
+					this._instanceLifecycle._receiveOwnershipMutationAdmissions--;
+				}
 				this.invalidateLeaderSelectionContextCache();
 			};
 		}
@@ -22884,39 +22420,6 @@ export class SharedLog<
 		};
 	}
 
-	private advanceReplicationInfoReceiveEpoch(peerHash: string): object {
-		return this._peerSessions.advanceReceiveEpoch(peerHash);
-	}
-
-	private getReplicationInfoReceiveEpoch(peerHash: string): object | null {
-		return this._peerSessions.receiveEpoch(peerHash);
-	}
-
-	private isCurrentReplicationInfoReceiveEpoch(
-		peerHash: string,
-		epoch: object | null,
-	): boolean {
-		return this._peerSessions.isReceiveEpochCurrent(peerHash, epoch);
-	}
-
-	private advanceSubscriptionEpoch(
-		peerHash: string,
-		kind: PeerSessionKind = "opening",
-	): PeerSession {
-		return this._peerSessions.rotate(peerHash, kind);
-	}
-
-	private getSubscriptionEpoch(peerHash: string): object | null {
-		return this._peerSessions.current(peerHash);
-	}
-
-	private isCurrentSubscriptionEpoch(
-		peerHash: string,
-		epoch: object | null,
-	): boolean {
-		return this.getSubscriptionEpoch(peerHash) === epoch;
-	}
-
 	private cancelReplicationInfoRequests(peerHash: string) {
 		const state = this._replicationInfoRequestByPeer.get(peerHash);
 		if (!state) return;
@@ -22928,7 +22431,7 @@ export class SharedLog<
 
 	private scheduleReplicationInfoRequests(
 		peer: PublicSignKey,
-		replicationLifecycleController = this._replicationLifecycleController,
+		replicationLifecycleController = this._instanceLifecycle?.membershipLifecycleController,
 	) {
 		if (
 			!replicationLifecycleController ||
@@ -23010,7 +22513,7 @@ export class SharedLog<
 		if (!topics.includes(this.topic)) {
 			return;
 		}
-		const replicationLifecycleController = this._replicationLifecycleController;
+		const replicationLifecycleController = this._instanceLifecycle?.membershipLifecycleController;
 		if (
 			!replicationLifecycleController ||
 			!this.isReplicationLifecycleActive(replicationLifecycleController)
@@ -23021,12 +22524,12 @@ export class SharedLog<
 		const peerHash = publicKey.hashcode();
 		const expectedSubscriptionEpoch =
 			subscriptionEpoch ??
-			this.advanceSubscriptionEpoch(
+			this._peerSessions.rotate(
 				peerHash,
 				subscribed ? "opening" : "departing",
 			);
 		const ownsSubscriptionEpoch = () =>
-			this.isCurrentSubscriptionEpoch(peerHash, expectedSubscriptionEpoch);
+			this._peerSessions.isCurrent(peerHash, expectedSubscriptionEpoch);
 		if (!ownsSubscriptionEpoch()) {
 			return;
 		}
@@ -23144,8 +22647,8 @@ export class SharedLog<
 		}
 
 		this._peerSessions.unblockReplicationInfo(peerHash);
-		this._replicatorLivenessFailures.delete(peerHash);
-		this.markReplicatorActivity(peerHash);
+		this._liveness._replicatorLivenessFailures.delete(peerHash);
+		this._liveness.markReplicatorActivity(peerHash);
 		this._peerSessions.markOpen(peerHash, expectedSubscriptionEpoch);
 
 		if (this._logProperties?.sync?.rawExchangeHeads === true) {
@@ -23265,14 +22768,6 @@ export class SharedLog<
 			);
 		}
 		return new AbsoluteReplicas(maxValue);
-	}
-
-	private removePruneRequestSent(hash: string, to?: string) {
-		this._checkedPrune.removeRequestSent(hash, to);
-	}
-
-	private removePruneRequestsSent(hashes: Iterable<string>, to?: string) {
-		this._checkedPrune.removeRequestsSent(hashes, to);
 	}
 
 	private async sendCheckedPruneResponse(
@@ -23543,7 +23038,7 @@ export class SharedLog<
 					ownershipLifecycleController,
 				);
 				this.deleteGidPeerHistory(x.entry.meta.gid);
-				this.removePruneRequestSent(x.entry.hash);
+				this._checkedPrune.removeRequestSent(x.entry.hash);
 				this._checkedPrune.clearConfirmedReplicators(x.entry.hash);
 				return this.trackAdmittedPruneRemove(
 					() =>
@@ -24115,7 +23610,7 @@ export class SharedLog<
 		delayInterval?: number;
 		timeoutMessage?: string;
 	}) {
-		await waitFor(() => this._pendingDeletes.size === 0, options);
+		await waitFor(() => this._checkedPrune.pendingDeletes.size === 0, options);
 	}
 
 	async onReplicationChange(
@@ -24380,7 +23875,7 @@ export class SharedLog<
 						if (oldPeersSet) {
 							for (const oldPeer of oldPeersSet) {
 								if (!currentPeers.has(oldPeer)) {
-									this.removePruneRequestSent(entryReplicated.hash, oldPeer);
+									this._checkedPrune.removeRequestSent(entryReplicated.hash, oldPeer);
 								}
 							}
 						}
@@ -24469,7 +23964,7 @@ export class SharedLog<
 					if (oldPeersSet) {
 						for (const oldPeer of oldPeersSet) {
 							if (!currentPeers.has(oldPeer)) {
-								this.removePruneRequestSent(entryReplicated.hash, oldPeer);
+								this._checkedPrune.removeRequestSent(entryReplicated.hash, oldPeer);
 							}
 						}
 					}
@@ -24649,7 +24144,7 @@ export class SharedLog<
 		}
 
 		const fromHash = evt.detail.from.hashcode();
-		const subscriptionEpoch = this.advanceSubscriptionEpoch(
+		const subscriptionEpoch = this._peerSessions.rotate(
 			fromHash,
 			"departing",
 		);
@@ -24685,7 +24180,7 @@ export class SharedLog<
 		}
 
 		const fromHash = evt.detail.from.hashcode();
-		const subscriptionEpoch = this.advanceSubscriptionEpoch(fromHash);
+		const subscriptionEpoch = this._peerSessions.rotate(fromHash, "opening");
 		this.remoteBlocks.onReachable(evt.detail.from);
 		this._peerSessions.blockReplicationInfo(fromHash);
 		this.invalidateSharedLogTopicSubscribersCache();
@@ -24840,7 +24335,7 @@ export class SharedLog<
 					} catch (error) {
 						if (
 							isTransientReplicationAnnouncementError(error) &&
-							this._replicationAnnouncementRetryPending
+							this._announcements._replicationAnnouncementRetryPending
 						) {
 							return false;
 						}

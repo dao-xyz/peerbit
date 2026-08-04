@@ -59,9 +59,8 @@ export class InstanceLifecycle {
 
 	// Moved from SharedLog (fences C1/C2, same names — the sanctioned
 	// file-to-file ratchet move). Physically owned per-open counters read and
-	// written by the host through delegating accessors that keep every legacy
-	// site verbatim; the fresh lifecycle object at open() IS the legacy
-	// reset-to-0 (same pattern as roleGeneration above).
+	// written directly through the lifecycle owner; the fresh lifecycle object
+	// at open() IS the legacy reset-to-0 (same pattern as roleGeneration above).
 	//
 	// Receive-side ownership plans may span lower-log joins that invoke user
 	// code. Incremented synchronously with leader-cache invalidation so the

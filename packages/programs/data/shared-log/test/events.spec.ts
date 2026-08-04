@@ -1552,7 +1552,7 @@ describe("events", () => {
 		const { log, replicationIndex } = await openDisconnectedLog(2);
 		const remoteKey = session.peers[1].identity.publicKey;
 		const duplicateId = randomBytes(32);
-		const markActivity = sinon.spy(log, "markReplicatorActivity");
+		const markActivity = sinon.spy(log._liveness, "markReplicatorActivity");
 		const applyQueue = sinon.spy(log, "withReplicationInfoApplyQueue");
 		const mutationLane = sinon.spy(log, "withReplicationRangeMutationQueue");
 		const resolveRanges = sinon.spy(
@@ -2439,13 +2439,14 @@ describe("events", () => {
 		try {
 			const replicating = db.log.replicate(entry);
 			await fromEntryStarted.promise;
-			const oldOwnershipLifecycle = log._repairLifecycleController;
+			const oldOwnershipLifecycle =
+				log._instanceLifecycle?.ownershipLifecycleController;
 			log.poisonReplicationOwnership(new Error("forced ownership poison"));
 			await db.close();
 			await session.peers[0].open(db, {
 				args: { replicate: false, timeUntilRoleMaturity: 0 },
 			});
-			expect(log._repairLifecycleController).to.not.equal(
+			expect(log._instanceLifecycle?.ownershipLifecycleController).to.not.equal(
 				oldOwnershipLifecycle,
 			);
 
@@ -3038,17 +3039,18 @@ describe("events", () => {
 				return [] as any;
 			});
 		const queueRepair = sinon.spy(
-			log,
+			log._announcements,
 			"queueCurrentReplicationStateAnnouncementRepair",
 		);
 		const queueRetry = sinon.spy(
-			log,
+			log._announcements,
 			"queueCurrentReplicationStateAnnouncementRetry",
 		);
-		const ownershipLifecycleController = log._repairLifecycleController;
+		const ownershipLifecycleController =
+			log._instanceLifecycle?.ownershipLifecycleController;
 
 		try {
-			const announcing = log.sendReplicationAnnouncement(
+			const announcing = log._announcements.sendReplicationAnnouncement(
 				new StoppedReplicating({ segmentIds: [] }),
 			);
 			await announcementStarted.promise;
@@ -3095,7 +3097,8 @@ describe("events", () => {
 			});
 
 		try {
-			const retrying = log.retryCurrentReplicationStateAnnouncement();
+			const retrying =
+				log._announcements.retryCurrentReplicationStateAnnouncement();
 			await snapshotReadStarted.promise;
 			getMyReplicationSegments.restore();
 
@@ -3104,13 +3107,16 @@ describe("events", () => {
 			await session.peers[0].open(db, {
 				args: { replicate: false, timeUntilRoleMaturity: 0 },
 			});
-			const reopenedLifecycle = log._repairLifecycleController;
+			const reopenedLifecycle =
+				log._instanceLifecycle?.ownershipLifecycleController;
 
 			releaseSnapshotRead.resolve();
 			await retrying;
 
 			expect(log._replicationRangeMutationFailure).to.be.undefined;
-			expect(log._repairLifecycleController).to.equal(reopenedLifecycle);
+			expect(log._instanceLifecycle?.ownershipLifecycleController).to.equal(
+				reopenedLifecycle,
+			);
 			expect(reopenedLifecycle.signal.aborted).to.be.false;
 		} finally {
 			releaseSnapshotRead.resolve();
@@ -3136,10 +3142,11 @@ describe("events", () => {
 					},
 				];
 			});
-		log._replicationAnnouncementRepairPending = true;
+		log._announcements._announcementRepairBinding.pending = true;
 
 		try {
-			const repairing = log.runCurrentReplicationStateAnnouncementRepair();
+			const repairing =
+				log._announcements.runCurrentReplicationStateAnnouncementRepair();
 			await snapshotReadStarted.promise;
 			getMyReplicationSegments.restore();
 
@@ -3148,13 +3155,16 @@ describe("events", () => {
 			await session.peers[0].open(db, {
 				args: { replicate: false, timeUntilRoleMaturity: 0 },
 			});
-			const reopenedLifecycle = log._repairLifecycleController;
+			const reopenedLifecycle =
+				log._instanceLifecycle?.ownershipLifecycleController;
 
 			releaseSnapshotRead.resolve();
 			await repairing;
 
 			expect(log._replicationRangeMutationFailure).to.be.undefined;
-			expect(log._repairLifecycleController).to.equal(reopenedLifecycle);
+			expect(log._instanceLifecycle?.ownershipLifecycleController).to.equal(
+				reopenedLifecycle,
+			);
 			expect(reopenedLifecycle.signal.aborted).to.be.false;
 		} finally {
 			releaseSnapshotRead.resolve();
@@ -3193,7 +3203,8 @@ describe("events", () => {
 			log.ensureRepairFrontierRunner("churn", "target", [0, 5]);
 			await firstSendStarted.promise;
 
-			const oldRepairLifecycle = log._repairLifecycleController;
+			const oldRepairLifecycle =
+				log._instanceLifecycle?.ownershipLifecycleController;
 			log.poisonReplicationOwnership(new Error("forced ownership poison"));
 			expect(oldRepairLifecycle.signal.aborted).to.be.true;
 			expect(log._repairRetryTimers.size).to.equal(0);
@@ -3263,7 +3274,8 @@ describe("events", () => {
 			encodeRawExchangeSyncPayload: () => new Uint8Array([++encoded]),
 			syncSendBlockByteLengths: () => [600_000, 600_000],
 		};
-		const ownershipLifecycleController = log._repairLifecycleController;
+		const ownershipLifecycleController =
+			log._instanceLifecycle?.ownershipLifecycleController;
 
 		try {
 			const sending = log.sendFusedRawExchangeHeadsPlan(
@@ -3334,7 +3346,8 @@ describe("events", () => {
 				}
 			});
 		}) as any);
-		const ownershipLifecycleController = log._repairLifecycleController;
+		const ownershipLifecycleController =
+			log._instanceLifecycle?.ownershipLifecycleController;
 
 		try {
 			const sending = log.sendRepairEntriesWithTransport(
@@ -3738,7 +3751,8 @@ describe("events", () => {
 				}
 				return [] as any;
 			});
-		const ownershipLifecycleController = log._repairLifecycleController;
+		const ownershipLifecycleController =
+			log._instanceLifecycle?.ownershipLifecycleController;
 
 		try {
 			log.schedulePendingMaturity(
@@ -4023,9 +4037,8 @@ describe("events", () => {
 		const disconnectedPeerHash = disconnectedPublicKey.hashcode();
 		const entryHash = uuid();
 
-		const responseMap = (db1.log as any)[
-			"_requestIPruneResponseReplicatorSet"
-		] as Map<string, Set<string>>;
+		const responseMap = (db1.log as any)._checkedPrune
+			.responseReplicatorSet as Map<string, Set<string>>;
 		responseMap.set(entryHash, new Set([disconnectedPeerHash]));
 
 		await db1.log.handleSubscriptionChange(
@@ -4269,7 +4282,8 @@ describe("events", () => {
 			log._gidPeersHistory.set(gid, new Set([remoteHash]));
 
 			expect(log._peerSyncCapabilities.get(remoteHash)).to.equal(7);
-			expect(log._replicatorLastActivityAt.has(remoteHash)).to.be.true;
+			expect(log._liveness._replicatorLastActivityAt.has(remoteHash)).to.be
+				.true;
 			expect(log._gidPeersHistory.get(gid)?.has(remoteHash)).to.be.true;
 			expect(log._peerSessions.isReplicationInfoBlocked(remoteHash)).to.be.false;
 			expect(disconnected.calledOnceWith(remoteHash)).to.be.true;
@@ -4284,7 +4298,8 @@ describe("events", () => {
 			expect(log.uniqueReplicators.has(remoteHash)).to.be.false;
 			expect(log._replicatorJoinEmitted.has(remoteHash)).to.be.false;
 			expect(log._peerSyncCapabilities.has(remoteHash)).to.be.false;
-			expect(log._replicatorLastActivityAt.has(remoteHash)).to.be.false;
+			expect(log._liveness._replicatorLastActivityAt.has(remoteHash)).to.be
+				.false;
 			expect(log._gidPeersHistory.has(gid)).to.be.false;
 			expect(disconnected.callCount).to.equal(2);
 			expect(disconnected.alwaysCalledWith(remoteHash)).to.be.true;

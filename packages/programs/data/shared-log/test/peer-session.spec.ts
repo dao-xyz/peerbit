@@ -4,10 +4,9 @@
 // open()-time map swap) and proves the registry's receive-admission
 // predicate is truth-table equivalent to an INLINE transcription of the
 // legacy 4-term SharedLog.isPeerReceiveAdmissionOpen predicate over every
-// input combination. Since stage 3 the host method delegates to the
-// registry, so the legacy side here must stay this independent inline
-// replica (expected booleans computed in the test itself) — comparing
-// against the host method would be tautological and lose regression power.
+// input combination. The host facade is gone, so the legacy side here stays
+// this independent inline replica (expected booleans computed in the test
+// itself) rather than becoming a tautological registry comparison.
 import { expect } from "chai";
 import {
 	type PeerReceiveAdmissionOptions,
@@ -43,8 +42,8 @@ const createDeps = (host: StubHost): PeerSessionDeps => ({
 
 // Literal transcription of the legacy (pre-stage-3) body of
 // SharedLog.isPeerReceiveAdmissionOpen, reading the same host state the
-// registry deps read. Deliberately NOT the host method: that now delegates
-// to the registry, so this inline replica is the regression oracle.
+// registry deps read. This inline replica is the regression oracle after the
+// host facade's removal.
 const legacyIsPeerReceiveAdmissionOpen = (
 	host: StubHost,
 	blockedPeers: Set<string>,
@@ -322,6 +321,27 @@ describe("receive admission peer session parity", () => {
 		registry.resetForOpen();
 		expect(registry.isReceiveEpochCurrent(PEER, third)).to.be.false;
 		expect(registry.isReceiveEpochCurrent(PEER, null)).to.be.true;
+	});
+
+	it("keeps receive epochs and cleanup gates isolated per peer", () => {
+		const host = createHost();
+		const registry = new PeerSessionRegistry(createDeps(host));
+		const otherPeer = "peer-b";
+
+		const peerAEpoch = registry.advanceReceiveEpoch(PEER);
+		expect(registry.isReceiveEpochCurrent(PEER, peerAEpoch)).to.be.true;
+		expect(registry.receiveEpoch(otherPeer)).to.equal(null);
+		expect(registry.isReceiveEpochCurrent(otherPeer, null)).to.be.true;
+
+		const peerBEpoch = registry.advanceReceiveEpoch(otherPeer);
+		expect(registry.isReceiveEpochCurrent(PEER, peerAEpoch)).to.be.true;
+		expect(registry.isReceiveEpochCurrent(otherPeer, peerBEpoch)).to.be.true;
+
+		const releasePeerA = registry.acquireReceiveCleanupGate(PEER);
+		expect(registry.isReceiveCleanupGateOpen(PEER)).to.be.false;
+		expect(registry.isReceiveCleanupGateOpen(otherPeer)).to.be.true;
+		releasePeerA();
+		expect(registry.isReceiveCleanupGateOpen(PEER)).to.be.true;
 	});
 
 	it("refcounts the receive cleanup gate with idempotent releases", () => {

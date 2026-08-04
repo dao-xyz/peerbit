@@ -997,7 +997,10 @@ describe("durable native commit acknowledgement", function () {
 	it("fully compensates a direct native commit when the operation intent write fails", async () => {
 		const { store, sharedLog, durable, backbone } = await openStore(true);
 		const forceDirectFallback = sinon
-			.stub(sharedLog, "canUseNativeBackboneResidentCoordinateState")
+			.stub(
+				sharedLog._coordinates,
+				"canUseNativeBackboneResidentCoordinateState",
+			)
 			.returns(false);
 		const intentStore = sharedLog._nativeBackboneCoordinatePersistenceStore as {
 			write: (name: string, bytes: Uint8Array) => Promise<void>;
@@ -2260,7 +2263,7 @@ describe("durable native commit acknowledgement", function () {
 			const forceCommitOnly = coordinateCleanupCase.forceCommitOnly
 				? sinon
 						.stub(
-							first.sharedLog,
+							first.sharedLog._coordinates,
 							"canUseNativeBackboneResidentCoordinateState",
 						)
 						.returns(false)
@@ -2273,15 +2276,16 @@ describe("durable native commit acknowledgement", function () {
 				first.sharedLog,
 				"appendLocallyPreparedPayloadsManyNativeBackboneDocumentIndexBatch",
 			);
-			const originalDelete = first.sharedLog.deleteCoordinatesForHashes.bind(
-				first.sharedLog,
-			);
+			const originalDelete =
+				first.sharedLog._coordinates.deleteCoordinatesForHashes.bind(
+					first.sharedLog._coordinates,
+				);
 			let injected = false;
 			const cleanupFailure = new Error(
 				`injected ${coordinateCleanupCase.label} coordinate cleanup failure`,
 			);
 			const deleteStub = sinon
-				.stub(first.sharedLog, "deleteCoordinatesForHashes")
+				.stub(first.sharedLog._coordinates, "deleteCoordinatesForHashes")
 				.callsFake((...args: unknown[]) => {
 					const hashes = args[0] as Iterable<string>;
 					const values = [...hashes];
@@ -2622,7 +2626,10 @@ describe("durable native commit acknowledgement", function () {
 		// Force the graph commit-only variant; the normal test above covers the
 		// resident-coordinate storage transaction variant.
 		const residentStateStub = sinon
-			.stub(sharedLog, "canUseNativeBackboneResidentCoordinateState")
+			.stub(
+				sharedLog._coordinates,
+				"canUseNativeBackboneResidentCoordinateState",
+			)
 			.returns(false);
 		const durablePutStub = sinon
 			.stub(durable, "putKnown")

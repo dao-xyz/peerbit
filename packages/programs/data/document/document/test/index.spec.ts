@@ -797,7 +797,7 @@ describe("index", () => {
 				);
 				const lowerTrimSpy = sinon.spy(store.docs.log.log, "trim");
 				const deleteCoordinatesSpy = sinon.spy(
-					store.docs.log as any,
+					(store.docs.log as any)._coordinates,
 					"deleteCoordinatesForHashes",
 				);
 				const initSpy = sinon.spy(EntryV0.prototype, "init");
@@ -1331,11 +1331,11 @@ describe("index", () => {
 					"preparePlainCommittedNoNextStorageAppendDocumentIndexCompactTransaction",
 				);
 				const backboneCoordinatePersistSpy = sinon.spy(
-					sharedLog,
+					sharedLog._coordinates,
 					"persistBackboneCoordinateFieldsNativeTransaction",
 				);
 				const genericCoordinatePersistSpy = sinon.spy(
-					sharedLog,
+					sharedLog._coordinates,
 					"persistPreparedCoordinateNativeTransaction",
 				);
 				const backendIndex = store.docs.index.index as any;
@@ -1435,11 +1435,11 @@ describe("index", () => {
 					"preparePlainCommittedNoNextStorageAppendDocumentIndexCompactTransaction",
 				);
 				const genericCoordinatePersistSpy = sinon.spy(
-					sharedLog,
+					sharedLog._coordinates,
 					"persistPreparedCoordinateNativeTransaction",
 				);
 				const backboneCoordinatePersistSpy = sinon.spy(
-					sharedLog,
+					sharedLog._coordinates,
 					"persistBackboneCoordinateFieldsNativeTransaction",
 				);
 

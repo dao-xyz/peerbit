@@ -66,7 +66,7 @@ export type ReplicatorLivenessDeps = {
 	confirmReplicatorSubscriberPresence: (peerHash: string) => Promise<boolean>;
 	getNode: () => Parameters<typeof waitForSubscribers>[0];
 	getWaitForReplicatorTimeout: () => number;
-	// Host-routed dispatch so instance stubs/spies keep intercepting
+	// Owner-routed dispatch so monitor stubs/spies keep intercepting
 	// sweep-driven probes and activity marks.
 	probeReplicatorLiveness: (peerHash: string) => Promise<void> | void;
 	markReplicatorActivity: (peerHash: string, now?: number) => void;

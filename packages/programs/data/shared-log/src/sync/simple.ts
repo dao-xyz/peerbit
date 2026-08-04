@@ -505,10 +505,6 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 	// detached row — it never touches a reconnected successor's quota.
 	private readonly peerSlotRows: SyncPeerSlotRegistry;
 
-	private get syncResponseSlotRows(): Map<string, SyncPeerSlotRow> {
-		return this.peerSlotRows.rows;
-	}
-
 	// map of hash to public keys that we can ask for entries
 	get syncInFlightQueue(): Map<SyncableKey, PublicSignKey[]> {
 		return this.pendingSync.syncInFlightQueue;
@@ -521,71 +517,6 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 	// map of hash to public keys that we have asked for entries
 	get syncInFlight(): Map<string, Map<SyncableKey, { timestamp: number }>> {
 		return this.pendingSync.syncInFlight;
-	}
-
-	private get syncInFlightTargetsByKey(): Map<SyncableKey, Set<string>> {
-		return this.pendingSync.syncInFlightTargetsByKey;
-	}
-
-	private get syncInFlightQueueExpiresAt(): Map<SyncableKey, number> {
-		return this.pendingSync.syncInFlightQueueExpiresAt;
-	}
-
-	private get syncInFlightQueueExpiryTimer():
-		| ReturnType<typeof setTimeout>
-		| undefined {
-		return this.pendingSync.syncInFlightQueueExpiryTimer;
-	}
-
-	private get pendingSyncExpiryHeap() {
-		return this.pendingSync.pendingSyncExpiryHeap;
-	}
-
-	private get pendingSyncAdmissionExpiryNodes() {
-		return this.pendingSync.pendingSyncAdmissionExpiryNodes;
-	}
-
-	private get syncInFlightQueuedCoordinates(): Set<bigint> {
-		return this.pendingSync.syncInFlightQueuedCoordinates;
-	}
-
-	private get syncInFlightQueuedHashByCoordinate(): Map<bigint, string> {
-		return this.pendingSync.syncInFlightQueuedHashByCoordinate;
-	}
-
-	private get syncInFlightQueuedCoordinatesByHash(): Map<string, Set<bigint>> {
-		return this.pendingSync.syncInFlightQueuedCoordinatesByHash;
-	}
-
-	private get pendingSyncClaimCount(): number {
-		return this.pendingSync.pendingSyncClaimCount;
-	}
-
-	private get pendingSyncAdmissionCount(): number {
-		return this.pendingSync.pendingSyncAdmissionCount;
-	}
-
-	private get pendingSyncAdmissionCountByPeer(): Map<string, number> {
-		return this.pendingSync.pendingSyncAdmissionCountByPeer;
-	}
-
-	private get pendingSyncAdmissionIdentitiesByPeer(): Map<
-		string,
-		Set<SyncableKey>
-	> {
-		return this.pendingSync.pendingSyncAdmissionIdentitiesByPeer;
-	}
-
-	private get pendingSyncAdmissionReservations() {
-		return this.pendingSync.pendingSyncAdmissionReservations;
-	}
-
-	private get pendingSyncAdmissionReservationsByPeer() {
-		return this.pendingSync.pendingSyncAdmissionReservationsByPeer;
-	}
-
-	private get pendingSyncAdmissionReservationsByIdentity() {
-		return this.pendingSync.pendingSyncAdmissionReservationsByIdentity;
 	}
 
 	rpc: RPC<TransportMessage, TransportMessage>;
@@ -628,12 +559,6 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 		SyncDispatchTargetLifecycle
 	>;
 
-	private get syncDispatchTargets(): Map<
-		string,
-		Set<SyncDispatchTargetLifecycle>
-	> {
-		return this.syncDispatchRegistry.activeTargets;
-	}
 	private repairSessionCounter: number;
 	private repairSessions: Map<string, RepairSessionState>;
 
@@ -2900,10 +2825,11 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 
 	private canStartPendingSyncLookup(peer: string): boolean {
 		return (
-			this.pendingSyncAdmissionReservations.size +
+			this.pendingSync.pendingSyncAdmissionReservations.size +
 				this.pendingCoordinateLookupCount <
 				MAX_PENDING_SIMPLE_SYNC_LOOKUPS_GLOBAL &&
-			(this.pendingSyncAdmissionReservationsByPeer.get(peer)?.size ?? 0) +
+			(this.pendingSync.pendingSyncAdmissionReservationsByPeer.get(peer)
+				?.size ?? 0) +
 				(this.pendingCoordinateLookupCountByPeer.get(peer) ?? 0) <
 				MAX_PENDING_SIMPLE_SYNC_LOOKUPS_PER_PEER
 		);
@@ -3101,10 +3027,10 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 			Math.min(
 				MAX_PENDING_SIMPLE_SYNC_KEYS_PER_PEER -
 					peerClaimCount -
-					(this.pendingSyncAdmissionCountByPeer.get(fromHash) ?? 0),
+					(this.pendingSync.pendingSyncAdmissionCountByPeer.get(fromHash) ?? 0),
 				MAX_PENDING_SIMPLE_SYNC_KEYS_GLOBAL -
-					this.pendingSyncClaimCount -
-					this.pendingSyncAdmissionCount,
+					this.pendingSync.pendingSyncClaimCount -
+					this.pendingSync.pendingSyncAdmissionCount,
 			),
 		);
 		const targetEpoch = this.getOrCreateSyncDispatchTargetEpoch(fromHash);
@@ -3129,7 +3055,7 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 		const identitiesToCheck: SyncableKey[] = [];
 		const seen = new Set<SyncableKey>();
 		const pendingAdmissionIdentities =
-			this.pendingSyncAdmissionIdentitiesByPeer.get(fromHash);
+			this.pendingSync.pendingSyncAdmissionIdentitiesByPeer.get(fromHash);
 		// Default senders use 1,024-key messages. Capping examined input at the
 		// entire per-peer allowance prevents a duplicate-filled oversized vector
 		// from turning admission itself into unbounded work.
@@ -3631,7 +3557,8 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 					if (!isOpenLifecycleActive()) {
 						return;
 					}
-					const expiresAt = this.syncInFlightQueueExpiresAt.get(key);
+					const expiresAt =
+						this.pendingSync.syncInFlightQueueExpiresAt.get(key);
 					if (expiresAt != null && expiresAt <= Date.now()) {
 						this.clearSyncProcessKey(key);
 						continue;
@@ -3645,7 +3572,8 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 					if (!value) {
 						continue;
 					}
-					const currentExpiresAt = this.syncInFlightQueueExpiresAt.get(key);
+					const currentExpiresAt =
+						this.pendingSync.syncInFlightQueueExpiresAt.get(key);
 					if (currentExpiresAt != null && currentExpiresAt <= Date.now()) {
 						this.clearSyncProcessKey(key);
 						continue;
@@ -3858,7 +3786,7 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 		this.syncDispatchTargetEpochs.delete(publicKeyHash);
 		this.clearPendingSyncAdmissions(publicKeyHash);
 		for (const targetLifecycle of [
-			...(this.syncDispatchTargets.get(publicKeyHash) ?? []),
+			...(this.syncDispatchRegistry.activeTargets.get(publicKeyHash) ?? []),
 		]) {
 			if (targetLifecycle.lifecycle.abortAllOnTargetDisconnect) {
 				this.abortSyncDispatchLifecycle(

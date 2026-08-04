@@ -1847,7 +1847,7 @@ describe("sync-chunking", () => {
 			expect(
 				sync.syncInFlightQueueInverted.get(peerA.hashcode())?.size,
 			).to.equal(MAX_PENDING_SIMPLE_SYNC_KEYS_PER_PEER);
-			expect((sync as any).pendingSyncClaimCount).to.equal(
+			expect((sync as any).pendingSync.pendingSyncClaimCount).to.equal(
 				MAX_PENDING_SIMPLE_SYNC_KEYS_PER_PEER,
 			);
 			expect(sync.syncInFlightQueue.has(hashes.at(-1)!)).to.equal(false);
@@ -1923,12 +1923,15 @@ describe("sync-chunking", () => {
 		try {
 			await sync.queueSync(coordinates, peerA, { skipCheck: true });
 			coordinateToHash.add(coordinates.at(-1)!, alias);
-			(sync as any).syncInFlightQueuedCoordinatesByHash.set(
+			(sync as any).pendingSync.syncInFlightQueuedCoordinatesByHash.set(
 				alias,
 				new Set(coordinates),
 			);
 			for (const coordinate of coordinates) {
-				(sync as any).syncInFlightQueuedHashByCoordinate.set(coordinate, alias);
+				(sync as any).pendingSync.syncInFlightQueuedHashByCoordinate.set(
+					coordinate,
+					alias,
+				);
 			}
 			const get = sinon.spy(coordinateToHash, "get");
 
@@ -2130,7 +2133,7 @@ describe("sync-chunking", () => {
 			}
 
 			expect(sync.pending).to.equal(MAX_PENDING_SIMPLE_SYNC_KEYS_PER_PEER);
-			expect((sync as any).pendingSyncClaimCount).to.equal(
+			expect((sync as any).pendingSync.pendingSyncClaimCount).to.equal(
 				MAX_PENDING_SIMPLE_SYNC_KEYS_GLOBAL,
 			);
 			for (const peer of peers.slice(0, peerCount)) {
@@ -2165,9 +2168,9 @@ describe("sync-chunking", () => {
 			await sync.onMessage(new RequestMaybeSync({ hashes: ["claim"] }), {
 				from: peerA,
 			} as any);
-			const firstDeadline = (sync as any).syncInFlightQueueExpiresAt.get(
-				"claim",
-			);
+			const firstDeadline = (
+				sync as any
+			).pendingSync.syncInFlightQueueExpiresAt.get("claim");
 			expect(firstDeadline).to.equal(100_000 + PENDING_SIMPLE_SYNC_KEY_TTL_MS);
 			expect(sync.syncInFlight.get(peerA.hashcode())?.has("claim")).to.equal(
 				true,
@@ -2182,16 +2185,16 @@ describe("sync-chunking", () => {
 			);
 			expect(hasMany.calledOnce).to.equal(true);
 			expect(send.calledOnce).to.equal(true);
-			expect((sync as any).syncInFlightQueueExpiresAt.get("claim")).to.equal(
-				firstDeadline,
-			);
-			expect((sync as any).pendingSyncClaimCount).to.equal(1);
+			expect(
+				(sync as any).pendingSync.syncInFlightQueueExpiresAt.get("claim"),
+			).to.equal(firstDeadline);
+			expect((sync as any).pendingSync.pendingSyncClaimCount).to.equal(1);
 
 			await clock.tickAsync(1);
 			expect(sync.pending).to.equal(0);
 			expect(sync.syncInFlightQueueInverted.size).to.equal(0);
 			expect(sync.syncInFlight.size).to.equal(0);
-			expect((sync as any).pendingSyncClaimCount).to.equal(0);
+			expect((sync as any).pendingSync.pendingSyncClaimCount).to.equal(0);
 
 			await sync.onMessage(new RequestMaybeSync({ hashes: ["claim"] }), {
 				from: peerA,
@@ -2199,9 +2202,9 @@ describe("sync-chunking", () => {
 			expect(hasMany.callCount).to.equal(2);
 			expect(send.callCount).to.equal(2);
 			expect(sync.pending).to.equal(1);
-			expect((sync as any).syncInFlightQueueExpiresAt.get("claim")).to.equal(
-				firstDeadline + PENDING_SIMPLE_SYNC_KEY_TTL_MS,
-			);
+			expect(
+				(sync as any).pendingSync.syncInFlightQueueExpiresAt.get("claim"),
+			).to.equal(firstDeadline + PENDING_SIMPLE_SYNC_KEY_TTL_MS);
 		} finally {
 			await sync.close();
 			clock.restore();
@@ -2240,7 +2243,7 @@ describe("sync-chunking", () => {
 
 			expect(sync.pending).to.equal(1);
 			expect(sync.syncInFlightQueue.has("fresh-claim")).to.equal(true);
-			expect((sync as any).pendingSyncClaimCount).to.equal(1);
+			expect((sync as any).pendingSync.pendingSyncClaimCount).to.equal(1);
 		} finally {
 			await sync.close();
 			clock.restore();
@@ -2258,10 +2261,8 @@ describe("sync-chunking", () => {
 			log: {} as any,
 			coordinateToHash: new Cache<string>({ max: 100 }),
 		});
-		const expiryMap = (sync as any).syncInFlightQueueExpiresAt as Map<
-			string,
-			number
-		>;
+		const expiryMap = (sync as any).pendingSync
+			.syncInFlightQueueExpiresAt as Map<string, number>;
 
 		try {
 			for (let index = 0; index < 64; index += 1) {
@@ -2270,7 +2271,9 @@ describe("sync-chunking", () => {
 				});
 				await clock.tickAsync(1);
 			}
-			expect((sync as any).pendingSyncExpiryHeap).to.have.length(64);
+			expect((sync as any).pendingSync.pendingSyncExpiryHeap).to.have.length(
+				64,
+			);
 			Object.defineProperty(expiryMap, Symbol.iterator, {
 				configurable: true,
 				value: () => {
@@ -2280,7 +2283,7 @@ describe("sync-chunking", () => {
 
 			await clock.tickAsync(PENDING_SIMPLE_SYNC_KEY_TTL_MS);
 			expect(sync.pending).to.equal(0);
-			expect((sync as any).pendingSyncExpiryHeap).to.have.length(0);
+			expect((sync as any).pendingSync.pendingSyncExpiryHeap).to.have.length(0);
 		} finally {
 			delete (expiryMap as any)[Symbol.iterator];
 			await sync.close();
@@ -2352,14 +2355,14 @@ describe("sync-chunking", () => {
 				{ from: peerA } as any,
 			);
 			await waitFor(() => hasMany.calledOnce);
-			expect((sync as any).pendingSyncAdmissionCount).to.equal(
+			expect((sync as any).pendingSync.pendingSyncAdmissionCount).to.equal(
 				MAX_PENDING_SIMPLE_SYNC_KEYS_PER_PEER,
 			);
 
 			await clock.tickAsync(PENDING_SIMPLE_SYNC_KEY_TTL_MS);
 			// Expiry invalidates the late result but cannot release the quota slot
 			// while the non-abortable lookup is still consuming resources.
-			expect((sync as any).pendingSyncAdmissionCount).to.equal(
+			expect((sync as any).pendingSync.pendingSyncAdmissionCount).to.equal(
 				MAX_PENDING_SIMPLE_SYNC_KEYS_PER_PEER,
 			);
 			await sync.onMessage(new RequestMaybeSync({ hashes: ["fresh"] }), {
@@ -2368,7 +2371,7 @@ describe("sync-chunking", () => {
 			expect(hasMany.calledOnce).to.equal(true);
 			resolveLookup([]);
 			await handling;
-			expect((sync as any).pendingSyncAdmissionCount).to.equal(0);
+			expect((sync as any).pendingSync.pendingSyncAdmissionCount).to.equal(0);
 			expect(sync.pending).to.equal(0);
 			expect(send.called).to.equal(false);
 
@@ -2415,11 +2418,12 @@ describe("sync-chunking", () => {
 			await waitFor(() => hasMany.calledOnce);
 
 			sync.onEntryAddedHashes(hashes);
-			expect((sync as any).pendingSyncAdmissionCount).to.equal(
+			expect((sync as any).pendingSync.pendingSyncAdmissionCount).to.equal(
 				MAX_PENDING_SIMPLE_SYNC_KEYS_PER_PEER,
 			);
 			expect(
-				(sync as any).pendingSyncAdmissionReservationsByIdentity.size,
+				(sync as any).pendingSync.pendingSyncAdmissionReservationsByIdentity
+					.size,
 			).to.equal(0);
 
 			await sync.onMessage(
@@ -2430,8 +2434,10 @@ describe("sync-chunking", () => {
 
 			resolveLookup(hashes);
 			await handling;
-			expect((sync as any).pendingSyncAdmissionCount).to.equal(0);
-			expect((sync as any).pendingSyncAdmissionCountByPeer.size).to.equal(0);
+			expect((sync as any).pendingSync.pendingSyncAdmissionCount).to.equal(0);
+			expect(
+				(sync as any).pendingSync.pendingSyncAdmissionCountByPeer.size,
+			).to.equal(0);
 
 			await sync.onMessage(
 				new RequestMaybeSync({ hashes: ["after-old-lookup"] }),
@@ -2486,22 +2492,27 @@ describe("sync-chunking", () => {
 			expect(
 				sync.syncInFlightQueue.get(shared)?.map((peer) => peer.hashcode()),
 			).to.deep.equal([peerB.hashcode(), peerA.hashcode()]);
-			expect((sync as any).pendingSyncAdmissionCount).to.equal(reserved.length);
-			expect((sync as any).pendingSyncClaimCount).to.equal(2);
+			expect((sync as any).pendingSync.pendingSyncAdmissionCount).to.equal(
+				reserved.length,
+			);
+			expect((sync as any).pendingSync.pendingSyncClaimCount).to.equal(2);
 			expect(
-				(sync as any).pendingSyncAdmissionCountByPeer.get(peerA.hashcode()) +
-					(sync.syncInFlightQueueInverted.get(peerA.hashcode())?.size ?? 0),
+				(sync as any).pendingSync.pendingSyncAdmissionCountByPeer.get(
+					peerA.hashcode(),
+				) + (sync.syncInFlightQueueInverted.get(peerA.hashcode())?.size ?? 0),
 			).to.equal(MAX_PENDING_SIMPLE_SYNC_KEYS_PER_PEER);
 			expect(send.calledOnce).to.equal(true);
 			expect(send.firstCall.args[1].mode.to).to.deep.equal([peerA.hashcode()]);
 
 			sync.onEntryAddedHash(shared);
-			expect((sync as any).pendingSyncClaimCount).to.equal(0);
-			expect((sync as any).pendingSyncAdmissionCount).to.equal(reserved.length);
+			expect((sync as any).pendingSync.pendingSyncClaimCount).to.equal(0);
+			expect((sync as any).pendingSync.pendingSyncAdmissionCount).to.equal(
+				reserved.length,
+			);
 
 			resolveLookup(reserved);
 			await blocked;
-			expect((sync as any).pendingSyncAdmissionCount).to.equal(0);
+			expect((sync as any).pendingSync.pendingSyncAdmissionCount).to.equal(0);
 			expect(sync.pending).to.equal(0);
 		} finally {
 			resolveLookup?.(reserved);
@@ -2549,12 +2560,12 @@ describe("sync-chunking", () => {
 
 			expect(hasMany.calledOnce).to.equal(true);
 			expect(sync.pending).to.equal(0);
-			expect((sync as any).pendingSyncAdmissionCount).to.equal(
+			expect((sync as any).pendingSync.pendingSyncAdmissionCount).to.equal(
 				MAX_PENDING_SIMPLE_SYNC_KEYS_PER_PEER,
 			);
 
 			sync.onPeerDisconnected(peerA);
-			expect((sync as any).pendingSyncAdmissionCount).to.equal(
+			expect((sync as any).pendingSync.pendingSyncAdmissionCount).to.equal(
 				MAX_PENDING_SIMPLE_SYNC_KEYS_PER_PEER,
 			);
 			await sync.onMessage(new RequestMaybeSync({ hashes: second }), {
@@ -2563,7 +2574,7 @@ describe("sync-chunking", () => {
 			expect(hasMany.calledOnce).to.equal(true);
 			resolveLookup([]);
 			await blocked;
-			expect((sync as any).pendingSyncAdmissionCount).to.equal(0);
+			expect((sync as any).pendingSync.pendingSyncAdmissionCount).to.equal(0);
 			expect(sync.pending).to.equal(0);
 
 			await sync.onMessage(new RequestMaybeSync({ hashes: ["reclaimed"] }), {
@@ -2630,7 +2641,9 @@ describe("sync-chunking", () => {
 				release([]);
 			}
 			await Promise.all(blocked);
-			expect((sync as any).pendingSyncAdmissionReservations.size).to.equal(0);
+			expect(
+				(sync as any).pendingSync.pendingSyncAdmissionReservations.size,
+			).to.equal(0);
 
 			await sync.onMessage(
 				new RequestMaybeSync({ hashes: ["after-call-cap"] }),
