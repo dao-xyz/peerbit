@@ -379,15 +379,16 @@ interface DatabaseCreator {
 }
 
 let initialized: DatabaseCreator | undefined = undefined;
+const SQLITE3_WORKER_PATH = "/peerbit/sqlite3/sqlite3.worker.min.js";
 const init = async (): Promise<DatabaseCreator> => {
 	if (initialized) {
 		return initialized;
 	}
 
-	const worker = new Worker(
-		new URL("/peerbit/sqlite3/sqlite3.worker.min.js", import.meta.url),
-		{ type: "module" },
-	);
+	// This is already a prebuilt public asset. Keeping the URL opaque prevents
+	// Vite from transforming the worker and its native public-module import.
+	const workerUrl = new URL(SQLITE3_WORKER_PATH, globalThis.location.href);
+	const worker = new Worker(workerUrl, { type: "module" });
 	const resolvers: Record<
 		string,
 		{

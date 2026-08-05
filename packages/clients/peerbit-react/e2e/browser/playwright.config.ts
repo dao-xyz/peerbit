@@ -5,6 +5,10 @@ const defaultPort = 4183;
 const envPort = Number.parseInt(process.env.PLAYWRIGHT_PORT ?? "", 10);
 const port = Number.isFinite(envPort) && envPort > 0 ? envPort : defaultPort;
 const baseURL = `http://localhost:${port}`;
+const useViteDev = process.env.PEERBIT_E2E_VITE_DEV === "1";
+const viteCommand = useViteDev
+	? "vite --config vite.sqlite-dev.config.ts"
+	: "vite preview";
 
 export default defineConfig({
 	testDir: "./tests",
@@ -26,7 +30,7 @@ export default defineConfig({
 		screenshot: "only-on-failure",
 	},
 	webServer: {
-		command: `pnpm exec vite preview --host --strictPort --port ${port}`,
+		command: `pnpm exec ${viteCommand} --host --strictPort --port ${port}`,
 		url: baseURL,
 		reuseExistingServer: false,
 		timeout: 120_000,
