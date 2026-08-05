@@ -1,5 +1,13 @@
 # Changelog
 
+## 3.0.13
+
+### Patch Changes
+
+- [#1188](https://github.com/dao-xyz/peerbit/pull/1188) [`4f1d192`](https://github.com/dao-xyz/peerbit/commit/4f1d1924c37d2f2a179576df1af24c606d06f176) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Load SQLite's initialization module as a published browser asset so Vite
+  consumers no longer resolve the unused and unpublished `sqlite3-worker1.js`
+  asset from the upstream worker-promiser side effect.
+
 ## 3.0.12
 
 ### Patch Changes

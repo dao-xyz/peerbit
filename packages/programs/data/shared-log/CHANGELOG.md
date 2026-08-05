@@ -1,5 +1,14 @@
 # Changelog
 
+## 13.2.26
+
+### Patch Changes
+
+- Updated dependencies [[`4f1d192`](https://github.com/dao-xyz/peerbit/commit/4f1d1924c37d2f2a179576df1af24c606d06f176), [`7111c4e`](https://github.com/dao-xyz/peerbit/commit/7111c4e19ef37c60e515a20ff46270c61020a244)]:
+  - @peerbit/indexer-sqlite3@3.0.13
+  - @peerbit/log@6.2.15
+  - @peerbit/rpc@6.1.16
+
 ## 13.2.25
 
 ### Patch Changes
