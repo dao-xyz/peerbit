@@ -19541,6 +19541,38 @@ describe("index", () => {
 				expect((getRemote as any)["__indexed"]).to.exist;
 			});
 
+			it("rehydrates a foreign Entry identity before an indexed RPC response", async () => {
+				const local = await stores[0].docs.index.get("1", { resolve: false });
+				const headHash = local!.__context.head;
+				const log = (stores[0].docs.index as any)._log.log;
+				const getMany = log.getMany.bind(log);
+				let foreignHeads = 0;
+				const getManyStub = sinon
+					.stub(log, "getMany")
+					.callsFake(async (...args: unknown[]) =>
+						(await getMany(args[0] as string[])).map(
+							(head: Entry<Operation> | undefined) => {
+								if (head?.hash !== headHash) {
+									return head;
+								}
+								foreignHeads++;
+								return { hash: head.hash } as unknown as Entry<Operation>;
+							},
+						),
+					);
+
+				try {
+					const remote = await stores[1].docs.index.get("1", {
+						resolve: false,
+					});
+					expect(foreignHeads).to.be.greaterThan(0);
+					expect(remote!.nameTransformed).to.eq("NAME1");
+					expect((remote as any)["__indexed"]).to.exist;
+				} finally {
+					getManyStub.restore();
+				}
+			});
+
 			it("uses indexed requests for replicated resolved remote get", async () => {
 				const processQuerySpy = sinon.spy(stores[0].docs.index, "processQuery");
 				try {

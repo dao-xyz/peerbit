@@ -24,7 +24,7 @@ import {
 import { CachedIndex, type QueryCacheOptions } from "@peerbit/indexer-cache";
 import * as indexerTypes from "@peerbit/indexer-interface";
 import { HashmapIndex } from "@peerbit/indexer-simple";
-import { BORSH_ENCODING, type Encoding, type Entry } from "@peerbit/log";
+import { BORSH_ENCODING, type Encoding, Entry } from "@peerbit/log";
 import { logger as loggerFn } from "@peerbit/logger";
 import { ClosedError, Program } from "@peerbit/program";
 import {
@@ -1233,6 +1233,35 @@ export class DocumentIndex<
 		return { resolved, heads };
 	}
 
+	/**
+	 * Return a head that the local document-interface Entry schema can encode.
+	 * Consumers can install the same @peerbit/log version at more than one
+	 * physical path, giving its Entry class more than one runtime identity.
+	 * Rehydrate only foreign or hollow entries through this log's block store;
+	 * the normal colocated path preserves the existing Entry object.
+	 */
+	private getSerializableHead(
+		head: Entry<Operation> | undefined,
+	): MaybePromise<Entry<Operation> | undefined> {
+		const hash = head?.hash;
+		if (!hash) {
+			return head;
+		}
+		if (head instanceof Entry) {
+			try {
+				head.getStorageBytes();
+				return head;
+			} catch {
+				// A native-backed head may be hollow until read from the block store.
+			}
+			return Entry.fromMultihash<Operation>(
+				this._log.log.blocks,
+				hash,
+			).catch(() => head);
+		}
+		return Entry.fromMultihash<Operation>(this._log.log.blocks, hash);
+	}
+
 	private async wrapPushResults(
 		matches: Array<WithContext<T> | WithContext<I>>,
 		resolve: boolean,
@@ -1270,6 +1299,9 @@ export class DocumentIndex<
 				headsByMatch[position] = indexedBatch.heads[i];
 			}
 		}
+		const serializableHeads = await Promise.all(
+			headsByMatch.map((head) => this.getSerializableHead(head)),
+		);
 		const results: types.Result[] = [];
 		for (let i = 0; i < matches.length; i++) {
 			const match = matches[i]!;
@@ -1304,7 +1336,7 @@ export class DocumentIndex<
 					continue;
 				}
 
-				const head = headsByMatch[i];
+				const head = serializableHeads[i];
 				results.push(
 					new types.ResultIndexedValue({
 						context: indexed.__context,
@@ -1315,7 +1347,7 @@ export class DocumentIndex<
 				);
 			} else {
 				const indexed = match as WithContext<I>;
-				const head = headsByMatch[i];
+				const head = serializableHeads[i];
 				results.push(
 					new types.ResultIndexedValue({
 						context: indexed.__context,
@@ -1350,6 +1382,9 @@ export class DocumentIndex<
 			: await this._log.log.getMany(
 					drained.map((entry) => entry.value.__context.head),
 				);
+		const serializableHeads = await Promise.all(
+			heads.map((head) => this.getSerializableHead(head)),
+		);
 		const results: types.Result[] = [];
 		for (let i = 0; i < drained.length; i++) {
 			const entry = drained[i]!;
@@ -1371,7 +1406,7 @@ export class DocumentIndex<
 					continue;
 				}
 
-				const head = heads[i];
+				const head = serializableHeads[i];
 				results.push(
 					new types.ResultIndexedValue({
 						context: entry.value.__context,
@@ -1381,7 +1416,7 @@ export class DocumentIndex<
 					}),
 				);
 			} else {
-				const head = heads[i];
+				const head = serializableHeads[i];
 				results.push(
 					new types.ResultIndexedValue({
 						context: entry.value.__context,
@@ -3775,6 +3810,9 @@ export class DocumentIndex<
 						candidates.map(({ result }) => result.value.__context.head),
 					)
 				: [];
+		const serializableHeads = resolveDocumentsFlag
+			? heads
+			: await Promise.all(heads.map((head) => this.getSerializableHead(head)));
 		const filteredResults: types.Result[] = [];
 		for (let i = 0; i < candidates.length; i++) {
 			const { result, indexed: indexedUnwrapped } = candidates[i]!;
@@ -3795,7 +3833,7 @@ export class DocumentIndex<
 				);
 			} else {
 				const context = result.value.__context;
-				const head = heads[i];
+				const head = serializableHeads[i];
 				if (replicateIndexFlag) {
 					if (!head) {
 						continue;

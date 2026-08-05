@@ -215,6 +215,14 @@ objects through the block store. The #1027 helper remains a defensive
 serialization check, but normal native full reads arrive complete before the
 document RPC boundary.
 
+The batched-head path also preserves that boundary when package managers place
+the same `@peerbit/log` version at multiple physical paths. Such entries are
+structurally valid but fail borsh's runtime class check, so only those foreign
+instances are rehydrated through the local block store before the response is
+encoded. On receipt, the lower log recognizes the full structural Entry
+contract and normalizes it into the receiving log's local runtime identity
+instead of mistaking it for an `EntryWithRefs` wrapper.
+
 ### Not yet catalogued (deferred, out of scope for this leg)
 
 The `updates`, `replication`, `remote`, `acl`, `program as value`, `migration`,
