@@ -517,6 +517,44 @@ type EntryWithMetaBytes = {
 	getHashDigestBytes?: () => Uint8Array | undefined;
 };
 
+/**
+ * Package managers can install the same @peerbit/log version at more than one
+ * physical path. Those entries retain the full Entry contract but fail a
+ * local instanceof check because their constructor has a different identity.
+ */
+const isFullEntry = (value: unknown): value is Entry<any> => {
+	if (value instanceof Entry) {
+		return true;
+	}
+	if (!value || typeof value !== "object") {
+		return false;
+	}
+	const candidate = value as Partial<Entry<any>>;
+	return (
+		typeof candidate.hash === "string" &&
+		typeof candidate.init === "function" &&
+		typeof candidate.getNext === "function" &&
+		typeof candidate.getClock === "function" &&
+		typeof candidate.getStorageBytes === "function" &&
+		typeof candidate.verifySignatures === "function"
+	);
+};
+
+const normalizeFullEntry = <T>(value: unknown): Entry<T> => {
+	if (value instanceof Entry) {
+		return value as Entry<T>;
+	}
+	const entry = value as Entry<any>;
+	const normalized = deserialize(entry.getStorageBytes(), Entry) as Entry<T>;
+	if (normalized.hash && normalized.hash !== entry.hash) {
+		throw new Error(
+			"Entry hash changed while normalizing its runtime identity",
+		);
+	}
+	normalized.hash = entry.hash;
+	return normalized;
+};
+
 type MutationCallback = (...args: any[]) => any;
 
 @variant(0)
@@ -3882,7 +3920,7 @@ export class Log<T> {
 				continue;
 			}
 			let nextEntry: Entry<any>;
-			if (e instanceof Entry) {
+			if (isFullEntry(e)) {
 				nextEntry = e;
 			} else {
 				const resolved = await this.entryIndex.get(e.hash);
@@ -4303,22 +4341,23 @@ export class Log<T> {
 							entriesOrLog.map((element) =>
 								typeof element === "string"
 									? element
-									: element instanceof Entry
+									: isFullEntry(element)
 										? element.hash
 										: element instanceof ShallowEntry
 											? element.hash
-											: element.entry.hash,
+											: (element as EntryWithRefs<T>).entry.hash,
 							),
 						);
 
 			entries = [];
 			for (const element of entriesOrLog) {
-				if (element instanceof Entry) {
-					if (existingHashes.has(element.hash)) {
+				if (isFullEntry(element)) {
+					const fullEntry = normalizeFullEntry<T>(element);
+					if (existingHashes.has(fullEntry.hash)) {
 						continue;
 					}
-					entries.push(element);
-					references.set(element.hash, element);
+					entries.push(fullEntry);
+					references.set(fullEntry.hash, fullEntry);
 					continue;
 				}
 
@@ -4380,9 +4419,10 @@ export class Log<T> {
 					continue;
 				}
 
-				entries.push(element.entry);
-				references.set(element.entry.hash, element.entry);
-				for (const ref of element.references) {
+				const entryWithRefs = element as EntryWithRefs<T>;
+				entries.push(entryWithRefs.entry);
+				references.set(entryWithRefs.entry.hash, entryWithRefs.entry);
+				for (const ref of entryWithRefs.references) {
 					references.set(ref.hash, ref);
 				}
 			}

@@ -171,6 +171,26 @@ describe("join", function () {
 			expect(await log2.length).equal(1);
 		});
 
+		it("joins an entry from another runtime class identity", async () => {
+			const { entry } = await log1.append(new Uint8Array([0, 1]));
+			const foreignEntry = new Proxy(entry, {
+				get(target, property) {
+					const value = Reflect.get(target, property, target);
+					return typeof value === "function" ? value.bind(target) : value;
+				},
+				getPrototypeOf: () => Object.prototype,
+			}) as Entry<Uint8Array>;
+
+			expect(foreignEntry).not.to.be.instanceOf(Entry);
+			await log2.join([foreignEntry]);
+
+			expect(await log2.has(entry.hash)).to.be.true;
+			expect(log2.length).equal(1);
+			const joined = await log2.get(entry.hash);
+			expect(joined).to.be.instanceOf(Entry);
+			expect(joined).not.to.equal(foreignEntry);
+		});
+
 		it("will no-refetch blocks when already joined by has", async () => {
 			await log1.append(new Uint8Array([0, 1]));
 			const blockGet = log2["_storage"].get.bind(log2.blocks);
