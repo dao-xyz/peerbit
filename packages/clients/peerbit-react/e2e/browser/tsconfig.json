@@ -10,5 +10,5 @@
 		"skipLibCheck": true,
 		"noEmit": true
 	},
-	"include": ["src", "tests", "service-worker.ts"]
+	"include": ["src", "sqlite-dev", "tests", "service-worker.ts"]
 }

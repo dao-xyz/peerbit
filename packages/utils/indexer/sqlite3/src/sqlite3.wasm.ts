@@ -144,8 +144,15 @@ const ensureSqlite3InitModuleState = () => {
 
 const loadSqlite3InitModule = async (): Promise<Sqlite3InitModule> => {
 	if (!sqlite3InitModulePromise) {
+		// Vite only injects its public-asset query into relative/root-relative
+		// variable imports. An absolute same-origin URL stays a native import in
+		// development and remains compatible with strict CSP and Trusted Types.
+		const moduleUrl = new URL(
+			SQLITE3_MODULE_PATH,
+			globalThis.location.href,
+		).href;
 		sqlite3InitModulePromise = import(
-			/* @vite-ignore */ SQLITE3_MODULE_PATH
+			/* @vite-ignore */ moduleUrl
 		).then((mod) => mod.default as Sqlite3InitModule);
 	}
 	const sqlite3InitModule = await sqlite3InitModulePromise;
