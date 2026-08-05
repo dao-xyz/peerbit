@@ -1,5 +1,11 @@
 # Changelog
 
+## 3.0.14
+
+### Patch Changes
+
+- [#1190](https://github.com/dao-xyz/peerbit/pull/1190) [`be89e5f`](https://github.com/dao-xyz/peerbit/commit/be89e5f0b00d19b5ac495aec7fc3442273110b0e) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Keep the public SQLite browser module and prebuilt worker out of Vite's development transforms while preserving strict CSP and Trusted Types compatibility.
+
 ## 3.0.13
 
 ### Patch Changes

@@ -1,5 +1,12 @@
 # Changelog
 
+## 6.2.16
+
+### Patch Changes
+
+- Updated dependencies [[`be89e5f`](https://github.com/dao-xyz/peerbit/commit/be89e5f0b00d19b5ac495aec7fc3442273110b0e)]:
+  - @peerbit/indexer-sqlite3@3.0.14
+
 ## 6.2.15
 
 ### Patch Changes
