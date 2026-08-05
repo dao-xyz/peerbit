@@ -1,18 +1,15 @@
 import { BinaryReader, BinaryWriter } from "@dao-xyz/borsh";
 import { fromBase64URL, toBase64URL } from "@peerbit/crypto";
-import {
-	type OpfsSAHPoolDatabase,
-	type SAHPoolUtil,
-	type Database as SQLDatabase,
-	type PreparedStatement as SQLStatement,
+import type {
+	OpfsSAHPoolDatabase,
+	SAHPoolUtil,
+	Database as SQLDatabase,
+	PreparedStatement as SQLStatement,
 } from "@sqlite.org/sqlite-wasm";
 import { v4 as uuid } from "uuid";
 import type { BindableValue } from "./schema.js";
-import {
-	type Statement as IStatement,
-	type StatementGetResult,
-} from "./types.js";
 import type { SQLitePragmaOptions } from "./sqlite3-messages.worker.js";
+import type { Statement as IStatement, StatementGetResult } from "./types.js";
 
 export const encodeName = (name: string): string => {
 	// since "/" and perhaps other characters might not be allowed we do encode
@@ -125,6 +122,7 @@ type Sqlite3InitModuleState = {
 
 const SQLITE3_ASSET_BASE = "/peerbit/sqlite3";
 const SQLITE3_ASSET_DIR = `${SQLITE3_ASSET_BASE}/`;
+const SQLITE3_MODULE_PATH = "/peerbit/sqlite3/sqlite3.mjs";
 const SQLITE3_WASM_PATH = `${SQLITE3_ASSET_BASE}/sqlite3.wasm`;
 
 let sqlite3InitModulePromise: Promise<Sqlite3InitModule> | undefined;
@@ -146,9 +144,9 @@ const ensureSqlite3InitModuleState = () => {
 
 const loadSqlite3InitModule = async (): Promise<Sqlite3InitModule> => {
 	if (!sqlite3InitModulePromise) {
-		sqlite3InitModulePromise = import("@sqlite.org/sqlite-wasm").then(
-			(mod) => mod.default,
-		);
+		sqlite3InitModulePromise = import(
+			/* @vite-ignore */ SQLITE3_MODULE_PATH
+		).then((mod) => mod.default as Sqlite3InitModule);
 	}
 	const sqlite3InitModule = await sqlite3InitModulePromise;
 	// sqlite-wasm reads sqlite3InitModuleState when sqlite3InitModule() runs.

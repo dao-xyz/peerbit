@@ -76,7 +76,7 @@ const TRANSPORT_COUNTER_MAX_COUNTERPART_BYTE_SKEW = 1024 * 1024;
 const TRANSPORT_COUNTER_SAMPLE_CLOCK_TOLERANCE_MS = 1;
 const TRANSPORT_COUNTER_PRE_READ_START_TOLERANCE_MS = 1_000;
 const TRANSPORT_COUNTER_POST_READ_CAPTURE_MAX_DELAY_MS = 9_000;
-const PUBSUB_PROTOCOL = "/peerbit/topic-control-plane/2.0.0";
+const PUBSUB_PROTOCOL = "/peerbit/topic-control-plane/2.1.0";
 const DEMAND_WAIT_DEFINITION =
 	"wall-clock time each sequential stream consumer awaited its scheduled chunk";
 const RECEIVER_PROGRESS_PERCENTAGES = Object.freeze(

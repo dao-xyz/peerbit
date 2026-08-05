@@ -1208,9 +1208,9 @@ const createReaderLocalityFixture = ({
 		service: "pubsub",
 		remotePeerHash,
 		peerHashIdentityMatch: true,
-		serviceProtocol: "/peerbit/topic-control-plane/2.0.0",
-		protocol: "/peerbit/topic-control-plane/2.0.0",
-		expectedProtocol: "/peerbit/topic-control-plane/2.0.0",
+		serviceProtocol: "/peerbit/topic-control-plane/2.1.0",
+		protocol: "/peerbit/topic-control-plane/2.1.0",
+		expectedProtocol: "/peerbit/topic-control-plane/2.1.0",
 		protocolIdentityMatch: true,
 		remotePeer,
 		id,
@@ -3023,7 +3023,7 @@ test("accepts exact observer-locality control and rejects contradictory evidence
 		[
 			(result) => {
 				result.readerLocalityControl.preTimedReadTopologyObservations[1].writerTopology.transportStreams[0].protocol =
-					"/wrong/protocol";
+					"/peerbit/topic-control-plane/2.0.0";
 			},
 			/relevant pubsub stream 0 is not authoritative/,
 		],

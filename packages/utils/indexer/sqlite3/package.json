@@ -30,7 +30,6 @@
 		"!dist/index.min.js",
 		"!dist/index.min.js.map",
 		"!dist/assets/sqlite3/sqlite3.js",
-		"!dist/assets/sqlite3/sqlite3.mjs",
 		"!dist/assets/sqlite3/sqlite3-worker1*",
 		"!**/*.tsbuildinfo"
 	],

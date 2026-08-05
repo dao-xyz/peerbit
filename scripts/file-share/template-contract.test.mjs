@@ -232,6 +232,7 @@ test("upload probe fails closed and records bounded scheduling tolerances", asyn
 		"TRANSPORT_COUNTER_SAMPLE_CLOCK_TOLERANCE_MS = 1",
 		"TRANSPORT_COUNTER_PRE_READ_START_TOLERANCE_MS = 1_000",
 		"TRANSPORT_COUNTER_POST_READ_CAPTURE_MAX_DELAY_MS = 9_000",
+		'const PUBSUB_PROTOCOL = "/peerbit/topic-control-plane/2.1.0"',
 		"transportCounterSampleClockToleranceMs:",
 		"transportCounterPreReadStartToleranceMs:",
 		"transportCounterPostReadCaptureMaxDelayMs:",
