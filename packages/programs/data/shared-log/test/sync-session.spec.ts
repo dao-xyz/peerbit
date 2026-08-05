@@ -1037,6 +1037,64 @@ describe("sync-repair-session", () => {
 		expect(result[0]!.unresolved).to.have.length(1);
 	});
 
+	it("keeps a successor repair-frontier runner owned when its predecessor settles", async () => {
+		const log = new SharedLog<unknown>();
+		log.closed = false;
+		const internals = log as any;
+		const target = "target";
+		const started: string[][] = [];
+		const releases: (() => void)[] = [];
+		const send = sinon
+			.stub(internals, "sendMaybeMissingEntriesNow")
+			.callsFake(async (...args: unknown[]) => {
+				started.push([...(args[1] as Map<string, unknown>).keys()]);
+				await new Promise<void>((resolve) => releases.push(resolve));
+			});
+
+		const dispatch = (hash: string) =>
+			internals.dispatchMaybeMissingEntries(
+				target,
+				new Map([[hash, { hash }]]),
+				{
+					bypassRecentDedupe: true,
+					mode: "churn",
+					retryScheduleMs: [0, 1_000],
+				},
+			);
+
+		try {
+			dispatch("old");
+			await Promise.resolve();
+			expect(started).to.deep.equal([["old"]]);
+			const active = internals._repairFrontierActiveTargetsByMode.get("churn");
+			const predecessorToken = active.get(target);
+
+			internals.removeRepairFrontierTarget(target);
+			dispatch("new");
+			await Promise.resolve();
+			expect(started).to.deep.equal([["old"], ["new"]]);
+			const successorToken = active.get(target);
+			expect(successorToken).to.not.equal(predecessorToken);
+
+			releases[0]!();
+			await Promise.resolve();
+			await Promise.resolve();
+			expect(started).to.deep.equal([["old"], ["new"]]);
+			expect(active.get(target)).to.equal(successorToken);
+
+			internals.clearRepairFrontierHashes(target, ["new"]);
+			releases[1]!();
+			await Promise.resolve();
+			await Promise.resolve();
+			expect(active.has(target)).to.be.false;
+		} finally {
+			for (const release of releases) {
+				release();
+			}
+			send.restore();
+		}
+	});
+
 	it("scopes removeReplicator warmup cancellation to the captured warmup generation", async () => {
 		const testSession = await TestSession.disconnected(2);
 		try {

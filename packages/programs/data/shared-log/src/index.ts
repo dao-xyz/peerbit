@@ -1494,8 +1494,8 @@ const createRepairFrontierByMode = () =>
 	>(REPAIR_DISPATCH_MODES.map((mode) => [mode, new Map()]));
 
 const createRepairActiveTargetsByMode = () =>
-	new Map<RepairDispatchMode, Set<string>>(
-		REPAIR_DISPATCH_MODES.map((mode) => [mode, new Set()]),
+	new Map<RepairDispatchMode, Map<string, object>>(
+		REPAIR_DISPATCH_MODES.map((mode) => [mode, new Map()]),
 	);
 
 const createRepairFrontierBypassKnownPeersByMode = () =>
@@ -3246,7 +3246,7 @@ export class SharedLog<
 	>;
 	private _repairFrontierActiveTargetsByMode!: Map<
 		RepairDispatchMode,
-		Set<string>
+		Map<string, object>
 	>;
 	private _repairFrontierBypassKnownPeersByMode!: Map<
 		RepairDispatchMode,
@@ -7821,7 +7821,11 @@ export class SharedLog<
 		) {
 			return;
 		}
-		activeTargets.add(target);
+		const runnerToken = {};
+		activeTargets.set(target, runnerToken);
+		const isCurrentRunner = () =>
+			activeTargets.get(target) === runnerToken &&
+			this.isRepairLifecycleActive(repairLifecycleController);
 		const retrySchedule = resolveRepairRetrySchedule(
 			mode,
 			retryScheduleMs,
@@ -7840,12 +7844,12 @@ export class SharedLog<
 			let attemptIndex = 0;
 			try {
 				for (;;) {
-					if (!this.isRepairLifecycleActive(repairLifecycleController)) {
+					if (!isCurrentRunner()) {
 						return;
 					}
 					const pending = this._repairFrontierByMode.get(mode)?.get(target);
 					if (!pending || pending.size === 0) {
-						if (!this.isRepairLifecycleActive(repairLifecycleController)) {
+						if (!isCurrentRunner()) {
 							return;
 						}
 						this._repairFrontierBypassKnownPeersByMode
@@ -7872,7 +7876,7 @@ export class SharedLog<
 						continue;
 					}
 
-					if (!this.isRepairLifecycleActive(repairLifecycleController)) {
+					if (!isCurrentRunner()) {
 						return;
 					}
 					await this.sendMaybeMissingEntriesNow(
@@ -7889,7 +7893,7 @@ export class SharedLog<
 						},
 						repairLifecycleController,
 					);
-					if (!this.isRepairLifecycleActive(repairLifecycleController)) {
+					if (!isCurrentRunner()) {
 						return;
 					}
 
@@ -7911,21 +7915,25 @@ export class SharedLog<
 					}
 				}
 			} finally {
-				activeTargets.delete(target);
-				if (
-					this.isRepairLifecycleActive(repairLifecycleController) &&
-					(this._repairFrontierByMode.get(mode)?.get(target)?.size || 0) > 0
-				) {
-					this.ensureRepairFrontierRunner(
-						mode,
-						target,
-						retryScheduleMs,
-						repairLifecycleController,
-					);
+				if (activeTargets.get(target) === runnerToken) {
+					activeTargets.delete(target);
+					if (
+						this.isRepairLifecycleActive(repairLifecycleController) &&
+						(this._repairFrontierByMode.get(mode)?.get(target)?.size || 0) > 0
+					) {
+						this.ensureRepairFrontierRunner(
+							mode,
+							target,
+							retryScheduleMs,
+							repairLifecycleController,
+						);
+					}
 				}
 			}
 		})().catch((error: any) => {
-			activeTargets.delete(target);
+			if (activeTargets.get(target) === runnerToken) {
+				activeTargets.delete(target);
+			}
 			if (this.isRepairLifecycleActive(repairLifecycleController)) {
 				logger.error(error);
 			}
