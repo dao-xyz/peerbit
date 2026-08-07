@@ -76,6 +76,14 @@ export type NativeWireModule = {
 	 * per frame; see the layout above.
 	 */
 	decodeAndVerifyBatch(frames: Uint8Array[], nowMs: number): Uint32Array;
+	/**
+	 * BENCH-ONLY: perform ONLY the js→wasm ingress copy (`array.to_vec()` per
+	 * frame into wasm linear memory) that `decodeAndVerifyBatch` does, without
+	 * any decode/verify. Returns a checksum of the copied bytes. Used by the
+	 * transport-rust profiling harness to isolate the copy cost a native
+	 * transport removes; see `packages/transport/transport-rust/PROFILING.md`.
+	 */
+	copyBatchOnly(frames: Uint8Array[]): number;
 	/** Decode + re-encode a frame (byte-identity parity testing). */
 	reencodeFrame(frame: Uint8Array): Uint8Array;
 	/** Decode a frame to the stable debug-JSON parity shape. */
@@ -91,6 +99,7 @@ export type NativeWireModule = {
 
 type WireWasmExports = {
 	decode_and_verify_batch(frames: Uint8Array[], nowMs: number): Uint32Array;
+	copy_batch_only(frames: Uint8Array[]): number;
 	reencode_frame(frame: Uint8Array): Uint8Array;
 	decode_frame_to_json(frame: Uint8Array): string;
 	signable_bytes(frame: Uint8Array): Uint8Array;
@@ -104,6 +113,7 @@ export const createNativeWire = async (): Promise<NativeWireModule> => {
 	return {
 		decodeAndVerifyBatch: (frames, nowMs) =>
 			wasm.decode_and_verify_batch(frames, nowMs),
+		copyBatchOnly: (frames) => wasm.copy_batch_only(frames),
 		reencodeFrame: (frame) => wasm.reencode_frame(frame),
 		decodeFrameToJson: (frame) => wasm.decode_frame_to_json(frame),
 		signableBytes: (frame) => wasm.signable_bytes(frame),

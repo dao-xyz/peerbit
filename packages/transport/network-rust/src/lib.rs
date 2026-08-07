@@ -97,6 +97,52 @@ pub fn decode_and_verify_batch(frames: Array, now_ms: f64) -> Vec<u32> {
     words
 }
 
+/// BENCH-ONLY: perform ONLY the js→wasm ingress copy that
+/// [`decode_and_verify_batch`] does — the per-frame `array.to_vec()` that
+/// materializes each socket-delivered `Uint8Array` into wasm linear memory
+/// (ARCHITECTURE.md exception 2) — WITHOUT decoding or verifying anything.
+///
+/// This is the cost a native (in-process napi) transport removes by handing
+/// the codec socket slices in place. It exists so the profiling harness can
+/// isolate `T_copy` from `T_decode` (the full copy + decode + Ed25519 batch
+/// verify) and report the copy's fraction of the wasm-side receive cost.
+///
+/// The copy loop is byte-for-byte the same as the one in
+/// [`decode_and_verify_batch`]; the only difference is that instead of
+/// building `&[&[u8]]` slices and calling `wire::decode_and_verify_frames`,
+/// it folds a checksum over the copied bytes and returns it. The fold both
+/// (a) forces the optimizer to keep the copy (a bare `to_vec` whose result is
+/// dropped could in principle be elided) and (b) touches every copied byte,
+/// matching the fact that decode reads them too. Returns a `u32` checksum of
+/// (total byte length, XOR of first/last bytes) so the JS caller can consume
+/// the result and defeat dead-code elimination across the boundary.
+#[wasm_bindgen]
+pub fn copy_batch_only(frames: Array) -> u32 {
+    let buffers: Vec<Option<Vec<u8>>> = frames
+        .iter()
+        .map(|value| {
+            value
+                .dyn_into::<Uint8Array>()
+                .ok()
+                .map(|array| array.to_vec())
+        })
+        .collect();
+    let slices: Vec<&[u8]> = buffers
+        .iter()
+        .map(|buffer| buffer.as_deref().unwrap_or(&[]))
+        .collect();
+    // Fold a checksum over the materialized bytes so the copy cannot be
+    // optimized away and every copied byte is actually read (as decode would).
+    let mut checksum: u32 = 0;
+    for slice in &slices {
+        checksum = checksum.wrapping_add(slice.len() as u32);
+        if let (Some(first), Some(last)) = (slice.first(), slice.last()) {
+            checksum ^= (*first as u32) | ((*last as u32) << 8);
+        }
+    }
+    checksum
+}
+
 /// Decode a frame and re-encode it from the parsed representation. Used by
 /// the golden-vector parity tests to prove Rust encoding is byte-identical
 /// to the TS wire format.
