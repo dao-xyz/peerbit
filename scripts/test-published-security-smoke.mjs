@@ -4,6 +4,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { validateImageSizeAuditException } from "./image-size-advisory-exception.mjs";
 import {
 	discoverPublishableWorkspacePackages,
 	runtimeDependencyFields,
@@ -276,23 +277,34 @@ try {
 	assert.deepEqual(consumerManifest.dependencies, dependencies);
 	assert.equal(packedPackages.size, publishablePackages.length);
 
+	const lockfile = JSON.parse(
+		await readFile(join(consumerDirectory, "package-lock.json"), "utf8"),
+	);
 	const audit = run("npm", ["audit", "--omit=dev", "--json"], {
 		cwd: consumerDirectory,
 		timeout: 300_000,
 	});
 	const auditReport = JSON.parse(audit.stdout);
-	const vulnerabilities = auditReport.metadata?.vulnerabilities;
-	assert(vulnerabilities, "npm audit did not return vulnerability metadata");
-	assert.equal(
-		vulnerabilities.total,
-		0,
-		`external production audit found vulnerabilities:\n${audit.stdout}`,
-	);
-	assert.equal(audit.status, 0, audit.stderr || audit.stdout);
-
-	const lockfile = JSON.parse(
-		await readFile(join(consumerDirectory, "package-lock.json"), "utf8"),
-	);
+	const auditValidation = validateImageSizeAuditException({
+		auditReport,
+		packageLock: lockfile,
+	});
+	if (auditValidation.status === "clean") {
+		assert.equal(audit.status, 0, audit.stderr || audit.stdout);
+	} else {
+		assert.equal(
+			audit.status,
+			1,
+			"npm audit must report findings when the temporary exception is used",
+		);
+		console.warn(
+			"Published consumer audit accepted only " +
+				auditValidation.cves.join(" and ") +
+				" through the exact image-size dependency spine; this temporary exception expires at " +
+				auditValidation.expiresAt +
+				".",
+		);
+	}
 	assert.deepEqual(lockfile.packages[""].dependencies, dependencies);
 	const lockfilePackages = Object.entries(lockfile.packages);
 	const installedViteEntries = lockfilePackages.filter(([packagePath]) =>
@@ -374,8 +386,23 @@ try {
 		},
 	);
 	assert.match(node18.stdout, /Node 18\./);
+	const auditSummary =
+		auditValidation.status === "clean"
+			? "zero production audit findings"
+			: "only the temporary " +
+				auditValidation.cves.join(" and ") +
+				" image-size exception, expiring " +
+				auditValidation.expiresAt;
 	console.log(
-		`Clean published-package consumer passed with ${packageDirectories.length} security roots and all ${publishablePackages.length} publishable workspace packages as exact local tarballs, zero production audit findings, esbuild ${esbuildVersions.join(", ")}, the isolated nested crypto install, and the Node 18 crypto wire contract.`,
+		"Published-package consumer passed with " +
+			packageDirectories.length +
+			" security roots and all " +
+			publishablePackages.length +
+			" publishable workspace packages as exact local tarballs, " +
+			auditSummary +
+			", esbuild " +
+			esbuildVersions.join(", ") +
+			", the isolated nested crypto install, and the Node 18 crypto wire contract.",
 	);
 } finally {
 	await rm(temporaryRoot, { recursive: true, force: true });
