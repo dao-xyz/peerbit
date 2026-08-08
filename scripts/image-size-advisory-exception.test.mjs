@@ -147,19 +147,19 @@ const exactPackageLock = () => ({
 			},
 		},
 		"node_modules/react-native": {
-			version: "0.82.1",
+			version: "0.86.2",
 			dependencies: {
-				"@react-native/community-cli-plugin": "0.82.1",
+				"@react-native/community-cli-plugin": "0.86.2",
 			},
 		},
 		"node_modules/@react-native/community-cli-plugin": {
-			version: "0.82.1",
+			version: "0.86.2",
 			dependencies: {
-				metro: "^0.83.1",
+				metro: "^0.84.3",
 			},
 		},
 		"node_modules/metro": {
-			version: "0.83.7",
+			version: "0.84.4",
 			dependencies: {
 				"image-size": "^1.0.2",
 			},
