@@ -116,7 +116,7 @@ const packageLockSpine = Object.freeze([
 	},
 	{
 		path: "node_modules/react-native-webrtc",
-		version: "124.0.7",
+		version: "124.0.8",
 		field: "peerDependencies",
 		dependency: "react-native",
 		range: ">=0.60.0",

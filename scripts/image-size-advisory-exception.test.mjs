@@ -141,7 +141,7 @@ const exactPackageLock = () => ({
 			},
 		},
 		"node_modules/react-native-webrtc": {
-			version: "124.0.7",
+			version: "124.0.8",
 			peerDependencies: {
 				"react-native": ">=0.60.0",
 			},

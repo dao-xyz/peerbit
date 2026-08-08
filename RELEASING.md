@@ -110,9 +110,12 @@ transitive chain:
 
 `@libp2p/webrtc@6.0.15 -> react-native-webrtc@124.0.7 -> react-native@0.82.1 -> @react-native/community-cli-plugin@0.82.1 -> metro@0.83.7 -> image-size@1.2.1`
 
-The clean packed npm consumer currently resolves the declared
-`@libp2p/webrtc@^6.0.15` range to `6.0.29`; its otherwise identical exact
-chain and its three reviewed published introducers are pinned independently.
+The clean packed npm consumer currently resolves the declared dependency
+range to the independently pinned chain:
+
+`@libp2p/webrtc@6.0.29 -> react-native-webrtc@124.0.8 -> react-native@0.82.1 -> @react-native/community-cli-plugin@0.82.1 -> metro@0.83.7 -> image-size@1.2.1`
+
+Its three reviewed published introducers are pinned independently as well.
 
 Before either root audit runs, the gate validates that exact committed pnpm
 graph. The packed-consumer npm audit independently accepts only its exact npm
