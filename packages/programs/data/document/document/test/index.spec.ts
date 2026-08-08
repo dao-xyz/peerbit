@@ -14038,6 +14038,20 @@ describe("index", () => {
 					// TODO separate setup so we don't need to close store 2 test here
 					await stores[2].close();
 					await stores[0].docs.log.replicate(false);
+					expect(await stores[0].docs.log.isReplicating()).to.be.false;
+					const writerHash = session.peers[1].identity.publicKey.hashcode();
+					await waitForResolved(
+						async () =>
+							expect([
+								...(await stores[0].docs.log.getReplicators()),
+							]).to.have.members([writerHash]),
+						{
+							timeout: 30_000,
+							delayInterval: 100,
+							timeoutMessage:
+								"observer topology did not converge to the writer",
+						},
+					);
 					const fanout = {
 						root: getDocumentTestFanout(session.peers[1]).publicKeyHash,
 						channel: {
@@ -14059,9 +14073,6 @@ describe("index", () => {
 						}
 						await (store.docs.log as any)._openFanoutChannel(fanout);
 					}
-					await waitForResolved(async () =>
-						expect((await stores[0].docs.log.getReplicators()).size).equal(1),
-					);
 					let data: number[] = [];
 					for (let i = 0; i < 100; i++) {
 						let doc = new Document({
