@@ -109,7 +109,7 @@ const expectedAuditVulnerabilities = Object.freeze({
 const packageLockSpine = Object.freeze([
 	{
 		path: "node_modules/@libp2p/webrtc",
-		version: "6.0.15",
+		version: "6.0.29",
 		field: "dependencies",
 		dependency: "react-native-webrtc",
 		range: "^124.0.6",

@@ -135,7 +135,7 @@ const exactPackageLock = () => ({
 			},
 		},
 		"node_modules/@libp2p/webrtc": {
-			version: "6.0.15",
+			version: "6.0.29",
 			dependencies: {
 				"react-native-webrtc": "^124.0.6",
 			},

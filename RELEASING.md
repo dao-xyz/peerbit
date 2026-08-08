@@ -105,9 +105,14 @@ workflow:
 
 The release security gate temporarily ignores only CVE-2025-71330 and
 CVE-2025-71329 in its two root pnpm audits. Neither advisory has a patched npm
-release yet. The exception is allowed only for this exact transitive chain:
+release yet. The committed pnpm graph is allowed only for this exact
+transitive chain:
 
 `@libp2p/webrtc@6.0.15 -> react-native-webrtc@124.0.7 -> react-native@0.82.1 -> @react-native/community-cli-plugin@0.82.1 -> metro@0.83.7 -> image-size@1.2.1`
+
+The clean packed npm consumer currently resolves the declared
+`@libp2p/webrtc@^6.0.15` range to `6.0.29`; its otherwise identical exact
+chain and its three reviewed published introducers are pinned independently.
 
 Before either root audit runs, the gate validates that exact committed pnpm
 graph. The packed-consumer npm audit independently accepts only its exact npm
