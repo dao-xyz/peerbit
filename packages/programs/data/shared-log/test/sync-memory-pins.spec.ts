@@ -937,6 +937,10 @@ describe("rateless-iblt-syncronizer slot-quota pins", () => {
 			);
 			await waitFor(() => ship.callCount === 1);
 			expect((sync as any).activeRatelessResponseCount).to.equal(1);
+			const firstSlotRow = (sync as any).ratelessPeerSlotRows.rows.get(
+				"peer-a",
+			);
+			expect(firstSlotRow).to.not.equal(undefined);
 			const firstTargetLifecycle = [
 				...(sync as any).ratelessDispatchRegistry.activeTargets.get("peer-a"),
 			][0] as any;
@@ -946,6 +950,8 @@ describe("rateless-iblt-syncronizer slot-quota pins", () => {
 			expect((sync as any).activeRatelessResponseCountByPeer.size).to.equal(0);
 			expect((sync as any).outgoingSyncProcessByTarget.size).to.equal(0);
 			expect((sync as any).ratelessPeerSlotRows.rows.size).to.equal(0);
+			expect(firstSlotRow.attached).to.equal(false);
+			expect(firstSlotRow.active).to.equal(1);
 			expect(
 				(sync as any).ratelessDispatchRegistry.activeTargets.has("peer-a"),
 			).to.equal(false);
@@ -964,11 +970,20 @@ describe("rateless-iblt-syncronizer slot-quota pins", () => {
 			);
 			await waitFor(() => ship.callCount === 2);
 			expect((sync as any).activeRatelessResponseCount).to.equal(2);
+			const successorSlotRow = (sync as any).ratelessPeerSlotRows.rows.get(
+				"peer-a",
+			);
+			expect(successorSlotRow).to.not.equal(undefined);
+			expect(successorSlotRow).to.not.equal(firstSlotRow);
+			expect(successorSlotRow.active).to.equal(1);
 
 			// open() rotation deliberately does NOT clear slot accounting:
 			// cross-generation ship work is charged until it settles.
 			await sync.open();
 			expect((sync as any).activeRatelessResponseCount).to.equal(2);
+			expect((sync as any).ratelessPeerSlotRows.rows.get("peer-a")).to.equal(
+				successorSlotRow,
+			);
 
 			blockShipments = false;
 			releases.shift()!();
@@ -976,6 +991,8 @@ describe("rateless-iblt-syncronizer slot-quota pins", () => {
 			// The old row returns only its global permit; the successor's attached
 			// per-peer accounting is untouched.
 			expect((sync as any).activeRatelessResponseCount).to.equal(1);
+			expect(firstSlotRow.active).to.equal(0);
+			expect(successorSlotRow.active).to.equal(1);
 			expect(
 				(sync as any).activeRatelessResponseCountByPeer.get("peer-a"),
 			).to.equal(1);
