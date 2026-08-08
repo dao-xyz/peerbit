@@ -4,6 +4,10 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+	IMAGE_SIZE_EXCEPTION_CVES,
+	IMAGE_SIZE_EXCEPTION_EXPIRES_AT,
+} from "./image-size-advisory-exception.mjs";
+import {
 	packageDirectories,
 	validatePublishedSecurityCoverage,
 } from "./published-security-coverage.mjs";
@@ -43,6 +47,7 @@ const documentManifest = JSON.parse(
 const viteManifest = JSON.parse(
 	await readRepositoryFile("packages/clients/vite/package.json"),
 );
+const releasingGuide = await readRepositoryFile("RELEASING.md");
 const viteNodeEngine = "^20.19.0 || >=22.12.0";
 
 assert.equal(
@@ -60,11 +65,44 @@ assert.equal(
 	viteNodeEngine,
 	"@peerbit/vite must declare the Node.js floor imposed by Vite 7",
 );
+assert.deepEqual(
+	IMAGE_SIZE_EXCEPTION_CVES,
+	["CVE-2025-71330", "CVE-2025-71329"],
+	"the temporary audit exception must name only the two image-size CVEs",
+);
+assert.equal(
+	IMAGE_SIZE_EXCEPTION_EXPIRES_AT,
+	"2026-08-22T00:00:00Z",
+	"the temporary image-size exception must retain its hard UTC expiry",
+);
+for (const marker of [
+	"CVE-2025-71330",
+	"CVE-2025-71329",
+	"2026-08-22T00:00:00Z",
+	"@libp2p/webrtc@6.0.15 -> react-native-webrtc@124.0.7",
+	"@libp2p/webrtc@6.0.29 -> react-native-webrtc@124.0.8 -> react-native@0.86.2",
+]) {
+	assert(
+		releasingGuide.includes(marker),
+		"RELEASING.md must document the temporary image-size contract marker " +
+			marker,
+	);
+}
 
 assert.equal(
 	scripts["release:security-gate"],
-	"pnpm run test:release-security-contracts && pnpm run test:security-dependencies && pnpm run test:security-published-closure && pnpm run test:security-published && pnpm dlx pnpm@11.13.0 with current audit --prod && pnpm dlx pnpm@11.13.0 with current audit",
-	"the shared release gate must fail closed on its contract test, dependency probe, focused publication-closure proof, full published-package smoke, and both root audits",
+	"pnpm run test:release-security-contracts && pnpm run test:security-dependencies && pnpm run test:security-image-size-exception && pnpm run test:security-published-closure && pnpm run test:security-published && pnpm dlx pnpm@11.13.0 with current audit --prod --ignore CVE-2025-71330 --ignore CVE-2025-71329 && pnpm dlx pnpm@11.13.0 with current audit --ignore CVE-2025-71330 --ignore CVE-2025-71329",
+	"the shared release gate must fail closed on its contract tests, exact temporary advisory graph, dependency probe, focused publication-closure proof, full published-package smoke, and both root audits",
+);
+assert.equal(
+	scripts["test:security-image-size-exception"],
+	"node --test scripts/image-size-advisory-exception.test.mjs && node scripts/test-image-size-root-graph.mjs",
+	"the root audits may ignore the image-size CVEs only after mutation tests and the committed dependency graph contract",
+);
+assert.doesNotMatch(
+	scripts["release:security-gate"],
+	/--ignore-unfixable/,
+	"the release gate must never suppress all unfixable advisories",
 );
 assert.equal(
 	scripts.release,

@@ -101,6 +101,33 @@ workflow:
 - **rc** — builds and runs `pnpm run release:rc` (`aegir release-rc`) to
   publish prerelease versions.
 
+## Temporary image-size audit exception
+
+The release security gate temporarily ignores only CVE-2025-71330 and
+CVE-2025-71329 in its two root pnpm audits. Neither advisory has a patched npm
+release yet. The committed pnpm graph is allowed only for this exact
+transitive chain:
+
+`@libp2p/webrtc@6.0.15 -> react-native-webrtc@124.0.7 -> react-native@0.82.1 -> @react-native/community-cli-plugin@0.82.1 -> metro@0.83.7 -> image-size@1.2.1`
+
+The clean packed npm consumer currently resolves the declared dependency
+range to the independently pinned chain:
+
+`@libp2p/webrtc@6.0.29 -> react-native-webrtc@124.0.8 -> react-native@0.86.2 -> @react-native/community-cli-plugin@0.86.2 -> metro@0.84.4 -> image-size@1.2.1`
+
+Its three reviewed published introducers are pinned independently as well.
+
+Before either root audit runs, the gate validates that exact committed pnpm
+graph. The packed-consumer npm audit independently accepts only its exact npm
+audit v2 closure of seven vulnerability nodes and the two `image-size`
+advisory leaves. Zero audit findings always pass.
+
+The exception expires hard at **2026-08-22T00:00:00Z**. At or after that
+instant, the root graph contract fails before the audits and forces removal of
+the exception. Once an upstream patched path is available, update the
+dependency graph and remove the validator, both pnpm `--ignore` pairs, their
+contract tests, and this section together.
+
 ## Caveat: "no changeset" does not mean "no publish"
 
 The workflow has a publish script, so on any push to `master` with no pending
