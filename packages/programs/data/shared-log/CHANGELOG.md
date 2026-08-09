@@ -1,5 +1,11 @@
 # Changelog
 
+## 13.2.29
+
+### Patch Changes
+
+- [#1199](https://github.com/dao-xyz/peerbit/pull/1199) [`e5fd560`](https://github.com/dao-xyz/peerbit/commit/e5fd5605a874a5f66f2edae32506f50e2837f602) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Keep raw entry synchronization behavior consistent while simplifying the receive pipeline.
+
 ## 13.2.28
 
 ### Patch Changes
