@@ -1,6 +1,7 @@
 import {
 	deserialize,
 	field,
+	fixedArray,
 	option,
 	serialize,
 	variant,
@@ -123,6 +124,108 @@ export class ReplicationPingMessage extends TransportMessage {
 		super();
 	}
 }
+
+/**
+ * Decode-first replication-info V2 messages. This rollout only registers and
+ * advertises the final wire schemas; it never sends or applies these messages.
+ * A later negotiated phase must bind the signed transport session and an
+ * outstanding receiver challenge before any V2 payload is used.
+ */
+@variant([1, 6])
+export class FullReplicationInfoV2Message extends TransportMessage {
+	@field({ type: fixedArray("u8", 32) })
+	receiverChallenge: Uint8Array;
+
+	@field({ type: fixedArray("u8", 32) })
+	senderEpoch: Uint8Array;
+
+	@field({ type: "u64" })
+	sequence: bigint;
+
+	@field({ type: vec(ReplicationRangeMessage) })
+	segments: ReplicationRangeMessage<any>[];
+
+	constructor(properties: {
+		receiverChallenge: Uint8Array;
+		senderEpoch: Uint8Array;
+		sequence: bigint;
+		segments: ReplicationRangeMessage<any>[];
+	}) {
+		super();
+		this.receiverChallenge = properties.receiverChallenge;
+		this.senderEpoch = properties.senderEpoch;
+		this.sequence = properties.sequence;
+		this.segments = properties.segments;
+	}
+}
+
+@variant([1, 7])
+export class AddedReplicationInfoV2Message extends TransportMessage {
+	@field({ type: fixedArray("u8", 32) })
+	receiverChallenge: Uint8Array;
+
+	@field({ type: fixedArray("u8", 32) })
+	senderEpoch: Uint8Array;
+
+	@field({ type: "u64" })
+	sequence: bigint;
+
+	@field({ type: vec(ReplicationRangeMessage) })
+	segments: ReplicationRangeMessage<any>[];
+
+	constructor(properties: {
+		receiverChallenge: Uint8Array;
+		senderEpoch: Uint8Array;
+		sequence: bigint;
+		segments: ReplicationRangeMessage<any>[];
+	}) {
+		super();
+		this.receiverChallenge = properties.receiverChallenge;
+		this.senderEpoch = properties.senderEpoch;
+		this.sequence = properties.sequence;
+		this.segments = properties.segments;
+	}
+}
+
+@variant([1, 8])
+export class StoppedReplicationInfoV2Message extends TransportMessage {
+	@field({ type: fixedArray("u8", 32) })
+	receiverChallenge: Uint8Array;
+
+	@field({ type: fixedArray("u8", 32) })
+	senderEpoch: Uint8Array;
+
+	@field({ type: "u64" })
+	sequence: bigint;
+
+	@field({ type: vec(Uint8Array) })
+	segmentIds: Uint8Array[];
+
+	constructor(properties: {
+		receiverChallenge: Uint8Array;
+		senderEpoch: Uint8Array;
+		sequence: bigint;
+		segmentIds: Uint8Array[];
+	}) {
+		super();
+		this.receiverChallenge = properties.receiverChallenge;
+		this.senderEpoch = properties.senderEpoch;
+		this.sequence = properties.sequence;
+		this.segmentIds = properties.segmentIds;
+	}
+}
+
+export type ReplicationInfoV2Message =
+	| FullReplicationInfoV2Message
+	| AddedReplicationInfoV2Message
+	| StoppedReplicationInfoV2Message;
+
+export const isReplicationInfoV2Message = (
+	message: TransportMessage,
+): message is ReplicationInfoV2Message =>
+	message instanceof FullReplicationInfoV2Message ||
+	message instanceof AddedReplicationInfoV2Message ||
+	message instanceof StoppedReplicationInfoV2Message;
 
 /* 
 @variant(1)

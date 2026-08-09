@@ -154,6 +154,7 @@ import {
 	ResponseIPrune,
 	ResponseIPruneV2,
 	SYNC_CAPABILITY_RAW_EXCHANGE_HEADS,
+	SYNC_CAPABILITY_REPLICATION_INFO_V2_DECODE,
 	StashBackedRawExchangeHeadsMessage,
 	SyncCapabilitiesMessage,
 	collectRawExchangeHeadSendPlan,
@@ -261,6 +262,7 @@ import {
 	StoppedReplicating,
 	decodeReplicas,
 	encodeReplicas,
+	isReplicationInfoV2Message,
 	maxReplicas,
 } from "./replication.js";
 import { ReplicatorLivenessMonitor } from "./replicator-liveness.js";
@@ -17124,6 +17126,13 @@ export class SharedLog<
 		msg: TransportMessage,
 		context: RequestContext,
 	): Promise<void> {
+		// Decode-first only: capability advertisement is not permission to use
+		// V2. Drop every unsolicited V2 envelope before even entering the shared
+		// receive envelope, so durable poison checks, leases, liveness, ordering
+		// watermarks, replication ranges and cleanup side effects cannot observe it.
+		if (isReplicationInfoV2Message(msg)) {
+			return;
+		}
 		const stashBackedRawMessage = isStashBackedRawExchangeHeadsMessage(msg)
 			? msg
 			: undefined;
@@ -22708,27 +22717,30 @@ export class SharedLog<
 		this._liveness.markReplicatorActivity(peerHash);
 		this._peerSessions.markOpen(peerHash, expectedSubscriptionEpoch);
 
-		if (this._logProperties?.sync?.rawExchangeHeads === true) {
-			// One-shot capability advertisement so live append gossip can pick
-			// the raw exchange-heads path for this peer without a per-request
-			// round trip. Peers that do not know the message drop it.
-			this.rpc
-				.send(
-					new SyncCapabilitiesMessage({
-						capabilities: SYNC_CAPABILITY_RAW_EXCHANGE_HEADS,
-					}),
-					{
-						mode: new SilentDelivery({ redundancy: 1, to: [publicKey] }),
-						signal: replicationLifecycleController.signal,
-					},
-				)
-				.catch((error) =>
-					this.handleReplicationLifecycleSendError(
-						error,
-						replicationLifecycleController,
-					),
-				);
-		}
+		// Decode support is advertised independently from use permission. Every
+		// replication-info send below and in the announcement coordinator remains
+		// on the legacy wire format until a later receiver-led negotiation exists.
+		const receiveCapabilities =
+			SYNC_CAPABILITY_REPLICATION_INFO_V2_DECODE |
+			(this._logProperties?.sync?.rawExchangeHeads === true
+				? SYNC_CAPABILITY_RAW_EXCHANGE_HEADS
+				: 0);
+		this.rpc
+			.send(
+				new SyncCapabilitiesMessage({
+					capabilities: receiveCapabilities,
+				}),
+				{
+					mode: new SilentDelivery({ redundancy: 1, to: [publicKey] }),
+					signal: replicationLifecycleController.signal,
+				},
+			)
+			.catch((error) =>
+				this.handleReplicationLifecycleSendError(
+					error,
+					replicationLifecycleController,
+				),
+			);
 
 		let replicationSegments: ReplicationRangeIndexable<R>[];
 		try {
