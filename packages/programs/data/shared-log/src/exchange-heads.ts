@@ -349,10 +349,17 @@ export const EXCHANGE_HEADS_REPAIR_HINT = 1;
 export const SYNC_CAPABILITY_RAW_EXCHANGE_HEADS = 1;
 
 /**
+ * Capability bit: the peer can decode the challenge-bound replication-info V2
+ * variants [1, 6], [1, 7] and [1, 8]. This is decode support only and never
+ * authorizes a sender to transmit V2. Use requires a separate receiver-led
+ * negotiation that is intentionally outside this rollout.
+ */
+export const SYNC_CAPABILITY_REPLICATION_INFO_V2_DECODE = 1 << 1;
+
+/**
  * One-shot capability advertisement, sent to a peer when it (or we) subscribe
- * to the program topic and `sync.rawExchangeHeads` is enabled. Peers that do
- * not know this message drop it as an unknown variant; peers that never
- * advertise keep receiving the plain `ExchangeHeadsMessage` path.
+ * to the program topic. Peers that do not know this message drop it as an
+ * unknown variant. Each feature still requires its explicit bit.
  */
 @variant([0, 10])
 export class SyncCapabilitiesMessage extends TransportMessage {
