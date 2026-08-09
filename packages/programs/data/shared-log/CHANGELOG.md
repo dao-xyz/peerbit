@@ -1,5 +1,11 @@
 # Changelog
 
+## 13.2.31
+
+### Patch Changes
+
+- [#1203](https://github.com/dao-xyz/peerbit/pull/1203) [`599c185`](https://github.com/dao-xyz/peerbit/commit/599c1852f3c180042eefe09f9bc90ceb2df4f04b) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Register the challenge-bound replication-info V2 decoder while keeping all replication announcements on the legacy wire format.
+
 ## 13.2.30
 
 ### Patch Changes
