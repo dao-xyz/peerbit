@@ -989,7 +989,8 @@ describe("events", () => {
 			).to.be.rejectedWith(
 				"Persisted replication ownership is invalid and cannot be announced",
 			);
-			expect(send.called).to.be.false;
+			expect(send.calledOnce).to.be.true;
+			expect(send.firstCall.args[0]).to.be.instanceOf(SyncCapabilitiesMessage);
 			expect(log._replicationRangeMutationFailure).to.be.instanceOf(Error);
 			await expect(
 				log._findLeaders([log.indexableDomain.numbers.denormalize(0.5)]),
