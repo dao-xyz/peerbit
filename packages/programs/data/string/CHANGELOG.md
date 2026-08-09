@@ -1,5 +1,12 @@
 # Changelog
 
+## 5.1.97
+
+### Patch Changes
+
+- Updated dependencies [[`d79b2c8`](https://github.com/dao-xyz/peerbit/commit/d79b2c89a8cf8eb58339ea647122466c529203b5)]:
+  - @peerbit/shared-log@13.2.30
+
 ## 5.1.96
 
 ### Patch Changes
