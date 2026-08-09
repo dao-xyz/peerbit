@@ -212,6 +212,18 @@ test("requires the canonical configuration for a gate result", () => {
 	}
 });
 
+test("requires Node 22 for a gate result", () => {
+	const node24 = result(samples(100), {
+		runtime: { node: "24.1.0", v8: "13.6-test" },
+	});
+	const comparison = compareSyncPeerStateResults(node24, node24);
+	assert.equal(comparison.gate.eligible, false);
+	assert.equal(comparison.status, "inconclusive");
+	assert.deepEqual(comparison.gate.reasons, [
+		"canonical gate requires Node 22",
+	]);
+});
+
 test("rejects exact runtime and full configuration mismatches", () => {
 	const values = samples(1);
 	assert.throws(

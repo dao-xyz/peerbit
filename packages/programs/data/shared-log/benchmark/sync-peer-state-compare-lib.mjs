@@ -14,6 +14,7 @@ const SCENARIOS = [
 ];
 const SCENARIO_SET = new Set(SCENARIOS);
 const RUNTIME_FIELDS = ["node", "v8", "platform", "arch", "cpu"];
+const GATE_NODE_MAJOR = 22;
 // schemaVersion 1 fixes this workload to the production cap used by the A
 // baseline. A cap or scenario change requires a new benchmark schema.
 const RETAINED_PHYSICAL_PERMIT_CAP = 32;
@@ -113,6 +114,9 @@ const normalizedConfig = (config) => ({
 
 const isGateConfig = (config) =>
 	JSON.stringify(config) === JSON.stringify(GATE_CONFIG);
+
+const isGateRuntime = (runtime) =>
+	runtime.node.split(".", 1)[0] === String(GATE_NODE_MAJOR);
 
 const validateDocument = (document, label) => {
 	if (
@@ -334,7 +338,16 @@ export const compareSyncPeerStateResults = (
 			comparison.pointEstimateExceedsThreshold &&
 			!comparison.credibleRegression,
 	);
-	const gateEligible = isGateConfig(baselineDocument.config);
+	const gateReasons = [];
+	if (!isGateConfig(baselineDocument.config)) {
+		gateReasons.push(
+			"run configuration differs from the canonical gate configuration",
+		);
+	}
+	if (!isGateRuntime(baselineDocument.runtime)) {
+		gateReasons.push(`canonical gate requires Node ${GATE_NODE_MAJOR}`);
+	}
+	const gateEligible = gateReasons.length === 0;
 	const status = !gateEligible
 		? "inconclusive"
 		: regressions.length > 0
@@ -350,9 +363,7 @@ export const compareSyncPeerStateResults = (
 		gate: {
 			eligible: gateEligible,
 			canonicalConfig: GATE_CONFIG,
-			reasons: gateEligible
-				? []
-				: ["run configuration differs from the canonical gate configuration"],
+			reasons: gateReasons,
 		},
 		comparisons,
 		regressions: regressions.map((comparison) => comparison.key),
