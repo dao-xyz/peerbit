@@ -7,7 +7,7 @@ on:
       - "**.md"
       - "docs/**"
   pull_request:
-    types: ["opened", "reopened", "synchronize"]
+    types: ["opened", "reopened", "synchronize", "edited"]
 
 permissions:
   contents: read
@@ -28,6 +28,54 @@ jobs:
       PEERBIT_TEST_SESSION: mock
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Setup Node for changeset coverage
+        if: github.event_name == 'pull_request'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+      - name: Enforce per-package changeset coverage
+        if: github.event_name == 'pull_request'
+        shell: bash
+        env:
+          CHANGESET_GUARD_REPOSITORY_ROOT: ${{ github.workspace }}
+          TRUSTED_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$TRUSTED_BASE_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "Trusted pull request base SHA is not a full lowercase SHA-1" >&2
+            exit 1
+          fi
+          trusted_guard_dir=$(mktemp -d)
+          trap 'rm -rf -- "$trusted_guard_dir"' EXIT
+          umask 077
+          base_guard_present=0
+          base_guard_test_present=0
+          if git cat-file -e "${TRUSTED_BASE_SHA}:scripts/ci/check-changeset-required.mjs" 2>/dev/null; then
+            base_guard_present=1
+          fi
+          if git cat-file -e "${TRUSTED_BASE_SHA}:scripts/ci/check-changeset-required.test.mjs" 2>/dev/null; then
+            base_guard_test_present=1
+          fi
+          if [[ "$base_guard_present" == 1 && "$base_guard_test_present" == 1 ]]; then
+            git show "${TRUSTED_BASE_SHA}:scripts/ci/check-changeset-required.mjs" \
+              > "$trusted_guard_dir/check-changeset-required.mjs"
+            git show "${TRUSTED_BASE_SHA}:scripts/ci/check-changeset-required.test.mjs" \
+              > "$trusted_guard_dir/check-changeset-required.test.mjs"
+          elif [[ "$base_guard_present" == 0 && "$base_guard_test_present" == 0 ]]; then
+            echo "One-time bootstrap: trusted base has neither changeset guard file; using this introducing PR's pair." >&2
+            cp scripts/ci/check-changeset-required.mjs \
+              "$trusted_guard_dir/check-changeset-required.mjs"
+            cp scripts/ci/check-changeset-required.test.mjs \
+              "$trusted_guard_dir/check-changeset-required.test.mjs"
+          else
+            echo "Trusted base contains only one changeset guard file; refusing a partial trust boundary." >&2
+            exit 1
+          fi
+          node --test "$trusted_guard_dir/check-changeset-required.test.mjs"
+          node "$trusted_guard_dir/check-changeset-required.mjs"
       - name: Restore cached workspace build
         id: workspace_dist_cache
         uses: actions/cache@v4
