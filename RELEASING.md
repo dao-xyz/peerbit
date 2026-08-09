@@ -22,9 +22,133 @@ tooling, tests, CI, or docs does not need a changeset.
 Internal dependencies are cascaded automatically: when an internal dependency
 is bumped, its dependents are bumped at least a `patch`
 (`updateInternalDependencies: "patch"` in `.changeset/config.json`), mirroring
-the old release-please node-workspace behavior. Packages listed under `ignore`
-in the config (private, e2e, example, and app packages, plus `@peerbit/test-lib`)
-are never versioned or published.
+the old release-please node-workspace behavior. Every internal dependency,
+optional dependency, peer dependency, and dev dependency must preserve one of
+the supported `workspace:*`, `workspace:^`, or `workspace:~` shorthands.
+Changesets config is pinned to the GitHub changelog adapter for
+`dao-xyz/peerbit`, `commit: false`, public access, the current Changesets 3.1.4
+schema, and the exact supported config-key set. Every `ignore` entry must be the
+exact name of an existing authoritative workspace package. Ignored packages
+must be private and are never versioned or published, with the sole deliberate
+exception of the public, frozen `@peerbit/test-lib` package. A package is also
+skipped when it is private or its version is absent, `null`, or empty, whether
+or not it is in `ignore`. `private`, when present, must be a boolean; every
+truthy version must be a canonical string `major.minor.patch`. A public,
+versioned, non-ignored package may not have a runtime, optional, or peer
+dependency on any skipped workspace package; dev dependencies are allowed for
+test and tooling support. The private repository-root manifest is workspace
+policy only and is never treated as a Changesets package.
+
+Pull-request CI enforces this per package. It compares the PR head with its
+validated Git merge base and requires every publishable package with a
+release-relevant change to appear in a **new**, direct, non-dot-prefixed,
+case-sensitive `.changeset/*.md` file (excluding `README.md`,
+case-insensitively), matching `@changesets/read` discovery. Source, `src_js`,
+Cargo, packaged assets, `.gitignore`/`.npmignore` packlist inputs, positive
+`files` patterns, and runtime `package.json` semantics count. Repeated leading
+`!` operators in `files` use pnpm-negation parity; unsupported extglob, group,
+class, brace, or interior-bang patterns are treated conservatively as relevant
+instead of suppressing coverage. Exact targets named by `main`, `module`,
+`types`, `typings`, `browser`, `bin`, or recursively by `exports`, along with
+their extension-resolved siblings (`target.*`) and descendants (`target/**`),
+always count even under an otherwise exempt test/tool path. Targets selected
+by `types` or `typings`, plus packable TypeScript-resolvable files selected by a
+validated `typesVersions` target, also follow TypeScript's terminal `.js`,
+`.jsx`, `.mjs`, and `.cjs` extension substitutions; runtime-only fields do not
+inherit those substitutions. Malformed selector maps, non-array targets,
+unsafe paths, and keys or targets with more than one `*` wildcard fail closed.
+The private server frontend is a trusted artifact producer: every
+`packages/clients/peerbit-server/frontend/src/**` and
+`packages/clients/peerbit-server/frontend/public/**` input, plus its package and
+build config, requires an `@peerbit/server` changeset. Documentation, tests, e2e
+fixtures, benchmarks, unrelated tool configuration, private nested packages,
+and packages already listed under Changesets `ignore` do not. Only regular Git
+blobs with mode `100644` or `100755` are accepted anywhere in either tree, so
+symlinks, submodules, and other special tree entries fail closed. An existing
+changeset cannot be edited or reused as coverage. Every new direct changeset
+summary must also be safe for the configured GitHub changelog adapter: raw
+HTML, ATX H1/H2 headings, Setext H1/H2 headings, and authored backtick or tilde
+fence delimiters are rejected before merge, including delimiters indented with
+arbitrary horizontal whitespace. Line endings are normalized before these
+structural checks so bare carriage returns cannot hide a heading. An active
+package version must never be bumped by hand. Adding the first canonical
+version to activate a previously skipped unversioned package is allowed only
+with new changeset coverage. Every PR head must descend from the exact base SHA
+in its event.
+
+The primary `.github/workflows/changeset-guard.yml` check is a minimal,
+base-owned `pull_request_target` workflow with only `contents: read`. It checks
+out the exact event base, fetches `refs/pull/<number>/head` to a remote ref as
+data, verifies the full event SHAs and repository identity, and executes only
+the base guard and its tests. It never checks out or executes the PR head, uses
+secrets, installs dependencies, caches artifacts, or runs a build. The workflow
+itself must exactly match the guard's canonical commit-pinned contract.
+
+Ordinary secret-free `pull_request` CI remains as defense in depth. It loads
+the guard and mutation tests with `git show` from the trusted base SHA into a
+private temporary directory, never executing the PR head's copy. The guard
+evaluates ownership from the union of the base owner, the surviving base-policy
+head owner, and the head-policy owner for both sides of every change. This
+preserves ownership across edits, deletes, renames, nested-root transitions,
+and workspace-policy changes while still requiring coverage for a newly
+exposed public package. A removed root is not retained as a head owner unless
+the root is still authoritative in the head. An arbitrary or same-PR nested
+private `package.json` therefore cannot shadow an existing publishable owner.
+
+There is one explicit bootstrap exception for the PR that first introduces the
+three-file guard boundary. When the trusted base contains neither executable
+guard file and no target workflow, ordinary CI runs the introducing PR's guard
+and tests as a pair and validates the target workflow as data. Any partial base
+boundary fails. As soon as all three files exist on `master`, CI always executes
+the base copies and there is no head fallback. The two executable guard files
+must also remain byte-identical to their base versions, while the target
+workflow must remain byte-identical to its embedded canonical definition. The
+guard rejects changing or removing any of the three files, so an ordinary PR
+cannot mutate the root of trust or reset the repository into bootstrap mode.
+Any future guard-boundary update requires an explicitly administered
+root-of-trust transition outside the ordinary pull-request lane. Both guard
+workflows rerun on `edited` as well as opened, reopened, and synchronized pull
+request activity.
+
+A publishable package cannot be removed, moved, renamed, or made private in the
+same PR that attempts to version it: Changesets cannot consume an entry for a
+package absent from the head release graph. Stage removal instead:
+
+1. keep the package at the same public root and name and release its final
+   deprecation changeset;
+2. after that Version Packages PR is merged, use a policy-only PR to add the
+   exact package name to `.changeset/config.json` `ignore` and set only
+   `private: true`, preserving its root, name, version, source, and all other
+   release policy; and
+3. only after that retirement policy is present on the base branch, remove the
+   private package and its exact ignore entry together in a later policy PR.
+
+The only active-package version-bump exception is the generated **Version
+Packages** PR. CI
+recognizes it only when `peerbit-org` authored the same-repository
+`changeset-release/master` branch, the event sender is also the exact
+`peerbit-org` account (GitHub user ID `273107789`), the base is exactly the
+current `master` SHA, and the diff contains generated artifacts only. It must
+consume the exact pending base changeset set, apply each
+direct semver bump exactly, reproduce the deterministic transitive runtime and
+peer-dependency cascade, preserve old changelog history, and either leave the
+lockfile unchanged or make only deterministic `package@old` to `package@new`
+lockfile projections. The lockfile projection is checked even when
+`pnpm-lock.yaml` is omitted from the reported diff. Existing changelog history
+must remain the exact terminal tail beneath a generated prefix with exactly one
+H1 title and exactly one ATX H2 for the expected version. Extra H1 titles,
+Setext H1/H2 sections, copied, commented-out, duplicated, or unclosed-fenced
+history are rejected, as is raw HTML in newly generated release content that
+could wrap or hide the preserved structure. Headings inside a properly closed
+CommonMark code fence are treated as code rather than changelog structure;
+because backticks are forbidden in a backtick fence's info string, such a line
+cannot hide a following heading. A lookalike PR, stale branch, arbitrary extra
+bump, or one containing source code is rejected. `@peerbit/test-lib` remains
+deliberately ignored/frozen under the current policy; this guard does not change
+its publication status. The guard requires non-empty, generator-safe changeset
+summaries and preserved changelog history, but it does not prove that generated
+changelog prose is identical to the authored summary; that review still relies
+on the exact bot identity and human inspection of the generated PR.
 
 ## The Version Packages PR
 
@@ -38,11 +162,10 @@ updating itself.
 Review that PR like any other. Nothing is published while it is open.
 
 > [!NOTE]
-> The Version Packages PR is opened with `GITHUB_TOKEN`, which does not
-> trigger downstream workflows — so CI does not automatically run on it. If you
-> want CI to run on the Version Packages PR, add a bot Personal Access Token
-> secret (repo + workflow scopes) and pass it as `token:` to
-> `changesets/action` in `.github/workflows/release.yml`.
+> The Version Packages PR is opened with `RELEASE_PR_TOKEN`, authenticated as
+> `peerbit-org`, so it triggers downstream CI. The release workflow verifies
+> that bot identity before passing the step-scoped token to `changesets/action`;
+> checkout itself retains only the read-only workflow credential.
 
 ## Publishing a stable release
 

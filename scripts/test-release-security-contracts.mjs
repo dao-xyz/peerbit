@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { validateChangesetGuardWorkflow } from "./ci/check-changeset-required.mjs";
 import {
 	IMAGE_SIZE_EXCEPTION_CVES,
 	IMAGE_SIZE_EXCEPTION_EXPIRES_AT,
@@ -20,7 +21,7 @@ const workflowJob = (workflow, jobName) => {
 	const start = workflow.indexOf(marker);
 	assert(start >= 0, `workflow must contain the ${jobName} job`);
 	const remainder = workflow.slice(start + marker.length);
-	const nextJob = remainder.search(/^  [A-Za-z0-9_-]+:\n/m);
+	const nextJob = remainder.search(/^ {2}[A-Za-z0-9_-]+:\n/m);
 	return nextJob < 0
 		? workflow.slice(start)
 		: workflow.slice(start, start + marker.length + nextJob);
@@ -28,7 +29,7 @@ const workflowJob = (workflow, jobName) => {
 const workflowSteps = (job) => {
 	const lines = job.split("\n");
 	const starts = lines.flatMap((line, index) =>
-		/^      - /.test(line) ? [index] : [],
+		/^ {6}- /.test(line) ? [index] : [],
 	);
 	return starts.map((start, index) =>
 		lines.slice(start, starts[index + 1] ?? lines.length).join("\n"),
@@ -124,7 +125,7 @@ const releaseWorkflow = await readRepositoryFile(
 );
 assert.match(
 	releaseWorkflow,
-	/^permissions:\n  contents: read$/m,
+	/^permissions:\n {2}contents: read$/m,
 	"release workflow jobs must inherit a read-only GITHUB_TOKEN by default",
 );
 assert.doesNotMatch(
@@ -134,12 +135,12 @@ assert.doesNotMatch(
 );
 assert.match(
 	releaseWorkflow,
-	/release:\n    if: \$\{\{ vars\.ACTIONS_SECRETS_MIGRATED == 'true' && github\.ref == 'refs\/heads\/master'/,
+	/release:\n {4}if: \$\{\{ vars\.ACTIONS_SECRETS_MIGRATED == 'true' && github\.ref == 'refs\/heads\/master'/,
 	"stable releases must require completed credential migration and the master ref",
 );
 assert.match(
 	releaseWorkflow,
-	/release-rc:\n    if: \$\{\{ vars\.ACTIONS_SECRETS_MIGRATED == 'true' && github\.ref == 'refs\/heads\/master'/,
+	/release-rc:\n {4}if: \$\{\{ vars\.ACTIONS_SECRETS_MIGRATED == 'true' && github\.ref == 'refs\/heads\/master'/,
 	"release candidates must require completed credential migration and the master ref",
 );
 const stableReleaseJob = workflowJob(releaseWorkflow, "release");
@@ -150,7 +151,7 @@ for (const [name, job] of [
 ]) {
 	assert.match(
 		job,
-		/^    environment: npm-release$/m,
+		/^ {4}environment: npm-release$/m,
 		`${name} publication must obtain secrets from the master-restricted release environment`,
 	);
 	const checkouts = actionSteps(job, "actions/checkout");
@@ -212,13 +213,190 @@ assert.doesNotMatch(
 const ciWorkflow = await readRepositoryFile(".github/workflows/ci.yml");
 assert.match(
 	ciWorkflow,
-	/^permissions:\n  contents: read$/m,
+	/^permissions:\n {2}contents: read$/m,
 	"ordinary CI must use a read-only GITHUB_TOKEN",
 );
 assert.doesNotMatch(
 	ciWorkflow,
 	/\$\{\{\s*secrets\./,
 	"CI must not depend on long-lived repository secrets",
+);
+assert.doesNotMatch(
+	ciWorkflow,
+	/^\s*pull_request_target:/m,
+	"ordinary build/test CI must remain on pull_request; only the dedicated data-only changeset guard may use pull_request_target",
+);
+assert.match(
+	ciWorkflow,
+	/^ {2}pull_request:\n {4}types: \["opened", "reopened", "synchronize", "edited"\]$/m,
+	"ordinary pull-request CI must rerun when edited activity can change the trusted base/ref contract",
+);
+const buildWorkspaceJob = workflowJob(ciWorkflow, "build_workspace");
+const buildWorkspaceCheckouts = actionSteps(
+	buildWorkspaceJob,
+	"actions/checkout",
+);
+assert.equal(
+	buildWorkspaceCheckouts.length,
+	1,
+	"the workspace build must have exactly one checkout",
+);
+assert.match(
+	buildWorkspaceCheckouts[0],
+	/fetch-depth: 0/,
+	"the PR changeset guard must receive full history for an exact merge-base diff",
+);
+assert.match(
+	buildWorkspaceCheckouts[0],
+	/persist-credentials: false/,
+	"the untrusted PR checkout must not persist even the read-only workflow credential",
+);
+const changesetNodeSteps = workflowSteps(buildWorkspaceJob).filter((step) =>
+	step.includes("name: Setup Node for changeset coverage"),
+);
+assert.equal(
+	changesetNodeSteps.length,
+	1,
+	"the workspace build must prepare the guard's Node runtime exactly once",
+);
+assert.match(
+	changesetNodeSteps[0],
+	/if: github\.event_name == 'pull_request'[\s\S]*uses: actions\/setup-node@v4[\s\S]*node-version: 22\.x/,
+	"the changeset guard fixtures and production check must run on Node 22 for PRs",
+);
+const changesetCoverageSteps = workflowSteps(buildWorkspaceJob).filter((step) =>
+	step.includes("name: Enforce per-package changeset coverage"),
+);
+assert.equal(
+	changesetCoverageSteps.length,
+	1,
+	"the workspace build must enforce per-package changeset coverage exactly once",
+);
+const changesetCoverageStep = changesetCoverageSteps[0];
+assert.match(
+	changesetCoverageStep,
+	/if: github\.event_name == 'pull_request'/,
+	"changeset coverage must be pull-request-only so master pushes cannot be rejected",
+);
+assert.match(
+	changesetCoverageStep,
+	/TRUSTED_BASE_SHA: \$\{\{ github\.event\.pull_request\.base\.sha \}\}[\s\S]*trusted_guard_dir=\$\(mktemp -d\)[\s\S]*git show "\$\{TRUSTED_BASE_SHA\}:scripts\/ci\/check-changeset-required\.mjs"[\s\S]*git show "\$\{TRUSTED_BASE_SHA\}:scripts\/ci\/check-changeset-required\.test\.mjs"[\s\S]*node --test "\$trusted_guard_dir\/check-changeset-required\.test\.mjs"[\s\S]*node "\$trusted_guard_dir\/check-changeset-required\.mjs"/,
+	"CI must extract and execute the trusted base tree's guard and fixtures before evaluating the real PR",
+);
+assert.match(
+	changesetCoverageStep,
+	/base_guard_present=0[\s\S]*git cat-file -e "\$\{TRUSTED_BASE_SHA\}:scripts\/ci\/check-changeset-required\.mjs"[\s\S]*base_guard_test_present=1[\s\S]*if \[\[ "\$base_guard_present" == 1 && "\$base_guard_test_present" == 1 \]\]; then[\s\S]*elif \[\[ "\$base_guard_present" == 0 && "\$base_guard_test_present" == 0 \]\]; then[\s\S]*cp scripts\/ci\/check-changeset-required\.mjs[\s\S]*cp scripts\/ci\/check-changeset-required\.test\.mjs[\s\S]*else[\s\S]*refusing a partial trust boundary[\s\S]*exit 1/,
+	"only the one-time both-files-absent bootstrap may use the introducing PR's guard pair; a partial base must fail",
+);
+assert.match(
+	changesetCoverageStep,
+	/CHANGESET_GUARD_REPOSITORY_ROOT: \$\{\{ github\.workspace \}\}/,
+	"the extracted trusted guard must inspect the checked-out repository instead of its temporary directory",
+);
+assert.doesNotMatch(
+	changesetCoverageStep,
+	/node (?:--test )?scripts\/ci\/check-changeset-required/,
+	"CI must never execute the PR head's guard or guard tests",
+);
+assert.doesNotMatch(
+	changesetCoverageStep,
+	/\$\{\{\s*secrets\./,
+	"the PR changeset guard must not receive repository secrets",
+);
+
+const targetChangesetWorkflow = await readRepositoryFile(
+	".github/workflows/changeset-guard.yml",
+);
+assert.equal(
+	validateChangesetGuardWorkflow(targetChangesetWorkflow),
+	true,
+	"the pull_request_target changeset workflow must exactly match the canonical base-owned data-only contract",
+);
+assert.match(
+	targetChangesetWorkflow,
+	/^on:\n {2}pull_request_target:\n {4}types: \[opened, reopened, synchronize, edited\]$/m,
+	"the base-owned guard must run only for pull request lifecycle events that can change the head",
+);
+assert.match(
+	targetChangesetWorkflow,
+	/^permissions:\n {2}contents: read$/m,
+	"the base-owned guard must have only read access to repository contents",
+);
+const targetChangesetJob = workflowJob(
+	targetChangesetWorkflow,
+	"changeset_guard",
+);
+const targetChangesetSteps = workflowSteps(targetChangesetJob);
+assert.equal(
+	targetChangesetSteps.length,
+	3,
+	"the target guard must contain only base checkout, Node setup, and data validation",
+);
+assert.match(
+	targetChangesetSteps[0],
+	/uses: actions\/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4[\s\S]*ref: \$\{\{ github\.event\.pull_request\.base\.sha \}\}[\s\S]*fetch-depth: 0[\s\S]*persist-credentials: false/,
+	"the target guard must check out only the exact trusted event base without persisted credentials",
+);
+assert.match(
+	targetChangesetSteps[1],
+	/uses: actions\/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4[\s\S]*node-version: 22\.x/,
+	"the target guard must use the commit-pinned Node 22 setup action",
+);
+assert.match(
+	targetChangesetSteps[2],
+	/PR_NUMBER: \$\{\{ github\.event\.pull_request\.number \}\}[\s\S]*TRUSTED_BASE_SHA: \$\{\{ github\.event\.pull_request\.base\.sha \}\}[\s\S]*UNTRUSTED_HEAD_SHA: \$\{\{ github\.event\.pull_request\.head\.sha \}\}[\s\S]*refs\/pull\/\$\{PR_NUMBER\}\/head:refs\/remotes\/pull-request\/head[\s\S]*fetched_head[\s\S]*\$UNTRUSTED_HEAD_SHA[\s\S]*node --test scripts\/ci\/check-changeset-required\.test\.mjs[\s\S]*node scripts\/ci\/check-changeset-required\.mjs/,
+	"the target guard must fetch the PR head to a remote data ref, verify the exact event SHA, and execute only trusted-base guard files",
+);
+assert.doesNotMatch(
+	targetChangesetWorkflow,
+	/\$\{\{\s*secrets\.|(?:contents|issues|pull-requests|id-token): write|actions\/cache|actions\/(?:upload|download)-artifact|\b(?:npm|pnpm|yarn|corepack)\b|\bgit (?:checkout|switch|reset|clean)\b|ref: \$\{\{[^\n]*head/,
+	"the target guard must never receive secrets, mutate GitHub, install head dependencies, cache head state, or check out/execute the untrusted head",
+);
+const changesetGuard = await readRepositoryFile(
+	"scripts/ci/check-changeset-required.mjs",
+);
+for (const marker of [
+	'"merge-base"',
+	'"--name-status"',
+	'"--find-renames"',
+	'pullRequest.user?.login === "peerbit-org"',
+	"pullRequest.user?.id === 273107789",
+	'payload.sender?.login === "peerbit-org"',
+	"payload.sender?.id === 273107789",
+	'pullRequest.base?.ref === "master"',
+	'pullRequest.head?.ref === "changeset-release/master"',
+	"pullRequest.head.repo.full_name === pullRequest.base.repo.full_name",
+	"payload.repository.full_name === pullRequest.base.repo.full_name",
+	'new Set(["@peerbit/test-lib"])',
+	"const CHANGESET_GUARD_PATHS = [",
+	"const CHANGESET_CONFIG_SCHEMA =",
+	'["ls-tree", "-r", "-z", sha]',
+	"await assertChangesetGuardPair(repository, baseSha, headSha, state)",
+	"frozen executable root-of-trust boundary",
+	"analyzeMarkdownStructure(normalized)",
+	"assertChangesetSummaryCompatible(summary, path)",
+	"hasMarkdownFenceDelimiter(normalized)",
+	"hasMarkdownSetextDelimiter(normalized)",
+	'const normalizeLineEndings = (source) => source.replace(/\\r\\n?/g, "\\n");',
+	"const RAW_HTML_PATTERN =",
+	"candidate.manifest.private !== undefined &&",
+	'typeof candidate.manifest.version !== "string"',
+	"normalizedTypesVersionsTargets(candidate.manifest)",
+	"matchesPackedTypesVersionsPath(relativePath, manifest)",
+	"typeResolutionTargetAlternatives(target)",
+	'opening[2].includes("`")',
+	'GITHUB_EVENT_NAME !== "pull_request_target"',
+	"mergeBase !== baseSha",
+]) {
+	assert(
+		changesetGuard.includes(marker),
+		`the changeset guard must retain its protected contract marker ${marker}`,
+	);
+}
+assert.match(
+	changesetGuard,
+	/\[\s*"diff",[\s\S]*"-z",[\s\S]*baseSha,[\s\S]*headSha/,
+	"the guard must consume an exact NUL-delimited base/head Git diff",
 );
 const pullRequestJob = workflowJob(ciWorkflow, "test_pr");
 assert.doesNotMatch(
@@ -245,7 +423,7 @@ assert.match(
 const coverageJob = workflowJob(ciWorkflow, "coverage_push");
 assert.match(
 	coverageJob,
-	/permissions:\n      contents: read\n      id-token: write/,
+	/permissions:\n {6}contents: read\n {6}id-token: write/,
 	"the isolated coverage upload must receive only read access and an OIDC identity",
 );
 assert.match(
@@ -280,14 +458,14 @@ const nightlyWorkflow = await readRepositoryFile(
 );
 assert.match(
 	nightlyWorkflow,
-	/^permissions:\n  contents: read$/m,
+	/^permissions:\n {2}contents: read$/m,
 	"nightly simulations must use a read-only GITHUB_TOKEN",
 );
 
 const siteWorkflow = await readRepositoryFile(".github/workflows/site.yml");
 assert.match(
 	siteWorkflow,
-	/^permissions:\n  contents: read$/m,
+	/^permissions:\n {2}contents: read$/m,
 	"site builds must inherit only read access",
 );
 assert.match(
@@ -303,7 +481,7 @@ assert.doesNotMatch(
 );
 assert.match(
 	sitePullRequestJob,
-	/^    if: github\.event_name == 'pull_request'$/m,
+	/^ {4}if: github\.event_name == 'pull_request'$/m,
 	"the secret-free site build must be pull-request-only",
 );
 assert.doesNotMatch(
@@ -314,18 +492,18 @@ assert.doesNotMatch(
 const siteProductionJob = workflowJob(siteWorkflow, "build");
 assert.match(
 	siteProductionJob,
-	/^    if: github\.event_name == 'push' && github\.ref == 'refs\/heads\/master'$/m,
+	/^ {4}if: github\.event_name == 'push' && github\.ref == 'refs\/heads\/master'$/m,
 	"the secret-bearing production build must be push-only on master",
 );
 assert.match(
 	siteProductionJob,
-	/environment:\n      name: github-pages\n      deployment: false/,
+	/environment:\n {6}name: github-pages\n {6}deployment: false/,
 	"production site secrets must come from the master-restricted Pages environment",
 );
 const siteDeployJob = workflowJob(siteWorkflow, "deploy");
 assert.match(
 	siteDeployJob,
-	/permissions:\n      pages: write\n      id-token: write/,
+	/permissions:\n {6}pages: write\n {6}id-token: write/,
 );
 
 const publishedSecuritySmoke = await readRepositoryFile(
@@ -387,7 +565,7 @@ const postReleaseWorkflow = await readRepositoryFile(
 );
 assert.match(
 	postReleaseWorkflow,
-	/^permissions:\n  contents: read$/m,
+	/^permissions:\n {2}contents: read$/m,
 	"post-release jobs must inherit only read access",
 );
 assert.doesNotMatch(
@@ -424,7 +602,7 @@ for (const [name, job] of [
 	);
 	assert.match(
 		job,
-		/^    environment: post-release$/m,
+		/^ {4}environment: post-release$/m,
 		`${name} must obtain bot credentials from the master-restricted post-release environment`,
 	);
 	const peerbitCheckout = actionSteps(job, "actions/checkout").find(
@@ -474,7 +652,7 @@ for (const pullRequestAction of pullRequestActions) {
 	);
 	assert.match(
 		pullRequestAction,
-		/^          base: master$/m,
+		/^ {10}base: master$/m,
 		"every post-release pull request must name its base after exact-SHA checkout",
 	);
 }
@@ -493,7 +671,7 @@ const bootstrapRolloutPullRequest = actionSteps(
 )[0];
 assert.match(
 	bootstrapRolloutPullRequest,
-	/^          draft: true$/m,
+	/^ {10}draft: true$/m,
 	"bootstrap rollout pull requests must remain draft until production source state is verified",
 );
 assert.match(
