@@ -81,6 +81,7 @@ for (const marker of [
 	"CVE-2025-71329",
 	"2026-08-22T00:00:00Z",
 	"@libp2p/webrtc@6.0.15 -> react-native-webrtc@124.0.7",
+	"@libp2p/webrtc@6.0.29 -> react-native-webrtc@124.0.8 -> react-native@0.86.2",
 ]) {
 	assert(
 		releasingGuide.includes(marker),

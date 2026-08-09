@@ -1,5 +1,11 @@
 # Changelog
 
+## 13.2.28
+
+### Patch Changes
+
+- [#1193](https://github.com/dao-xyz/peerbit/pull/1193) [`e4f6669`](https://github.com/dao-xyz/peerbit/commit/e4f66695c9478bc329c928370e214f0f6ea9b27d) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Keep replacement repair-frontier runners owned when cancelled predecessors settle.
+
 ## 13.2.27
 
 ### Patch Changes
