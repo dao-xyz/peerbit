@@ -1,0 +1,68 @@
+name: Changeset Guard
+
+on:
+  pull_request_target:
+    types: [opened, reopened, synchronize, edited]
+
+permissions:
+  contents: read
+
+jobs:
+  changeset_guard:
+    name: Enforce Changeset Coverage
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout the exact trusted base
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Setup trusted Node runtime
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22.x
+      - name: Fetch the untrusted head as data and run the base guard
+        shell: bash
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          TRUSTED_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          UNTRUSTED_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          EVENT_REPOSITORY: ${{ github.repository }}
+          BASE_REPOSITORY: ${{ github.event.pull_request.base.repo.full_name }}
+          CHANGESET_GUARD_REPOSITORY_ROOT: ${{ github.workspace }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$PR_NUMBER" =~ ^[1-9][0-9]*$ ]]; then
+            echo "Pull request number is not a positive integer" >&2
+            exit 1
+          fi
+          if [[ ! "$TRUSTED_BASE_SHA" =~ ^([0-9a-f]{40}|[0-9a-f]{64})$ ]]; then
+            echo "Trusted base SHA is not a full lowercase Git object id" >&2
+            exit 1
+          fi
+          if [[ ! "$UNTRUSTED_HEAD_SHA" =~ ^([0-9a-f]{40}|[0-9a-f]{64})$ ]]; then
+            echo "Untrusted head SHA is not a full lowercase Git object id" >&2
+            exit 1
+          fi
+          if [[ "$EVENT_REPOSITORY" != "dao-xyz/peerbit" || "$BASE_REPOSITORY" != "$EVENT_REPOSITORY" ]]; then
+            echo "Changeset guard repository identity mismatch" >&2
+            exit 1
+          fi
+          checked_out_base=$(git rev-parse --verify "HEAD^{commit}")
+          if [[ "$checked_out_base" != "$TRUSTED_BASE_SHA" ]]; then
+            echo "Checkout does not match the trusted event base SHA" >&2
+            exit 1
+          fi
+          git fetch --no-tags --no-write-fetch-head --force origin \
+            "refs/pull/${PR_NUMBER}/head:refs/remotes/pull-request/head"
+          fetched_head=$(git rev-parse --verify "refs/remotes/pull-request/head^{commit}")
+          if [[ "$fetched_head" != "$UNTRUSTED_HEAD_SHA" ]]; then
+            echo "Fetched pull request head does not match the event head SHA" >&2
+            exit 1
+          fi
+          git cat-file -e "${TRUSTED_BASE_SHA}^{commit}"
+          git cat-file -e "${UNTRUSTED_HEAD_SHA}^{commit}"
+          node --test scripts/ci/check-changeset-required.test.mjs
+          node scripts/ci/check-changeset-required.mjs
