@@ -1,5 +1,11 @@
 # Changelog
 
+## 13.2.30
+
+### Patch Changes
+
+- [#1201](https://github.com/dao-xyz/peerbit/pull/1201) [`d79b2c8`](https://github.com/dao-xyz/peerbit/commit/d79b2c89a8cf8eb58339ea647122466c529203b5) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Add repeatable per-peer synchronization state benchmarks and lifecycle regression coverage.
+
 ## 13.2.29
 
 ### Patch Changes
