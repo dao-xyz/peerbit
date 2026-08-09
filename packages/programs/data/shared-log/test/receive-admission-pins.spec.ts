@@ -766,4 +766,90 @@ describe("receive admission receive error envelope", () => {
 			await session.stop();
 		}
 	});
+
+	it("keeps handled and rejected raw normalization inside the shared stash envelope", async () => {
+		const session = await TestSession.disconnected(1);
+		try {
+			const profileEvents: any[] = [];
+			const store = new EventStore<string, any>();
+			const target = await session.peers[0].open(store.clone(), {
+				args: {
+					replicate: false,
+					setup,
+					sync: { profile: (event: any) => profileEvents.push(event) },
+				},
+			});
+			const sharedLog = target.log as any;
+			const createStashMessage = (
+				release: () => boolean,
+				hashes: string[] = [],
+			) =>
+				new StashBackedRawExchangeHeadsMessage({
+					messageId: new Uint8Array(32),
+					hashes,
+					gidRefrences: hashes.map(() => []),
+					byteLengths: Uint32Array.from(hashes, () => 1),
+					reserved: new Uint8Array(4),
+					stash: {
+						release,
+						stashedBlocks: () => undefined,
+					} as any,
+				});
+
+			const handledRelease = sinon.stub().returns(true);
+			const materialize = sinon.spy(sharedLog, "materializeRawReceiveMessage");
+			try {
+				const { entry: knownEntry } = await target.add("known", {
+					meta: { next: [] },
+				});
+				// All-known raw receives are handled by normalization. Its early
+				// return must still cross the outer wire-stash release boundary once.
+				await target.log.onMessage(
+					createStashMessage(handledRelease, [knownEntry.hash]),
+					{
+						from: target.node.identity.publicKey,
+					} as any,
+				);
+				expect(materialize.calledOnce).to.be.true;
+				expect(handledRelease.calledOnce).to.be.true;
+			} finally {
+				materialize.restore();
+			}
+
+			const order: string[] = [];
+			const rejectedRelease = sinon.stub().callsFake(() => {
+				order.push("stash");
+				return true;
+			});
+			const rejectedMaterialize = sinon
+				.stub(sharedLog, "materializeRawReceiveMessage")
+				.callsFake(async () => {
+					order.push("materialize");
+					throw new AccessError("pinned raw normalization error");
+				});
+			try {
+				// Helper errors retain the existing onMessage classification, and stash
+				// cleanup happens after the failed helper exactly once.
+				await target.log.onMessage(createStashMessage(rejectedRelease), {
+					from: target.node.identity.publicKey,
+				} as any);
+				expect(rejectedMaterialize.calledOnce).to.be.true;
+				expect(rejectedRelease.calledOnce).to.be.true;
+				expect(order).to.deep.equal(["materialize", "stash"]);
+			} finally {
+				rejectedMaterialize.restore();
+			}
+
+			const releaseEvents = profileEvents.filter(
+				(event) => event.name === "sharedLog.rawReceive.wireStashRelease",
+			);
+			expect(releaseEvents).to.have.length(2);
+			expect(releaseEvents.map((event) => event.entries)).to.deep.equal([1, 0]);
+			expect(
+				releaseEvents.every((event) => event.details.bytesMaterialized === 0),
+			).to.be.true;
+		} finally {
+			await session.stop();
+		}
+	});
 });

@@ -16786,6 +16786,339 @@ export class SharedLog<
 		});
 	}
 
+	/**
+	 * Normalize a raw exchange-heads receive into the regular exchange message
+	 * consumed by the rest of the receive path. An undefined result means the
+	 * message was fully handled (all heads were already present or the native
+	 * receive plan dropped every head).
+	 *
+	 * This helper intentionally runs inside `onMessage`'s shared try/finally
+	 * envelope so receive errors keep their existing classification and a
+	 * wire-backed message keeps its single outer stash-release boundary.
+	 */
+	private async materializeRawReceiveMessage(
+		msg: RawExchangeHeadsMessage,
+		properties: {
+			from: PublicSignKey;
+			stashBackedRawMessage?: StashBackedRawExchangeHeadsMessage;
+			syncProfile?: SyncProfileFn;
+			receiveOwnershipRevision: number;
+		},
+	): Promise<
+		| {
+				message: ExchangeHeadsMessage<any>;
+				preparedSelection: NativeBackboneRawReceiveSelectionPlan | undefined;
+		  }
+		| undefined
+	> {
+		const {
+			from: rawFrom,
+			stashBackedRawMessage,
+			syncProfile,
+			receiveOwnershipRevision,
+		} = properties;
+		const fromIsSelf = rawFrom.equals(this.node.identity.publicKey);
+		if (syncProfile && !stashBackedRawMessage) {
+			// Per-message JS-side entry decode: the heads were
+			// borsh-decoded in TS (regular RPC path) instead of being
+			// resolved from the native wire stash. Zero on the fused
+			// hot path.
+			emitSyncProfileEvent(syncProfile, {
+				name: "sharedLog.rawReceive.jsEntryDecode",
+				component: "shared-log",
+				entries: msg.heads.length,
+				messages: 1,
+			});
+		}
+		const rawExistingStartedAt = syncProfileStart(syncProfile);
+		const rawExistingHashes = await this.log.hasMany(
+			msg.heads.map((head) => head.hash),
+		);
+		if (syncProfile) {
+			emitSyncProfileDuration(syncProfile, rawExistingStartedAt, {
+				name: "sharedLog.rawReceive.existingHeads",
+				component: "shared-log",
+				entries: msg.heads.length,
+				messages: 1,
+			});
+		}
+		const rawMissingHeads = [];
+		const rawConfirmedHashes = new Set<string>();
+		let rawMissingBytes = 0;
+		for (const head of msg.heads) {
+			if (rawExistingHashes.has(head.hash)) {
+				rawConfirmedHashes.add(head.hash);
+			} else {
+				rawMissingHeads.push(head);
+				rawMissingBytes += getRawExchangeHeadByteLength(head);
+			}
+		}
+		if (rawConfirmedHashes.size > 0 && !fromIsSelf) {
+			const rawConfirmStartedAt = syncProfileStart(syncProfile);
+			this.markEntriesKnownByPeer(rawConfirmedHashes, rawFrom.hashcode());
+			await this.sendRepairConfirmation(rawFrom, rawConfirmedHashes);
+			if (syncProfile) {
+				emitSyncProfileDuration(syncProfile, rawConfirmStartedAt, {
+					name: "sharedLog.rawReceive.confirmExisting",
+					component: "shared-log",
+					entries: rawConfirmedHashes.size,
+					messages: 1,
+				});
+			}
+		}
+		if (rawMissingHeads.length === 0) {
+			return undefined;
+		}
+		const rawIsRepairHint =
+			(msg.reserved[0] & EXCHANGE_HEADS_REPAIR_HINT) !== 0;
+		const rawPrepareVerifySetting =
+			this._logProperties?.sync?.rawExchangeHeadsVerifySignaturesDuringPrepare;
+		// A program-level canAppend hook must observe every entry before
+		// it commits, so the native join commit (which validates and
+		// commits entirely in wasm) is not used for programs that
+		// register one; those joins run through the lower-log batch
+		// join where the hook fires per entry.
+		const programCanAppend = !!this._logProperties?.canAppend;
+		const canVerifyPreparedRawReceiveOnCommit =
+			!programCanAppend &&
+			!!this._nativeBackbone?.graph.commitVerifiedPreparedRawReceiveJoinBatch;
+		const canDeferRawReceiveVerificationUntilNativeSelection =
+			!rawIsRepairHint &&
+			!!this._nativeBackbone?.verifyPreparedRawReceiveEntries &&
+			!this._isReplicating &&
+			!this.keep &&
+			!this.closed &&
+			!!this.syncronizer.onReceivedEntryHashes &&
+			rawMissingHeads.every((head) => head.gidRefrences.length === 0);
+		const verifyNativeBackboneSignaturesDuringPrepare =
+			rawPrepareVerifySetting === true ||
+			(rawPrepareVerifySetting !== false &&
+				(canDeferRawReceiveVerificationUntilNativeSelection ||
+					(this._isReplicating &&
+						!rawIsRepairHint &&
+						!canVerifyPreparedRawReceiveOnCommit)));
+		const deferNativeBackboneSignatureVerificationUntilSelection =
+			verifyNativeBackboneSignaturesDuringPrepare &&
+			canDeferRawReceiveVerificationUntilNativeSelection;
+		const deferNativeBackboneSignatureVerificationUntilCommit =
+			deferNativeBackboneSignatureVerificationUntilSelection &&
+			!programCanAppend &&
+			!!this._nativeBackbone?.graph.commitVerifiedPreparedRawReceiveJoinBatch;
+		let rawPreparedReceiveSelectionValue:
+			| NativeBackboneRawReceiveSelectionPlan
+			| undefined;
+		let rawPreparedReceiveSelection:
+			| Promise<NativeBackboneRawReceiveSelectionPlan | undefined>
+			| undefined;
+		const getRawPreparedReceiveSelection = async (
+			heads: RawEntryWithRefs[],
+			hashes: string[],
+		) => {
+			if (rawPreparedReceiveSelectionValue) {
+				return rawPreparedReceiveSelectionValue;
+			}
+			rawPreparedReceiveSelection ??=
+				this.planNativePreparedRawReceiveSelection({
+					heads,
+					hashes,
+					from: rawFrom,
+				});
+			rawPreparedReceiveSelectionValue = await rawPreparedReceiveSelection;
+			return rawPreparedReceiveSelectionValue;
+		};
+		// Receive fusion: when this message was resolved from the wire
+		// stash, the prepared receive reads entry block bytes straight
+		// out of wasm memory (indexed into the stashed frame) instead
+		// of copying a JS blocks array across the boundary.
+		const rawStashIndexes = stashBackedRawMessage
+			? getRawExchangeHeadStashIndexes(rawMissingHeads)
+			: undefined;
+		const prepareNativeBackboneExpectedColumns =
+			stashBackedRawMessage && rawStashIndexes
+				? ({
+						hashes,
+						verifySignatures,
+					}: {
+						hashes: string[];
+						verifySignatures: boolean;
+					}) => {
+						const backbone = this._nativeBackbone;
+						const wireSession = this._wireSyncSession;
+						if (!backbone || !wireSession) {
+							return undefined;
+						}
+						try {
+							return backbone.prepareStashedRawReceiveExpectedColumnsBatch(
+								wireSession,
+								stashBackedRawMessage.messageId,
+								rawStashIndexes,
+								hashes,
+								{ verifySignatures },
+							);
+						} catch {
+							return undefined;
+						}
+					}
+				: undefined;
+		const prepareNativeBackboneExpectedColumnsAndSelection = rawIsRepairHint
+			? undefined
+			: async ({
+					blocks,
+					hashes,
+					verifySignatures,
+				}: {
+					blocks: () => Uint8Array[];
+					hashes: string[];
+					verifySignatures: boolean;
+				}) => {
+					if (
+						verifySignatures ||
+						!canDeferRawReceiveVerificationUntilNativeSelection
+					) {
+						return undefined;
+					}
+					try {
+						const replicaOptions = {
+							minReplicas: this.replicas.min?.getValue(this) || 1,
+							maxReplicas: this.replicas.max?.getValue(this),
+						};
+						const leaderSelectionContext =
+							await this.createLeaderSelectionContext();
+						const prepareOptions = {
+							verifySignatures: false as const,
+							...replicaOptions,
+							leaderOptions: this.createNativeLeaderOptions(
+								leaderSelectionContext,
+							),
+							fromHash: rawFrom.hashcode(),
+						};
+						let prepared:
+							| ReturnType<
+									NativePeerbitBackbone["prepareRawReceiveExpectedColumnsAndSelectionBatch"]
+							  >
+							| undefined;
+						const wireSession = this._wireSyncSession;
+						if (
+							stashBackedRawMessage &&
+							rawStashIndexes &&
+							wireSession &&
+							this._nativeBackbone
+						) {
+							prepared =
+								this._nativeBackbone.prepareStashedRawReceiveExpectedColumnsAndSelectionBatch(
+									wireSession,
+									stashBackedRawMessage.messageId,
+									rawStashIndexes,
+									hashes,
+									prepareOptions,
+								);
+						}
+						if (
+							!prepared &&
+							this._nativeBackbone
+								?.prepareRawReceiveExpectedColumnsAndSelectionBatch
+						) {
+							prepared =
+								this._nativeBackbone.prepareRawReceiveExpectedColumnsAndSelectionBatch(
+									blocks(),
+									hashes,
+									prepareOptions,
+								);
+						}
+						if (!prepared) {
+							return undefined;
+						}
+						rawPreparedReceiveSelectionValue = prepared.selection;
+						rawPreparedReceiveSelection = Promise.resolve(
+							rawPreparedReceiveSelectionValue,
+						);
+						return { columns: prepared.columns };
+					} catch {
+						this.throwIfReplicationOwnershipPoisoned();
+						return undefined;
+					}
+				};
+		const rawMaterializeStartedAt = syncProfileStart(syncProfile);
+		const materializedRawMessage =
+			await materializeVerifiedRawExchangeHeadsMessage(
+				new RawExchangeHeadsMessage({
+					heads: rawMissingHeads,
+					reserved: msg.reserved,
+				}),
+				this.log,
+				syncProfile,
+				{
+					nativeBackbone: this._nativeBackbone,
+					verifyNativeBackboneSignaturesDuringPrepare:
+						verifyNativeBackboneSignaturesDuringPrepare,
+					deferNativeBackboneSignatureVerificationUntilSelection:
+						deferNativeBackboneSignatureVerificationUntilSelection,
+					deferNativeBackboneSignatureVerificationUntilCommit:
+						deferNativeBackboneSignatureVerificationUntilCommit,
+					prepareNativeBackboneExpectedColumnsAndSelection:
+						prepareNativeBackboneExpectedColumnsAndSelection,
+					prepareNativeBackboneExpectedColumns:
+						prepareNativeBackboneExpectedColumns,
+					tryPreparedRawReceiveFastDrop: rawIsRepairHint
+						? undefined
+						: async ({ heads, hashes }) =>
+								this.tryFastDropPreparedRawReceive({
+									heads,
+									hashes,
+									from: rawFrom,
+									fromIsSelf,
+									syncProfile,
+									selection: await getRawPreparedReceiveSelection(
+										heads,
+										hashes,
+									),
+									receiveOwnershipRevision,
+								}),
+					selectPreparedRawReceiveHashes: rawIsRepairHint
+						? undefined
+						: async ({ heads, hashes }) =>
+								this.selectNativePreparedRawReceiveHashes({
+									heads,
+									hashes,
+									from: rawFrom,
+									fromIsSelf,
+									syncProfile,
+									selection: await getRawPreparedReceiveSelection(
+										heads,
+										hashes,
+									),
+									receiveOwnershipRevision,
+								}),
+				},
+			);
+		if (materializedRawMessage === undefined) {
+			if (syncProfile) {
+				emitSyncProfileDuration(syncProfile, rawMaterializeStartedAt, {
+					name: "sharedLog.rawReceive.materialize",
+					component: "shared-log",
+					entries: rawMissingHeads.length,
+					bytes: rawMissingBytes,
+					messages: 1,
+					details: { nativeFastDropEarly: true },
+				});
+			}
+			return undefined;
+		}
+		if (syncProfile) {
+			emitSyncProfileDuration(syncProfile, rawMaterializeStartedAt, {
+				name: "sharedLog.rawReceive.materialize",
+				component: "shared-log",
+				entries: rawMissingHeads.length,
+				bytes: rawMissingBytes,
+				messages: 1,
+			});
+		}
+		return {
+			message: materializedRawMessage,
+			preparedSelection: rawPreparedReceiveSelectionValue,
+		};
+	}
+
 	// Callback for receiving a message from the network
 	async onMessage(
 		msg: TransportMessage,
@@ -16863,307 +17196,23 @@ export class SharedLog<
 				| NativeBackboneRawReceiveSelectionPlan
 				| undefined;
 			if (msg instanceof RawExchangeHeadsMessage) {
-				const rawFrom = context.from!;
-				const fromIsSelf = rawFrom.equals(this.node.identity.publicKey);
-				if (syncProfile && !stashBackedRawMessage) {
-					// Per-message JS-side entry decode: the heads were
-					// borsh-decoded in TS (regular RPC path) instead of being
-					// resolved from the native wire stash. Zero on the fused
-					// hot path.
-					emitSyncProfileEvent(syncProfile, {
-						name: "sharedLog.rawReceive.jsEntryDecode",
-						component: "shared-log",
-						entries: msg.heads.length,
-						messages: 1,
-					});
-				}
-				const rawExistingStartedAt = syncProfileStart(syncProfile);
-				const rawExistingHashes = await this.log.hasMany(
-					msg.heads.map((head) => head.hash),
-				);
-				if (syncProfile) {
-					emitSyncProfileDuration(syncProfile, rawExistingStartedAt, {
-						name: "sharedLog.rawReceive.existingHeads",
-						component: "shared-log",
-						entries: msg.heads.length,
-						messages: 1,
-					});
-				}
-				const rawMissingHeads = [];
-				const rawConfirmedHashes = new Set<string>();
-				let rawMissingBytes = 0;
-				for (const head of msg.heads) {
-					if (rawExistingHashes.has(head.hash)) {
-						rawConfirmedHashes.add(head.hash);
-					} else {
-						rawMissingHeads.push(head);
-						rawMissingBytes += getRawExchangeHeadByteLength(head);
-					}
-				}
-				if (rawConfirmedHashes.size > 0 && !fromIsSelf) {
-					const rawConfirmStartedAt = syncProfileStart(syncProfile);
-					this.markEntriesKnownByPeer(rawConfirmedHashes, rawFrom.hashcode());
-					await this.sendRepairConfirmation(rawFrom, rawConfirmedHashes);
-					if (syncProfile) {
-						emitSyncProfileDuration(syncProfile, rawConfirmStartedAt, {
-							name: "sharedLog.rawReceive.confirmExisting",
-							component: "shared-log",
-							entries: rawConfirmedHashes.size,
-							messages: 1,
-						});
-					}
-				}
-				if (rawMissingHeads.length === 0) {
-					return;
-				}
-				const rawIsRepairHint =
-					(msg.reserved[0] & EXCHANGE_HEADS_REPAIR_HINT) !== 0;
-				const rawPrepareVerifySetting =
-					this._logProperties?.sync
-						?.rawExchangeHeadsVerifySignaturesDuringPrepare;
-				// A program-level canAppend hook must observe every entry before
-				// it commits, so the native join commit (which validates and
-				// commits entirely in wasm) is not used for programs that
-				// register one; those joins run through the lower-log batch
-				// join where the hook fires per entry.
-				const programCanAppend = !!this._logProperties?.canAppend;
-				const canVerifyPreparedRawReceiveOnCommit =
-					!programCanAppend &&
-					!!this._nativeBackbone?.graph
-						.commitVerifiedPreparedRawReceiveJoinBatch;
-				const canDeferRawReceiveVerificationUntilNativeSelection =
-					!rawIsRepairHint &&
-					!!this._nativeBackbone?.verifyPreparedRawReceiveEntries &&
-					!this._isReplicating &&
-					!this.keep &&
-					!this.closed &&
-					!!this.syncronizer.onReceivedEntryHashes &&
-					rawMissingHeads.every((head) => head.gidRefrences.length === 0);
-				const verifyNativeBackboneSignaturesDuringPrepare =
-					rawPrepareVerifySetting === true ||
-					(rawPrepareVerifySetting !== false &&
-						(canDeferRawReceiveVerificationUntilNativeSelection ||
-							(this._isReplicating &&
-								!rawIsRepairHint &&
-								!canVerifyPreparedRawReceiveOnCommit)));
-				const deferNativeBackboneSignatureVerificationUntilSelection =
-					verifyNativeBackboneSignaturesDuringPrepare &&
-					canDeferRawReceiveVerificationUntilNativeSelection;
-				const deferNativeBackboneSignatureVerificationUntilCommit =
-					deferNativeBackboneSignatureVerificationUntilSelection &&
-					!programCanAppend &&
-					!!this._nativeBackbone?.graph
-						.commitVerifiedPreparedRawReceiveJoinBatch;
-				let rawPreparedReceiveSelection:
-					| Promise<NativeBackboneRawReceiveSelectionPlan | undefined>
-					| undefined;
-				const getRawPreparedReceiveSelection = async (
-					heads: RawEntryWithRefs[],
-					hashes: string[],
-				) => {
-					if (rawPreparedReceiveSelectionValue) {
-						return rawPreparedReceiveSelectionValue;
-					}
-					rawPreparedReceiveSelection ??=
-						this.planNativePreparedRawReceiveSelection({
-							heads,
-							hashes,
-							from: rawFrom,
-						});
-					rawPreparedReceiveSelectionValue = await rawPreparedReceiveSelection;
-					return rawPreparedReceiveSelectionValue;
-				};
-				// Receive fusion: when this message was resolved from the wire
-				// stash, the prepared receive reads entry block bytes straight
-				// out of wasm memory (indexed into the stashed frame) instead
-				// of copying a JS blocks array across the boundary.
-				const rawStashIndexes = stashBackedRawMessage
-					? getRawExchangeHeadStashIndexes(rawMissingHeads)
-					: undefined;
-				const prepareNativeBackboneExpectedColumns =
-					stashBackedRawMessage && rawStashIndexes
-						? ({
-								hashes,
-								verifySignatures,
-							}: {
-								hashes: string[];
-								verifySignatures: boolean;
-							}) => {
-								const backbone = this._nativeBackbone;
-								const wireSession = this._wireSyncSession;
-								if (!backbone || !wireSession) {
-									return undefined;
-								}
-								try {
-									return backbone.prepareStashedRawReceiveExpectedColumnsBatch(
-										wireSession,
-										stashBackedRawMessage.messageId,
-										rawStashIndexes,
-										hashes,
-										{ verifySignatures },
-									);
-								} catch {
-									return undefined;
-								}
-							}
-						: undefined;
-				const prepareNativeBackboneExpectedColumnsAndSelection = rawIsRepairHint
-					? undefined
-					: async ({
-							blocks,
-							hashes,
-							verifySignatures,
-						}: {
-							blocks: () => Uint8Array[];
-							hashes: string[];
-							verifySignatures: boolean;
-						}) => {
-							if (
-								verifySignatures ||
-								!canDeferRawReceiveVerificationUntilNativeSelection
-							) {
-								return undefined;
-							}
-							try {
-								const replicaOptions = {
-									minReplicas: this.replicas.min?.getValue(this) || 1,
-									maxReplicas: this.replicas.max?.getValue(this),
-								};
-								const leaderSelectionContext =
-									await this.createLeaderSelectionContext();
-								const prepareOptions = {
-									verifySignatures: false as const,
-									...replicaOptions,
-									leaderOptions: this.createNativeLeaderOptions(
-										leaderSelectionContext,
-									),
-									fromHash: rawFrom.hashcode(),
-								};
-								let prepared:
-									| ReturnType<
-											NativePeerbitBackbone["prepareRawReceiveExpectedColumnsAndSelectionBatch"]
-									  >
-									| undefined;
-								const wireSession = this._wireSyncSession;
-								if (
-									stashBackedRawMessage &&
-									rawStashIndexes &&
-									wireSession &&
-									this._nativeBackbone
-								) {
-									prepared =
-										this._nativeBackbone.prepareStashedRawReceiveExpectedColumnsAndSelectionBatch(
-											wireSession,
-											stashBackedRawMessage.messageId,
-											rawStashIndexes,
-											hashes,
-											prepareOptions,
-										);
-								}
-								if (
-									!prepared &&
-									this._nativeBackbone
-										?.prepareRawReceiveExpectedColumnsAndSelectionBatch
-								) {
-									prepared =
-										this._nativeBackbone.prepareRawReceiveExpectedColumnsAndSelectionBatch(
-											blocks(),
-											hashes,
-											prepareOptions,
-										);
-								}
-								if (!prepared) {
-									return undefined;
-								}
-								rawPreparedReceiveSelectionValue = prepared.selection;
-								rawPreparedReceiveSelection = Promise.resolve(
-									rawPreparedReceiveSelectionValue,
-								);
-								return { columns: prepared.columns };
-							} catch {
-								this.throwIfReplicationOwnershipPoisoned();
-								return undefined;
-							}
-						};
-				const rawMaterializeStartedAt = syncProfileStart(syncProfile);
-				const materializedRawMessage =
-					await materializeVerifiedRawExchangeHeadsMessage(
-						new RawExchangeHeadsMessage({
-							heads: rawMissingHeads,
-							reserved: msg.reserved,
-						}),
-						this.log,
+				const materializedRawReceive = await this.materializeRawReceiveMessage(
+					msg,
+					{
+						from: context.from,
+						stashBackedRawMessage,
 						syncProfile,
-						{
-							nativeBackbone: this._nativeBackbone,
-							verifyNativeBackboneSignaturesDuringPrepare:
-								verifyNativeBackboneSignaturesDuringPrepare,
-							deferNativeBackboneSignatureVerificationUntilSelection:
-								deferNativeBackboneSignatureVerificationUntilSelection,
-							deferNativeBackboneSignatureVerificationUntilCommit:
-								deferNativeBackboneSignatureVerificationUntilCommit,
-							prepareNativeBackboneExpectedColumnsAndSelection:
-								prepareNativeBackboneExpectedColumnsAndSelection,
-							prepareNativeBackboneExpectedColumns:
-								prepareNativeBackboneExpectedColumns,
-							tryPreparedRawReceiveFastDrop: rawIsRepairHint
-								? undefined
-								: async ({ heads, hashes }) =>
-										this.tryFastDropPreparedRawReceive({
-											heads,
-											hashes,
-											from: rawFrom,
-											fromIsSelf,
-											syncProfile,
-											selection: await getRawPreparedReceiveSelection(
-												heads,
-												hashes,
-											),
-											receiveOwnershipRevision,
-										}),
-							selectPreparedRawReceiveHashes: rawIsRepairHint
-								? undefined
-								: async ({ heads, hashes }) =>
-										this.selectNativePreparedRawReceiveHashes({
-											heads,
-											hashes,
-											from: rawFrom,
-											fromIsSelf,
-											syncProfile,
-											selection: await getRawPreparedReceiveSelection(
-												heads,
-												hashes,
-											),
-											receiveOwnershipRevision,
-										}),
-						},
-					);
-				if (materializedRawMessage === undefined) {
-					if (syncProfile) {
-						emitSyncProfileDuration(syncProfile, rawMaterializeStartedAt, {
-							name: "sharedLog.rawReceive.materialize",
-							component: "shared-log",
-							entries: rawMissingHeads.length,
-							bytes: rawMissingBytes,
-							messages: 1,
-							details: { nativeFastDropEarly: true },
-						});
-					}
+						receiveOwnershipRevision,
+					},
+				);
+				if (materializedRawReceive === undefined) {
 					return;
 				}
-				msg = materializedRawMessage;
+				msg = materializedRawReceive.message;
+				rawPreparedReceiveSelectionValue =
+					materializedRawReceive.preparedSelection;
 				rawMaterializedKnownMissing = true;
-				if (syncProfile) {
-					emitSyncProfileDuration(syncProfile, rawMaterializeStartedAt, {
-						name: "sharedLog.rawReceive.materialize",
-						component: "shared-log",
-						entries: rawMissingHeads.length,
-						bytes: rawMissingBytes,
-						messages: 1,
-					});
-				}
 			}
-
 			if (msg instanceof ExchangeHeadsMessage) {
 				/**
 				 * I have received heads from someone else.
