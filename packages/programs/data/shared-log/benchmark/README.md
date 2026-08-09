@@ -5,10 +5,59 @@ networked sessions inside one process, so results measure the combined
 sender+receiver pipeline and are more variable than pure algorithmic
 benches — prefer comparing means over several runs.
 
-Each `benchmark:*` script in `package.json` runs one file with
-`node --loader ts-node/esm`. Common environment knobs are documented in each
-file's header. `BENCH_JSON=1` switches every harness to machine-readable
-JSON on stdout.
+The TypeScript `benchmark:*` harnesses in `package.json` run with
+`node --loader ts-node/esm`; validation helpers use plain Node.js. Common
+environment knobs are documented in each file's header. `BENCH_JSON=1`
+switches every harness to machine-readable JSON on stdout.
+
+## sync-peer-state.ts
+
+Deterministic in-process microbenchmark for the state a per-peer state fold
+would move. Every scenario runs at 1, 8, and 64 peers:
+
+- `simple-dispatch-quota` captures and disposes the real Simple dispatch
+  lifecycle while acquiring and settling one real coordinate-lookup quota
+  permit per peer.
+- `rateless-target-lifecycle` captures the real Rateless target lifecycle,
+  finishes dispatch while process/response retention is live, then releases
+  that retention and disposes the target sets.
+- `disconnect-reconnect-retained-physical` leaves real Simple physical
+  permits unsettled for the full timed sample while repeatedly creating and
+  disconnecting successor logical rows. It retains one per peer through 32
+  peers and saturates the real global cap of 32 for the 64-peer case. The
+  permits are settled after timing so the benchmark process itself does not
+  leak.
+
+The workload is fixed and has no network, storage, timers, randomness, or
+generated identities. That makes it the primary performance signal for a
+state-fold change; the networked benchmarks remain useful corroboration, not
+the sole gate.
+
+Capture baseline and candidate results from their intended revisions on the
+same otherwise-idle host with the exact same Node 22 runtime. The gate-eligible
+configuration is exactly the default: peers `1,8,64`, three warmups, 15
+measured samples, and 500 iterations. The exact confidence calculation caps
+measured samples at 1,000:
+
+```bash
+# Run at the baseline revision.
+BENCH_JSON=1 pnpm --silent --filter @peerbit/shared-log run benchmark:sync-peer-state > baseline.json
+# Switch to the candidate revision (or copy a second worktree's result here).
+BENCH_JSON=1 pnpm --silent --filter @peerbit/shared-log run benchmark:sync-peer-state > candidate.json
+pnpm --filter @peerbit/shared-log run benchmark:sync-peer-state:compare "$PWD/baseline.json" "$PWD/candidate.json"
+```
+
+The comparison ratchet fails only when both conditions hold for a matching
+scenario/peer count: candidate median round time is more than 5% slower and
+the candidate's distribution-free 95% median confidence interval is wholly
+more than 5% above the baseline interval. An above-threshold point estimate
+without that evidence is inconclusive, as is any noncanonical smoke/custom
+configuration; the CLI returns nonzero for both. Mismatched exact
+Node/V8/CPU/platform/architecture, run configuration, task sets, sample counts,
+or deterministic workload counters make the comparison invalid instead of
+silently passing. This deliberately avoids treating a single noisy timing as
+proof. Correctness/lifecycle invariants stay gated by the focused sync test
+suites.
 
 ## network-preset-e2e.ts
 

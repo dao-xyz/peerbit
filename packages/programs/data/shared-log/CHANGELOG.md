@@ -1,5 +1,23 @@
 # Changelog
 
+## 13.2.30
+
+### Patch Changes
+
+- [#1201](https://github.com/dao-xyz/peerbit/pull/1201) [`d79b2c8`](https://github.com/dao-xyz/peerbit/commit/d79b2c89a8cf8eb58339ea647122466c529203b5) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Add repeatable per-peer synchronization state benchmarks and lifecycle regression coverage.
+
+## 13.2.29
+
+### Patch Changes
+
+- [#1199](https://github.com/dao-xyz/peerbit/pull/1199) [`e5fd560`](https://github.com/dao-xyz/peerbit/commit/e5fd5605a874a5f66f2edae32506f50e2837f602) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Keep raw entry synchronization behavior consistent while simplifying the receive pipeline.
+
+## 13.2.28
+
+### Patch Changes
+
+- [#1193](https://github.com/dao-xyz/peerbit/pull/1193) [`e4f6669`](https://github.com/dao-xyz/peerbit/commit/e4f66695c9478bc329c928370e214f0f6ea9b27d) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Keep replacement repair-frontier runners owned when cancelled predecessors settle.
+
 ## 13.2.27
 
 ### Patch Changes
