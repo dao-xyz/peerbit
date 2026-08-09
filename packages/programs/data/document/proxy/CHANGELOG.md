@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.0.78
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @peerbit/document@13.1.33
+  - @peerbit/shared-log-proxy@2.0.75
+
 ## 2.0.77
 
 ### Patch Changes
