@@ -1,10 +1,13 @@
 import { deserialize, serialize } from "@dao-xyz/borsh";
+import { Ed25519PublicKey } from "@peerbit/crypto";
 import { TestSession } from "@peerbit/test-utils";
 import { expect } from "chai";
 import sinon from "sinon";
 import {
 	SYNC_CAPABILITY_RAW_EXCHANGE_HEADS,
+	SYNC_CAPABILITY_REPLICATION_INFO_V2_APPLY,
 	SYNC_CAPABILITY_REPLICATION_INFO_V2_DECODE,
+	SYNC_CAPABILITY_REPLICATION_INFO_V2_SEND,
 	SyncCapabilitiesMessage,
 } from "../src/exchange-heads.js";
 import { TransportMessage } from "../src/message.js";
@@ -17,6 +20,7 @@ import {
 	AddedReplicationSegmentMessage,
 	AllReplicatingSegmentsMessage,
 	FullReplicationInfoV2Message,
+	RequestReplicationInfoV2Message,
 	StoppedReplicating,
 	StoppedReplicationInfoV2Message,
 } from "../src/replication.js";
@@ -28,12 +32,17 @@ const SENDER_EPOCH = Uint8Array.from(
 	(_, index) => 0xff - index,
 );
 const SEQUENCE = 0x0102030405060708n;
+const SENDER_SESSION = 0x1112131415161718n;
+const INTENDED_SENDER = new Ed25519PublicKey({
+	publicKey: Uint8Array.from({ length: 32 }, (_, index) => 0x80 + index),
+});
 
 const RECEIVER_CHALLENGE_HEX =
 	"000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f";
 const SENDER_EPOCH_HEX =
 	"fffefdfcfbfaf9f8f7f6f5f4f3f2f1f0efeeedecebeae9e8e7e6e5e4e3e2e1e0";
 const SEQUENCE_HEX = "0807060504030201";
+const SENDER_SESSION_HEX = "1817161514131211";
 
 const hex = (value: unknown): string =>
 	Buffer.from(serialize(value)).toString("hex");
@@ -111,6 +120,37 @@ describe("receive admission replication-info V2 decode-only codec", () => {
 				SEQUENCE,
 			);
 		}
+	});
+
+	it("pins the signed receiver request tag and sender binding", () => {
+		const request = new RequestReplicationInfoV2Message({
+			receiverChallenge: RECEIVER_CHALLENGE,
+			intendedSender: INTENDED_SENDER,
+			senderSession: SENDER_SESSION,
+		});
+		const intendedSenderHex = `00${Buffer.from(
+			INTENDED_SENDER.publicKey,
+		).toString("hex")}`;
+		expect(hex(request)).to.equal(
+			`000109${RECEIVER_CHALLENGE_HEX}${intendedSenderHex}${SENDER_SESSION_HEX}`,
+		);
+
+		const decoded = deserialize(
+			serialize(request),
+			TransportMessage,
+		) as RequestReplicationInfoV2Message;
+		expect(decoded).to.be.instanceOf(RequestReplicationInfoV2Message);
+		expect(decoded.intendedSender.equals(INTENDED_SENDER)).to.be.true;
+		expect(decoded.senderSession).to.equal(SENDER_SESSION);
+		expect(() =>
+			serialize(
+				new RequestReplicationInfoV2Message({
+					receiverChallenge: new Uint8Array(31),
+					intendedSender: INTENDED_SENDER,
+					senderSession: SENDER_SESSION,
+				}),
+			),
+		).to.throw();
 	});
 
 	it("round-trips the unchanged replication payload schemas", () => {
@@ -208,9 +248,11 @@ describe("receive admission replication-info V2 decode-only codec", () => {
 		}
 	});
 
-	it("pins the decode-only capability vocabulary", () => {
+	it("pins the decode, send and apply capability vocabulary", () => {
 		expect(SYNC_CAPABILITY_RAW_EXCHANGE_HEADS).to.equal(1);
 		expect(SYNC_CAPABILITY_REPLICATION_INFO_V2_DECODE).to.equal(2);
+		expect(SYNC_CAPABILITY_REPLICATION_INFO_V2_SEND).to.equal(4);
+		expect(SYNC_CAPABILITY_REPLICATION_INFO_V2_APPLY).to.equal(8);
 		expect(hex(new SyncCapabilitiesMessage())).to.equal("00000a01000000");
 		expect(
 			hex(
@@ -222,12 +264,10 @@ describe("receive admission replication-info V2 decode-only codec", () => {
 		expect(
 			hex(
 				new SyncCapabilitiesMessage({
-					capabilities:
-						SYNC_CAPABILITY_RAW_EXCHANGE_HEADS |
-						SYNC_CAPABILITY_REPLICATION_INFO_V2_DECODE,
+					capabilities: 15,
 				}),
 			),
-		).to.equal("00000a03000000");
+		).to.equal("00000a0f000000");
 	});
 
 	it("drops unsolicited V2 before receive state or side effects", async () => {
@@ -277,7 +317,7 @@ describe("receive admission replication-info V2 decode-only codec", () => {
 		}
 	});
 
-	it("advertises decode support while every replication send stays legacy", async () => {
+	it("advertises sender readiness while ordinary replication sends stay legacy", async () => {
 		session = await TestSession.disconnected(2);
 		const db = await session.peers[0].open(new EventStore(), {
 			args: { replicate: true, timeUntilRoleMaturity: 0 },
@@ -308,8 +348,17 @@ describe("receive admission replication-info V2 decode-only codec", () => {
 			).to.equal(SYNC_CAPABILITY_REPLICATION_INFO_V2_DECODE);
 			expect(
 				capability!.capabilities &
+					SYNC_CAPABILITY_REPLICATION_INFO_V2_SEND,
+			).to.equal(SYNC_CAPABILITY_REPLICATION_INFO_V2_SEND);
+			expect(
+				capability!.capabilities &
+					SYNC_CAPABILITY_REPLICATION_INFO_V2_APPLY,
+			).to.equal(0);
+			expect(
+				capability!.capabilities &
 					~(
 						SYNC_CAPABILITY_REPLICATION_INFO_V2_DECODE |
+						SYNC_CAPABILITY_REPLICATION_INFO_V2_SEND |
 						SYNC_CAPABILITY_RAW_EXCHANGE_HEADS
 					),
 			).to.equal(0);
@@ -321,6 +370,7 @@ describe("receive admission replication-info V2 decode-only codec", () => {
 			expect(
 				sent.some(
 					(message) =>
+						message instanceof RequestReplicationInfoV2Message ||
 						message instanceof FullReplicationInfoV2Message ||
 						message instanceof AddedReplicationInfoV2Message ||
 						message instanceof StoppedReplicationInfoV2Message,
@@ -332,7 +382,7 @@ describe("receive admission replication-info V2 decode-only codec", () => {
 		}
 	});
 
-	it("advertises decode support before replication snapshot retrieval", async () => {
+	it("advertises sender readiness before replication snapshot retrieval", async () => {
 		session = await TestSession.disconnected(2);
 		const db = await session.peers[0].open(new EventStore(), {
 			args: { replicate: true, timeUntilRoleMaturity: 0 },
@@ -364,6 +414,14 @@ describe("receive admission replication-info V2 decode-only codec", () => {
 			expect(
 				capability!.capabilities & SYNC_CAPABILITY_REPLICATION_INFO_V2_DECODE,
 			).to.equal(SYNC_CAPABILITY_REPLICATION_INFO_V2_DECODE);
+			expect(
+				capability!.capabilities &
+					SYNC_CAPABILITY_REPLICATION_INFO_V2_SEND,
+			).to.equal(SYNC_CAPABILITY_REPLICATION_INFO_V2_SEND);
+			expect(
+				capability!.capabilities &
+					SYNC_CAPABILITY_REPLICATION_INFO_V2_APPLY,
+			).to.equal(0);
 		} finally {
 			send.restore();
 			snapshot.restore();

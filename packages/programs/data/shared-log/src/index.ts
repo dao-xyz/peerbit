@@ -154,7 +154,9 @@ import {
 	ResponseIPrune,
 	ResponseIPruneV2,
 	SYNC_CAPABILITY_RAW_EXCHANGE_HEADS,
+	SYNC_CAPABILITY_REPLICATION_INFO_V2_APPLY,
 	SYNC_CAPABILITY_REPLICATION_INFO_V2_DECODE,
+	SYNC_CAPABILITY_REPLICATION_INFO_V2_SEND,
 	StashBackedRawExchangeHeadsMessage,
 	SyncCapabilitiesMessage,
 	collectRawExchangeHeadSendPlan,
@@ -235,6 +237,7 @@ import {
 	ReplicationAnnouncementCoordinator,
 	isTransientReplicationAnnouncementError,
 } from "./replication-announcement.js";
+import { ReplicationInfoV2SendCoordinator } from "./replication-info-v2-send.js";
 import {
 	type ReplicationDomainHash,
 	createReplicationDomainHash,
@@ -258,6 +261,7 @@ import {
 	type ReplicationLimits,
 	ReplicationPingMessage,
 	RequestReplicationInfoMessage,
+	RequestReplicationInfoV2Message,
 	ResponseRoleMessage,
 	StoppedReplicating,
 	decodeReplicas,
@@ -2024,7 +2028,12 @@ export class SharedLog<
 	// PeerSession the advert was staged under; promote/delete key off it.
 	private _openingSyncCapabilitiesByPeer!: Map<
 		string,
-		{ epoch: object; capabilities: number }
+		{
+			epoch: object;
+			capabilities: number;
+			transportSession?: bigint;
+			timestamp?: bigint;
+		}
 	>;
 	private _onFanoutDataFn?: (arg: any) => void;
 	private _onFanoutUnicastFn?: (arg: any) => void;
@@ -3225,6 +3234,7 @@ export class SharedLog<
 		| ReturnType<typeof debounceFixedInterval>
 		| undefined;
 	private _announcements!: ReplicationAnnouncementCoordinator<R>;
+	private _v2Send!: ReplicationInfoV2SendCoordinator<R>;
 
 	// A fn for debouncing the calls for pruning
 	pruneDebouncedFn!: DebouncedAccumulatorMap<{
@@ -3286,6 +3296,10 @@ export class SharedLog<
 	// Sync capability bits advertised by peers (SyncCapabilitiesMessage), keyed
 	// by public key hash. Entries are dropped on unsubscribe/disconnect.
 	private _peerSyncCapabilities!: Map<string, number>;
+	// Signed transport session carried by the capability envelope. Kept in a
+	// parallel map so existing capability-number consumers remain unchanged.
+	private _peerSyncCapabilitySessions!: Map<string, bigint>;
+	private _peerSyncCapabilityTimestamps!: Map<string, bigint>;
 	// Pending live raw exchange-head gossip, coalesced per recipient set and
 	// flushed at the end of the current event-loop turn (or when a batch cap
 	// is hit). Only used when every recipient advertised raw capability.
@@ -3355,6 +3369,7 @@ export class SharedLog<
 				this._announcements.queueCurrentReplicationStateAnnouncementRepair(),
 			queueCurrentReplicationStateAnnouncementRetry: (error: unknown) =>
 				this._announcements.queueCurrentReplicationStateAnnouncementRetry(error),
+			enqueueReplicationInfoV2: (message) => this._v2Send.enqueue(message),
 			isClosed: () => this.closed,
 			getCloseSignal: () => this._closeController.signal,
 			getMyReplicationSegments: () => this.getMyReplicationSegments(),
@@ -3371,6 +3386,30 @@ export class SharedLog<
 			isAdaptiveReplicating: () => this._isAdaptiveReplicating,
 			callRebalanceParticipationDebounced: () =>
 				this.rebalanceParticipationDebounced?.call(),
+		});
+	}
+
+	private createReplicationInfoV2SendCoordinator(): ReplicationInfoV2SendCoordinator<R> {
+		return new ReplicationInfoV2SendCoordinator<R>({
+			getRpc: () => this.rpc,
+			getSelfKey: () => this.node.identity.publicKey,
+			getSenderTransportSession: () =>
+				BigInt(
+					(this.node.services.pubsub as unknown as { session: number }).session,
+				),
+			getMyReplicationSegments: () => this.getMyReplicationSegments(),
+			validatePersistedReplicationRangeSnapshot: (ranges) =>
+				this.validatePersistedReplicationRangeSnapshot(ranges),
+			isClosed: () => this.closed,
+			isPeerSessionOpen: (peerHash, peerSession) =>
+				this._peerSessions.isCurrent(peerHash, peerSession) &&
+				(peerSession as PeerSession).phase === "open" &&
+				!this._peerSessions.isReplicationInfoBlocked(peerHash) &&
+				this._peerSessions.isReceiveCleanupGateOpen(peerHash),
+			captureReplicationOwnershipLifecycle: () =>
+				this.captureReplicationOwnershipLifecycle(),
+			isReplicationOwnershipLifecycleActive: (controller) =>
+				this.isRepairLifecycleActive(controller),
 		});
 	}
 
@@ -3488,6 +3527,8 @@ export class SharedLog<
 		this._appendBackfillPendingByTarget = new Map();
 		this._topicSubscribersCache = new Map();
 		this._peerSyncCapabilities = new Map();
+		this._peerSyncCapabilitySessions = new Map();
+		this._peerSyncCapabilityTimestamps = new Map();
 		this._liveRawGossipBatches = new Map();
 		this._liveRawGossipFlushScheduled = false;
 		this.coordinateToHash = new Cache<string>({ max: 1e6, ttl: 1e4 });
@@ -3496,6 +3537,7 @@ export class SharedLog<
 		this._replicatorJoinEmitted = new Set();
 		this._replicatorsReconciled = false;
 		this._liveness = this.createReplicatorLivenessMonitor();
+		this._v2Send = this.createReplicationInfoV2SendCoordinator();
 		this._announcements = this.createReplicationAnnouncementCoordinator();
 		this.pendingMaturity = new Map();
 		this._closeController = new AbortController();
@@ -3989,6 +4031,97 @@ export class SharedLog<
 				SYNC_CAPABILITY_RAW_EXCHANGE_HEADS) !==
 			0
 		);
+	}
+
+	private observePeerSyncCapabilities(properties: {
+		peerHash: string;
+		capabilities: number;
+		transportSession?: bigint;
+		timestamp?: bigint;
+		openingSession?: PeerSession;
+	}): boolean {
+		const {
+			peerHash,
+			capabilities,
+			transportSession,
+			timestamp,
+			openingSession,
+		} = properties;
+		if (openingSession) {
+			const previous = this._openingSyncCapabilitiesByPeer.get(peerHash);
+			if (
+				transportSession !== undefined &&
+				timestamp !== undefined &&
+				previous?.epoch === openingSession &&
+				previous.transportSession === transportSession
+			) {
+				if (previous.timestamp !== undefined && timestamp < previous.timestamp) {
+					return false;
+				}
+				this._openingSyncCapabilitiesByPeer.set(peerHash, {
+					epoch: openingSession,
+					capabilities: previous.capabilities | capabilities,
+					transportSession,
+					timestamp:
+						previous.timestamp === undefined || timestamp > previous.timestamp
+							? timestamp
+							: previous.timestamp,
+				});
+				return true;
+			}
+			this._openingSyncCapabilitiesByPeer.set(peerHash, {
+				epoch: openingSession,
+				capabilities,
+				transportSession,
+				timestamp,
+			});
+			return true;
+		}
+
+		if (transportSession === undefined || timestamp === undefined) {
+			// Test/in-process synthetic contexts predate signed envelope captures.
+			// They may exercise capability-number behavior, but can never authorize V2.
+			this._peerSyncCapabilities.set(peerHash, capabilities);
+			this._peerSyncCapabilitySessions.delete(peerHash);
+			this._peerSyncCapabilityTimestamps.delete(peerHash);
+			this._v2Send.advancePeerCapability(peerHash);
+			return true;
+		}
+
+		const previousSession = this._peerSyncCapabilitySessions.get(peerHash);
+		const previousTimestamp = this._peerSyncCapabilityTimestamps.get(peerHash);
+		const sameTransportSession = previousSession === transportSession;
+		if (
+			sameTransportSession &&
+			previousTimestamp !== undefined &&
+			timestamp < previousTimestamp
+		) {
+			return false;
+		}
+		const previousCapabilities =
+			this._peerSyncCapabilities.get(peerHash) ?? 0;
+		const nextCapabilities = sameTransportSession
+			? previousCapabilities | capabilities
+			: capabilities;
+		const generationAdvanced =
+			!sameTransportSession ||
+			previousTimestamp === undefined ||
+			timestamp > previousTimestamp ||
+			nextCapabilities !== previousCapabilities;
+		this._peerSyncCapabilities.set(peerHash, nextCapabilities);
+		this._peerSyncCapabilitySessions.set(peerHash, transportSession);
+		this._peerSyncCapabilityTimestamps.set(
+			peerHash,
+			previousTimestamp === undefined ||
+				!sameTransportSession ||
+				timestamp > previousTimestamp
+				? timestamp
+				: previousTimestamp,
+		);
+		if (generationAdvanced) {
+			this._v2Send.advancePeerCapability(peerHash);
+		}
+		return true;
 	}
 
 	/**
@@ -13831,6 +13964,8 @@ export class SharedLog<
 			ttl: LEADER_PLAN_CACHE_TTL_MS,
 		});
 		this._peerSyncCapabilities = new Map();
+		this._peerSyncCapabilitySessions = new Map();
+		this._peerSyncCapabilityTimestamps = new Map();
 		this._liveRawGossipBatches = new Map();
 		this._liveRawGossipFlushScheduled = false;
 		this.coordinateToHash = new Cache<string>({ max: 1e6, ttl: 1e4 });
@@ -13847,6 +13982,8 @@ export class SharedLog<
 		this._lastLocalAppendAt = 0;
 		this._announcements ??= this.createReplicationAnnouncementCoordinator();
 		this._announcements.resetForOpen();
+		this._v2Send ??= this.createReplicationInfoV2SendCoordinator();
+		this._v2Send.resetForOpen();
 		const adaptiveReplicateOptions =
 			options?.replicate && isAdaptiveReplicatorOption(options.replicate)
 				? options.replicate
@@ -15339,6 +15476,9 @@ export class SharedLog<
 		this._liveness._replicatorLivenessFailures.delete(peerHash);
 		this._liveness._replicatorLastActivityAt.delete(peerHash);
 		this._peerSyncCapabilities.delete(peerHash);
+		this._peerSyncCapabilitySessions.delete(peerHash);
+		this._peerSyncCapabilityTimestamps.delete(peerHash);
+		this._v2Send.clearPeer(peerHash);
 		this.cleanupPendingIHavePeer(peerHash);
 		this.cleanupCheckedPrunePeer(
 			peerHash,
@@ -16348,6 +16488,9 @@ export class SharedLog<
 			this._openingSyncCapabilitiesByPeer?.clear();
 			this._gidPeersHistory?.clear();
 			this._peerSyncCapabilities?.clear();
+			this._peerSyncCapabilitySessions?.clear();
+			this._peerSyncCapabilityTimestamps?.clear();
+			this._v2Send?.clearForClose();
 			this._liveRawGossipBatches?.clear();
 			this._nativeSharedLogState?.clearGidPeers();
 			this._nativeBackbone?.clearGidPeers();
@@ -16480,12 +16623,14 @@ export class SharedLog<
 					}
 				}, 2_000);
 				try {
-					await this.rpc
-						.send(new AllReplicatingSegmentsMessage({ segments: [] }), {
+					const reset = new AllReplicatingSegmentsMessage({ segments: [] });
+					await Promise.all([
+						this.rpc.send(reset, {
 							priority: CONVERGENCE_MESSAGE_PRIORITY,
 							signal: abort.signal,
-						})
-						.catch(() => {});
+						}).catch(() => {}),
+						this._v2Send.sendTerminalReset(abort.signal),
+					]);
 				} finally {
 					clearTimeout(abortTimer);
 				}
@@ -16604,12 +16749,14 @@ export class SharedLog<
 					}
 				}, 2_000);
 				try {
-					await this.rpc
-						.send(new AllReplicatingSegmentsMessage({ segments: [] }), {
+					const reset = new AllReplicatingSegmentsMessage({ segments: [] });
+					await Promise.all([
+						this.rpc.send(reset, {
 							priority: CONVERGENCE_MESSAGE_PRIORITY,
 							signal: abort.signal,
-						})
-						.catch(() => {});
+						}).catch(() => {}),
+						this._v2Send.sendTerminalReset(abort.signal),
+					]);
 				} finally {
 					clearTimeout(abortTimer);
 				}
@@ -17195,7 +17342,10 @@ export class SharedLog<
 				// allocation cost, and before liveness or apply-queue side effects.
 				this.validateStoppedReplicationAnnouncement(msg.segmentIds);
 			}
-			if (!context.from.equals(this.node.identity.publicKey)) {
+			if (
+				!context.from.equals(this.node.identity.publicKey) &&
+				!(msg instanceof RequestReplicationInfoV2Message)
+			) {
 				this._liveness.markReplicatorActivity(receiveFromHash);
 			}
 
@@ -18824,6 +18974,8 @@ export class SharedLog<
 					return;
 				} else if (msg instanceof SyncCapabilitiesMessage) {
 					if (!context.from.equals(this.node.identity.publicKey)) {
+						const capabilityTransportSession = context.message?.header?.session;
+						const capabilityTimestamp = context.message?.header?.timestamp;
 						// No await separates this from the capture above, so the captured
 						// window state is exact: the legacy re-read of the opening map here
 						// could never observe a different value.
@@ -18834,13 +18986,45 @@ export class SharedLog<
 							// A prior unsubscribe cleanup may still be ahead of this reconnect
 							// barrier. Stage the new generation's one-shot advertisement so that
 							// cleanup cannot erase it before the opening transition commits.
-							this._openingSyncCapabilitiesByPeer.set(receiveFromHash, {
-								epoch: receiveSession!,
+							this.observePeerSyncCapabilities({
+								peerHash: receiveFromHash,
 								capabilities: msg.capabilities,
+								transportSession: capabilityTransportSession,
+								timestamp: capabilityTimestamp,
+								openingSession: receiveSession!,
 							});
 						} else {
-							this._peerSyncCapabilities.set(receiveFromHash, msg.capabilities);
+							this.observePeerSyncCapabilities({
+								peerHash: receiveFromHash,
+								capabilities: msg.capabilities,
+								transportSession: capabilityTransportSession,
+								timestamp: capabilityTimestamp,
+							});
 						}
+					}
+					return;
+				} else if (msg instanceof RequestReplicationInfoV2Message) {
+					const requiredCapabilities =
+						SYNC_CAPABILITY_REPLICATION_INFO_V2_DECODE |
+						SYNC_CAPABILITY_REPLICATION_INFO_V2_APPLY;
+					if (
+						receiveSession &&
+						((this._peerSyncCapabilities.get(receiveFromHash) ?? 0) &
+							requiredCapabilities) ===
+							requiredCapabilities &&
+						this._peerSyncCapabilitySessions.get(receiveFromHash) ===
+							context.message.header.session &&
+						this._peerSyncCapabilityTimestamps.has(receiveFromHash) &&
+						context.message.header.timestamp >
+							this._peerSyncCapabilityTimestamps.get(receiveFromHash)! &&
+						this._v2Send.acceptRequest(msg, {
+							from: context.from,
+							peerSession: receiveSession,
+							receiverTransportSession: context.message.header.session,
+							requestTimestamp: context.message.header.timestamp,
+						})
+					) {
+						this._liveness.markReplicatorActivity(receiveFromHash);
 					}
 					return;
 				} else if (await this.syncronizer.onMessage(msg, context)) {
@@ -19157,6 +19341,7 @@ export class SharedLog<
 		}
 		const segments = replicationSegments.map((x) => x.toReplicationRange());
 		this.validatePersistedReplicationRangeSnapshot(segments);
+		this._v2Send.enqueueSnapshotForPeer(receiveFromHash);
 
 		await this.rpc
 			.send(new AllReplicatingSegmentsMessage({ segments }), {
@@ -22599,6 +22784,12 @@ export class SharedLog<
 		if (!ownsSubscriptionEpoch()) {
 			return;
 		}
+		// A destination stream is scoped to exactly one topic-subscription
+		// session. Abort the predecessor synchronously before either barrier can
+		// yield; a late queue completion must never enter the new session.
+		this._v2Send.clearPeer(peerHash);
+		this._peerSyncCapabilitySessions.delete(peerHash);
+		this._peerSyncCapabilityTimestamps.delete(peerHash);
 		if (subscribed) {
 			const pendingOpeningCapabilities =
 				this._openingSyncCapabilitiesByPeer.get(peerHash);
@@ -22638,6 +22829,22 @@ export class SharedLog<
 						peerHash,
 						openingCapabilities.capabilities,
 					);
+					if (openingCapabilities.transportSession === undefined) {
+						this._peerSyncCapabilitySessions.delete(peerHash);
+					} else {
+						this._peerSyncCapabilitySessions.set(
+							peerHash,
+							openingCapabilities.transportSession,
+						);
+					}
+					if (openingCapabilities.timestamp === undefined) {
+						this._peerSyncCapabilityTimestamps.delete(peerHash);
+					} else {
+						this._peerSyncCapabilityTimestamps.set(
+							peerHash,
+							openingCapabilities.timestamp,
+						);
+					}
 					this._openingSyncCapabilitiesByPeer.delete(peerHash);
 				}
 				this._peerSessions.unblockReplicationInfo(peerHash);
@@ -22717,11 +22924,13 @@ export class SharedLog<
 		this._liveness.markReplicatorActivity(peerHash);
 		this._peerSessions.markOpen(peerHash, expectedSubscriptionEpoch);
 
-		// Decode support is advertised independently from use permission. Every
-		// replication-info send below and in the announcement coordinator remains
-		// on the legacy wire format until a later receiver-led negotiation exists.
+		// Decode support and receiver-led negotiation readiness are separate bits.
+		// This node never initiates a request in this rollout; normal replication
+		// announcements remain legacy unless a peer explicitly grants one signed,
+		// session-bound V2 destination stream.
 		const receiveCapabilities =
 			SYNC_CAPABILITY_REPLICATION_INFO_V2_DECODE |
+			SYNC_CAPABILITY_REPLICATION_INFO_V2_SEND |
 			(this._logProperties?.sync?.rawExchangeHeads === true
 				? SYNC_CAPABILITY_RAW_EXCHANGE_HEADS
 				: 0);
