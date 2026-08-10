@@ -1,5 +1,4 @@
-import { serialize } from "@dao-xyz/borsh";
-import { type PublicSignKey, randomBytes, sha256Sync } from "@peerbit/crypto";
+import { type PublicSignKey, randomBytes } from "@peerbit/crypto";
 import { logger as loggerFn } from "@peerbit/logger";
 import type { RPC } from "@peerbit/rpc";
 import {
@@ -8,7 +7,7 @@ import {
 } from "@peerbit/stream-interface";
 import type { TransportMessage } from "./message.js";
 import type { ReplicationRangeIndexable } from "./ranges.js";
-import { concat, fromString } from "uint8arrays";
+import { deriveReplicationInfoV2ReceiverBinding } from "./replication-info-v2-binding.js";
 import {
 	AddedReplicationInfoV2Message,
 	AddedReplicationSegmentMessage,
@@ -22,46 +21,8 @@ import {
 const logger = loggerFn("peerbit:shared-log:replication-info-v2-send");
 
 const MAX_U64 = (1n << 64n) - 1n;
-const RECEIVER_BINDING_DOMAIN = fromString(
-	"peerbit/shared-log/replication-info-v2/receiver-binding/v1",
-);
 
-const lengthPrefixed = (bytes: Uint8Array): Uint8Array => {
-	const length = new Uint8Array(4);
-	new DataView(length.buffer).setUint32(0, bytes.byteLength, true);
-	return concat([length, bytes]);
-};
-
-const u64LittleEndian = (value: bigint): Uint8Array => {
-	const bytes = new Uint8Array(8);
-	new DataView(bytes.buffer).setBigUint64(0, value, true);
-	return bytes;
-};
-
-/**
- * Derive the token echoed by V2 data frames. Delivery recipients are unsigned,
- * so the receiver's nonce alone is not a destination binding. Folding both
- * authenticated identities and signed transport sessions into the 32-byte
- * field prevents a copied request nonce from creating an interchangeable
- * stream for another receiver.
- */
-export const deriveReplicationInfoV2ReceiverBinding = (properties: {
-	receiverChallenge: Uint8Array;
-	receiver: PublicSignKey;
-	receiverTransportSession: bigint;
-	sender: PublicSignKey;
-	senderTransportSession: bigint;
-}): Uint8Array =>
-	sha256Sync(
-		concat([
-			lengthPrefixed(RECEIVER_BINDING_DOMAIN),
-			lengthPrefixed(properties.receiverChallenge),
-			lengthPrefixed(serialize(properties.receiver)),
-			u64LittleEndian(properties.receiverTransportSession),
-			lengthPrefixed(serialize(properties.sender)),
-			u64LittleEndian(properties.senderTransportSession),
-		]),
-	);
+export { deriveReplicationInfoV2ReceiverBinding } from "./replication-info-v2-binding.js";
 
 export type LegacyReplicationInfoMessage =
 	| AllReplicatingSegmentsMessage
@@ -78,6 +39,7 @@ export type ReplicationInfoV2SendState = {
 	peerSession: object;
 	receiverTransportSession: bigint;
 	senderTransportSession: bigint;
+	capabilityTimestamp: bigint;
 	lastRequestTimestamp: bigint;
 	receiverRequestChallenge: Uint8Array;
 	receiverChallenge: Uint8Array;
@@ -218,8 +180,8 @@ export class ReplicationInfoV2SendCoordinator<R extends "u32" | "u64"> {
 	/**
 	 * Accept a signed receiver request. An exact newer retry asks for another
 	 * full snapshot without resetting the epoch/sequence. A different challenge
-	 * cannot replace the first binding within one PeerSession; this prevents a
-	 * signed request flood from spawning unbounded orphan snapshot reads.
+	 * can replace the binding only after a strictly newer signed capability;
+	 * retiring work is drained before the replacement can start.
 	 */
 	acceptRequest(
 		request: RequestReplicationInfoV2Message,
@@ -227,6 +189,7 @@ export class ReplicationInfoV2SendCoordinator<R extends "u32" | "u64"> {
 			from: PublicSignKey;
 			peerSession: object;
 			receiverTransportSession: bigint;
+			capabilityTimestamp: bigint;
 			requestTimestamp: bigint;
 		},
 	): boolean {
@@ -275,12 +238,20 @@ export class ReplicationInfoV2SendCoordinator<R extends "u32" | "u64"> {
 					return false;
 				}
 				previous.lastRequestTimestamp = properties.requestTimestamp;
+				previous.capabilityTimestamp = properties.capabilityTimestamp;
 				previous.suspended = false;
 				this.enqueueState(previous, { kind: "snapshot" });
 				return true;
 			}
 
-			return false;
+			if (properties.capabilityTimestamp <= previous.capabilityTimestamp) {
+				return false;
+			}
+			this.clearState(previous);
+			previous = undefined;
+			if (this._retiringWorkersByPeer.has(peerHash)) {
+				return false;
+			}
 		}
 
 		const ownershipLifecycleController =
@@ -291,6 +262,7 @@ export class ReplicationInfoV2SendCoordinator<R extends "u32" | "u64"> {
 			peerSession: properties.peerSession,
 			receiverTransportSession: properties.receiverTransportSession,
 			senderTransportSession,
+			capabilityTimestamp: properties.capabilityTimestamp,
 			lastRequestTimestamp: properties.requestTimestamp,
 			receiverRequestChallenge: request.receiverChallenge.slice(),
 			receiverChallenge: deriveReplicationInfoV2ReceiverBinding({

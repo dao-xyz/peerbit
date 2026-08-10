@@ -270,7 +270,7 @@ describe("receive admission replication-info V2 decode-only codec", () => {
 		).to.equal("00000a0f000000");
 	});
 
-	it("drops unsolicited V2 before receive state or side effects", async () => {
+	it("drops unsolicited V2 before state or mutation side effects", async () => {
 		session = await TestSession.disconnected(2);
 		const db = await session.peers[0].open(new EventStore(), {
 			args: { replicate: false, timeUntilRoleMaturity: 0 },
@@ -278,9 +278,6 @@ describe("receive admission replication-info V2 decode-only codec", () => {
 		const log = db.log as any;
 		const remote = session.peers[1].identity.publicKey;
 		const remoteHash = remote.hashcode();
-		const durablePoison = sinon.spy(log, "throwIfNativeDurableCommitFailed");
-		const lease = sinon.spy(log, "acquirePeerReceiveLease");
-		const ownership = sinon.spy(log, "captureReplicationOwnershipLifecycle");
 		const activity = sinon.spy(log._liveness, "markReplicatorActivity");
 		const add = sinon.spy(log, "addReplicationRange");
 		const remove = sinon.spy(log, "removeReplicationRanges");
@@ -294,9 +291,6 @@ describe("receive admission replication-info V2 decode-only codec", () => {
 				} as any);
 			}
 
-			expect(durablePoison.notCalled).to.be.true;
-			expect(lease.notCalled).to.be.true;
-			expect(ownership.notCalled).to.be.true;
 			expect(activity.notCalled).to.be.true;
 			expect(add.notCalled).to.be.true;
 			expect(remove.notCalled).to.be.true;
@@ -307,9 +301,6 @@ describe("receive admission replication-info V2 decode-only codec", () => {
 				await db.log.replicationIndex.count({ query: { hash: remoteHash } }),
 			).to.equal(0);
 		} finally {
-			durablePoison.restore();
-			lease.restore();
-			ownership.restore();
 			activity.restore();
 			add.restore();
 			remove.restore();
@@ -317,7 +308,7 @@ describe("receive admission replication-info V2 decode-only codec", () => {
 		}
 	});
 
-	it("advertises sender readiness while ordinary replication sends stay legacy", async () => {
+	it("advertises sender and receiver readiness while legacy remains primary", async () => {
 		session = await TestSession.disconnected(2);
 		const db = await session.peers[0].open(new EventStore(), {
 			args: { replicate: true, timeUntilRoleMaturity: 0 },
@@ -347,18 +338,17 @@ describe("receive admission replication-info V2 decode-only codec", () => {
 				capability!.capabilities & SYNC_CAPABILITY_REPLICATION_INFO_V2_DECODE,
 			).to.equal(SYNC_CAPABILITY_REPLICATION_INFO_V2_DECODE);
 			expect(
-				capability!.capabilities &
-					SYNC_CAPABILITY_REPLICATION_INFO_V2_SEND,
+				capability!.capabilities & SYNC_CAPABILITY_REPLICATION_INFO_V2_SEND,
 			).to.equal(SYNC_CAPABILITY_REPLICATION_INFO_V2_SEND);
 			expect(
-				capability!.capabilities &
-					SYNC_CAPABILITY_REPLICATION_INFO_V2_APPLY,
-			).to.equal(0);
+				capability!.capabilities & SYNC_CAPABILITY_REPLICATION_INFO_V2_APPLY,
+			).to.equal(SYNC_CAPABILITY_REPLICATION_INFO_V2_APPLY);
 			expect(
 				capability!.capabilities &
 					~(
 						SYNC_CAPABILITY_REPLICATION_INFO_V2_DECODE |
 						SYNC_CAPABILITY_REPLICATION_INFO_V2_SEND |
+						SYNC_CAPABILITY_REPLICATION_INFO_V2_APPLY |
 						SYNC_CAPABILITY_RAW_EXCHANGE_HEADS
 					),
 			).to.equal(0);
@@ -382,7 +372,7 @@ describe("receive admission replication-info V2 decode-only codec", () => {
 		}
 	});
 
-	it("advertises sender readiness before replication snapshot retrieval", async () => {
+	it("advertises V2 readiness before replication snapshot retrieval", async () => {
 		session = await TestSession.disconnected(2);
 		const db = await session.peers[0].open(new EventStore(), {
 			args: { replicate: true, timeUntilRoleMaturity: 0 },
@@ -415,16 +405,94 @@ describe("receive admission replication-info V2 decode-only codec", () => {
 				capability!.capabilities & SYNC_CAPABILITY_REPLICATION_INFO_V2_DECODE,
 			).to.equal(SYNC_CAPABILITY_REPLICATION_INFO_V2_DECODE);
 			expect(
-				capability!.capabilities &
-					SYNC_CAPABILITY_REPLICATION_INFO_V2_SEND,
+				capability!.capabilities & SYNC_CAPABILITY_REPLICATION_INFO_V2_SEND,
 			).to.equal(SYNC_CAPABILITY_REPLICATION_INFO_V2_SEND);
 			expect(
-				capability!.capabilities &
-					SYNC_CAPABILITY_REPLICATION_INFO_V2_APPLY,
-			).to.equal(0);
+				capability!.capabilities & SYNC_CAPABILITY_REPLICATION_INFO_V2_APPLY,
+			).to.equal(SYNC_CAPABILITY_REPLICATION_INFO_V2_APPLY);
 		} finally {
 			send.restore();
 			snapshot.restore();
+		}
+	});
+
+	it("does not hold the legacy snapshot behind the V2 capability acknowledgement", async () => {
+		session = await TestSession.disconnected(2);
+		const db = await session.peers[0].open(new EventStore(), {
+			args: { replicate: true, timeUntilRoleMaturity: 0 },
+		});
+		const log = db.log as any;
+		const remote = session.peers[1].identity.publicKey;
+		let releaseCapabilityAcknowledgement!: () => void;
+		const capabilityAcknowledgement = new Promise<void>((resolve) => {
+			releaseCapabilityAcknowledgement = resolve;
+		});
+		let markLegacySnapshotSent!: () => void;
+		const legacySnapshotSent = new Promise<void>((resolve) => {
+			markLegacySnapshotSent = resolve;
+		});
+		const sent: unknown[] = [];
+		const send = sinon
+			.stub(log.rpc, "send")
+			.callsFake(async (message: unknown) => {
+				sent.push(message);
+				if (message instanceof SyncCapabilitiesMessage) {
+					await capabilityAcknowledgement;
+				}
+				if (message instanceof AllReplicatingSegmentsMessage) {
+					markLegacySnapshotSent();
+				}
+				return [] as any;
+			});
+		const markReady = sinon.spy(log._v2Receive, "markLocalCapabilityReady");
+		const requests = sinon
+			.stub(log, "scheduleReplicationInfoRequests")
+			.callsFake(() => {});
+		let subscription: Promise<void> | undefined;
+		let subscriptionSettled = false;
+		let legacySnapshotTimeout: ReturnType<typeof setTimeout> | undefined;
+
+		try {
+			subscription = log
+				._onSubscription({
+					detail: { from: remote, topics: [db.log.topic] },
+				})
+				.then(() => {
+					subscriptionSettled = true;
+				});
+			await Promise.race([
+				legacySnapshotSent,
+				new Promise<never>((_, reject) => {
+					legacySnapshotTimeout = setTimeout(
+						() => reject(new Error("legacy snapshot send was blocked")),
+						5_000,
+					);
+				}),
+			]);
+			clearTimeout(legacySnapshotTimeout);
+			legacySnapshotTimeout = undefined;
+			await new Promise<void>((resolve) => setImmediate(resolve));
+
+			expect(sent[0]).to.be.instanceOf(SyncCapabilitiesMessage);
+			expect(
+				sent.some(
+					(message) => message instanceof AllReplicatingSegmentsMessage,
+				),
+			).to.be.true;
+			expect(subscriptionSettled).to.be.false;
+			expect(markReady.called).to.be.false;
+			expect(requests.calledOnce).to.be.true;
+
+			releaseCapabilityAcknowledgement();
+			await subscription;
+			expect(markReady.calledOnce).to.be.true;
+		} finally {
+			clearTimeout(legacySnapshotTimeout);
+			releaseCapabilityAcknowledgement();
+			await subscription?.catch(() => {});
+			send.restore();
+			markReady.restore();
+			requests.restore();
 		}
 	});
 });

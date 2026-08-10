@@ -807,6 +807,12 @@ describe("waitForReplicator liveness", () => {
 		const resolvePublicKey = sinon
 			.stub(log, "_resolvePublicKeyFromHash")
 			.resolves(undefined);
+		// This test isolates the legacy receive-epoch fence. Once a B10 peer has
+		// committed V2 Full, ignoring later legacy snapshots is correct and V2
+		// recovery owns relearning; that path is covered by the V2 receiver suite.
+		const forceLegacyReceivePath = sinon
+			.stub(log._v2Receive, "isLegacyCutover")
+			.returns(false);
 
 		try {
 			const delayedSnapshotReceive = db0.log.onMessage(delayedSnapshot, {
@@ -871,6 +877,7 @@ describe("waitForReplicator liveness", () => {
 			releaseStoppedSynchronizer.resolve();
 			synchronizer.restore();
 			resolvePublicKey.restore();
+			forceLegacyReceivePath.restore();
 		}
 	});
 });

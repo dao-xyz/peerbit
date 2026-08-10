@@ -130,6 +130,14 @@ import {
 	type CheckedPruneRetryIdentity,
 	type CheckedPruneRetryState,
 } from "./checked-prune.js";
+import {
+	CoordinatePersistenceCoordinator,
+	type MaybePromise,
+	combineCoordinateDeleteHashes,
+	isPromiseLike,
+	mapMaybePromise,
+	normalizedHashValues,
+} from "./coordinate-persistence.js";
 import { type CPUUsage, CPUUsageIntervalLag } from "./cpu.js";
 import {
 	type DebouncedAccumulatorMap,
@@ -181,14 +189,6 @@ import {
 	materializeVerifiedRawExchangeHeadsMessage,
 } from "./exchange-heads.js";
 import { FanoutEnvelope } from "./fanout-envelope.js";
-import {
-	CoordinatePersistenceCoordinator,
-	type MaybePromise,
-	combineCoordinateDeleteHashes,
-	isPromiseLike,
-	mapMaybePromise,
-	normalizedHashValues,
-} from "./coordinate-persistence.js";
 import { InstanceLifecycle } from "./instance-lifecycle.js";
 import {
 	MAX_U32,
@@ -201,10 +201,7 @@ import { JoinWarmupCoordinator, type WarmupSession } from "./join-warmup.js";
 import { LeaderPlanCache } from "./leader-plan-cache.js";
 import { TransportMessage } from "./message.js";
 import { NativeBackboneWriteThroughBlockStore } from "./native-write-through-block-store.js";
-import {
-	type PeerSession,
-	PeerSessionRegistry,
-} from "./peer-session.js";
+import { type PeerSession, PeerSessionRegistry } from "./peer-session.js";
 import { PIDReplicationController } from "./pid.js";
 import {
 	type EntryReplicated,
@@ -237,7 +234,6 @@ import {
 	ReplicationAnnouncementCoordinator,
 	isTransientReplicationAnnouncementError,
 } from "./replication-announcement.js";
-import { ReplicationInfoV2SendCoordinator } from "./replication-info-v2-send.js";
 import {
 	type ReplicationDomainHash,
 	createReplicationDomainHash,
@@ -252,18 +248,24 @@ import {
 	type ReplicationDomain,
 	type ReplicationDomainConstructor,
 } from "./replication-domain.js";
+import { ReplicationInfoV2ReceiveCoordinator } from "./replication-info-v2-receive.js";
+import { ReplicationInfoV2SendCoordinator } from "./replication-info-v2-send.js";
 import {
 	AbsoluteReplicas,
+	AddedReplicationInfoV2Message,
 	AddedReplicationSegmentMessage,
 	AllReplicatingSegmentsMessage,
+	FullReplicationInfoV2Message,
 	MinReplicas,
 	ReplicationError,
+	type ReplicationInfoV2Message,
 	type ReplicationLimits,
 	ReplicationPingMessage,
 	RequestReplicationInfoMessage,
 	RequestReplicationInfoV2Message,
 	ResponseRoleMessage,
 	StoppedReplicating,
+	StoppedReplicationInfoV2Message,
 	decodeReplicas,
 	encodeReplicas,
 	isReplicationInfoV2Message,
@@ -354,6 +356,7 @@ type ReceiveLaneContext = {
 	fromHash: string;
 	session: PeerSession | null;
 	lifecycleController: AbortController | undefined;
+	ownershipLifecycleController: AbortController;
 	receiveEpoch: object | null;
 	syncProfile: SyncProfileFn | undefined;
 	lease: PeerReceiveLease;
@@ -560,6 +563,7 @@ type ReplicationRangeDeletionOutcome<R extends "u32" | "u64"> = {
 	removed: ReplicationRangeIndexable<R>[];
 	retained: ReplicationRangeIndexable<R>[];
 	ownerHasRanges: boolean;
+	rollback: () => Promise<void>;
 	error?: unknown;
 };
 
@@ -632,7 +636,8 @@ export type NativeBackboneCoordinateRollback<R extends "u32" | "u64"> = {
 	generations: Map<string, number>;
 };
 
-export type RepairDispatchEntry<R extends "u32" | "u64"> = ResidentCoordinateEntry<R>;
+export type RepairDispatchEntry<R extends "u32" | "u64"> =
+	ResidentCoordinateEntry<R>;
 
 type PreparedLocalAppendCommit<R extends "u32" | "u64"> = {
 	hash: string;
@@ -1090,7 +1095,6 @@ const isReplicationOptionsDependentOnPreviousState = async (
 
 	return false;
 };
-
 
 export interface IndexableDomain<R extends "u32" | "u64"> {
 	numbers: Numbers<R>;
@@ -1990,7 +1994,8 @@ export class SharedLog<
 	}
 
 	get _nativeBackboneCoordinateJournalLastFlushMs(): number {
-		return this._coordinates?._nativeBackboneCoordinateJournalLastFlushMs as number;
+		return this._coordinates
+			?._nativeBackboneCoordinateJournalLastFlushMs as number;
 	}
 
 	set _nativeBackboneCoordinateJournalLastFlushMs(value: number) {
@@ -3077,7 +3082,8 @@ export class SharedLog<
 		if (!lowerMarkerCommitted) {
 			if (intent.coordinates.length > 0) {
 				const mutationGenerations =
-					(this._coordinates._nativeCoordinateMutationGenerations ??= new Map());
+					(this._coordinates._nativeCoordinateMutationGenerations ??=
+						new Map());
 				const rollback: NativeBackboneCoordinateRollback<R> = {
 					hashes: new Set(),
 					entries: new Map(),
@@ -3109,7 +3115,10 @@ export class SharedLog<
 						);
 					}
 				}
-				await this._coordinates.rollbackNativeBackboneCoordinateAppendDurably("", rollback);
+				await this._coordinates.rollbackNativeBackboneCoordinateAppendDurably(
+					"",
+					rollback,
+				);
 			}
 			for (const document of intent.documents) {
 				this.restoreNativeBackboneDocument({
@@ -3234,6 +3243,7 @@ export class SharedLog<
 		| ReturnType<typeof debounceFixedInterval>
 		| undefined;
 	private _announcements!: ReplicationAnnouncementCoordinator<R>;
+	private _v2Receive!: ReplicationInfoV2ReceiveCoordinator;
 	private _v2Send!: ReplicationInfoV2SendCoordinator<R>;
 
 	// A fn for debouncing the calls for pruning
@@ -3368,16 +3378,20 @@ export class SharedLog<
 			queueCurrentReplicationStateAnnouncementRepair: () =>
 				this._announcements.queueCurrentReplicationStateAnnouncementRepair(),
 			queueCurrentReplicationStateAnnouncementRetry: (error: unknown) =>
-				this._announcements.queueCurrentReplicationStateAnnouncementRetry(error),
+				this._announcements.queueCurrentReplicationStateAnnouncementRetry(
+					error,
+				),
 			enqueueReplicationInfoV2: (message) => this._v2Send.enqueue(message),
 			isClosed: () => this.closed,
 			getCloseSignal: () => this._closeController.signal,
 			getMyReplicationSegments: () => this.getMyReplicationSegments(),
 			validatePersistedReplicationRangeSnapshot: (ranges) =>
 				this.validatePersistedReplicationRangeSnapshot(ranges),
-			getSubscribers: () => this.node.services.pubsub.getSubscribers(this.topic),
+			getSubscribers: () =>
+				this.node.services.pubsub.getSubscribers(this.topic),
 			getSelfHash: () => this.node.identity.publicKey.hashcode(),
-			isBlockedPeer: (hash) => this._peerSessions.isReplicationInfoBlocked(hash),
+			isBlockedPeer: (hash) =>
+				this._peerSessions.isReplicationInfoBlocked(hash),
 			getRpc: () => this.rpc,
 			captureReplicationOwnershipLifecycle: () =>
 				this.captureReplicationOwnershipLifecycle(),
@@ -3413,6 +3427,114 @@ export class SharedLog<
 		});
 	}
 
+	private replicationInfoV2ReceiveCapabilities(): number {
+		return (
+			SYNC_CAPABILITY_REPLICATION_INFO_V2_DECODE |
+			SYNC_CAPABILITY_REPLICATION_INFO_V2_SEND |
+			SYNC_CAPABILITY_REPLICATION_INFO_V2_APPLY |
+			(this._logProperties?.sync?.rawExchangeHeads === true
+				? SYNC_CAPABILITY_RAW_EXCHANGE_HEADS
+				: 0)
+		);
+	}
+
+	private async advertiseReplicationInfoV2ReceiveCapability(properties: {
+		target: PublicSignKey;
+		peerSession: PeerSession;
+		receiveEpoch: object | null;
+		signal: AbortSignal;
+	}): Promise<
+		{ receiverTransportSession: bigint; requestNotBeforeMs: number } | undefined
+	> {
+		const peerHash = properties.target.hashcode();
+		const receiverTransportSession = BigInt(
+			(this.node.services.pubsub as unknown as { session: number }).session,
+		);
+		await this.rpc.send(
+			new SyncCapabilitiesMessage({
+				capabilities: this.replicationInfoV2ReceiveCapabilities(),
+			}),
+			{
+				mode: new AcknowledgeDelivery({
+					redundancy: 1,
+					to: [properties.target],
+				}),
+				priority: CONVERGENCE_MESSAGE_PRIORITY,
+				signal: properties.signal,
+			},
+		);
+		if (
+			properties.signal.aborted ||
+			this.closed ||
+			!this._peerSessions.isCurrent(peerHash, properties.peerSession) ||
+			properties.peerSession.phase !== "open" ||
+			!properties.peerSession.isActive() ||
+			!this._peerSessions.isReceiveEpochCurrent(
+				peerHash,
+				properties.receiveEpoch,
+			) ||
+			this._peerSessions.isReplicationInfoBlocked(peerHash) ||
+			!this._peerSessions.isReceiveCleanupGateOpen(peerHash) ||
+			BigInt(
+				(this.node.services.pubsub as unknown as { session: number }).session,
+			) !== receiverTransportSession
+		) {
+			return undefined;
+		}
+		return {
+			receiverTransportSession,
+			requestNotBeforeMs: Date.now(),
+		};
+	}
+
+	private createReplicationInfoV2ReceiveCoordinator(): ReplicationInfoV2ReceiveCoordinator {
+		return new ReplicationInfoV2ReceiveCoordinator({
+			getSelfKey: () => this.node.identity.publicKey,
+			getReceiverTransportSession: () =>
+				BigInt(
+					(this.node.services.pubsub as unknown as { session: number }).session,
+				),
+			isClosed: () => this.closed,
+			isPeerStateCurrent: (peerHash, peerSession, receiveEpoch) =>
+				this._peerSessions.isCurrent(peerHash, peerSession) &&
+				(peerSession as PeerSession).phase === "open" &&
+				(peerSession as PeerSession).isActive() &&
+				this._peerSessions.isReceiveEpochCurrent(peerHash, receiveEpoch) &&
+				!this._peerSessions.isReplicationInfoBlocked(peerHash) &&
+				this._peerSessions.isReceiveCleanupGateOpen(peerHash),
+			isSenderTransportSessionCurrent: (peerHash, senderTransportSession) =>
+				this._peerSyncCapabilitySessions.get(peerHash) ===
+				senderTransportSession,
+			sendRequest: async (request, target, signal) => {
+				await this.rpc.send(request, {
+					mode: new AcknowledgeDelivery({ redundancy: 1, to: [target] }),
+					priority: CONVERGENCE_MESSAGE_PRIORITY,
+					signal,
+				});
+			},
+			refreshLocalCapability: (properties) =>
+				this.advertiseReplicationInfoV2ReceiveCapability({
+					target: properties.target,
+					peerSession: properties.peerSession as PeerSession,
+					receiveEpoch: properties.receiveEpoch,
+					signal: properties.signal,
+				}),
+			onRequestError: (error) => {
+				if (
+					isNotStartedError(error as Error) ||
+					(this.closed && error instanceof AbortError)
+				) {
+					return;
+				}
+				logger.trace(
+					`Replication-info V2 recovery request failed: ${
+						(error as Error)?.message ?? String(error)
+					}`,
+				);
+			},
+		});
+	}
+
 	private createReplicatorLivenessMonitor(): ReplicatorLivenessMonitor {
 		return new ReplicatorLivenessMonitor({
 			// Sweep-driven probes and activity marks dispatch through the owner so
@@ -3443,7 +3565,8 @@ export class SharedLog<
 					}),
 				);
 			},
-			isBlockedPeer: (hash) => this._peerSessions.isReplicationInfoBlocked(hash),
+			isBlockedPeer: (hash) =>
+				this._peerSessions.isReplicationInfoBlocked(hash),
 			scheduleReplicationInfoRequests: (peer, replicationLifecycleController) =>
 				this.scheduleReplicationInfoRequests(
 					peer,
@@ -3537,6 +3660,7 @@ export class SharedLog<
 		this._replicatorJoinEmitted = new Set();
 		this._replicatorsReconciled = false;
 		this._liveness = this.createReplicatorLivenessMonitor();
+		this._v2Receive = this.createReplicationInfoV2ReceiveCoordinator();
 		this._v2Send = this.createReplicationInfoV2SendCoordinator();
 		this._announcements = this.createReplicationAnnouncementCoordinator();
 		this.pendingMaturity = new Map();
@@ -4053,9 +4177,22 @@ export class SharedLog<
 				transportSession !== undefined &&
 				timestamp !== undefined &&
 				previous?.epoch === openingSession &&
+				previous.timestamp !== undefined &&
+				previous.transportSession !== transportSession &&
+				timestamp <= previous.timestamp
+			) {
+				return false;
+			}
+			if (
+				transportSession !== undefined &&
+				timestamp !== undefined &&
+				previous?.epoch === openingSession &&
 				previous.transportSession === transportSession
 			) {
-				if (previous.timestamp !== undefined && timestamp < previous.timestamp) {
+				if (
+					previous.timestamp !== undefined &&
+					timestamp < previous.timestamp
+				) {
 					return false;
 				}
 				this._openingSyncCapabilitiesByPeer.set(peerHash, {
@@ -4085,6 +4222,7 @@ export class SharedLog<
 			this._peerSyncCapabilitySessions.delete(peerHash);
 			this._peerSyncCapabilityTimestamps.delete(peerHash);
 			this._v2Send.advancePeerCapability(peerHash);
+			this._v2Receive.revokePeerCapability(peerHash);
 			return true;
 		}
 
@@ -4092,22 +4230,23 @@ export class SharedLog<
 		const previousTimestamp = this._peerSyncCapabilityTimestamps.get(peerHash);
 		const sameTransportSession = previousSession === transportSession;
 		if (
-			sameTransportSession &&
 			previousTimestamp !== undefined &&
-			timestamp < previousTimestamp
+			((sameTransportSession && timestamp < previousTimestamp) ||
+				(!sameTransportSession && timestamp <= previousTimestamp))
 		) {
 			return false;
 		}
-		const previousCapabilities =
-			this._peerSyncCapabilities.get(peerHash) ?? 0;
+		const previousCapabilities = this._peerSyncCapabilities.get(peerHash) ?? 0;
 		const nextCapabilities = sameTransportSession
 			? previousCapabilities | capabilities
 			: capabilities;
+		const senderGrantCapabilityMask =
+			SYNC_CAPABILITY_REPLICATION_INFO_V2_DECODE |
+			SYNC_CAPABILITY_REPLICATION_INFO_V2_APPLY;
 		const generationAdvanced =
 			!sameTransportSession ||
-			previousTimestamp === undefined ||
-			timestamp > previousTimestamp ||
-			nextCapabilities !== previousCapabilities;
+			(previousCapabilities & senderGrantCapabilityMask) !==
+				(nextCapabilities & senderGrantCapabilityMask);
 		this._peerSyncCapabilities.set(peerHash, nextCapabilities);
 		this._peerSyncCapabilitySessions.set(peerHash, transportSession);
 		this._peerSyncCapabilityTimestamps.set(
@@ -4122,6 +4261,32 @@ export class SharedLog<
 			this._v2Send.advancePeerCapability(peerHash);
 		}
 		return true;
+	}
+
+	private promoteReplicationInfoV2ReceiveCapability(
+		target: PublicSignKey,
+		peerSession: PeerSession,
+	): boolean {
+		const peerHash = target.hashcode();
+		const senderTransportSession =
+			this._peerSyncCapabilitySessions.get(peerHash);
+		const capabilityTimestamp =
+			this._peerSyncCapabilityTimestamps.get(peerHash);
+		if (
+			senderTransportSession === undefined ||
+			capabilityTimestamp === undefined
+		) {
+			return false;
+		}
+		return this._v2Receive.observeCapability({
+			peerHash,
+			target,
+			peerSession,
+			receiveEpoch: this._peerSessions.receiveEpoch(peerHash),
+			capabilities: this._peerSyncCapabilities.get(peerHash) ?? 0,
+			senderTransportSession,
+			capabilityTimestamp,
+		});
 	}
 
 	/**
@@ -5001,7 +5166,8 @@ export class SharedLog<
 
 	private isReceiveOwnershipSnapshotStable(revision: number): boolean {
 		return (
-			(this._instanceLifecycle?._receiveOwnershipMutationAdmissions ?? 0) === 0 &&
+			(this._instanceLifecycle?._receiveOwnershipMutationAdmissions ?? 0) ===
+				0 &&
 			(this._instanceLifecycle?._receiveOwnershipRevision ?? 0) === revision
 		);
 	}
@@ -5249,7 +5415,8 @@ export class SharedLog<
 		pending: PendingIHave<T>,
 		entry: Entry<T>,
 	): void {
-		const replicationLifecycleController = this._instanceLifecycle?.membershipLifecycleController;
+		const replicationLifecycleController =
+			this._instanceLifecycle?.membershipLifecycleController;
 		if (!this.isReplicationLifecycleActive(replicationLifecycleController)) {
 			if (this._pendingIHave.get(entry.hash) === pending) {
 				pending.clear();
@@ -6157,6 +6324,7 @@ export class SharedLog<
 		};
 		let removed = false;
 		let removalCallCompleted = false;
+		let replicationInfoRecoveryEpochAdvanced = false;
 
 		// Replication-info updates already serialize per peer. Put the hash-wide
 		// removal on the same queue so a newer reset cannot be deleted underneath
@@ -6246,6 +6414,13 @@ export class SharedLog<
 								checkedPruneCoordinator,
 							);
 						}
+						if (!isMe) {
+							// This is the last synchronous current-generation boundary
+							// before destructive work. Fence parked receives now because
+							// the coherent delete can durably mutate and then fail or poison.
+							this.advanceReplicationInfoRecoveryEpoch(keyHash);
+							replicationInfoRecoveryEpochAdvanced = true;
+						}
 						const deletion = await this.deleteReplicationRangesCoherently(
 							deleted,
 							keyHash,
@@ -6269,7 +6444,6 @@ export class SharedLog<
 					}
 					return;
 				}
-
 				if (options?.noEvent !== true && deleted.length > 0) {
 					const publicKey = toLocalPublicSignKey(key);
 					if (publicKey) {
@@ -6305,11 +6479,6 @@ export class SharedLog<
 				await cleanupDisconnectedPeer();
 
 				if (!isMe) {
-					// Replication-info handlers release their receive lease before joining
-					// this lane. Fence every handler queued behind this successful removal,
-					// regardless of whether it came from liveness, startup pruning, or an
-					// unsubscribe transition.
-					this.advanceReplicationInfoRecoveryEpoch(keyHash);
 					this.rebalanceParticipationDebounced?.call();
 				}
 				removed = true;
@@ -6347,6 +6516,24 @@ export class SharedLog<
 			removalCallCompleted = true;
 		} finally {
 			releaseReceiveCleanupGate?.();
+			if (
+				replicationInfoRecoveryEpochAdvanced &&
+				ownsReplicationOwnershipLifecycle() &&
+				ownsReplicationLifecycle() &&
+				ownsSubscriptionEpoch()
+			) {
+				// The first recovery arm ran while receive admission was fenced.
+				// Re-arm after releasing the cleanup gate so a still-open peer can
+				// deliver the authoritative Full that completes recovery.
+				const peerSession = this._peerSessions.current(keyHash);
+				if (peerSession?.phase === "open") {
+					this._v2Receive.advanceRecovery({
+						peerHash: keyHash,
+						peerSession,
+						receiveEpoch: this._peerSessions.receiveEpoch(keyHash),
+					});
+				}
+			}
 			if (isSpeculativePeerRemoval) {
 				const cancelledByFreshActivity =
 					removalCallCompleted &&
@@ -6422,6 +6609,7 @@ export class SharedLog<
 		options?: {
 			onRemoved?: (ranges: ReplicationRangeIndexable<R>[]) => void;
 			shouldRemove?: () => boolean;
+			onDurableRemoveCommitted?: () => boolean | void;
 		},
 		replicationOwnershipLifecycleController = this.captureReplicationOwnershipLifecycle(),
 	): Promise<boolean> {
@@ -6440,6 +6628,7 @@ export class SharedLog<
 		options?: {
 			onRemoved?: (ranges: ReplicationRangeIndexable<R>[]) => void;
 			shouldRemove?: () => boolean;
+			onDurableRemoveCommitted?: () => boolean | void;
 		},
 	): Promise<boolean> {
 		if (ranges.length === 0) {
@@ -6496,6 +6685,13 @@ export class SharedLog<
 			ownerHash,
 		);
 		ranges = deletion.removed;
+		if (
+			(options?.shouldRemove && !options.shouldRemove()) ||
+			options?.onDurableRemoveCommitted?.() === false
+		) {
+			await deletion.rollback();
+			return false;
+		}
 		options?.onRemoved?.(ranges);
 
 		if (ranges.length > 0) {
@@ -6581,6 +6777,7 @@ export class SharedLog<
 			timestamp?: number;
 			allowLegacyOrderedReplacementPairs?: boolean;
 			onConfirmedDurableStateChanged?: () => void;
+			onDurableApplyCommitted?: () => boolean | void;
 			shouldApply?: () => boolean;
 		} = {},
 		replicationOwnershipLifecycleController = this.captureReplicationOwnershipLifecycle(),
@@ -6622,6 +6819,7 @@ export class SharedLog<
 			rebalance,
 			allowLegacyOrderedReplacementPairs,
 			onConfirmedDurableStateChanged,
+			onDurableApplyCommitted,
 			shouldApply,
 		}: {
 			reset?: boolean;
@@ -6630,6 +6828,7 @@ export class SharedLog<
 			timestamp?: number;
 			allowLegacyOrderedReplacementPairs?: boolean;
 			onConfirmedDurableStateChanged?: () => void;
+			onDurableApplyCommitted?: () => boolean | void;
 			shouldApply?: () => boolean;
 		} = {},
 		replicationOwnershipLifecycleController = this.captureReplicationOwnershipLifecycle(),
@@ -6644,6 +6843,12 @@ export class SharedLog<
 		if (shouldApply && !shouldApply()) {
 			return [];
 		}
+		const applySuperseded = Symbol("replication-range-apply-superseded");
+		const throwIfApplySuperseded = () => {
+			if (shouldApply && !shouldApply()) {
+				throw applySuperseded;
+			}
+		};
 		const fromHash = from.hashcode();
 		const incomingRangesById = new Map<
 			string,
@@ -6733,6 +6938,7 @@ export class SharedLog<
 		let isStoppedReplicating = false;
 		let wasReplicatorBeforeDestructiveReset = false;
 		let resetFailureLeaveEmitted = false;
+		let resetDeletionRollback: (() => Promise<void>) | undefined;
 		const publishConfirmedResetStop = (ownerHasRanges: boolean) => {
 			if (ownerHasRanges || resetFailureLeaveEmitted) {
 				return;
@@ -6785,12 +6991,18 @@ export class SharedLog<
 			} else {
 				wasReplicatorBeforeDestructiveReset =
 					this.uniqueReplicators.has(fromHash);
+				throwIfApplySuperseded();
 				const deletion = await this.deleteReplicationRangesCoherently(
 					deleted,
 					fromHash,
 					{ preserveOwnerMembership: ranges.length > 0 },
 				);
 				deleted = deletion.removed;
+				resetDeletionRollback = deletion.rollback;
+				if (shouldApply && !shouldApply()) {
+					await deletion.rollback();
+					return [];
+				}
 
 				diffs = [
 					...deleted.map((x) => {
@@ -6986,18 +7198,26 @@ export class SharedLog<
 		};
 
 		try {
+			throwIfApplySuperseded();
 			for (const diff of diffs) {
 				if (diff.type !== "added") {
 					continue;
 				}
+				throwIfApplySuperseded();
 				appliedPositiveRanges.push(diff);
 				await this.replicationIndex.put(diff.range);
 				this.putNativeReplicationRange(diff.range);
+				throwIfApplySuperseded();
 			}
 			if (reset && diffs.length > 0) {
 				await this.updateOldestTimestampFromIndex();
+				throwIfApplySuperseded();
+			}
+			if (onDurableApplyCommitted?.() === false) {
+				throw applySuperseded;
 			}
 		} catch (error) {
+			const superseded = error === applySuperseded;
 			let outcomeError = error;
 			if (appliedPositiveRanges.length > 0) {
 				try {
@@ -7005,6 +7225,19 @@ export class SharedLog<
 				} catch (rollbackError) {
 					outcomeError = poisonFromPositiveRollback(rollbackError, error);
 				}
+			}
+			if (superseded) {
+				if (resetDeletionRollback) {
+					try {
+						await resetDeletionRollback();
+					} catch (rollbackError) {
+						outcomeError = rollbackError;
+					}
+				}
+				if (outcomeError === applySuperseded) {
+					return [];
+				}
+				throw outcomeError;
 			}
 			if (reset) {
 				const negativeDiffs = diffs.filter((diff) => diff.type !== "added");
@@ -8612,7 +8845,8 @@ export class SharedLog<
 					}
 				};
 
-				const residentEntriesByHash = this._coordinates._residentEntryCoordinatesByHash;
+				const residentEntriesByHash =
+					this._coordinates._residentEntryCoordinatesByHash;
 				if (
 					(this._nativeBackbone ?? this._nativeSharedLogState) &&
 					residentEntriesByHash &&
@@ -8924,7 +9158,8 @@ export class SharedLog<
 		const localLeaderHashes = new Set<string>();
 		const unresolvedHashes = new Set(hashes);
 		const nativePlanner = this._nativeBackbone ?? this._nativeRangePlanner;
-		const nativeEntryMetadata = this._coordinates.getNativeLogEntryMetadataBatch(hashes);
+		const nativeEntryMetadata =
+			this._coordinates.getNativeLogEntryMetadataBatch(hashes);
 
 		if (nativePlanner && !this.hasCustomFindLeaders() && nativeEntryMetadata) {
 			const nativeItems: Array<{
@@ -10425,7 +10660,8 @@ export class SharedLog<
 			) {
 				try {
 					this.restoreNativeBackboneDocument(nativeDocumentRollback);
-					const flushed = this._coordinates.flushNativeBackboneCoordinateJournal();
+					const flushed =
+						this._coordinates.flushNativeBackboneCoordinateJournal();
 					if (isPromiseLike(flushed)) {
 						await flushed;
 					}
@@ -10515,11 +10751,12 @@ export class SharedLog<
 								prepared.trimmedEntries as Array<{ hash?: string }> | undefined
 							)?.flatMap((entry) => (entry.hash ? [entry.hash] : [])) ??
 							[];
-						const coordinateRollback = this._coordinates.snapshotResidentCoordinateEntries([
-							...(preparedHash ? [preparedHash] : []),
-							...preparedNext,
-							...nativeTrimmedHashes,
-						]);
+						const coordinateRollback =
+							this._coordinates.snapshotResidentCoordinateEntries([
+								...(preparedHash ? [preparedHash] : []),
+								...preparedNext,
+								...nativeTrimmedHashes,
+							]);
 						lowerPublicationRollback = {
 							committedHashes: preparedHash ? [preparedHash] : [],
 							trimmedEntries: prepared.trimmedEntries,
@@ -10735,7 +10972,8 @@ export class SharedLog<
 					for (const document of lowerPublicationRollback?.documents ?? []) {
 						this.restoreNativeBackboneDocument(document);
 					}
-					const flushed = this._coordinates.flushNativeBackboneCoordinateJournal();
+					const flushed =
+						this._coordinates.flushNativeBackboneCoordinateJournal();
 					if (isPromiseLike(flushed)) {
 						await flushed;
 					}
@@ -10830,7 +11068,10 @@ export class SharedLog<
 			ownershipLifecycleController,
 		);
 		const backbone = this._nativeBackbone;
-		if (!backbone || !this._coordinates.canUseNativeBackboneResidentCoordinateState()) {
+		if (
+			!backbone ||
+			!this._coordinates.canUseNativeBackboneResidentCoordinateState()
+		) {
 			return undefined;
 		}
 		if (
@@ -11035,11 +11276,12 @@ export class SharedLog<
 					const committedHash =
 						backboneAppend.entry.cid ?? backboneAppend.entry.hash;
 					const committedNext = backboneAppend.entry.next ?? next;
-					nativeCoordinateRollback = this._coordinates.snapshotResidentCoordinateEntries([
-						...(committedHash ? [committedHash] : []),
-						...committedNext,
-						...nativeTrimmedHashes,
-					]);
+					nativeCoordinateRollback =
+						this._coordinates.snapshotResidentCoordinateEntries([
+							...(committedHash ? [committedHash] : []),
+							...committedNext,
+							...nativeTrimmedHashes,
+						]);
 					await this.setNativeStrictDurableTransactionOperation(
 						nativeStrictTransaction,
 						committedHash ? [committedHash] : [],
@@ -11350,7 +11592,8 @@ export class SharedLog<
 						if (nativeDocumentRollback) {
 							try {
 								this.restoreNativeBackboneDocument(nativeDocumentRollback);
-								const flushed = this._coordinates.flushNativeBackboneCoordinateJournal();
+								const flushed =
+									this._coordinates.flushNativeBackboneCoordinateJournal();
 								if (isPromiseLike(flushed)) {
 									await flushed;
 								}
@@ -11382,15 +11625,17 @@ export class SharedLog<
 							coordinateIndex.putSharedLogCoordinateFieldsEncodedAndDeleteHashesNoReturn ||
 							coordinateIndex.putSharedLogCoordinateFieldsAndDeleteHashesNoReturn;
 						const persisted = hasNativeCoordinatePut
-							? this._coordinates.persistBackboneCoordinateFieldsNativeTransaction({
-									coordinateIndex,
-									fields: coordinateFields,
-									hash: prepared.appendFacts.hash,
-									deleteHashes: [],
-									coordinates: backboneAppend.coordinate
-										.coordinates as NumberFromType<R>[],
-									skipGenericTransientCoordinateIndex: runtimeOnlyCoordinates,
-								})
+							? this._coordinates.persistBackboneCoordinateFieldsNativeTransaction(
+									{
+										coordinateIndex,
+										fields: coordinateFields,
+										hash: prepared.appendFacts.hash,
+										deleteHashes: [],
+										coordinates: backboneAppend.coordinate
+											.coordinates as NumberFromType<R>[],
+										skipGenericTransientCoordinateIndex: runtimeOnlyCoordinates,
+									},
+								)
 							: this._coordinates.persistPreparedCoordinate({
 									prepared: getPreparedCoordinate(),
 									hash: prepared.appendFacts.hash,
@@ -11444,9 +11689,10 @@ export class SharedLog<
 					if (!backboneAppend.isLeader && !delayAdaptiveRebalance) {
 						const leaders = backboneAppend.leaders;
 						if (leaders) {
-							const pruneEntry = this._coordinates.materializePreparedCoordinateEntry(
-								getPreparedCoordinate(),
-							);
+							const pruneEntry =
+								this._coordinates.materializePreparedCoordinateEntry(
+									getPreparedCoordinate(),
+								);
 							this.pruneDebouncedFnAddIfNotKeeping({
 								key: pruneEntry.hash,
 								value: { entry: pruneEntry, leaders },
@@ -12117,16 +12363,17 @@ export class SharedLog<
 						),
 					);
 					const nativeTrimmedHashes = [...nativeTrimmedHashSet];
-					batchCoordinateRollback = this._coordinates.snapshotResidentCoordinateEntries(
-						committedAppends.flatMap((append) => [
-							...((append.entry.cid ?? append.entry.hash)
-								? [append.entry.cid ?? append.entry.hash!]
-								: []),
-							...append.entry.next,
-							...(append.trimmedHashes ??
-								append.trimmed.map((entry) => entry.hash)),
-						]),
-					);
+					batchCoordinateRollback =
+						this._coordinates.snapshotResidentCoordinateEntries(
+							committedAppends.flatMap((append) => [
+								...((append.entry.cid ?? append.entry.hash)
+									? [append.entry.cid ?? append.entry.hash!]
+									: []),
+								...append.entry.next,
+								...(append.trimmedHashes ??
+									append.trimmed.map((entry) => entry.hash)),
+							]),
+						);
 					await this.setNativeStrictDurableTransactionOperation(
 						nativeStrictTransaction,
 						committedCids,
@@ -12378,7 +12625,8 @@ export class SharedLog<
 				for (const document of batchDocumentRollbacks) {
 					this.restoreNativeBackboneDocument(document);
 				}
-				const flushed = this._coordinates.flushNativeBackboneCoordinateJournal();
+				const flushed =
+					this._coordinates.flushNativeBackboneCoordinateJournal();
 				if (isPromiseLike(flushed)) {
 					await flushed;
 				}
@@ -12458,20 +12706,21 @@ export class SharedLog<
 					coordinateFields,
 					plannedCoordinateDeleteHashes,
 				});
-				const persisted = this._coordinates.persistBackboneCoordinateFieldsNativeTransaction(
-					{
-						coordinateIndex: this.entryCoordinatesIndex as PutAndDeleteIndex<
-							EntryReplicated<R>
-						>,
-						fields: coordinateFields,
-						hash: facts.hash,
-						deleteHashes: [],
-						coordinates: backboneAppend.coordinate
-							.coordinates as NumberFromType<R>[],
-						skipGenericTransientCoordinateIndex: runtimeOnlyCoordinates,
-					},
-					ownershipLifecycleController,
-				);
+				const persisted =
+					this._coordinates.persistBackboneCoordinateFieldsNativeTransaction(
+						{
+							coordinateIndex: this.entryCoordinatesIndex as PutAndDeleteIndex<
+								EntryReplicated<R>
+							>,
+							fields: coordinateFields,
+							hash: facts.hash,
+							deleteHashes: [],
+							coordinates: backboneAppend.coordinate
+								.coordinates as NumberFromType<R>[],
+							skipGenericTransientCoordinateIndex: runtimeOnlyCoordinates,
+						},
+						ownershipLifecycleController,
+					);
 				if (isPromiseLike(persisted)) {
 					await persisted;
 					this.throwIfReplicationOwnershipLifecycleInactive(
@@ -13982,6 +14231,8 @@ export class SharedLog<
 		this._lastLocalAppendAt = 0;
 		this._announcements ??= this.createReplicationAnnouncementCoordinator();
 		this._announcements.resetForOpen();
+		this._v2Receive ??= this.createReplicationInfoV2ReceiveCoordinator();
+		this._v2Receive.resetForOpen();
 		this._v2Send ??= this.createReplicationInfoV2SendCoordinator();
 		this._v2Send.resetForOpen();
 		const adaptiveReplicateOptions =
@@ -14725,8 +14976,11 @@ export class SharedLog<
 			// tombstone was written. Complete that erase before the adapter can expose
 			// any stale coordinate or document state to this backbone.
 			await this._coordinates._nativeBackboneCoordinatePersistence.resumeDrop?.();
-			await this._coordinates._nativeBackboneCoordinatePersistence.hydrate(backbone);
-			this._coordinates._nativeBackboneCoordinateJournalLastFlushMs = Date.now();
+			await this._coordinates._nativeBackboneCoordinatePersistence.hydrate(
+				backbone,
+			);
+			this._coordinates._nativeBackboneCoordinateJournalLastFlushMs =
+				Date.now();
 			this.hydrateNativeCoordinateStateFromBackbone(backbone);
 			return;
 		}
@@ -14766,7 +15020,9 @@ export class SharedLog<
 		if (!this._nativeBackbone) {
 			return;
 		}
-		const hashes = new Set(this._coordinates._residentEntryCoordinatesByHash?.keys() ?? []);
+		const hashes = new Set(
+			this._coordinates._residentEntryCoordinatesByHash?.keys() ?? [],
+		);
 		const iterator = this.entryCoordinatesIndex.iterate({});
 		try {
 			for (;;) {
@@ -14836,7 +15092,10 @@ export class SharedLog<
 				coordinate.requestedReplicas,
 				sharedFields.hashNumber,
 			);
-			this._coordinates._residentEntryCoordinatesByHash.set(sharedFields.hash, sharedFields);
+			this._coordinates._residentEntryCoordinatesByHash.set(
+				sharedFields.hash,
+				sharedFields,
+			);
 			for (const value of sharedFields.coordinates) {
 				this.coordinateToHash.add(value, sharedFields.hash);
 			}
@@ -14995,7 +15254,8 @@ export class SharedLog<
 				this._coordinates._nativeBackboneCoordinatePersistence
 			) {
 				if (
-					this._coordinates._nativeBackboneCoordinatePersistence.durableBarrier !== true ||
+					this._coordinates._nativeBackboneCoordinatePersistence
+						.durableBarrier !== true ||
 					typeof this._nativeBackboneCoordinatePersistenceStore
 						?.durableBarrier !== "function"
 				) {
@@ -15006,11 +15266,12 @@ export class SharedLog<
 			}
 			if (
 				this._coordinates._nativeBackboneCoordinatePersistence &&
-				(this._coordinates._nativeBackboneCoordinatePersistence.compactMaxJournalBytes !=
-					null ||
-					this._coordinates._nativeBackboneCoordinatePersistence.compactMaxJournalRecords !=
-						null) &&
-				this._coordinates._nativeBackboneCoordinatePersistence.crashSafeCompaction !== true
+				(this._coordinates._nativeBackboneCoordinatePersistence
+					.compactMaxJournalBytes != null ||
+					this._coordinates._nativeBackboneCoordinatePersistence
+						.compactMaxJournalRecords != null) &&
+				this._coordinates._nativeBackboneCoordinatePersistence
+					.crashSafeCompaction !== true
 			) {
 				// Durable custom adapters must explicitly advertise an atomic generation
 				// protocol before SharedLog permits automatic WAL compaction.
@@ -15236,7 +15497,8 @@ export class SharedLog<
 	async afterOpen(): Promise<void> {
 		await super.afterOpen();
 		const existingSubscribersPromise = this._getTopicSubscribers(this.topic);
-		const replicationLifecycleController = this._instanceLifecycle?.membershipLifecycleController;
+		const replicationLifecycleController =
+			this._instanceLifecycle?.membershipLifecycleController;
 
 		// We do this here, because these calls requires this.closed == false
 		void this.pruneOfflineReplicators()
@@ -15277,7 +15539,8 @@ export class SharedLog<
 	async pruneOfflineReplicators() {
 		// Go through all segments and wait for replicators to become reachable;
 		// otherwise prune them away from the local membership view.
-		const replicationLifecycleController = this._instanceLifecycle?.membershipLifecycleController;
+		const replicationLifecycleController =
+			this._instanceLifecycle?.membershipLifecycleController;
 		try {
 			if (
 				!replicationLifecycleController ||
@@ -15472,13 +15735,19 @@ export class SharedLog<
 		peerHash: string,
 		ownershipLifecycleController = this.captureReplicationOwnershipLifecycle(),
 	) {
+		const peerSession = this._peerSessions.current(peerHash);
+		const preserveV2Session =
+			peerSession?.phase === "open" && peerSession.isActive();
 		this.cancelReplicationInfoRequests(peerHash);
 		this._liveness._replicatorLivenessFailures.delete(peerHash);
 		this._liveness._replicatorLastActivityAt.delete(peerHash);
-		this._peerSyncCapabilities.delete(peerHash);
-		this._peerSyncCapabilitySessions.delete(peerHash);
-		this._peerSyncCapabilityTimestamps.delete(peerHash);
-		this._v2Send.clearPeer(peerHash);
+		if (!preserveV2Session) {
+			this._peerSyncCapabilities.delete(peerHash);
+			this._peerSyncCapabilitySessions.delete(peerHash);
+			this._peerSyncCapabilityTimestamps.delete(peerHash);
+			this._v2Receive.clearPeer(peerHash);
+			this._v2Send.clearPeer(peerHash);
+		}
 		this.cleanupPendingIHavePeer(peerHash);
 		this.cleanupCheckedPrunePeer(
 			peerHash,
@@ -15502,8 +15771,16 @@ export class SharedLog<
 		// when they eventually reach the apply lane. Reset the sender's
 		// ordering watermark with the local epoch so a later arrival can be
 		// accepted without comparing its clock to this receiver's clock.
-		this._peerSessions.advanceReceiveEpoch(peerHash);
+		const receiveEpoch = this._peerSessions.advanceReceiveEpoch(peerHash);
 		this.latestReplicationInfoMessage.delete(peerHash);
+		const peerSession = this._peerSessions.current(peerHash);
+		if (peerSession?.phase === "open") {
+			this._v2Receive.advanceRecovery({
+				peerHash,
+				peerSession,
+				receiveEpoch,
+			});
+		}
 	}
 
 	private async resolveCandidatePeersForHash(
@@ -15784,7 +16061,9 @@ export class SharedLog<
 				deferredCoordinateDeleteHashes,
 			);
 		} else {
-			this._coordinates.forgetCoordinateStateForHashes(deferredCoordinateDeleteHashes);
+			this._coordinates.forgetCoordinateStateForHashes(
+				deferredCoordinateDeleteHashes,
+			);
 		}
 		return deferredCoordinateDeleteHashes;
 	}
@@ -15832,7 +16111,9 @@ export class SharedLog<
 				deferredCoordinateDeleteHashes,
 			);
 		} else {
-			this._coordinates.forgetCoordinateStateForHashes(deferredCoordinateDeleteHashes);
+			this._coordinates.forgetCoordinateStateForHashes(
+				deferredCoordinateDeleteHashes,
+			);
 		}
 		return deferredCoordinateDeleteHashes;
 	}
@@ -16395,7 +16676,9 @@ export class SharedLog<
 				this._wireSyncSession = undefined;
 			}
 		});
-		await capture(() => this._coordinates.closeNativeBackboneCoordinatePersistence());
+		await capture(() =>
+			this._coordinates.closeNativeBackboneCoordinatePersistence(),
+		);
 		await capture(() => this.syncronizer?.close());
 
 		captureSync(() => {
@@ -16490,6 +16773,7 @@ export class SharedLog<
 			this._peerSyncCapabilities?.clear();
 			this._peerSyncCapabilitySessions?.clear();
 			this._peerSyncCapabilityTimestamps?.clear();
+			this._v2Receive?.clearForClose();
 			this._v2Send?.clearForClose();
 			this._liveRawGossipBatches?.clear();
 			this._nativeSharedLogState?.clearGidPeers();
@@ -16563,6 +16847,7 @@ export class SharedLog<
 		this.preventParentAttachments();
 		this.stopRepairLifecycle();
 		this._instanceLifecycle?.beginTerminal("close");
+		this._v2Receive?.clearForClose();
 		const replicationRangeTerminalFence =
 			this.acquireReplicationRangeMutationTerminalFence();
 		const pruneRemoveTerminalFence = this.acquirePruneRemoveTerminalFence();
@@ -16625,10 +16910,12 @@ export class SharedLog<
 				try {
 					const reset = new AllReplicatingSegmentsMessage({ segments: [] });
 					await Promise.all([
-						this.rpc.send(reset, {
-							priority: CONVERGENCE_MESSAGE_PRIORITY,
-							signal: abort.signal,
-						}).catch(() => {}),
+						this.rpc
+							.send(reset, {
+								priority: CONVERGENCE_MESSAGE_PRIORITY,
+								signal: abort.signal,
+							})
+							.catch(() => {}),
 						this._v2Send.sendTerminalReset(abort.signal),
 					]);
 				} finally {
@@ -16688,7 +16975,8 @@ export class SharedLog<
 		}
 		this.throwIfCheckedPruneRemoveBlocksLocalOperation("drop");
 		this.ensureNativeDurabilityRuntimeState();
-		const nativePersistence = this._coordinates._nativeBackboneCoordinatePersistence;
+		const nativePersistence =
+			this._coordinates._nativeBackboneCoordinatePersistence;
 		if (
 			nativePersistence &&
 			(typeof nativePersistence.drop !== "function" ||
@@ -16706,6 +16994,7 @@ export class SharedLog<
 		this.preventParentAttachments();
 		this.stopRepairLifecycle();
 		this._instanceLifecycle?.beginTerminal("drop");
+		this._v2Receive?.clearForClose();
 		const replicationRangeTerminalFence =
 			this.acquireReplicationRangeMutationTerminalFence();
 		const pruneRemoveTerminalFence = this.acquirePruneRemoveTerminalFence();
@@ -16751,10 +17040,12 @@ export class SharedLog<
 				try {
 					const reset = new AllReplicatingSegmentsMessage({ segments: [] });
 					await Promise.all([
-						this.rpc.send(reset, {
-							priority: CONVERGENCE_MESSAGE_PRIORITY,
-							signal: abort.signal,
-						}).catch(() => {}),
+						this.rpc
+							.send(reset, {
+								priority: CONVERGENCE_MESSAGE_PRIORITY,
+								signal: abort.signal,
+							})
+							.catch(() => {}),
 						this._v2Send.sendTerminalReset(abort.signal),
 					]);
 				} finally {
@@ -17273,13 +17564,6 @@ export class SharedLog<
 		msg: TransportMessage,
 		context: RequestContext,
 	): Promise<void> {
-		// Decode-first only: capability advertisement is not permission to use
-		// V2. Drop every unsolicited V2 envelope before even entering the shared
-		// receive envelope, so durable poison checks, leases, liveness, ordering
-		// watermarks, replication ranges and cleanup side effects cannot observe it.
-		if (isReplicationInfoV2Message(msg)) {
-			return;
-		}
 		const stashBackedRawMessage = isStashBackedRawExchangeHeadsMessage(msg)
 			? msg
 			: undefined;
@@ -17332,19 +17616,28 @@ export class SharedLog<
 			}
 			if (
 				msg instanceof AllReplicatingSegmentsMessage ||
-				msg instanceof AddedReplicationSegmentMessage
+				msg instanceof AddedReplicationSegmentMessage ||
+				msg instanceof FullReplicationInfoV2Message ||
+				msg instanceof AddedReplicationInfoV2Message
 			) {
 				// Bound decoded untrusted vectors before per-peer/global mutation
 				// queues, trusted-replicator authorization, or liveness side effects.
 				this.validateReplicationRangeAnnouncement(msg.segments);
-			} else if (msg instanceof StoppedReplicating) {
+			} else if (
+				msg instanceof StoppedReplicating ||
+				msg instanceof StoppedReplicationInfoV2Message
+			) {
 				// Bound the raw decoded vector before deduplication can hide the
 				// allocation cost, and before liveness or apply-queue side effects.
 				this.validateStoppedReplicationAnnouncement(msg.segmentIds);
 			}
 			if (
 				!context.from.equals(this.node.identity.publicKey) &&
-				!(msg instanceof RequestReplicationInfoV2Message)
+				!(msg instanceof RequestReplicationInfoV2Message) &&
+				!isReplicationInfoV2Message(msg) &&
+				!(msg instanceof AllReplicatingSegmentsMessage) &&
+				!(msg instanceof AddedReplicationSegmentMessage) &&
+				!(msg instanceof StoppedReplicating)
 			) {
 				this._liveness.markReplicatorActivity(receiveFromHash);
 			}
@@ -18390,11 +18683,14 @@ export class SharedLog<
 						);
 					}
 					const reusableCoordinatePlans =
-						this._coordinates.createReusableReceiveCoordinatePlans(receiveGroups, {
-							decodedReplicaCounts: receiveReplicaCounts,
-							allowRoleAgeZeroPlans:
-								immediateReplicatingLeaderPlans !== undefined,
-						}) as Map<string, ReusableReceiveCoordinatePlan<R>>;
+						this._coordinates.createReusableReceiveCoordinatePlans(
+							receiveGroups,
+							{
+								decodedReplicaCounts: receiveReplicaCounts,
+								allowRoleAgeZeroPlans:
+									immediateReplicatingLeaderPlans !== undefined,
+							},
+						) as Map<string, ReusableReceiveCoordinatePlan<R>>;
 					if (syncProfile) {
 						emitSyncProfileDuration(syncProfile, joinPlanStartedAt, {
 							name: "sharedLog.receive.joinPlan",
@@ -18789,9 +19085,7 @@ export class SharedLog<
 						}
 						const checkedPruneStartedAt = syncProfileStart(syncProfile);
 						const ownershipChangedDuringReceive =
-							!this.isReceiveOwnershipSnapshotStable(
-								receiveOwnershipRevision,
-							);
+							!this.isReceiveOwnershipSnapshotStable(receiveOwnershipRevision);
 						if (ownershipChangedDuringReceive) {
 							const freshAuditRevision =
 								this._instanceLifecycle?._receiveOwnershipRevision ?? 0;
@@ -18949,6 +19243,7 @@ export class SharedLog<
 					fromHash: receiveFromHash,
 					session: receiveSession,
 					lifecycleController: receiveReplicationLifecycleController,
+					ownershipLifecycleController: receiveOwnershipLifecycleController,
 					receiveEpoch: receiveReplicationInfoReceiveEpoch,
 					syncProfile,
 					lease: peerReceiveLease,
@@ -18972,6 +19267,12 @@ export class SharedLog<
 					this.markEntriesKnownByPeer(msg.hashes, context.from.hashcode());
 					this.clearRepairFrontierHashes(context.from.hashcode(), msg.hashes);
 					return;
+				} else if (isReplicationInfoV2Message(msg)) {
+					await this.handleReplicationInfoV2Announcement(
+						msg,
+						laneRequestContext,
+						lane,
+					);
 				} else if (msg instanceof SyncCapabilitiesMessage) {
 					if (!context.from.equals(this.node.identity.publicKey)) {
 						const capabilityTransportSession = context.message?.header?.session;
@@ -18993,13 +19294,19 @@ export class SharedLog<
 								timestamp: capabilityTimestamp,
 								openingSession: receiveSession!,
 							});
-						} else {
+						} else if (
 							this.observePeerSyncCapabilities({
 								peerHash: receiveFromHash,
 								capabilities: msg.capabilities,
 								transportSession: capabilityTransportSession,
 								timestamp: capabilityTimestamp,
-							});
+							}) &&
+							receiveSession?.phase === "open"
+						) {
+							this.promoteReplicationInfoV2ReceiveCapability(
+								context.from,
+								receiveSession,
+							);
 						}
 					}
 					return;
@@ -19021,6 +19328,8 @@ export class SharedLog<
 							from: context.from,
 							peerSession: receiveSession,
 							receiverTransportSession: context.message.header.session,
+							capabilityTimestamp:
+								this._peerSyncCapabilityTimestamps.get(receiveFromHash)!,
 							requestTimestamp: context.message.header.timestamp,
 						})
 					) {
@@ -19164,9 +19473,7 @@ export class SharedLog<
 			msg.requests,
 		);
 		if (
-			!this.isReplicationLifecycleActive(
-				receiveReplicationLifecycleController,
-			)
+			!this.isReplicationLifecycleActive(receiveReplicationLifecycleController)
 		) {
 			return;
 		}
@@ -19225,9 +19532,7 @@ export class SharedLog<
 			let entry: Entry<T> | undefined;
 			try {
 				if (await this.log.blocks.has(request.hash)) {
-					entry = (await this.log.get(request.hash)) as
-						| Entry<T>
-						| undefined;
+					entry = (await this.log.get(request.hash)) as Entry<T> | undefined;
 				}
 			} catch {
 				// The normal entry-admission hook will retry this path.
@@ -19268,16 +19573,11 @@ export class SharedLog<
 		}
 		const responseTasks: Promise<void>[] = [];
 		for (const request of msg.requests) {
-			const pendingDelete = this._checkedPrune.getPendingDelete(
-				request.hash,
-			);
+			const pendingDelete = this._checkedPrune.getPendingDelete(request.hash);
 			if (pendingDelete) {
 				responseTasks.push(
 					Promise.resolve(
-						pendingDelete.resolve(
-							context.from.hashcode(),
-							request.requestId,
-						),
+						pendingDelete.resolve(context.from.hashcode(), request.requestId),
 					),
 				);
 			}
@@ -19397,6 +19697,191 @@ export class SharedLog<
 		}
 	}
 
+	private async handleReplicationInfoV2Announcement(
+		msg: ReplicationInfoV2Message,
+		context: ReceiveRequestContext,
+		lane: ReceiveLaneContext,
+	): Promise<void> {
+		const from = context.from;
+		const fromHash = lane.fromHash;
+		const receiveSession = lane.session;
+		if (
+			from.equals(this.node.identity.publicKey) ||
+			receiveSession === null ||
+			receiveSession.phase !== "open"
+		) {
+			return;
+		}
+
+		// Authenticate and reserve before the per-peer lane. One reservation per
+		// peer bounds decoded-frame retention while another mutation is parked.
+		const receiveState = this._v2Receive._receiveStates.get(fromHash);
+		if (
+			!receiveState ||
+			receiveState.peerSession !== receiveSession ||
+			receiveState.senderTransportSession !== context.message.header.session
+		) {
+			return;
+		}
+		const admission = this._v2Receive.reserve(msg, {
+			from,
+			peerSession: receiveSession,
+			receiveEpoch: lane.receiveEpoch,
+			senderTransportSession: context.message.header.session,
+			transportTimestamp: context.message.header.timestamp,
+		});
+		if (!admission) {
+			return;
+		}
+
+		lane.lease.release();
+		try {
+			await this.withReplicationInfoApplyQueue(fromHash, async () => {
+				const hostGate = () =>
+					this._instanceLifecycle!.isMembershipActiveFor(
+						lane.lifecycleController,
+					) &&
+					this.isRepairLifecycleActive(lane.ownershipLifecycleController) &&
+					this._peerSessions.isCurrent(fromHash, receiveSession) &&
+					receiveSession.phase === "open" &&
+					this._peerSessions.isReceiveEpochCurrent(
+						fromHash,
+						lane.receiveEpoch,
+					) &&
+					!this._peerSessions.isReplicationInfoBlocked(fromHash) &&
+					this._peerSessions.isReceiveCleanupGateOpen(fromHash);
+				if (!hostGate()) {
+					return;
+				}
+				const exactGate = () =>
+					hostGate() && this._v2Receive.isAdmissionCurrent(admission);
+				let durableCommitted = false;
+
+				try {
+					if (
+						msg instanceof FullReplicationInfoV2Message ||
+						msg instanceof AddedReplicationInfoV2Message
+					) {
+						let mutationGateChecked = false;
+						let mutationGateAdmitted = false;
+						const result = await this.addReplicationRange(
+							msg.segments.map((segment) =>
+								segment.toReplicationRangeIndexable(from),
+							),
+							from,
+							{
+								reset: msg instanceof FullReplicationInfoV2Message,
+								checkDuplicates: true,
+								timestamp: Number(context.message.header.timestamp),
+								allowLegacyOrderedReplacementPairs:
+									msg instanceof AddedReplicationInfoV2Message,
+								shouldApply: () => {
+									mutationGateChecked = true;
+									mutationGateAdmitted = exactGate();
+									return mutationGateAdmitted;
+								},
+								onDurableApplyCommitted: () => {
+									if (!exactGate() || !this._v2Receive.commit(admission)) {
+										return false;
+									}
+									durableCommitted = true;
+									return true;
+								},
+							},
+							lane.ownershipLifecycleController,
+						);
+						if (
+							result === undefined ||
+							!mutationGateChecked ||
+							!mutationGateAdmitted ||
+							!durableCommitted ||
+							!exactGate()
+						) {
+							return;
+						}
+					} else {
+						if (!exactGate()) {
+							return;
+						}
+						const rangesToRemove =
+							await this.resolveReplicationRangesFromIdsAndKey(
+								msg.segmentIds,
+								from,
+							);
+						if (!exactGate()) {
+							return;
+						}
+						let mutationGateAdmitted = true;
+						const removedRanges: ReplicationRangeIndexable<R>[] = [];
+						const removed = await this.removeReplicationRanges(
+							rangesToRemove,
+							from,
+							{
+								shouldRemove: () => {
+									mutationGateAdmitted = exactGate();
+									return mutationGateAdmitted;
+								},
+								onDurableRemoveCommitted: () => {
+									if (!exactGate() || !this._v2Receive.commit(admission)) {
+										return false;
+									}
+									durableCommitted = true;
+									return true;
+								},
+								onRemoved: (ranges) => removedRanges.push(...ranges),
+							},
+							lane.ownershipLifecycleController,
+						);
+						if (!durableCommitted) {
+							if (
+								!mutationGateAdmitted ||
+								!exactGate() ||
+								removed ||
+								!this._v2Receive.commit(admission)
+							) {
+								return;
+							}
+							durableCommitted = true;
+						}
+						if (
+							this._instanceLifecycle!.isMembershipActiveFor(
+								lane.lifecycleController,
+							) &&
+							this.isRepairLifecycleActive(lane.ownershipLifecycleController)
+						) {
+							const timestamp = BigInt(Date.now());
+							for (const range of removedRanges) {
+								this.replicationChangeDebounceFn.add({
+									range,
+									type: "removed",
+									timestamp,
+								});
+							}
+						}
+					}
+				} catch (error) {
+					this._v2Receive.requireFullAfterFailure(admission);
+					throw error;
+				}
+
+				if (!durableCommitted) {
+					if (!exactGate() || !this._v2Receive.commit(admission)) {
+						return;
+					}
+				}
+				if (!hostGate()) {
+					return;
+				}
+				this._liveness.markReplicatorActivity(fromHash);
+				if (msg instanceof FullReplicationInfoV2Message) {
+					this.cancelReplicationInfoRequests(fromHash);
+				}
+			});
+		} finally {
+			this._v2Receive.release(admission);
+		}
+	}
+
 	private async handleReplicationInfoAnnouncement(
 		msg: AllReplicatingSegmentsMessage | AddedReplicationSegmentMessage,
 		context: ReceiveRequestContext,
@@ -19420,6 +19905,19 @@ export class SharedLog<
 		// (and downstream `waitForReplicator()` timeouts) under timing-sensitive joins.
 		const from = context.from!;
 		const fromHash = from.hashcode();
+		if (this._v2Receive.isLegacyCutover(receiveSession)) {
+			if (receiveSession) {
+				this._v2Receive.noteLegacyAnnouncement({
+					peerHash: fromHash,
+					peerSession: receiveSession,
+					receiveEpoch: receiveReplicationInfoReceiveEpoch,
+					senderTransportSession: context.message.header.session,
+					transportTimestamp: context.message.header.timestamp,
+					message: msg,
+				});
+			}
+			return;
+		}
 		// Pre-lane gate: lifecycle -> receive-epoch -> blocked, exactly the
 		// legacy order. isMembershipActiveFor is the unit-pinned fold of
 		// isReplicationLifecycleActive; isReceiveEpochCurrent is the
@@ -19458,6 +19956,17 @@ export class SharedLog<
 				) {
 					return;
 				}
+				if (receiveSession && this._v2Receive.isLegacyCutover(receiveSession)) {
+					this._v2Receive.noteLegacyAnnouncement({
+						peerHash: fromHash,
+						peerSession: receiveSession,
+						receiveEpoch: receiveReplicationInfoReceiveEpoch,
+						senderTransportSession: context.message.header.session,
+						transportTimestamp: context.message.header.timestamp,
+						message: msg,
+					});
+					return;
+				}
 
 				// Process in-order to avoid races where repeated reset messages arrive
 				// concurrently and trigger spurious "added" diffs / rebalancing.
@@ -19467,14 +19976,13 @@ export class SharedLog<
 				}
 
 				this.latestReplicationInfoMessage.set(fromHash, messageTimestamp);
-				this._liveness._replicatorLivenessFailures.delete(fromHash);
 
 				if (this.closed) {
 					return;
 				}
 
 				const reset = msg instanceof AllReplicatingSegmentsMessage;
-				await this.addReplicationRange(
+				const result = await this.addReplicationRange(
 					replicationInfoMessage.segments.map((x) =>
 						x.toReplicationRangeIndexable(from),
 					),
@@ -19487,6 +19995,10 @@ export class SharedLog<
 							msg instanceof AddedReplicationSegmentMessage,
 					},
 				);
+				if (result === undefined) {
+					return;
+				}
+				this._liveness.markReplicatorActivity(fromHash);
 
 				// If the peer reports any replication segments, stop re-requesting.
 				// (Empty reports can be transient during startup.)
@@ -19522,6 +20034,19 @@ export class SharedLog<
 			return;
 		}
 		const fromHash = from.hashcode();
+		if (this._v2Receive.isLegacyCutover(receiveSession)) {
+			if (receiveSession) {
+				this._v2Receive.noteLegacyAnnouncement({
+					peerHash: fromHash,
+					peerSession: receiveSession,
+					receiveEpoch: receiveReplicationInfoReceiveEpoch,
+					senderTransportSession: context.message.header.session,
+					transportTimestamp: context.message.header.timestamp,
+					message: msg,
+				});
+			}
+			return;
+		}
 		// Same pre-lane gate shape as Added/All above (and the same
 		// intentional absence of a subscription-epoch term).
 		if (
@@ -19552,22 +20077,34 @@ export class SharedLog<
 			) {
 				return;
 			}
+			if (receiveSession && this._v2Receive.isLegacyCutover(receiveSession)) {
+				this._v2Receive.noteLegacyAnnouncement({
+					peerHash: fromHash,
+					peerSession: receiveSession,
+					receiveEpoch: receiveReplicationInfoReceiveEpoch,
+					senderTransportSession: context.message.header.session,
+					transportTimestamp: context.message.header.timestamp,
+					message: msg,
+				});
+				return;
+			}
 
-			const previousTimestamp =
-				this.latestReplicationInfoMessage.get(fromHash);
+			const previousTimestamp = this.latestReplicationInfoMessage.get(fromHash);
 			if (previousTimestamp && previousTimestamp > messageTimestamp) {
 				return;
 			}
 			this.latestReplicationInfoMessage.set(fromHash, messageTimestamp);
-			this._liveness._replicatorLivenessFailures.delete(fromHash);
 			if (this.closed) {
 				return;
 			}
 
-			const rangesToRemove =
-				await this.resolveReplicationRangesFromIdsAndKey(segmentIds, from);
+			const rangesToRemove = await this.resolveReplicationRangesFromIdsAndKey(
+				segmentIds,
+				from,
+			);
 
 			await this.removeReplicationRanges(rangesToRemove, from);
+			this._liveness.markReplicatorActivity(fromHash);
 			const timestamp = BigInt(+new Date());
 			for (const range of rangesToRemove) {
 				this.replicationChangeDebounceFn.add({
@@ -20369,10 +20906,9 @@ export class SharedLog<
 		entry: ShallowOrFullEntry<any> | EntryReplicated<R> | NumberFromType<R>,
 		minReplicas: number,
 	): Promise<NumberFromType<R>[]> {
-		return this._coordinates.createCoordinates(
-			entry,
-			minReplicas,
-		) as Promise<NumberFromType<R>[]>;
+		return this._coordinates.createCoordinates(entry, minReplicas) as Promise<
+			NumberFromType<R>[]
+		>;
 	}
 
 	async getDefaultMinRoleAge(): Promise<number> {
@@ -20736,8 +21272,9 @@ export class SharedLog<
 						this.createNativeLeaderOptions(context, firstItem.options),
 					);
 				const plans: EntryLeaderPlan<R>[] = [];
-				const persistItems: Parameters<typeof this._coordinates.persistCoordinatesBatch>[0] =
-					[];
+				const persistItems: Parameters<
+					typeof this._coordinates.persistCoordinatesBatch
+				>[0] = [];
 				for (let i = 0; i < itemArray.length; i++) {
 					const item = itemArray[i]!;
 					const nativePlan = nativePlans[i]!;
@@ -20799,8 +21336,9 @@ export class SharedLog<
 			);
 			const selfHash = this.node.identity.publicKey.hashcode();
 			const plans: EntryLeaderPlan<R>[] = [];
-			const persistItems: Parameters<typeof this._coordinates.persistCoordinatesBatch>[0] =
-				[];
+			const persistItems: Parameters<
+				typeof this._coordinates.persistCoordinatesBatch
+			>[0] = [];
 			for (let i = 0; i < itemArray.length; i++) {
 				const item = itemArray[i]!;
 				const nativePlan = nativePlans[i]!;
@@ -22411,6 +22949,8 @@ export class SharedLog<
 		ownerHash: string,
 		options?: { preserveOwnerMembership?: boolean },
 	): Promise<ReplicationRangeDeletionOutcome<R>> {
+		const wasReplicator = this.uniqueReplicators.has(ownerHash);
+		const joinWasEmitted = this._replicatorJoinEmitted.has(ownerHash);
 		if (ranges.length === 0) {
 			const ownerHasRanges =
 				(await this.replicationIndex.count({ query: { hash: ownerHash } })) > 0;
@@ -22422,14 +22962,24 @@ export class SharedLog<
 				removed: [],
 				retained: [],
 				ownerHasRanges,
+				rollback: async () => {
+					if (wasReplicator) {
+						this.uniqueReplicators.add(ownerHash);
+					} else {
+						this.uniqueReplicators.delete(ownerHash);
+					}
+					if (joinWasEmitted) {
+						this._replicatorJoinEmitted.add(ownerHash);
+					} else {
+						this._replicatorJoinEmitted.delete(ownerHash);
+					}
+				},
 			};
 		}
 
 		const uniqueRanges = [
 			...new Map(ranges.map((range) => [range.idString, range])).values(),
 		];
-		const wasReplicator = this.uniqueReplicators.has(ownerHash);
-		const joinWasEmitted = this._replicatorJoinEmitted.has(ownerHash);
 		type Snapshot = {
 			range: ReplicationRangeIndexable<R>;
 			pending?: PendingMaturityRecord<R>;
@@ -22663,10 +23213,80 @@ export class SharedLog<
 			);
 			this.poisonReplicationOwnership(outcomeError);
 		}
+		let rollbackStarted = false;
+		const rollback = async () => {
+			if (rollbackStarted) {
+				return;
+			}
+			rollbackStarted = true;
+			const rollbackErrors: unknown[] = [];
+			const removedIds = new Set(removed.map((range) => range.idString));
+			for (const snapshot of snapshots) {
+				if (!removedIds.has(snapshot.range.idString)) {
+					continue;
+				}
+				try {
+					await this.replicationIndex.put(snapshot.range);
+					this.putNativeReplicationRange(snapshot.range);
+				} catch (error) {
+					rollbackErrors.push(error);
+				}
+			}
+			for (const snapshot of snapshots) {
+				if (
+					!removedIds.has(snapshot.range.idString) ||
+					!snapshot.pending ||
+					this.pendingMaturity.get(ownerHash)?.has(snapshot.range.idString)
+				) {
+					continue;
+				}
+				try {
+					this.schedulePendingMaturity(
+						snapshot.pending.range,
+						snapshot.pending.from,
+						{
+							rebalance: snapshot.pending.rebalance,
+							waitMs: Math.max(0, snapshot.pending.expiresAt - Date.now()),
+						},
+						snapshot.pending.ownershipLifecycleController,
+					);
+				} catch (error) {
+					rollbackErrors.push(error);
+				}
+			}
+			try {
+				if (wasReplicator) {
+					this.uniqueReplicators.add(ownerHash);
+				} else {
+					this.uniqueReplicators.delete(ownerHash);
+				}
+				if (joinWasEmitted) {
+					this._replicatorJoinEmitted.add(ownerHash);
+				} else {
+					this._replicatorJoinEmitted.delete(ownerHash);
+				}
+			} catch (error) {
+				rollbackErrors.push(error);
+			}
+			try {
+				await this.updateOldestTimestampFromIndex();
+			} catch (error) {
+				rollbackErrors.push(error);
+			}
+			if (rollbackErrors.length > 0) {
+				const failure = new AggregateError(
+					rollbackErrors,
+					"Replication-range deletion rollback failed",
+				);
+				this.poisonReplicationOwnership(failure);
+				throw failure;
+			}
+		};
 		return {
 			removed,
 			retained,
 			ownerHasRanges,
+			rollback,
 			error: outcomeError,
 		};
 	}
@@ -22682,7 +23302,8 @@ export class SharedLog<
 
 	private scheduleReplicationInfoRequests(
 		peer: PublicSignKey,
-		replicationLifecycleController = this._instanceLifecycle?.membershipLifecycleController,
+		replicationLifecycleController = this._instanceLifecycle
+			?.membershipLifecycleController,
 	) {
 		if (
 			!replicationLifecycleController ||
@@ -22764,7 +23385,8 @@ export class SharedLog<
 		if (!topics.includes(this.topic)) {
 			return;
 		}
-		const replicationLifecycleController = this._instanceLifecycle?.membershipLifecycleController;
+		const replicationLifecycleController =
+			this._instanceLifecycle?.membershipLifecycleController;
 		if (
 			!replicationLifecycleController ||
 			!this.isReplicationLifecycleActive(replicationLifecycleController)
@@ -22775,10 +23397,7 @@ export class SharedLog<
 		const peerHash = publicKey.hashcode();
 		const expectedSubscriptionEpoch =
 			subscriptionEpoch ??
-			this._peerSessions.rotate(
-				peerHash,
-				subscribed ? "opening" : "departing",
-			);
+			this._peerSessions.rotate(peerHash, subscribed ? "opening" : "departing");
 		const ownsSubscriptionEpoch = () =>
 			this._peerSessions.isCurrent(peerHash, expectedSubscriptionEpoch);
 		if (!ownsSubscriptionEpoch()) {
@@ -22787,6 +23406,7 @@ export class SharedLog<
 		// A destination stream is scoped to exactly one topic-subscription
 		// session. Abort the predecessor synchronously before either barrier can
 		// yield; a late queue completion must never enter the new session.
+		this._v2Receive.clearPeer(peerHash);
 		this._v2Send.clearPeer(peerHash);
 		this._peerSyncCapabilitySessions.delete(peerHash);
 		this._peerSyncCapabilityTimestamps.delete(peerHash);
@@ -22923,33 +23543,30 @@ export class SharedLog<
 		this._liveness._replicatorLivenessFailures.delete(peerHash);
 		this._liveness.markReplicatorActivity(peerHash);
 		this._peerSessions.markOpen(peerHash, expectedSubscriptionEpoch);
+		this.promoteReplicationInfoV2ReceiveCapability(
+			publicKey,
+			expectedSubscriptionEpoch,
+		);
 
-		// Decode support and receiver-led negotiation readiness are separate bits.
-		// This node never initiates a request in this rollout; normal replication
-		// announcements remain legacy unless a peer explicitly grants one signed,
-		// session-bound V2 destination stream.
-		const receiveCapabilities =
-			SYNC_CAPABILITY_REPLICATION_INFO_V2_DECODE |
-			SYNC_CAPABILITY_REPLICATION_INFO_V2_SEND |
-			(this._logProperties?.sync?.rawExchangeHeads === true
-				? SYNC_CAPABILITY_RAW_EXCHANGE_HEADS
-				: 0);
-		this.rpc
-			.send(
-				new SyncCapabilitiesMessage({
-					capabilities: receiveCapabilities,
-				}),
-				{
-					mode: new SilentDelivery({ redundancy: 1, to: [publicKey] }),
-					signal: replicationLifecycleController.signal,
-				},
-			)
-			.catch((error) =>
+		// Decode, sender and authenticated apply readiness are separate bits. Start
+		// the ACKed receiver-led negotiation before the legacy snapshot, but do not
+		// hold mixed-version replication discovery behind that round trip. Attach
+		// the rejection handler now because a lifecycle fence below may return before
+		// awaiting the advert. RequestV2 is armed only after both sends settle.
+		const receiveEpoch = this._peerSessions.receiveEpoch(peerHash);
+		const localCapabilityAdvertisement =
+			this.advertiseReplicationInfoV2ReceiveCapability({
+				target: publicKey,
+				peerSession: expectedSubscriptionEpoch,
+				receiveEpoch,
+				signal: replicationLifecycleController.signal,
+			}).catch((error) => {
 				this.handleReplicationLifecycleSendError(
 					error,
 					replicationLifecycleController,
-				),
-			);
+				);
+				return undefined;
+			});
 
 		let replicationSegments: ReplicationRangeIndexable<R>[];
 		try {
@@ -23019,9 +23636,9 @@ export class SharedLog<
 			}
 		}
 
-		// Request the remote peer's replication info. This makes joins resilient to
-		// timing-sensitive delivery/order issues where we may miss their initial
-		// replication announcement.
+		// Keep legacy request-based discovery independent of the capability ACK too.
+		// This makes mixed-version joins resilient to timing-sensitive delivery/order
+		// issues where we may miss the remote peer's initial announcement.
 		if (
 			this.isReplicationLifecycleActive(replicationLifecycleController) &&
 			ownsSubscriptionEpoch()
@@ -23030,6 +23647,16 @@ export class SharedLog<
 				publicKey,
 				replicationLifecycleController,
 			);
+		}
+
+		const localCapabilityReady = await localCapabilityAdvertisement;
+		if (localCapabilityReady) {
+			this._v2Receive.markLocalCapabilityReady({
+				peerHash,
+				peerSession: expectedSubscriptionEpoch,
+				receiveEpoch,
+				...localCapabilityReady,
+			});
 		}
 	}
 
@@ -24153,7 +24780,10 @@ export class SharedLog<
 						if (oldPeersSet) {
 							for (const oldPeer of oldPeersSet) {
 								if (!currentPeers.has(oldPeer)) {
-									this._checkedPrune.removeRequestSent(entryReplicated.hash, oldPeer);
+									this._checkedPrune.removeRequestSent(
+										entryReplicated.hash,
+										oldPeer,
+									);
 								}
 							}
 						}
@@ -24242,7 +24872,10 @@ export class SharedLog<
 					if (oldPeersSet) {
 						for (const oldPeer of oldPeersSet) {
 							if (!currentPeers.has(oldPeer)) {
-								this._checkedPrune.removeRequestSent(entryReplicated.hash, oldPeer);
+								this._checkedPrune.removeRequestSent(
+									entryReplicated.hash,
+									oldPeer,
+								);
 							}
 						}
 					}
@@ -24422,10 +25055,7 @@ export class SharedLog<
 		}
 
 		const fromHash = evt.detail.from.hashcode();
-		const subscriptionEpoch = this._peerSessions.rotate(
-			fromHash,
-			"departing",
-		);
+		const subscriptionEpoch = this._peerSessions.rotate(fromHash, "departing");
 		this._peerSessions.blockReplicationInfo(fromHash);
 		this._recentRepairDispatch.delete(fromHash);
 

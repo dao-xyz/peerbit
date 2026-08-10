@@ -186,6 +186,142 @@ describe("receive admission replication-info recovery epoch", () => {
 		}
 	});
 
+	it("fences a parked handler when coherent deletion throws after durable commit", async () => {
+		const session = await TestSession.connected(2);
+		const handlerParked = pDefer<void>();
+		const releaseHandler = pDefer<void>();
+		try {
+			const store = new EventStore<string, any>();
+			const target = await session.peers[0].open(store, {
+				args: { replicate: 1, setup, timeUntilRoleMaturity: 0 },
+			});
+			await session.peers[1].open(store.clone(), {
+				args: { replicate: 1, setup, timeUntilRoleMaturity: 0 },
+			});
+			const sharedLog = target.log as any;
+			const sourceKey = session.peers[1].identity.publicKey;
+			const sourceHash = sourceKey.hashcode();
+			let remoteRange: any;
+			await waitForResolved(async () => {
+				const ranges = await target.log.replicationIndex
+					.iterate({ query: { hash: sourceHash } })
+					.all();
+				expect(ranges).to.have.length.greaterThan(0);
+				remoteRange = ranges[0].value;
+			});
+
+			const scheduleRequests = sinon
+				.stub(sharedLog, "scheduleReplicationInfoRequests")
+				.callsFake(() => {});
+			const recoveryCalls: Array<{
+				gateOpen: boolean;
+				receiveEpoch: object | null;
+			}> = [];
+			const v2Recovery = sinon
+				.stub(sharedLog._v2Receive, "advanceRecovery")
+				.callsFake((...args: unknown[]) => {
+					const properties = args[0] as { receiveEpoch: object | null };
+					recoveryCalls.push({
+						gateOpen:
+							sharedLog._peerSessions.isReceiveCleanupGateOpen(sourceHash),
+						receiveEpoch: properties.receiveEpoch,
+					});
+					return true;
+				});
+			const delayedMessage = new AddedReplicationSegmentMessage({
+				segments: [remoteRange.toReplicationRange()],
+			});
+			let armed = false;
+			const originalSynchronizerOnMessage =
+				sharedLog.syncronizer.onMessage.bind(sharedLog.syncronizer);
+			const synchronizer = sinon
+				.stub(sharedLog.syncronizer, "onMessage")
+				.callsFake(async (message: unknown, context: unknown) => {
+					if (message === delayedMessage) {
+						armed = true;
+						return false;
+					}
+					return originalSynchronizerOnMessage(message, context);
+				});
+			const originalApplyQueue =
+				sharedLog.withReplicationInfoApplyQueue.bind(sharedLog);
+			const applyQueue = sinon
+				.stub(sharedLog, "withReplicationInfoApplyQueue")
+				.callsFake(async (...args: unknown[]) => {
+					const [peerHash, fn] = args as [string, () => Promise<void>];
+					if (armed && peerHash === sourceHash) {
+						armed = false;
+						handlerParked.resolve();
+						await releaseHandler.promise;
+					}
+					return originalApplyQueue(peerHash, fn);
+				});
+			const originalDelete =
+				sharedLog.deleteReplicationRangesCoherently.bind(sharedLog);
+			const postCommitFailure = new Error("post-commit deletion failure");
+			const coherentDelete = sinon
+				.stub(sharedLog, "deleteReplicationRangesCoherently")
+				.callsFake(async (...args: unknown[]) => {
+					await originalDelete(...args);
+					throw postCommitFailure;
+				});
+
+			try {
+				const receive = target.log.onMessage(delayedMessage, {
+					from: sourceKey,
+					message: { header: { timestamp: BigInt(Date.now()) } },
+				} as any);
+				await handlerParked.promise;
+				const receiveEpochBefore =
+					sharedLog._peerSessions.receiveEpoch(sourceHash);
+
+				let removalError: unknown;
+				try {
+					await sharedLog.removeReplicator(sourceKey, { noEvent: true });
+				} catch (error) {
+					removalError = error;
+				}
+				expect(removalError).to.equal(postCommitFailure);
+				expect(
+					await target.log.replicationIndex.count({
+						query: { hash: sourceHash },
+					}),
+				).to.equal(0);
+				expect(sharedLog._peerSessions.receiveEpoch(sourceHash)).to.not.equal(
+					receiveEpochBefore,
+				);
+				expect(recoveryCalls).to.have.length(2);
+				expect(recoveryCalls.map((call) => call.gateOpen)).to.deep.equal([
+					false,
+					true,
+				]);
+				expect(recoveryCalls[0].receiveEpoch).to.equal(
+					recoveryCalls[1].receiveEpoch,
+				);
+
+				releaseHandler.resolve();
+				await receive;
+				expect(
+					await target.log.replicationIndex.count({
+						query: { hash: sourceHash },
+					}),
+				).to.equal(0);
+				expect(sharedLog.latestReplicationInfoMessage.has(sourceHash)).to.be
+					.false;
+			} finally {
+				releaseHandler.resolve();
+				coherentDelete.restore();
+				applyQueue.restore();
+				synchronizer.restore();
+				v2Recovery.restore();
+				scheduleRequests.restore();
+			}
+		} finally {
+			releaseHandler.resolve();
+			await session.stop();
+		}
+	});
+
 	it("keeps a pre-close recovery-epoch capture stale after reopen", async () => {
 		const session = await TestSession.disconnected(1);
 		try {
@@ -323,9 +459,10 @@ describe("receive admission opening-barrier windows", () => {
 					.then(() => {
 						subscriptionSettled = true;
 					});
-				await waitForResolved(() =>
-					expect(sharedLog._receiveHandlerDrainByPeer.has(sourceHash)).to.be
-						.true,
+				await waitForResolved(
+					() =>
+						expect(sharedLog._receiveHandlerDrainByPeer.has(sourceHash)).to.be
+							.true,
 				);
 				// Window-open probe (stage-3 home: the barrier flags its session).
 				const barrierSession = sharedLog._peerSessions.current(sourceHash);
@@ -552,6 +689,11 @@ describe("receive admission control-plane lease one-shot", () => {
 			const scheduleRequests = sinon
 				.stub(sharedLog, "scheduleReplicationInfoRequests")
 				.callsFake(() => {});
+			// This assertion targets the legacy handler's lease/apply-lane boundary;
+			// keep the independently negotiated V2 cutover from bypassing that path.
+			const forceLegacyReceivePath = sinon
+				.stub(sharedLog._v2Receive, "isLegacyCutover")
+				.returns(false);
 			try {
 				// Hold a second lease in the same bucket: a lost mid-branch release
 				// would keep the bucket at 2, and any extra release (e.g. a finally
@@ -629,12 +771,14 @@ describe("receive admission control-plane lease one-shot", () => {
 					).to.equal(1),
 				);
 				extraRelease();
-				await waitForResolved(() =>
-					expect(sharedLog._activeReceiveHandlersByPeer.has(sourceHash)).to.be
-						.false,
+				await waitForResolved(
+					() =>
+						expect(sharedLog._activeReceiveHandlersByPeer.has(sourceHash)).to.be
+							.false,
 				);
 			} finally {
 				scheduleRequests.restore();
+				forceLegacyReceivePath.restore();
 			}
 		} finally {
 			releaseLane.resolve();

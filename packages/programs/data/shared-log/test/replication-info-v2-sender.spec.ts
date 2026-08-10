@@ -13,8 +13,8 @@ import {
 } from "../src/exchange-heads.js";
 import {
 	ReplicationInfoV2SendCoordinator,
-	deriveReplicationInfoV2ReceiverBinding,
 	type ReplicationInfoV2SendState,
+	deriveReplicationInfoV2ReceiverBinding,
 } from "../src/replication-info-v2-send.js";
 import {
 	AddedReplicationInfoV2Message,
@@ -63,6 +63,7 @@ describe("receive admission replication-info V2 sender streams", () => {
 			from,
 			peerSession,
 			receiverTransportSession: BigInt(from.publicKey[0]),
+			capabilityTimestamp: 1n,
 			requestTimestamp,
 		});
 
@@ -187,9 +188,8 @@ describe("receive admission replication-info V2 sender streams", () => {
 		const firstState = coordinator._sendStates.get(peerA.hashcode())!;
 
 		for (let index = 0; index < 10_000; index++) {
-			expect(
-				accept(peerA, peerSession, challenge(8), 21n + BigInt(index)),
-			).to.be.false;
+			expect(accept(peerA, peerSession, challenge(8), 21n + BigInt(index))).to
+				.be.false;
 		}
 		expect(getSegments.calledOnce).to.be.true;
 		expect(rpcSend.notCalled).to.be.true;
@@ -225,9 +225,8 @@ describe("receive admission replication-info V2 sender streams", () => {
 		expect(drainSettled).to.be.false;
 		for (let index = 0; index < 10_000; index++) {
 			coordinator.advancePeerCapability(peerA.hashcode());
-			expect(
-				accept(peerA, peerSession, challenge(19), 31n + BigInt(index)),
-			).to.be.false;
+			expect(accept(peerA, peerSession, challenge(19), 31n + BigInt(index))).to
+				.be.false;
 		}
 		expect(getSegments.calledOnce).to.be.true;
 		expect(rpcSend.notCalled).to.be.true;
@@ -539,10 +538,11 @@ describe("receive admission replication-info V2 sender integration", () => {
 		expect(activity.notCalled).to.be.true;
 
 		await log.onMessage(request, context(receiverTransportSession, 3n));
-		await waitForResolved(() =>
-			expect(
-				send.calledWith(sinon.match.instanceOf(FullReplicationInfoV2Message)),
-			).to.be.true,
+		await waitForResolved(
+			() =>
+				expect(
+					send.calledWith(sinon.match.instanceOf(FullReplicationInfoV2Message)),
+				).to.be.true,
 		);
 		expect(activity.calledOnceWith(remoteHash)).to.be.true;
 		const state = log._v2Send._sendStates.get(remoteHash);
@@ -604,7 +604,7 @@ describe("receive admission replication-info V2 sender integration", () => {
 		expect(v2!.sequence).to.equal(2n);
 	});
 
-	it("keeps capabilities monotonic and fences the previous grant generation", async () => {
+	it("uses a newer capability to authorize one bounded challenge rebind", async () => {
 		session = await TestSession.disconnected(2);
 		const db = await session.peers[0].open(new EventStore(), {
 			args: { replicate: false, timeUntilRoleMaturity: 0 },
@@ -638,23 +638,16 @@ describe("receive admission replication-info V2 sender integration", () => {
 				intendedSender: log.node.identity.publicKey,
 				senderSession: BigInt(log.node.services.pubsub.session),
 			});
+		const firstSend = pDefer<void>();
 		let blockFirst = true;
-		const send = sinon
-			.stub(log.rpc, "send")
-			.callsFake(async (_message, options: any) => {
-				if (!blockFirst) {
-					return [] as any;
-				}
-				blockFirst = false;
-				await new Promise<void>((_resolve, reject) => {
-					options.signal.addEventListener(
-						"abort",
-						() => reject(new Error("capability generation advanced")),
-						{ once: true },
-					);
-				});
+		const send = sinon.stub(log.rpc, "send").callsFake(async () => {
+			if (!blockFirst) {
 				return [] as any;
-			});
+			}
+			blockFirst = false;
+			await firstSend.promise;
+			return [] as any;
+		});
 
 		await log.onMessage(request(30), context(11n));
 		await waitForResolved(() => expect(send.calledOnce).to.be.true);
@@ -662,15 +655,15 @@ describe("receive admission replication-info V2 sender integration", () => {
 			new SyncCapabilitiesMessage({ capabilities: 0 }),
 			context(12n),
 		);
-		expect(log._v2Send._sendStates.size).to.equal(0);
+		expect(log._v2Send._sendStates.size).to.equal(1);
 		expect(
 			log._peerSyncCapabilities.get(remoteHash) &
 				SYNC_CAPABILITY_REPLICATION_INFO_V2_APPLY,
 		).to.equal(SYNC_CAPABILITY_REPLICATION_INFO_V2_APPLY);
 		expect(log._peerSyncCapabilityTimestamps.get(remoteHash)).to.equal(12n);
-		await waitForResolved(() =>
-			expect(log._v2Send._retiringWorkersByPeer.size).to.equal(0),
-		);
+		expect(log._v2Send._retiringWorkersByPeer.size).to.equal(0);
+		firstSend.resolve();
+		await log._v2Send.drain();
 
 		await log.onMessage(request(30), context(11n));
 		expect(send.calledOnce).to.be.true;
@@ -678,8 +671,13 @@ describe("receive admission replication-info V2 sender integration", () => {
 		expect(send.calledOnce).to.be.true;
 		await log.onMessage(request(31), context(13n));
 		await waitForResolved(() => expect(send.callCount).to.equal(2));
+		await log.onMessage(request(30), context(13n));
+		expect(send.callCount).to.equal(2);
 		await log._v2Send.drain();
 		expect(log._v2Send._sendStates.get(remoteHash)?.established).to.be.true;
+		expect([
+			...log._v2Send._sendStates.get(remoteHash)!.receiverRequestChallenge,
+		]).to.deep.equal([...challenge(31)]);
 	});
 
 	it("keeps opening-barrier capabilities monotonic within a signed session", async () => {
