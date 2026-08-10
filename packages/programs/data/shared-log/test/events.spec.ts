@@ -4548,6 +4548,11 @@ describe("events", () => {
 		const scheduleRequests = sinon
 			.stub(log, "scheduleReplicationInfoRequests")
 			.callsFake(() => {});
+		// This test manually drives the legacy receive handler; negotiated V2
+		// cutover is covered independently.
+		const forceLegacyReceivePath = sinon
+			.stub(log._v2Receive, "isLegacyCutover")
+			.returns(false);
 
 		try {
 			const delayedReceive = db1.log.onMessage(delayedMessage, {
@@ -4571,6 +4576,7 @@ describe("events", () => {
 			releaseSynchronizer.resolve();
 			synchronizer.restore();
 			scheduleRequests.restore();
+			forceLegacyReceivePath.restore();
 		}
 	});
 
@@ -4599,6 +4605,11 @@ describe("events", () => {
 		const scheduleRequests = sinon
 			.stub(log, "scheduleReplicationInfoRequests")
 			.callsFake(() => {});
+		// This test manually drives the legacy receive handler; negotiated V2
+		// cutover is covered independently.
+		const forceLegacyReceivePath = sinon
+			.stub(log._v2Receive, "isLegacyCutover")
+			.returns(false);
 
 		try {
 			await log._onUnsubscription({
@@ -4630,6 +4641,7 @@ describe("events", () => {
 			expect(log.latestReplicationInfoMessage.get(remoteHash)).to.equal(1n);
 		} finally {
 			scheduleRequests.restore();
+			forceLegacyReceivePath.restore();
 		}
 	});
 
@@ -4655,32 +4667,41 @@ describe("events", () => {
 			expect(ranges).to.have.length.greaterThan(0);
 			remoteRange = ranges[0].value;
 		});
+		// This test manually drives the legacy receive handler; negotiated V2
+		// cutover is covered independently.
+		const forceLegacyReceivePath = sinon
+			.stub(log._v2Receive, "isLegacyCutover")
+			.returns(false);
 
-		log.latestReplicationInfoMessage.delete(remoteHash);
-		const newerTimestamp = BigInt(Date.now() + 1_000);
-		await db1.log.onMessage(
-			new AllReplicatingSegmentsMessage({
-				segments: [remoteRange.toReplicationRange()],
-			}),
-			{
-				from: remoteKey,
-				message: { header: { timestamp: newerTimestamp } },
-			} as any,
-		);
-		await db1.log.onMessage(
-			new StoppedReplicating({ segmentIds: [remoteRange.id] }),
-			{
-				from: remoteKey,
-				message: { header: { timestamp: newerTimestamp - 1n } },
-			} as any,
-		);
+		try {
+			log.latestReplicationInfoMessage.delete(remoteHash);
+			const newerTimestamp = BigInt(Date.now() + 1_000);
+			await db1.log.onMessage(
+				new AllReplicatingSegmentsMessage({
+					segments: [remoteRange.toReplicationRange()],
+				}),
+				{
+					from: remoteKey,
+					message: { header: { timestamp: newerTimestamp } },
+				} as any,
+			);
+			await db1.log.onMessage(
+				new StoppedReplicating({ segmentIds: [remoteRange.id] }),
+				{
+					from: remoteKey,
+					message: { header: { timestamp: newerTimestamp - 1n } },
+				} as any,
+			);
 
-		expect(
-			await replicationIndex.count({ query: { hash: remoteHash } }),
-		).to.be.greaterThan(0);
-		expect(log.latestReplicationInfoMessage.get(remoteHash)).to.equal(
-			newerTimestamp,
-		);
+			expect(
+				await replicationIndex.count({ query: { hash: remoteHash } }),
+			).to.be.greaterThan(0);
+			expect(log.latestReplicationInfoMessage.get(remoteHash)).to.equal(
+				newerTimestamp,
+			);
+		} finally {
+			forceLegacyReceivePath.restore();
+		}
 	});
 
 	it("drains admitted replication mutations before close and reopen", async () => {
