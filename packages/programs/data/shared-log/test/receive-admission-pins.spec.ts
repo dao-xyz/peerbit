@@ -228,6 +228,26 @@ describe("receive admission replication-info recovery epoch", () => {
 					});
 					return true;
 				});
+			const reAdvertisementCalls: Array<{
+				gateOpen: boolean;
+				peerSession: object;
+				receiveEpoch: object | null;
+			}> = [];
+			const v2ReAdvertisement = sinon
+				.stub(sharedLog._v2Receive, "reAdvertiseLocalCapabilityForRecovery")
+				.callsFake((...args: unknown[]) => {
+					const properties = args[0] as {
+						peerSession: object;
+						receiveEpoch: object | null;
+					};
+					reAdvertisementCalls.push({
+						gateOpen:
+							sharedLog._peerSessions.isReceiveCleanupGateOpen(sourceHash),
+						peerSession: properties.peerSession,
+						receiveEpoch: properties.receiveEpoch,
+					});
+					return true;
+				});
 			const delayedMessage = new AddedReplicationSegmentMessage({
 				segments: [remoteRange.toReplicationRange()],
 			});
@@ -298,6 +318,14 @@ describe("receive admission replication-info recovery epoch", () => {
 				expect(recoveryCalls[0].receiveEpoch).to.equal(
 					recoveryCalls[1].receiveEpoch,
 				);
+				expect(reAdvertisementCalls).to.have.length(1);
+				expect(reAdvertisementCalls[0].gateOpen).to.be.true;
+				expect(reAdvertisementCalls[0].peerSession).to.equal(
+					sharedLog._peerSessions.current(sourceHash),
+				);
+				expect(reAdvertisementCalls[0].receiveEpoch).to.equal(
+					recoveryCalls[1].receiveEpoch,
+				);
 
 				releaseHandler.resolve();
 				await receive;
@@ -313,6 +341,7 @@ describe("receive admission replication-info recovery epoch", () => {
 				coherentDelete.restore();
 				applyQueue.restore();
 				synchronizer.restore();
+				v2ReAdvertisement.restore();
 				v2Recovery.restore();
 				scheduleRequests.restore();
 			}

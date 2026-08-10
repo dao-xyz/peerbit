@@ -21,6 +21,9 @@ import {
 const logger = loggerFn("peerbit:shared-log:replication-info-v2-send");
 
 const MAX_U64 = (1n << 64n) - 1n;
+const DEFAULT_SEND_RETRY_MS = 1_000;
+const DEFAULT_MAX_SEND_RETRY_MS = 30_000;
+const MAX_BACKOFF_EXPONENT = 20;
 
 export { deriveReplicationInfoV2ReceiverBinding } from "./replication-info-v2-binding.js";
 
@@ -45,10 +48,13 @@ export type ReplicationInfoV2SendState = {
 	receiverChallenge: Uint8Array;
 	senderEpoch: Uint8Array;
 	ownershipLifecycleController: AbortController;
+	ownershipAbortListener: () => void;
 	nextSequence: bigint;
 	established: boolean;
 	suspended: boolean;
 	inFlightSequence?: bigint;
+	retryTimer?: ReturnType<typeof setTimeout>;
+	retryAttempts: number;
 	controller: AbortController;
 	pending?: SendRequest;
 	worker?: Promise<void>;
@@ -63,11 +69,14 @@ export type ReplicationInfoV2SendDeps<R extends "u32" | "u64"> = {
 		ranges: readonly { mode: unknown }[],
 	) => void;
 	isClosed: () => boolean;
+	isPeerSessionCurrent: (peerHash: string, peerSession: object) => boolean;
 	isPeerSessionOpen: (peerHash: string, peerSession: object) => boolean;
 	captureReplicationOwnershipLifecycle: () => AbortController;
 	isReplicationOwnershipLifecycleActive: (
 		controller: AbortController,
 	) => boolean;
+	sendRetryMs?: number;
+	maxSendRetryMs?: number;
 };
 
 const bytesEqual = (left: Uint8Array, right: Uint8Array): boolean => {
@@ -93,7 +102,15 @@ export class ReplicationInfoV2SendCoordinator<R extends "u32" | "u64"> {
 	_spentPeerSessions!: WeakSet<object>;
 	_retiringWorkersByPeer!: Map<string, Promise<void>>;
 
+	private readonly sendRetryMs: number;
+	private readonly maxSendRetryMs: number;
+
 	constructor(private readonly deps: ReplicationInfoV2SendDeps<R>) {
+		this.sendRetryMs = Math.max(1, deps.sendRetryMs ?? DEFAULT_SEND_RETRY_MS);
+		this.maxSendRetryMs = Math.max(
+			this.sendRetryMs,
+			deps.maxSendRetryMs ?? DEFAULT_MAX_SEND_RETRY_MS,
+		);
 		this._senderEpoch = randomBytes(32);
 		this._sendStates = new Map();
 		this._spentPeerSessions = new WeakSet();
@@ -131,6 +148,14 @@ export class ReplicationInfoV2SendCoordinator<R extends "u32" | "u64"> {
 
 	private clearState(state: ReplicationInfoV2SendState): void {
 		this.trackRetiringWorker(state);
+		if (state.retryTimer) {
+			clearTimeout(state.retryTimer);
+			state.retryTimer = undefined;
+		}
+		state.ownershipLifecycleController.signal.removeEventListener(
+			"abort",
+			state.ownershipAbortListener,
+		);
 		state.controller.abort();
 		if (this._sendStates.get(state.peerHash) === state) {
 			this._sendStates.delete(state.peerHash);
@@ -163,18 +188,65 @@ export class ReplicationInfoV2SendCoordinator<R extends "u32" | "u64"> {
 			!this.deps.isClosed() &&
 			!state.controller.signal.aborted &&
 			this._sendStates.get(state.peerHash) === state &&
-			this.deps.isPeerSessionOpen(state.peerHash, state.peerSession) &&
+			this.deps.isPeerSessionCurrent(state.peerHash, state.peerSession) &&
 			this.deps.getSenderTransportSession() === state.senderTransportSession
+		);
+	}
+
+	private isDestinationReady(state: ReplicationInfoV2SendState): boolean {
+		return (
+			this.isDestinationCurrent(state) &&
+			this.deps.isPeerSessionOpen(state.peerHash, state.peerSession)
 		);
 	}
 
 	private isCurrent(state: ReplicationInfoV2SendState): boolean {
 		return (
-			this.isDestinationCurrent(state) &&
+			this.isDestinationReady(state) &&
 			this.deps.isReplicationOwnershipLifecycleActive(
 				state.ownershipLifecycleController,
 			)
 		);
+	}
+
+	private retireSpentState(state: ReplicationInfoV2SendState): void {
+		this._spentPeerSessions.add(state.peerSession);
+		this.clearState(state);
+	}
+
+	/**
+	 * Collapse every interrupted normal-send path to one authoritative snapshot.
+	 * A closed readiness gate is temporary while the exact PeerSession remains
+	 * current, so it parks instead of destroying the receiver binding. Sequence
+	 * exhaustion is terminal even when readiness or ownership changed at the same
+	 * time as an in-flight transport attempt.
+	 */
+	private parkSnapshotForRetry(state: ReplicationInfoV2SendState): void {
+		state.inFlightSequence = undefined;
+		if (state.nextSequence > MAX_U64) {
+			this.retireSpentState(state);
+			return;
+		}
+		if (!this.isDestinationCurrent(state)) {
+			this.clearState(state);
+			return;
+		}
+		if (
+			!this.deps.isReplicationOwnershipLifecycleActive(
+				state.ownershipLifecycleController,
+			)
+		) {
+			if (state.retryTimer) {
+				clearTimeout(state.retryTimer);
+				state.retryTimer = undefined;
+			}
+			state.pending = undefined;
+			return;
+		}
+
+		state.suspended = true;
+		state.pending = { kind: "snapshot" };
+		this.scheduleRetry(state);
 	}
 
 	/**
@@ -207,6 +279,7 @@ export class ReplicationInfoV2SendCoordinator<R extends "u32" | "u64"> {
 		if (
 			this._retiringWorkersByPeer.has(peerHash) ||
 			this._spentPeerSessions.has(properties.peerSession) ||
+			!this.deps.isPeerSessionCurrent(peerHash, properties.peerSession) ||
 			!this.deps.isPeerSessionOpen(peerHash, properties.peerSession)
 		) {
 			return false;
@@ -224,6 +297,16 @@ export class ReplicationInfoV2SendCoordinator<R extends "u32" | "u64"> {
 				return false;
 			}
 		}
+		if (
+			previous &&
+			!this.deps.isReplicationOwnershipLifecycleActive(
+				previous.ownershipLifecycleController,
+			)
+		) {
+			// Ownership teardown retains the binding only so close/drop can send its
+			// terminal empty Full. A later request must not revive normal delivery.
+			return false;
+		}
 		if (previous) {
 			const sameBinding =
 				previous.peerSession === properties.peerSession &&
@@ -239,7 +322,12 @@ export class ReplicationInfoV2SendCoordinator<R extends "u32" | "u64"> {
 				}
 				previous.lastRequestTimestamp = properties.requestTimestamp;
 				previous.capabilityTimestamp = properties.capabilityTimestamp;
+				if (previous.retryTimer) {
+					clearTimeout(previous.retryTimer);
+					previous.retryTimer = undefined;
+				}
 				previous.suspended = false;
+				previous.pending = { kind: "snapshot" };
 				this.enqueueState(previous, { kind: "snapshot" });
 				return true;
 			}
@@ -256,6 +344,13 @@ export class ReplicationInfoV2SendCoordinator<R extends "u32" | "u64"> {
 
 		const ownershipLifecycleController =
 			this.deps.captureReplicationOwnershipLifecycle();
+		if (
+			!this.deps.isReplicationOwnershipLifecycleActive(
+				ownershipLifecycleController,
+			)
+		) {
+			return false;
+		}
 		const state: ReplicationInfoV2SendState = {
 			peerHash,
 			target: properties.from,
@@ -273,12 +368,26 @@ export class ReplicationInfoV2SendCoordinator<R extends "u32" | "u64"> {
 				senderTransportSession,
 			}),
 			senderEpoch: this._senderEpoch.slice(),
+			ownershipAbortListener: () => {},
 			nextSequence: 1n,
 			established: false,
 			suspended: false,
+			retryAttempts: 0,
 			controller: new AbortController(),
 			ownershipLifecycleController,
 		};
+		state.ownershipAbortListener = () => {
+			if (state.retryTimer) {
+				clearTimeout(state.retryTimer);
+				state.retryTimer = undefined;
+			}
+			state.pending = undefined;
+		};
+		ownershipLifecycleController.signal.addEventListener(
+			"abort",
+			state.ownershipAbortListener,
+			{ once: true },
+		);
 		this._sendStates.set(peerHash, state);
 		this.enqueueState(state, { kind: "snapshot" });
 		return true;
@@ -301,20 +410,15 @@ export class ReplicationInfoV2SendCoordinator<R extends "u32" | "u64"> {
 		state: ReplicationInfoV2SendState,
 		request: SendRequest,
 	): void {
-		if (!this.isCurrent(state)) {
-			state.pending = undefined;
-			if (
-				!this.isDestinationCurrent(state) ||
-				this.deps.isReplicationOwnershipLifecycleActive(
-					state.ownershipLifecycleController,
-				)
-			) {
-				this.clearState(state);
-			}
+		if (state.nextSequence > MAX_U64 || !this.isCurrent(state)) {
+			this.parkSnapshotForRetry(state);
 			return;
 		}
 		if (state.suspended) {
-			state.pending = undefined;
+			// Delivery is ambiguous while the backoff is armed. Never retain a
+			// potentially stale delta: one authoritative Full represents every
+			// mutation that arrives before the retry fires.
+			this.parkSnapshotForRetry(state);
 			return;
 		}
 
@@ -324,12 +428,14 @@ export class ReplicationInfoV2SendCoordinator<R extends "u32" | "u64"> {
 			worker = Promise.resolve()
 				.then(() => this.runWorker(state))
 				.catch((error) => {
-					const ownershipActive =
+					// Sequence cleanup and exhaustion fencing must happen before any
+					// readiness/ownership classification in the recovery path.
+					this.parkSnapshotForRetry(state);
+					if (
+						this._sendStates.get(state.peerHash) === state &&
 						this.deps.isReplicationOwnershipLifecycleActive(
 							state.ownershipLifecycleController,
-						);
-					if (
-						ownershipActive &&
+						) &&
 						!state.controller.signal.aborted &&
 						!this.deps.isClosed()
 					) {
@@ -339,28 +445,6 @@ export class ReplicationInfoV2SendCoordinator<R extends "u32" | "u64"> {
 							(error as Error)?.message ?? String(error),
 						);
 					}
-					state.pending = undefined;
-					const ordinaryFailure =
-						ownershipActive && this.isDestinationCurrent(state);
-					if (ordinaryFailure) {
-						if (state.inFlightSequence !== undefined) {
-							state.inFlightSequence = undefined;
-							if (state.nextSequence > MAX_U64) {
-								this._spentPeerSessions.add(state.peerSession);
-								this.clearState(state);
-								return;
-							}
-						}
-						// A delivery error is ambiguous: the receiver may already have
-						// applied this sequence. Retain the exact grant, stop ordinary
-						// deltas, and require a newer same-challenge request to resume
-						// with an authoritative Full at the next safe sequence.
-						state.suspended = true;
-						return;
-					}
-					if (!this.isDestinationCurrent(state)) {
-						this.clearState(state);
-					}
 				})
 				.finally(() => {
 					if (state.worker === worker) {
@@ -369,7 +453,7 @@ export class ReplicationInfoV2SendCoordinator<R extends "u32" | "u64"> {
 						// before this promise reaction clears `worker`. Re-arm that item
 						// here so the one-slot bound cannot become a stranded queue.
 						const pending = state.pending;
-						if (pending && this.isCurrent(state)) {
+						if (pending) {
 							state.pending = undefined;
 							this.enqueueState(state, pending);
 						}
@@ -387,6 +471,51 @@ export class ReplicationInfoV2SendCoordinator<R extends "u32" | "u64"> {
 		// One pending item is the hard bound. Once another mutation arrives,
 		// replace the pending delta with a current authoritative snapshot.
 		state.pending = { kind: "snapshot" };
+	}
+
+	private retryDelay(state: ReplicationInfoV2SendState): number {
+		const exponent = Math.max(0, state.retryAttempts - 1);
+		return Math.min(
+			this.maxSendRetryMs,
+			this.sendRetryMs * 2 ** Math.min(exponent, MAX_BACKOFF_EXPONENT),
+		);
+	}
+
+	private scheduleRetry(state: ReplicationInfoV2SendState): void {
+		if (state.retryTimer) {
+			return;
+		}
+		if (state.nextSequence > MAX_U64) {
+			this.retireSpentState(state);
+			return;
+		}
+		if (!this.isDestinationCurrent(state)) {
+			this.clearState(state);
+			return;
+		}
+		if (
+			!this.deps.isReplicationOwnershipLifecycleActive(
+				state.ownershipLifecycleController,
+			)
+		) {
+			state.pending = undefined;
+			return;
+		}
+		state.retryAttempts = Math.min(
+			state.retryAttempts + 1,
+			MAX_BACKOFF_EXPONENT + 1,
+		);
+		state.retryTimer = setTimeout(() => {
+			state.retryTimer = undefined;
+			if (state.nextSequence > MAX_U64 || !this.isCurrent(state)) {
+				this.parkSnapshotForRetry(state);
+				return;
+			}
+			state.suspended = false;
+			state.pending = { kind: "snapshot" };
+			this.enqueueState(state, { kind: "snapshot" });
+		}, this.retryDelay(state));
+		state.retryTimer.unref?.();
 	}
 
 	private async createMessage(
@@ -427,19 +556,19 @@ export class ReplicationInfoV2SendCoordinator<R extends "u32" | "u64"> {
 	}
 
 	private async runWorker(state: ReplicationInfoV2SendState): Promise<void> {
-		while (this.isCurrent(state)) {
+		while (true) {
+			if (state.nextSequence > MAX_U64 || !this.isCurrent(state)) {
+				this.parkSnapshotForRetry(state);
+				return;
+			}
 			const request = state.pending;
 			if (!request) {
 				return;
 			}
 			state.pending = undefined;
-			if (state.nextSequence > MAX_U64) {
-				this.clearState(state);
-				return;
-			}
-
 			const message = await this.createMessage(state, request);
-			if (!this.isCurrent(state)) {
+			if (state.nextSequence > MAX_U64 || !this.isCurrent(state)) {
+				this.parkSnapshotForRetry(state);
 				return;
 			}
 			// Consume the sequence before the transport attempt. From this point on
@@ -460,15 +589,12 @@ export class ReplicationInfoV2SendCoordinator<R extends "u32" | "u64"> {
 				]),
 			});
 			state.inFlightSequence = undefined;
-			if (!this.isCurrent(state)) {
+			if (state.nextSequence > MAX_U64 || !this.isCurrent(state)) {
+				this.parkSnapshotForRetry(state);
 				return;
 			}
+			state.retryAttempts = 0;
 			state.established = true;
-			if (state.nextSequence > MAX_U64) {
-				this._spentPeerSessions.add(state.peerSession);
-				this.clearState(state);
-				return;
-			}
 		}
 	}
 
@@ -490,22 +616,38 @@ export class ReplicationInfoV2SendCoordinator<R extends "u32" | "u64"> {
 				continue;
 			}
 			state.pending = undefined;
+			const sequence = state.nextSequence;
+			state.nextSequence += 1n;
 			const message = new FullReplicationInfoV2Message({
 				receiverChallenge: state.receiverChallenge.slice(),
 				senderEpoch: state.senderEpoch.slice(),
-				sequence: state.nextSequence,
+				sequence,
 				segments: [],
 			});
-			sends.push(
-				this.deps.getRpc().send(message, {
-					mode: new AcknowledgeDelivery({
-						to: [state.target],
-						redundancy: 1,
-					}),
-					priority: CONVERGENCE_MESSAGE_PRIORITY,
-					signal,
-				}),
-			);
+			if (sequence === MAX_U64) {
+				// Retire the exhausted normal stream before transport invocation. The
+				// terminal attempt remains valid because it carries its caller-owned
+				// signal rather than the state controller that clearState aborts.
+				this.retireSpentState(state);
+			}
+			try {
+				sends.push(
+					Promise.resolve(
+						this.deps.getRpc().send(message, {
+							mode: new AcknowledgeDelivery({
+								to: [state.target],
+								redundancy: 1,
+							}),
+							priority: CONVERGENCE_MESSAGE_PRIORITY,
+							signal,
+						}),
+					),
+				);
+			} catch (error) {
+				// Keep one synchronous transport failure isolated to its destination;
+				// the sequence was already consumed and later peers must still reset.
+				sends.push(Promise.reject(error));
+			}
 		}
 		await Promise.allSettled(sends);
 	}

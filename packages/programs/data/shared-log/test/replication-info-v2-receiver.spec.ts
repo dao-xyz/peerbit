@@ -44,6 +44,7 @@ describe("receive admission replication-info V2 receiver state", () => {
 	let currentSession: object;
 	let currentReceiveEpoch: object;
 	let currentSenderTransportSession: bigint;
+	let peerStateReady: boolean;
 	let sendRequest: sinon.SinonStub;
 	let refreshLocalCapability: sinon.SinonStub;
 	let coordinator: ReplicationInfoV2ReceiveCoordinator;
@@ -58,8 +59,14 @@ describe("receive admission replication-info V2 receiver state", () => {
 			getSelfKey: () => self,
 			getReceiverTransportSession: () => receiverTransportSession,
 			isClosed: () => closed,
+			isPeerSessionCurrent: (_peerHash, peerSession) =>
+				peerSession === currentSession,
+			isReceiveEpochCurrent: (_peerHash, receiveEpoch) =>
+				receiveEpoch === currentReceiveEpoch,
 			isPeerStateCurrent: (_peerHash, peerSession, receiveEpoch) =>
-				peerSession === currentSession && receiveEpoch === currentReceiveEpoch,
+				peerStateReady &&
+				peerSession === currentSession &&
+				receiveEpoch === currentReceiveEpoch,
 			isSenderTransportSessionCurrent: (_peerHash, transportSession) =>
 				transportSession === currentSenderTransportSession,
 			sendRequest,
@@ -113,6 +120,7 @@ describe("receive admission replication-info V2 receiver state", () => {
 		currentSession = {};
 		currentReceiveEpoch = {};
 		currentSenderTransportSession = senderTransportSession;
+		peerStateReady = true;
 		sendRequest = sinon.stub().resolves();
 		refreshLocalCapability = sinon.stub().callsFake(async () => ({
 			receiverTransportSession,
@@ -158,6 +166,663 @@ describe("receive admission replication-info V2 receiver state", () => {
 		expect([...retried.receiverChallenge]).to.deep.equal([
 			...first.receiverChallenge,
 		]);
+	});
+
+	it("holds an ACK behind the legacy barrier and releases idempotently", async () => {
+		const clock = sinon.useFakeTimers({ now: 1_000 });
+		coordinator = createCoordinator({ requestRetryMs: 5 });
+		const lifecycle = new AbortController();
+		expect(observeSender()).to.be.true;
+
+		const handle = coordinator.advertiseLocalCapability({
+			target: sender,
+			peerSession: currentSession,
+			receiveEpoch: currentReceiveEpoch,
+			signal: lifecycle.signal,
+		});
+		await handle.firstAttempt;
+		const advertisement =
+			coordinator._localCapabilityAdvertisementsByPeer.get(peerHash)!;
+		expect(advertisement.acknowledgedReady).to.exist;
+		expect(advertisement.ready).to.be.false;
+		expect(coordinator._localCapabilityReadyBySession.has(currentSession)).to.be
+			.false;
+		expect(sendRequest.notCalled).to.be.true;
+
+		handle.releaseLegacyBarrier();
+		const ready =
+			coordinator._localCapabilityReadyBySession.get(currentSession);
+		handle.releaseLegacyBarrier();
+		expect(
+			coordinator._localCapabilityReadyBySession.get(currentSession),
+		).to.equal(ready);
+		expect(advertisement.ready).to.be.true;
+		await clock.tickAsync(1);
+		expect(sendRequest.calledOnce).to.be.true;
+	});
+
+	it("promotes when the ACK arrives after the legacy barrier release", async () => {
+		const clock = sinon.useFakeTimers({ now: 1_100 });
+		const pending = pDefer<{
+			receiverTransportSession: bigint;
+			requestNotBeforeMs: number;
+		}>();
+		refreshLocalCapability.callsFake(() => pending.promise);
+		coordinator = createCoordinator();
+		const lifecycle = new AbortController();
+		expect(observeSender()).to.be.true;
+
+		const handle = coordinator.advertiseLocalCapability({
+			target: sender,
+			peerSession: currentSession,
+			receiveEpoch: currentReceiveEpoch,
+			signal: lifecycle.signal,
+		});
+		handle.releaseLegacyBarrier();
+		expect(coordinator._localCapabilityReadyBySession.has(currentSession)).to.be
+			.false;
+		pending.resolve({
+			receiverTransportSession,
+			requestNotBeforeMs: Date.now(),
+		});
+		await handle.firstAttempt;
+		expect(
+			coordinator._localCapabilityAdvertisementsByPeer.get(peerHash)?.ready,
+		).to.be.true;
+		await clock.tickAsync(1);
+		expect(sendRequest.calledOnce).to.be.true;
+	});
+
+	it("stops retrying after an ACK while the legacy barrier remains closed", async () => {
+		const clock = sinon.useFakeTimers({ now: 1_200 });
+		refreshLocalCapability.onFirstCall().rejects(new Error("advert failed"));
+		refreshLocalCapability.onSecondCall().callsFake(async () => ({
+			receiverTransportSession,
+			requestNotBeforeMs: Date.now(),
+		}));
+		coordinator = createCoordinator({ requestRetryMs: 5 });
+		const lifecycle = new AbortController();
+		expect(observeSender()).to.be.true;
+
+		const handle = coordinator.advertiseLocalCapability({
+			target: sender,
+			peerSession: currentSession,
+			receiveEpoch: currentReceiveEpoch,
+			signal: lifecycle.signal,
+		});
+		await handle.firstAttempt;
+		const advertisement =
+			coordinator._localCapabilityAdvertisementsByPeer.get(peerHash)!;
+		expect(advertisement.timer).to.exist;
+		expect((advertisement.timer as any).hasRef()).to.be.false;
+
+		await clock.tickAsync(5);
+		expect(refreshLocalCapability.callCount).to.equal(2);
+		expect(advertisement.acknowledgedReady).to.exist;
+		expect(advertisement.ready).to.be.false;
+		expect(advertisement.timer).to.be.undefined;
+		await clock.tickAsync(100);
+		expect(refreshLocalCapability.callCount).to.equal(2);
+		expect(sendRequest.notCalled).to.be.true;
+
+		handle.releaseLegacyBarrier();
+		await clock.tickAsync(0);
+		expect(advertisement.ready).to.be.true;
+		expect(sendRequest.calledOnce).to.be.true;
+	});
+
+	it("parks one failed worker across a temporary receive gate closure", async () => {
+		const clock = sinon.useFakeTimers({ now: 1_300 });
+		refreshLocalCapability.onFirstCall().rejects(new Error("advert failed"));
+		refreshLocalCapability.onSecondCall().callsFake(async () => ({
+			receiverTransportSession,
+			requestNotBeforeMs: Date.now(),
+		}));
+		coordinator = createCoordinator({ requestRetryMs: 5 });
+		const lifecycle = new AbortController();
+		const handle = coordinator.advertiseLocalCapability({
+			target: sender,
+			peerSession: currentSession,
+			receiveEpoch: currentReceiveEpoch,
+			signal: lifecycle.signal,
+		});
+		await handle.firstAttempt;
+		handle.releaseLegacyBarrier();
+		const advertisement =
+			coordinator._localCapabilityAdvertisementsByPeer.get(peerHash)!;
+
+		peerStateReady = false;
+		await clock.tickAsync(10);
+		expect(refreshLocalCapability.calledOnce).to.be.true;
+		expect(
+			coordinator._localCapabilityAdvertisementsByPeer.get(peerHash),
+		).to.equal(advertisement);
+		expect(advertisement.controller.signal.aborted).to.be.false;
+		expect(advertisement.timer).to.exist;
+
+		peerStateReady = true;
+		await clock.tickAsync(5);
+		expect(refreshLocalCapability.callCount).to.equal(2);
+		expect(advertisement.ready).to.be.true;
+		expect(advertisement.timer).to.be.undefined;
+	});
+
+	it("keeps independent bounded capability workers and barriers for two peers", async () => {
+		const clock = sinon.useFakeTimers({ now: 2_000 });
+		const secondSender = key(3);
+		const sessionByPeer = new Map<string, object>();
+		const epochByPeer = new Map<string, object>();
+		const attemptsByPeer = new Map<string, number>();
+		const lifecycle = new AbortController();
+		for (const target of [sender, secondSender]) {
+			sessionByPeer.set(target.hashcode(), {});
+			epochByPeer.set(target.hashcode(), {});
+		}
+		coordinator = new ReplicationInfoV2ReceiveCoordinator({
+			getSelfKey: () => self,
+			getReceiverTransportSession: () => receiverTransportSession,
+			isClosed: () => false,
+			isPeerSessionCurrent: (hash, peerSession) =>
+				sessionByPeer.get(hash) === peerSession,
+			isReceiveEpochCurrent: (hash, receiveEpoch) =>
+				epochByPeer.get(hash) === receiveEpoch,
+			isPeerStateCurrent: (hash, peerSession, receiveEpoch) =>
+				sessionByPeer.get(hash) === peerSession &&
+				epochByPeer.get(hash) === receiveEpoch,
+			isSenderTransportSessionCurrent: () => true,
+			sendRequest: async () => {},
+			refreshLocalCapability: async ({ peerHash }) => {
+				const attempt = (attemptsByPeer.get(peerHash) ?? 0) + 1;
+				attemptsByPeer.set(peerHash, attempt);
+				if (attempt === 1) {
+					throw new Error("first advert failed");
+				}
+				return {
+					receiverTransportSession,
+					requestNotBeforeMs: Date.now(),
+				};
+			},
+			requestRetryMs: 5,
+			maxRequestRetryMs: 20,
+		});
+
+		const handles = [sender, secondSender].map((target) =>
+			coordinator.advertiseLocalCapability({
+				target,
+				peerSession: sessionByPeer.get(target.hashcode())!,
+				receiveEpoch: epochByPeer.get(target.hashcode())!,
+				signal: lifecycle.signal,
+			}),
+		);
+		await Promise.all(handles.map((handle) => handle.firstAttempt));
+		expect(coordinator._localCapabilityAdvertisementsByPeer.size).to.equal(2);
+		expect(
+			[...coordinator._localCapabilityAdvertisementsByPeer.values()].every(
+				(state) => state.timer !== undefined,
+			),
+		).to.be.true;
+
+		await clock.tickAsync(5);
+		expect([...attemptsByPeer.values()]).to.deep.equal([2, 2]);
+		expect(
+			[...coordinator._localCapabilityAdvertisementsByPeer.values()].every(
+				(state) =>
+					state.acknowledgedReady !== undefined &&
+					!state.ready &&
+					state.timer === undefined,
+			),
+		).to.be.true;
+
+		handles[0].releaseLegacyBarrier();
+		expect(
+			coordinator._localCapabilityReadyBySession.has(
+				sessionByPeer.get(peerHash)!,
+			),
+		).to.be.true;
+		expect(
+			coordinator._localCapabilityReadyBySession.has(
+				sessionByPeer.get(secondSender.hashcode())!,
+			),
+		).to.be.false;
+		handles[1].releaseLegacyBarrier();
+		expect(
+			[...coordinator._localCapabilityAdvertisementsByPeer.values()].every(
+				(state) => state.ready,
+			),
+		).to.be.true;
+	});
+
+	it("fences stale completion and release after a session replacement", async () => {
+		const oldAck = pDefer<{
+			receiverTransportSession: bigint;
+			requestNotBeforeMs: number;
+		}>();
+		refreshLocalCapability.onFirstCall().callsFake(() => oldAck.promise);
+		refreshLocalCapability.onSecondCall().resolves({
+			receiverTransportSession,
+			requestNotBeforeMs: Date.now(),
+		});
+		const oldSession = currentSession;
+		const oldEpoch = currentReceiveEpoch;
+		const oldLifecycle = new AbortController();
+		const oldHandle = coordinator.advertiseLocalCapability({
+			target: sender,
+			peerSession: oldSession,
+			receiveEpoch: oldEpoch,
+			signal: oldLifecycle.signal,
+		});
+
+		currentSession = {};
+		currentReceiveEpoch = {};
+		const replacementSession = currentSession;
+		const newLifecycle = new AbortController();
+		const replacementHandle = coordinator.advertiseLocalCapability({
+			target: sender,
+			peerSession: replacementSession,
+			receiveEpoch: currentReceiveEpoch,
+			signal: newLifecycle.signal,
+		});
+		await replacementHandle.firstAttempt;
+		replacementHandle.releaseLegacyBarrier();
+		const replacement =
+			coordinator._localCapabilityAdvertisementsByPeer.get(peerHash)!;
+		expect(replacement.peerSession).to.equal(replacementSession);
+		expect(replacement.ready).to.be.true;
+
+		oldHandle.releaseLegacyBarrier();
+		oldAck.resolve({
+			receiverTransportSession,
+			requestNotBeforeMs: Date.now(),
+		});
+		await oldHandle.firstAttempt;
+		expect(
+			coordinator._localCapabilityAdvertisementsByPeer.get(peerHash),
+		).to.equal(replacement);
+		expect(coordinator._localCapabilityReadyBySession.has(replacementSession))
+			.to.be.true;
+		expect(coordinator._localCapabilityReadyBySession.has(oldSession)).to.be
+			.false;
+	});
+
+	it("fences an in-flight old-epoch completion after same-session recovery", async () => {
+		const oldAck = pDefer<{
+			receiverTransportSession: bigint;
+			requestNotBeforeMs: number;
+		}>();
+		refreshLocalCapability.onFirstCall().callsFake(() => oldAck.promise);
+		refreshLocalCapability.onSecondCall().resolves({
+			receiverTransportSession,
+			requestNotBeforeMs: Date.now(),
+		});
+		const peerSession = currentSession;
+		const oldEpoch = currentReceiveEpoch;
+		const lifecycle = new AbortController();
+		const oldHandle = coordinator.advertiseLocalCapability({
+			target: sender,
+			peerSession,
+			receiveEpoch: oldEpoch,
+			signal: lifecycle.signal,
+		});
+		const oldAdvertisement =
+			coordinator._localCapabilityAdvertisementsByPeer.get(peerHash)!;
+
+		currentReceiveEpoch = {};
+		expect(
+			coordinator.reAdvertiseLocalCapabilityForRecovery({
+				peerHash,
+				peerSession,
+				receiveEpoch: currentReceiveEpoch,
+			}),
+		).to.be.true;
+		const replacement =
+			coordinator._localCapabilityAdvertisementsByPeer.get(peerHash)!;
+		expect(replacement).not.to.equal(oldAdvertisement);
+		expect(replacement.context).to.equal(oldAdvertisement.context);
+		await replacement.firstAttempt;
+		expect(replacement.acknowledgedReady).to.exist;
+
+		oldHandle.releaseLegacyBarrier();
+		expect(replacement.ready).to.be.true;
+		const replacementReady =
+			coordinator._localCapabilityReadyBySession.get(peerSession);
+		expect(replacementReady?.advertisement).to.equal(replacement);
+
+		oldAck.resolve({
+			receiverTransportSession,
+			requestNotBeforeMs: Date.now(),
+		});
+		await oldHandle.firstAttempt;
+		expect(
+			coordinator._localCapabilityAdvertisementsByPeer.get(peerHash),
+		).to.equal(replacement);
+		expect(
+			coordinator._localCapabilityContextBySession.get(peerSession),
+		).to.equal(replacement.context);
+		expect(
+			coordinator._localCapabilityReadyBySession.get(peerSession),
+		).to.equal(replacementReady);
+		expect(replacement.controller.signal.aborted).to.be.false;
+		expect(replacement.ready).to.be.true;
+	});
+
+	it("cancels a capability generation across lifecycle abort and reopen", async () => {
+		const pending = pDefer<{
+			receiverTransportSession: bigint;
+			requestNotBeforeMs: number;
+		}>();
+		refreshLocalCapability.onFirstCall().callsFake(() => pending.promise);
+		refreshLocalCapability.onSecondCall().resolves({
+			receiverTransportSession,
+			requestNotBeforeMs: Date.now(),
+		});
+		const oldSession = currentSession;
+		const oldLifecycle = new AbortController();
+		const staleHandle = coordinator.advertiseLocalCapability({
+			target: sender,
+			peerSession: oldSession,
+			receiveEpoch: currentReceiveEpoch,
+			signal: oldLifecycle.signal,
+		});
+		oldLifecycle.abort();
+		staleHandle.releaseLegacyBarrier();
+		pending.resolve({
+			receiverTransportSession,
+			requestNotBeforeMs: Date.now(),
+		});
+		await staleHandle.firstAttempt;
+		expect(coordinator._localCapabilityAdvertisementsByPeer.size).to.equal(0);
+		expect(coordinator._localCapabilityReadyBySession.has(oldSession)).to.be
+			.false;
+
+		currentSession = {};
+		currentReceiveEpoch = {};
+		const currentLifecycle = new AbortController();
+		const currentHandle = coordinator.advertiseLocalCapability({
+			target: sender,
+			peerSession: currentSession,
+			receiveEpoch: currentReceiveEpoch,
+			signal: currentLifecycle.signal,
+		});
+		await currentHandle.firstAttempt;
+		currentHandle.releaseLegacyBarrier();
+		expect(coordinator._localCapabilityReadyBySession.has(currentSession)).to.be
+			.true;
+	});
+
+	it("bounds repeated local capability starts to one retry slot", async () => {
+		const clock = sinon.useFakeTimers({ now: 4_000 });
+		refreshLocalCapability.rejects(new Error("advert failed"));
+		coordinator = createCoordinator({
+			requestRetryMs: 5,
+			maxRequestRetryMs: 20,
+		});
+		const lifecycle = new AbortController();
+		const first = coordinator.advertiseLocalCapability({
+			target: sender,
+			peerSession: currentSession,
+			receiveEpoch: currentReceiveEpoch,
+			signal: lifecycle.signal,
+		});
+		for (let index = 0; index < 10_000; index++) {
+			const coalesced = coordinator.advertiseLocalCapability({
+				target: sender,
+				peerSession: currentSession,
+				receiveEpoch: currentReceiveEpoch,
+				signal: lifecycle.signal,
+			});
+			expect(coalesced.firstAttempt).to.equal(first.firstAttempt);
+		}
+		await first.firstAttempt;
+		expect(refreshLocalCapability.calledOnce).to.be.true;
+		expect(coordinator._localCapabilityAdvertisementsByPeer.size).to.equal(1);
+		const state =
+			coordinator._localCapabilityAdvertisementsByPeer.get(peerHash)!;
+		expect(state.attempts).to.equal(1);
+		expect(state.timer).to.exist;
+
+		await clock.tickAsync(5 + 10 + 20 + 20);
+		expect(refreshLocalCapability.callCount).to.equal(5);
+		expect(coordinator._localCapabilityAdvertisementsByPeer.size).to.equal(1);
+		expect(state.timer).to.exist;
+	});
+
+	it("fences a capability retry when the local transport session rotates", async () => {
+		const clock = sinon.useFakeTimers({ now: 5_000 });
+		let localTransportSession = receiverTransportSession;
+		refreshLocalCapability.rejects(new Error("advert failed"));
+		coordinator = new ReplicationInfoV2ReceiveCoordinator({
+			getSelfKey: () => self,
+			getReceiverTransportSession: () => localTransportSession,
+			isClosed: () => closed,
+			isPeerSessionCurrent: (_peerHash, peerSession) =>
+				peerSession === currentSession,
+			isReceiveEpochCurrent: (_peerHash, receiveEpoch) =>
+				receiveEpoch === currentReceiveEpoch,
+			isPeerStateCurrent: (_peerHash, peerSession, receiveEpoch) =>
+				peerSession === currentSession && receiveEpoch === currentReceiveEpoch,
+			isSenderTransportSessionCurrent: (_peerHash, transportSession) =>
+				transportSession === currentSenderTransportSession,
+			sendRequest,
+			refreshLocalCapability,
+			requestRetryMs: 5,
+			maxRequestRetryMs: 20,
+		});
+		const lifecycle = new AbortController();
+		const handle = coordinator.advertiseLocalCapability({
+			target: sender,
+			peerSession: currentSession,
+			receiveEpoch: currentReceiveEpoch,
+			signal: lifecycle.signal,
+		});
+		await handle.firstAttempt;
+		const stale =
+			coordinator._localCapabilityAdvertisementsByPeer.get(peerHash)!;
+		expect(stale.timer).to.exist;
+
+		localTransportSession++;
+		handle.releaseLegacyBarrier();
+		await clock.tickAsync(5);
+		expect(refreshLocalCapability.calledOnce).to.be.true;
+		expect(stale.controller.signal.aborted).to.be.true;
+		expect(stale.timer).to.be.undefined;
+		expect(coordinator._localCapabilityAdvertisementsByPeer.size).to.equal(0);
+		expect(coordinator._localCapabilityReadyBySession.has(currentSession)).to.be
+			.false;
+	});
+
+	it("clears an ACKed advert when transport rotates before barrier release", async () => {
+		let localTransportSession = receiverTransportSession;
+		coordinator = new ReplicationInfoV2ReceiveCoordinator({
+			getSelfKey: () => self,
+			getReceiverTransportSession: () => localTransportSession,
+			isClosed: () => closed,
+			isPeerSessionCurrent: (_peerHash, peerSession) =>
+				peerSession === currentSession,
+			isReceiveEpochCurrent: (_peerHash, receiveEpoch) =>
+				receiveEpoch === currentReceiveEpoch,
+			isPeerStateCurrent: (_peerHash, peerSession, receiveEpoch) =>
+				peerSession === currentSession && receiveEpoch === currentReceiveEpoch,
+			isSenderTransportSessionCurrent: (_peerHash, transportSession) =>
+				transportSession === currentSenderTransportSession,
+			sendRequest,
+			refreshLocalCapability,
+		});
+		const lifecycle = new AbortController();
+		const handle = coordinator.advertiseLocalCapability({
+			target: sender,
+			peerSession: currentSession,
+			receiveEpoch: currentReceiveEpoch,
+			signal: lifecycle.signal,
+		});
+		await handle.firstAttempt;
+		const stale =
+			coordinator._localCapabilityAdvertisementsByPeer.get(peerHash)!;
+		expect(stale.acknowledgedReady).to.exist;
+
+		localTransportSession++;
+		handle.releaseLegacyBarrier();
+		expect(stale.controller.signal.aborted).to.be.true;
+		expect(coordinator._localCapabilityAdvertisementsByPeer.size).to.equal(0);
+		expect(coordinator._localCapabilityReadyBySession.has(currentSession)).to.be
+			.false;
+		expect(coordinator._localCapabilityContextBySession.has(currentSession)).to
+			.be.false;
+	});
+
+	it("recovers before remote capability without bypassing the opening barrier", async () => {
+		const clock = sinon.useFakeTimers({ now: 5_100 });
+		refreshLocalCapability.onFirstCall().rejects(new Error("advert failed"));
+		refreshLocalCapability.onSecondCall().callsFake(async () => ({
+			receiverTransportSession,
+			requestNotBeforeMs: Date.now(),
+		}));
+		const oldEpoch = currentReceiveEpoch;
+		const lifecycle = new AbortController();
+		const openingHandle = coordinator.advertiseLocalCapability({
+			target: sender,
+			peerSession: currentSession,
+			receiveEpoch: oldEpoch,
+			signal: lifecycle.signal,
+		});
+		await openingHandle.firstAttempt;
+		const openingAdvertisement =
+			coordinator._localCapabilityAdvertisementsByPeer.get(peerHash)!;
+
+		peerStateReady = false;
+		currentReceiveEpoch = {};
+		expect(
+			coordinator.reAdvertiseLocalCapabilityForRecovery({
+				peerHash,
+				peerSession: currentSession,
+				receiveEpoch: currentReceiveEpoch,
+			}),
+		).to.be.true;
+		const replacement =
+			coordinator._localCapabilityAdvertisementsByPeer.get(peerHash)!;
+		await replacement.firstAttempt;
+		expect(replacement).not.to.equal(openingAdvertisement);
+		expect(replacement.context).to.equal(openingAdvertisement.context);
+		expect(replacement.receiveEpoch).to.equal(currentReceiveEpoch);
+		expect(replacement.ready).to.be.false;
+		expect(refreshLocalCapability.calledOnce).to.be.true;
+
+		peerStateReady = true;
+		await clock.tickAsync(5);
+		expect(refreshLocalCapability.callCount).to.equal(2);
+		expect(replacement.acknowledgedReady).to.exist;
+		expect(replacement.ready).to.be.false;
+		expect(observeSender()).to.be.true;
+		expect(coordinator._receiveStates.get(peerHash)?.receiverBinding).to.be
+			.undefined;
+
+		openingHandle.releaseLegacyBarrier();
+		expect(replacement.ready).to.be.true;
+		expect(coordinator._receiveStates.get(peerHash)?.receiverBinding).to.exist;
+		await clock.tickAsync(1);
+		expect(sendRequest.calledOnce).to.be.true;
+	});
+
+	it("keeps recovery readiness across remote sender-state replacement", async () => {
+		refreshLocalCapability.onFirstCall().rejects(new Error("advert failed"));
+		refreshLocalCapability.onSecondCall().resolves({
+			receiverTransportSession,
+			requestNotBeforeMs: Date.now(),
+		});
+		const lifecycle = new AbortController();
+		const openingHandle = coordinator.advertiseLocalCapability({
+			target: sender,
+			peerSession: currentSession,
+			receiveEpoch: currentReceiveEpoch,
+			signal: lifecycle.signal,
+		});
+		await openingHandle.firstAttempt;
+		openingHandle.releaseLegacyBarrier();
+
+		currentReceiveEpoch = {};
+		expect(
+			coordinator.reAdvertiseLocalCapabilityForRecovery({
+				peerHash,
+				peerSession: currentSession,
+				receiveEpoch: currentReceiveEpoch,
+			}),
+		).to.be.true;
+		const advertisement =
+			coordinator._localCapabilityAdvertisementsByPeer.get(peerHash)!;
+		await advertisement.firstAttempt;
+		expect(advertisement.ready).to.be.true;
+		expect(observeSender()).to.be.true;
+		const oldState = coordinator._receiveStates.get(peerHash)!;
+		const oldBinding = oldState.receiverBinding!.slice();
+		const ready =
+			coordinator._localCapabilityReadyBySession.get(currentSession);
+
+		currentSenderTransportSession++;
+		expect(observeSender(2n, currentSenderTransportSession)).to.be.true;
+		const replacementState = coordinator._receiveStates.get(peerHash)!;
+		expect(oldState.controller.signal.aborted).to.be.true;
+		expect(replacementState).not.to.equal(oldState);
+		expect([...replacementState.receiverBinding!]).not.to.deep.equal([
+			...oldBinding,
+		]);
+		expect(
+			coordinator._localCapabilityReadyBySession.get(currentSession),
+		).to.equal(ready);
+		expect(
+			coordinator._localCapabilityAdvertisementsByPeer.get(peerHash),
+		).to.equal(advertisement);
+		expect(advertisement.controller.signal.aborted).to.be.false;
+		expect(lifecycle.signal.aborted).to.be.false;
+	});
+
+	it("uses immediate refreshGrant after cutover without a parallel advert", async () => {
+		const clock = sinon.useFakeTimers({ now: 5_200 });
+		const lifecycle = new AbortController();
+		const openingHandle = coordinator.advertiseLocalCapability({
+			target: sender,
+			peerSession: currentSession,
+			receiveEpoch: currentReceiveEpoch,
+			signal: lifecycle.signal,
+		});
+		await openingHandle.firstAttempt;
+		openingHandle.releaseLegacyBarrier();
+		expect(observeSender()).to.be.true;
+		const state = coordinator._receiveStates.get(peerHash)!;
+		const full = new FullReplicationInfoV2Message({
+			receiverChallenge: state.receiverBinding!.slice(),
+			senderEpoch: bytes(8),
+			sequence: 1n,
+			segments: [],
+		});
+		const admission = prepare(full);
+		expect(admission).to.exist;
+		expect(coordinator.commit(admission!)).to.be.true;
+		const advertisement =
+			coordinator._localCapabilityAdvertisementsByPeer.get(peerHash)!;
+		const refreshesBeforeRecovery = refreshLocalCapability.callCount;
+
+		expect(
+			coordinator.advanceRecovery({
+				peerHash,
+				peerSession: currentSession,
+				receiveEpoch: currentReceiveEpoch,
+			}),
+		).to.be.true;
+		expect(
+			coordinator.reAdvertiseLocalCapabilityForRecovery({
+				peerHash,
+				peerSession: currentSession,
+				receiveEpoch: currentReceiveEpoch,
+			}),
+		).to.be.false;
+		expect(
+			coordinator._localCapabilityAdvertisementsByPeer.get(peerHash),
+		).to.equal(advertisement);
+		await clock.tickAsync(0);
+		expect(refreshLocalCapability.callCount).to.equal(
+			refreshesBeforeRecovery + 1,
+		);
+		await clock.tickAsync(1);
+		expect(sendRequest.calledOnce).to.be.true;
 	});
 
 	it("orders Full, Added and recovery Full independently of transport time", () => {
@@ -1077,6 +1742,8 @@ describe("receive admission replication-info V2 receiver state", () => {
 			isClosed: () => false,
 			isPeerSessionOpen: (_hash, peerSession) =>
 				peerSession === senderPeerSession,
+			isPeerSessionCurrent: (_hash, peerSession) =>
+				peerSession === senderPeerSession,
 			captureReplicationOwnershipLifecycle: () => ownershipController,
 			isReplicationOwnershipLifecycleActive: (controller) =>
 				controller === ownershipController && !controller.signal.aborted,
@@ -1207,6 +1874,179 @@ describe("receive admission replication-info V2 receiver integration", () => {
 			},
 			{ timeout: 20_000 },
 		);
+	});
+
+	it("recovers first capability-advert failures for both exact peer sessions", async () => {
+		session = await TestSession.disconnected(2);
+		const store1 = new EventStore();
+		const store2 = new EventStore({ id: store1.id });
+		const logs = [store1.log as any, store2.log as any];
+		const adverts: sinon.SinonStub[] = [];
+		for (const log of logs) {
+			const original =
+				log.advertiseReplicationInfoV2ReceiveCapability.bind(log);
+			let first = true;
+			adverts.push(
+				sinon
+					.stub(log, "advertiseReplicationInfoV2ReceiveCapability")
+					.callsFake(async (...args: unknown[]) => {
+						if (first) {
+							first = false;
+							throw new Error("first capability advert failed");
+						}
+						return original(...args);
+					}),
+			);
+		}
+		const db1 = await session.peers[0].open(store1, {
+			args: { replicate: false, timeUntilRoleMaturity: 0 },
+		});
+		const db2 = await session.peers[1].open(store2, {
+			args: { replicate: 1, timeUntilRoleMaturity: 0 },
+		});
+		await session.connect([[session.peers[0], session.peers[1]]]);
+		const log1 = db1.log as any;
+		const log2 = db2.log as any;
+		const hash1 = session.peers[0].identity.publicKey.hashcode();
+		const hash2 = session.peers[1].identity.publicKey.hashcode();
+
+		await waitForResolved(
+			() => {
+				expect(log1._v2Receive._receiveStates.get(hash2)?.phase).to.equal(
+					"active",
+				);
+				expect(log2._v2Receive._receiveStates.get(hash1)?.phase).to.equal(
+					"active",
+				);
+				expect(adverts[0].callCount).to.be.greaterThanOrEqual(2);
+				expect(adverts[1].callCount).to.be.greaterThanOrEqual(2);
+				const advert1 =
+					log1._v2Receive._localCapabilityAdvertisementsByPeer.get(hash2);
+				const advert2 =
+					log2._v2Receive._localCapabilityAdvertisementsByPeer.get(hash1);
+				expect(advert1?.ready).to.be.true;
+				expect(advert2?.ready).to.be.true;
+				expect(advert1?.peerSession).to.equal(
+					log1._peerSessions.current(hash2),
+				);
+				expect(advert2?.peerSession).to.equal(
+					log2._peerSessions.current(hash1),
+				);
+			},
+			{ timeout: 20_000 },
+		);
+	});
+
+	it("restores a rejected V2 delta with a Full while its legacy sidecar is suppressed", async () => {
+		session = await TestSession.connected(2);
+		const db1 = await session.peers[0].open(new EventStore(), {
+			args: { replicate: false, timeUntilRoleMaturity: 0 },
+		});
+		const db2 = await EventStore.open<EventStore<string, any>>(
+			db1.address!,
+			session.peers[1],
+			{
+				args: { replicate: 1, timeUntilRoleMaturity: 0 },
+			},
+		);
+		const receiver = db1.log as any;
+		const senderLog = db2.log as any;
+		const senderHash = session.peers[1].identity.publicKey.hashcode();
+		const receiverHash = session.peers[0].identity.publicKey.hashcode();
+		await waitForResolved(
+			() => {
+				expect(
+					receiver._v2Receive._receiveStates.get(senderHash)?.phase,
+				).to.equal("active");
+				expect(senderLog._v2Send._sendStates.get(receiverHash)?.established).to
+					.be.true;
+			},
+			{ timeout: 20_000 },
+		);
+
+		const range = new ReplicationRangeMessageU64({
+			id: bytes(42),
+			offset: 10n,
+			factor: 10n,
+			timestamp: 10n,
+			mode: ReplicationIntent.NonStrict,
+		});
+		const indexedRange = range.toReplicationRangeIndexable(
+			session.peers[1].identity.publicKey,
+		);
+		const legacy = new AddedReplicationSegmentMessage({ segments: [range] });
+		const getSegments = sinon
+			.stub(senderLog, "getMyReplicationSegments")
+			.resolves([indexedRange]);
+		const originalSend = senderLog.rpc.send.bind(senderLog.rpc);
+		let rejectedV2Delta = 0;
+		let suppressedLegacy = 0;
+		let recoveryFull: FullReplicationInfoV2Message | undefined;
+		const send = sinon
+			.stub(senderLog.rpc, "send")
+			.callsFake(async (message: unknown, options: unknown) => {
+				if (message === legacy) {
+					suppressedLegacy++;
+					return [];
+				}
+				if (
+					message instanceof AddedReplicationInfoV2Message &&
+					rejectedV2Delta === 0
+				) {
+					rejectedV2Delta++;
+					throw new Error("ambiguous V2 delta delivery");
+				}
+				if (message instanceof FullReplicationInfoV2Message) {
+					recoveryFull = message;
+				}
+				return originalSend(message, options);
+			});
+		const queueLegacyRepair = sinon.stub(
+			senderLog._announcements,
+			"queueCurrentReplicationStateAnnouncementRepair",
+		);
+		(senderLog._v2Send as any).sendRetryMs = 25;
+		(senderLog._v2Send as any).maxSendRetryMs = 50;
+
+		try {
+			await senderLog._announcements.sendReplicationAnnouncement(legacy);
+			await senderLog._v2Send.drain();
+			const failedState = senderLog._v2Send._sendStates.get(receiverHash);
+			expect(rejectedV2Delta).to.equal(1);
+			expect(suppressedLegacy).to.equal(1);
+			expect(failedState?.suspended).to.be.true;
+			const beforeRecovery = await receiver.replicationIndex
+				.iterate({ query: { hash: senderHash } })
+				.all();
+			expect(
+				beforeRecovery.some(
+					(result: any) => result.value.idString === indexedRange.idString,
+				),
+			).to.be.false;
+
+			await waitForResolved(
+				async () => {
+					const ranges = await receiver.replicationIndex
+						.iterate({ query: { hash: senderHash } })
+						.all();
+					expect(
+						ranges.map((result: any) => result.value.idString),
+					).to.deep.equal([indexedRange.idString]);
+					expect(
+						receiver._v2Receive._receiveStates.get(senderHash)?.phase,
+					).to.equal("active");
+				},
+				{ timeout: 10_000 },
+			);
+			expect(recoveryFull).to.exist;
+			expect(recoveryFull!.sequence).to.equal(failedState!.nextSequence - 1n);
+			expect(getSegments.called).to.be.true;
+			expect(queueLegacyRepair.calledOnce).to.be.true;
+		} finally {
+			queueLegacyRepair.restore();
+			send.restore();
+			getSegments.restore();
+		}
 	});
 
 	it("rejects transport-generation downgrade replay on the signed host path", async () => {

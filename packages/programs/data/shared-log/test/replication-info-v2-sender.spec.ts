@@ -33,13 +33,37 @@ describe("receive admission replication-info V2 sender streams", () => {
 	const self = key(1);
 	const peerA = key(2);
 	const peerB = key(3);
-	const senderTransportSession = 0x20000000000001n;
+	const initialSenderTransportSession = 0x20000000000001n;
+	let senderTransportSession: bigint;
 	let closed: boolean;
 	let openSessions: Set<object>;
+	let closedReadinessGates: Set<object>;
 	let rpcSend: sinon.SinonStub;
 	let getSegments: sinon.SinonStub;
 	let ownershipController: AbortController;
 	let coordinator: ReplicationInfoV2SendCoordinator<"u32">;
+
+	const createCoordinator = (options?: {
+		sendRetryMs?: number;
+		maxSendRetryMs?: number;
+	}) =>
+		new ReplicationInfoV2SendCoordinator<"u32">({
+			getRpc: () => ({ send: rpcSend }) as any,
+			getSelfKey: () => self,
+			getSenderTransportSession: () => senderTransportSession,
+			getMyReplicationSegments: getSegments,
+			validatePersistedReplicationRangeSnapshot: () => {},
+			isClosed: () => closed,
+			isPeerSessionCurrent: (_peerHash, peerSession) =>
+				openSessions.has(peerSession),
+			isPeerSessionOpen: (_peerHash, peerSession) =>
+				openSessions.has(peerSession) && !closedReadinessGates.has(peerSession),
+			captureReplicationOwnershipLifecycle: () => ownershipController,
+			isReplicationOwnershipLifecycleActive: (controller) =>
+				controller === ownershipController && !controller.signal.aborted,
+			sendRetryMs: options?.sendRetryMs,
+			maxSendRetryMs: options?.maxSendRetryMs,
+		});
 
 	const makeRequest = (
 		receiverChallenge: Uint8Array,
@@ -69,23 +93,13 @@ describe("receive admission replication-info V2 sender streams", () => {
 
 	beforeEach(() => {
 		closed = false;
+		senderTransportSession = initialSenderTransportSession;
 		openSessions = new Set();
+		closedReadinessGates = new Set();
 		rpcSend = sinon.stub().resolves([]);
 		getSegments = sinon.stub().resolves([]);
 		ownershipController = new AbortController();
-		coordinator = new ReplicationInfoV2SendCoordinator<"u32">({
-			getRpc: () => ({ send: rpcSend }) as any,
-			getSelfKey: () => self,
-			getSenderTransportSession: () => senderTransportSession,
-			getMyReplicationSegments: getSegments,
-			validatePersistedReplicationRangeSnapshot: () => {},
-			isClosed: () => closed,
-			isPeerSessionOpen: (_peerHash, peerSession) =>
-				openSessions.has(peerSession),
-			captureReplicationOwnershipLifecycle: () => ownershipController,
-			isReplicationOwnershipLifecycleActive: (controller) =>
-				controller === ownershipController && !controller.signal.aborted,
-		});
+		coordinator = createCoordinator();
 	});
 
 	afterEach(() => {
@@ -118,6 +132,18 @@ describe("receive admission replication-info V2 sender streams", () => {
 		openSessions.delete(peerSession);
 		expect(accept(peerA, peerSession, challenge(4))).to.be.false;
 		await coordinator.drain();
+		expect(rpcSend.notCalled).to.be.true;
+		expect(coordinator._sendStates.size).to.equal(0);
+	});
+
+	it("rejects a request when captured ownership is already inactive", async () => {
+		const peerSession = {};
+		openSessions.add(peerSession);
+		ownershipController.abort();
+
+		expect(accept(peerA, peerSession, challenge(41))).to.be.false;
+		await coordinator.drain();
+		expect(getSegments.notCalled).to.be.true;
 		expect(rpcSend.notCalled).to.be.true;
 		expect(coordinator._sendStates.size).to.equal(0);
 	});
@@ -267,6 +293,33 @@ describe("receive admission replication-info V2 sender streams", () => {
 		expect(rpcSend.calledOnce).to.be.true;
 	});
 
+	it("fences an old state when the local sender transport session rotates", async () => {
+		const peerSession = {};
+		openSessions.add(peerSession);
+		const oldSnapshot = pDefer<never[]>();
+		getSegments.onFirstCall().returns(oldSnapshot.promise);
+		expect(accept(peerA, peerSession, challenge(42), 10n)).to.be.true;
+		await waitForResolved(() => expect(getSegments.calledOnce).to.be.true);
+		const oldState = coordinator._sendStates.get(peerA.hashcode())!;
+
+		senderTransportSession += 1n;
+		oldSnapshot.resolve([]);
+		await coordinator.drain();
+		expect(oldState.controller.signal.aborted).to.be.true;
+		expect(coordinator._sendStates.size).to.equal(0);
+		expect(rpcSend.notCalled).to.be.true;
+
+		expect(accept(peerA, peerSession, challenge(43), 11n)).to.be.true;
+		await coordinator.drain();
+		expect(rpcSend.calledOnce).to.be.true;
+		const replacement = rpcSend.firstCall
+			.args[0] as FullReplicationInfoV2Message;
+		expect(replacement.sequence).to.equal(1n);
+		expect(coordinator._sendStates.get(peerA.hashcode())?.peerSession).to.equal(
+			peerSession,
+		);
+	});
+
 	it("keeps independent sequences and challenges for two destinations", async () => {
 		const sessionA = {};
 		const sessionB = {};
@@ -355,6 +408,379 @@ describe("receive admission replication-info V2 sender streams", () => {
 		expect(failedState?.established).to.be.true;
 	});
 
+	it("self-heals an ambiguous send with a Full at the next sequence", async () => {
+		const clock = sinon.useFakeTimers();
+		coordinator.clearForClose();
+		coordinator = createCoordinator({ sendRetryMs: 5, maxSendRetryMs: 20 });
+		const peerSession = {};
+		openSessions.add(peerSession);
+		rpcSend.onFirstCall().rejects(new Error("ambiguous delivery"));
+		rpcSend.onSecondCall().resolves([]);
+
+		expect(accept(peerA, peerSession, challenge(26))).to.be.true;
+		await coordinator.drain();
+		const state = coordinator._sendStates.get(peerA.hashcode())!;
+		expect(state.suspended).to.be.true;
+		expect(state.nextSequence).to.equal(2n);
+		expect(state.retryAttempts).to.equal(1);
+		expect(state.retryTimer).to.exist;
+		expect((state.retryTimer as any).hasRef()).to.be.false;
+
+		await clock.tickAsync(5);
+		await coordinator.drain();
+		expect(rpcSend.callCount).to.equal(2);
+		expect(rpcSend.firstCall.args[0]).to.be.instanceOf(
+			FullReplicationInfoV2Message,
+		);
+		const recovered = rpcSend.secondCall
+			.args[0] as FullReplicationInfoV2Message;
+		expect(recovered).to.be.instanceOf(FullReplicationInfoV2Message);
+		expect(recovered.sequence).to.equal(2n);
+		expect(state.suspended).to.be.false;
+		expect(state.retryAttempts).to.equal(0);
+		expect(state.retryTimer).to.be.undefined;
+	});
+
+	it("parks sequence one when readiness closes during snapshot creation", async () => {
+		const clock = sinon.useFakeTimers();
+		coordinator.clearForClose();
+		coordinator = createCoordinator({ sendRetryMs: 5, maxSendRetryMs: 20 });
+		const peerSession = {};
+		openSessions.add(peerSession);
+		const snapshot = pDefer<never[]>();
+		getSegments.returns(snapshot.promise);
+
+		expect(accept(peerA, peerSession, challenge(36))).to.be.true;
+		await clock.tickAsync(0);
+		expect(getSegments.calledOnce).to.be.true;
+		closedReadinessGates.add(peerSession);
+		snapshot.resolve([]);
+		await coordinator.drain();
+
+		const state = coordinator._sendStates.get(peerA.hashcode())!;
+		expect(rpcSend.notCalled).to.be.true;
+		expect(state.nextSequence).to.equal(1n);
+		expect(state.suspended).to.be.true;
+		expect(state.pending).to.deep.equal({ kind: "snapshot" });
+		expect(state.retryTimer).to.exist;
+
+		closedReadinessGates.delete(peerSession);
+		await clock.tickAsync(5);
+		await coordinator.drain();
+		expect(rpcSend.calledOnce).to.be.true;
+		const resumed = rpcSend.firstCall.args[0] as FullReplicationInfoV2Message;
+		expect(resumed.sequence).to.equal(1n);
+		expect(state.established).to.be.true;
+	});
+
+	it("recovers when readiness closes before a successful send continuation", async () => {
+		const clock = sinon.useFakeTimers();
+		coordinator.clearForClose();
+		coordinator = createCoordinator({ sendRetryMs: 5, maxSendRetryMs: 20 });
+		const peerSession = {};
+		openSessions.add(peerSession);
+		let closeGateOnSend = true;
+		rpcSend.callsFake(async () => {
+			if (closeGateOnSend) {
+				closeGateOnSend = false;
+				closedReadinessGates.add(peerSession);
+			}
+			return [];
+		});
+
+		expect(accept(peerA, peerSession, challenge(44))).to.be.true;
+		await coordinator.drain();
+		const state = coordinator._sendStates.get(peerA.hashcode())!;
+		expect(rpcSend.calledOnce).to.be.true;
+		expect(rpcSend.firstCall.args[0].sequence).to.equal(1n);
+		expect(state.nextSequence).to.equal(2n);
+		expect(state.suspended).to.be.true;
+		expect(state.pending).to.deep.equal({ kind: "snapshot" });
+
+		closedReadinessGates.delete(peerSession);
+		await clock.tickAsync(5);
+		await coordinator.drain();
+		expect(rpcSend.callCount).to.equal(2);
+		const recovered = rpcSend.secondCall
+			.args[0] as FullReplicationInfoV2Message;
+		expect(recovered).to.be.instanceOf(FullReplicationInfoV2Message);
+		expect(recovered.sequence).to.equal(2n);
+		expect(state.established).to.be.true;
+	});
+
+	it("recovers a consumed sequence rejection after the readiness gate reopens", async () => {
+		const clock = sinon.useFakeTimers();
+		coordinator.clearForClose();
+		coordinator = createCoordinator({ sendRetryMs: 5, maxSendRetryMs: 20 });
+		const peerSession = {};
+		openSessions.add(peerSession);
+		expect(accept(peerA, peerSession, challenge(37))).to.be.true;
+		await coordinator.drain();
+		const initial = rpcSend.firstCall.args[0] as FullReplicationInfoV2Message;
+		const rejectedSend = pDefer<void>();
+		rpcSend.onSecondCall().returns(rejectedSend.promise);
+
+		coordinator.enqueue(new AddedReplicationSegmentMessage({ segments: [] }));
+		await clock.tickAsync(0);
+		expect(rpcSend.callCount).to.equal(2);
+		expect(rpcSend.secondCall.args[0].sequence).to.equal(2n);
+		closedReadinessGates.add(peerSession);
+		rejectedSend.reject(new Error("gate closed after sequence consumption"));
+		await coordinator.drain();
+
+		const state = coordinator._sendStates.get(peerA.hashcode())!;
+		expect(state.nextSequence).to.equal(3n);
+		expect(state.inFlightSequence).to.be.undefined;
+		expect(state.suspended).to.be.true;
+		expect(state.pending).to.deep.equal({ kind: "snapshot" });
+
+		closedReadinessGates.delete(peerSession);
+		await clock.tickAsync(5);
+		await coordinator.drain();
+		expect(rpcSend.callCount).to.equal(3);
+		const recovered = rpcSend.thirdCall.args[0] as FullReplicationInfoV2Message;
+		expect(recovered).to.be.instanceOf(FullReplicationInfoV2Message);
+		expect(recovered.sequence).to.equal(3n);
+		expect([...recovered.senderEpoch]).to.deep.equal([...initial.senderEpoch]);
+		expect([...recovered.receiverChallenge]).to.deep.equal([
+			...initial.receiverChallenge,
+		]);
+	});
+
+	it("spends a MAX_U64 stream before ownership teardown can retain it", async () => {
+		const peerSession = {};
+		openSessions.add(peerSession);
+		expect(accept(peerA, peerSession, challenge(38))).to.be.true;
+		await coordinator.drain();
+		const state = coordinator._sendStates.get(peerA.hashcode())!;
+		state.nextSequence = (1n << 64n) - 1n;
+		rpcSend.resetHistory();
+		rpcSend.callsFake(
+			async (_message, options) =>
+				await new Promise<void>((_resolve, reject) => {
+					options.signal.addEventListener(
+						"abort",
+						() => reject(new Error("ownership closed at MAX_U64")),
+						{ once: true },
+					);
+				}),
+		);
+
+		coordinator.enqueue(new AddedReplicationSegmentMessage({ segments: [] }));
+		await waitForResolved(() => expect(rpcSend.calledOnce).to.be.true);
+		expect(rpcSend.firstCall.args[0].sequence).to.equal((1n << 64n) - 1n);
+		ownershipController.abort();
+		await coordinator.drain();
+
+		expect(state.inFlightSequence).to.be.undefined;
+		expect(coordinator._sendStates.has(peerA.hashcode())).to.be.false;
+		expect(coordinator._spentPeerSessions.has(peerSession)).to.be.true;
+		await coordinator.sendTerminalReset(new AbortController().signal);
+		expect(rpcSend.calledOnce).to.be.true;
+	});
+
+	it("lets an actual PeerSession replacement start a new binding at sequence one", async () => {
+		const oldPeerSession = {};
+		const newPeerSession = {};
+		openSessions.add(oldPeerSession);
+		expect(accept(peerA, oldPeerSession, challenge(39))).to.be.true;
+		await coordinator.drain();
+		const oldState = coordinator._sendStates.get(peerA.hashcode())!;
+		const oldBinding = (
+			rpcSend.firstCall.args[0] as FullReplicationInfoV2Message
+		).receiverChallenge.slice();
+
+		closedReadinessGates.add(oldPeerSession);
+		coordinator.enqueue(new AddedReplicationSegmentMessage({ segments: [] }));
+		expect(oldState.suspended).to.be.true;
+		expect(oldState.pending).to.deep.equal({ kind: "snapshot" });
+		openSessions.delete(oldPeerSession);
+		openSessions.add(newPeerSession);
+
+		expect(accept(peerA, newPeerSession, challenge(40), 2n)).to.be.true;
+		await coordinator.drain();
+		expect(oldState.controller.signal.aborted).to.be.true;
+		expect(rpcSend.callCount).to.equal(2);
+		const replacement = rpcSend.secondCall
+			.args[0] as FullReplicationInfoV2Message;
+		expect(replacement.sequence).to.equal(1n);
+		expect([...replacement.receiverChallenge]).to.not.deep.equal([
+			...oldBinding,
+		]);
+		expect(coordinator._sendStates.get(peerA.hashcode())?.peerSession).to.equal(
+			newPeerSession,
+		);
+	});
+
+	it("coalesces every backoff mutation into the current authoritative Full", async () => {
+		const clock = sinon.useFakeTimers();
+		coordinator.clearForClose();
+		coordinator = createCoordinator({ sendRetryMs: 5, maxSendRetryMs: 20 });
+		const peerSession = {};
+		openSessions.add(peerSession);
+		rpcSend.onFirstCall().rejects(new Error("ambiguous delivery"));
+		rpcSend.onSecondCall().resolves([]);
+
+		expect(accept(peerA, peerSession, challenge(27))).to.be.true;
+		await coordinator.drain();
+		const state = coordinator._sendStates.get(peerA.hashcode())!;
+		for (let index = 0; index < 10_000; index++) {
+			coordinator.enqueue(new AddedReplicationSegmentMessage({ segments: [] }));
+		}
+		expect(state.pending).to.deep.equal({ kind: "snapshot" });
+		expect(state.retryTimer).to.exist;
+
+		await clock.tickAsync(5);
+		await coordinator.drain();
+		expect(rpcSend.callCount).to.equal(2);
+		expect(rpcSend.secondCall.args[0]).to.be.instanceOf(
+			FullReplicationInfoV2Message,
+		);
+		expect(rpcSend.secondCall.args[0].sequence).to.equal(2n);
+		expect(getSegments.callCount).to.equal(2);
+	});
+
+	it("lets a newer same-challenge request preempt backoff exactly once", async () => {
+		const clock = sinon.useFakeTimers();
+		coordinator.clearForClose();
+		coordinator = createCoordinator({ sendRetryMs: 5, maxSendRetryMs: 20 });
+		const peerSession = {};
+		openSessions.add(peerSession);
+		const receiverChallenge = challenge(28);
+		rpcSend.onFirstCall().rejects(new Error("ambiguous delivery"));
+		rpcSend.onSecondCall().resolves([]);
+
+		expect(accept(peerA, peerSession, receiverChallenge, 10n)).to.be.true;
+		await coordinator.drain();
+		const state = coordinator._sendStates.get(peerA.hashcode())!;
+		expect(state.retryTimer).to.exist;
+		expect(accept(peerA, peerSession, receiverChallenge, 11n)).to.be.true;
+		await coordinator.drain();
+		expect(rpcSend.callCount).to.equal(2);
+		expect(rpcSend.secondCall.args[0].sequence).to.equal(2n);
+		expect(state.retryTimer).to.be.undefined;
+
+		await clock.tickAsync(1_000);
+		await coordinator.drain();
+		expect(rpcSend.callCount).to.equal(2);
+	});
+
+	it("fences retry timers on peer, reopen, session and ownership teardown", async () => {
+		const clock = sinon.useFakeTimers();
+		coordinator.clearForClose();
+		coordinator = createCoordinator({ sendRetryMs: 5, maxSendRetryMs: 20 });
+		const peerSession = {};
+		openSessions.add(peerSession);
+		rpcSend.rejects(new Error("ambiguous delivery"));
+
+		expect(accept(peerA, peerSession, challenge(29))).to.be.true;
+		await coordinator.drain();
+		const cleared = coordinator._sendStates.get(peerA.hashcode())!;
+		coordinator.clearPeer(peerA.hashcode(), peerSession);
+		expect(cleared.retryTimer).to.be.undefined;
+		await clock.tickAsync(100);
+		expect(rpcSend.callCount).to.equal(1);
+
+		rpcSend.resetHistory();
+		rpcSend.rejects(new Error("ambiguous delivery"));
+		const reopeningSession = {};
+		openSessions.add(reopeningSession);
+		expect(accept(peerA, reopeningSession, challenge(30))).to.be.true;
+		await coordinator.drain();
+		const reopening = coordinator._sendStates.get(peerA.hashcode())!;
+		coordinator.resetForOpen();
+		expect(reopening.retryTimer).to.be.undefined;
+		await clock.tickAsync(100);
+		expect(rpcSend.callCount).to.equal(1);
+
+		rpcSend.resetHistory();
+		rpcSend.rejects(new Error("ambiguous delivery"));
+		const rotatedSession = {};
+		openSessions.add(rotatedSession);
+		expect(accept(peerA, rotatedSession, challenge(31))).to.be.true;
+		await coordinator.drain();
+		openSessions.delete(rotatedSession);
+		await clock.tickAsync(5);
+		expect(rpcSend.callCount).to.equal(1);
+		expect(coordinator._sendStates.has(peerA.hashcode())).to.be.false;
+
+		rpcSend.resetHistory();
+		rpcSend.rejects(new Error("ambiguous delivery"));
+		const ownershipSession = {};
+		openSessions.add(ownershipSession);
+		expect(accept(peerA, ownershipSession, challenge(32))).to.be.true;
+		await coordinator.drain();
+		const retained = coordinator._sendStates.get(peerA.hashcode())!;
+		ownershipController.abort();
+		expect(retained.retryTimer).to.be.undefined;
+		await clock.tickAsync(5);
+		expect(rpcSend.callCount).to.equal(1);
+		expect(retained.retryTimer).to.be.undefined;
+		expect(coordinator._sendStates.get(peerA.hashcode())).to.equal(retained);
+	});
+
+	it("retires an ambiguous MAX_U64 attempt without scheduling a retry", async () => {
+		const clock = sinon.useFakeTimers();
+		coordinator.clearForClose();
+		coordinator = createCoordinator({ sendRetryMs: 5, maxSendRetryMs: 20 });
+		const peerSession = {};
+		openSessions.add(peerSession);
+		expect(accept(peerA, peerSession, challenge(33))).to.be.true;
+		await coordinator.drain();
+		const state = coordinator._sendStates.get(peerA.hashcode())!;
+		state.nextSequence = (1n << 64n) - 1n;
+		rpcSend.resetHistory();
+		rpcSend.rejects(new Error("ambiguous final delivery"));
+
+		coordinator.enqueue(new AddedReplicationSegmentMessage({ segments: [] }));
+		await coordinator.drain();
+		expect(rpcSend.calledOnce).to.be.true;
+		expect(rpcSend.firstCall.args[0].sequence).to.equal((1n << 64n) - 1n);
+		expect(coordinator._sendStates.has(peerA.hashcode())).to.be.false;
+		expect(coordinator._spentPeerSessions.has(peerSession)).to.be.true;
+		await clock.tickAsync(100);
+		expect(rpcSend.calledOnce).to.be.true;
+	});
+
+	it("backs off a failed destination without delaying another destination", async () => {
+		const clock = sinon.useFakeTimers();
+		coordinator.clearForClose();
+		coordinator = createCoordinator({ sendRetryMs: 5, maxSendRetryMs: 20 });
+		const sessionA = {};
+		const sessionB = {};
+		openSessions.add(sessionA);
+		openSessions.add(sessionB);
+		let failedA = false;
+		rpcSend.callsFake(async (_message, options) => {
+			if (!failedA && options.mode.to[0] === peerA.hashcode()) {
+				failedA = true;
+				throw new Error("peer A delivery failed");
+			}
+			return [];
+		});
+
+		expect(accept(peerA, sessionA, challenge(34))).to.be.true;
+		expect(accept(peerB, sessionB, challenge(35))).to.be.true;
+		await coordinator.drain();
+		expect(coordinator._sendStates.get(peerA.hashcode())?.retryTimer).to.exist;
+		expect(coordinator._sendStates.get(peerB.hashcode())?.established).to.be
+			.true;
+		coordinator.enqueue(new AddedReplicationSegmentMessage({ segments: [] }));
+		await coordinator.drain();
+		expect(
+			rpcSend.args.some(
+				(args) =>
+					args[1].mode.to[0] === peerB.hashcode() &&
+					args[0] instanceof AddedReplicationInfoV2Message,
+			),
+		).to.be.true;
+
+		await clock.tickAsync(5);
+		await coordinator.drain();
+		expect(coordinator._sendStates.get(peerA.hashcode())?.established).to.be
+			.true;
+	});
+
 	it("never wraps or recreates a stream after u64 exhaustion", async () => {
 		const peerSession = {};
 		openSessions.add(peerSession);
@@ -411,10 +837,49 @@ describe("receive admission replication-info V2 sender streams", () => {
 		expect(terminal.segments).to.deep.equal([]);
 	});
 
-	it("uses the last safe u64 sequence for an idle terminal reset", async () => {
+	it("consumes a new sequence for every terminal attempt, including sync throws", async () => {
+		const peerSessionA = {};
+		const peerSessionB = {};
+		openSessions.add(peerSessionA);
+		openSessions.add(peerSessionB);
+		expect(accept(peerA, peerSessionA, challenge(45))).to.be.true;
+		expect(accept(peerB, peerSessionB, challenge(46))).to.be.true;
+		await coordinator.drain();
+		const stateA = coordinator._sendStates.get(peerA.hashcode())!;
+		const stateB = coordinator._sendStates.get(peerB.hashcode())!;
+		ownershipController.abort();
+		rpcSend.resetHistory();
+		rpcSend.onFirstCall().throws(new Error("synchronous terminal failure"));
+		rpcSend.onSecondCall().resolves([]);
+
+		await coordinator.sendTerminalReset(new AbortController().signal);
+		expect(rpcSend.callCount).to.equal(2);
+		const failed = rpcSend.firstCall.args[0] as FullReplicationInfoV2Message;
+		const continued = rpcSend.secondCall
+			.args[0] as FullReplicationInfoV2Message;
+		expect(failed.sequence).to.equal(2n);
+		expect(continued.sequence).to.equal(2n);
+		expect(continued.segments).to.deep.equal([]);
+		expect(stateA.nextSequence).to.equal(3n);
+		expect(stateB.nextSequence).to.equal(3n);
+
+		await coordinator.sendTerminalReset(new AbortController().signal);
+		expect(rpcSend.callCount).to.equal(4);
+		const retriedA = rpcSend.thirdCall.args[0] as FullReplicationInfoV2Message;
+		const retriedB = rpcSend.getCall(3).args[0] as FullReplicationInfoV2Message;
+		expect(retriedA.sequence).to.equal(3n);
+		expect(retriedB.sequence).to.equal(3n);
+		expect(retriedA.segments).to.deep.equal([]);
+		expect(retriedB.segments).to.deep.equal([]);
+		expect(stateA.nextSequence).to.equal(4n);
+		expect(stateB.nextSequence).to.equal(4n);
+	});
+
+	it("spends the last u64 terminal sequence and cannot retry or recreate it", async () => {
 		const peerSession = {};
 		openSessions.add(peerSession);
-		expect(accept(peerA, peerSession, challenge(24))).to.be.true;
+		const receiverChallenge = challenge(24);
+		expect(accept(peerA, peerSession, receiverChallenge)).to.be.true;
 		await coordinator.drain();
 		const state = coordinator._sendStates.get(peerA.hashcode())!;
 		state.nextSequence = (1n << 64n) - 1n;
@@ -426,6 +891,17 @@ describe("receive admission replication-info V2 sender streams", () => {
 		const terminal = rpcSend.firstCall.args[0] as FullReplicationInfoV2Message;
 		expect(terminal.sequence).to.equal((1n << 64n) - 1n);
 		expect(terminal.segments).to.deep.equal([]);
+		expect(state.nextSequence).to.equal(1n << 64n);
+		expect(coordinator._spentPeerSessions.has(peerSession)).to.be.true;
+		expect(coordinator._sendStates.has(peerA.hashcode())).to.be.false;
+
+		rpcSend.resetHistory();
+		await coordinator.sendTerminalReset(new AbortController().signal);
+		expect(rpcSend.notCalled).to.be.true;
+		ownershipController = new AbortController();
+		expect(accept(peerA, peerSession, receiverChallenge, 2n)).to.be.false;
+		await coordinator.drain();
+		expect(rpcSend.notCalled).to.be.true;
 	});
 
 	it("uses the last safe u64 sequence after an ambiguous predecessor", async () => {

@@ -3415,6 +3415,8 @@ export class SharedLog<
 			validatePersistedReplicationRangeSnapshot: (ranges) =>
 				this.validatePersistedReplicationRangeSnapshot(ranges),
 			isClosed: () => this.closed,
+			isPeerSessionCurrent: (peerHash, peerSession) =>
+				this._peerSessions.isCurrent(peerHash, peerSession),
 			isPeerSessionOpen: (peerHash, peerSession) =>
 				this._peerSessions.isCurrent(peerHash, peerSession) &&
 				(peerSession as PeerSession).phase === "open" &&
@@ -3495,6 +3497,12 @@ export class SharedLog<
 					(this.node.services.pubsub as unknown as { session: number }).session,
 				),
 			isClosed: () => this.closed,
+			isPeerSessionCurrent: (peerHash, peerSession) =>
+				this._peerSessions.isCurrent(peerHash, peerSession) &&
+				(peerSession as PeerSession).phase === "open" &&
+				(peerSession as PeerSession).isActive(),
+			isReceiveEpochCurrent: (peerHash, receiveEpoch) =>
+				this._peerSessions.isReceiveEpochCurrent(peerHash, receiveEpoch),
 			isPeerStateCurrent: (peerHash, peerSession, receiveEpoch) =>
 				this._peerSessions.isCurrent(peerHash, peerSession) &&
 				(peerSession as PeerSession).phase === "open" &&
@@ -3532,6 +3540,8 @@ export class SharedLog<
 					}`,
 				);
 			},
+			onLocalCapabilityError: (error) =>
+				this.handleReplicationLifecycleSendError(error),
 		});
 	}
 
@@ -6527,10 +6537,16 @@ export class SharedLog<
 				// deliver the authoritative Full that completes recovery.
 				const peerSession = this._peerSessions.current(keyHash);
 				if (peerSession?.phase === "open") {
+					const receiveEpoch = this._peerSessions.receiveEpoch(keyHash);
 					this._v2Receive.advanceRecovery({
 						peerHash: keyHash,
 						peerSession,
-						receiveEpoch: this._peerSessions.receiveEpoch(keyHash),
+						receiveEpoch,
+					});
+					this._v2Receive.reAdvertiseLocalCapabilityForRecovery({
+						peerHash: keyHash,
+						peerSession,
+						receiveEpoch,
 					});
 				}
 			}
@@ -23548,76 +23564,46 @@ export class SharedLog<
 			expectedSubscriptionEpoch,
 		);
 
-		// Decode, sender and authenticated apply readiness are separate bits. Start
-		// the ACKed receiver-led negotiation before the legacy snapshot, but do not
-		// hold mixed-version replication discovery behind that round trip. Attach
-		// the rejection handler now because a lifecycle fence below may return before
-		// awaiting the advert. RequestV2 is armed only after both sends settle.
+		// Decode, sender and authenticated apply readiness are separate bits. An
+		// ACKed capability advert is the local half of receiver-led negotiation;
+		// readiness is promoted only after the legacy startup path has completed.
+		// This preserves mixed-version discovery without putting capability ACK
+		// latency on the subscription callback's critical path.
 		const receiveEpoch = this._peerSessions.receiveEpoch(peerHash);
 		const localCapabilityAdvertisement =
-			this.advertiseReplicationInfoV2ReceiveCapability({
+			this._v2Receive.advertiseLocalCapability({
 				target: publicKey,
 				peerSession: expectedSubscriptionEpoch,
 				receiveEpoch,
 				signal: replicationLifecycleController.signal,
-			}).catch((error) => {
-				this.handleReplicationLifecycleSendError(
-					error,
-					replicationLifecycleController,
-				);
-				return undefined;
 			});
 
-		let replicationSegments: ReplicationRangeIndexable<R>[];
 		try {
-			replicationSegments = await this.getMyReplicationSegments();
-		} catch (error) {
-			if (
-				!this.isReplicationLifecycleActive(replicationLifecycleController) &&
-				isNotStartedError(error as Error)
-			) {
-				return;
+			let replicationSegments: ReplicationRangeIndexable<R>[];
+			try {
+				replicationSegments = await this.getMyReplicationSegments();
+			} catch (error) {
+				if (
+					!this.isReplicationLifecycleActive(replicationLifecycleController) &&
+					isNotStartedError(error as Error)
+				) {
+					return;
+				}
+				throw error;
 			}
-			throw error;
-		}
-		if (
-			!this.isReplicationLifecycleActive(replicationLifecycleController) ||
-			!ownsSubscriptionEpoch()
-		) {
-			return;
-		}
-		if (replicationSegments.length > 0) {
-			const segments = replicationSegments.map((x) => x.toReplicationRange());
-			this.validatePersistedReplicationRangeSnapshot(segments);
-			await this.rpc
-				.send(
-					new AllReplicatingSegmentsMessage({
-						segments,
-					}),
-					{
-						mode: new AcknowledgeDelivery({ redundancy: 1, to: [publicKey] }),
-						signal: replicationLifecycleController.signal,
-					},
-				)
-				.catch((error) =>
-					this.handleReplicationLifecycleSendError(
-						error,
-						replicationLifecycleController,
-					),
-				);
 			if (
 				!this.isReplicationLifecycleActive(replicationLifecycleController) ||
 				!ownsSubscriptionEpoch()
 			) {
 				return;
 			}
-
-			if (this.v8Behaviour) {
-				// for backwards compatibility
+			if (replicationSegments.length > 0) {
+				const segments = replicationSegments.map((x) => x.toReplicationRange());
+				this.validatePersistedReplicationRangeSnapshot(segments);
 				await this.rpc
 					.send(
-						new ResponseRoleMessage({
-							role: this.getRoleFromReplicationSegments(replicationSegments),
+						new AllReplicatingSegmentsMessage({
+							segments,
 						}),
 						{
 							mode: new AcknowledgeDelivery({
@@ -23633,30 +23619,51 @@ export class SharedLog<
 							replicationLifecycleController,
 						),
 					);
+				if (
+					!this.isReplicationLifecycleActive(replicationLifecycleController) ||
+					!ownsSubscriptionEpoch()
+				) {
+					return;
+				}
+
+				if (this.v8Behaviour) {
+					// for backwards compatibility
+					await this.rpc
+						.send(
+							new ResponseRoleMessage({
+								role: this.getRoleFromReplicationSegments(replicationSegments),
+							}),
+							{
+								mode: new AcknowledgeDelivery({
+									redundancy: 1,
+									to: [publicKey],
+								}),
+								signal: replicationLifecycleController.signal,
+							},
+						)
+						.catch((error) =>
+							this.handleReplicationLifecycleSendError(
+								error,
+								replicationLifecycleController,
+							),
+						);
+				}
 			}
-		}
 
-		// Keep legacy request-based discovery independent of the capability ACK too.
-		// This makes mixed-version joins resilient to timing-sensitive delivery/order
-		// issues where we may miss the remote peer's initial announcement.
-		if (
-			this.isReplicationLifecycleActive(replicationLifecycleController) &&
-			ownsSubscriptionEpoch()
-		) {
-			this.scheduleReplicationInfoRequests(
-				publicKey,
-				replicationLifecycleController,
-			);
-		}
-
-		const localCapabilityReady = await localCapabilityAdvertisement;
-		if (localCapabilityReady) {
-			this._v2Receive.markLocalCapabilityReady({
-				peerHash,
-				peerSession: expectedSubscriptionEpoch,
-				receiveEpoch,
-				...localCapabilityReady,
-			});
+			// Keep legacy request-based discovery independent of the capability ACK.
+			// This makes mixed-version joins resilient to timing-sensitive delivery/order
+			// issues where we may miss the remote peer's initial announcement.
+			if (
+				this.isReplicationLifecycleActive(replicationLifecycleController) &&
+				ownsSubscriptionEpoch()
+			) {
+				this.scheduleReplicationInfoRequests(
+					publicKey,
+					replicationLifecycleController,
+				);
+			}
+		} finally {
+			localCapabilityAdvertisement.releaseLegacyBarrier();
 		}
 	}
 
