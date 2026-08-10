@@ -1,5 +1,11 @@
 # Changelog
 
+## 13.2.34
+
+### Patch Changes
+
+- [#1210](https://github.com/dao-xyz/peerbit/pull/1210) [`b6353df`](https://github.com/dao-xyz/peerbit/commit/b6353df56fcbf7e8b21be1720326f3089c4c4b4a) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Make authenticated replication-info V2 negotiation and destination streams recover independently of legacy sidecars.
+
 ## 13.2.33
 
 ### Patch Changes
