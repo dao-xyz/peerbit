@@ -351,10 +351,23 @@ export const SYNC_CAPABILITY_RAW_EXCHANGE_HEADS = 1;
 /**
  * Capability bit: the peer can decode the challenge-bound replication-info V2
  * variants [1, 6], [1, 7] and [1, 8]. This is decode support only and never
- * authorizes a sender to transmit V2. Use requires a separate receiver-led
- * negotiation that is intentionally outside this rollout.
+ * authorizes a sender to transmit V2. Use requires the separate receiver-led
+ * SEND/APPLY capability handshake below.
  */
 export const SYNC_CAPABILITY_REPLICATION_INFO_V2_DECODE = 1 << 1;
+
+/**
+ * Capability bit: the peer can honor a signed, receiver-led replication-info
+ * V2 request. This is distinct from decode support: released decode-only peers
+ * advertise bit 2 but intentionally drop every V2 frame.
+ */
+export const SYNC_CAPABILITY_REPLICATION_INFO_V2_SEND = 1 << 2;
+
+/**
+ * Capability bit: the peer can authenticate and apply a receiver-bound V2
+ * stream. Sender-ready nodes do not advertise this until receive activation.
+ */
+export const SYNC_CAPABILITY_REPLICATION_INFO_V2_APPLY = 1 << 3;
 
 /**
  * One-shot capability advertisement, sent to a peer when it (or we) subscribe

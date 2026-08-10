@@ -7,7 +7,7 @@ import {
 	variant,
 	vec,
 } from "@dao-xyz/borsh";
-import { randomBytes } from "@peerbit/crypto";
+import { PublicSignKey, randomBytes } from "@peerbit/crypto";
 import { type Index } from "@peerbit/indexer-interface";
 import { TransportMessage } from "./message.js";
 import {
@@ -126,10 +126,11 @@ export class ReplicationPingMessage extends TransportMessage {
 }
 
 /**
- * Decode-first replication-info V2 messages. This rollout only registers and
- * advertises the final wire schemas; it never sends or applies these messages.
- * A later negotiated phase must bind the signed transport session and an
- * outstanding receiver challenge before any V2 payload is used.
+ * Challenge-bound replication-info V2 messages. Their `receiverChallenge`
+ * field carries a derived receiver binding, not the request's raw nonce. The
+ * binding covers both authenticated identities and signed transport sessions.
+ * Sender-ready nodes may emit them only after a signed, session-bound receiver
+ * request. Receive/apply activation remains separately capability-gated.
  */
 @variant([1, 6])
 export class FullReplicationInfoV2Message extends TransportMessage {
@@ -212,6 +213,39 @@ export class StoppedReplicationInfoV2Message extends TransportMessage {
 		this.senderEpoch = properties.senderEpoch;
 		this.sequence = properties.sequence;
 		this.segmentIds = properties.segmentIds;
+	}
+}
+
+/**
+ * Signed, receiver-led permission for one sender to start a V2 stream.
+ *
+ * The transport delivery target is deliberately unsigned because relays may
+ * rewrite it. Carry the intended sender in the signed payload so a valid
+ * request cannot be retargeted to another peer. `senderSession` is copied from
+ * the sender's signed capability envelope and binds the request to that exact
+ * transport incarnation.
+ */
+@variant([1, 9])
+export class RequestReplicationInfoV2Message extends TransportMessage {
+	/** Random receiver nonce used as input to the V2 receiver-binding hash. */
+	@field({ type: fixedArray("u8", 32) })
+	receiverChallenge: Uint8Array;
+
+	@field({ type: PublicSignKey })
+	intendedSender: PublicSignKey;
+
+	@field({ type: "u64" })
+	senderSession: bigint;
+
+	constructor(properties: {
+		receiverChallenge: Uint8Array;
+		intendedSender: PublicSignKey;
+		senderSession: bigint;
+	}) {
+		super();
+		this.receiverChallenge = properties.receiverChallenge;
+		this.intendedSender = properties.intendedSender;
+		this.senderSession = properties.senderSession;
 	}
 }
 

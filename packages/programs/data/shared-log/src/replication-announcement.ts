@@ -204,7 +204,15 @@ export type ReplicationAnnouncementDeps<R extends "u32" | "u64"> = {
 	// Owner-routed so coordinator spies keep observing re-entrant queueing.
 	queueCurrentReplicationStateAnnouncementRepair: () => void;
 	queueCurrentReplicationStateAnnouncementRetry: (error: unknown) => boolean;
+	// Best-effort sidecar. The legacy publish remains the primary operation and
+	// retains its exact rejection/retry semantics during mixed-version rollout.
+	enqueueReplicationInfoV2: (message: LegacyReplicationInfoMessage) => void;
 };
+
+type LegacyReplicationInfoMessage =
+	| AllReplicatingSegmentsMessage
+	| AddedReplicationSegmentMessage
+	| StoppedReplicating;
 
 export class ReplicationAnnouncementCoordinator<R extends "u32" | "u64"> {
 	replicationAnnouncementRetryDebounced:
@@ -611,10 +619,7 @@ export class ReplicationAnnouncementCoordinator<R extends "u32" | "u64"> {
 	}
 
 	async sendReplicationAnnouncement(
-		message:
-			| AllReplicatingSegmentsMessage
-			| AddedReplicationSegmentMessage
-			| StoppedReplicating,
+		message: LegacyReplicationInfoMessage,
 		ownershipLifecycleController = this.deps.captureReplicationOwnershipLifecycle(),
 		options?: { shouldSend?: () => boolean },
 	): Promise<void> {
@@ -639,6 +644,7 @@ export class ReplicationAnnouncementCoordinator<R extends "u32" | "u64"> {
 				// after that stale send settles.
 				this.rotateAnnouncementSession();
 				this.advanceCurrentReplicationStateAnnouncementRepairGeneration();
+				this.deps.enqueueReplicationInfoV2(message);
 				try {
 					await this.deps.getRpc().send(message, {
 						priority: CONVERGENCE_MESSAGE_PRIORITY,
