@@ -25,6 +25,7 @@ const DEFAULT_MAX_REQUEST_RETRY_MS = 30_000;
 const DEFAULT_REQUEST_MAX_ATTEMPTS = 7;
 const DEFAULT_LEGACY_FALLBACK_DELAY_MS = 5_000;
 const MAX_U64 = (1n << 64n) - 1n;
+const MAX_BACKOFF_EXPONENT = 20;
 
 const bytesEqual = (left: Uint8Array, right: Uint8Array): boolean => {
 	if (left.byteLength !== right.byteLength) {
@@ -64,6 +65,7 @@ export type ReplicationInfoV2ReceivePhase =
 
 type LocalCapabilityReady = {
 	peerHash: string;
+	receiveEpoch: object | null;
 	receiverTransportSession: bigint;
 	/**
 	 * The local capability envelope and the later RequestV2 envelope use the
@@ -71,6 +73,45 @@ type LocalCapabilityReady = {
 	 * be strictly newer, so never construct it in this captured millisecond.
 	 */
 	requestNotBeforeMs: number;
+	advertisement?: ReplicationInfoV2LocalCapabilityAdvertisement;
+};
+
+type LocalCapabilityReadyProperties = {
+	peerHash: string;
+	peerSession: object;
+	receiveEpoch: object | null;
+	receiverTransportSession: bigint;
+	requestNotBeforeMs: number;
+};
+
+export type ReplicationInfoV2LocalCapabilityAdvertisementHandle = {
+	firstAttempt: Promise<void>;
+	releaseLegacyBarrier(): void;
+};
+
+export type ReplicationInfoV2LocalCapabilityContext = {
+	peerHash: string;
+	target: PublicSignKey;
+	lifecycleSignal: AbortSignal;
+	legacyBarrierReleased: boolean;
+};
+
+export type ReplicationInfoV2LocalCapabilityAdvertisement = {
+	peerHash: string;
+	target: PublicSignKey;
+	peerSession: object;
+	receiveEpoch: object | null;
+	lifecycleSignal: AbortSignal;
+	onLifecycleAbort: () => void;
+	controller: AbortController;
+	context: ReplicationInfoV2LocalCapabilityContext;
+	attempts: number;
+	ready: boolean;
+	acknowledgedReady?: LocalCapabilityReady;
+	receiverTransportSession?: bigint;
+	timer?: ReturnType<typeof setTimeout>;
+	inFlight?: Promise<void>;
+	firstAttempt?: Promise<void>;
 };
 
 export type ReplicationInfoV2LocalCapabilityRefresh = {
@@ -131,6 +172,11 @@ export type ReplicationInfoV2ReceiveDeps = {
 	getSelfKey: () => PublicSignKey;
 	getReceiverTransportSession: () => bigint;
 	isClosed: () => boolean;
+	isPeerSessionCurrent: (peerHash: string, peerSession: object) => boolean;
+	isReceiveEpochCurrent: (
+		peerHash: string,
+		receiveEpoch: object | null,
+	) => boolean;
 	isPeerStateCurrent: (
 		peerHash: string,
 		peerSession: object,
@@ -153,6 +199,7 @@ export type ReplicationInfoV2ReceiveDeps = {
 		signal: AbortSignal;
 	}) => Promise<ReplicationInfoV2LocalCapabilityRefresh | undefined>;
 	onRequestError?: (error: unknown) => void;
+	onLocalCapabilityError?: (error: unknown) => void;
 	now?: () => number;
 	requestRetryMs?: number;
 	maxRequestRetryMs?: number;
@@ -169,6 +216,14 @@ export class ReplicationInfoV2ReceiveCoordinator {
 	_receiveStates!: Map<string, ReplicationInfoV2ReceiveState>;
 	_cutoverPeerSessions!: WeakSet<object>;
 	_localCapabilityReadyBySession!: WeakMap<object, LocalCapabilityReady>;
+	_localCapabilityContextBySession!: WeakMap<
+		object,
+		ReplicationInfoV2LocalCapabilityContext
+	>;
+	_localCapabilityAdvertisementsByPeer!: Map<
+		string,
+		ReplicationInfoV2LocalCapabilityAdvertisement
+	>;
 	_reservedAdmissionsByPeer!: Map<string, ReplicationInfoV2ReceiveAdmission>;
 
 	private readonly now: () => number;
@@ -198,6 +253,8 @@ export class ReplicationInfoV2ReceiveCoordinator {
 		this._receiveStates = new Map();
 		this._cutoverPeerSessions = new WeakSet();
 		this._localCapabilityReadyBySession = new WeakMap();
+		this._localCapabilityContextBySession = new WeakMap();
+		this._localCapabilityAdvertisementsByPeer = new Map();
 		this._reservedAdmissionsByPeer = new Map();
 	}
 
@@ -206,27 +263,46 @@ export class ReplicationInfoV2ReceiveCoordinator {
 		this._receiveStates = new Map();
 		this._cutoverPeerSessions = new WeakSet();
 		this._localCapabilityReadyBySession = new WeakMap();
+		this._localCapabilityContextBySession = new WeakMap();
+		this._localCapabilityAdvertisementsByPeer = new Map();
 		this._reservedAdmissionsByPeer = new Map();
 	}
 
 	clearForClose(): void {
+		for (const advertisement of [
+			...(this._localCapabilityAdvertisementsByPeer?.values() ?? []),
+		]) {
+			this.clearLocalCapabilityAdvertisement(advertisement);
+		}
+		this._localCapabilityAdvertisementsByPeer?.clear();
 		for (const state of this._receiveStates?.values() ?? []) {
 			this.clearState(state);
 		}
 		this._receiveStates?.clear();
 		this._cutoverPeerSessions = new WeakSet();
 		this._localCapabilityReadyBySession = new WeakMap();
+		this._localCapabilityContextBySession = new WeakMap();
 	}
 
 	clearPeer(peerHash: string, expectedSession?: object): void {
+		const advertisement =
+			this._localCapabilityAdvertisementsByPeer.get(peerHash);
+		if (
+			advertisement &&
+			(!expectedSession || advertisement.peerSession === expectedSession)
+		) {
+			this.clearLocalCapabilityAdvertisement(advertisement);
+		}
 		const state = this._receiveStates.get(peerHash);
 		if (state && (!expectedSession || state.peerSession === expectedSession)) {
 			this.clearState(state);
 			this._localCapabilityReadyBySession.delete(state.peerSession);
+			this._localCapabilityContextBySession.delete(state.peerSession);
 			this._cutoverPeerSessions.delete(state.peerSession);
 		}
 		if (expectedSession) {
 			this._localCapabilityReadyBySession.delete(expectedSession);
+			this._localCapabilityContextBySession.delete(expectedSession);
 			this._cutoverPeerSessions.delete(expectedSession);
 		}
 	}
@@ -259,14 +335,462 @@ export class ReplicationInfoV2ReceiveCoordinator {
 		}
 	}
 
-	/** Record success of this session's ACKed local APPLY advertisement. */
-	markLocalCapabilityReady(properties: {
+	private clearLocalCapabilityAdvertisement(
+		state: ReplicationInfoV2LocalCapabilityAdvertisement,
+		options?: { preserveContext?: boolean },
+	): void {
+		if (state.timer) {
+			clearTimeout(state.timer);
+			state.timer = undefined;
+		}
+		state.lifecycleSignal.removeEventListener("abort", state.onLifecycleAbort);
+		state.controller.abort();
+		const wasMapped =
+			this._localCapabilityAdvertisementsByPeer.get(state.peerHash) === state;
+		if (wasMapped) {
+			this._localCapabilityAdvertisementsByPeer.delete(state.peerHash);
+		}
+		const ready = this._localCapabilityReadyBySession.get(state.peerSession);
+		if (ready?.advertisement === state) {
+			this._localCapabilityReadyBySession.delete(state.peerSession);
+		}
+		if (
+			wasMapped &&
+			!options?.preserveContext &&
+			this._localCapabilityContextBySession.get(state.peerSession) ===
+				state.context
+		) {
+			this._localCapabilityContextBySession.delete(state.peerSession);
+		}
+	}
+
+	private isLocalCapabilityAdvertisementOwnerCurrent(
+		state: ReplicationInfoV2LocalCapabilityAdvertisement,
+	): boolean {
+		return (
+			this._localCapabilityAdvertisementsByPeer.get(state.peerHash) === state &&
+			this._localCapabilityContextBySession.get(state.peerSession) ===
+				state.context &&
+			state.context.peerHash === state.peerHash &&
+			state.context.lifecycleSignal === state.lifecycleSignal &&
+			state.context.target.equals(state.target) &&
+			!state.controller.signal.aborted &&
+			!state.lifecycleSignal.aborted &&
+			!this.deps.isClosed() &&
+			this.deps.isPeerSessionCurrent(state.peerHash, state.peerSession) &&
+			(state.receiverTransportSession === undefined ||
+				this.deps.getReceiverTransportSession() ===
+					state.receiverTransportSession)
+		);
+	}
+
+	private isLocalCapabilityAdvertisementGenerationCurrent(
+		state: ReplicationInfoV2LocalCapabilityAdvertisement,
+	): boolean {
+		return (
+			this.isLocalCapabilityAdvertisementOwnerCurrent(state) &&
+			this.deps.isReceiveEpochCurrent(state.peerHash, state.receiveEpoch)
+		);
+	}
+
+	private isLocalCapabilityAdvertisementReadyOpen(
+		state: ReplicationInfoV2LocalCapabilityAdvertisement,
+	): boolean {
+		return (
+			this.isLocalCapabilityAdvertisementGenerationCurrent(state) &&
+			this.deps.isPeerStateCurrent(
+				state.peerHash,
+				state.peerSession,
+				state.receiveEpoch,
+			)
+		);
+	}
+
+	private localCapabilityRetryDelay(
+		state: ReplicationInfoV2LocalCapabilityAdvertisement,
+	): number {
+		const exponent = Math.max(0, state.attempts - 1);
+		return Math.min(
+			this.maxRequestRetryMs,
+			this.requestRetryMs * 2 ** Math.min(exponent, MAX_BACKOFF_EXPONENT),
+		);
+	}
+
+	private armLocalCapabilityAdvertisement(
+		state: ReplicationInfoV2LocalCapabilityAdvertisement,
+	): void {
+		if (state.timer || state.inFlight || state.ready) {
+			return;
+		}
+		if (state.acknowledgedReady && !state.context.legacyBarrierReleased) {
+			return;
+		}
+		if (!this.isLocalCapabilityAdvertisementOwnerCurrent(state)) {
+			this.clearLocalCapabilityAdvertisement(state);
+			return;
+		}
+		if (!this.isLocalCapabilityAdvertisementGenerationCurrent(state)) {
+			return;
+		}
+		state.timer = setTimeout(() => {
+			state.timer = undefined;
+			if (!this.isLocalCapabilityAdvertisementOwnerCurrent(state)) {
+				this.clearLocalCapabilityAdvertisement(state);
+				return;
+			}
+			if (!this.isLocalCapabilityAdvertisementGenerationCurrent(state)) {
+				return;
+			}
+			if (!this.isLocalCapabilityAdvertisementReadyOpen(state)) {
+				this.armLocalCapabilityAdvertisement(state);
+				return;
+			}
+			void this.runLocalCapabilityAdvertisement(state);
+		}, this.localCapabilityRetryDelay(state));
+		state.timer.unref?.();
+	}
+
+	private async runLocalCapabilityAdvertisement(
+		state: ReplicationInfoV2LocalCapabilityAdvertisement,
+	): Promise<void> {
+		if (state.inFlight) {
+			await state.inFlight;
+			return;
+		}
+		if (state.ready) {
+			return;
+		}
+		if (!this.isLocalCapabilityAdvertisementOwnerCurrent(state)) {
+			this.clearLocalCapabilityAdvertisement(state);
+			return;
+		}
+		if (!this.isLocalCapabilityAdvertisementGenerationCurrent(state)) {
+			return;
+		}
+		if (state.acknowledgedReady) {
+			if (state.context.legacyBarrierReleased) {
+				this.promoteLocalCapabilityAdvertisement(state);
+			}
+			return;
+		}
+		if (!this.isLocalCapabilityAdvertisementReadyOpen(state)) {
+			this.armLocalCapabilityAdvertisement(state);
+			return;
+		}
+		state.attempts = Math.min(state.attempts + 1, MAX_BACKOFF_EXPONENT + 1);
+		let operation: Promise<void>;
+		operation = (async () => {
+			const refreshed = await this.deps.refreshLocalCapability({
+				peerHash: state.peerHash,
+				target: state.target,
+				peerSession: state.peerSession,
+				receiveEpoch: state.receiveEpoch,
+				signal: AbortSignal.any([
+					state.controller.signal,
+					state.lifecycleSignal,
+				]),
+			});
+			if (
+				!refreshed ||
+				!this.isLocalCapabilityAdvertisementGenerationCurrent(state) ||
+				this.deps.getReceiverTransportSession() !==
+					refreshed.receiverTransportSession
+			) {
+				return;
+			}
+			state.receiverTransportSession = refreshed.receiverTransportSession;
+			state.acknowledgedReady = {
+				peerHash: state.peerHash,
+				receiveEpoch: state.receiveEpoch,
+				receiverTransportSession: refreshed.receiverTransportSession,
+				requestNotBeforeMs: refreshed.requestNotBeforeMs,
+				advertisement: state,
+			};
+			state.attempts = 0;
+			this.promoteLocalCapabilityAdvertisement(state);
+		})()
+			.catch((error) => {
+				if (
+					!state.controller.signal.aborted &&
+					!state.lifecycleSignal.aborted &&
+					!this.deps.isClosed()
+				) {
+					this.deps.onLocalCapabilityError?.(error);
+				}
+			})
+			.finally(() => {
+				if (state.inFlight === operation) {
+					state.inFlight = undefined;
+				}
+				if (!this.isLocalCapabilityAdvertisementOwnerCurrent(state)) {
+					this.clearLocalCapabilityAdvertisement(state);
+				} else if (
+					this.isLocalCapabilityAdvertisementGenerationCurrent(state) &&
+					!state.ready
+				) {
+					if (!state.acknowledgedReady || state.context.legacyBarrierReleased) {
+						this.armLocalCapabilityAdvertisement(state);
+					}
+				}
+			});
+		state.inFlight = operation;
+		await operation;
+	}
+
+	/**
+	 * Start local authenticated-apply advertisement independently of the legacy
+	 * join path. ACK and legacy publication are a two-phase barrier: the first
+	 * attempt always settles independently, while readiness is promoted only
+	 * after the host releases the legacy barrier. Failed attempts leave one
+	 * exact-session worker retrying with capped exponential backoff.
+	 */
+	advertiseLocalCapability(properties: {
+		target: PublicSignKey;
+		peerSession: object;
+		receiveEpoch: object | null;
+		signal: AbortSignal;
+	}): ReplicationInfoV2LocalCapabilityAdvertisementHandle {
+		const peerHash = properties.target.hashcode();
+		if (
+			properties.signal.aborted ||
+			this.deps.isClosed() ||
+			!this.deps.isPeerSessionCurrent(peerHash, properties.peerSession) ||
+			!this.deps.isReceiveEpochCurrent(peerHash, properties.receiveEpoch)
+		) {
+			return {
+				firstAttempt: Promise.resolve(),
+				releaseLegacyBarrier: () => {},
+			};
+		}
+		let context = this._localCapabilityContextBySession.get(
+			properties.peerSession,
+		);
+		if (
+			context &&
+			(context.peerHash !== peerHash ||
+				!context.target.equals(properties.target) ||
+				context.lifecycleSignal !== properties.signal)
+		) {
+			return {
+				firstAttempt: Promise.resolve(),
+				releaseLegacyBarrier: () => {},
+			};
+		}
+		if (!context) {
+			context = {
+				peerHash,
+				target: properties.target,
+				lifecycleSignal: properties.signal,
+				legacyBarrierReleased: false,
+			};
+			this._localCapabilityContextBySession.set(
+				properties.peerSession,
+				context,
+			);
+		}
+		let state = this._localCapabilityAdvertisementsByPeer.get(peerHash);
+		if (
+			state &&
+			(state.peerSession !== properties.peerSession ||
+				state.context !== context ||
+				state.lifecycleSignal !== properties.signal ||
+				!state.target.equals(properties.target))
+		) {
+			this.clearLocalCapabilityAdvertisement(state);
+			state = undefined;
+		}
+		if (state && state.receiveEpoch !== properties.receiveEpoch) {
+			this.clearLocalCapabilityAdvertisement(state, { preserveContext: true });
+			state = undefined;
+		}
+		if (state && !this.isLocalCapabilityAdvertisementOwnerCurrent(state)) {
+			this.clearLocalCapabilityAdvertisement(state);
+			state = undefined;
+		}
+		if (
+			this._localCapabilityContextBySession.get(properties.peerSession) !==
+			context
+		) {
+			return {
+				firstAttempt: Promise.resolve(),
+				releaseLegacyBarrier: () => {},
+			};
+		}
+		if (!state) {
+			const controller = new AbortController();
+			const advertisement: ReplicationInfoV2LocalCapabilityAdvertisement = {
+				peerHash,
+				target: properties.target,
+				peerSession: properties.peerSession,
+				receiveEpoch: properties.receiveEpoch,
+				lifecycleSignal: properties.signal,
+				onLifecycleAbort: () => {},
+				controller,
+				context,
+				attempts: 0,
+				ready: false,
+				receiverTransportSession: this.deps.getReceiverTransportSession(),
+			};
+			advertisement.onLifecycleAbort = () =>
+				this.clearLocalCapabilityAdvertisement(advertisement);
+			properties.signal.addEventListener(
+				"abort",
+				advertisement.onLifecycleAbort,
+				{
+					once: true,
+				},
+			);
+			this._localCapabilityAdvertisementsByPeer.set(peerHash, advertisement);
+			state = advertisement;
+		}
+		const firstAttempt =
+			state.firstAttempt ??
+			(state.firstAttempt = this.runLocalCapabilityAdvertisement(state));
+		const advertisement = state;
+		return {
+			firstAttempt,
+			releaseLegacyBarrier: () =>
+				this.releaseLocalCapabilityLegacyBarrier(
+					advertisement.peerSession,
+					context,
+				),
+		};
+	}
+
+	private releaseLocalCapabilityLegacyBarrier(
+		peerSession: object,
+		context: ReplicationInfoV2LocalCapabilityContext,
+	): void {
+		if (context.legacyBarrierReleased) {
+			return;
+		}
+		if (
+			this._localCapabilityContextBySession.get(peerSession) !== context ||
+			context.lifecycleSignal.aborted ||
+			this.deps.isClosed() ||
+			!this.deps.isPeerSessionCurrent(context.peerHash, peerSession)
+		) {
+			return;
+		}
+		context.legacyBarrierReleased = true;
+		const state = this._localCapabilityAdvertisementsByPeer.get(
+			context.peerHash,
+		);
+		if (state?.peerSession === peerSession && state.context === context) {
+			if (!this.isLocalCapabilityAdvertisementOwnerCurrent(state)) {
+				this.clearLocalCapabilityAdvertisement(state);
+				return;
+			}
+			this.promoteLocalCapabilityAdvertisement(state);
+		}
+	}
+
+	private promoteLocalCapabilityAdvertisement(
+		state: ReplicationInfoV2LocalCapabilityAdvertisement,
+	): boolean {
+		const ready = state.acknowledgedReady;
+		if (
+			state.ready ||
+			!state.context.legacyBarrierReleased ||
+			!ready ||
+			ready.receiveEpoch !== state.receiveEpoch ||
+			ready.advertisement !== state ||
+			!this.isLocalCapabilityAdvertisementOwnerCurrent(state) ||
+			!this.isLocalCapabilityAdvertisementGenerationCurrent(state) ||
+			this.deps.getReceiverTransportSession() !== ready.receiverTransportSession
+		) {
+			return state.ready;
+		}
+		if (!this.isLocalCapabilityAdvertisementReadyOpen(state)) {
+			this.armLocalCapabilityAdvertisement(state);
+			return false;
+		}
+		if (
+			!this.recordLocalCapabilityReady(
+				{
+					peerHash: state.peerHash,
+					peerSession: state.peerSession,
+					receiveEpoch: state.receiveEpoch,
+					receiverTransportSession: ready.receiverTransportSession,
+					requestNotBeforeMs: ready.requestNotBeforeMs,
+				},
+				state,
+			)
+		) {
+			return false;
+		}
+		state.ready = true;
+		return true;
+	}
+
+	/**
+	 * Re-advertise one exact current recovery epoch from the stable membership
+	 * context captured during opening. The opening handle owns barrier release;
+	 * recovery never bypasses a legacy snapshot or role publication still in
+	 * progress.
+	 */
+	reAdvertiseLocalCapabilityForRecovery(properties: {
 		peerHash: string;
 		peerSession: object;
 		receiveEpoch: object | null;
-		receiverTransportSession: bigint;
-		requestNotBeforeMs: number;
 	}): boolean {
+		const context = this._localCapabilityContextBySession.get(
+			properties.peerSession,
+		);
+		if (
+			!context ||
+			context.peerHash !== properties.peerHash ||
+			context.lifecycleSignal.aborted ||
+			this.deps.isClosed() ||
+			!this.deps.isPeerSessionCurrent(
+				properties.peerHash,
+				properties.peerSession,
+			) ||
+			!this.deps.isReceiveEpochCurrent(
+				properties.peerHash,
+				properties.receiveEpoch,
+			)
+		) {
+			return false;
+		}
+		const state = this._receiveStates.get(properties.peerHash);
+		if (
+			state?.peerSession === properties.peerSession &&
+			state.receiveEpoch === properties.receiveEpoch &&
+			state.receiverBinding !== undefined
+		) {
+			return false;
+		}
+		const ready = this._localCapabilityReadyBySession.get(
+			properties.peerSession,
+		);
+		if (
+			ready?.peerHash === properties.peerHash &&
+			ready.receiveEpoch === properties.receiveEpoch &&
+			ready.receiverTransportSession === this.deps.getReceiverTransportSession()
+		) {
+			return false;
+		}
+		this.advertiseLocalCapability({
+			target: context.target,
+			peerSession: properties.peerSession,
+			receiveEpoch: properties.receiveEpoch,
+			signal: context.lifecycleSignal,
+		});
+		return true;
+	}
+
+	/** Record success of this session's ACKed local APPLY advertisement. */
+	markLocalCapabilityReady(
+		properties: LocalCapabilityReadyProperties,
+	): boolean {
+		return this.recordLocalCapabilityReady(properties);
+	}
+
+	private recordLocalCapabilityReady(
+		properties: LocalCapabilityReadyProperties,
+		advertisement?: ReplicationInfoV2LocalCapabilityAdvertisement,
+	): boolean {
 		const { peerHash, peerSession, receiverTransportSession } = properties;
 		const state = this._receiveStates.get(peerHash);
 		if (
@@ -283,8 +807,10 @@ export class ReplicationInfoV2ReceiveCoordinator {
 
 		const ready: LocalCapabilityReady = {
 			peerHash,
+			receiveEpoch: properties.receiveEpoch,
 			receiverTransportSession,
 			requestNotBeforeMs: properties.requestNotBeforeMs,
+			advertisement,
 		};
 		this._localCapabilityReadyBySession.set(peerSession, ready);
 		if (
@@ -388,7 +914,11 @@ export class ReplicationInfoV2ReceiveCoordinator {
 				});
 			}
 			const ready = this._localCapabilityReadyBySession.get(peerSession);
-			if (ready?.peerHash === peerHash && state.receiverBinding === undefined) {
+			if (
+				ready?.peerHash === peerHash &&
+				ready.receiveEpoch === receiveEpoch &&
+				state.receiverBinding === undefined
+			) {
 				this.bindLocalCapability(state, ready);
 			}
 			if (state.phase !== "active") {
@@ -422,7 +952,7 @@ export class ReplicationInfoV2ReceiveCoordinator {
 		};
 		this._receiveStates.set(peerHash, state);
 		const ready = this._localCapabilityReadyBySession.get(peerSession);
-		if (ready?.peerHash === peerHash) {
+		if (ready?.peerHash === peerHash && ready.receiveEpoch === receiveEpoch) {
 			this.bindLocalCapability(state, ready);
 			this.armRequest(state, 0);
 		}
@@ -937,6 +1467,7 @@ export class ReplicationInfoV2ReceiveCoordinator {
 
 		const ready: LocalCapabilityReady = {
 			peerHash: state.peerHash,
+			receiveEpoch: state.receiveEpoch,
 			receiverTransportSession: refreshed.receiverTransportSession,
 			requestNotBeforeMs: refreshed.requestNotBeforeMs,
 		};
@@ -988,6 +1519,7 @@ export class ReplicationInfoV2ReceiveCoordinator {
 			if (
 				!ready ||
 				ready.peerHash !== state.peerHash ||
+				ready.receiveEpoch !== state.receiveEpoch ||
 				ready.receiverTransportSession !== state.receiverTransportSession
 			) {
 				return;

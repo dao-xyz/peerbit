@@ -1,6 +1,7 @@
 import { deserialize, serialize } from "@dao-xyz/borsh";
 import { Ed25519PublicKey } from "@peerbit/crypto";
 import { TestSession } from "@peerbit/test-utils";
+import { waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
 import sinon from "sinon";
 import {
@@ -21,6 +22,7 @@ import {
 	AllReplicatingSegmentsMessage,
 	FullReplicationInfoV2Message,
 	RequestReplicationInfoV2Message,
+	ResponseRoleMessage,
 	StoppedReplicating,
 	StoppedReplicationInfoV2Message,
 } from "../src/replication.js";
@@ -372,7 +374,7 @@ describe("receive admission replication-info V2 decode-only codec", () => {
 		}
 	});
 
-	it("advertises V2 readiness before replication snapshot retrieval", async () => {
+	it("starts advertising V2 readiness before replication snapshot retrieval", async () => {
 		session = await TestSession.disconnected(2);
 		const db = await session.peers[0].open(new EventStore(), {
 			args: { replicate: true, timeUntilRoleMaturity: 0 },
@@ -390,6 +392,7 @@ describe("receive admission replication-info V2 decode-only codec", () => {
 		const snapshot = sinon
 			.stub(log, "getMyReplicationSegments")
 			.rejects(snapshotFailure);
+		const markReady = sinon.spy(log._v2Receive, "recordLocalCapabilityReady");
 
 		try {
 			await expect(
@@ -410,9 +413,13 @@ describe("receive admission replication-info V2 decode-only codec", () => {
 			expect(
 				capability!.capabilities & SYNC_CAPABILITY_REPLICATION_INFO_V2_APPLY,
 			).to.equal(SYNC_CAPABILITY_REPLICATION_INFO_V2_APPLY);
+			await waitForResolved(() => expect(markReady.calledOnce).to.be.true, {
+				timeout: 5_000,
+			});
 		} finally {
 			send.restore();
 			snapshot.restore();
+			markReady.restore();
 		}
 	});
 
@@ -444,13 +451,15 @@ describe("receive admission replication-info V2 decode-only codec", () => {
 				}
 				return [] as any;
 			});
-		const markReady = sinon.spy(log._v2Receive, "markLocalCapabilityReady");
+		const advertise = sinon.spy(log._v2Receive, "advertiseLocalCapability");
+		const markReady = sinon.spy(log._v2Receive, "recordLocalCapabilityReady");
 		const requests = sinon
 			.stub(log, "scheduleReplicationInfoRequests")
 			.callsFake(() => {});
 		let subscription: Promise<void> | undefined;
 		let subscriptionSettled = false;
 		let legacySnapshotTimeout: ReturnType<typeof setTimeout> | undefined;
+		let subscriptionTimeout: ReturnType<typeof setTimeout> | undefined;
 
 		try {
 			subscription = log
@@ -471,7 +480,17 @@ describe("receive admission replication-info V2 decode-only codec", () => {
 			]);
 			clearTimeout(legacySnapshotTimeout);
 			legacySnapshotTimeout = undefined;
-			await new Promise<void>((resolve) => setImmediate(resolve));
+			await Promise.race([
+				subscription,
+				new Promise<never>((_, reject) => {
+					subscriptionTimeout = setTimeout(
+						() => reject(new Error("subscription waited for capability ACK")),
+						5_000,
+					);
+				}),
+			]);
+			clearTimeout(subscriptionTimeout);
+			subscriptionTimeout = undefined;
 
 			expect(sent[0]).to.be.instanceOf(SyncCapabilitiesMessage);
 			expect(
@@ -479,18 +498,176 @@ describe("receive admission replication-info V2 decode-only codec", () => {
 					(message) => message instanceof AllReplicatingSegmentsMessage,
 				),
 			).to.be.true;
-			expect(subscriptionSettled).to.be.false;
+			expect(subscriptionSettled).to.be.true;
 			expect(markReady.called).to.be.false;
 			expect(requests.calledOnce).to.be.true;
 
 			releaseCapabilityAcknowledgement();
+			await waitForResolved(() => expect(markReady.calledOnce).to.be.true, {
+				timeout: 5_000,
+			});
+		} finally {
+			clearTimeout(legacySnapshotTimeout);
+			clearTimeout(subscriptionTimeout);
+			releaseCapabilityAcknowledgement();
+			await subscription?.catch(() => {});
+			await advertise.firstCall?.returnValue.firstAttempt.catch(() => {});
+			send.restore();
+			advertise.restore();
+			markReady.restore();
+			requests.restore();
+		}
+	});
+
+	it("holds V2 readiness behind the complete v8 legacy startup path across recovery", async () => {
+		session = await TestSession.disconnected(2);
+		const db = await session.peers[0].open(new EventStore(), {
+			args: { compatibility: 8, replicate: true, timeUntilRoleMaturity: 0 },
+		});
+		const log = db.log as any;
+		const remote = session.peers[1].identity.publicKey;
+		let releaseLegacySnapshot!: () => void;
+		const legacySnapshotGate = new Promise<void>((resolve) => {
+			releaseLegacySnapshot = resolve;
+		});
+		let markLegacySnapshotAttempted!: () => void;
+		const legacySnapshotAttempted = new Promise<void>((resolve) => {
+			markLegacySnapshotAttempted = resolve;
+		});
+		let releaseLegacyRole!: () => void;
+		const legacyRoleGate = new Promise<void>((resolve) => {
+			releaseLegacyRole = resolve;
+		});
+		let markLegacyRoleAttempted!: () => void;
+		const legacyRoleAttempted = new Promise<void>((resolve) => {
+			markLegacyRoleAttempted = resolve;
+		});
+		const sent: unknown[] = [];
+		const send = sinon
+			.stub(log.rpc, "send")
+			.callsFake(async (message: unknown) => {
+				sent.push(message);
+				if (message instanceof AllReplicatingSegmentsMessage) {
+					markLegacySnapshotAttempted();
+					await legacySnapshotGate;
+				}
+				if (message instanceof ResponseRoleMessage) {
+					markLegacyRoleAttempted();
+					await legacyRoleGate;
+				}
+				return [] as any;
+			});
+		const advertise = sinon.spy(log._v2Receive, "advertiseLocalCapability");
+		const markReady = sinon.spy(log._v2Receive, "recordLocalCapabilityReady");
+		const requests = sinon
+			.stub(log, "scheduleReplicationInfoRequests")
+			.callsFake(() => {
+				expect(markReady.called).to.be.false;
+				expect(
+					sent.some(
+						(message) => message instanceof RequestReplicationInfoV2Message,
+					),
+				).to.be.false;
+			});
+		let subscription: Promise<void> | undefined;
+		let legacySnapshotTimeout: ReturnType<typeof setTimeout> | undefined;
+		let capabilityTimeout: ReturnType<typeof setTimeout> | undefined;
+		let legacyRoleTimeout: ReturnType<typeof setTimeout> | undefined;
+
+		try {
+			subscription = log._onSubscription({
+				detail: { from: remote, topics: [db.log.topic] },
+			});
+			await Promise.race([
+				legacySnapshotAttempted,
+				new Promise<never>((_, reject) => {
+					legacySnapshotTimeout = setTimeout(
+						() => reject(new Error("legacy snapshot was not attempted")),
+						5_000,
+					);
+				}),
+			]);
+			clearTimeout(legacySnapshotTimeout);
+			legacySnapshotTimeout = undefined;
+			expect(advertise.calledOnce).to.be.true;
+			const advertisement = advertise.firstCall.returnValue;
+			await Promise.race([
+				advertisement.firstAttempt,
+				new Promise<never>((_, reject) => {
+					capabilityTimeout = setTimeout(
+						() => reject(new Error("capability ACK did not settle")),
+						5_000,
+					);
+				}),
+			]);
+			clearTimeout(capabilityTimeout);
+			capabilityTimeout = undefined;
+			const peerHash = remote.hashcode();
+			const peerSession = log._peerSessions.current(peerHash);
+			expect(peerSession?.phase).to.equal("open");
+			log.advanceReplicationInfoRecoveryEpoch(peerHash);
+			const receiveEpoch = log._peerSessions.receiveEpoch(peerHash);
+			expect(
+				log._v2Receive.reAdvertiseLocalCapabilityForRecovery({
+					peerHash,
+					peerSession,
+					receiveEpoch,
+				}),
+			).to.be.true;
+			expect(advertise.calledTwice).to.be.true;
+			const recoveryAdvertisement = advertise.secondCall.returnValue;
+			expect(recoveryAdvertisement).to.not.equal(advertisement);
+			await Promise.race([
+				recoveryAdvertisement.firstAttempt,
+				new Promise<never>((_, reject) => {
+					capabilityTimeout = setTimeout(
+						() => reject(new Error("recovery capability ACK did not settle")),
+						5_000,
+					);
+				}),
+			]);
+			clearTimeout(capabilityTimeout);
+			capabilityTimeout = undefined;
+
+			expect(sent[0]).to.be.instanceOf(SyncCapabilitiesMessage);
+			expect(markReady.called).to.be.false;
+			expect(requests.called).to.be.false;
+			expect(
+				sent.some(
+					(message) => message instanceof RequestReplicationInfoV2Message,
+				),
+			).to.be.false;
+
+			releaseLegacySnapshot();
+			await Promise.race([
+				legacyRoleAttempted,
+				new Promise<never>((_, reject) => {
+					legacyRoleTimeout = setTimeout(
+						() => reject(new Error("legacy v8 role was not attempted")),
+						5_000,
+					);
+				}),
+			]);
+			clearTimeout(legacyRoleTimeout);
+			legacyRoleTimeout = undefined;
+			expect(markReady.called).to.be.false;
+			expect(requests.called).to.be.false;
+
+			releaseLegacyRole();
 			await subscription;
+			expect(requests.calledOnce).to.be.true;
+			expect(markReady.calledOnce).to.be.true;
+			await new Promise<void>((resolve) => setImmediate(resolve));
 			expect(markReady.calledOnce).to.be.true;
 		} finally {
 			clearTimeout(legacySnapshotTimeout);
-			releaseCapabilityAcknowledgement();
+			clearTimeout(capabilityTimeout);
+			clearTimeout(legacyRoleTimeout);
+			releaseLegacySnapshot();
+			releaseLegacyRole();
 			await subscription?.catch(() => {});
 			send.restore();
+			advertise.restore();
 			markReady.restore();
 			requests.restore();
 		}
