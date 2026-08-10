@@ -1,5 +1,11 @@
 # Changelog
 
+## 13.2.33
+
+### Patch Changes
+
+- [#1207](https://github.com/dao-xyz/peerbit/pull/1207) [`d01bbf7`](https://github.com/dao-xyz/peerbit/commit/d01bbf756997bdc2698ec473f303296121565c06) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Activate authenticated replication-info V2 receive/apply with session-bound negotiation, sender sequence ordering, lifecycle recovery, and permanent per-session legacy cutover.
+
 ## 13.2.32
 
 ### Patch Changes
