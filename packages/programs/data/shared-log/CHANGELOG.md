@@ -1,5 +1,11 @@
 # Changelog
 
+## 13.2.32
+
+### Patch Changes
+
+- [#1205](https://github.com/dao-xyz/peerbit/pull/1205) [`141e34d`](https://github.com/dao-xyz/peerbit/commit/141e34d8baf6465a5acfb12452b20825340f841c) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Add signed receiver-led replication-info V2 negotiation and bounded per-peer sender streams while retaining legacy announcements for mixed-version peers.
+
 ## 13.2.31
 
 ### Patch Changes
