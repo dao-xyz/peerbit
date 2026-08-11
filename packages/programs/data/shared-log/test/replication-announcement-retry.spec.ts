@@ -22,6 +22,7 @@ describe("replication announcement retries", () => {
 		session = await TestSession.disconnected(1);
 		return session.peers[0].open(new EventStore<string, any>(), {
 			args: {
+				compatibility: 9,
 				replicate,
 				timeUntilRoleMaturity: 0,
 			},
@@ -45,6 +46,41 @@ describe("replication announcement retries", () => {
 			await session.stop();
 			session = undefined;
 		}
+	});
+
+	it("keeps legacy announcement retry and repair dormant by default", async () => {
+		session = await TestSession.disconnected(1);
+		const store = await session.peers[0].open(new EventStore<string, any>(), {
+			args: { replicate: false, timeUntilRoleMaturity: 0 },
+		});
+		const log = store.log as any;
+		const enqueueV2 = sinon.spy(log._v2Send, "enqueue");
+		const send = sinon.stub(store.log.rpc, "send").resolves([] as any);
+		const snapshot = sinon.spy(log, "getMyReplicationSegments");
+		log._announcements.setupReplicationAnnouncementRetryFunction(10);
+		log._announcements.setupReplicationAnnouncementRepairFunction(10, 3);
+
+		await log._announcements.sendReplicationAnnouncement(
+			new AddedReplicationSegmentMessage({ segments: [] }),
+		);
+		expect(enqueueV2.calledOnce).to.be.true;
+		expect(send.notCalled).to.be.true;
+		expect(
+			log._announcements.queueCurrentReplicationStateAnnouncementRetry(
+				new TimeoutError("legacy retry must stay disabled"),
+			),
+		).to.be.false;
+		log._announcements.queueCurrentReplicationStateAnnouncementRepair();
+		expect(log._announcements._announcementRepairBinding.pending).to.be.false;
+
+		log._announcements._announcementRepairBinding.pending = true;
+		await log._announcements.repairCurrentReplicationStateAnnouncement();
+		expect(log._announcements._announcementRepairBinding.pending).to.be.false;
+		log._announcements._replicationAnnouncementRetryPending = true;
+		await log._announcements.retryCurrentReplicationStateAnnouncement();
+		expect(log._announcements._replicationAnnouncementRetryPending).to.be.false;
+		expect(snapshot.notCalled).to.be.true;
+		expect(send.notCalled).to.be.true;
 	});
 
 	it("contains an adaptive timeout and retries the locally committed range as a full snapshot", async () => {
@@ -167,6 +203,7 @@ describe("replication announcement retries", () => {
 		session = await TestSession.connected(2);
 		const writer = await session.peers[0].open(new EventStore<string, any>(), {
 			args: {
+				compatibility: 9,
 				replicate: { factor: 1, offset: 0 },
 				timeUntilRoleMaturity: 0,
 				waitForReplicatorRequestIntervalMs: 25,
@@ -175,6 +212,7 @@ describe("replication announcement retries", () => {
 		});
 		const reader = await session.peers[1].open(writer.clone(), {
 			args: {
+				compatibility: 9,
 				replicate: false,
 				timeUntilRoleMaturity: 0,
 				waitForReplicatorRequestIntervalMs: 25,
@@ -246,7 +284,7 @@ describe("replication announcement retries", () => {
 	it("retries only a subscriber that did not acknowledge", async () => {
 		session = await TestSession.disconnected(3);
 		const store = await session.peers[0].open(new EventStore<string, any>(), {
-			args: { replicate: false, timeUntilRoleMaturity: 0 },
+			args: { compatibility: 9, replicate: false, timeUntilRoleMaturity: 0 },
 		});
 		const log = store.log as any;
 		useFastAnnouncementRepair(log);
@@ -288,7 +326,7 @@ describe("replication announcement retries", () => {
 	it("caps acknowledged repair retries and coalesces newer mutations", async () => {
 		session = await TestSession.disconnected(2);
 		const store = await session.peers[0].open(new EventStore<string, any>(), {
-			args: { replicate: false, timeUntilRoleMaturity: 0 },
+			args: { compatibility: 9, replicate: false, timeUntilRoleMaturity: 0 },
 		});
 		const log = store.log as any;
 		log._announcements.setupReplicationAnnouncementRepairFunction(25, 3);
@@ -357,7 +395,7 @@ describe("replication announcement retries", () => {
 	it("caps each generation at eight targets and rotates the next cohort", async () => {
 		session = await TestSession.disconnected(11);
 		const store = await session.peers[0].open(new EventStore<string, any>(), {
-			args: { replicate: false, timeUntilRoleMaturity: 0 },
+			args: { compatibility: 9, replicate: false, timeUntilRoleMaturity: 0 },
 		});
 		const log = store.log as any;
 		log._announcements.setupReplicationAnnouncementRepairFunction(10_000, 3);
@@ -411,7 +449,7 @@ describe("replication announcement retries", () => {
 	it("preempts an in-flight stale repair with the next mutation generation", async () => {
 		session = await TestSession.disconnected(2);
 		const store = await session.peers[0].open(new EventStore<string, any>(), {
-			args: { replicate: false, timeUntilRoleMaturity: 0 },
+			args: { compatibility: 9, replicate: false, timeUntilRoleMaturity: 0 },
 		});
 		const log = store.log as any;
 		useFastAnnouncementRepair(log);
@@ -488,7 +526,7 @@ describe("replication announcement retries", () => {
 	it("does not let a stale collection failure clear a newer pending repair", async () => {
 		session = await TestSession.disconnected(2);
 		const store = await session.peers[0].open(new EventStore<string, any>(), {
-			args: { replicate: false, timeUntilRoleMaturity: 0 },
+			args: { compatibility: 9, replicate: false, timeUntilRoleMaturity: 0 },
 		});
 		const log = store.log as any;
 		useFastAnnouncementRepair(log);
@@ -563,7 +601,7 @@ describe("replication announcement retries", () => {
 	it("cancels a queued acknowledged repair on close", async () => {
 		session = await TestSession.disconnected(2);
 		const store = await session.peers[0].open(new EventStore<string, any>(), {
-			args: { replicate: false, timeUntilRoleMaturity: 0 },
+			args: { compatibility: 9, replicate: false, timeUntilRoleMaturity: 0 },
 		});
 		const log = store.log as any;
 		log._announcements.setupReplicationAnnouncementRepairFunction(100, 3);
@@ -989,7 +1027,7 @@ describe("replication announcement retries", () => {
 	it("does not let a repair worker outlive a repair function reconfiguration", async () => {
 		session = await TestSession.disconnected(2);
 		const store = await session.peers[0].open(new EventStore<string, any>(), {
-			args: { replicate: false, timeUntilRoleMaturity: 0 },
+			args: { compatibility: 9, replicate: false, timeUntilRoleMaturity: 0 },
 		});
 		const log = store.log as any;
 		useFastAnnouncementRepair(log);
@@ -1126,7 +1164,7 @@ describe("replication announcement retries", () => {
 	it("does not let a repair worker from a previous open service the reopened log", async () => {
 		session = await TestSession.disconnected(2);
 		const store = await session.peers[0].open(new EventStore<string, any>(), {
-			args: { replicate: false, timeUntilRoleMaturity: 0 },
+			args: { compatibility: 9, replicate: false, timeUntilRoleMaturity: 0 },
 		});
 		const log = store.log as any;
 		useFastAnnouncementRepair(log);
@@ -1168,7 +1206,7 @@ describe("replication announcement retries", () => {
 
 		await store.close();
 		await session.peers[0].open(store, {
-			args: { replicate: false, timeUntilRoleMaturity: 0 },
+			args: { compatibility: 9, replicate: false, timeUntilRoleMaturity: 0 },
 		});
 		reopened = true;
 		log._announcements._announcementRepairBinding.pending = true;

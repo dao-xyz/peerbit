@@ -991,6 +991,44 @@ export class ReplicationInfoV2ReceiveCoordinator {
 		return true;
 	}
 
+	/**
+	 * Resume only a request generation that exhausted its bounded retries.
+	 * Wait/liveness callers may nudge recovery without invalidating an active,
+	 * timed or in-flight request and without advancing the receive epoch.
+	 */
+	resumeParkedRequest(properties: {
+		peerHash: string;
+		peerSession: object;
+		receiveEpoch: object | null;
+	}): boolean {
+		const state = this._receiveStates.get(properties.peerHash);
+		if (
+			!state ||
+			state.peerSession !== properties.peerSession ||
+			state.receiveEpoch !== properties.receiveEpoch ||
+			!this.deps.isPeerStateCurrent(
+				properties.peerHash,
+				properties.peerSession,
+				properties.receiveEpoch,
+			) ||
+			state.phase === "active" ||
+			!state.requestParked ||
+			state.requestTimer !== undefined ||
+			state.requestInFlight !== undefined ||
+			this._reservedAdmissionsByPeer.has(properties.peerHash) ||
+			state.receiverBinding === undefined ||
+			state.lastSequence === MAX_U64
+		) {
+			return false;
+		}
+		state.requestAttempts = 0;
+		state.requestsSinceCapabilityRefresh = 0;
+		state.capabilityRefreshRequired = true;
+		state.requestParked = false;
+		this.armRequest(state, 0);
+		return true;
+	}
+
 	private transitionToResync(
 		state: ReplicationInfoV2ReceiveState,
 		options?: { force?: boolean; refreshCapability?: boolean },
@@ -1154,6 +1192,14 @@ export class ReplicationInfoV2ReceiveCoordinator {
 		const { state } = admission;
 		this._reservedAdmissionsByPeer.set(peerHash, admission);
 		state.reservedAdmission = admission;
+		if (state.requestTimer) {
+			clearTimeout(state.requestTimer);
+			state.requestTimer = undefined;
+		}
+		if (state.legacyFallbackTimer) {
+			clearTimeout(state.legacyFallbackTimer);
+			state.legacyFallbackTimer = undefined;
+		}
 		return admission;
 	}
 
@@ -1174,6 +1220,30 @@ export class ReplicationInfoV2ReceiveCoordinator {
 				(currentState !== state && currentState.phase !== "active"))
 		) {
 			this.transitionToResync(currentState, { force: true });
+		} else if (
+			currentState === state &&
+			!admission.committed &&
+			this.isStateCurrent(state) &&
+			state.phase !== "active" &&
+			state.requestTimer === undefined &&
+			state.requestInFlight === undefined &&
+			!state.requestParked
+		) {
+			// Reserving a Full pauses this generation's retry timer. If its host
+			// apply lane releases without committing, restore the bounded request
+			// worker so the exact current generation cannot become stranded.
+			this.armRequest(state, 0);
+		}
+		if (
+			currentState === state &&
+			this.isStateCurrent(state) &&
+			state.phase === "active" &&
+			state.legacyFallbackFingerprint !== undefined
+		) {
+			// A reservation also pauses compat sidecar recovery. Matching commits
+			// clear the evidence; an uncommitted or non-matching frame restores its
+			// bounded fallback without invalidating work in the host apply lane.
+			this.armLegacyFallback(state);
 		}
 	}
 
@@ -1281,6 +1351,19 @@ export class ReplicationInfoV2ReceiveCoordinator {
 		if (state.legacyFallbackTimer) {
 			return true;
 		}
+		this.armLegacyFallback(state);
+		return true;
+	}
+
+	private armLegacyFallback(state: ReplicationInfoV2ReceiveState): void {
+		if (
+			state.legacyFallbackTimer ||
+			state.phase !== "active" ||
+			state.legacyFallbackFingerprint === undefined ||
+			this._reservedAdmissionsByPeer.has(state.peerHash)
+		) {
+			return;
+		}
 		state.legacyFallbackTimer = setTimeout(() => {
 			state.legacyFallbackTimer = undefined;
 			if (this.isStateCurrent(state) && state.phase === "active") {
@@ -1291,7 +1374,6 @@ export class ReplicationInfoV2ReceiveCoordinator {
 			}
 		}, this.legacyFallbackDelayMs);
 		state.legacyFallbackTimer.unref?.();
-		return true;
 	}
 
 	private clearLegacyFallback(state: ReplicationInfoV2ReceiveState): void {
@@ -1418,8 +1500,7 @@ export class ReplicationInfoV2ReceiveCoordinator {
 			this._receiveStates.get(state.peerHash) !== state ||
 			state.controller.signal.aborted ||
 			this.deps.isClosed() ||
-			(this._reservedAdmissionsByPeer.has(state.peerHash) &&
-				this._reservedAdmissionsByPeer.get(state.peerHash)?.state !== state) ||
+			this._reservedAdmissionsByPeer.has(state.peerHash) ||
 			state.receiverBinding === undefined ||
 			state.phase === "active" ||
 			state.requestParked ||
@@ -1449,6 +1530,7 @@ export class ReplicationInfoV2ReceiveCoordinator {
 	private async refreshGrant(
 		state: ReplicationInfoV2ReceiveState,
 	): Promise<boolean> {
+		const version = state.version;
 		const refreshed = await this.deps.refreshLocalCapability({
 			peerHash: state.peerHash,
 			target: state.target,
@@ -1458,6 +1540,8 @@ export class ReplicationInfoV2ReceiveCoordinator {
 		});
 		if (
 			!refreshed ||
+			state.version !== version ||
+			this._reservedAdmissionsByPeer.has(state.peerHash) ||
 			!this.isStateCurrent(state) ||
 			this.deps.getReceiverTransportSession() !==
 				refreshed.receiverTransportSession
@@ -1489,7 +1573,10 @@ export class ReplicationInfoV2ReceiveCoordinator {
 		if (state.requestInFlight) {
 			return;
 		}
-		if (!this.isStateCurrent(state)) {
+		if (
+			!this.isStateCurrent(state) ||
+			this._reservedAdmissionsByPeer.has(state.peerHash)
+		) {
 			return;
 		}
 		if (
@@ -1512,7 +1599,10 @@ export class ReplicationInfoV2ReceiveCoordinator {
 					return;
 				}
 			}
-			if (!this.isStateCurrent(state)) {
+			if (
+				!this.isStateCurrent(state) ||
+				this._reservedAdmissionsByPeer.has(state.peerHash)
+			) {
 				return;
 			}
 			const ready = this._localCapabilityReadyBySession.get(state.peerSession);
@@ -1558,6 +1648,7 @@ export class ReplicationInfoV2ReceiveCoordinator {
 				if (
 					this._receiveStates.get(state.peerHash) === state &&
 					!state.controller.signal.aborted &&
+					!this._reservedAdmissionsByPeer.has(state.peerHash) &&
 					!state.requestTimer &&
 					state.phase !== "active"
 				) {

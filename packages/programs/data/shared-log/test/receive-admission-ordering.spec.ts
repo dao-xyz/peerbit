@@ -30,7 +30,7 @@ describe("receive admission replication-info ordering watermark", () => {
 	const openLogWithSyntheticOwner = async () => {
 		session = await TestSession.disconnected(2);
 		const db = await session.peers[0].open(new EventStore(), {
-			args: { replicate: false, timeUntilRoleMaturity: 0 },
+			args: { compatibility: 9, replicate: false, timeUntilRoleMaturity: 0 },
 		});
 		const log = db.log as any;
 		const ownerKey = session.peers[1].identity.publicKey;
@@ -45,10 +45,13 @@ describe("receive admission replication-info ordering watermark", () => {
 				timestamp: 1n,
 			});
 		const receive = (message: unknown, timestamp: bigint) =>
-			db.log.onMessage(message as any, {
-				from: ownerKey,
-				message: { header: { timestamp } },
-			} as any);
+			db.log.onMessage(
+				message as any,
+				{
+					from: ownerKey,
+					message: { header: { timestamp } },
+				} as any,
+			);
 		return {
 			db,
 			log,

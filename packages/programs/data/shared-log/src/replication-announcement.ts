@@ -204,9 +204,10 @@ export type ReplicationAnnouncementDeps<R extends "u32" | "u64"> = {
 	// Owner-routed so coordinator spies keep observing re-entrant queueing.
 	queueCurrentReplicationStateAnnouncementRepair: () => void;
 	queueCurrentReplicationStateAnnouncementRetry: (error: unknown) => boolean;
-	// Best-effort sidecar. The legacy publish remains the primary operation and
-	// retains its exact rejection/retry semantics during mixed-version rollout.
+	// V2 is always current. Legacy publication is enabled only for an explicit
+	// compatibility open and retains its exact rejection/retry semantics there.
 	enqueueReplicationInfoV2: (message: LegacyReplicationInfoMessage) => void;
+	isLegacyReplicationInfoEnabled: () => boolean;
 };
 
 type LegacyReplicationInfoMessage =
@@ -270,6 +271,7 @@ export class ReplicationAnnouncementCoordinator<R extends "u32" | "u64"> {
 
 	queueCurrentReplicationStateAnnouncementRetry(error: unknown): boolean {
 		if (
+			!this.deps.isLegacyReplicationInfoEnabled() ||
 			this.deps.isClosed() ||
 			this.deps.getCloseSignal().aborted ||
 			this._replicationAnnouncementRetryController.signal.aborted ||
@@ -362,6 +364,7 @@ export class ReplicationAnnouncementCoordinator<R extends "u32" | "u64"> {
 
 	queueCurrentReplicationStateAnnouncementRepair(): void {
 		if (
+			!this.deps.isLegacyReplicationInfoEnabled() ||
 			this.deps.isClosed() ||
 			this.deps.getCloseSignal().aborted ||
 			this._replicationAnnouncementRepairController.signal.aborted ||
@@ -437,6 +440,11 @@ export class ReplicationAnnouncementCoordinator<R extends "u32" | "u64"> {
 	async repairCurrentReplicationStateAnnouncement(
 		context?: ReplicationAnnouncementRepairWorkerContext,
 	): Promise<void> {
+		if (!this.deps.isLegacyReplicationInfoEnabled()) {
+			this._announcementRepairBinding.pending = false;
+			this._announcementRepairBinding.targets.clear();
+			return;
+		}
 		if (!this._announcementRepairBinding.pending) {
 			return;
 		}
@@ -645,6 +653,9 @@ export class ReplicationAnnouncementCoordinator<R extends "u32" | "u64"> {
 				this.rotateAnnouncementSession();
 				this.advanceCurrentReplicationStateAnnouncementRepairGeneration();
 				this.deps.enqueueReplicationInfoV2(message);
+				if (!this.deps.isLegacyReplicationInfoEnabled()) {
+					return;
+				}
 				try {
 					await this.deps.getRpc().send(message, {
 						priority: CONVERGENCE_MESSAGE_PRIORITY,
@@ -677,6 +688,10 @@ export class ReplicationAnnouncementCoordinator<R extends "u32" | "u64"> {
 	}
 
 	async retryCurrentReplicationStateAnnouncement(): Promise<void> {
+		if (!this.deps.isLegacyReplicationInfoEnabled()) {
+			this._replicationAnnouncementRetryPending = false;
+			return;
+		}
 		const session = this._announcementSession;
 		const controller = this._replicationAnnouncementRetryController;
 		try {

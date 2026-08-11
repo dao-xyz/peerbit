@@ -61,10 +61,20 @@ describe("receive admission replication-info recovery epoch", () => {
 		try {
 			const store = new EventStore<string, any>();
 			const target = await session.peers[0].open(store, {
-				args: { replicate: 1, setup, timeUntilRoleMaturity: 0 },
+				args: {
+					compatibility: 9,
+					replicate: 1,
+					setup,
+					timeUntilRoleMaturity: 0,
+				},
 			});
 			await session.peers[1].open(store.clone(), {
-				args: { replicate: 1, setup, timeUntilRoleMaturity: 0 },
+				args: {
+					compatibility: 9,
+					replicate: 1,
+					setup,
+					timeUntilRoleMaturity: 0,
+				},
 			});
 			const sharedLog = target.log as any;
 			const sourceKey = session.peers[1].identity.publicKey;
@@ -84,6 +94,11 @@ describe("receive admission replication-info recovery epoch", () => {
 			const scheduleRequests = sinon
 				.stub(sharedLog, "scheduleReplicationInfoRequests")
 				.callsFake(() => {});
+			// This test manually drives the legacy receive lane. V2 cutover is
+			// covered separately and must not bypass the fence under test.
+			const forceLegacyReceivePath = sinon
+				.stub(sharedLog._v2Receive, "isLegacyCutover")
+				.returns(false);
 
 			const delayedMessage = new AddedReplicationSegmentMessage({
 				segments: [remoteRange.toReplicationRange()],
@@ -178,6 +193,7 @@ describe("receive admission replication-info recovery epoch", () => {
 				releaseHandler.resolve();
 				applyQueue.restore();
 				synchronizer.restore();
+				forceLegacyReceivePath.restore();
 				scheduleRequests.restore();
 			}
 		} finally {
@@ -193,10 +209,20 @@ describe("receive admission replication-info recovery epoch", () => {
 		try {
 			const store = new EventStore<string, any>();
 			const target = await session.peers[0].open(store, {
-				args: { replicate: 1, setup, timeUntilRoleMaturity: 0 },
+				args: {
+					compatibility: 9,
+					replicate: 1,
+					setup,
+					timeUntilRoleMaturity: 0,
+				},
 			});
 			await session.peers[1].open(store.clone(), {
-				args: { replicate: 1, setup, timeUntilRoleMaturity: 0 },
+				args: {
+					compatibility: 9,
+					replicate: 1,
+					setup,
+					timeUntilRoleMaturity: 0,
+				},
 			});
 			const sharedLog = target.log as any;
 			const sourceKey = session.peers[1].identity.publicKey;
@@ -213,6 +239,11 @@ describe("receive admission replication-info recovery epoch", () => {
 			const scheduleRequests = sinon
 				.stub(sharedLog, "scheduleReplicationInfoRequests")
 				.callsFake(() => {});
+			// This test manually drives the legacy receive lane. V2 cutover is
+			// covered separately and must not bypass the fence under test.
+			const forceLegacyReceivePath = sinon
+				.stub(sharedLog._v2Receive, "isLegacyCutover")
+				.returns(false);
 			const recoveryCalls: Array<{
 				gateOpen: boolean;
 				receiveEpoch: object | null;
@@ -343,6 +374,7 @@ describe("receive admission replication-info recovery epoch", () => {
 				synchronizer.restore();
 				v2ReAdvertisement.restore();
 				v2Recovery.restore();
+				forceLegacyReceivePath.restore();
 				scheduleRequests.restore();
 			}
 		} finally {
@@ -633,10 +665,10 @@ describe("receive admission control-plane dispatch precedence", () => {
 		try {
 			const store = new EventStore<string, any>();
 			const source = await session.peers[0].open(store.clone(), {
-				args: { replicate: false, setup },
+				args: { compatibility: 9, replicate: false, setup },
 			});
 			const target = await session.peers[1].open(store.clone(), {
-				args: { replicate: 1, setup },
+				args: { compatibility: 9, replicate: 1, setup },
 			});
 			const sharedLog = target.log as any;
 			const sourceKey = source.node.identity.publicKey;
@@ -699,10 +731,20 @@ describe("receive admission control-plane lease one-shot", () => {
 		try {
 			const store = new EventStore<string, any>();
 			const target = await session.peers[0].open(store, {
-				args: { replicate: 1, setup, timeUntilRoleMaturity: 0 },
+				args: {
+					compatibility: 9,
+					replicate: 1,
+					setup,
+					timeUntilRoleMaturity: 0,
+				},
 			});
 			await session.peers[1].open(store.clone(), {
-				args: { replicate: 1, setup, timeUntilRoleMaturity: 0 },
+				args: {
+					compatibility: 9,
+					replicate: 1,
+					setup,
+					timeUntilRoleMaturity: 0,
+				},
 			});
 			const sharedLog = target.log as any;
 			const sourceKey = session.peers[1].identity.publicKey;
@@ -827,10 +869,10 @@ describe("receive admission receive error envelope", () => {
 		try {
 			const store = new EventStore<string, any>();
 			const source = await session.peers[0].open(store.clone(), {
-				args: { replicate: false, setup },
+				args: { compatibility: 9, replicate: false, setup },
 			});
 			const target = await session.peers[1].open(store.clone(), {
-				args: { replicate: 1, setup },
+				args: { compatibility: 9, replicate: 1, setup },
 			});
 			const sharedLog = target.log as any;
 			const sourceKey = source.node.identity.publicKey;

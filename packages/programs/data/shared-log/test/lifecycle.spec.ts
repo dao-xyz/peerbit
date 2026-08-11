@@ -182,7 +182,7 @@ describe("lifecycle", () => {
 		it(`${operation} drains an admitted subscription callback before retiring replication state`, async () => {
 			session = await TestSession.connected(2);
 			const db = await session.peers[0].open(new EventStore(), {
-				args: { replicate: { factor: 1 } },
+				args: { compatibility: 9, replicate: { factor: 1 } },
 			});
 			const sharedLog = db.log;
 			const replicationSegments = await sharedLog.getMyReplicationSegments();
@@ -319,10 +319,45 @@ describe("lifecycle", () => {
 	}
 
 	for (const operation of ["close", "drop"] as const) {
-		it(`${operation} publishes an admitted replication snapshot before the terminal reset`, async () => {
+		it(`${operation} uses only the V2 replication-info terminal path by default`, async () => {
 			session = await TestSession.connected(2);
 			const db = await session.peers[0].open(new EventStore(), {
 				args: { replicate: { factor: 1 } },
+			});
+			const sharedLog = db.log as any;
+			const sent: unknown[] = [];
+			const send = sinon
+				.stub(sharedLog.rpc, "send")
+				.callsFake(async (message) => {
+					sent.push(message);
+					return [] as any;
+				});
+			const v2Terminal = sinon
+				.stub(sharedLog._v2Send, "sendTerminalReset")
+				.resolves();
+
+			try {
+				await db[operation]();
+				expect(v2Terminal.calledOnce).to.be.true;
+				expect(
+					sent.filter(
+						(message) =>
+							message instanceof AllReplicatingSegmentsMessage &&
+							message.segments.length === 0,
+					),
+				).to.have.length(0);
+			} finally {
+				send.restore();
+				v2Terminal.restore();
+			}
+		});
+	}
+
+	for (const operation of ["close", "drop"] as const) {
+		it(`${operation} publishes an admitted replication snapshot before the terminal reset`, async () => {
+			session = await TestSession.connected(2);
+			const db = await session.peers[0].open(new EventStore(), {
+				args: { compatibility: 9, replicate: { factor: 1 } },
 			});
 			const sharedLog = db.log;
 			const order: string[] = [];
@@ -356,6 +391,15 @@ describe("lifecycle", () => {
 					}
 					return [] as any;
 				});
+			const originalV2Terminal = (
+				sharedLog as any
+			)._v2Send.sendTerminalReset.bind((sharedLog as any)._v2Send);
+			const v2Terminal = sinon
+				.stub((sharedLog as any)._v2Send, "sendTerminalReset")
+				.callsFake(async (...args: unknown[]) => {
+					order.push("v2-terminal-reset");
+					return originalV2Terminal(...args);
+				});
 			let terminating: Promise<unknown> | undefined;
 
 			try {
@@ -384,12 +428,15 @@ describe("lifecycle", () => {
 				expect(order).to.deep.equal([
 					"snapshot-start",
 					"snapshot-finish",
+					"v2-terminal-reset",
 					"terminal-reset",
 				]);
+				expect(v2Terminal.calledOnce).to.be.true;
 			} finally {
 				releaseSnapshot();
 				await terminating?.catch(() => {});
 				send.restore();
+				v2Terminal.restore();
 			}
 		});
 	}
@@ -447,7 +494,7 @@ describe("lifecycle", () => {
 	it("does not publish a request snapshot from a closed generation after reopen", async () => {
 		session = await TestSession.connected(1);
 		const db = await session.peers[0].open(new EventStore(), {
-			args: { replicate: { factor: 1 } },
+			args: { compatibility: 9, replicate: { factor: 1 } },
 		});
 		const sharedLog = db.log;
 		const requestMessage = new RequestReplicationInfoMessage();
@@ -509,7 +556,7 @@ describe("lifecycle", () => {
 				),
 			).to.have.length(0);
 
-			await session.peers[0].open(db);
+			await session.peers[0].open(db, { args: { compatibility: 9 } });
 			expect((sharedLog as any)._activeReceiveHandlersByPeer.size).to.equal(0);
 		} finally {
 			releaseSynchronizer();

@@ -366,13 +366,10 @@ describe("waitForReplicator liveness", () => {
 		const disconnected = sinon.spy(log.syncronizer, "onPeerDisconnected");
 
 		try {
-			const blocker = log.withReplicationInfoApplyQueue(
-				peerHash,
-				async () => {
-					blockerStarted.resolve();
-					await releaseBlocker.promise;
-				},
-			);
+			const blocker = log.withReplicationInfoApplyQueue(peerHash, async () => {
+				blockerStarted.resolve();
+				await releaseBlocker.promise;
+			});
 			await blockerStarted.promise;
 			const blockerTail = log._replicationInfoApplyQueueByPeer.get(peerHash);
 
@@ -680,9 +677,9 @@ describe("waitForReplicator liveness", () => {
 		);
 		await waitForResolved(
 			() =>
-				expect(joinEvents.filter((eventHash) => eventHash === peerHash)).to.have.length(
-					1,
-				),
+				expect(
+					joinEvents.filter((eventHash) => eventHash === peerHash),
+				).to.have.length(1),
 			{ timeout: 20_000, delayInterval: 100 },
 		);
 
@@ -692,6 +689,14 @@ describe("waitForReplicator liveness", () => {
 			hooks.confirmReplicatorSubscriberPresence.bind(hooks);
 		let pingFailuresLeft = 2;
 		let failRecoveryRequests = true;
+		const originalResumeParkedRequest = (
+			db0.log as any
+		)._v2Receive.resumeParkedRequest.bind((db0.log as any)._v2Receive);
+		const resumeParkedRequest = sinon
+			.stub((db0.log as any)._v2Receive, "resumeParkedRequest")
+			.callsFake((properties) =>
+				failRecoveryRequests ? false : originalResumeParkedRequest(properties),
+			);
 		db0.log.rpc.send = async (...args: Parameters<typeof originalSend>) => {
 			const [message] = args;
 			if (message instanceof ReplicationPingMessage && pingFailuresLeft-- > 0) {
@@ -730,11 +735,13 @@ describe("waitForReplicator liveness", () => {
 			);
 			await waitForResolved(
 				() =>
-					expect(joinEvents.filter((eventHash) => eventHash === peerHash)).to.have
-						.length(2),
+					expect(
+						joinEvents.filter((eventHash) => eventHash === peerHash),
+					).to.have.length(2),
 				{ timeout: 20_000, delayInterval: 100 },
 			);
 		} finally {
+			resumeParkedRequest.restore();
 			db0.log.rpc.send = originalSend;
 			hooks.confirmReplicatorSubscriberPresence =
 				originalConfirmSubscriberPresence;
@@ -749,12 +756,14 @@ describe("waitForReplicator liveness", () => {
 			args: {
 				replicate: { factor: 1 },
 				timeUntilRoleMaturity: 0,
+				compatibility: 9,
 			},
 		});
 		await session.peers[1].open(store.clone(), {
 			args: {
 				replicate: { factor: 1 },
 				timeUntilRoleMaturity: 0,
+				compatibility: 9,
 			},
 		});
 

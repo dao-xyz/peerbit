@@ -218,10 +218,20 @@ describe("receive admission", () => {
 		try {
 			const store = new EventStore<string, any>();
 			const target = await session.peers[0].open(store, {
-				args: { replicate: 1, setup, timeUntilRoleMaturity: 0 },
+				args: {
+					compatibility: 9,
+					replicate: 1,
+					setup,
+					timeUntilRoleMaturity: 0,
+				},
 			});
 			await session.peers[1].open(store.clone(), {
-				args: { replicate: 1, setup, timeUntilRoleMaturity: 0 },
+				args: {
+					compatibility: 9,
+					replicate: 1,
+					setup,
+					timeUntilRoleMaturity: 0,
+				},
 			});
 			const sharedLog = target.log as any;
 			const sourceKey = session.peers[1].identity.publicKey;
@@ -986,10 +996,20 @@ describe("receive admission", () => {
 		try {
 			const store = new EventStore<string, any>();
 			const target = await session.peers[0].open(store, {
-				args: { replicate: 1, setup, timeUntilRoleMaturity: 0 },
+				args: {
+					compatibility: 9,
+					replicate: 1,
+					setup,
+					timeUntilRoleMaturity: 0,
+				},
 			});
 			await session.peers[1].open(store.clone(), {
-				args: { replicate: 1, setup, timeUntilRoleMaturity: 0 },
+				args: {
+					compatibility: 9,
+					replicate: 1,
+					setup,
+					timeUntilRoleMaturity: 0,
+				},
 			});
 			const sharedLog = target.log as any;
 			const sourceKey = session.peers[1].identity.publicKey;
@@ -1006,6 +1026,11 @@ describe("receive admission", () => {
 			const delayedMessage = new AllReplicatingSegmentsMessage({
 				segments: [remoteRange.toReplicationRange()],
 			});
+			// This test manually drives the legacy receive lane. V2 cutover is
+			// covered separately and must not bypass the cleanup fence under test.
+			const forceLegacyReceivePath = sinon
+				.stub(sharedLog._v2Receive, "isLegacyCutover")
+				.returns(false);
 			const originalSynchronizerOnMessage =
 				sharedLog.syncronizer.onMessage.bind(sharedLog.syncronizer);
 			const synchronizer = sinon
@@ -1047,6 +1072,7 @@ describe("receive admission", () => {
 			} finally {
 				releaseSynchronizer.resolve();
 				synchronizer.restore();
+				forceLegacyReceivePath.restore();
 			}
 		} finally {
 			releaseSynchronizer.resolve();

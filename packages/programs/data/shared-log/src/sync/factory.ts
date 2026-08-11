@@ -114,7 +114,7 @@ export function createSyncronizer<R extends "u32" | "u64">(
 			sendRawExchangeHeads: props.sendRawExchangeHeads,
 		});
 	} else {
-		if (props.compatibility && props.compatibility < 10) {
+		if (props.compatibility !== undefined && props.compatibility < 10) {
 			return new SimpleSyncronizer({
 				log: props.log,
 				rpc: props.rpc,

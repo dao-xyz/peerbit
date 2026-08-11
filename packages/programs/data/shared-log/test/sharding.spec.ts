@@ -18,8 +18,8 @@ import {
 } from "../src/replication-domain-hash.js";
 import {
 	AbsoluteReplicas,
-	AddedReplicationSegmentMessage,
-	AllReplicatingSegmentsMessage,
+	AddedReplicationInfoV2Message,
+	FullReplicationInfoV2Message,
 	RequestReplicationInfoMessage,
 } from "../src/replication.js";
 import {
@@ -1124,6 +1124,7 @@ testSetups.forEach((setup) => {
 						timeUntilRoleMaturity: 0,
 						waitForReplicatorRequestIntervalMs: 50,
 						waitForReplicatorTimeout: 300,
+						compatibility: 9,
 					},
 				});
 
@@ -1623,13 +1624,13 @@ testSetups.forEach((setup) => {
 							probability: 1,
 						},
 						{
-							type: AddedReplicationSegmentMessage,
+							type: AddedReplicationInfoV2Message,
 							minDelayMs: 100,
 							maxDelayMs: 600,
 							probability: 0.45,
 						},
 						{
-							type: AllReplicatingSegmentsMessage,
+							type: FullReplicationInfoV2Message,
 							minDelayMs: 100,
 							maxDelayMs: 600,
 							probability: 0.45,
@@ -1921,13 +1922,13 @@ testSetups.forEach((setup) => {
 							probability: 0.25,
 						},
 						{
-							type: AddedReplicationSegmentMessage,
+							type: AddedReplicationInfoV2Message,
 							minDelayMs: 25,
 							maxDelayMs: 140,
 							probability: 0.25,
 						},
 						{
-							type: AllReplicatingSegmentsMessage,
+							type: FullReplicationInfoV2Message,
 							minDelayMs: 25,
 							maxDelayMs: 140,
 							probability: 0.25,

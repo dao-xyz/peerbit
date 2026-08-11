@@ -623,7 +623,7 @@ describe("join", () => {
 
 	it("will emit one message when replicating multiple entries", async () => {
 		db1 = await session.peers[0].open(new EventStore<string, any>(), {
-			args: { replicate: false },
+			args: { replicate: false, compatibility: 9 },
 		});
 		db2 = db1.clone();
 
@@ -637,7 +637,7 @@ describe("join", () => {
 		};
 
 		db2 = await session.peers[1].open(db2, {
-			args: { replicate: false },
+			args: { replicate: false, compatibility: 9 },
 		});
 
 		await waitForResolved(() => expect(subscribed).to.be.true); // we do this to assert that this message producing event has happend before we test stuff later
@@ -669,7 +669,7 @@ describe("join", () => {
 
 	it("will emit one message when replicating new and already joined entries", async () => {
 		db1 = await session.peers[0].open(new EventStore<string, any>(), {
-			args: { replicate: false },
+			args: { replicate: false, compatibility: 9 },
 		});
 		db2 = db1.clone();
 
@@ -683,7 +683,7 @@ describe("join", () => {
 		};
 
 		db2 = await session.peers[1].open(db2, {
-			args: { replicate: false },
+			args: { replicate: false, compatibility: 9 },
 		});
 
 		await waitForResolved(() => expect(subscribed).to.be.true); // we do this to assert that this message producing event has happend before we test stuff later
