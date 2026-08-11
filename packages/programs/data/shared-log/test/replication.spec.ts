@@ -26,8 +26,9 @@ import { createNumbers } from "../src/integers.js";
 import type { ReplicationRangeIndexable } from "../src/ranges.js";
 import {
 	AbsoluteReplicas,
-	AddedReplicationSegmentMessage,
+	AddedReplicationInfoV2Message,
 	AllReplicatingSegmentsMessage,
+	FullReplicationInfoV2Message,
 	decodeReplicas,
 	maxReplicas,
 } from "../src/replication.js";
@@ -213,46 +214,58 @@ testSetups.forEach((setup) => {
 				db2 = await session.peers[1].open(db1.clone(), {
 					args: {
 						setup,
+						compatibility: 9,
 					},
 				});
 
 				const fromHash = session.peers[0].identity.publicKey.hashcode();
+				// This test manually sends the legacy snapshot. V2 cutover is covered
+				// separately and must not satisfy the assertion through another path.
+				const forceLegacyReceivePath = sinon
+					.stub((db2.log as any)._v2Receive, "isLegacyCutover")
+					.returns(false);
 
-				// Ensure we start from a clean state on db2 for db1's ranges.
-				// Clearing through the network can race with periodic replication
-				// announcements and make this test flaky under CI load.
-				await db2.log.replicationIndex.del({
-					query: { hash: fromHash },
-				});
-				await waitForResolved(
-					async () =>
-						expect(
-							await db2.log.replicationIndex.count({
-								query: { hash: fromHash },
-							}),
-						).to.equal(0),
-					{ timeout: 5_000 },
-				);
+				try {
+					// Ensure we start from a clean state on db2 for db1's ranges.
+					// Clearing through the network can race with periodic replication
+					// announcements and make this test flaky under CI load.
+					await db2.log.replicationIndex.del({
+						query: { hash: fromHash },
+					});
+					await waitForResolved(
+						async () =>
+							expect(
+								await db2.log.replicationIndex.count({
+									query: { hash: fromHash },
+								}),
+							).to.equal(0),
+						{ timeout: 5_000 },
+					);
 
-				// Simulate the timing-sensitive case where `Program.waitFor()` rejects.
-				(db2.log as any).waitFor = () => Promise.reject(new Error("boom"));
+					// Simulate the timing-sensitive case where `Program.waitFor()` rejects.
+					(db2.log as any).waitFor = () => Promise.reject(new Error("boom"));
 
-				const segments = (await db1.log.getMyReplicationSegments()).map((x) =>
-					x.toReplicationRange(),
-				);
-				expect(segments.length).to.be.greaterThan(0);
+					const segments = (await db1.log.getMyReplicationSegments()).map((x) =>
+						x.toReplicationRange(),
+					);
+					expect(segments.length).to.be.greaterThan(0);
 
-				await db1.log.rpc.send(new AllReplicatingSegmentsMessage({ segments }));
+					await db1.log.rpc.send(
+						new AllReplicatingSegmentsMessage({ segments }),
+					);
 
-				await waitForResolved(
-					async () =>
-						expect(
-							await db2.log.replicationIndex.count({
-								query: { hash: fromHash },
-							}),
-						).to.be.greaterThan(0),
-					{ timeout: 5_000 },
-				);
+					await waitForResolved(
+						async () =>
+							expect(
+								await db2.log.replicationIndex.count({
+									query: { hash: fromHash },
+								}),
+							).to.be.greaterThan(0),
+						{ timeout: 5_000 },
+					);
+				} finally {
+					forceLegacyReceivePath.restore();
+				}
 			});
 
 			it("logs are unique", async () => {
@@ -2541,13 +2554,13 @@ testSetups.forEach((setup) => {
 									probability: scaleChaosProbability(0.25),
 								},
 								{
-									type: AddedReplicationSegmentMessage,
+									type: AddedReplicationInfoV2Message,
 									minDelayMs: scaleChaosDelay(25),
 									maxDelayMs: scaleChaosDelay(140),
 									probability: scaleChaosProbability(0.25),
 								},
 								{
-									type: AllReplicatingSegmentsMessage,
+									type: FullReplicationInfoV2Message,
 									minDelayMs: scaleChaosDelay(25),
 									maxDelayMs: scaleChaosDelay(140),
 									probability: scaleChaosProbability(0.25),
@@ -4375,8 +4388,8 @@ testSetups.forEach((setup) => {
 						expect(
 							received.some(
 								(m) =>
-									m instanceof AddedReplicationSegmentMessage ||
-									m instanceof AllReplicatingSegmentsMessage,
+									m instanceof AddedReplicationInfoV2Message ||
+									m instanceof FullReplicationInfoV2Message,
 							),
 						).to.equal(true);
 						expect(received.some((m) => m instanceof RequestIPruneV2)).to.equal(true);
@@ -5041,13 +5054,13 @@ testSetups.forEach((setup) => {
 					const slowController = new AbortController();
 					slowDownMessage(
 						db3.log,
-						AddedReplicationSegmentMessage,
+						AddedReplicationInfoV2Message,
 						2000,
 						slowController.signal,
 					);
 					slowDownMessage(
 						db3.log,
-						AllReplicatingSegmentsMessage,
+						FullReplicationInfoV2Message,
 						2000,
 						slowController.signal,
 					);

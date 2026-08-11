@@ -21,11 +21,13 @@ import {
 	AddedReplicationSegmentMessage,
 	AllReplicatingSegmentsMessage,
 	FullReplicationInfoV2Message,
+	RequestReplicationInfoMessage,
 	RequestReplicationInfoV2Message,
 	ResponseRoleMessage,
 	StoppedReplicating,
 	StoppedReplicationInfoV2Message,
 } from "../src/replication.js";
+import { Observer } from "../src/role.js";
 import { EventStore } from "./utils/stores/index.js";
 
 const RECEIVER_CHALLENGE = Uint8Array.from({ length: 32 }, (_, index) => index);
@@ -79,16 +81,24 @@ describe("receive admission replication-info V2 decode-only codec", () => {
 		session = undefined;
 	});
 
-	it("keeps every legacy replication-info payload byte-identical", () => {
-		expect(hex(new AllReplicatingSegmentsMessage({ segments: [] }))).to.equal(
-			"00010200000000",
-		);
-		expect(hex(new AddedReplicationSegmentMessage({ segments: [] }))).to.equal(
-			"00010300000000",
-		);
-		expect(hex(new StoppedReplicating({ segmentIds: [] }))).to.equal(
-			"00010400000000",
-		);
+	it("keeps every legacy replication-info variant tag byte-identical", () => {
+		const cases = [
+			[new RequestReplicationInfoMessage(), "000100"],
+			[new ResponseRoleMessage({ role: new Observer() }), "0001010101"],
+			[new AllReplicatingSegmentsMessage({ segments: [] }), "00010200000000"],
+			[new AddedReplicationSegmentMessage({ segments: [] }), "00010300000000"],
+			[new StoppedReplicating({ segmentIds: [] }), "00010400000000"],
+		] as const;
+
+		for (const [message, expected] of cases) {
+			const bytes = serialize(message);
+			expect(Buffer.from(bytes).toString("hex")).to.equal(expected);
+			const decoded = deserialize(bytes, TransportMessage);
+			expect(decoded.constructor).to.equal(message.constructor);
+			expect(Buffer.from(serialize(decoded)).toString("hex")).to.equal(
+				expected,
+			);
+		}
 	});
 
 	it("pins the V2 tags, fixed-field order and little-endian u64", () => {
@@ -310,7 +320,7 @@ describe("receive admission replication-info V2 decode-only codec", () => {
 		}
 	});
 
-	it("advertises sender and receiver readiness while legacy remains primary", async () => {
+	it("uses V2-only replication-info startup by default", async () => {
 		session = await TestSession.disconnected(2);
 		const db = await session.peers[0].open(new EventStore(), {
 			args: { replicate: true, timeUntilRoleMaturity: 0 },
@@ -327,11 +337,27 @@ describe("receive admission replication-info V2 decode-only codec", () => {
 		const requests = sinon
 			.stub(log, "scheduleReplicationInfoRequests")
 			.callsFake(() => {});
+		const v2Recovery = sinon
+			.stub(log, "scheduleReplicationInfoV2Recovery")
+			.callsFake(() => {});
+		const snapshot = sinon.spy(log, "getMyReplicationSegments");
+		const advertise = sinon.spy(log._v2Receive, "advertiseLocalCapability");
+		const markReady = sinon.spy(log._v2Receive, "recordLocalCapabilityReady");
 
 		try {
 			await log._onSubscription({
 				detail: { from: remote, topics: [db.log.topic] },
 			});
+			const capabilityAdvertisement = advertise.returnValues[0];
+			expect(capabilityAdvertisement).to.exist;
+			await capabilityAdvertisement.firstAttempt;
+			const remoteHash = remote.hashcode();
+			const peerSession = log._peerSessions.current(remoteHash);
+			expect(
+				log._v2Receive._localCapabilityContextBySession.get(peerSession)
+					.legacyBarrierReleased,
+			).to.be.true;
+			expect(markReady.calledOnce).to.be.true;
 			const capability = sent.find(
 				(message) => message instanceof SyncCapabilitiesMessage,
 			) as SyncCapabilitiesMessage | undefined;
@@ -358,7 +384,14 @@ describe("receive admission replication-info V2 decode-only codec", () => {
 				sent.some(
 					(message) => message instanceof AllReplicatingSegmentsMessage,
 				),
-			).to.be.true;
+			).to.be.false;
+			expect(
+				sent.some(
+					(message) =>
+						message instanceof RequestReplicationInfoMessage ||
+						message instanceof ResponseRoleMessage,
+				),
+			).to.be.false;
 			expect(
 				sent.some(
 					(message) =>
@@ -368,16 +401,181 @@ describe("receive admission replication-info V2 decode-only codec", () => {
 						message instanceof StoppedReplicationInfoV2Message,
 				),
 			).to.be.false;
+			expect(snapshot.notCalled).to.be.true;
+			expect(requests.notCalled).to.be.true;
+			expect(v2Recovery.calledOnce).to.be.true;
 		} finally {
 			send.restore();
 			requests.restore();
+			v2Recovery.restore();
+			snapshot.restore();
+			advertise.restore();
+			markReady.restore();
+		}
+	});
+
+	it("drops every legacy replication-info control message in default mode", async () => {
+		session = await TestSession.disconnected(2);
+		const db = await session.peers[0].open(new EventStore(), {
+			args: { replicate: false, timeUntilRoleMaturity: 0 },
+		});
+		const log = db.log as any;
+		const remote = session.peers[1].identity.publicKey;
+		const remoteHash = remote.hashcode();
+		const peerSession = log._peerSessions.rotate(remoteHash, "opening");
+		log._peerSessions.unblockReplicationInfo(remoteHash);
+		log._peerSessions.markOpen(remoteHash, peerSession);
+
+		const synchronizer = sinon
+			.stub(log.syncronizer, "onMessage")
+			.resolves(false);
+		const request = sinon.spy(log, "handleRequestReplicationInfo");
+		const announcement = sinon.spy(log, "handleReplicationInfoAnnouncement");
+		const stopped = sinon.spy(log, "handleStoppedReplicating");
+		const activity = sinon.spy(log._liveness, "markReplicatorActivity");
+		const add = sinon.spy(log, "addReplicationRange");
+		const remove = sinon.spy(log, "removeReplicationRanges");
+		const send = sinon.spy(log.rpc, "send");
+		const acquireLease = sinon.spy(log, "acquirePeerReceiveLease");
+		const validateRanges = sinon.spy(
+			log,
+			"validateReplicationRangeAnnouncement",
+		);
+		const validateStopped = sinon.spy(
+			log,
+			"validateStoppedReplicationAnnouncement",
+		);
+		const messages = [
+			new RequestReplicationInfoMessage(),
+			new ResponseRoleMessage({ role: new Observer() }),
+			new AllReplicatingSegmentsMessage({ segments: [] }),
+			new AddedReplicationSegmentMessage({ segments: [] }),
+			new StoppedReplicating({ segmentIds: [] }),
+		];
+
+		try {
+			for (const [index, message] of messages.entries()) {
+				await db.log.onMessage(message, {
+					from: remote,
+					message: {
+						header: { session: 1n, timestamp: BigInt(index + 1) },
+					},
+				} as any);
+			}
+
+			expect(synchronizer.notCalled).to.be.true;
+			expect(request.notCalled).to.be.true;
+			expect(announcement.notCalled).to.be.true;
+			expect(stopped.notCalled).to.be.true;
+			expect(activity.notCalled).to.be.true;
+			expect(add.notCalled).to.be.true;
+			expect(remove.notCalled).to.be.true;
+			expect(send.notCalled).to.be.true;
+			expect(acquireLease.notCalled).to.be.true;
+			expect(validateRanges.notCalled).to.be.true;
+			expect(validateStopped.notCalled).to.be.true;
+			expect(log.latestReplicationInfoMessage.has(remoteHash)).to.be.false;
+			expect(
+				await db.log.replicationIndex.count({ query: { hash: remoteHash } }),
+			).to.equal(0);
+		} finally {
+			synchronizer.restore();
+			request.restore();
+			announcement.restore();
+			stopped.restore();
+			activity.restore();
+			add.restore();
+			remove.restore();
+			send.restore();
+			acquireLease.restore();
+			validateRanges.restore();
+			validateStopped.restore();
+		}
+	});
+
+	it("replaces one exact-session V2 recovery nudge across rapid reconnect", async () => {
+		session = await TestSession.disconnected(2);
+		const db = await session.peers[0].open(new EventStore(), {
+			args: {
+				replicate: false,
+				timeUntilRoleMaturity: 0,
+				waitForReplicatorRequestIntervalMs: 50,
+			},
+		});
+		const log = db.log as any;
+		const remote = session.peers[1].identity.publicKey;
+		const remoteHash = remote.hashcode();
+		const peerSession = log._peerSessions.rotate(remoteHash, "opening");
+		log._peerSessions.unblockReplicationInfo(remoteHash);
+		log._peerSessions.markOpen(remoteHash, peerSession);
+		const resume = sinon
+			.stub(log._v2Receive, "resumeParkedRequest")
+			.returns(false);
+		const clock = sinon.useFakeTimers();
+
+		try {
+			log.scheduleReplicationInfoV2Recovery(
+				remote,
+				log._instanceLifecycle.membershipLifecycleController,
+			);
+			expect(resume.calledOnce).to.be.true;
+			expect(log._replicationInfoRequestByPeer.has(remoteHash)).to.be.true;
+			await clock.tickAsync(150);
+			expect(resume.callCount).to.equal(4);
+			for (const call of resume.getCalls()) {
+				expect(call.args[0]).to.deep.equal({
+					peerHash: remoteHash,
+					peerSession,
+					receiveEpoch: log._peerSessions.receiveEpoch(remoteHash),
+				});
+			}
+			const exactSessionRecovery =
+				log._replicationInfoRequestByPeer.get(remoteHash);
+			log.cleanupPeerDisconnectTracking(remoteHash);
+			expect(log._replicationInfoRequestByPeer.get(remoteHash)).to.equal(
+				exactSessionRecovery,
+			);
+
+			const replacementSession = log._peerSessions.rotate(
+				remoteHash,
+				"opening",
+			);
+			log._peerSessions.unblockReplicationInfo(remoteHash);
+			log._peerSessions.markOpen(remoteHash, replacementSession);
+			log.scheduleReplicationInfoV2Recovery(
+				remote,
+				log._instanceLifecycle.membershipLifecycleController,
+			);
+			expect(resume.callCount).to.equal(5);
+			expect(
+				log._replicationInfoRequestByPeer.get(remoteHash).peerSession,
+			).to.equal(replacementSession);
+			await clock.tickAsync(50);
+			expect(resume.callCount).to.equal(6);
+			expect(resume.lastCall.args[0]).to.deep.equal({
+				peerHash: remoteHash,
+				peerSession: replacementSession,
+				receiveEpoch: log._peerSessions.receiveEpoch(remoteHash),
+			});
+
+			log._peerSessions.rotate(remoteHash, "departing");
+			await clock.tickAsync(50);
+			expect(resume.callCount).to.equal(6);
+			expect(log._replicationInfoRequestByPeer.has(remoteHash)).to.be.false;
+		} finally {
+			clock.restore();
+			resume.restore();
 		}
 	});
 
 	it("starts advertising V2 readiness before replication snapshot retrieval", async () => {
 		session = await TestSession.disconnected(2);
 		const db = await session.peers[0].open(new EventStore(), {
-			args: { replicate: true, timeUntilRoleMaturity: 0 },
+			args: {
+				compatibility: 9,
+				replicate: true,
+				timeUntilRoleMaturity: 0,
+			},
 		});
 		const log = db.log as any;
 		const remote = session.peers[1].identity.publicKey;
@@ -426,7 +624,11 @@ describe("receive admission replication-info V2 decode-only codec", () => {
 	it("does not hold the legacy snapshot behind the V2 capability acknowledgement", async () => {
 		session = await TestSession.disconnected(2);
 		const db = await session.peers[0].open(new EventStore(), {
-			args: { replicate: true, timeUntilRoleMaturity: 0 },
+			args: {
+				compatibility: 9,
+				replicate: true,
+				timeUntilRoleMaturity: 0,
+			},
 		});
 		const log = db.log as any;
 		const remote = session.peers[1].identity.publicKey;

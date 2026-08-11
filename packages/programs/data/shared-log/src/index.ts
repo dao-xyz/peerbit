@@ -2086,7 +2086,11 @@ export class SharedLog<
 	// reconnect barrier commits. See PeerSessionRegistry._replicationInfoBlockedPeers.
 	private _replicationInfoRequestByPeer!: Map<
 		string,
-		{ attempts: number; timer?: ReturnType<typeof setTimeout> }
+		{
+			attempts: number;
+			timer?: ReturnType<typeof setTimeout>;
+			peerSession?: PeerSession;
+		}
 	>;
 	private _replicationInfoApplyQueueByPeer!: Map<string, Promise<void>>;
 	// Range ids are global primary keys while receive lanes are per peer. Keep
@@ -3382,6 +3386,7 @@ export class SharedLog<
 					error,
 				),
 			enqueueReplicationInfoV2: (message) => this._v2Send.enqueue(message),
+			isLegacyReplicationInfoEnabled: () => this.legacyReplicationInfoEnabled,
 			isClosed: () => this.closed,
 			getCloseSignal: () => this._closeController.signal,
 			getMyReplicationSegments: () => this.getMyReplicationSegments(),
@@ -3738,6 +3743,14 @@ export class SharedLog<
 
 	get compatibility(): number | undefined {
 		return this._logProperties?.compatibility;
+	}
+
+	/**
+	 * Legacy replication-info is an explicit compatibility fallback. Current
+	 * logs never infer or re-enable it from a remote peer's capabilities.
+	 */
+	private get legacyReplicationInfoEnabled(): boolean {
+		return this.compatibility !== undefined && this.compatibility < 10;
 	}
 
 	get isAdaptiveReplicating() {
@@ -14163,7 +14176,9 @@ export class SharedLog<
 		this.domain = options?.domain
 			? (options.domain(this) as unknown as D)
 			: (createReplicationDomainHash(
-					options?.compatibility && options?.compatibility < 10 ? "u32" : "u64",
+					options?.compatibility !== undefined && options.compatibility < 10
+						? "u32"
+						: "u64",
 				)(this) as unknown as D);
 		this.indexableDomain = createIndexableDomainFromResolution(
 			this.domain.resolution,
@@ -14309,8 +14324,12 @@ export class SharedLog<
 		}
 
 		this._closeController = new AbortController();
-		this._announcements.setupReplicationAnnouncementRetryFunction();
-		this._announcements.setupReplicationAnnouncementRepairFunction();
+		if (this.legacyReplicationInfoEnabled) {
+			this._announcements.setupReplicationAnnouncementRetryFunction();
+			this._announcements.setupReplicationAnnouncementRepairFunction();
+		} else {
+			this._announcements.cancelCurrentReplicationStateAnnouncementRetry();
+		}
 		this._closeController.signal.addEventListener("abort", () => {
 			for (const [_peer, state] of this._replicationInfoRequestByPeer) {
 				if (state.timer) clearTimeout(state.timer);
@@ -15512,7 +15531,14 @@ export class SharedLog<
 
 	async afterOpen(): Promise<void> {
 		await super.afterOpen();
-		const existingSubscribersPromise = this._getTopicSubscribers(this.topic);
+		// Start the broader discovery eagerly, in parallel with rebalance, for its
+		// routing/cache side effects. It also contains connected/provider/fanout
+		// candidates that have not subscribed to this log, so only the authoritative
+		// pubsub snapshot below may create subscription fallback sessions.
+		const subscriberDiscoveryPromise = this._getTopicSubscribers(this.topic);
+		const existingSubscribersPromise = this.node.services.pubsub.getSubscribers(
+			this.topic,
+		);
 		const replicationLifecycleController =
 			this._instanceLifecycle?.membershipLifecycleController;
 
@@ -15533,6 +15559,7 @@ export class SharedLog<
 		this._liveness.startReplicatorLivenessSweep();
 
 		await this.rebalanceParticipation();
+		await subscriberDiscoveryPromise;
 
 		// Take into account existing subscription
 		(await existingSubscribersPromise)?.forEach((v) => {
@@ -15540,6 +15567,14 @@ export class SharedLog<
 				return;
 			}
 			if (this.closed) {
+				return;
+			}
+			// The live subscribe event and this after-open snapshot can report the
+			// same initial transport generation. The live callback rotates its
+			// PeerSession synchronously, so any current session here proves the
+			// fallback is stale/duplicate. Rotating again would erase the signed
+			// capability binding that the first callback just established.
+			if (this._peerSessions.current(v.hashcode()) !== null) {
 				return;
 			}
 			void this.runSubscriptionChangeCallback(() =>
@@ -15754,7 +15789,9 @@ export class SharedLog<
 		const peerSession = this._peerSessions.current(peerHash);
 		const preserveV2Session =
 			peerSession?.phase === "open" && peerSession.isActive();
-		this.cancelReplicationInfoRequests(peerHash);
+		if (this.legacyReplicationInfoEnabled || !preserveV2Session) {
+			this.cancelReplicationInfoRequests(peerHash);
+		}
 		this._liveness._replicatorLivenessFailures.delete(peerHash);
 		this._liveness._replicatorLastActivityAt.delete(peerHash);
 		if (!preserveV2Session) {
@@ -16925,15 +16962,18 @@ export class SharedLog<
 				}, 2_000);
 				try {
 					const reset = new AllReplicatingSegmentsMessage({ segments: [] });
-					await Promise.all([
-						this.rpc
-							.send(reset, {
-								priority: CONVERGENCE_MESSAGE_PRIORITY,
-								signal: abort.signal,
-							})
-							.catch(() => {}),
-						this._v2Send.sendTerminalReset(abort.signal),
-					]);
+					const resets = [this._v2Send.sendTerminalReset(abort.signal)];
+					if (this.legacyReplicationInfoEnabled) {
+						resets.push(
+							this.rpc
+								.send(reset, {
+									priority: CONVERGENCE_MESSAGE_PRIORITY,
+									signal: abort.signal,
+								})
+								.catch(() => {}),
+						);
+					}
+					await Promise.all(resets);
 				} finally {
 					clearTimeout(abortTimer);
 				}
@@ -17055,15 +17095,18 @@ export class SharedLog<
 				}, 2_000);
 				try {
 					const reset = new AllReplicatingSegmentsMessage({ segments: [] });
-					await Promise.all([
-						this.rpc
-							.send(reset, {
-								priority: CONVERGENCE_MESSAGE_PRIORITY,
-								signal: abort.signal,
-							})
-							.catch(() => {}),
-						this._v2Send.sendTerminalReset(abort.signal),
-					]);
+					const resets = [this._v2Send.sendTerminalReset(abort.signal)];
+					if (this.legacyReplicationInfoEnabled) {
+						resets.push(
+							this.rpc
+								.send(reset, {
+									priority: CONVERGENCE_MESSAGE_PRIORITY,
+									signal: abort.signal,
+								})
+								.catch(() => {}),
+						);
+					}
+					await Promise.all(resets);
 				} finally {
 					clearTimeout(abortTimer);
 				}
@@ -17588,6 +17631,19 @@ export class SharedLog<
 			this.throwIfNativeDurableCommitFailed();
 			if (!context.from) {
 				throw new Error("Missing from in update role message");
+			}
+			if (
+				!this.legacyReplicationInfoEnabled &&
+				(msg instanceof RequestReplicationInfoMessage ||
+					msg instanceof ResponseRoleMessage ||
+					msg instanceof AllReplicatingSegmentsMessage ||
+					msg instanceof AddedReplicationSegmentMessage ||
+					msg instanceof StoppedReplicating)
+			) {
+				// These variants remain registered decode tombstones, but current logs
+				// fail closed before leases, synchronizer work, liveness, watermarks or
+				// mutations. Only an explicit pre-v10 compatibility open admits them.
+				return;
 			}
 			// Snapshot receive ownership before any async handler gets a chance to
 			// yield. Replication-info messages reach their branch only after the
@@ -19310,19 +19366,37 @@ export class SharedLog<
 								timestamp: capabilityTimestamp,
 								openingSession: receiveSession!,
 							});
-						} else if (
-							this.observePeerSyncCapabilities({
+						} else {
+							const observed = this.observePeerSyncCapabilities({
 								peerHash: receiveFromHash,
 								capabilities: msg.capabilities,
 								transportSession: capabilityTransportSession,
 								timestamp: capabilityTimestamp,
-							}) &&
-							receiveSession?.phase === "open"
-						) {
-							this.promoteReplicationInfoV2ReceiveCapability(
-								context.from,
-								receiveSession,
-							);
+							});
+							if (observed && receiveSession?.phase === "open") {
+								this.promoteReplicationInfoV2ReceiveCapability(
+									context.from,
+									receiveSession,
+								);
+							} else if (observed && receiveSession === null) {
+								// A capability can arrive before the sender's topic Subscribe after
+								// reconnect. Ask that authenticated peer for its authoritative
+								// subscriber snapshot; the resulting Subscribe creates the real
+								// PeerSession and completes the symmetric capability handshake.
+								// Never synthesize membership from capability traffic alone.
+								void Promise.resolve()
+									.then(() =>
+										this.node.services.pubsub.requestSubscribers(
+											this.topic,
+											context.from,
+										),
+									)
+									.catch((error) => {
+										if (!isNotStartedError(error as Error)) {
+											logger.error(error?.toString?.() ?? String(error));
+										}
+									});
+							}
 						}
 					}
 					return;
@@ -19889,7 +19963,10 @@ export class SharedLog<
 					return;
 				}
 				this._liveness.markReplicatorActivity(fromHash);
-				if (msg instanceof FullReplicationInfoV2Message) {
+				if (
+					msg instanceof FullReplicationInfoV2Message &&
+					this.legacyReplicationInfoEnabled
+				) {
 					this.cancelReplicationInfoRequests(fromHash);
 				}
 			});
@@ -20572,17 +20649,29 @@ export class SharedLog<
 
 			requestAttempts++;
 
-			this.rpc
-				.send(new RequestReplicationInfoMessage(), {
-					mode: new AcknowledgeDelivery({ redundancy: 1, to: [key] }),
-				})
-				.catch((e) => {
-					// Best-effort: missing peers / unopened RPC should not fail the wait logic.
-					if (isNotStartedError(e as Error)) {
-						return;
-					}
-					logger.error(e?.toString?.() ?? String(e));
-				});
+			if (this.legacyReplicationInfoEnabled) {
+				this.rpc
+					.send(new RequestReplicationInfoMessage(), {
+						mode: new AcknowledgeDelivery({ redundancy: 1, to: [key] }),
+					})
+					.catch((e) => {
+						// Best-effort: missing peers / unopened RPC should not fail the wait logic.
+						if (isNotStartedError(e as Error)) {
+							return;
+						}
+						logger.error(e?.toString?.() ?? String(e));
+					});
+			} else {
+				const peerHash = key.hashcode();
+				const peerSession = this._peerSessions.current(peerHash);
+				if (peerSession?.phase === "open") {
+					this._v2Receive.resumeParkedRequest({
+						peerHash,
+						peerSession,
+						receiveEpoch: this._peerSessions.receiveEpoch(peerHash),
+					});
+				}
+			}
 
 			if (requestAttempts < maxRequestAttempts) {
 				requestTimer = setTimeout(requestReplicationInfo, requestIntervalMs);
@@ -23316,6 +23405,73 @@ export class SharedLog<
 		this._replicationInfoRequestByPeer.delete(peerHash);
 	}
 
+	private scheduleReplicationInfoV2Recovery(
+		peer: PublicSignKey,
+		replicationLifecycleController = this._instanceLifecycle
+			?.membershipLifecycleController,
+	) {
+		if (
+			!replicationLifecycleController ||
+			!this.isReplicationLifecycleActive(replicationLifecycleController)
+		) {
+			return;
+		}
+		const peerHash = peer.hashcode();
+		const peerSession = this._peerSessions.current(peerHash);
+		if (!peerSession || peerSession.phase !== "open") {
+			return;
+		}
+		const requestStates = this._replicationInfoRequestByPeer;
+		const existing = requestStates.get(peerHash);
+		if (existing?.peerSession === peerSession) {
+			return;
+		}
+		if (existing) {
+			if (existing.timer) {
+				clearTimeout(existing.timer);
+			}
+			requestStates.delete(peerHash);
+		}
+		const state: {
+			attempts: number;
+			timer?: ReturnType<typeof setTimeout>;
+			peerSession: PeerSession;
+		} = {
+			attempts: 0,
+			peerSession,
+		};
+		requestStates.set(peerHash, state);
+		const cancel = () => {
+			if (requestStates.get(peerHash) !== state) {
+				return;
+			}
+			if (state.timer) {
+				clearTimeout(state.timer);
+			}
+			requestStates.delete(peerHash);
+		};
+		const intervalMs = Math.max(50, this.waitForReplicatorRequestIntervalMs);
+		const tick = () => {
+			if (
+				!this.isReplicationLifecycleActive(replicationLifecycleController) ||
+				peerSession.phase !== "open" ||
+				!this._peerSessions.isCurrent(peerHash, peerSession)
+			) {
+				cancel();
+				return;
+			}
+			this._v2Receive.resumeParkedRequest({
+				peerHash,
+				peerSession,
+				receiveEpoch: this._peerSessions.receiveEpoch(peerHash),
+			});
+			state.attempts++;
+			state.timer = setTimeout(tick, intervalMs);
+			state.timer.unref?.();
+		};
+		tick();
+	}
+
 	private scheduleReplicationInfoRequests(
 		peer: PublicSignKey,
 		replicationLifecycleController = this._instanceLifecycle
@@ -23325,6 +23481,13 @@ export class SharedLog<
 			!replicationLifecycleController ||
 			!this.isReplicationLifecycleActive(replicationLifecycleController)
 		) {
+			return;
+		}
+		if (!this.legacyReplicationInfoEnabled) {
+			this.scheduleReplicationInfoV2Recovery(
+				peer,
+				replicationLifecycleController,
+			);
 			return;
 		}
 		const peerHash = peer.hashcode();
@@ -23360,7 +23523,6 @@ export class SharedLog<
 				cancel();
 				return;
 			}
-
 			state.attempts++;
 
 			this.rpc
@@ -23397,6 +23559,7 @@ export class SharedLog<
 		topics: string[],
 		subscribed: boolean,
 		subscriptionEpoch?: PeerSession,
+		subscriptionTransportSession?: bigint,
 	) {
 		if (!topics.includes(this.topic)) {
 			return;
@@ -23419,13 +23582,31 @@ export class SharedLog<
 		if (!ownsSubscriptionEpoch()) {
 			return;
 		}
+		// A reconnect can arrive before the previous exact-session recovery tick
+		// observes its stale session. Retire that job synchronously so it cannot
+		// suppress the replacement session's scheduler in the shared peer slot.
+		this.cancelReplicationInfoRequests(peerHash);
 		// A destination stream is scoped to exactly one topic-subscription
 		// session. Abort the predecessor synchronously before either barrier can
 		// yield; a late queue completion must never enter the new session.
 		this._v2Receive.clearPeer(peerHash);
 		this._v2Send.clearPeer(peerHash);
-		this._peerSyncCapabilitySessions.delete(peerHash);
-		this._peerSyncCapabilityTimestamps.delete(peerHash);
+		const capabilityTransportSession =
+			this._peerSyncCapabilitySessions.get(peerHash);
+		const canInheritCapability =
+			subscribed &&
+			(subscriptionTransportSession !== undefined
+				? capabilityTransportSession === subscriptionTransportSession
+				: !expectedSubscriptionEpoch.hasPredecessor);
+		if (!canInheritCapability) {
+			// Departures and successor openings revoke the signed transport binding.
+			// A live successor may inherit a capability that arrived just before its
+			// Subscribe only when both signed frames belong to the same transport
+			// generation. Snapshot fallbacks lack that proof, so only their first
+			// opening may inherit pre-opening capability state.
+			this._peerSyncCapabilitySessions.delete(peerHash);
+			this._peerSyncCapabilityTimestamps.delete(peerHash);
+		}
 		if (subscribed) {
 			const pendingOpeningCapabilities =
 				this._openingSyncCapabilitiesByPeer.get(peerHash);
@@ -23577,6 +23758,17 @@ export class SharedLog<
 				receiveEpoch,
 				signal: replicationLifecycleController.signal,
 			});
+		if (!this.legacyReplicationInfoEnabled) {
+			// Current logs have no legacy startup work to order ahead of RequestV2.
+			// Releasing is synchronous and exact-session fenced; the ACK may still
+			// arrive later and promote readiness through the coordinator.
+			localCapabilityAdvertisement.releaseLegacyBarrier();
+			this.scheduleReplicationInfoV2Recovery(
+				publicKey,
+				replicationLifecycleController,
+			);
+			return;
+		}
 
 		try {
 			let replicationSegments: ReplicationRangeIndexable<R>[];
@@ -25105,6 +25297,7 @@ export class SharedLog<
 			evt.detail.topics,
 			true,
 			subscriptionEpoch,
+			evt.detail.session,
 		);
 	}
 

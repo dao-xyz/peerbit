@@ -1,11 +1,11 @@
 import { TestSession } from "@peerbit/test-utils";
-import { TimeoutError, delay } from "@peerbit/time";
+import { TimeoutError, delay, waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
 import sinon from "sinon";
 import {
 	AbsoluteReplicas,
-	encodeReplicas,
 	RequestReplicationInfoMessage,
+	encodeReplicas,
 } from "../src/replication.js";
 import { checkBounded } from "./utils.js";
 import { EventStore } from "./utils/stores/index.js";
@@ -75,6 +75,7 @@ describe("waitForReplicator", () => {
 		session = await TestSession.connected(2);
 		db = await session.peers[0].open(new EventStore<string, any>(), {
 			args: {
+				compatibility: 9,
 				timeUntilRoleMaturity: 0,
 				waitForReplicatorRequestIntervalMs: 50,
 				waitForReplicatorRequestMaxAttempts: 2,
@@ -109,6 +110,96 @@ describe("waitForReplicator", () => {
 		}
 
 		expect(requestCount - baseline).to.equal(2);
+	});
+
+	it("nudges parked V2 recovery without sending legacy requests by default", async () => {
+		session = await TestSession.connected(2);
+		db = await session.peers[0].open(new EventStore<string, any>(), {
+			args: {
+				timeUntilRoleMaturity: 0,
+				waitForReplicatorRequestIntervalMs: 50,
+				waitForReplicatorRequestMaxAttempts: 2,
+			},
+		});
+		await session.peers[1].open(db.clone(), {
+			args: {
+				replicate: false,
+				timeUntilRoleMaturity: 0,
+			},
+		});
+		const log = db.log as any;
+		const originalSend = log.rpc.send.bind(log.rpc);
+		let legacyRequests = 0;
+		log.rpc.send = async (message: any, options: any) => {
+			if (message instanceof RequestReplicationInfoMessage) {
+				legacyRequests++;
+				return;
+			}
+			return originalSend(message, options);
+		};
+		const remote = session.peers[1].identity.publicKey;
+		const remoteHash = remote.hashcode();
+		await waitForResolved(() =>
+			expect(log._peerSessions.current(remoteHash)?.phase).to.equal("open"),
+		);
+		// Isolate the caller-owned wait loop from the session-lifetime recovery
+		// ticker started at the end of the subscription callback. `markOpen`
+		// precedes that scheduling, so wait for the exact-session job itself.
+		await waitForResolved(() =>
+			expect(
+				log._replicationInfoRequestByPeer.get(remoteHash)?.peerSession,
+			).to.equal(log._peerSessions.current(remoteHash)),
+		);
+		log.cancelReplicationInfoRequests(remoteHash);
+		const scheduleRecovery = sinon
+			.stub(log, "scheduleReplicationInfoV2Recovery")
+			.callsFake(() => {});
+		const resumed: Array<{
+			properties: {
+				peerHash: string;
+				peerSession: object;
+				receiveEpoch: object | null;
+			};
+			currentPeerSession: object | undefined;
+			currentPhase: string | undefined;
+			currentReceiveEpoch: object | null;
+		}> = [];
+		const resume = sinon
+			.stub(log._v2Receive, "resumeParkedRequest")
+			.callsFake((properties: unknown) => {
+				resumed.push({
+					properties: properties as (typeof resumed)[number]["properties"],
+					currentPeerSession: log._peerSessions.current(remoteHash),
+					currentPhase: log._peerSessions.current(remoteHash)?.phase,
+					currentReceiveEpoch: log._peerSessions.receiveEpoch(remoteHash),
+				});
+				return false;
+			});
+
+		try {
+			await expect(
+				db.log.waitForReplicator(remote, {
+					timeout: 300,
+					eager: true,
+				}),
+			).to.be.rejectedWith(TimeoutError);
+			expect(legacyRequests).to.equal(0);
+			expect(resume.callCount).to.equal(2);
+			for (const observation of resumed) {
+				expect(observation.properties.peerHash).to.equal(remoteHash);
+				expect(observation.properties.peerSession).to.equal(
+					observation.currentPeerSession,
+				);
+				expect(observation.currentPhase).to.equal("open");
+				expect(observation.properties.receiveEpoch).to.equal(
+					observation.currentReceiveEpoch,
+				);
+			}
+		} finally {
+			resume.restore();
+			scheduleRecovery.restore();
+			log.rpc.send = originalSend;
+		}
 	});
 
 	it("rejects waitForReplicators when internal leader check throws", async () => {
@@ -186,5 +277,4 @@ describe("waitForReplicator", () => {
 			"Log did not conform to upper bound length of 1 got 2",
 		);
 	});
-
 });

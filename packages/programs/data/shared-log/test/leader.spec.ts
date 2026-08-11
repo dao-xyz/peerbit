@@ -11,6 +11,7 @@ import {
 import { TestSession } from "@peerbit/test-utils";
 import { delay, waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
+import sinon from "sinon";
 import { ExchangeHeadsMessage } from "../src/exchange-heads.js";
 import { slowDownMessage } from "./utils.js";
 import { EventStore } from "./utils/stores/event-store.js";
@@ -729,34 +730,34 @@ describe(`isLeader`, function () {
 			]);
 
 			await waitForResolved(
-					async () => {
-						expect((await db1.log.getReplicators()).size).equal(2);
-						expect((await db2.log.getReplicators()).size).equal(2);
+				async () => {
+					expect((await db1.log.getReplicators()).size).equal(2);
+					expect((await db2.log.getReplicators()).size).equal(2);
 
-						const expected = [
-							...session.peers.map((x) => x.identity.publicKey.hashcode()),
-						].sort();
+					const expected = [
+						...session.peers.map((x) => x.identity.publicKey.hashcode()),
+					].sort();
 
-						const coverAll = [
-							...(await db1.log.getCover({ args: undefined }, { roleAge: 0 })),
-						].sort();
-						expect(coverAll.length).to.be.greaterThan(0);
-						for (const peer of coverAll) {
-							expect(expected).to.include(peer);
-						}
+					const coverAll = [
+						...(await db1.log.getCover({ args: undefined }, { roleAge: 0 })),
+					].sort();
+					expect(coverAll.length).to.be.greaterThan(0);
+					for (const peer of coverAll) {
+						expect(expected).to.include(peer);
+					}
 
-						const coverReachableOnly = [
-							...(await db1.log.getCover(
-								{ args: undefined },
-								{ roleAge: 0, reachableOnly: true },
-							)),
-						].sort();
-						expect(coverReachableOnly).to.deep.equal(coverAll);
-					},
-					{
-						timeout: 60 * 1000,
-						timeoutMessage: "reachableOnly cover not ready",
-					},
+					const coverReachableOnly = [
+						...(await db1.log.getCover(
+							{ args: undefined },
+							{ roleAge: 0, reachableOnly: true },
+						)),
+					].sort();
+					expect(coverReachableOnly).to.deep.equal(coverAll);
+				},
+				{
+					timeout: 60 * 1000,
+					timeoutMessage: "reachableOnly cover not ready",
+				},
 			);
 
 			await db1.close();
@@ -934,6 +935,10 @@ describe(`isLeader`, function () {
 				});
 
 				await delay(MATURE_TIME);
+				// Evaluate the first cover assertion at the intended historical instant:
+				// db1 is mature, while peers opened below are not. Their sequential open
+				// and handshake time must not silently mature them before the assertion.
+				const oneMatureNow = Date.now();
 
 				db2 = await EventStore.open<EventStore<string, any>>(
 					db1.address!,
@@ -983,19 +988,24 @@ describe(`isLeader`, function () {
 				// db2 is not mature from db3 perspective (?). Might be (?)
 				// this test is kind of pointless anyway since we got the range.test.ts that tests all the cases
 
-				for (let i = 1; i < 3; i++) {
-					db3.log.replicas.min = { getValue: () => i };
-					let list = await db3.log.getCover(
-						{ args: undefined },
-						{
-							roleAge: MATURE_TIME,
-						},
-					);
-					expect(list).to.have.length(2); // TODO unmature nodes should not be queried
-					expect(list).to.have.members([
-						session.peers[0].identity.publicKey.hashcode(),
-						session.peers[2].identity.publicKey.hashcode(),
-					]);
+				const now = sinon.stub(Date, "now").returns(oneMatureNow);
+				try {
+					for (let i = 1; i < 3; i++) {
+						db3.log.replicas.min = { getValue: () => i };
+						const list = await db3.log.getCover(
+							{ args: undefined },
+							{
+								roleAge: MATURE_TIME,
+							},
+						);
+						expect(list).to.have.length(2); // TODO unmature nodes should not be queried
+						expect(list).to.have.members([
+							session.peers[0].identity.publicKey.hashcode(),
+							session.peers[2].identity.publicKey.hashcode(),
+						]);
+					}
+				} finally {
+					now.restore();
 				}
 
 				await delay(MATURE_TIME);

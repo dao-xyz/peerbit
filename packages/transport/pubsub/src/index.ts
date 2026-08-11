@@ -3889,7 +3889,11 @@ export class TopicControlPlane
 				if (changed.length > 0) {
 					this.dispatchEvent(
 						new CustomEvent<SubscriptionEvent>("subscribe", {
-							detail: new SubscriptionEvent(sender, changed),
+							detail: new SubscriptionEvent(
+								sender,
+								changed,
+								message.header.session,
+							),
 						}),
 					);
 				}
@@ -3998,7 +4002,11 @@ export class TopicControlPlane
 				if (changed.length > 0) {
 					this.dispatchEvent(
 						new CustomEvent<SubscriptionEvent>("subscribe", {
-							detail: new SubscriptionEvent(sender, changed),
+							detail: new SubscriptionEvent(
+								sender,
+								changed,
+								message.header.session,
+							),
 						}),
 					);
 				}

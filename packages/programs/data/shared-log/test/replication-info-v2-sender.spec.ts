@@ -875,6 +875,37 @@ describe("receive admission replication-info V2 sender streams", () => {
 		expect(stateB.nextSequence).to.equal(4n);
 	});
 
+	it("honors the terminal bound when the transport ignores abort", async () => {
+		const peerSession = {};
+		openSessions.add(peerSession);
+		expect(accept(peerA, peerSession, challenge(47))).to.be.true;
+		await coordinator.drain();
+		const state = coordinator._sendStates.get(peerA.hashcode())!;
+		ownershipController.abort();
+		rpcSend.resetHistory();
+		const transport = pDefer<unknown>();
+		rpcSend.returns(transport.promise);
+		const terminalController = new AbortController();
+
+		const terminal = coordinator.sendTerminalReset(terminalController.signal);
+		await waitForResolved(() => expect(rpcSend.calledOnce).to.be.true);
+		let settled = false;
+		void terminal.then(() => {
+			settled = true;
+		});
+		await new Promise<void>((resolve) => setImmediate(resolve));
+		expect(settled).to.be.false;
+
+		terminalController.abort();
+		await terminal;
+		expect(settled).to.be.true;
+		const reset = rpcSend.firstCall.args[0] as FullReplicationInfoV2Message;
+		expect(reset.sequence).to.equal(2n);
+		expect(reset.segments).to.deep.equal([]);
+		expect(state.nextSequence).to.equal(3n);
+		transport.resolve([]);
+	});
+
 	it("spends the last u64 terminal sequence and cannot retry or recreate it", async () => {
 		const peerSession = {};
 		openSessions.add(peerSession);
@@ -1033,7 +1064,7 @@ describe("receive admission replication-info V2 sender integration", () => {
 		expect(activity.notCalled).to.be.true;
 	});
 
-	it("adds a directed V2 sidecar without changing the legacy primary send", async () => {
+	it("inherits only transport-matched pre-opening capabilities and fences departure", async () => {
 		session = await TestSession.disconnected(2);
 		const db = await session.peers[0].open(new EventStore(), {
 			args: { replicate: false, timeUntilRoleMaturity: 0 },
@@ -1041,44 +1072,179 @@ describe("receive admission replication-info V2 sender integration", () => {
 		const log = db.log as any;
 		const remote = session.peers[1].identity.publicKey;
 		const remoteHash = remote.hashcode();
-		const peerSession = log._peerSessions.rotate(remoteHash, "opening");
-		log._peerSessions.unblockReplicationInfo(remoteHash);
-		log._peerSessions.markOpen(remoteHash, peerSession);
-		const receiverTransportSession = 88n;
-		log._peerSyncCapabilities.set(
-			remoteHash,
-			SYNC_CAPABILITY_REPLICATION_INFO_V2_DECODE |
+		const remoteTransportSession = 78n;
+		const capabilityTimestamp = 10n;
+		const capability = new SyncCapabilitiesMessage({
+			capabilities:
+				SYNC_CAPABILITY_REPLICATION_INFO_V2_DECODE |
+				SYNC_CAPABILITY_REPLICATION_INFO_V2_SEND |
 				SYNC_CAPABILITY_REPLICATION_INFO_V2_APPLY,
-		);
-		log._peerSyncCapabilitySessions.set(remoteHash, receiverTransportSession);
-		log._peerSyncCapabilityTimestamps.set(remoteHash, 0n);
-		const send = sinon.stub(log.rpc, "send").resolves([] as any);
-		const request = new RequestReplicationInfoV2Message({
-			receiverChallenge: challenge(21),
-			intendedSender: log.node.identity.publicKey,
-			senderSession: BigInt(log.node.services.pubsub.session),
 		});
-		await log.onMessage(request, {
+		const requestSubscribers = sinon
+			.stub(session.peers[0].services.pubsub, "requestSubscribers")
+			.resolves();
+		await log.onMessage(capability, {
 			from: remote,
 			message: {
-				header: { session: receiverTransportSession, timestamp: 1n },
+				header: {
+					session: remoteTransportSession,
+					timestamp: capabilityTimestamp,
+				},
 			},
 		} as any);
-		await log._v2Send.drain();
-		send.resetHistory();
+		expect(log._peerSessions.current(remoteHash)).to.equal(null);
+		expect(log._peerSyncCapabilitySessions.get(remoteHash)).to.equal(
+			remoteTransportSession,
+		);
+		await waitForResolved(
+			() =>
+				expect(requestSubscribers.calledOnceWith(log.topic, remote)).to.be.true,
+		);
 
-		const legacy = new AddedReplicationSegmentMessage({ segments: [] });
-		await log._announcements.sendReplicationAnnouncement(legacy);
-		await log._v2Send.drain();
-		expect(send.calledWith(legacy)).to.be.true;
-		const v2 = send.args
-			.map((args: any[]) => args[0])
-			.find(
-				(message: unknown) => message instanceof AddedReplicationInfoV2Message,
-			) as AddedReplicationInfoV2Message | undefined;
-		expect(v2).to.exist;
-		expect(v2!.sequence).to.equal(2n);
+		sinon.stub(log.rpc, "send").resolves([] as any);
+		const event = {
+			detail: {
+				from: remote,
+				topics: [log.topic],
+				session: remoteTransportSession,
+			},
+		} as any;
+		await log._onSubscription(event);
+		const firstSession = log._peerSessions.current(remoteHash);
+		expect(log._peerSyncCapabilitySessions.get(remoteHash)).to.equal(
+			remoteTransportSession,
+		);
+		expect(log._peerSyncCapabilityTimestamps.get(remoteHash)).to.equal(
+			capabilityTimestamp,
+		);
+		expect(
+			log._v2Receive._receiveStates.get(remoteHash)?.senderTransportSession,
+		).to.equal(remoteTransportSession);
+
+		const successorTransportSession = 79n;
+		await log.onMessage(capability, {
+			from: remote,
+			message: {
+				header: {
+					session: successorTransportSession,
+					timestamp: capabilityTimestamp + 1n,
+				},
+			},
+		} as any);
+		await log._onSubscription({
+			detail: {
+				from: remote,
+				topics: [log.topic],
+				session: successorTransportSession,
+			},
+		} as any);
+		const replacement = log._peerSessions.current(remoteHash);
+		expect(replacement).not.to.equal(firstSession);
+		expect(log._peerSyncCapabilitySessions.get(remoteHash)).to.equal(
+			successorTransportSession,
+		);
+		expect(log._peerSyncCapabilityTimestamps.get(remoteHash)).to.equal(
+			capabilityTimestamp + 1n,
+		);
+		expect(
+			log._v2Receive._receiveStates.get(remoteHash)?.senderTransportSession,
+		).to.equal(successorTransportSession);
+
+		await log._onSubscription({
+			detail: {
+				from: remote,
+				topics: [log.topic],
+				session: successorTransportSession + 1n,
+			},
+		} as any);
+		expect(log._peerSyncCapabilitySessions.has(remoteHash)).to.be.false;
+		expect(log._peerSyncCapabilityTimestamps.has(remoteHash)).to.be.false;
+		expect(log._v2Receive._receiveStates.has(remoteHash)).to.be.false;
+
+		const unboundTransportSession = successorTransportSession + 2n;
+		await log.onMessage(capability, {
+			from: remote,
+			message: {
+				header: {
+					session: unboundTransportSession,
+					timestamp: capabilityTimestamp + 2n,
+				},
+			},
+		} as any);
+		await log._onSubscription({
+			detail: { from: remote, topics: [log.topic] },
+		} as any);
+		expect(log._peerSyncCapabilitySessions.has(remoteHash)).to.be.false;
+		expect(log._peerSyncCapabilityTimestamps.has(remoteHash)).to.be.false;
+		expect(log._v2Receive._receiveStates.has(remoteHash)).to.be.false;
+
+		await log._onUnsubscription(event);
+		expect(log._peerSyncCapabilitySessions.has(remoteHash)).to.be.false;
+		expect(log._peerSyncCapabilityTimestamps.has(remoteHash)).to.be.false;
 	});
+
+	it("does not open a replication session for an unsubscribed discovery candidate", async () => {
+		session = await TestSession.connected(2);
+		const db = await session.peers[0].open(new EventStore(), {
+			args: { replicate: false, timeUntilRoleMaturity: 0 },
+		});
+		const remoteHash = session.peers[1].identity.publicKey.hashcode();
+
+		expect((db.log as any)._peerSessions.current(remoteHash)).to.equal(null);
+	});
+
+	for (const compatibility of [undefined, 0, 9, 10] as const) {
+		const retainsLegacy = compatibility !== undefined && compatibility < 10;
+		it(`${retainsLegacy ? "retains" : "suppresses"} the legacy primary for compatibility ${String(compatibility)} while sending directed V2 mutations`, async () => {
+			session = await TestSession.disconnected(2);
+			const db = await session.peers[0].open(new EventStore(), {
+				args: { compatibility, replicate: false, timeUntilRoleMaturity: 0 },
+			});
+			const log = db.log as any;
+			const remote = session.peers[1].identity.publicKey;
+			const remoteHash = remote.hashcode();
+			const peerSession = log._peerSessions.rotate(remoteHash, "opening");
+			log._peerSessions.unblockReplicationInfo(remoteHash);
+			log._peerSessions.markOpen(remoteHash, peerSession);
+			const receiverTransportSession = 88n;
+			log._peerSyncCapabilities.set(
+				remoteHash,
+				SYNC_CAPABILITY_REPLICATION_INFO_V2_DECODE |
+					SYNC_CAPABILITY_REPLICATION_INFO_V2_APPLY,
+			);
+			log._peerSyncCapabilitySessions.set(remoteHash, receiverTransportSession);
+			log._peerSyncCapabilityTimestamps.set(remoteHash, 0n);
+			const send = sinon.stub(log.rpc, "send").resolves([] as any);
+			const request = new RequestReplicationInfoV2Message({
+				receiverChallenge: challenge(21),
+				intendedSender: log.node.identity.publicKey,
+				senderSession: BigInt(log.node.services.pubsub.session),
+			});
+			await log.onMessage(request, {
+				from: remote,
+				message: {
+					header: { session: receiverTransportSession, timestamp: 1n },
+				},
+			} as any);
+			await log._v2Send.drain();
+			send.resetHistory();
+
+			const legacy = new AddedReplicationSegmentMessage({ segments: [] });
+			await log._announcements.sendReplicationAnnouncement(legacy);
+			await log._v2Send.drain();
+			const outbound = send.args.map((args: any[]) => args[0]);
+			const legacyMessages = outbound.filter(
+				(message: unknown) => message instanceof AddedReplicationSegmentMessage,
+			);
+			const v2Messages = outbound.filter(
+				(message: unknown) => message instanceof AddedReplicationInfoV2Message,
+			) as AddedReplicationInfoV2Message[];
+			expect(outbound).to.have.length(retainsLegacy ? 2 : 1);
+			expect(legacyMessages).to.have.length(retainsLegacy ? 1 : 0);
+			expect(v2Messages).to.have.length(1);
+			expect(v2Messages[0].sequence).to.equal(2n);
+		});
+	}
 
 	it("uses a newer capability to authorize one bounded challenge rebind", async () => {
 		session = await TestSession.disconnected(2);

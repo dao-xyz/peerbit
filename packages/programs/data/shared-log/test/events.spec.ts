@@ -24,10 +24,14 @@ describe("events", () => {
 		await session.stop();
 	});
 
-	const openDisconnectedLog = async (peers = 2) => {
+	const openDisconnectedLog = async (peers = 2, compatibility?: number) => {
 		session = await TestSession.disconnected(peers);
 		const db = await session.peers[0].open(new EventStore(), {
-			args: { replicate: false, timeUntilRoleMaturity: 0 },
+			args: {
+				replicate: false,
+				timeUntilRoleMaturity: 0,
+				...(compatibility !== undefined ? { compatibility } : {}),
+			},
 		});
 		return {
 			db,
@@ -132,7 +136,7 @@ describe("events", () => {
 	};
 
 	it("announces the authoritative empty snapshot after a reset put commits then throws", async () => {
-		const { log, replicationIndex } = await openDisconnectedLog(1);
+		const { log, replicationIndex } = await openDisconnectedLog(1, 9);
 		const selfKey = session.peers[0].identity.publicKey;
 		const selfHash = selfKey.hashcode();
 		const numbers = log.indexableDomain.numbers;
@@ -491,7 +495,7 @@ describe("events", () => {
 	});
 
 	it("accepts only an ordered legacy replacement pair and applies its final range", async () => {
-		const { db, log, replicationIndex } = await openDisconnectedLog(2);
+		const { db, log, replicationIndex } = await openDisconnectedLog(2, 9);
 		const ownerKey = session.peers[1].identity.publicKey;
 		const ownerHash = ownerKey.hashcode();
 		const id = randomBytes(32);
@@ -756,7 +760,7 @@ describe("events", () => {
 	});
 
 	it("announces the authoritative snapshot when a merge removal precedes a failed replacement", async () => {
-		const { log, replicationIndex } = await openDisconnectedLog(1);
+		const { log, replicationIndex } = await openDisconnectedLog(1, 9);
 		const selfKey = session.peers[0].identity.publicKey;
 		const selfHash = selfKey.hashcode();
 		const first = makeReplicationRange(log, {
@@ -843,7 +847,7 @@ describe("events", () => {
 	});
 
 	it("queues a preliminary removal once when its delete commits then throws", async () => {
-		const { log, replicationIndex } = await openDisconnectedLog(1);
+		const { log, replicationIndex } = await openDisconnectedLog(1, 9);
 		const selfKey = session.peers[0].identity.publicKey;
 		const selfHash = selfKey.hashcode();
 		const first = makeReplicationRange(log, {
@@ -909,7 +913,7 @@ describe("events", () => {
 	});
 
 	it("announces the current snapshot when post-write maturity bookkeeping fails", async () => {
-		const { log, replicationIndex } = await openDisconnectedLog(1);
+		const { log, replicationIndex } = await openDisconnectedLog(1, 9);
 		const selfHash = session.peers[0].identity.publicKey.hashcode();
 		const range = makeReplicationRange(log, {
 			id: randomBytes(32),
@@ -963,7 +967,7 @@ describe("events", () => {
 	});
 
 	it("poisons ownership instead of announcing an invalid persisted snapshot", async () => {
-		const { log, replicationIndex } = await openDisconnectedLog(2);
+		const { log, replicationIndex } = await openDisconnectedLog(2, 9);
 		const selfKey = session.peers[0].identity.publicKey;
 		const selfHash = selfKey.hashcode();
 		const invalid = makeReplicationRange(log, {
@@ -1479,7 +1483,7 @@ describe("events", () => {
 	});
 
 	it("keeps incremental owner state within the snapshot limit and reconnects at the limit", async () => {
-		const { log, replicationIndex } = await openDisconnectedLog(2);
+		const { log, replicationIndex } = await openDisconnectedLog(2, 9);
 		const selfKey = session.peers[0].identity.publicKey;
 		const selfHash = selfKey.hashcode();
 		const ranges = Array.from({ length: 4096 }, (_, index) =>
@@ -1550,7 +1554,7 @@ describe("events", () => {
 	});
 
 	it("rejects over-limit stopped announcements before liveness, queues, or queries", async () => {
-		const { log, replicationIndex } = await openDisconnectedLog(2);
+		const { log, replicationIndex } = await openDisconnectedLog(2, 9);
 		const remoteKey = session.peers[1].identity.publicKey;
 		const duplicateId = randomBytes(32);
 		const markActivity = sinon.spy(log._liveness, "markReplicatorActivity");
@@ -1834,7 +1838,7 @@ describe("events", () => {
 	}
 
 	it("orders a delayed adaptive Added announcement before the authoritative empty snapshot", async () => {
-		const { db, log } = await openDisconnectedLog(1);
+		const { db, log } = await openDisconnectedLog(1, 9);
 		const [currentRange] = await db.log.replicate({
 			factor: 0.2,
 			offset: 0.1,
@@ -1971,7 +1975,10 @@ describe("events", () => {
 				await releaseLowerAppend.promise;
 				return { entries: [entry], removed: [] };
 			});
-		const deleteCoordinates = sinon.spy((log as any)._coordinates, "deleteCoordinatesForHashes");
+		const deleteCoordinates = sinon.spy(
+			(log as any)._coordinates,
+			"deleteCoordinatesForHashes",
+		);
 		const coalesced = sinon.spy(log, "processLocalAppendManyCoalesced");
 		const planLocal = sinon.spy(log, "planNativeLocalAppendEntries");
 		const planDelivery = sinon.spy(log, "planNativeAppendEntries");
@@ -2123,6 +2130,11 @@ describe("events", () => {
 		const { db, log } = await openDisconnectedLog(1);
 		const lowerAppendStarted = pDefer<void>();
 		const releaseLowerAppend = pDefer<void>();
+		// This case targets the fallback path even when the Rust-core matrix makes
+		// a native backbone available for the same commit-only operation.
+		const nativeCommitOnly = sinon
+			.stub(log, "appendLocallyPreparedPayloadNativeBackboneCommitOnly")
+			.returns(undefined);
 		const lowerAppend = sinon
 			.stub(log.log, "appendLocallyPreparedCommitOnly")
 			.callsFake(async () => {
@@ -2160,6 +2172,7 @@ describe("events", () => {
 			expect(finishAppend.called).to.be.false;
 		} finally {
 			releaseLowerAppend.resolve();
+			nativeCommitOnly.restore();
 			lowerAppend.restore();
 			finishAppend.restore();
 			log._replicationRangeMutationFailure = undefined;
@@ -2184,7 +2197,10 @@ describe("events", () => {
 				return {} as any;
 			});
 		const applyChange = sinon.spy(log, "applyChange");
-		const deleteCoordinates = sinon.spy((log as any)._coordinates, "deleteCoordinatesForHashes");
+		const deleteCoordinates = sinon.spy(
+			(log as any)._coordinates,
+			"deleteCoordinatesForHashes",
+		);
 		const planLocal = sinon.spy(log, "planNativeLocalAppendEntries");
 		const planDelivery = sinon.spy(log, "planNativeAppendEntries");
 		const processLocalAppend = sinon.spy(log, "processLocalAppend");
@@ -2887,7 +2903,10 @@ describe("events", () => {
 				staleLatestCommit,
 		};
 		const canUseResidentState = sinon
-			.stub((log as any)._coordinates, "canUseNativeBackboneResidentCoordinateState")
+			.stub(
+				(log as any)._coordinates,
+				"canUseNativeBackboneResidentCoordinateState",
+			)
 			.returns(true);
 		const context = sinon.stub(log, "createLeaderSelectionContext").resolves({
 			roleAge: 0,
@@ -2994,7 +3013,10 @@ describe("events", () => {
 			await session.peers[0].open(db, {
 				args: { replicate: false, timeUntilRoleMaturity: 0 },
 			});
-			const deleteCoordinates = sinon.spy((log as any)._coordinates, "deleteCoordinatesForHashes");
+			const deleteCoordinates = sinon.spy(
+				(log as any)._coordinates,
+				"deleteCoordinatesForHashes",
+			);
 			const planHeads = sinon.spy(log, "planEntryLeaderBatch");
 
 			try {
@@ -3023,7 +3045,7 @@ describe("events", () => {
 	});
 
 	it("fences a blocked replication announcement from reopened repair queues", async () => {
-		const { db, log } = await openDisconnectedLog(1);
+		const { db, log } = await openDisconnectedLog(1, 9);
 		const announcementStarted = pDefer<void>();
 		const releaseAnnouncement = pDefer<void>();
 		let announcementSignal: AbortSignal | undefined;
@@ -3061,7 +3083,11 @@ describe("events", () => {
 			expect(announcementSignal?.aborted).to.be.true;
 			await db.close();
 			await session.peers[0].open(db, {
-				args: { replicate: false, timeUntilRoleMaturity: 0 },
+				args: {
+					replicate: false,
+					timeUntilRoleMaturity: 0,
+					compatibility: 9,
+				},
 			});
 			queueRepair.resetHistory();
 			queueRetry.resetHistory();
@@ -3082,7 +3108,7 @@ describe("events", () => {
 	});
 
 	it("does not let a stale announcement retry poison reopened ownership", async () => {
-		const { db, log } = await openDisconnectedLog(1);
+		const { db, log } = await openDisconnectedLog(1, 9);
 		const snapshotReadStarted = pDefer<void>();
 		const releaseSnapshotRead = pDefer<void>();
 		const getMyReplicationSegments = sinon
@@ -3106,7 +3132,11 @@ describe("events", () => {
 			log.poisonReplicationOwnership(new Error("forced ownership poison"));
 			await db.close();
 			await session.peers[0].open(db, {
-				args: { replicate: false, timeUntilRoleMaturity: 0 },
+				args: {
+					replicate: false,
+					timeUntilRoleMaturity: 0,
+					compatibility: 9,
+				},
 			});
 			const reopenedLifecycle =
 				log._instanceLifecycle?.ownershipLifecycleController;
@@ -3129,7 +3159,7 @@ describe("events", () => {
 	});
 
 	it("does not let a stale announcement repair poison reopened ownership", async () => {
-		const { db, log } = await openDisconnectedLog(1);
+		const { db, log } = await openDisconnectedLog(1, 9);
 		const snapshotReadStarted = pDefer<void>();
 		const releaseSnapshotRead = pDefer<void>();
 		const getMyReplicationSegments = sinon
@@ -3154,7 +3184,11 @@ describe("events", () => {
 			log.poisonReplicationOwnership(new Error("forced ownership poison"));
 			await db.close();
 			await session.peers[0].open(db, {
-				args: { replicate: false, timeUntilRoleMaturity: 0 },
+				args: {
+					replicate: false,
+					timeUntilRoleMaturity: 0,
+					compatibility: 9,
+				},
 			});
 			const reopenedLifecycle =
 				log._instanceLifecycle?.ownershipLifecycleController;
@@ -3723,7 +3757,7 @@ describe("events", () => {
 	});
 
 	it("suppresses pending maturity while terminal close is still in progress", async () => {
-		const { db, log } = await openDisconnectedLog();
+		const { db, log } = await openDisconnectedLog(2, 9);
 		const remoteKey = session.peers[1].identity.publicKey;
 		const numbers = log.indexableDomain.numbers;
 		const range = new log.indexableDomain.constructorRange({
@@ -4203,10 +4237,10 @@ describe("events", () => {
 		session = await TestSession.connected(2);
 
 		const db1 = await session.peers[0].open(new EventStore(), {
-			args: { replicate: 1, timeUntilRoleMaturity: 0 },
+			args: { compatibility: 9, replicate: 1, timeUntilRoleMaturity: 0 },
 		});
 		await session.peers[1].open(db1.clone(), {
-			args: { replicate: 1, timeUntilRoleMaturity: 0 },
+			args: { compatibility: 9, replicate: 1, timeUntilRoleMaturity: 0 },
 		});
 
 		const remoteKey = session.peers[1].identity.publicKey;
@@ -4286,7 +4320,8 @@ describe("events", () => {
 			expect(log._liveness._replicatorLastActivityAt.has(remoteHash)).to.be
 				.true;
 			expect(log._gidPeersHistory.get(gid)?.has(remoteHash)).to.be.true;
-			expect(log._peerSessions.isReplicationInfoBlocked(remoteHash)).to.be.false;
+			expect(log._peerSessions.isReplicationInfoBlocked(remoteHash)).to.be
+				.false;
 			expect(disconnected.calledOnceWith(remoteHash)).to.be.true;
 			expect(leaves).to.deep.equal([]);
 
@@ -4354,8 +4389,15 @@ describe("events", () => {
 			}
 			return originalDel(query, options);
 		}) as any);
-		const unblock = sinon.spy(log._peerSessions._replicationInfoBlockedPeers, "delete");
+		const unblock = sinon.spy(
+			log._peerSessions._replicationInfoBlockedPeers,
+			"delete",
+		);
 		const scheduleRequests = sinon.spy(log, "scheduleReplicationInfoRequests");
+		const scheduleV2Recovery = sinon.spy(
+			log,
+			"scheduleReplicationInfoV2Recovery",
+		);
 		const disconnected = sinon.spy(log.syncronizer, "onPeerDisconnected");
 		const leaves: string[] = [];
 		db1.log.events.addEventListener("replicator:leave", (event) => {
@@ -4393,6 +4435,7 @@ describe("events", () => {
 			expect(log._peerSessions.isReplicationInfoBlocked(remoteHash)).to.be.true;
 			expect(unblock.neverCalledWith(remoteHash)).to.be.true;
 			expect(scheduleRequests.notCalled).to.be.true;
+			expect(scheduleV2Recovery.notCalled).to.be.true;
 			expect(disconnected.callCount).to.equal(2);
 			expect(disconnected.alwaysCalledWith(remoteHash)).to.be.true;
 			expect(leaves).to.deep.equal([remoteHash]);
@@ -4400,6 +4443,7 @@ describe("events", () => {
 			del.restore();
 			unblock.restore();
 			scheduleRequests.restore();
+			scheduleV2Recovery.restore();
 			releaseDelete.resolve();
 			disconnected.restore();
 		}
@@ -4503,10 +4547,10 @@ describe("events", () => {
 		session = await TestSession.connected(2);
 
 		const db1 = await session.peers[0].open(new EventStore(), {
-			args: { replicate: 1, timeUntilRoleMaturity: 0 },
+			args: { replicate: 1, timeUntilRoleMaturity: 0, compatibility: 9 },
 		});
 		await session.peers[1].open(db1.clone(), {
-			args: { replicate: 1, timeUntilRoleMaturity: 0 },
+			args: { replicate: 1, timeUntilRoleMaturity: 0, compatibility: 9 },
 		});
 
 		const remoteKey = session.peers[1].identity.publicKey;
@@ -4584,10 +4628,10 @@ describe("events", () => {
 		session = await TestSession.connected(2);
 
 		const db1 = await session.peers[0].open(new EventStore(), {
-			args: { replicate: 1, timeUntilRoleMaturity: 0 },
+			args: { replicate: 1, timeUntilRoleMaturity: 0, compatibility: 9 },
 		});
 		await session.peers[1].open(db1.clone(), {
-			args: { replicate: 1, timeUntilRoleMaturity: 0 },
+			args: { replicate: 1, timeUntilRoleMaturity: 0, compatibility: 9 },
 		});
 
 		const remoteKey = session.peers[1].identity.publicKey;
@@ -4649,10 +4693,10 @@ describe("events", () => {
 		session = await TestSession.connected(2);
 
 		const db1 = await session.peers[0].open(new EventStore(), {
-			args: { replicate: 1, timeUntilRoleMaturity: 0 },
+			args: { replicate: 1, timeUntilRoleMaturity: 0, compatibility: 9 },
 		});
 		await session.peers[1].open(db1.clone(), {
-			args: { replicate: 1, timeUntilRoleMaturity: 0 },
+			args: { replicate: 1, timeUntilRoleMaturity: 0, compatibility: 9 },
 		});
 
 		const remoteKey = session.peers[1].identity.publicKey;

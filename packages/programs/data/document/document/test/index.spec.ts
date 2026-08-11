@@ -10404,6 +10404,7 @@ describe("index", () => {
 						replicate: false,
 					},
 				});
+				await nonReplicator.docs.index.waitFor(store.node.identity.publicKey);
 				const docResolved = await nonReplicator.docs.index.get(id, {
 					waitFor: 5e3,
 				});
@@ -14869,10 +14870,12 @@ describe("index", () => {
 
 						await session.connect([[session.peers[0], session.peers[2]]]); // connect the nodes!
 
-						await observer.docs.log.waitForReplicator(
-							writer2.node.identity.publicKey,
-							{ eager: true },
+						const readyWriter2 = await observer.docs.index.waitFor(
+							[writer2.node.identity.publicKey].values(),
 						);
+						expect(readyWriter2).to.deep.equal([
+							writer2.node.identity.publicKey.hashcode(),
+						]);
 
 						const iterator = observer.docs.index.iterate(
 							{ sort: new Sort({ key: "id", direction: SortDirection.DESC }) }, // 4, 3, 2, 1
@@ -14899,9 +14902,8 @@ describe("index", () => {
 						expect(second.map((x) => x.id)).to.deep.equal(["2"]);
 
 						await session.connect([[session.peers[0], session.peers[1]]]); // connect the nodes!
-						await observer.docs.log.waitForReplicator(
+						await observer.docs.index.waitFor(
 							writer1.node.identity.publicKey,
-							{ eager: true },
 						);
 
 						const third = await waitForResolved(

@@ -3,11 +3,17 @@ import { SilentDelivery } from "@peerbit/stream-interface";
 import { TestSession } from "@peerbit/test-utils";
 import { waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
+import { SyncCapabilitiesMessage } from "../src/exchange-heads.js";
 import {
+	AddedReplicationInfoV2Message,
 	AddedReplicationSegmentMessage,
 	AllReplicatingSegmentsMessage,
+	FullReplicationInfoV2Message,
 	RequestReplicationInfoMessage,
+	RequestReplicationInfoV2Message,
 	ResponseRoleMessage,
+	StoppedReplicating,
+	StoppedReplicationInfoV2Message,
 } from "../src/replication.js";
 import { Replicator } from "../src/role.js";
 import { RatelessIBLTSynchronizer } from "../src/sync/rateless-iblt.js";
@@ -17,9 +23,20 @@ import { EventStore } from "./utils/stores/event-store.js";
 describe(`migration-8-9`, function () {
 	let session: TestSession;
 	let db1: EventStore<string, any>, db2: EventStore<string, any>;
+	let fakeOldLegacyRequests = 0;
+	let fakeOldV2Messages = 0;
+
+	const isReplicationInfoV2Message = (message: unknown) =>
+		message instanceof SyncCapabilitiesMessage ||
+		message instanceof RequestReplicationInfoV2Message ||
+		message instanceof FullReplicationInfoV2Message ||
+		message instanceof AddedReplicationInfoV2Message ||
+		message instanceof StoppedReplicationInfoV2Message;
 
 	const setup = async (compatibility?: number, order: boolean = false) => {
-		session = await TestSession.connected(2, [
+		fakeOldLegacyRequests = 0;
+		fakeOldV2Messages = 0;
+		session = await TestSession.disconnected(2, [
 			{
 				libp2p: {
 					privateKey: keys.privateKeyFromRaw(
@@ -60,16 +77,24 @@ describe(`migration-8-9`, function () {
 					},
 					compatibility,
 					onMessage: async (msg, context) => {
-						if (msg instanceof AddedReplicationSegmentMessage) {
+						if (isReplicationInfoV2Message(msg)) {
+							fakeOldV2Messages++;
+							return;
+						}
+						if (
+							msg instanceof AddedReplicationSegmentMessage ||
+							msg instanceof StoppedReplicating
+						) {
 							return; // this message type did not exist before
 						}
 						if (msg instanceof AllReplicatingSegmentsMessage) {
 							return; // this message type did not exist before
 						}
 						if (msg instanceof RequestReplicationInfoMessage) {
+							fakeOldLegacyRequests++;
 							// TODO we never respond to this message, nor in older version do we need to send it
 							// we are keeping this here to mimic the old behaviour
-							await db.log.rpc.send(
+							await db1.log.rpc.send(
 								new ResponseRoleMessage({
 									role: new Replicator({ factor: 1, offset: 0 }),
 								}),
@@ -80,6 +105,7 @@ describe(`migration-8-9`, function () {
 									}),
 								},
 							);
+							return;
 						}
 						return onMessageDefault(msg, context);
 					},
@@ -106,6 +132,27 @@ describe(`migration-8-9`, function () {
 			db1 = await createV8();
 		}
 
+		// Install both directions of the fake-old protocol boundary before the
+		// peers connect. This prevents the current implementation hidden behind
+		// the fixture from making the compatibility assertions pass through V2.
+		const originalFakeOldSend = db1.log.rpc.send.bind(db1.log.rpc);
+		(db1.log.rpc as any).send = async (message: unknown, options: unknown) => {
+			if (isReplicationInfoV2Message(message)) {
+				fakeOldV2Messages++;
+				return;
+			}
+			if (
+				message instanceof AddedReplicationSegmentMessage ||
+				message instanceof AllReplicatingSegmentsMessage ||
+				message instanceof StoppedReplicating
+			) {
+				return;
+			}
+			return originalFakeOldSend(message as any, options as any);
+		};
+
+		await session.connect([[session.peers[0], session.peers[1]]]);
+
 		await db1.waitFor(session.peers[1].peerId);
 		await db2.waitFor(session.peers[0].peerId);
 	};
@@ -118,7 +165,7 @@ describe(`migration-8-9`, function () {
 			await db2.drop();
 		}
 
-		await session.stop();
+		await session?.stop();
 	});
 
 	it("8-9, replicates database of 1 entry", async () => {
@@ -128,6 +175,8 @@ describe(`migration-8-9`, function () {
 
 		await db1.add(value);
 		await waitForResolved(() => expect(db2.log.log.length).equal(1));
+		expect(fakeOldLegacyRequests).to.be.greaterThan(0);
+		expect(fakeOldV2Messages).to.be.greaterThan(0);
 	});
 
 	it("9-8, replicates database of 1 entry", async () => {
@@ -137,9 +186,11 @@ describe(`migration-8-9`, function () {
 
 		await db2.add(value);
 		await waitForResolved(() => expect(db1.log.log.length).equal(1));
+		expect(fakeOldLegacyRequests).to.be.greaterThan(0);
+		expect(fakeOldV2Messages).to.be.greaterThan(0);
 	});
 
-	it("can turn off old behaviour", async () => {
+	it("does not fall back to legacy when compatibility is omitted", async () => {
 		await setup(undefined);
 		const value = "hello";
 		await db1.add(value);
@@ -150,6 +201,8 @@ describe(`migration-8-9`, function () {
 				throw new Error("timeout");
 			}),
 		).to.be.rejectedWith("timeout");
+		expect(fakeOldLegacyRequests).to.equal(0);
+		expect(fakeOldV2Messages).to.be.greaterThan(0);
 	});
 
 	it("v8 uses simple sync u32", async () => {
@@ -164,8 +217,14 @@ describe(`migration-8-9`, function () {
 		expect(db1.log.domain.resolution).to.equal("u32");
 	});
 
+	it("v0 stays on simple sync u32", async () => {
+		await setup(0);
+		expect(db1.log.syncronizer).to.be.instanceOf(SimpleSyncronizer);
+		expect(db1.log.domain.resolution).to.equal("u32");
+	});
+
 	it("v10+ uses iblt u64", async () => {
-		await setup(undefined);
+		await setup(10);
 		expect(db1.log.syncronizer).to.be.instanceOf(RatelessIBLTSynchronizer);
 		expect(db1.log.domain.resolution).to.equal("u64");
 	});

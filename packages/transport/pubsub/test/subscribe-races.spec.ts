@@ -2834,6 +2834,33 @@ describe("pubsub (subscribe race regressions)", function () {
 		expect(a.topics.get(TOPIC)).to.equal(undefined);
 	});
 
+	it("exposes the signed transport generation on subscribe events", async () => {
+		const TOPIC = "subscribe-event-transport-session";
+		session = await createDisconnectedSession(2);
+
+		const a = session.peers[0]!.services.pubsub;
+		const b = session.peers[1]!.services.pubsub;
+		await session.connect([[session.peers[0], session.peers[1]]]);
+		await waitForNeighbour(a, b);
+		await b.subscribe(TOPIC);
+
+		let observedSession: bigint | undefined;
+		b.addEventListener("subscribe", (event) => {
+			if (event.detail.from.hashcode() === a.publicKeyHash) {
+				observedSession = event.detail.session;
+			}
+		});
+		await a.subscribe(TOPIC);
+
+		await waitForResolved(() => {
+			const recordedSession = b.topics
+				.get(TOPIC)
+				?.get(a.publicKeyHash)?.session;
+			expect(observedSession).to.equal(recordedSession);
+			expect(observedSession).to.not.equal(undefined);
+		});
+	});
+
 	it("does not advertise cancelled pending subscriptions to peers", async () => {
 		const TOPIC = "subscribe-then-unsubscribe-before-debounce-regression";
 		const debounceDelayMs = 500;

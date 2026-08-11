@@ -649,7 +649,27 @@ export class ReplicationInfoV2SendCoordinator<R extends "u32" | "u64"> {
 				sends.push(Promise.reject(error));
 			}
 		}
-		await Promise.allSettled(sends);
+		if (sends.length === 0 || signal.aborted) {
+			return;
+		}
+
+		// Terminal reset is best-effort and the caller owns its close/drop bound.
+		// A transport is expected to observe the signal, but a disconnected
+		// acknowledgement path can leave its promise pending indefinitely. Do not
+		// let such a transport retain the whole terminal operation past the bound.
+		await new Promise<void>((resolve) => {
+			let finished = false;
+			const finish = () => {
+				if (finished) return;
+				finished = true;
+				signal.removeEventListener("abort", finish);
+				resolve();
+			};
+			signal.addEventListener("abort", finish, { once: true });
+			void Promise.allSettled(sends).then(finish);
+			// Close the check/listener race if the caller aborted synchronously.
+			if (signal.aborted) finish();
+		});
 	}
 
 	async drain(signal?: AbortSignal): Promise<void> {

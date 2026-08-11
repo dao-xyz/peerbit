@@ -31,6 +31,11 @@ export type PeerReceiveAdmissionOptions = {
 export class PeerSession {
 	readonly peerHash: string;
 	readonly kind: PeerSessionKind;
+	// True when rotate() superseded an earlier subscription generation. This is
+	// deliberately independent of the predecessor's phase/kind: a newer
+	// transport can announce a subscription without first delivering an
+	// unsubscribe, and must not inherit the old transport's signed capability.
+	readonly hasPredecessor: boolean;
 	// The lifecycle controller live at rotation. All current seams pair the
 	// epoch check with a lifecycle check against a controller captured in the
 	// same synchronous window as the epoch advance; capturing it here
@@ -59,10 +64,12 @@ export class PeerSession {
 		peerHash: string,
 		kind: PeerSessionKind,
 		replicationLifecycleController: AbortController | undefined,
+		hasPredecessor: boolean,
 	) {
 		this.peerHash = peerHash;
 		this.kind = kind;
 		this.replicationLifecycleController = replicationLifecycleController;
+		this.hasPredecessor = hasPredecessor;
 		this.phase = kind;
 	}
 
@@ -278,6 +285,7 @@ export class PeerSessionRegistry {
 			peerHash,
 			kind,
 			this.deps.getReplicationLifecycleController(),
+			previous !== undefined,
 		);
 		this.sessions.set(peerHash, next);
 		return next;

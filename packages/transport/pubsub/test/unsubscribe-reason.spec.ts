@@ -1,17 +1,22 @@
 import { getPublicKeyFromPeerId } from "@peerbit/crypto";
 import { TestSession } from "@peerbit/libp2p-test-utils";
 import type {
+	SubscriptionEvent,
 	UnsubcriptionEvent,
 	UnsubscriptionReason,
 } from "@peerbit/pubsub-interface";
 import {
-	SubscriptionData,
 	Subscribe,
+	SubscriptionData,
 	Unsubscribe,
 } from "@peerbit/pubsub-interface";
 import { waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
-import { FanoutTree, TopicControlPlane, TopicRootControlPlane } from "../src/index.js";
+import {
+	FanoutTree,
+	TopicControlPlane,
+	TopicRootControlPlane,
+} from "../src/index.js";
 
 describe("pubsub (unsubscribe reason)", function () {
 	const createControlEnvelope = (properties: {
@@ -376,6 +381,15 @@ describe("pubsub (unsubscribe reason)", function () {
 		try {
 			const { a, b } = await setupTrackedSubscribers(topic, session);
 			const bPublicKey = getPublicKeyFromPeerId(session.peers[1]!.peerId);
+			let observedSession: bigint | undefined;
+			a.addEventListener(
+				"subscribe",
+				(event: CustomEvent<SubscriptionEvent>) => {
+					if (event.detail.from.hashcode() === b.publicKeyHash) {
+						observedSession = event.detail.session;
+					}
+				},
+			);
 
 			a.topics.get(topic)?.delete(b.publicKeyHash);
 			a.peerToTopic.delete(b.publicKeyHash);
@@ -384,11 +398,14 @@ describe("pubsub (unsubscribe reason)", function () {
 			await a.requestSubscribers(topic, bPublicKey);
 
 			await waitForResolved(() => {
-				expect(a.topics.get(topic)?.has(b.publicKeyHash)).to.equal(true);
+				const recordedSession = a.topics
+					.get(topic)
+					?.get(b.publicKeyHash)?.session;
+				expect(observedSession).to.equal(recordedSession);
+				expect(observedSession).to.not.equal(undefined);
 			});
 		} finally {
 			await session.stop();
 		}
 	});
-
 });
