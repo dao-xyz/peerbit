@@ -15531,7 +15531,13 @@ export class SharedLog<
 
 	async afterOpen(): Promise<void> {
 		await super.afterOpen();
-		const existingSubscribersPromise = this._getTopicSubscribers(this.topic);
+		// This is a subscription fallback, not peer discovery. The broader
+		// _getTopicSubscribers() union also contains connected/provider/fanout
+		// candidates that have not subscribed to this log; treating those as an
+		// opening creates a false predecessor before their first real subscribe.
+		const existingSubscribersPromise = this.node.services.pubsub.getSubscribers(
+			this.topic,
+		);
 		const replicationLifecycleController =
 			this._instanceLifecycle?.membershipLifecycleController;
 
@@ -15561,9 +15567,23 @@ export class SharedLog<
 			if (this.closed) {
 				return;
 			}
-			void this.runSubscriptionChangeCallback(() =>
-				this.handleSubscriptionChange(v, [this.topic], true),
-			);
+			// The live subscribe event and this after-open snapshot can report the
+			// same initial transport generation. The live callback rotates its
+			// PeerSession synchronously, so any current session here proves the
+			// fallback is stale/duplicate. Rotating again would erase the signed
+			// capability binding that the first callback just established.
+			if (this._peerSessions.current(v.hashcode()) !== null) {
+				return;
+			}
+			void this.runSubscriptionChangeCallback(async () => {
+				// The live event may rotate after the outer check but before this queued
+				// fallback runs. Recheck at execution so the snapshot cannot create a
+				// duplicate successor session in that window.
+				if (this._peerSessions.current(v.hashcode()) !== null) {
+					return;
+				}
+				await this.handleSubscriptionChange(v, [this.topic], true);
+			});
 		});
 	}
 
@@ -23556,8 +23576,15 @@ export class SharedLog<
 		// yield; a late queue completion must never enter the new session.
 		this._v2Receive.clearPeer(peerHash);
 		this._v2Send.clearPeer(peerHash);
-		this._peerSyncCapabilitySessions.delete(peerHash);
-		this._peerSyncCapabilityTimestamps.delete(peerHash);
+		if (!subscribed || expectedSubscriptionEpoch.hasPredecessor) {
+			// Departures and successor openings revoke the signed transport binding.
+			// Only the first opening may inherit a capability that arrived before its
+			// subscription callback. afterOpen() deduplicates its subscriber snapshot
+			// against the live callback, so a true successor can never be mistaken for
+			// that startup race.
+			this._peerSyncCapabilitySessions.delete(peerHash);
+			this._peerSyncCapabilityTimestamps.delete(peerHash);
+		}
 		if (subscribed) {
 			const pendingOpeningCapabilities =
 				this._openingSyncCapabilitiesByPeer.get(peerHash);

@@ -875,6 +875,37 @@ describe("receive admission replication-info V2 sender streams", () => {
 		expect(stateB.nextSequence).to.equal(4n);
 	});
 
+	it("honors the terminal bound when the transport ignores abort", async () => {
+		const peerSession = {};
+		openSessions.add(peerSession);
+		expect(accept(peerA, peerSession, challenge(47))).to.be.true;
+		await coordinator.drain();
+		const state = coordinator._sendStates.get(peerA.hashcode())!;
+		ownershipController.abort();
+		rpcSend.resetHistory();
+		const transport = pDefer<unknown>();
+		rpcSend.returns(transport.promise);
+		const terminalController = new AbortController();
+
+		const terminal = coordinator.sendTerminalReset(terminalController.signal);
+		await waitForResolved(() => expect(rpcSend.calledOnce).to.be.true);
+		let settled = false;
+		void terminal.then(() => {
+			settled = true;
+		});
+		await new Promise<void>((resolve) => setImmediate(resolve));
+		expect(settled).to.be.false;
+
+		terminalController.abort();
+		await terminal;
+		expect(settled).to.be.true;
+		const reset = rpcSend.firstCall.args[0] as FullReplicationInfoV2Message;
+		expect(reset.sequence).to.equal(2n);
+		expect(reset.segments).to.deep.equal([]);
+		expect(state.nextSequence).to.equal(3n);
+		transport.resolve([]);
+	});
+
 	it("spends the last u64 terminal sequence and cannot retry or recreate it", async () => {
 		const peerSession = {};
 		openSessions.add(peerSession);
@@ -1031,6 +1062,91 @@ describe("receive admission replication-info V2 sender integration", () => {
 		await log.onMessage(request, context(receiverTransportSession, 3n));
 		expect(send.notCalled).to.be.true;
 		expect(activity.notCalled).to.be.true;
+	});
+
+	it("preserves a pre-opening capability but fences successor openings and departure", async () => {
+		session = await TestSession.disconnected(2);
+		const db = await session.peers[0].open(new EventStore(), {
+			args: { replicate: false, timeUntilRoleMaturity: 0 },
+		});
+		const log = db.log as any;
+		const remote = session.peers[1].identity.publicKey;
+		const remoteHash = remote.hashcode();
+		const remoteTransportSession = 78n;
+		const capabilityTimestamp = 10n;
+		const capability = new SyncCapabilitiesMessage({
+			capabilities:
+				SYNC_CAPABILITY_REPLICATION_INFO_V2_DECODE |
+				SYNC_CAPABILITY_REPLICATION_INFO_V2_SEND |
+				SYNC_CAPABILITY_REPLICATION_INFO_V2_APPLY,
+		});
+		await log.onMessage(capability, {
+			from: remote,
+			message: {
+				header: {
+					session: remoteTransportSession,
+					timestamp: capabilityTimestamp,
+				},
+			},
+		} as any);
+		expect(log._peerSessions.current(remoteHash)).to.equal(null);
+		expect(log._peerSyncCapabilitySessions.get(remoteHash)).to.equal(
+			remoteTransportSession,
+		);
+
+		sinon.stub(log.rpc, "send").resolves([] as any);
+		const event = {
+			detail: { from: remote, topics: [log.topic] },
+		} as any;
+		await log._onSubscription(event);
+		const firstSession = log._peerSessions.current(remoteHash);
+		expect(log._peerSyncCapabilitySessions.get(remoteHash)).to.equal(
+			remoteTransportSession,
+		);
+		expect(log._peerSyncCapabilityTimestamps.get(remoteHash)).to.equal(
+			capabilityTimestamp,
+		);
+		expect(
+			log._v2Receive._receiveStates.get(remoteHash)?.senderTransportSession,
+		).to.equal(remoteTransportSession);
+
+		await log._onSubscription(event);
+		const replacement = log._peerSessions.current(remoteHash);
+		expect(replacement).not.to.equal(firstSession);
+		expect(log._peerSyncCapabilitySessions.has(remoteHash)).to.be.false;
+		expect(log._peerSyncCapabilityTimestamps.has(remoteHash)).to.be.false;
+		expect(log._v2Receive._receiveStates.has(remoteHash)).to.be.false;
+
+		const successorTransportSession = 79n;
+		await log.onMessage(capability, {
+			from: remote,
+			message: {
+				header: {
+					session: successorTransportSession,
+					timestamp: capabilityTimestamp + 1n,
+				},
+			},
+		} as any);
+		expect(log._peerSyncCapabilitySessions.get(remoteHash)).to.equal(
+			successorTransportSession,
+		);
+		expect(
+			log._v2Receive._receiveStates.get(remoteHash)?.senderTransportSession,
+		).to.equal(successorTransportSession);
+
+		await log._onUnsubscription(event);
+		expect(log._peerSyncCapabilitySessions.has(remoteHash)).to.be.false;
+		expect(log._peerSyncCapabilityTimestamps.has(remoteHash)).to.be.false;
+	});
+
+	it("does not open a replication session for an unsubscribed discovery candidate", async () => {
+		session = await TestSession.connected(2);
+		const db = await session.peers[0].open(new EventStore(), {
+			args: { replicate: false, timeUntilRoleMaturity: 0 },
+		});
+		const remoteHash = session.peers[1].identity.publicKey.hashcode();
+
+		expect((db.log as any)._peerSessions.current(remoteHash)).to.equal(null);
 	});
 
 	for (const compatibility of [undefined, 0, 9, 10] as const) {
