@@ -20,7 +20,6 @@ import { ReplicationInfoV2SendCoordinator } from "../src/replication-info-v2-sen
 import {
 	AddedReplicationInfoV2Message,
 	AddedReplicationSegmentMessage,
-	AllReplicatingSegmentsMessage,
 	FullReplicationInfoV2Message,
 	StoppedReplicationInfoV2Message,
 } from "../src/replication.js";
@@ -886,7 +885,7 @@ describe("receive admission replication-info V2 receiver state", () => {
 		expect(state.lastSequence).to.equal(5n);
 	});
 
-	it("fences a parked delta across same-session recovery without reopening legacy", () => {
+	it("fences a parked delta across same-session recovery", () => {
 		expect(markLocalReady()).to.be.true;
 		expect(observeSender()).to.be.true;
 		const state = coordinator._receiveStates.get(peerHash)!;
@@ -923,7 +922,6 @@ describe("receive admission replication-info V2 receiver state", () => {
 			...rawChallenge,
 		]);
 		expect([...state.receiverBinding!]).to.deep.equal([...binding]);
-		expect(coordinator.isLegacyCutover(currentSession)).to.be.true;
 		expect(
 			coordinator.prepare(delta, {
 				from: sender,
@@ -2325,16 +2323,16 @@ describe("receive admission replication-info V2 receiver integration", () => {
 		);
 	});
 
-	it("restores a rejected V2 delta with a Full while its legacy sidecar is suppressed", async () => {
+	it("restores a rejected V2 delta with a Full", async () => {
 		session = await TestSession.connected(2);
 		const db1 = await session.peers[0].open(new EventStore(), {
-			args: { compatibility: 9, replicate: false, timeUntilRoleMaturity: 0 },
+			args: { replicate: false, timeUntilRoleMaturity: 0 },
 		});
 		const db2 = await EventStore.open<EventStore<string, any>>(
 			db1.address!,
 			session.peers[1],
 			{
-				args: { compatibility: 9, replicate: 1, timeUntilRoleMaturity: 0 },
+				args: { replicate: 1, timeUntilRoleMaturity: 0 },
 			},
 		);
 		const receiver = db1.log as any;
@@ -2352,10 +2350,10 @@ describe("receive admission replication-info V2 receiver integration", () => {
 			{ timeout: 20_000 },
 		);
 
-		const range = new ReplicationRangeMessageU32({
+		const range = new ReplicationRangeMessageU64({
 			id: bytes(42),
-			offset: 10,
-			factor: 10,
+			offset: 10n,
+			factor: 10n,
 			timestamp: 10n,
 			mode: ReplicationIntent.NonStrict,
 		});
@@ -2368,13 +2366,14 @@ describe("receive admission replication-info V2 receiver integration", () => {
 			.resolves([indexedRange]);
 		const originalSend = senderLog.rpc.send.bind(senderLog.rpc);
 		let rejectedV2Delta = 0;
-		let suppressedLegacy = 0;
+		let legacyEgress = 0;
 		let recoveryFull: FullReplicationInfoV2Message | undefined;
 		const send = sinon
 			.stub(senderLog.rpc, "send")
 			.callsFake(async (message: unknown, options: unknown) => {
-				if (message === legacy) {
-					suppressedLegacy++;
+				if (message instanceof AddedReplicationSegmentMessage) {
+					// Default mode must never publish the legacy announcement class.
+					legacyEgress++;
 					return [];
 				}
 				if (
@@ -2389,19 +2388,14 @@ describe("receive admission replication-info V2 receiver integration", () => {
 				}
 				return originalSend(message, options);
 			});
-		const queueLegacyRepair = sinon.stub(
-			senderLog._announcements,
-			"queueCurrentReplicationStateAnnouncementRepair",
-		);
 		(senderLog._v2Send as any).sendRetryMs = 25;
 		(senderLog._v2Send as any).maxSendRetryMs = 50;
-
 		try {
 			await senderLog._announcements.sendReplicationAnnouncement(legacy);
 			await senderLog._v2Send.drain();
 			const failedState = senderLog._v2Send._sendStates.get(receiverHash);
 			expect(rejectedV2Delta).to.equal(1);
-			expect(suppressedLegacy).to.equal(1);
+			expect(legacyEgress).to.equal(0);
 			expect(failedState?.suspended).to.be.true;
 			const beforeRecovery = await receiver.replicationIndex
 				.iterate({ query: { hash: senderHash } })
@@ -2429,9 +2423,7 @@ describe("receive admission replication-info V2 receiver integration", () => {
 			expect(recoveryFull).to.exist;
 			expect(recoveryFull!.sequence).to.equal(failedState!.nextSequence - 1n);
 			expect(getSegments.called).to.be.true;
-			expect(queueLegacyRepair.calledOnce).to.be.true;
 		} finally {
-			queueLegacyRepair.restore();
 			send.restore();
 			getSegments.restore();
 		}
@@ -2733,10 +2725,10 @@ describe("receive admission replication-info V2 receiver integration", () => {
 		}
 	});
 
-	it("applies sequence order, cuts over legacy and recovers a gap with Full", async () => {
+	it("applies sequence order and recovers a gap with Full", async () => {
 		session = await TestSession.disconnected(2);
 		const db = await session.peers[0].open(new EventStore(), {
-			args: { compatibility: 9, replicate: false, timeUntilRoleMaturity: 0 },
+			args: { replicate: false, timeUntilRoleMaturity: 0 },
 		});
 		const log = db.log as any;
 		const remote = session.peers[1].identity.publicKey;
@@ -2780,24 +2772,24 @@ describe("receive admission replication-info V2 receiver integration", () => {
 			log._v2Receive._localCapabilityReadyBySession.get(peerSession);
 		localReady.requestNotBeforeMs = 0;
 		const senderEpoch = bytes(7);
-		const rangeA = new ReplicationRangeMessageU32({
+		const rangeA = new ReplicationRangeMessageU64({
 			id: bytes(8),
-			offset: 10,
-			factor: 10,
+			offset: 10n,
+			factor: 10n,
 			timestamp: 10n,
 			mode: ReplicationIntent.NonStrict,
 		});
-		const rangeB = new ReplicationRangeMessageU32({
+		const rangeB = new ReplicationRangeMessageU64({
 			id: bytes(9),
-			offset: 30,
-			factor: 10,
+			offset: 30n,
+			factor: 10n,
 			timestamp: 11n,
 			mode: ReplicationIntent.NonStrict,
 		});
-		const rangeC = new ReplicationRangeMessageU32({
+		const rangeC = new ReplicationRangeMessageU64({
 			id: bytes(10),
-			offset: 50,
-			factor: 10,
+			offset: 50n,
+			factor: 10n,
 			timestamp: 12n,
 			mode: ReplicationIntent.NonStrict,
 		});
@@ -2809,17 +2801,7 @@ describe("receive admission replication-info V2 receiver integration", () => {
 				},
 			}) as any;
 
-		const releaseCutoverLane = pDefer<void>();
-		let cutoverLaneEntered = false;
-		const cutoverLaneBlocker = log.withReplicationInfoApplyQueue(
-			remoteHash,
-			async () => {
-				cutoverLaneEntered = true;
-				await releaseCutoverLane.promise;
-			},
-		);
-		await waitForResolved(() => expect(cutoverLaneEntered).to.be.true);
-		const initialFull = log.onMessage(
+		await log.onMessage(
 			new FullReplicationInfoV2Message({
 				receiverChallenge: state.receiverBinding!.slice(),
 				senderEpoch,
@@ -2828,35 +2810,12 @@ describe("receive admission replication-info V2 receiver integration", () => {
 			}),
 			context(100n),
 		);
-		await waitForResolved(() => expect(state.reservedAdmission).to.exist);
-		const originalLegacyHandler =
-			log.handleReplicationInfoAnnouncement.bind(log);
-		const legacyQueued = pDefer<void>();
-		const legacyHandler = sinon
-			.stub(log, "handleReplicationInfoAnnouncement")
-			.callsFake((...args: unknown[]) => {
-				const result = originalLegacyHandler(...args);
-				legacyQueued.resolve();
-				return result;
-			});
-		const legacyAcrossCutover = log.onMessage(
-			new AddedReplicationSegmentMessage({ segments: [rangeB] }),
-			context(150n),
-		);
-		await legacyQueued.promise;
-		legacyHandler.restore();
-		releaseCutoverLane.resolve();
-		await cutoverLaneBlocker;
-		await Promise.all([initialFull, legacyAcrossCutover]);
 		expect(state.phase).to.equal("active");
 		expect(state.lastSequence).to.equal(1n);
 		expect(
 			await log.replicationIndex.count({ query: { hash: remoteHash } }),
 		).to.equal(1);
 		expect(activity.calledOnceWith(remoteHash)).to.be.true;
-		expect(log._v2Receive.isLegacyCutover(peerSession)).to.be.true;
-		expect(state.legacyFallbackTimer).to.exist;
-		expect(log.latestReplicationInfoMessage.has(remoteHash)).to.be.false;
 
 		activity.resetHistory();
 		await log.onMessage(
@@ -2872,7 +2831,6 @@ describe("receive admission replication-info V2 receiver integration", () => {
 			await log.replicationIndex.count({ query: { hash: remoteHash } }),
 		).to.equal(2);
 		expect(activity.calledOnceWith(remoteHash)).to.be.true;
-		expect(state.legacyFallbackTimer).to.be.undefined;
 
 		activity.resetHistory();
 		await log.onMessage(
@@ -2904,17 +2862,6 @@ describe("receive admission replication-info V2 receiver integration", () => {
 		expect(
 			await log.replicationIndex.count({ query: { hash: remoteHash } }),
 		).to.equal(3);
-
-		activity.resetHistory();
-		await log.onMessage(
-			new AllReplicatingSegmentsMessage({ segments: [] }),
-			context(1_000n),
-		);
-		expect(
-			await log.replicationIndex.count({ query: { hash: remoteHash } }),
-		).to.equal(3);
-		expect(activity.notCalled).to.be.true;
-		expect(log.latestReplicationInfoMessage.has(remoteHash)).to.be.false;
 
 		activity.resetHistory();
 		await log.onMessage(
@@ -2996,7 +2943,6 @@ describe("receive admission replication-info V2 receiver integration", () => {
 		expect([...state.receiverRequestChallenge]).to.deep.equal([
 			...challengeBeforeRecovery,
 		]);
-		expect(log._v2Receive.isLegacyCutover(peerSession)).to.be.true;
 		expect(
 			await log.replicationIndex.count({ query: { hash: remoteHash } }),
 		).to.equal(1);

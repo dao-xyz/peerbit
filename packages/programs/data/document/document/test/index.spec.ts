@@ -7017,11 +7017,6 @@ describe("index", () => {
 							message: "arbitrary index transform",
 						},
 						{
-							name: "legacy compatibility",
-							options: { compatibility: 7 as const },
-							message: "legacy compatibility",
-						},
-						{
 							name: "strictHistory",
 							options: { strictHistory: true },
 							message: "strict history",

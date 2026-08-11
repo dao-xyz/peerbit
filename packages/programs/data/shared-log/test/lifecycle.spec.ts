@@ -183,31 +183,40 @@ describe("lifecycle", () => {
 		it(`${operation} drains an admitted subscription callback before retiring replication state`, async () => {
 			session = await TestSession.connected(2);
 			const db = await session.peers[0].open(new EventStore(), {
-				args: { compatibility: 9, replicate: { factor: 1 } },
+				args: { replicate: { factor: 1 } },
 			});
-			const sharedLog = db.log;
+			const sharedLog = db.log as any;
+			const remoteKey = session.peers[1].identity.publicKey;
+			const remoteHash = remoteKey.hashcode();
 			const replicationSegments = await sharedLog.getMyReplicationSegments();
 			expect(replicationSegments).to.have.length(1);
 
-			let markLookupStarted!: () => void;
-			const lookupStarted = new Promise<void>((resolve) => {
-				markLookupStarted = resolve;
+			// The default-mode subscription callback awaits the per-peer receive
+			// drain before the V2 capability path runs; gate it there to hold the
+			// admitted callback mid-flight.
+			let markDrainStarted!: () => void;
+			const drainStarted = new Promise<void>((resolve) => {
+				markDrainStarted = resolve;
 			});
-			let releaseLookup!: () => void;
-			const lookupGate = new Promise<void>((resolve) => {
-				releaseLookup = resolve;
+			let releaseDrain!: () => void;
+			const drainGate = new Promise<void>((resolve) => {
+				releaseDrain = resolve;
 			});
-			const lookup = sinon
-				.stub(sharedLog, "getMyReplicationSegments")
-				.callsFake(async () => {
-					markLookupStarted();
-					await lookupGate;
-					return replicationSegments;
+			const originalDrain = sharedLog.drainPeerReceiveHandlers.bind(sharedLog);
+			const drain = sinon
+				.stub(sharedLog, "drainPeerReceiveHandlers")
+				.callsFake(async (...args: unknown[]) => {
+					const peerHash = args[0] as string;
+					if (peerHash === remoteHash) {
+						markDrainStarted();
+						await drainGate;
+					}
+					return originalDrain(peerHash);
 				});
 			const sent: unknown[] = [];
 			const send = sinon
 				.stub(sharedLog.rpc, "send")
-				.callsFake(async (message) => {
+				.callsFake(async (message: unknown) => {
 					sent.push(message);
 					return [] as any;
 				});
@@ -221,44 +230,44 @@ describe("lifecycle", () => {
 				(sharedLog as any)._onSubscriptionFn(
 					new CustomEvent("subscribe", {
 						detail: {
-							from: session.peers[1].identity.publicKey,
+							from: remoteKey,
 							topics: [sharedLog.topic],
 						},
 					}),
 				);
-				await lookupStarted;
+				await drainStarted;
 
-				const terminating = db[operation]();
+				let terminalSettled = false;
+				const terminating = db[operation]().then(() => {
+					terminalSettled = true;
+				});
 				await waitForResolved(
 					() => expect(sharedLog.acceptsParentAttachments).to.be.false,
 				);
+				// The admitted callback is still parked: terminal retirement must
+				// stay blocked behind its drain, not merely lose a race.
+				await delay(50);
+				expect(terminalSettled).to.be.false;
 				expect(retire.called).to.be.false;
 
-				releaseLookup();
+				releaseDrain();
 				await terminating;
 
-				// A capability round-trip can keep an earlier duplicate subscription
-				// callback admitted. Terminal drain must settle every admitted lookup.
-				expect(lookup.called).to.be.true;
+				// Terminal drain must settle every admitted subscription callback
+				// before replication state retires.
 				expect(retire.calledOnce).to.be.true;
+				// Default mode publishes no legacy replication-info frames at all.
 				expect(
 					sent.filter(
 						(message) =>
-							message instanceof AllReplicatingSegmentsMessage &&
-							message.segments.length > 0,
-					),
-				).to.have.length(0);
-				expect(
-					sent.filter((message) => message instanceof ResponseRoleMessage),
-				).to.have.length(0);
-				expect(
-					sent.filter(
-						(message) => message instanceof RequestReplicationInfoMessage,
+							message instanceof AllReplicatingSegmentsMessage ||
+							message instanceof ResponseRoleMessage ||
+							message instanceof RequestReplicationInfoMessage,
 					),
 				).to.have.length(0);
 			} finally {
-				releaseLookup();
-				lookup.restore();
+				releaseDrain();
+				drain.restore();
 				send.restore();
 			}
 		});
@@ -355,51 +364,46 @@ describe("lifecycle", () => {
 	}
 
 	for (const operation of ["close", "drop"] as const) {
-		it(`${operation} publishes an admitted replication snapshot before the terminal reset`, async () => {
+		it(`${operation} drains an admitted subscription callback before the V2 terminal reset`, async () => {
 			session = await TestSession.connected(2);
 			const db = await session.peers[0].open(new EventStore(), {
-				args: { compatibility: 9, replicate: { factor: 1 } },
+				args: { replicate: { factor: 1 } },
 			});
-			const sharedLog = db.log;
+			const sharedLog = db.log as any;
+			const remoteKey = session.peers[1].identity.publicKey;
+			const remoteHash = remoteKey.hashcode();
 			const order: string[] = [];
-			let markSnapshotStarted!: () => void;
-			const snapshotStarted = new Promise<void>((resolve) => {
-				markSnapshotStarted = resolve;
+			let markDrainStarted!: () => void;
+			const drainStarted = new Promise<void>((resolve) => {
+				markDrainStarted = resolve;
 			});
-			let releaseSnapshot!: () => void;
-			const snapshotGate = new Promise<void>((resolve) => {
-				releaseSnapshot = resolve;
+			let releaseDrain!: () => void;
+			const drainGate = new Promise<void>((resolve) => {
+				releaseDrain = resolve;
 			});
-			let gateSnapshot = true;
+			const originalDrain = sharedLog.drainPeerReceiveHandlers.bind(sharedLog);
+			const drain = sinon
+				.stub(sharedLog, "drainPeerReceiveHandlers")
+				.callsFake(async (...args: unknown[]) => {
+					const peerHash = args[0] as string;
+					if (peerHash === remoteHash) {
+						markDrainStarted();
+						await drainGate;
+						order.push("subscription-drained");
+					}
+					return originalDrain(peerHash);
+				});
+			const sent: unknown[] = [];
 			const send = sinon
 				.stub(sharedLog.rpc, "send")
-				.callsFake(async (message) => {
-					if (
-						gateSnapshot &&
-						message instanceof AllReplicatingSegmentsMessage &&
-						message.segments.length > 0
-					) {
-						gateSnapshot = false;
-						order.push("snapshot-start");
-						markSnapshotStarted();
-						await snapshotGate;
-						order.push("snapshot-finish");
-					} else if (
-						message instanceof AllReplicatingSegmentsMessage &&
-						message.segments.length === 0
-					) {
-						order.push("terminal-reset");
-					}
+				.callsFake(async (message: unknown) => {
+					sent.push(message);
 					return [] as any;
 				});
-			const originalV2Terminal = (
-				sharedLog as any
-			)._v2Send.sendTerminalReset.bind((sharedLog as any)._v2Send);
 			const v2Terminal = sinon
-				.stub((sharedLog as any)._v2Send, "sendTerminalReset")
-				.callsFake(async (...args: unknown[]) => {
+				.stub(sharedLog._v2Send, "sendTerminalReset")
+				.callsFake(async () => {
 					order.push("v2-terminal-reset");
-					return originalV2Terminal(...args);
 				});
 			let terminating: Promise<unknown> | undefined;
 
@@ -407,12 +411,12 @@ describe("lifecycle", () => {
 				(sharedLog as any)._onSubscriptionFn(
 					new CustomEvent("subscribe", {
 						detail: {
-							from: session.peers[1].identity.publicKey,
+							from: remoteKey,
 							topics: [sharedLog.topic],
 						},
 					}),
 				);
-				await snapshotStarted;
+				await drainStarted;
 
 				let terminalSettled = false;
 				terminating = db[operation]().then(() => {
@@ -421,21 +425,31 @@ describe("lifecycle", () => {
 				await waitForResolved(
 					() => expect(sharedLog.acceptsParentAttachments).to.be.false,
 				);
+				// The admitted callback is still parked: the terminal reset must
+				// stay blocked behind its drain, not merely lose a race.
+				await delay(50);
 				expect(terminalSettled).to.be.false;
-				expect(order).to.deep.equal(["snapshot-start"]);
+				// The V2 terminal reset must not run while the admitted callback
+				// is still draining.
+				expect(order).to.deep.equal([]);
 
-				releaseSnapshot();
+				releaseDrain();
 				await terminating;
 				expect(order).to.deep.equal([
-					"snapshot-start",
-					"snapshot-finish",
+					"subscription-drained",
 					"v2-terminal-reset",
-					"terminal-reset",
 				]);
 				expect(v2Terminal.calledOnce).to.be.true;
+				// Default mode publishes no legacy terminal frames.
+				expect(
+					sent.filter(
+						(message) => message instanceof AllReplicatingSegmentsMessage,
+					),
+				).to.have.length(0);
 			} finally {
-				releaseSnapshot();
+				releaseDrain();
 				await terminating?.catch(() => {});
+				drain.restore();
 				send.restore();
 				v2Terminal.restore();
 			}

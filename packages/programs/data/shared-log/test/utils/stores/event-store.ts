@@ -134,7 +134,11 @@ export class EventStore<
 				: undefined;
 
 		await this.log.open({
-			compatibility: properties?.compatibility,
+			// Only pre-v10 compatibility opens pass the key at all; default opens
+			// must not carry an explicit `compatibility` property.
+			...(properties?.compatibility !== undefined
+				? { compatibility: properties.compatibility }
+				: {}),
 			onChange: properties?.onChange,
 			canAppend,
 			canReplicate: properties?.canReplicate,

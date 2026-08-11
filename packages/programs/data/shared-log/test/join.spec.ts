@@ -6,10 +6,6 @@ import { expect } from "chai";
 import pDefer from "p-defer";
 import { createReplicationDomainHash } from "../src/replication-domain-hash.js";
 import { createReplicationDomainTime } from "../src/replication-domain-time.js";
-import {
-	AddedReplicationSegmentMessage,
-	AllReplicatingSegmentsMessage,
-} from "../src/replication.js";
 import { RequestMaybeSync, SimpleSyncronizer } from "../src/sync/simple.js";
 import { EventStore } from "./utils/stores/event-store.js";
 
@@ -19,6 +15,37 @@ type JoinPeerServices = TestSession["peers"][number]["services"] & {
 
 const getJoinServices = (peer: TestSession["peers"][number]): JoinPeerServices =>
 	peer.services as JoinPeerServices;
+
+// Neutral observation of the internal V2 mutation feed. Today the feed
+// carries the legacy announcement classes; after the neutral-union retype it
+// carries plain tagged objects. Classify by union tag or constructor name so
+// these observations survive the retype without weakening.
+const classifyAnnouncement = (
+	message: any,
+): {
+	kind: "full" | "added" | "stopped";
+	segments?: any[];
+	segmentIds?: any[];
+} => {
+	if (message?.full) return { kind: "full", segments: message.full.segments };
+	if (message?.added) {
+		return { kind: "added", segments: message.added.segments };
+	}
+	if (message?.stopped) {
+		return { kind: "stopped", segmentIds: message.stopped.segmentIds };
+	}
+	const name = message?.constructor?.name;
+	if (name === "AllReplicatingSegmentsMessage") {
+		return { kind: "full", segments: message.segments };
+	}
+	if (name === "AddedReplicationSegmentMessage") {
+		return { kind: "added", segments: message.segments };
+	}
+	if (name === "StoppedReplicating") {
+		return { kind: "stopped", segmentIds: message.segmentIds };
+	}
+	throw new Error(`Unknown announcement shape: ${String(name)}`);
+};
 
 describe("join", () => {
 	let session: TestSession;
@@ -623,7 +650,7 @@ describe("join", () => {
 
 	it("will emit one message when replicating multiple entries", async () => {
 		db1 = await session.peers[0].open(new EventStore<string, any>(), {
-			args: { replicate: false, compatibility: 9 },
+			args: { replicate: false },
 		});
 		db2 = db1.clone();
 
@@ -637,7 +664,7 @@ describe("join", () => {
 		};
 
 		db2 = await session.peers[1].open(db2, {
-			args: { replicate: false, compatibility: 9 },
+			args: { replicate: false },
 		});
 
 		await waitForResolved(() => expect(subscribed).to.be.true); // we do this to assert that this message producing event has happend before we test stuff later
@@ -645,22 +672,26 @@ describe("join", () => {
 		const e1 = await db1.add("hello", { meta: { next: [] } });
 		const e2 = await db1.add("hello again", { meta: { next: [] } });
 
-		let sentMessages: any[] = [];
-		const sendFn = db2.log.rpc.send.bind(db2.log.rpc);
-		db2.log.rpc.send = async (message: any, options: any) => {
-			sentMessages.push(message);
-			return sendFn(message, options);
+		// Default mode publishes replication mutations only through the V2
+		// mutation feed; observe the feed neutrally instead of legacy rpc egress.
+		const announced: any[] = [];
+		const enqueue = ((db2.log as any)._v2Send.enqueue as Function).bind(
+			(db2.log as any)._v2Send,
+		);
+		(db2.log as any)._v2Send.enqueue = (message: any) => {
+			announced.push(classifyAnnouncement(message));
+			return enqueue(message);
 		};
 
 		// now join entries
 		await db2.log.join([e1.entry, e2.entry], { replicate: true });
 		expect(db2.log.log.length).to.equal(2);
 
-		expect(
-			sentMessages.filter((x) => x instanceof AllReplicatingSegmentsMessage),
-		).to.have.length(0);
-		const replicationMessages = sentMessages.filter(
-			(x) => x instanceof AddedReplicationSegmentMessage,
+		expect(announced.filter((entry) => entry.kind === "full")).to.have.length(
+			0,
+		);
+		const replicationMessages = announced.filter(
+			(entry) => entry.kind === "added",
 		);
 
 		expect(replicationMessages).to.have.length(1);
@@ -669,7 +700,7 @@ describe("join", () => {
 
 	it("will emit one message when replicating new and already joined entries", async () => {
 		db1 = await session.peers[0].open(new EventStore<string, any>(), {
-			args: { replicate: false, compatibility: 9 },
+			args: { replicate: false },
 		});
 		db2 = db1.clone();
 
@@ -683,7 +714,7 @@ describe("join", () => {
 		};
 
 		db2 = await session.peers[1].open(db2, {
-			args: { replicate: false, compatibility: 9 },
+			args: { replicate: false },
 		});
 
 		await waitForResolved(() => expect(subscribed).to.be.true); // we do this to assert that this message producing event has happend before we test stuff later
@@ -695,22 +726,24 @@ describe("join", () => {
 
 		await db2.log.join([e1.entry]);
 
-		let sentMessages: any[] = [];
-		const sendFn = db2.log.rpc.send.bind(db2.log.rpc);
-		db2.log.rpc.send = async (message: any, options: any) => {
-			sentMessages.push(message);
-			return sendFn(message, options);
+		const announced: any[] = [];
+		const enqueue = ((db2.log as any)._v2Send.enqueue as Function).bind(
+			(db2.log as any)._v2Send,
+		);
+		(db2.log as any)._v2Send.enqueue = (message: any) => {
+			announced.push(classifyAnnouncement(message));
+			return enqueue(message);
 		};
 
 		// now join e1 again and replicate this time
 		await db2.log.join([e1.entry, e2.entry], { replicate: true });
 		expect(db2.log.log.length).to.equal(2);
 
-		expect(
-			sentMessages.filter((x) => x instanceof AllReplicatingSegmentsMessage),
-		).to.have.length(0);
-		const replicationMessages = sentMessages.filter(
-			(x) => x instanceof AddedReplicationSegmentMessage,
+		expect(announced.filter((entry) => entry.kind === "full")).to.have.length(
+			0,
+		);
+		const replicationMessages = announced.filter(
+			(entry) => entry.kind === "added",
 		);
 
 		expect(replicationMessages).to.have.length(1);

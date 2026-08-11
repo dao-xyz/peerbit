@@ -1314,8 +1314,61 @@ describe("receive admission replication-info V2 sender integration", () => {
 		expect((db.log as any)._peerSessions.current(remoteHash)).to.equal(null);
 	});
 
-	for (const compatibility of [undefined, 0, 9, 10] as const) {
-		const retainsLegacy = compatibility !== undefined && compatibility < 10;
+	it("egresses only V2 mutations for a default open", async () => {
+		// B12 default-mode pin: with no compatibility option, a mutation
+		// announcement produces exactly ONE outbound frame — the directed V2
+		// mutation — and no legacy primary of any class.
+		session = await TestSession.disconnected(2);
+		const db = await session.peers[0].open(new EventStore(), {
+			args: { replicate: false, timeUntilRoleMaturity: 0 },
+		});
+		const log = db.log as any;
+		const remote = session.peers[1].identity.publicKey;
+		const remoteHash = remote.hashcode();
+		const peerSession = log._peerSessions.rotate(remoteHash, "opening");
+		log._peerSessions.unblockReplicationInfo(remoteHash);
+		log._peerSessions.markOpen(remoteHash, peerSession);
+		const receiverTransportSession = 88n;
+		log._peerSyncCapabilities.set(
+			remoteHash,
+			SYNC_CAPABILITY_REPLICATION_INFO_V2_DECODE |
+				SYNC_CAPABILITY_REPLICATION_INFO_V2_APPLY,
+		);
+		log._peerSyncCapabilitySessions.set(remoteHash, receiverTransportSession);
+		log._peerSyncCapabilityTimestamps.set(remoteHash, 0n);
+		const send = sinon.stub(log.rpc, "send").resolves([] as any);
+		const request = new RequestReplicationInfoV2Message({
+			receiverChallenge: challenge(21),
+			intendedSender: log.node.identity.publicKey,
+			senderSession: BigInt(log.node.services.pubsub.session),
+		});
+		await log.onMessage(request, {
+			from: remote,
+			message: {
+				header: { session: receiverTransportSession, timestamp: 1n },
+			},
+		} as any);
+		await log._v2Send.drain();
+		send.resetHistory();
+
+		const legacy = new AddedReplicationSegmentMessage({ segments: [] });
+		await log._announcements.sendReplicationAnnouncement(legacy);
+		await log._v2Send.drain();
+		const outbound = send.args.map((args: any[]) => args[0]);
+		const legacyMessages = outbound.filter(
+			(message: unknown) => message instanceof AddedReplicationSegmentMessage,
+		);
+		const v2Messages = outbound.filter(
+			(message: unknown) => message instanceof AddedReplicationInfoV2Message,
+		) as AddedReplicationInfoV2Message[];
+		expect(outbound).to.have.length(1);
+		expect(legacyMessages).to.have.length(0);
+		expect(v2Messages).to.have.length(1);
+		expect(v2Messages[0].sequence).to.equal(2n);
+	});
+
+	for (const compatibility of [0, 9, 10] as const) {
+		const retainsLegacy = compatibility < 10;
 		it(`${retainsLegacy ? "retains" : "suppresses"} the legacy primary for compatibility ${String(compatibility)} while sending directed V2 mutations`, async () => {
 			session = await TestSession.disconnected(2);
 			const db = await session.peers[0].open(new EventStore(), {

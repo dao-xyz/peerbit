@@ -87,7 +87,9 @@ describe(`migration-8-9`, function () {
 					replicate: {
 						factor: 1,
 					},
-					compatibility,
+					// The fixture must not need the compatibility option for default
+					// opens: only explicit pre-v10 opens pass the key at all.
+					...(compatibility !== undefined ? { compatibility } : {}),
 					onMessage: async (msg, context) => {
 						if (isReplicationInfoV2Message(msg)) {
 							fakeOldV2Messages++;
@@ -134,7 +136,7 @@ describe(`migration-8-9`, function () {
 					replicate: {
 						factor: 1,
 					},
-					compatibility,
+					...(compatibility !== undefined ? { compatibility } : {}),
 				},
 			});
 		};
@@ -245,8 +247,8 @@ describe(`migration-8-9`, function () {
 		expect(db1.log.domain.resolution).to.equal("u32");
 	});
 
-	it("v10+ uses iblt u64", async () => {
-		await setup(10);
+	it("default open uses iblt u64", async () => {
+		await setup();
 		expect(db1.log.syncronizer).to.be.instanceOf(RatelessIBLTSynchronizer);
 		expect(db1.log.domain.resolution).to.equal("u64");
 	});

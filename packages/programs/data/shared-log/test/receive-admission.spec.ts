@@ -16,7 +16,10 @@ import {
 } from "../src/exchange-heads.js";
 import { createReplicationDomainHash } from "../src/replication-domain-hash.js";
 import { ReplicationIntent } from "../src/ranges.js";
-import { AllReplicatingSegmentsMessage } from "../src/replication.js";
+import {
+	AddedReplicationInfoV2Message,
+	FullReplicationInfoV2Message,
+} from "../src/replication.js";
 import {
 	ConfirmEntriesMessage,
 	RequestMaybeSync,
@@ -219,7 +222,6 @@ describe("receive admission", () => {
 			const store = new EventStore<string, any>();
 			const target = await session.peers[0].open(store, {
 				args: {
-					compatibility: 9,
 					replicate: 1,
 					setup,
 					timeUntilRoleMaturity: 0,
@@ -227,7 +229,6 @@ describe("receive admission", () => {
 			});
 			await session.peers[1].open(store.clone(), {
 				args: {
-					compatibility: 9,
 					replicate: 1,
 					setup,
 					timeUntilRoleMaturity: 0,
@@ -244,8 +245,24 @@ describe("receive admission", () => {
 				expect(ranges).to.have.length.greaterThan(0);
 				remoteRange = ranges[0].value;
 			});
-			const scheduleRequests = sinon
-				.stub(sharedLog, "scheduleReplicationInfoRequests")
+			await waitForResolved(() =>
+				expect(
+					sharedLog._v2Receive._receiveStates.get(sourceHash)?.phase,
+				).to.equal("active"),
+			);
+			// Capture the CURRENT authenticated stream binding before the
+			// unsubscribe wipes it: the mid-barrier probe below is byte-valid for
+			// that pre-departure generation.
+			const departedState = sharedLog._v2Receive._receiveStates.get(sourceHash);
+			const departedProbe = new FullReplicationInfoV2Message({
+				receiverChallenge: departedState.receiverBinding.slice(),
+				senderEpoch: departedState.senderEpoch.slice(),
+				sequence: departedState.lastSequence + 1n,
+				segments: [remoteRange.toReplicationRange()],
+			});
+			const departedTransportSession = departedState.senderTransportSession;
+			const v2Recovery = sinon
+				.stub(sharedLog, "scheduleReplicationInfoV2Recovery")
 				.callsFake(() => {});
 
 			try {
@@ -298,26 +315,33 @@ describe("receive admission", () => {
 					.true;
 				expect(subscriptionSettled).to.be.false;
 				// …and replication-info admitted mid-barrier is dropped whole,
-				// before the watermark write.
-				const watermarkBefore =
-					sharedLog.latestReplicationInfoMessage.get(sourceHash);
-				await target.log.onMessage(
-					new AllReplicatingSegmentsMessage({
-						segments: [remoteRange.toReplicationRange()],
-					}),
-					{
+				// before any replication mutation: the reconnect already revoked
+				// the departed stream generation, so even its byte-valid frame
+				// cannot cross the barrier.
+				expect(sharedLog._v2Receive._receiveStates.has(sourceHash)).to.be.false;
+				const add = sinon.spy(sharedLog, "addReplicationRange");
+				const remove = sinon.spy(sharedLog, "removeReplicationRanges");
+				try {
+					await target.log.onMessage(departedProbe, {
 						from: sourceKey,
-						message: { header: { timestamp: BigInt(Date.now() + 5_000) } },
-					} as any,
-				);
-				expect(
-					await target.log.replicationIndex.count({
-						query: { hash: sourceHash },
-					}),
-				).to.equal(0);
-				expect(sharedLog.latestReplicationInfoMessage.get(sourceHash)).to.equal(
-					watermarkBefore,
-				);
+						message: {
+							header: {
+								session: departedTransportSession,
+								timestamp: BigInt(Date.now() + 5_000),
+							},
+						},
+					} as any);
+					expect(
+						await target.log.replicationIndex.count({
+							query: { hash: sourceHash },
+						}),
+					).to.equal(0);
+					expect(add.notCalled).to.be.true;
+					expect(remove.notCalled).to.be.true;
+				} finally {
+					add.restore();
+					remove.restore();
+				}
 				expect(sharedLog._peerSessions.isReplicationInfoBlocked(sourceHash)).to.be
 					.true;
 
@@ -333,7 +357,7 @@ describe("receive admission", () => {
 						(value): value is Promise<void> => value != null,
 					),
 				);
-				scheduleRequests.restore();
+				v2Recovery.restore();
 			}
 		} finally {
 			releaseLane.resolve();
@@ -991,13 +1015,12 @@ describe("receive admission", () => {
 
 	it("fences a replication update queued behind generic peer cleanup", async () => {
 		const session = await TestSession.connected(2);
-		const synchronizerEntered = pDefer<void>();
-		const releaseSynchronizer = pDefer<void>();
+		const handlerParked = pDefer<void>();
+		const releaseHandler = pDefer<void>();
 		try {
 			const store = new EventStore<string, any>();
 			const target = await session.peers[0].open(store, {
 				args: {
-					compatibility: 9,
 					replicate: 1,
 					setup,
 					timeUntilRoleMaturity: 0,
@@ -1005,7 +1028,6 @@ describe("receive admission", () => {
 			});
 			await session.peers[1].open(store.clone(), {
 				args: {
-					compatibility: 9,
 					replicate: 1,
 					setup,
 					timeUntilRoleMaturity: 0,
@@ -1022,60 +1044,87 @@ describe("receive admission", () => {
 				expect(ranges).to.have.length.greaterThan(0);
 				remoteRange = ranges[0].value;
 			});
+			await waitForResolved(() =>
+				expect(
+					sharedLog._v2Receive._receiveStates.get(sourceHash)?.phase,
+				).to.equal("active"),
+			);
+			const receiveState = sharedLog._v2Receive._receiveStates.get(sourceHash);
 
-			const delayedMessage = new AllReplicatingSegmentsMessage({
+			// A committed removal re-solicits replication info; a genuine re-learn
+			// through recovery would mask the cleanup fence under test.
+			const v2Recovery = sinon
+				.stub(sharedLog, "scheduleReplicationInfoV2Recovery")
+				.callsFake(() => {});
+			const v2ReAdvertisement = sinon
+				.stub(sharedLog._v2Receive, "reAdvertiseLocalCapabilityForRecovery")
+				.returns(true);
+
+			// The stream's next in-order mutation: byte-valid for the CURRENT
+			// authenticated stream, parked between its admission reservation and
+			// its apply-lane turn while the generic cleanup runs.
+			const delayedMessage = new FullReplicationInfoV2Message({
+				receiverChallenge: receiveState.receiverBinding.slice(),
+				senderEpoch: receiveState.senderEpoch.slice(),
+				sequence: receiveState.lastSequence + 1n,
 				segments: [remoteRange.toReplicationRange()],
 			});
-			// This test manually drives the legacy receive lane. V2 cutover is
-			// covered separately and must not bypass the cleanup fence under test.
-			const forceLegacyReceivePath = sinon
-				.stub(sharedLog._v2Receive, "isLegacyCutover")
-				.returns(false);
-			const originalSynchronizerOnMessage =
-				sharedLog.syncronizer.onMessage.bind(sharedLog.syncronizer);
-			const synchronizer = sinon
-				.stub(sharedLog.syncronizer, "onMessage")
-				.callsFake(async (message: unknown, context: unknown) => {
-					if (message === delayedMessage) {
-						synchronizerEntered.resolve();
-						await releaseSynchronizer.promise;
-						return false;
+			let armed = false;
+			const originalApplyQueue =
+				sharedLog.withReplicationInfoApplyQueue.bind(sharedLog);
+			const applyQueue = sinon
+				.stub(sharedLog, "withReplicationInfoApplyQueue")
+				.callsFake(async (...args: unknown[]) => {
+					const [peerHash, fn] = args as [string, () => Promise<void>];
+					if (armed && peerHash === sourceHash) {
+						armed = false;
+						handlerParked.resolve();
+						await releaseHandler.promise;
 					}
-					return originalSynchronizerOnMessage(message, context);
+					return originalApplyQueue(peerHash, fn);
 				});
 
 			try {
+				armed = true;
 				const receive = target.log.onMessage(delayedMessage, {
 					from: sourceKey,
-					message: { header: { timestamp: BigInt(Date.now()) } },
+					message: {
+						header: {
+							session: receiveState.senderTransportSession,
+							timestamp: BigInt(Date.now()),
+						},
+					},
 				} as any);
-				await synchronizerEntered.promise;
+				await handlerParked.promise;
 
 				const removal = sharedLog.removeReplicator(sourceKey, {
 					noEvent: true,
 				});
-				await waitForResolved(() =>
-					expect(sharedLog._receiveHandlerDrainByPeer.has(sourceHash)).to.be
-						.true,
-				);
+				await removal;
+				expect(
+					await target.log.replicationIndex.count({
+						query: { hash: sourceHash },
+					}),
+				).to.equal(0);
 
-				releaseSynchronizer.resolve();
-				await Promise.all([receive, removal]);
+				releaseHandler.resolve();
+				await receive;
+				// The parked update reached its lane after the committed cleanup:
+				// it must not restore the removed ranges.
 				expect(
 					await target.log.replicationIndex.count({
 						query: { hash: sourceHash },
 					}),
 				).to.equal(0);
 				expect(target.log.uniqueReplicators.has(sourceHash)).to.be.false;
-				expect(sharedLog.latestReplicationInfoMessage.has(sourceHash)).to.be
-					.false;
 			} finally {
-				releaseSynchronizer.resolve();
-				synchronizer.restore();
-				forceLegacyReceivePath.restore();
+				releaseHandler.resolve();
+				applyQueue.restore();
+				v2ReAdvertisement.restore();
+				v2Recovery.restore();
 			}
 		} finally {
-			releaseSynchronizer.resolve();
+			releaseHandler.resolve();
 			await session.stop();
 		}
 	});
