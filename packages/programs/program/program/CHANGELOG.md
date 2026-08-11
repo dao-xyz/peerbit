@@ -1,5 +1,13 @@
 # Changelog
 
+## 6.0.49
+
+### Patch Changes
+
+- Updated dependencies [[`2ab28af`](https://github.com/dao-xyz/peerbit/commit/2ab28afac007b6e337e1c69aa1ed7647b71e0210)]:
+  - @peerbit/pubsub@5.4.1
+  - @peerbit/pubsub-interface@5.2.1
+
 ## 6.0.48
 
 ### Patch Changes

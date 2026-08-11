@@ -1,5 +1,11 @@
 # Changelog
 
+## 5.2.1
+
+### Patch Changes
+
+- [#1212](https://github.com/dao-xyz/peerbit/pull/1212) [`2ab28af`](https://github.com/dao-xyz/peerbit/commit/2ab28afac007b6e337e1c69aa1ed7647b71e0210) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Use authenticated replication-info V2 by default while retaining legacy fallback for explicit pre-v10 compatibility opens, bind subscription events to their signed transport generation so reconnect handshakes cannot inherit stale capabilities, and establish both document-index and shared-log topics before reporting peer readiness.
+
 ## 5.2.0
 
 ### Minor Changes
