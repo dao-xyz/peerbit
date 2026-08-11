@@ -2105,6 +2105,11 @@ export class SharedLog<
 		}
 	>;
 	private _replicationInfoApplyQueueByPeer!: Map<string, Promise<void>>;
+	// One in-flight targeted subscriber-snapshot request per session-less peer.
+	// A capability burst from a peer whose Subscribe has not been observed must
+	// coalesce into a single pubsub.requestSubscribers call (mirrors the
+	// waitForReplicator in-flight coalescing); a later burst may request again.
+	private _subscriberSnapshotRequestsByPeer!: Map<string, Promise<void>>;
 	// Range ids are global primary keys while receive lanes are per peer. Keep
 	// reads and writes that decide one mutation in a single global lane.
 	private _replicationRangeMutationTail: Promise<void> = Promise.resolve();
@@ -3645,6 +3650,7 @@ export class SharedLog<
 		this._pendingIHaveCallbacks = new Set();
 		this.latestReplicationInfoMessage = new Map();
 		this._replicationInfoRequestByPeer = new Map();
+		this._subscriberSnapshotRequestsByPeer = new Map();
 		this._replicationInfoApplyQueueByPeer = new Map();
 		// The registry constructor runs resetForOpen(), which creates the
 		// replication-info blocked set (fence B5) alongside the session maps —
@@ -4325,6 +4331,36 @@ export class SharedLog<
 			senderTransportSession,
 			capabilityTimestamp,
 		});
+	}
+
+	/**
+	 * Coalesced targeted subscriber-snapshot request for the
+	 * capability-before-Subscribe recovery path. The observed-capability gate
+	 * is sender-paced (any advancing timestamp passes), so a burst of frames
+	 * from one session-less peer must not fan out into one GetSubscribers
+	 * unicast per frame. One request per peer is in flight at a time; once it
+	 * settles, a genuinely new session-less capability may request again.
+	 */
+	private requestSubscriberSnapshotForCapability(target: PublicSignKey): void {
+		const peerHash = target.hashcode();
+		if (this._subscriberSnapshotRequestsByPeer.has(peerHash)) {
+			return;
+		}
+		const request = Promise.resolve()
+			.then(() =>
+				this.node.services.pubsub.requestSubscribers(this.topic, target),
+			)
+			.catch((error) => {
+				if (!isNotStartedError(error as Error)) {
+					logger.error(error?.toString?.() ?? String(error));
+				}
+			})
+			.finally(() => {
+				if (this._subscriberSnapshotRequestsByPeer.get(peerHash) === request) {
+					this._subscriberSnapshotRequestsByPeer.delete(peerHash);
+				}
+			});
+		this._subscriberSnapshotRequestsByPeer.set(peerHash, request);
 	}
 
 	/**
@@ -14206,6 +14242,7 @@ export class SharedLog<
 		this._pendingIHaveCallbacks = new Set();
 		this.latestReplicationInfoMessage = new Map();
 		this._replicationInfoRequestByPeer = new Map();
+		this._subscriberSnapshotRequestsByPeer = new Map();
 		// Terminal close/drop drains the previous lifecycle before another open can
 		// install fresh lanes and opaque per-subscription ownership tokens.
 		this._replicationInfoApplyQueueByPeer = new Map();
@@ -19399,18 +19436,7 @@ export class SharedLog<
 								// subscriber snapshot; the resulting Subscribe creates the real
 								// PeerSession and completes the symmetric capability handshake.
 								// Never synthesize membership from capability traffic alone.
-								void Promise.resolve()
-									.then(() =>
-										this.node.services.pubsub.requestSubscribers(
-											this.topic,
-											context.from,
-										),
-									)
-									.catch((error) => {
-										if (!isNotStartedError(error as Error)) {
-											logger.error(error?.toString?.() ?? String(error));
-										}
-									});
+								this.requestSubscriberSnapshotForCapability(context.from);
 							}
 						}
 					}
