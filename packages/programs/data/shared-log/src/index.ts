@@ -15531,10 +15531,11 @@ export class SharedLog<
 
 	async afterOpen(): Promise<void> {
 		await super.afterOpen();
-		// This is a subscription fallback, not peer discovery. The broader
-		// _getTopicSubscribers() union also contains connected/provider/fanout
-		// candidates that have not subscribed to this log; treating those as an
-		// opening creates a false predecessor before their first real subscribe.
+		// Start the broader discovery eagerly, in parallel with rebalance, for its
+		// routing/cache side effects. It also contains connected/provider/fanout
+		// candidates that have not subscribed to this log, so only the authoritative
+		// pubsub snapshot below may create subscription fallback sessions.
+		const subscriberDiscoveryPromise = this._getTopicSubscribers(this.topic);
 		const existingSubscribersPromise = this.node.services.pubsub.getSubscribers(
 			this.topic,
 		);
@@ -15558,6 +15559,7 @@ export class SharedLog<
 		this._liveness.startReplicatorLivenessSweep();
 
 		await this.rebalanceParticipation();
+		await subscriberDiscoveryPromise;
 
 		// Take into account existing subscription
 		(await existingSubscribersPromise)?.forEach((v) => {
