@@ -15575,15 +15575,9 @@ export class SharedLog<
 			if (this._peerSessions.current(v.hashcode()) !== null) {
 				return;
 			}
-			void this.runSubscriptionChangeCallback(async () => {
-				// The live event may rotate after the outer check but before this queued
-				// fallback runs. Recheck at execution so the snapshot cannot create a
-				// duplicate successor session in that window.
-				if (this._peerSessions.current(v.hashcode()) !== null) {
-					return;
-				}
-				await this.handleSubscriptionChange(v, [this.topic], true);
-			});
+			void this.runSubscriptionChangeCallback(() =>
+				this.handleSubscriptionChange(v, [this.topic], true),
+			);
 		});
 	}
 
