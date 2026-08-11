@@ -202,6 +202,156 @@ describe("waitForReplicator", () => {
 		}
 	});
 
+	it("requests an authoritative subscriber snapshot when V2 has no peer session", async () => {
+		session = await TestSession.connected(2);
+		db = await session.peers[0].open(new EventStore<string, any>(), {
+			args: {
+				timeUntilRoleMaturity: 0,
+				waitForReplicatorRequestIntervalMs: 50,
+				waitForReplicatorRequestMaxAttempts: 2,
+			},
+		});
+
+		const log = db.log as any;
+		const remote = session.peers[1].identity.publicKey;
+		const remoteHash = remote.hashcode();
+		expect(log._peerSessions.current(remoteHash)).to.equal(null);
+
+		const requestSubscribers = sinon
+			.stub(session.peers[0].services.pubsub, "requestSubscribers")
+			.resolves();
+		const resume = sinon.stub(log._v2Receive, "resumeParkedRequest");
+
+		try {
+			await expect(
+				log.waitForReplicator(remote, {
+					timeout: 300,
+					eager: true,
+				}),
+			).to.be.rejectedWith(TimeoutError);
+			expect(requestSubscribers.callCount).to.equal(2);
+			for (const call of requestSubscribers.getCalls()) {
+				expect(call.args).to.deep.equal([log.topic, remote]);
+			}
+			expect(resume.notCalled).to.be.true;
+		} finally {
+			resume.restore();
+			requestSubscribers.restore();
+		}
+	});
+
+	it("requests a subscriber snapshot for a departing V2 peer session", async () => {
+		session = await TestSession.connected(2);
+		db = await session.peers[0].open(new EventStore<string, any>(), {
+			args: {
+				timeUntilRoleMaturity: 0,
+				waitForReplicatorRequestIntervalMs: 50,
+				waitForReplicatorRequestMaxAttempts: 2,
+			},
+		});
+
+		const log = db.log as any;
+		const remote = session.peers[1].identity.publicKey;
+		const remoteHash = remote.hashcode();
+		const departing = log._peerSessions.rotate(remoteHash, "departing");
+		expect(log._peerSessions.current(remoteHash)).to.equal(departing);
+
+		const requestSubscribers = sinon
+			.stub(session.peers[0].services.pubsub, "requestSubscribers")
+			.resolves();
+		const resume = sinon.stub(log._v2Receive, "resumeParkedRequest");
+
+		try {
+			await expect(
+				log.waitForReplicator(remote, {
+					timeout: 300,
+					eager: true,
+				}),
+			).to.be.rejectedWith(TimeoutError);
+			expect(requestSubscribers.callCount).to.equal(2);
+			expect(requestSubscribers.alwaysCalledWithExactly(log.topic, remote)).to
+				.be.true;
+			expect(resume.notCalled).to.be.true;
+		} finally {
+			resume.restore();
+			requestSubscribers.restore();
+		}
+	});
+
+	it("coalesces an in-flight V2 subscriber snapshot across wait retries", async () => {
+		session = await TestSession.connected(2);
+		db = await session.peers[0].open(new EventStore<string, any>(), {
+			args: {
+				timeUntilRoleMaturity: 0,
+				waitForReplicatorRequestIntervalMs: 50,
+				waitForReplicatorRequestMaxAttempts: 3,
+			},
+		});
+
+		const log = db.log as any;
+		const remote = session.peers[1].identity.publicKey;
+		let releaseSnapshot!: () => void;
+		const snapshot = new Promise<void>((resolve) => {
+			releaseSnapshot = resolve;
+		});
+		const requestSubscribers = sinon
+			.stub(session.peers[0].services.pubsub, "requestSubscribers")
+			.returns(snapshot);
+
+		try {
+			await expect(
+				log.waitForReplicator(remote, {
+					timeout: 300,
+					eager: true,
+				}),
+			).to.be.rejectedWith(TimeoutError);
+			expect(requestSubscribers.calledOnceWithExactly(log.topic, remote)).to.be
+				.true;
+		} finally {
+			releaseSnapshot();
+			await snapshot;
+			await delay(0);
+			requestSubscribers.restore();
+		}
+	});
+
+	it("does not request a subscriber snapshot while a V2 peer session is opening", async () => {
+		session = await TestSession.connected(2);
+		db = await session.peers[0].open(new EventStore<string, any>(), {
+			args: {
+				timeUntilRoleMaturity: 0,
+				waitForReplicatorRequestIntervalMs: 50,
+				waitForReplicatorRequestMaxAttempts: 2,
+			},
+		});
+
+		const log = db.log as any;
+		const remote = session.peers[1].identity.publicKey;
+		const remoteHash = remote.hashcode();
+		const opening = log._peerSessions.rotate(remoteHash, "opening");
+		expect(log._peerSessions.current(remoteHash)).to.equal(opening);
+
+		const requestSubscribers = sinon.stub(
+			session.peers[0].services.pubsub,
+			"requestSubscribers",
+		);
+		const resume = sinon.stub(log._v2Receive, "resumeParkedRequest");
+
+		try {
+			await expect(
+				log.waitForReplicator(remote, {
+					timeout: 300,
+					eager: true,
+				}),
+			).to.be.rejectedWith(TimeoutError);
+			expect(requestSubscribers.notCalled).to.be.true;
+			expect(resume.notCalled).to.be.true;
+		} finally {
+			resume.restore();
+			requestSubscribers.restore();
+		}
+	});
+
 	it("rejects waitForReplicators when internal leader check throws", async () => {
 		session = await TestSession.connected(1);
 		db = await session.peers[0].open(new EventStore<string, any>(), {

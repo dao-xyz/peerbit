@@ -20630,6 +20630,7 @@ export class SharedLog<
 		}, timeoutMs);
 
 		let requestAttempts = 0;
+		let subscriberSnapshotInFlight: Promise<void> | undefined;
 		const requestIntervalMs = this.waitForReplicatorRequestIntervalMs;
 		const maxRequestAttempts =
 			this.waitForReplicatorRequestMaxAttempts ??
@@ -20637,6 +20638,26 @@ export class SharedLog<
 				WAIT_FOR_REPLICATOR_REQUEST_MIN_ATTEMPTS,
 				Math.ceil(timeoutMs / requestIntervalMs),
 			);
+		const requestSubscriberSnapshot = () => {
+			if (subscriberSnapshotInFlight) {
+				return;
+			}
+			subscriberSnapshotInFlight = Promise.resolve()
+				.then(async () => {
+					if (settled || this.closed) {
+						return;
+					}
+					await this.node.services.pubsub.requestSubscribers(this.topic, key);
+				})
+				.catch((error) => {
+					if (!isNotStartedError(error as Error)) {
+						logger.error(error?.toString?.() ?? String(error));
+					}
+				})
+				.finally(() => {
+					subscriberSnapshotInFlight = undefined;
+				});
+		};
 
 		const requestReplicationInfo = () => {
 			if (settled || this.closed) {
@@ -20670,6 +20691,12 @@ export class SharedLog<
 						peerSession,
 						receiveEpoch: this._peerSessions.receiveEpoch(peerHash),
 					});
+				} else if (peerSession === null || peerSession.phase === "departing") {
+					// A peer can be known to routing before its SharedLog topic
+					// subscription has been observed. Legacy requests used to bootstrap
+					// that case directly; V2 needs an authoritative Subscribe snapshot
+					// before it can create a fenced PeerSession and request a Full.
+					requestSubscriberSnapshot();
 				}
 			}
 
