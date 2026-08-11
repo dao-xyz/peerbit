@@ -1,5 +1,11 @@
 # Changelog
 
+## 13.2.36
+
+### Patch Changes
+
+- [#1215](https://github.com/dao-xyz/peerbit/pull/1215) [`b100d9a`](https://github.com/dao-xyz/peerbit/commit/b100d9a640267b1abd806d18b8cd6bd99f00a779) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Escalate the persistent V2 recovery unpark delay against silent-but-subscribed peers (doubling per fruitless cycle, capped at 5 minutes, reset on any applied V2 progress), stop rotating a still-current capability grant on unpark so in-flight Fulls answering the pre-park challenge still apply, and coalesce session-less capability-triggered subscriber snapshot requests to one in flight per peer.
+
 ## 13.2.35
 
 ### Patch Changes
