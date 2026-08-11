@@ -1346,6 +1346,13 @@ export const WAIT_FOR_REPLICATOR_TIMEOUT = 20000;
 export const WAIT_FOR_ROLE_MATURITY = 5000;
 export const WAIT_FOR_REPLICATOR_REQUEST_INTERVAL = 1000;
 export const WAIT_FOR_REPLICATOR_REQUEST_MIN_ATTEMPTS = 3;
+// The V2 recovery scheduler is deliberately persistent (a subscribed peer is
+// re-solicited for as long as its topic session stays open), but consecutive
+// fruitless park/unpark cycles double the wait before the next unpark so a
+// silent-but-subscribed peer converges to one bounded request cycle per cap
+// window instead of one per base interval. Any applied V2 progress resets it.
+export const REPLICATION_INFO_V2_RECOVERY_MAX_UNPARK_DELAY = 300_000;
+const REPLICATION_INFO_V2_RECOVERY_MAX_UNPARK_EXPONENT = 20;
 // TODO(prune): Investigate if/when a non-zero prune delay is required for correctness
 // (e.g. responsibility/replication-info message reordering in multi-peer scenarios).
 // Prefer making pruning robust without timing-based heuristics.
@@ -2087,9 +2094,14 @@ export class SharedLog<
 	private _replicationInfoRequestByPeer!: Map<
 		string,
 		{
+			// Legacy scheduler: sends issued (bounded by maxAttempts). V2 recovery
+			// scheduler: consecutive fruitless unparks — the escalation exponent
+			// for the next unpark delay, reset on any applied V2 progress.
 			attempts: number;
 			timer?: ReturnType<typeof setTimeout>;
 			peerSession?: PeerSession;
+			// V2 recovery scheduler only: when the current park was first observed.
+			parkedSinceMs?: number;
 		}
 	>;
 	private _replicationInfoApplyQueueByPeer!: Map<string, Promise<void>>;
@@ -4282,6 +4294,9 @@ export class SharedLog<
 		);
 		if (generationAdvanced) {
 			this._v2Send.advancePeerCapability(peerHash);
+			// A fresh signed capability generation is V2 progress from the peer:
+			// recovery re-solicitation may restart from the base interval.
+			this.resetReplicationInfoV2RecoveryEscalation(peerHash);
 		}
 		return true;
 	}
@@ -19963,6 +19978,9 @@ export class SharedLog<
 					return;
 				}
 				this._liveness.markReplicatorActivity(fromHash);
+				// A committed V2 announcement is applied progress: the peer answers,
+				// so recovery re-solicitation may restart from the base interval.
+				this.resetReplicationInfoV2RecoveryEscalation(fromHash);
 				if (
 					msg instanceof FullReplicationInfoV2Message &&
 					this.legacyReplicationInfoEnabled
@@ -23432,6 +23450,22 @@ export class SharedLog<
 		this._replicationInfoRequestByPeer.delete(peerHash);
 	}
 
+	/**
+	 * Applied V2 progress from a peer (a committed Full/Added/Stopped, or a
+	 * rotated capability generation) proves the peer answers. Reset the
+	 * recovery scheduler's unpark escalation so a later stall restarts from
+	 * the base interval. Peer-session rotation resets implicitly: the recovery
+	 * scheduler creates a fresh per-session state.
+	 */
+	private resetReplicationInfoV2RecoveryEscalation(peerHash: string) {
+		const state = this._replicationInfoRequestByPeer.get(peerHash);
+		if (!state || state.peerSession === undefined) {
+			return;
+		}
+		state.attempts = 0;
+		state.parkedSinceMs = undefined;
+	}
+
 	private scheduleReplicationInfoV2Recovery(
 		peer: PublicSignKey,
 		replicationLifecycleController = this._instanceLifecycle
@@ -23463,6 +23497,7 @@ export class SharedLog<
 			attempts: number;
 			timer?: ReturnType<typeof setTimeout>;
 			peerSession: PeerSession;
+			parkedSinceMs?: number;
 		} = {
 			attempts: 0,
 			peerSession,
@@ -23478,6 +23513,24 @@ export class SharedLog<
 			requestStates.delete(peerHash);
 		};
 		const intervalMs = Math.max(50, this.waitForReplicatorRequestIntervalMs);
+		const maxUnparkDelayMs = Math.max(
+			intervalMs,
+			REPLICATION_INFO_V2_RECOVERY_MAX_UNPARK_DELAY,
+		);
+		const unparkDelayMs = () =>
+			Math.min(
+				maxUnparkDelayMs,
+				intervalMs *
+					2 **
+						Math.min(
+							state.attempts,
+							REPLICATION_INFO_V2_RECOVERY_MAX_UNPARK_EXPONENT,
+						),
+			);
+		const arm = (delayMs: number) => {
+			state.timer = setTimeout(tick, delayMs);
+			state.timer.unref?.();
+		};
 		const tick = () => {
 			if (
 				!this.isReplicationLifecycleActive(replicationLifecycleController) ||
@@ -23487,14 +23540,38 @@ export class SharedLog<
 				cancel();
 				return;
 			}
-			this._v2Receive.resumeParkedRequest({
-				peerHash,
-				peerSession,
-				receiveEpoch: this._peerSessions.receiveEpoch(peerHash),
-			});
-			state.attempts++;
-			state.timer = setTimeout(tick, intervalMs);
-			state.timer.unref?.();
+			const receiveEpoch = this._peerSessions.receiveEpoch(peerHash);
+			if (
+				!this._v2Receive.isRequestParked({ peerHash, peerSession, receiveEpoch })
+			) {
+				// Active, or a bounded request cycle is still running its own
+				// exponential retries. Keep polling for the next park.
+				state.parkedSinceMs = undefined;
+				arm(intervalMs);
+				return;
+			}
+			const now = Date.now();
+			if (state.parkedSinceMs === undefined) {
+				state.parkedSinceMs = now;
+			}
+			const resumeAtMs = state.parkedSinceMs + unparkDelayMs();
+			if (now < resumeAtMs) {
+				arm(Math.max(50, resumeAtMs - now));
+				return;
+			}
+			if (
+				this._v2Receive.resumeParkedRequest({
+					peerHash,
+					peerSession,
+					receiveEpoch,
+				})
+			) {
+				// Fruitless until proven otherwise: escalate the next unpark wait.
+				// Applied progress resets via resetReplicationInfoV2RecoveryEscalation.
+				state.attempts++;
+				state.parkedSinceMs = undefined;
+			}
+			arm(intervalMs);
 		};
 		tick();
 	}

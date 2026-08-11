@@ -3,6 +3,11 @@ import { TimeoutError, delay, waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
 import sinon from "sinon";
 import {
+	SYNC_CAPABILITY_REPLICATION_INFO_V2_APPLY,
+	SYNC_CAPABILITY_REPLICATION_INFO_V2_DECODE,
+	SYNC_CAPABILITY_REPLICATION_INFO_V2_SEND,
+} from "../src/exchange-heads.js";
+import {
 	AbsoluteReplicas,
 	RequestReplicationInfoMessage,
 	encodeReplicas,
@@ -350,6 +355,120 @@ describe("waitForReplicator", () => {
 			resume.restore();
 			requestSubscribers.restore();
 		}
+	});
+
+	it("escalates the V2 recovery unpark delay against a silent-but-subscribed peer", async () => {
+		session = await TestSession.connected(2);
+		db = await session.peers[0].open(new EventStore<string, any>(), {
+			args: {
+				timeUntilRoleMaturity: 0,
+				waitForReplicatorRequestIntervalMs: 50,
+			},
+		});
+		await session.peers[1].open(db.clone(), {
+			args: {
+				replicate: false,
+				timeUntilRoleMaturity: 0,
+			},
+		});
+		const log = db.log as any;
+		const remote = session.peers[1].identity.publicKey;
+		const remoteHash = remote.hashcode();
+		await waitForResolved(() =>
+			expect(log._peerSessions.current(remoteHash)?.phase).to.equal("open"),
+		);
+
+		// Model a subscribed peer whose bounded request cycles never produce a
+		// response: every probe observes a park and every unpark is fruitless.
+		const parked = sinon.stub(log._v2Receive, "isRequestParked").returns(true);
+		const resumeTimes: number[] = [];
+		const resume = sinon
+			.stub(log._v2Receive, "resumeParkedRequest")
+			.callsFake(() => {
+				resumeTimes.push(Date.now());
+				return true;
+			});
+
+		try {
+			log.cancelReplicationInfoRequests(remoteHash);
+			log.scheduleReplicationInfoV2Recovery(remote);
+			const state = log._replicationInfoRequestByPeer.get(remoteHash);
+			expect(state?.peerSession).to.equal(log._peerSessions.current(remoteHash));
+
+			await waitForResolved(
+				() => expect(resumeTimes.length).to.be.greaterThanOrEqual(5),
+				{ timeout: 15_000, delayInterval: 25 },
+			);
+			// Raw escalation state: one fruitless unpark per recorded resume.
+			expect(state.attempts).to.equal(resumeTimes.length);
+
+			// With the pre-escalation scheduler the first five unparks span four
+			// 50ms base intervals (~200ms). Doubling the park wait per fruitless
+			// cycle (50 + 100 + 200 + 400 + observation ticks) needs >= 1.2s, so
+			// the steady-state cycle rate is bounded well below one per interval.
+			const elapsed = resumeTimes[4] - resumeTimes[0];
+			expect(elapsed).to.be.greaterThanOrEqual(1_200);
+			const firstGap = resumeTimes[1] - resumeTimes[0];
+			const lastGap = resumeTimes[4] - resumeTimes[3];
+			expect(lastGap).to.be.greaterThanOrEqual(firstGap * 2);
+
+			// A fresh signed capability generation is applied V2 progress: the
+			// escalation resets so recovery restarts from the base interval.
+			const previousSession =
+				log._peerSyncCapabilitySessions.get(remoteHash) ?? 0n;
+			const previousTimestamp =
+				log._peerSyncCapabilityTimestamps.get(remoteHash) ?? 0n;
+			log.observePeerSyncCapabilities({
+				peerHash: remoteHash,
+				capabilities:
+					SYNC_CAPABILITY_REPLICATION_INFO_V2_DECODE |
+					SYNC_CAPABILITY_REPLICATION_INFO_V2_SEND |
+					SYNC_CAPABILITY_REPLICATION_INFO_V2_APPLY,
+				transportSession: previousSession + 1n,
+				timestamp: previousTimestamp + 1n,
+			});
+			expect(state.attempts).to.equal(0);
+			expect(state.parkedSinceMs).to.be.undefined;
+		} finally {
+			log.cancelReplicationInfoRequests(remoteHash);
+			parked.restore();
+			resume.restore();
+		}
+	});
+
+	it("resets V2 recovery escalation when an announcement applies", async () => {
+		session = await TestSession.connected(2);
+		db = await session.peers[0].open(new EventStore<string, any>(), {
+			args: {
+				replicate: false,
+				timeUntilRoleMaturity: 0,
+			},
+		});
+		const db2 = await session.peers[1].open(db.clone(), {
+			args: {
+				replicate: { factor: 1 },
+				timeUntilRoleMaturity: 0,
+			},
+		});
+		const log = db.log as any;
+		const remote = session.peers[1].identity.publicKey;
+		const remoteHash = remote.hashcode();
+		await db.log.waitForReplicator(remote, { timeout: 15_000, eager: true });
+		await waitForResolved(() =>
+			expect(
+				log._replicationInfoRequestByPeer.get(remoteHash)?.peerSession,
+			).to.equal(log._peerSessions.current(remoteHash)),
+		);
+		const state = log._replicationInfoRequestByPeer.get(remoteHash);
+		state.attempts = 7;
+
+		// A newly applied V2 announcement (the segment added below) must reset
+		// the recovery escalation for its sender.
+		await db2.log.replicate({ factor: 0.5, offset: 0.25 });
+		await waitForResolved(() => {
+			expect(log._replicationInfoRequestByPeer.get(remoteHash)).to.equal(state);
+			expect(state.attempts).to.equal(0);
+		});
 	});
 
 	it("rejects waitForReplicators when internal leader check throws", async () => {

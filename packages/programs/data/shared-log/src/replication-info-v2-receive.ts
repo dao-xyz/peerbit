@@ -992,6 +992,28 @@ export class ReplicationInfoV2ReceiveCoordinator {
 	}
 
 	/**
+	 * Whether the request generation for this exact peer state is parked: the
+	 * bounded retry cycle exhausted its attempts and no timer or send is in
+	 * flight. Read-only probe for the host's recovery scheduler.
+	 */
+	isRequestParked(properties: {
+		peerHash: string;
+		peerSession: object;
+		receiveEpoch: object | null;
+	}): boolean {
+		const state = this._receiveStates.get(properties.peerHash);
+		return (
+			state !== undefined &&
+			state.peerSession === properties.peerSession &&
+			state.receiveEpoch === properties.receiveEpoch &&
+			state.phase !== "active" &&
+			state.requestParked &&
+			state.requestTimer === undefined &&
+			state.requestInFlight === undefined
+		);
+	}
+
+	/**
 	 * Resume only a request generation that exhausted its bounded retries.
 	 * Wait/liveness callers may nudge recovery without invalidating an active,
 	 * timed or in-flight request and without advancing the receive epoch.
@@ -1023,7 +1045,24 @@ export class ReplicationInfoV2ReceiveCoordinator {
 		}
 		state.requestAttempts = 0;
 		state.requestsSinceCapabilityRefresh = 0;
-		state.capabilityRefreshRequired = true;
+		if (!state.capabilityRefreshRequired) {
+			// Only rotate the grant when it is genuinely stale: the peer's
+			// capability rotation paths already flagged a refresh, and a missing
+			// or transport-outdated local grant cannot authorize a request. A
+			// still-current grant must keep its challenge so a Full already in
+			// flight for the pre-park request generation still applies.
+			const ready = this._localCapabilityReadyBySession.get(state.peerSession);
+			const grantCurrent =
+				ready !== undefined &&
+				ready.peerHash === state.peerHash &&
+				ready.receiveEpoch === state.receiveEpoch &&
+				ready.receiverTransportSession === state.receiverTransportSession &&
+				ready.receiverTransportSession ===
+					this.deps.getReceiverTransportSession();
+			if (!grantCurrent) {
+				state.capabilityRefreshRequired = true;
+			}
+		}
 		state.requestParked = false;
 		this.armRequest(state, 0);
 		return true;
