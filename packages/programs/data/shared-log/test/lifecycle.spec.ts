@@ -8,6 +8,7 @@ import sinon from "sinon";
 import { createReplicationDomainHash } from "../src/replication-domain-hash.js";
 import {
 	AllReplicatingSegmentsMessage,
+	ReplicationPingMessage,
 	RequestReplicationInfoMessage,
 	ResponseRoleMessage,
 } from "../src/replication.js";
@@ -564,6 +565,71 @@ describe("lifecycle", () => {
 			await closing?.catch(() => {});
 			synchronizer.restore();
 			send.restore();
+		}
+	});
+
+	it("clears active receive leases across a drained close and default reopen", async () => {
+		// Relocated B12 pin: the unique `_activeReceiveHandlersByPeer` reopen
+		// assertion previously lived only inside a compatibility-9 test. The
+		// behavior is mode-independent — a receive handler parked inside the
+		// synchronizer holds its lease, close() drains it, and a reopened
+		// instance starts with zero active leases.
+		session = await TestSession.connected(1);
+		const db = await session.peers[0].open(new EventStore());
+		const sharedLog = db.log as any;
+		const parkedMessage = new ReplicationPingMessage();
+		let markSynchronizerEntered!: () => void;
+		const synchronizerEntered = new Promise<void>((resolve) => {
+			markSynchronizerEntered = resolve;
+		});
+		let releaseSynchronizer!: () => void;
+		const synchronizerGate = new Promise<void>((resolve) => {
+			releaseSynchronizer = resolve;
+		});
+		const originalSynchronizerOnMessage = sharedLog.syncronizer.onMessage.bind(
+			sharedLog.syncronizer,
+		);
+		const synchronizer = sinon
+			.stub(sharedLog.syncronizer, "onMessage")
+			.callsFake(async (message: unknown, context: unknown) => {
+				if (message === parkedMessage) {
+					markSynchronizerEntered();
+					await synchronizerGate;
+					return true;
+				}
+				return originalSynchronizerOnMessage(message as any, context as any);
+			});
+		const requester = (await Ed25519Keypair.create()).publicKey;
+		let receive: Promise<unknown> | undefined;
+		let closing: Promise<unknown> | undefined;
+
+		try {
+			receive = sharedLog.onMessage(parkedMessage, {
+				from: requester,
+			} as any);
+			await synchronizerEntered;
+			expect(sharedLog._activeReceiveHandlersByPeer.size).to.equal(1);
+
+			let closeSettled = false;
+			closing = db.close().then(() => {
+				closeSettled = true;
+			});
+			await waitForResolved(
+				() => expect(sharedLog.acceptsParentAttachments).to.be.false,
+			);
+			await delay(20);
+			expect(closeSettled).to.be.false;
+
+			releaseSynchronizer();
+			await Promise.all([receive, closing]);
+
+			await session.peers[0].open(db);
+			expect(sharedLog._activeReceiveHandlersByPeer.size).to.equal(0);
+		} finally {
+			releaseSynchronizer();
+			await receive?.catch(() => {});
+			await closing?.catch(() => {});
+			synchronizer.restore();
 		}
 	});
 
