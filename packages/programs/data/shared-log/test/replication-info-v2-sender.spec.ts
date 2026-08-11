@@ -1064,7 +1064,7 @@ describe("receive admission replication-info V2 sender integration", () => {
 		expect(activity.notCalled).to.be.true;
 	});
 
-	it("preserves a pre-opening capability but fences successor openings and departure", async () => {
+	it("inherits only transport-matched pre-opening capabilities and fences departure", async () => {
 		session = await TestSession.disconnected(2);
 		const db = await session.peers[0].open(new EventStore(), {
 			args: { replicate: false, timeUntilRoleMaturity: 0 },
@@ -1080,6 +1080,9 @@ describe("receive admission replication-info V2 sender integration", () => {
 				SYNC_CAPABILITY_REPLICATION_INFO_V2_SEND |
 				SYNC_CAPABILITY_REPLICATION_INFO_V2_APPLY,
 		});
+		const requestSubscribers = sinon
+			.stub(session.peers[0].services.pubsub, "requestSubscribers")
+			.resolves();
 		await log.onMessage(capability, {
 			from: remote,
 			message: {
@@ -1093,10 +1096,18 @@ describe("receive admission replication-info V2 sender integration", () => {
 		expect(log._peerSyncCapabilitySessions.get(remoteHash)).to.equal(
 			remoteTransportSession,
 		);
+		await waitForResolved(
+			() =>
+				expect(requestSubscribers.calledOnceWith(log.topic, remote)).to.be.true,
+		);
 
 		sinon.stub(log.rpc, "send").resolves([] as any);
 		const event = {
-			detail: { from: remote, topics: [log.topic] },
+			detail: {
+				from: remote,
+				topics: [log.topic],
+				session: remoteTransportSession,
+			},
 		} as any;
 		await log._onSubscription(event);
 		const firstSession = log._peerSessions.current(remoteHash);
@@ -1110,13 +1121,6 @@ describe("receive admission replication-info V2 sender integration", () => {
 			log._v2Receive._receiveStates.get(remoteHash)?.senderTransportSession,
 		).to.equal(remoteTransportSession);
 
-		await log._onSubscription(event);
-		const replacement = log._peerSessions.current(remoteHash);
-		expect(replacement).not.to.equal(firstSession);
-		expect(log._peerSyncCapabilitySessions.has(remoteHash)).to.be.false;
-		expect(log._peerSyncCapabilityTimestamps.has(remoteHash)).to.be.false;
-		expect(log._v2Receive._receiveStates.has(remoteHash)).to.be.false;
-
 		const successorTransportSession = 79n;
 		await log.onMessage(capability, {
 			from: remote,
@@ -1127,12 +1131,52 @@ describe("receive admission replication-info V2 sender integration", () => {
 				},
 			},
 		} as any);
+		await log._onSubscription({
+			detail: {
+				from: remote,
+				topics: [log.topic],
+				session: successorTransportSession,
+			},
+		} as any);
+		const replacement = log._peerSessions.current(remoteHash);
+		expect(replacement).not.to.equal(firstSession);
 		expect(log._peerSyncCapabilitySessions.get(remoteHash)).to.equal(
 			successorTransportSession,
+		);
+		expect(log._peerSyncCapabilityTimestamps.get(remoteHash)).to.equal(
+			capabilityTimestamp + 1n,
 		);
 		expect(
 			log._v2Receive._receiveStates.get(remoteHash)?.senderTransportSession,
 		).to.equal(successorTransportSession);
+
+		await log._onSubscription({
+			detail: {
+				from: remote,
+				topics: [log.topic],
+				session: successorTransportSession + 1n,
+			},
+		} as any);
+		expect(log._peerSyncCapabilitySessions.has(remoteHash)).to.be.false;
+		expect(log._peerSyncCapabilityTimestamps.has(remoteHash)).to.be.false;
+		expect(log._v2Receive._receiveStates.has(remoteHash)).to.be.false;
+
+		const unboundTransportSession = successorTransportSession + 2n;
+		await log.onMessage(capability, {
+			from: remote,
+			message: {
+				header: {
+					session: unboundTransportSession,
+					timestamp: capabilityTimestamp + 2n,
+				},
+			},
+		} as any);
+		await log._onSubscription({
+			detail: { from: remote, topics: [log.topic] },
+		} as any);
+		expect(log._peerSyncCapabilitySessions.has(remoteHash)).to.be.false;
+		expect(log._peerSyncCapabilityTimestamps.has(remoteHash)).to.be.false;
+		expect(log._v2Receive._receiveStates.has(remoteHash)).to.be.false;
 
 		await log._onUnsubscription(event);
 		expect(log._peerSyncCapabilitySessions.has(remoteHash)).to.be.false;

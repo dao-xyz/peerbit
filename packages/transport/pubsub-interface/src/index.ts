@@ -24,9 +24,16 @@ export class SubscriptionEvent {
 	@field({ type: vec("string") })
 	topics: string[];
 
-	constructor(from: PublicSignKey, topics: string[]) {
+	/**
+	 * Runtime-only signed transport generation of the Subscribe frame, when
+	 * available. Intentionally undecorated: this event metadata is not a wire field.
+	 */
+	session?: bigint;
+
+	constructor(from: PublicSignKey, topics: string[], session?: bigint) {
 		this.from = from;
 		this.topics = topics;
+		this.session = session;
 	}
 }
 

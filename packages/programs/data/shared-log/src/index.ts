@@ -19366,19 +19366,37 @@ export class SharedLog<
 								timestamp: capabilityTimestamp,
 								openingSession: receiveSession!,
 							});
-						} else if (
-							this.observePeerSyncCapabilities({
+						} else {
+							const observed = this.observePeerSyncCapabilities({
 								peerHash: receiveFromHash,
 								capabilities: msg.capabilities,
 								transportSession: capabilityTransportSession,
 								timestamp: capabilityTimestamp,
-							}) &&
-							receiveSession?.phase === "open"
-						) {
-							this.promoteReplicationInfoV2ReceiveCapability(
-								context.from,
-								receiveSession,
-							);
+							});
+							if (observed && receiveSession?.phase === "open") {
+								this.promoteReplicationInfoV2ReceiveCapability(
+									context.from,
+									receiveSession,
+								);
+							} else if (observed && receiveSession === null) {
+								// A capability can arrive before the sender's topic Subscribe after
+								// reconnect. Ask that authenticated peer for its authoritative
+								// subscriber snapshot; the resulting Subscribe creates the real
+								// PeerSession and completes the symmetric capability handshake.
+								// Never synthesize membership from capability traffic alone.
+								void Promise.resolve()
+									.then(() =>
+										this.node.services.pubsub.requestSubscribers(
+											this.topic,
+											context.from,
+										),
+									)
+									.catch((error) => {
+										if (!isNotStartedError(error as Error)) {
+											logger.error(error?.toString?.() ?? String(error));
+										}
+									});
+							}
 						}
 					}
 					return;
@@ -23541,6 +23559,7 @@ export class SharedLog<
 		topics: string[],
 		subscribed: boolean,
 		subscriptionEpoch?: PeerSession,
+		subscriptionTransportSession?: bigint,
 	) {
 		if (!topics.includes(this.topic)) {
 			return;
@@ -23572,12 +23591,19 @@ export class SharedLog<
 		// yield; a late queue completion must never enter the new session.
 		this._v2Receive.clearPeer(peerHash);
 		this._v2Send.clearPeer(peerHash);
-		if (!subscribed || expectedSubscriptionEpoch.hasPredecessor) {
+		const capabilityTransportSession =
+			this._peerSyncCapabilitySessions.get(peerHash);
+		const canInheritCapability =
+			subscribed &&
+			(subscriptionTransportSession !== undefined
+				? capabilityTransportSession === subscriptionTransportSession
+				: !expectedSubscriptionEpoch.hasPredecessor);
+		if (!canInheritCapability) {
 			// Departures and successor openings revoke the signed transport binding.
-			// Only the first opening may inherit a capability that arrived before its
-			// subscription callback. afterOpen() deduplicates its subscriber snapshot
-			// against the live callback, so a true successor can never be mistaken for
-			// that startup race.
+			// A live successor may inherit a capability that arrived just before its
+			// Subscribe only when both signed frames belong to the same transport
+			// generation. Snapshot fallbacks lack that proof, so only their first
+			// opening may inherit pre-opening capability state.
 			this._peerSyncCapabilitySessions.delete(peerHash);
 			this._peerSyncCapabilityTimestamps.delete(peerHash);
 		}
@@ -25271,6 +25297,7 @@ export class SharedLog<
 			evt.detail.topics,
 			true,
 			subscriptionEpoch,
+			evt.detail.session,
 		);
 	}
 

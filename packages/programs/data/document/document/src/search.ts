@@ -42,6 +42,7 @@ import {
 import {
 	DataMessage,
 	FOREGROUND_READ_MESSAGE_PRIORITY,
+	type PeerRef,
 	type PeerRefs,
 	SilentDelivery,
 } from "@peerbit/stream-interface";
@@ -7078,7 +7079,33 @@ export class DocumentIndex<
 			timeout?: number;
 		},
 	): Promise<string[]> {
-		const hashes = await super.waitFor(other, options);
+		// A document index and its SharedLog use separate RPC topics. Establish
+		// both before polling the replication index; otherwise a late-connected
+		// peer can be ready for queries while its replication-info session has
+		// never opened.
+		const reusableOther =
+			typeof (other as IterableIterator<PeerRef>).next === "function"
+				? [...(other as IterableIterator<PeerRef>)]
+				: other;
+		const waitController = new AbortController();
+		const waitOptions = {
+			...options,
+			signal: options?.signal
+				? AbortSignal.any([options.signal, waitController.signal])
+				: waitController.signal,
+		};
+		let hashes: string[];
+		try {
+			const [logHashes, indexHashes] = await Promise.all([
+				this._log.waitFor(reusableOther, waitOptions),
+				super.waitFor(reusableOther, waitOptions),
+			]);
+			const logPeers = new Set(logHashes);
+			hashes = indexHashes.filter((hash) => logPeers.has(hash));
+		} finally {
+			// If either topic wait rejects, retire the sibling's listeners/polling.
+			waitController.abort();
+		}
 		for (const key of hashes) {
 			await waitFor(
 				async () =>
