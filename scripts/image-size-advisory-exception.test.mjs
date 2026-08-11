@@ -34,7 +34,7 @@ const exactAuditReport = () => ({
 	auditReportVersion: 2,
 	vulnerabilities: {
 		"@react-native/community-cli-plugin": vulnerability({
-			via: ["metro", "metro-config"],
+			via: ["metro"],
 			effects: ["react-native"],
 			range: "*",
 			node: "node_modules/@react-native/community-cli-plugin",
@@ -66,7 +66,7 @@ const exactAuditReport = () => ({
 		}),
 		"metro-config": vulnerability({
 			via: ["metro"],
-			effects: ["@react-native/community-cli-plugin", "metro"],
+			effects: ["metro"],
 			range: "*",
 			node: "node_modules/metro-config",
 		}),
@@ -147,19 +147,19 @@ const exactPackageLock = () => ({
 			},
 		},
 		"node_modules/react-native": {
-			version: "0.86.2",
+			version: "0.87.0",
 			dependencies: {
-				"@react-native/community-cli-plugin": "0.86.2",
+				"@react-native/community-cli-plugin": "0.87.0",
 			},
 		},
 		"node_modules/@react-native/community-cli-plugin": {
-			version: "0.86.2",
+			version: "0.87.0",
 			dependencies: {
-				metro: "^0.84.3",
+				metro: "^0.87.0",
 			},
 		},
 		"node_modules/metro": {
-			version: "0.84.4",
+			version: "0.87.0",
 			dependencies: {
 				"image-size": "^1.0.2",
 			},
