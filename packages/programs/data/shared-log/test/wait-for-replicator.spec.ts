@@ -357,6 +357,76 @@ describe("waitForReplicator", () => {
 		}
 	});
 
+	it("resolves through a real targeted subscriber snapshot creating the peer session", async () => {
+		// End-to-end proof of the V2 bootstrap recovery: the remote replicator is
+		// routing-known but its topic Subscribe was never observed. Nothing on
+		// the snapshot path is stubbed — waitForReplicator must fire the real
+		// targeted GetSubscribers, whose Subscribe response rotates and opens the
+		// real PeerSession and completes the V2 handshake.
+		session = await TestSession.disconnected(2);
+		const pubsub0 = session.peers[0].services.pubsub as any;
+		const pubsub1 = session.peers[1].services.pubsub as any;
+		// Quiesce only the LIVE announce path (subscription re-broadcast on
+		// topology change), so the live Subscribe can never race the snapshot.
+		const reconcile0 = sinon.stub(pubsub0, "reconcileShardOverlays").resolves();
+		const reconcile1 = sinon.stub(pubsub1, "reconcileShardOverlays").resolves();
+
+		const db2 = await session.peers[1].open(new EventStore<string, any>(), {
+			args: {
+				replicate: { factor: 1 },
+				timeUntilRoleMaturity: 0,
+			},
+		});
+		db = await session.peers[0].open(db2.clone(), {
+			args: {
+				replicate: false,
+				timeUntilRoleMaturity: 0,
+			},
+		});
+		const log = db.log as any;
+		const remote = session.peers[1].identity.publicKey;
+		const remoteHash = remote.hashcode();
+		const requestSubscribers = sinon.spy(
+			session.peers[0].services.pubsub,
+			"requestSubscribers",
+		);
+
+		try {
+			await session.connect([[session.peers[0], session.peers[1]]]);
+			await session.peers[0].services.pubsub.waitFor(session.peers[1].peerId);
+			await delay(1_000);
+			// The precondition of the recovery scenario: connected and routable,
+			// but the subscription was never observed, so no PeerSession exists.
+			expect(log._peerSessions.current(remoteHash)).to.equal(null);
+			const knownSubscribers =
+				((await session.peers[0].services.pubsub.getSubscribers(log.topic)) ??
+					[]) as any[];
+			expect(knownSubscribers.find((key: any) => key.equals(remote))).to.equal(
+				undefined,
+			);
+
+			await db.log.waitForReplicator(remote, { timeout: 20_000 });
+
+			// The snapshot really ran and really created the session + ranges.
+			expect(
+				requestSubscribers.getCalls().some(
+					(call) =>
+						call.args[0] === log.topic && (call.args[1] as any)?.equals(remote),
+				),
+			).to.be.true;
+			expect(log._peerSessions.current(remoteHash)?.phase).to.equal("open");
+			const replicators = await db.log.getReplicators();
+			expect([...replicators]).to.include(remoteHash);
+		} finally {
+			requestSubscribers.restore();
+			reconcile0.restore();
+			reconcile1.restore();
+			if (db2.closed === false) {
+				await db2.drop();
+			}
+		}
+	});
+
 	it("escalates the V2 recovery unpark delay against a silent-but-subscribed peer", async () => {
 		session = await TestSession.connected(2);
 		db = await session.peers[0].open(new EventStore<string, any>(), {

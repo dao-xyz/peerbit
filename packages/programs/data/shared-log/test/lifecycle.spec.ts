@@ -777,6 +777,61 @@ describe("lifecycle", () => {
 			);
 		});
 
+		it("skips the afterOpen snapshot fallback for a live-rotated session", async () => {
+			session = await TestSession.connected(2);
+			const remote = session.peers[1].identity.publicKey;
+			const remoteHash = remote.hashcode();
+
+			// Hold the authoritative open-time subscriber snapshot so the live
+			// subscribe callback races ahead of the afterOpen fallback loop.
+			let releaseSnapshot!: (subscribers: any[]) => void;
+			const snapshot = new Promise<any[]>((resolve) => {
+				releaseSnapshot = resolve;
+			});
+			const getSubscribers = sinon
+				.stub(session.peers[0].services.pubsub, "getSubscribers")
+				.returns(snapshot as any);
+
+			const store = new EventStore();
+			const openPromise = session.peers[0].open(store, {
+				args: { replicate: false, timeUntilRoleMaturity: 0 },
+			});
+			try {
+				await waitForResolved(() => expect(getSubscribers.called).to.be.true);
+				const log = store.log as any;
+				sinon.stub(log.rpc, "send").resolves([] as any);
+				const subscriptionChange = sinon.spy(log, "handleSubscriptionChange");
+
+				// The live subscribe callback rotates and opens the session first.
+				await log._onSubscription({
+					detail: { from: remote, topics: [log.topic] },
+				} as any);
+				const liveSession = log._peerSessions.current(remoteHash);
+				expect(liveSession?.phase).to.equal("open");
+				expect(subscriptionChange.callCount).to.equal(1);
+
+				// The signed capability binding this session establishes must
+				// survive the stale snapshot fallback below.
+				log._peerSyncCapabilitySessions.set(remoteHash, 42n);
+				log._peerSyncCapabilityTimestamps.set(remoteHash, 7n);
+
+				// Now the snapshot reports the same peer: the fallback observes a
+				// current session, so it must not rotate a duplicate session.
+				releaseSnapshot([remote]);
+				await openPromise;
+				await delay(100);
+
+				expect(subscriptionChange.callCount).to.equal(1);
+				expect(log._peerSessions.current(remoteHash)).to.equal(liveSession);
+				expect(log._peerSyncCapabilitySessions.get(remoteHash)).to.equal(42n);
+				expect(log._peerSyncCapabilityTimestamps.get(remoteHash)).to.equal(7n);
+			} finally {
+				releaseSnapshot([]);
+				await openPromise.catch(() => undefined);
+				getSubscribers.restore();
+			}
+		});
+
 		it("clears in flight info when leaving", async () => {
 			const store = new EventStore<string, any>();
 
