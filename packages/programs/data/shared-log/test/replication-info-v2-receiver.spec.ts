@@ -1712,7 +1712,8 @@ describe("receive admission replication-info V2 receiver state", () => {
 			}),
 		).to.be.true;
 		expect(state.requestParked).to.be.false;
-		expect(state.capabilityRefreshRequired).to.be.true;
+		// The local grant is still current, so the unpark must not rotate it.
+		expect(state.capabilityRefreshRequired).to.be.false;
 		expect(state.requestTimer).to.exist;
 		expect(
 			coordinator.resumeParkedRequest({
@@ -1722,8 +1723,8 @@ describe("receive admission replication-info V2 receiver state", () => {
 			}),
 		).to.be.false;
 
-		await clock.tickAsync(2);
-		expect(refreshLocalCapability.calledOnce).to.be.true;
+		await clock.tickAsync(1);
+		expect(refreshLocalCapability.notCalled).to.be.true;
 		expect(sendRequest.callCount).to.equal(3);
 		const full = new FullReplicationInfoV2Message({
 			receiverChallenge: state.receiverBinding!.slice(),
@@ -1739,6 +1740,100 @@ describe("receive admission replication-info V2 receiver state", () => {
 				receiveEpoch: currentReceiveEpoch,
 			}),
 		).to.be.false;
+	});
+
+	it("applies a Full bound to the pre-park challenge after an unpark", async () => {
+		const clock = sinon.useFakeTimers({ now: 1_000 });
+		coordinator = createCoordinator({
+			requestRetryMs: 2,
+			maxRequestRetryMs: 4,
+			requestMaxAttempts: 2,
+		});
+		expect(markLocalReady(999)).to.be.true;
+		expect(observeSender()).to.be.true;
+		await clock.tickAsync(10);
+		const state = coordinator._receiveStates.get(peerHash)!;
+		expect(state.requestParked).to.be.true;
+		expect(sendRequest.callCount).to.equal(2);
+		expect(
+			coordinator.isRequestParked({
+				peerHash,
+				peerSession: currentSession,
+				receiveEpoch: currentReceiveEpoch,
+			}),
+		).to.be.true;
+		const challengeBefore = state.receiverRequestChallenge.slice();
+		const bindingBefore = state.receiverBinding!.slice();
+
+		expect(
+			coordinator.resumeParkedRequest({
+				peerHash,
+				peerSession: currentSession,
+				receiveEpoch: currentReceiveEpoch,
+			}),
+		).to.be.true;
+		expect(
+			coordinator.isRequestParked({
+				peerHash,
+				peerSession: currentSession,
+				receiveEpoch: currentReceiveEpoch,
+			}),
+		).to.be.false;
+		await clock.tickAsync(1);
+		// The unpark reuses the still-current grant: no refresh, same challenge.
+		expect(refreshLocalCapability.notCalled).to.be.true;
+		expect(sendRequest.callCount).to.equal(3);
+		expect([...sendRequest.thirdCall.args[0].receiverChallenge]).to.deep.equal([
+			...challengeBefore,
+		]);
+		expect([...state.receiverRequestChallenge]).to.deep.equal([
+			...challengeBefore,
+		]);
+
+		// A Full that was already in flight answering the pre-park request
+		// generation still applies after the unpark.
+		const full = new FullReplicationInfoV2Message({
+			receiverChallenge: bindingBefore,
+			senderEpoch: bytes(26),
+			sequence: 1n,
+			segments: [],
+		});
+		const admission = prepare(full);
+		expect(admission).to.exist;
+		expect(coordinator.commit(admission!)).to.be.true;
+		expect(state.phase).to.equal("active");
+		expect(state.lastSequence).to.equal(1n);
+	});
+
+	it("requires a capability refresh on unpark only when the grant is stale", async () => {
+		const clock = sinon.useFakeTimers({ now: 1_000 });
+		coordinator = createCoordinator({
+			requestRetryMs: 2,
+			maxRequestRetryMs: 4,
+			requestMaxAttempts: 2,
+		});
+		expect(markLocalReady(999)).to.be.true;
+		expect(observeSender()).to.be.true;
+		await clock.tickAsync(10);
+		const state = coordinator._receiveStates.get(peerHash)!;
+		expect(state.requestParked).to.be.true;
+		const challengeBefore = state.receiverRequestChallenge.slice();
+
+		// Expire the local grant while parked: the next unpark must re-handshake.
+		coordinator._localCapabilityReadyBySession.delete(currentSession);
+		expect(
+			coordinator.resumeParkedRequest({
+				peerHash,
+				peerSession: currentSession,
+				receiveEpoch: currentReceiveEpoch,
+			}),
+		).to.be.true;
+		expect(state.capabilityRefreshRequired).to.be.true;
+		await clock.tickAsync(1);
+		expect(refreshLocalCapability.calledOnce).to.be.true;
+		expect([...state.receiverRequestChallenge]).to.not.deep.equal([
+			...challengeBefore,
+		]);
 	});
 
 	it("does not resume a parked request while an authoritative Full is applying", async () => {

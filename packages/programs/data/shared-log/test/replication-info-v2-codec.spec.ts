@@ -508,6 +508,9 @@ describe("receive admission replication-info V2 decode-only codec", () => {
 		const peerSession = log._peerSessions.rotate(remoteHash, "opening");
 		log._peerSessions.unblockReplicationInfo(remoteHash);
 		log._peerSessions.markOpen(remoteHash, peerSession);
+		// A park whose resume stays blocked (reserved admission, missing binding)
+		// keeps polling at the base interval without escalating.
+		const parked = sinon.stub(log._v2Receive, "isRequestParked").returns(true);
 		const resume = sinon
 			.stub(log._v2Receive, "resumeParkedRequest")
 			.returns(false);
@@ -518,10 +521,12 @@ describe("receive admission replication-info V2 decode-only codec", () => {
 				remote,
 				log._instanceLifecycle.membershipLifecycleController,
 			);
-			expect(resume.calledOnce).to.be.true;
 			expect(log._replicationInfoRequestByPeer.has(remoteHash)).to.be.true;
+			// The first observation of a park waits one base interval before the
+			// first unpark attempt.
+			expect(resume.notCalled).to.be.true;
 			await clock.tickAsync(150);
-			expect(resume.callCount).to.equal(4);
+			expect(resume.callCount).to.equal(3);
 			for (const call of resume.getCalls()) {
 				expect(call.args[0]).to.deep.equal({
 					peerHash: remoteHash,
@@ -546,12 +551,12 @@ describe("receive admission replication-info V2 decode-only codec", () => {
 				remote,
 				log._instanceLifecycle.membershipLifecycleController,
 			);
-			expect(resume.callCount).to.equal(5);
+			expect(resume.callCount).to.equal(3);
 			expect(
 				log._replicationInfoRequestByPeer.get(remoteHash).peerSession,
 			).to.equal(replacementSession);
 			await clock.tickAsync(50);
-			expect(resume.callCount).to.equal(6);
+			expect(resume.callCount).to.equal(4);
 			expect(resume.lastCall.args[0]).to.deep.equal({
 				peerHash: remoteHash,
 				peerSession: replacementSession,
@@ -560,10 +565,11 @@ describe("receive admission replication-info V2 decode-only codec", () => {
 
 			log._peerSessions.rotate(remoteHash, "departing");
 			await clock.tickAsync(50);
-			expect(resume.callCount).to.equal(6);
+			expect(resume.callCount).to.equal(4);
 			expect(log._replicationInfoRequestByPeer.has(remoteHash)).to.be.false;
 		} finally {
 			clock.restore();
+			parked.restore();
 			resume.restore();
 		}
 	});

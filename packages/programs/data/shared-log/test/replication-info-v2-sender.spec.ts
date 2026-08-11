@@ -1183,6 +1183,127 @@ describe("receive admission replication-info V2 sender integration", () => {
 		expect(log._peerSyncCapabilityTimestamps.has(remoteHash)).to.be.false;
 	});
 
+	it("inherits pre-opening capability on the first snapshot-fallback opening", async () => {
+		session = await TestSession.disconnected(2);
+		const db = await session.peers[0].open(new EventStore(), {
+			args: { replicate: false, timeUntilRoleMaturity: 0 },
+		});
+		const log = db.log as any;
+		const remote = session.peers[1].identity.publicKey;
+		const remoteHash = remote.hashcode();
+		const remoteTransportSession = 91n;
+		const capabilityTimestamp = 5n;
+		const requestSubscribers = sinon
+			.stub(session.peers[0].services.pubsub, "requestSubscribers")
+			.resolves();
+		await log.onMessage(
+			new SyncCapabilitiesMessage({
+				capabilities:
+					SYNC_CAPABILITY_REPLICATION_INFO_V2_DECODE |
+					SYNC_CAPABILITY_REPLICATION_INFO_V2_SEND |
+					SYNC_CAPABILITY_REPLICATION_INFO_V2_APPLY,
+			}),
+			{
+				from: remote,
+				message: {
+					header: {
+						session: remoteTransportSession,
+						timestamp: capabilityTimestamp,
+					},
+				},
+			} as any,
+		);
+		expect(log._peerSessions.current(remoteHash)).to.equal(null);
+		expect(log._peerSyncCapabilitySessions.get(remoteHash)).to.equal(
+			remoteTransportSession,
+		);
+
+		sinon.stub(log.rpc, "send").resolves([] as any);
+		// A snapshot-fallback opening carries no signed transport session on the
+		// subscription event. Its FIRST session (no predecessor) may inherit the
+		// pre-opening capability; only successor openings must wipe it.
+		await log._onSubscription({
+			detail: { from: remote, topics: [log.topic] },
+		} as any);
+		const opened = log._peerSessions.current(remoteHash);
+		expect(opened?.phase).to.equal("open");
+		// The branch under test: fallback arm with hasPredecessor === false.
+		expect(opened?.hasPredecessor).to.be.false;
+		expect(log._peerSyncCapabilitySessions.get(remoteHash)).to.equal(
+			remoteTransportSession,
+		);
+		expect(log._peerSyncCapabilityTimestamps.get(remoteHash)).to.equal(
+			capabilityTimestamp,
+		);
+		// The inherited signed capability promotes straight into a receive state
+		// bound to the pre-opening transport generation.
+		expect(
+			log._v2Receive._receiveStates.get(remoteHash)?.senderTransportSession,
+		).to.equal(remoteTransportSession);
+		requestSubscribers.restore();
+	});
+
+	it("coalesces subscriber snapshot requests for a session-less capability burst", async () => {
+		session = await TestSession.disconnected(2);
+		const db = await session.peers[0].open(new EventStore(), {
+			args: { replicate: false, timeUntilRoleMaturity: 0 },
+		});
+		const log = db.log as any;
+		const remote = session.peers[1].identity.publicKey;
+		const remoteHash = remote.hashcode();
+		const capability = new SyncCapabilitiesMessage({
+			capabilities:
+				SYNC_CAPABILITY_REPLICATION_INFO_V2_DECODE |
+				SYNC_CAPABILITY_REPLICATION_INFO_V2_SEND |
+				SYNC_CAPABILITY_REPLICATION_INFO_V2_APPLY,
+		});
+		let releaseSnapshot!: () => void;
+		const snapshot = new Promise<void>((resolve) => {
+			releaseSnapshot = resolve;
+		});
+		const requestSubscribers = sinon
+			.stub(session.peers[0].services.pubsub, "requestSubscribers")
+			.returns(snapshot);
+		const frame = (timestamp: bigint) =>
+			log.onMessage(capability, {
+				from: remote,
+				message: { header: { session: 80n, timestamp } },
+			} as any);
+
+		try {
+			// Every frame advances its sender-controlled timestamp, so each one
+			// passes the observed gate — but the burst must coalesce into ONE
+			// in-flight targeted snapshot request.
+			for (let index = 0; index < 5; index++) {
+				await frame(BigInt(10 + index));
+			}
+			await waitForResolved(() =>
+				expect(requestSubscribers.callCount).to.equal(1),
+			);
+			expect(log._peerSessions.current(remoteHash)).to.equal(null);
+			expect(requestSubscribers.firstCall.args).to.deep.equal([
+				log.topic,
+				remote,
+			]);
+
+			// Once the in-flight snapshot settles, a genuinely new session-less
+			// capability may solicit a fresh snapshot again.
+			releaseSnapshot();
+			await waitForResolved(
+				() =>
+					expect(log._subscriberSnapshotRequestsByPeer.has(remoteHash)).to.be
+						.false,
+			);
+			await frame(20n);
+			await waitForResolved(() =>
+				expect(requestSubscribers.callCount).to.equal(2),
+			);
+		} finally {
+			releaseSnapshot();
+			requestSubscribers.restore();
+		}
+	});
+
 	it("does not open a replication session for an unsubscribed discovery candidate", async () => {
 		session = await TestSession.connected(2);
 		const db = await session.peers[0].open(new EventStore(), {

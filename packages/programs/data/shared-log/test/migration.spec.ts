@@ -24,6 +24,11 @@ describe(`migration-8-9`, function () {
 	let session: TestSession;
 	let db1: EventStore<string, any>, db2: EventStore<string, any>;
 	let fakeOldLegacyRequests = 0;
+	// Legacy traffic other than RequestReplicationInfoMessage crossing the
+	// fake-old boundary in either direction: ResponseRole, All, Added, Stopped.
+	// The default-mode test asserts this stays 0, so a re-enabled legacy
+	// announcement path cannot hide behind the fixture's silent swallowing.
+	let fakeOldLegacyAnnouncements = 0;
 	let fakeOldV2Messages = 0;
 
 	const isReplicationInfoV2Message = (message: unknown) =>
@@ -33,8 +38,15 @@ describe(`migration-8-9`, function () {
 		message instanceof AddedReplicationInfoV2Message ||
 		message instanceof StoppedReplicationInfoV2Message;
 
+	const isLegacyAnnouncementMessage = (message: unknown) =>
+		message instanceof ResponseRoleMessage ||
+		message instanceof AllReplicatingSegmentsMessage ||
+		message instanceof AddedReplicationSegmentMessage ||
+		message instanceof StoppedReplicating;
+
 	const setup = async (compatibility?: number, order: boolean = false) => {
 		fakeOldLegacyRequests = 0;
+		fakeOldLegacyAnnouncements = 0;
 		fakeOldV2Messages = 0;
 		session = await TestSession.disconnected(2, [
 			{
@@ -80,6 +92,9 @@ describe(`migration-8-9`, function () {
 						if (isReplicationInfoV2Message(msg)) {
 							fakeOldV2Messages++;
 							return;
+						}
+						if (isLegacyAnnouncementMessage(msg)) {
+							fakeOldLegacyAnnouncements++;
 						}
 						if (
 							msg instanceof AddedReplicationSegmentMessage ||
@@ -141,6 +156,9 @@ describe(`migration-8-9`, function () {
 				fakeOldV2Messages++;
 				return;
 			}
+			if (isLegacyAnnouncementMessage(message)) {
+				fakeOldLegacyAnnouncements++;
+			}
 			if (
 				message instanceof AddedReplicationSegmentMessage ||
 				message instanceof AllReplicatingSegmentsMessage ||
@@ -201,7 +219,11 @@ describe(`migration-8-9`, function () {
 				throw new Error("timeout");
 			}),
 		).to.be.rejectedWith("timeout");
+		// No legacy fallback of ANY class may cross the boundary in default
+		// mode: not the request, and none of ResponseRole/All/Added/Stopped in
+		// either direction (previously swallowed silently by the fixture).
 		expect(fakeOldLegacyRequests).to.equal(0);
+		expect(fakeOldLegacyAnnouncements).to.equal(0);
 		expect(fakeOldV2Messages).to.be.greaterThan(0);
 	});
 
