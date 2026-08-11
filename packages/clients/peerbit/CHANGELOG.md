@@ -1,5 +1,13 @@
 # Changelog
 
+## 5.3.23
+
+### Patch Changes
+
+- Updated dependencies [[`2ab28af`](https://github.com/dao-xyz/peerbit/commit/2ab28afac007b6e337e1c69aa1ed7647b71e0210)]:
+  - @peerbit/pubsub@5.4.1
+  - @peerbit/program@6.0.49
+
 ## 5.3.22
 
 ### Patch Changes
