@@ -13,14 +13,20 @@ import sinon from "sinon";
 import { CompatibilityModeRetiredError, SharedLog } from "../src/index.js";
 
 describe("network compatibility retirement", () => {
+	// One session for the whole suite: every rejection leg proves open() left
+	// zero partial state behind, so the peer is reusable — and per-test libp2p
+	// session churn starves timing-sensitive suites that share the CI process.
 	let session: TestSession | undefined;
 
-	beforeEach(async () => {
+	before(async () => {
 		session = await TestSession.disconnected(1);
 	});
 
-	afterEach(async () => {
+	afterEach(() => {
 		sinon.restore();
+	});
+
+	after(async () => {
 		await session?.stop();
 		session = undefined;
 	});
