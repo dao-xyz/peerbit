@@ -840,7 +840,7 @@ describe("receive admission replication-info V2 receiver state", () => {
 		const fullAdmission = prepare(full);
 		expect(fullAdmission).to.exist;
 		expect(coordinator.commit(fullAdmission!)).to.be.true;
-		expect(coordinator.isLegacyCutover(currentSession)).to.be.true;
+		expect(coordinator._cutoverPeerSessions.has(currentSession)).to.be.true;
 
 		const added = new AddedReplicationInfoV2Message({
 			receiverChallenge: state.receiverBinding!.slice(),
@@ -1002,7 +1002,7 @@ describe("receive admission replication-info V2 receiver state", () => {
 		).to.be.false;
 		expect(state.controller.signal.aborted).to.be.true;
 		expect(coordinator._receiveStates.has(peerHash)).to.be.false;
-		expect(coordinator.isLegacyCutover(currentSession)).to.be.false;
+		expect(coordinator._cutoverPeerSessions.has(currentSession)).to.be.false;
 		expect(prepare(full)).to.be.undefined;
 	});
 
@@ -1180,7 +1180,7 @@ describe("receive admission replication-info V2 receiver state", () => {
 		expect(coordinator.commit(reserved)).to.be.true;
 		expect(state.lastSequence).to.equal(1n);
 		expect(state.phase).to.equal("resync");
-		expect(coordinator.isLegacyCutover(currentSession)).to.be.true;
+		expect(coordinator._cutoverPeerSessions.has(currentSession)).to.be.true;
 		expect(state.requestTimer).to.exist;
 	});
 
@@ -1253,379 +1253,6 @@ describe("receive admission replication-info V2 receiver state", () => {
 		expect(coordinator.commit(replacementAdmission!)).to.be.true;
 		expect(replacement.phase).to.equal("active");
 		expect(replacement.lastSequence).to.equal(1n);
-	});
-
-	it("fences legacy recovery evidence to the exact receive generation", () => {
-		expect(markLocalReady()).to.be.true;
-		expect(observeSender()).to.be.true;
-		const state = coordinator._receiveStates.get(peerHash)!;
-		expect(
-			coordinator.commit(
-				prepare(
-					new FullReplicationInfoV2Message({
-						receiverChallenge: state.receiverBinding!.slice(),
-						senderEpoch: bytes(17),
-						sequence: 1n,
-						segments: [],
-					}),
-					10n,
-				)!,
-			),
-		).to.be.true;
-		const legacy = new AddedReplicationSegmentMessage({ segments: [] });
-		expect(
-			coordinator.noteLegacyAnnouncement({
-				peerHash,
-				peerSession: currentSession,
-				receiveEpoch: currentReceiveEpoch,
-				senderTransportSession: senderTransportSession + 1n,
-				transportTimestamp: 100n,
-				message: legacy,
-			}),
-		).to.be.false;
-		expect(
-			coordinator.noteLegacyAnnouncement({
-				peerHash,
-				peerSession: currentSession,
-				receiveEpoch: {},
-				senderTransportSession,
-				transportTimestamp: 101n,
-				message: legacy,
-			}),
-		).to.be.false;
-		expect(state.phase).to.equal("active");
-		expect(state.legacyFallbackTimer).to.be.undefined;
-	});
-
-	it("lets one fresh legacy observation restart parked recovery only once", async () => {
-		const clock = sinon.useFakeTimers({ now: 1_000 });
-		coordinator = createCoordinator({
-			requestRetryMs: 1,
-			requestMaxAttempts: 1,
-		});
-		expect(markLocalReady(999)).to.be.true;
-		expect(observeSender()).to.be.true;
-		const state = coordinator._receiveStates.get(peerHash)!;
-		expect(
-			coordinator.commit(
-				prepare(
-					new FullReplicationInfoV2Message({
-						receiverChallenge: state.receiverBinding!.slice(),
-						senderEpoch: bytes(18),
-						sequence: 1n,
-						segments: [],
-					}),
-					1n,
-				)!,
-			),
-		).to.be.true;
-		currentReceiveEpoch = {};
-		expect(
-			coordinator.advanceRecovery({
-				peerHash,
-				peerSession: currentSession,
-				receiveEpoch: currentReceiveEpoch,
-			}),
-		).to.be.true;
-		await clock.tickAsync(1);
-		expect(state.requestParked).to.be.true;
-
-		const legacy = new AddedReplicationSegmentMessage({ segments: [] });
-		const observeLegacy = (transportTimestamp: bigint) =>
-			coordinator.noteLegacyAnnouncement({
-				peerHash,
-				peerSession: currentSession,
-				receiveEpoch: currentReceiveEpoch,
-				senderTransportSession,
-				transportTimestamp,
-				message: legacy,
-			});
-		expect(observeLegacy(2n)).to.be.true;
-		expect(state.requestParked).to.be.false;
-		await clock.tickAsync(1);
-		expect(state.requestParked).to.be.true;
-		const refreshesAfterFreshEvidence = refreshLocalCapability.callCount;
-		for (let replay = 0; replay < 100; replay++) {
-			expect(observeLegacy(2n)).to.be.true;
-		}
-		expect(state.requestParked).to.be.true;
-		expect(state.requestTimer).to.be.undefined;
-		expect(refreshLocalCapability.callCount).to.equal(
-			refreshesAfterFreshEvidence,
-		);
-		expect(observeLegacy(3n)).to.be.true;
-		expect(state.requestParked).to.be.false;
-		expect(state.requestTimer).to.exist;
-	});
-
-	it("uses strict transport time and payload evidence for legacy coverage", () => {
-		expect(markLocalReady()).to.be.true;
-		expect(observeSender()).to.be.true;
-		const state = coordinator._receiveStates.get(peerHash)!;
-		const senderEpoch = bytes(19);
-		const rangeA = new ReplicationRangeMessageU64({
-			id: bytes(30),
-			offset: 1n,
-			factor: 1n,
-			timestamp: 1n,
-			mode: ReplicationIntent.NonStrict,
-		});
-		const rangeB = new ReplicationRangeMessageU64({
-			id: bytes(31),
-			offset: 2n,
-			factor: 1n,
-			timestamp: 2n,
-			mode: ReplicationIntent.NonStrict,
-		});
-		expect(
-			coordinator.commit(
-				prepare(
-					new FullReplicationInfoV2Message({
-						receiverChallenge: state.receiverBinding!.slice(),
-						senderEpoch,
-						sequence: 1n,
-						segments: [],
-					}),
-					1n,
-				)!,
-			),
-		).to.be.true;
-		expect(
-			coordinator.commit(
-				prepare(
-					new AddedReplicationInfoV2Message({
-						receiverChallenge: state.receiverBinding!.slice(),
-						senderEpoch,
-						sequence: 2n,
-						segments: [rangeA],
-					}),
-					10n,
-				)!,
-			),
-		).to.be.true;
-		expect(
-			coordinator.commit(
-				prepare(
-					new AddedReplicationInfoV2Message({
-						receiverChallenge: state.receiverBinding!.slice(),
-						senderEpoch,
-						sequence: 3n,
-						segments: [rangeB],
-					}),
-					20n,
-				)!,
-			),
-		).to.be.true;
-		const note = (
-			message: AddedReplicationSegmentMessage,
-			transportTimestamp: bigint,
-		) =>
-			coordinator.noteLegacyAnnouncement({
-				peerHash,
-				peerSession: currentSession,
-				receiveEpoch: currentReceiveEpoch,
-				senderTransportSession,
-				transportTimestamp,
-				message,
-			});
-		expect(
-			note(new AddedReplicationSegmentMessage({ segments: [rangeA] }), 10n),
-		).to.be.true;
-		expect(state.legacyFallbackTimer).to.be.undefined;
-
-		expect(
-			coordinator.commit(
-				prepare(
-					new FullReplicationInfoV2Message({
-						receiverChallenge: state.receiverBinding!.slice(),
-						senderEpoch,
-						sequence: 4n,
-						segments: [rangeA, rangeB],
-					}),
-					30n,
-				)!,
-			),
-		).to.be.true;
-		expect(
-			note(new AddedReplicationSegmentMessage({ segments: [rangeB] }), 29n),
-		).to.be.true;
-		expect(state.legacyFallbackTimer).to.be.undefined;
-		expect(
-			note(new AddedReplicationSegmentMessage({ segments: [rangeA] }), 30n),
-		).to.be.true;
-		expect(state.legacyFallbackTimer).to.exist;
-
-		expect(
-			coordinator.commit(
-				prepare(
-					new FullReplicationInfoV2Message({
-						receiverChallenge: state.receiverBinding!.slice(),
-						senderEpoch,
-						sequence: 5n,
-						segments: [rangeA, rangeB],
-					}),
-					31n,
-				)!,
-			),
-		).to.be.true;
-		expect(state.legacyFallbackTimer).to.be.undefined;
-	});
-
-	it("keeps unmatched legacy fallback armed across unrelated V2 work", async () => {
-		const clock = sinon.useFakeTimers({ now: 1_000 });
-		expect(markLocalReady(999)).to.be.true;
-		expect(observeSender()).to.be.true;
-		const state = coordinator._receiveStates.get(peerHash)!;
-		const senderEpoch = bytes(20);
-		const initial = new FullReplicationInfoV2Message({
-			receiverChallenge: state.receiverBinding!.slice(),
-			senderEpoch,
-			sequence: 1n,
-			segments: [],
-		});
-		expect(coordinator.commit(prepare(initial)!)).to.be.true;
-		const rangeA = new ReplicationRangeMessageU64({
-			id: bytes(21),
-			offset: 1n,
-			factor: 1n,
-			timestamp: 1n,
-			mode: ReplicationIntent.NonStrict,
-		});
-		const rangeB = new ReplicationRangeMessageU64({
-			id: bytes(22),
-			offset: 2n,
-			factor: 1n,
-			timestamp: 2n,
-			mode: ReplicationIntent.NonStrict,
-		});
-		expect(
-			coordinator.noteLegacyAnnouncement({
-				peerHash,
-				peerSession: currentSession,
-				receiveEpoch: currentReceiveEpoch,
-				senderTransportSession,
-				transportTimestamp: 2n,
-				message: new AddedReplicationSegmentMessage({ segments: [rangeB] }),
-			}),
-		).to.be.true;
-		const unrelated = new AddedReplicationInfoV2Message({
-			receiverChallenge: state.receiverBinding!.slice(),
-			senderEpoch,
-			sequence: 2n,
-			segments: [rangeA],
-		});
-		expect(coordinator.commit(prepare(unrelated)!)).to.be.true;
-		expect(state.legacyFallbackTimer).to.exist;
-		await clock.tickAsync(10);
-		expect(state.phase).to.equal("resync");
-	});
-
-	it("cancels legacy fallback only after a matching commit", async () => {
-		const clock = sinon.useFakeTimers({ now: 1_000 });
-		expect(markLocalReady(999)).to.be.true;
-		expect(observeSender()).to.be.true;
-		const state = coordinator._receiveStates.get(peerHash)!;
-		const senderEpoch = bytes(23);
-		expect(
-			coordinator.commit(
-				prepare(
-					new FullReplicationInfoV2Message({
-						receiverChallenge: state.receiverBinding!.slice(),
-						senderEpoch,
-						sequence: 1n,
-						segments: [],
-					}),
-				)!,
-			),
-		).to.be.true;
-		const range = new ReplicationRangeMessageU64({
-			id: bytes(24),
-			offset: 3n,
-			factor: 1n,
-			timestamp: 3n,
-			mode: ReplicationIntent.NonStrict,
-		});
-		const legacy = new AddedReplicationSegmentMessage({ segments: [range] });
-		coordinator.noteLegacyAnnouncement({
-			peerHash,
-			peerSession: currentSession,
-			receiveEpoch: currentReceiveEpoch,
-			senderTransportSession,
-			transportTimestamp: 2n,
-			message: legacy,
-		});
-		const matching = new AddedReplicationInfoV2Message({
-			receiverChallenge: state.receiverBinding!.slice(),
-			senderEpoch,
-			sequence: 2n,
-			segments: [range],
-		});
-		const reserved = coordinator.reserve(matching, {
-			from: sender,
-			peerSession: currentSession,
-			receiveEpoch: currentReceiveEpoch,
-			senderTransportSession,
-			transportTimestamp: 2n,
-		})!;
-		expect(state.legacyFallbackTimer).to.be.undefined;
-		coordinator.release(reserved);
-		expect(state.legacyFallbackTimer).to.exist;
-		const committed = coordinator.reserve(matching, {
-			from: sender,
-			peerSession: currentSession,
-			receiveEpoch: currentReceiveEpoch,
-			senderTransportSession,
-			transportTimestamp: 2n,
-		})!;
-		expect(coordinator.commit(committed)).to.be.true;
-		expect(state.legacyFallbackTimer).to.be.undefined;
-		await clock.tickAsync(100);
-		expect(state.phase).to.equal("active");
-	});
-
-	it("restarts parked recovery on fresh unmatched legacy evidence", async () => {
-		const clock = sinon.useFakeTimers({ now: 1_000 });
-		coordinator = createCoordinator({
-			requestRetryMs: 2,
-			requestMaxAttempts: 1,
-		});
-		expect(markLocalReady(999)).to.be.true;
-		expect(observeSender()).to.be.true;
-		const state = coordinator._receiveStates.get(peerHash)!;
-		const senderEpoch = bytes(25);
-		expect(
-			coordinator.commit(
-				prepare(
-					new FullReplicationInfoV2Message({
-						receiverChallenge: state.receiverBinding!.slice(),
-						senderEpoch,
-						sequence: 1n,
-						segments: [],
-					}),
-				)!,
-			),
-		).to.be.true;
-		currentReceiveEpoch = {};
-		expect(
-			coordinator.advanceRecovery({
-				peerHash,
-				peerSession: currentSession,
-				receiveEpoch: currentReceiveEpoch,
-			}),
-		).to.be.true;
-		await clock.tickAsync(1);
-		expect(state.requestParked).to.be.true;
-		coordinator.noteLegacyAnnouncement({
-			peerHash,
-			peerSession: currentSession,
-			receiveEpoch: currentReceiveEpoch,
-			senderTransportSession,
-			transportTimestamp: 2n,
-			message: new AddedReplicationSegmentMessage({ segments: [] }),
-		});
-		expect(state.requestParked).to.be.false;
-		expect(state.capabilityRefreshRequired).to.be.true;
-		expect(state.requestTimer).to.exist;
 	});
 
 	it("backs off to a parked request state and never renews an active stream", async () => {
@@ -1975,71 +1602,6 @@ describe("receive admission replication-info V2 receiver state", () => {
 		expect(state.lastSequence).to.equal(1n);
 	});
 
-	it("pauses compat sidecar recovery while its matching V2 frame is applying", async () => {
-		const clock = sinon.useFakeTimers({ now: 1_000 });
-		coordinator = createCoordinator({ legacyFallbackDelayMs: 10 });
-		expect(markLocalReady(999)).to.be.true;
-		expect(observeSender()).to.be.true;
-		const state = coordinator._receiveStates.get(peerHash)!;
-		const senderEpoch = bytes(19);
-		expect(
-			coordinator.commit(
-				prepare(
-					new FullReplicationInfoV2Message({
-						receiverChallenge: state.receiverBinding!.slice(),
-						senderEpoch,
-						sequence: 1n,
-						segments: [],
-					}),
-				)!,
-			),
-		).to.be.true;
-		const legacy = new AddedReplicationSegmentMessage({ segments: [] });
-		coordinator.noteLegacyAnnouncement({
-			peerHash,
-			peerSession: currentSession,
-			receiveEpoch: currentReceiveEpoch,
-			senderTransportSession,
-			transportTimestamp: 2n,
-			message: legacy,
-		});
-		expect(state.legacyFallbackTimer).to.exist;
-		const matching = new AddedReplicationInfoV2Message({
-			receiverChallenge: state.receiverBinding!.slice(),
-			senderEpoch,
-			sequence: 2n,
-			segments: [],
-		});
-		const first = coordinator.reserve(matching, {
-			from: sender,
-			peerSession: currentSession,
-			receiveEpoch: currentReceiveEpoch,
-			senderTransportSession,
-			transportTimestamp: 2n,
-		})!;
-		expect(state.legacyFallbackTimer).to.be.undefined;
-		coordinator.release(first);
-		expect(state.legacyFallbackTimer).to.exist;
-
-		const committed = coordinator.reserve(matching, {
-			from: sender,
-			peerSession: currentSession,
-			receiveEpoch: currentReceiveEpoch,
-			senderTransportSession,
-			transportTimestamp: 2n,
-		})!;
-		const version = state.version;
-		expect(state.legacyFallbackTimer).to.be.undefined;
-		await clock.tickAsync(100);
-		expect(state.version).to.equal(version);
-		expect(coordinator.isAdmissionCurrent(committed)).to.be.true;
-		expect(coordinator.commit(committed)).to.be.true;
-		expect(state.phase).to.equal("active");
-		expect(state.lastSequence).to.equal(2n);
-		expect(state.legacyFallbackTimer).to.be.undefined;
-		expect(state.legacyFallbackFingerprint).to.be.undefined;
-	});
-
 	it("treats MAX_U64 as terminal for the current receiver grant", async () => {
 		const clock = sinon.useFakeTimers({ now: 1_000 });
 		expect(markLocalReady(999)).to.be.true;
@@ -2180,7 +1742,7 @@ describe("receive admission replication-info V2 receiver state", () => {
 		expect(state.phase).to.equal("active");
 		expect(state.lastSequence).to.equal(1n);
 		expect([...state.receiverBinding!]).not.to.deep.equal([...oldBinding]);
-		expect(coordinator.isLegacyCutover(currentSession)).to.be.true;
+		expect(coordinator._cutoverPeerSessions.has(currentSession)).to.be.true;
 		expect(
 			coordinator.prepare(oldFull, {
 				from: sender,
@@ -2248,7 +1810,7 @@ describe("receive admission replication-info V2 receiver integration", () => {
 				expect(capabilityTimestamp).to.not.equal(undefined);
 				expect(sendState.lastRequestTimestamp > capabilityTimestamp).to.be.true;
 				expect(
-					receiver._v2Receive.isLegacyCutover(
+					receiver._v2Receive._cutoverPeerSessions.has(
 						receiver._peerSessions.current(senderHash),
 					),
 				).to.be.true;
@@ -2472,7 +2034,7 @@ describe("receive admission replication-info V2 receiver integration", () => {
 			segments: [],
 		});
 		await log.onMessage(full, context(senderSessionA, 11n));
-		expect(log._v2Receive.isLegacyCutover(peerSession)).to.be.true;
+		expect(log._v2Receive._cutoverPeerSessions.has(peerSession)).to.be.true;
 
 		await log.onMessage(
 			new SyncCapabilitiesMessage({
@@ -2482,7 +2044,7 @@ describe("receive admission replication-info V2 receiver integration", () => {
 		);
 		expect(state.controller.signal.aborted).to.be.true;
 		expect(log._v2Receive._receiveStates.has(remoteHash)).to.be.false;
-		expect(log._v2Receive.isLegacyCutover(peerSession)).to.be.false;
+		expect(log._v2Receive._cutoverPeerSessions.has(peerSession)).to.be.false;
 		expect(log._peerSyncCapabilitySessions.get(remoteHash)).to.equal(
 			senderSessionB,
 		);
@@ -2575,7 +2137,7 @@ describe("receive admission replication-info V2 receiver integration", () => {
 		).to.equal(1);
 		expect(state.lastSequence).to.equal(1n);
 		expect(state.phase).to.equal("resync");
-		expect(log._v2Receive.isLegacyCutover(peerSession)).to.be.true;
+		expect(log._v2Receive._cutoverPeerSessions.has(peerSession)).to.be.true;
 		await waitForResolved(() => expect(send.called).to.be.true);
 
 		await log.onMessage(
