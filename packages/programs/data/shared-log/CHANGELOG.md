@@ -1,5 +1,11 @@
 # Changelog
 
+## 14.0.0
+
+### Major Changes
+
+- [#1220](https://github.com/dao-xyz/peerbit/pull/1220) [`4b0fa5a`](https://github.com/dao-xyz/peerbit/commit/4b0fa5a49a019892133688519204658c72f6c4d1) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Retire the pre-v10 replication-info network compatibility modes. `SharedLogOptions.compatibility` is removed; any explicitly-defined value passed at open — including 10, which previously behaved like the default — now rejects with `CompatibilityModeRetiredError` before any open-time side effect (an explicitly-present `undefined` stays accepted). The legacy wire variants [1,0]-[1,4] remain registered decode tombstones and published exports, so frames from old peers still decode (and are dropped by the default inbound guard); `ReplicationPingMessage` ([1,5]) is unaffected.
+
 ## 13.2.36
 
 ### Patch Changes
