@@ -392,13 +392,6 @@ export class ReplicationInfoV2SendCoordinator<R extends "u32" | "u64"> {
 		}
 	}
 
-	enqueueSnapshotForPeer(peerHash: string): void {
-		const state = this._sendStates.get(peerHash);
-		if (state) {
-			this.enqueueState(state, { kind: "snapshot" });
-		}
-	}
-
 	private enqueueState(
 		state: ReplicationInfoV2SendState,
 		request: SendRequest,

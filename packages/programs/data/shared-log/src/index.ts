@@ -19448,12 +19448,6 @@ export class SharedLog<
 					});
 				} else if (msg instanceof ReplicationPingMessage) {
 					// No-op: used as an ACKed unicast liveness probe.
-				} else if (msg instanceof RequestReplicationInfoMessage) {
-					await this.handleRequestReplicationInfo(
-						msg,
-						laneRequestContext,
-						lane,
-					);
 				} else if (
 					msg instanceof AllReplicatingSegmentsMessage ||
 					msg instanceof AddedReplicationSegmentMessage
@@ -19689,113 +19683,6 @@ export class SharedLog<
 		for (const result of results) {
 			if (result.status === "rejected") {
 				logger.error(result.reason?.toString?.() ?? String(result.reason));
-			}
-		}
-	}
-
-	private async handleRequestReplicationInfo(
-		_msg: RequestReplicationInfoMessage,
-		context: ReceiveRequestContext,
-		lane: ReceiveLaneContext,
-	): Promise<void> {
-		const receiveFromHash = lane.fromHash;
-		const receiveSession = lane.session;
-		const receiveReplicationLifecycleController = lane.lifecycleController;
-		if (context.from.equals(this.node.identity.publicKey)) {
-			return;
-		}
-		const replicationLifecycleController =
-			receiveReplicationLifecycleController;
-		if (
-			!replicationLifecycleController ||
-			!this._peerSessions.isReceiveAdmissionOpen(
-				receiveFromHash,
-				receiveSession,
-				replicationLifecycleController,
-			)
-		) {
-			return;
-		}
-
-		let replicationSegments: ReplicationRangeIndexable<R>[];
-		try {
-			replicationSegments = await this.getMyReplicationSegments();
-		} catch (error) {
-			if (
-				!this._peerSessions.isReceiveAdmissionOpen(
-					receiveFromHash,
-					receiveSession,
-					replicationLifecycleController,
-				) &&
-				isNotStartedError(error as Error)
-			) {
-				return;
-			}
-			throw error;
-		}
-		if (
-			!this._peerSessions.isReceiveAdmissionOpen(
-				receiveFromHash,
-				receiveSession,
-				replicationLifecycleController,
-			)
-		) {
-			return;
-		}
-		const segments = replicationSegments.map((x) => x.toReplicationRange());
-		this.validatePersistedReplicationRangeSnapshot(segments);
-		this._v2Send.enqueueSnapshotForPeer(receiveFromHash);
-
-		await this.rpc
-			.send(new AllReplicatingSegmentsMessage({ segments }), {
-				mode: new AcknowledgeDelivery({
-					to: [context.from],
-					redundancy: 1,
-				}),
-				signal: replicationLifecycleController.signal,
-			})
-			.catch((error) =>
-				this.handleReplicationLifecycleSendError(
-					error,
-					replicationLifecycleController,
-				),
-			);
-		if (
-			!this._peerSessions.isReceiveAdmissionOpen(
-				receiveFromHash,
-				receiveSession,
-				replicationLifecycleController,
-			)
-		) {
-			return;
-		}
-
-		// for backwards compatibility (v8) remove this when we are sure that all nodes are v9+
-		if (this.v8Behaviour) {
-			const role = this.getRoleFromReplicationSegments(replicationSegments);
-			if (role instanceof Replicator) {
-				const fixedSettings = !this._isAdaptiveReplicating;
-				if (fixedSettings) {
-					await this.rpc
-						.send(
-							new ResponseRoleMessage({
-								role,
-							}),
-							{
-								mode: new SilentDelivery({
-									to: [context.from],
-									redundancy: 1,
-								}),
-								signal: replicationLifecycleController.signal,
-							},
-						)
-						.catch((error) =>
-							this.handleReplicationLifecycleSendError(
-								error,
-								replicationLifecycleController,
-							),
-						);
-				}
 			}
 		}
 	}
@@ -23849,9 +23736,9 @@ export class SharedLog<
 
 		// Decode, sender and authenticated apply readiness are separate bits. An
 		// ACKed capability advert is the local half of receiver-led negotiation;
-		// readiness is promoted only after the legacy startup path has completed.
-		// This preserves mixed-version discovery without putting capability ACK
-		// latency on the subscription callback's critical path.
+		// readiness is promoted through the coordinator once the ACK arrives.
+		// This keeps capability ACK latency off the subscription callback's
+		// critical path.
 		const receiveEpoch = this._peerSessions.receiveEpoch(peerHash);
 		const localCapabilityAdvertisement =
 			this._v2Receive.advertiseLocalCapability({
@@ -23860,105 +23747,14 @@ export class SharedLog<
 				receiveEpoch,
 				signal: replicationLifecycleController.signal,
 			});
-		if (!this.legacyReplicationInfoEnabled) {
-			// Current logs have no legacy startup work to order ahead of RequestV2.
-			// Releasing is synchronous and exact-session fenced; the ACK may still
-			// arrive later and promote readiness through the coordinator.
-			localCapabilityAdvertisement.releaseLegacyBarrier();
-			this.scheduleReplicationInfoV2Recovery(
-				publicKey,
-				replicationLifecycleController,
-			);
-			return;
-		}
-
-		try {
-			let replicationSegments: ReplicationRangeIndexable<R>[];
-			try {
-				replicationSegments = await this.getMyReplicationSegments();
-			} catch (error) {
-				if (
-					!this.isReplicationLifecycleActive(replicationLifecycleController) &&
-					isNotStartedError(error as Error)
-				) {
-					return;
-				}
-				throw error;
-			}
-			if (
-				!this.isReplicationLifecycleActive(replicationLifecycleController) ||
-				!ownsSubscriptionEpoch()
-			) {
-				return;
-			}
-			if (replicationSegments.length > 0) {
-				const segments = replicationSegments.map((x) => x.toReplicationRange());
-				this.validatePersistedReplicationRangeSnapshot(segments);
-				await this.rpc
-					.send(
-						new AllReplicatingSegmentsMessage({
-							segments,
-						}),
-						{
-							mode: new AcknowledgeDelivery({
-								redundancy: 1,
-								to: [publicKey],
-							}),
-							signal: replicationLifecycleController.signal,
-						},
-					)
-					.catch((error) =>
-						this.handleReplicationLifecycleSendError(
-							error,
-							replicationLifecycleController,
-						),
-					);
-				if (
-					!this.isReplicationLifecycleActive(replicationLifecycleController) ||
-					!ownsSubscriptionEpoch()
-				) {
-					return;
-				}
-
-				if (this.v8Behaviour) {
-					// for backwards compatibility
-					await this.rpc
-						.send(
-							new ResponseRoleMessage({
-								role: this.getRoleFromReplicationSegments(replicationSegments),
-							}),
-							{
-								mode: new AcknowledgeDelivery({
-									redundancy: 1,
-									to: [publicKey],
-								}),
-								signal: replicationLifecycleController.signal,
-							},
-						)
-						.catch((error) =>
-							this.handleReplicationLifecycleSendError(
-								error,
-								replicationLifecycleController,
-							),
-						);
-				}
-			}
-
-			// Keep legacy request-based discovery independent of the capability ACK.
-			// This makes mixed-version joins resilient to timing-sensitive delivery/order
-			// issues where we may miss the remote peer's initial announcement.
-			if (
-				this.isReplicationLifecycleActive(replicationLifecycleController) &&
-				ownsSubscriptionEpoch()
-			) {
-				this.scheduleReplicationInfoRequests(
-					publicKey,
-					replicationLifecycleController,
-				);
-			}
-		} finally {
-			localCapabilityAdvertisement.releaseLegacyBarrier();
-		}
+		// Current logs have no legacy startup work to order ahead of RequestV2.
+		// Releasing is synchronous and exact-session fenced; the ACK may still
+		// arrive later and promote readiness through the coordinator.
+		localCapabilityAdvertisement.releaseLegacyBarrier();
+		this.scheduleReplicationInfoV2Recovery(
+			publicKey,
+			replicationLifecycleController,
+		);
 	}
 
 	private getClampedReplicas(customValue?: MinReplicas) {
