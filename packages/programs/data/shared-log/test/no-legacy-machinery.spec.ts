@@ -1,3 +1,5 @@
+import { readFileSync } from "fs";
+import path from "path";
 import { TestSession } from "@peerbit/test-utils";
 import { expect } from "chai";
 import sinon from "sinon";
@@ -116,5 +118,26 @@ describe("no legacy machinery", () => {
 		// ...and no legacy frame crossed the wire from either side.
 		expect(sent1.filter(isLegacyFrame)).to.have.length(0);
 		expect(sent2.filter(isLegacyFrame)).to.have.length(0);
+	});
+
+	it("has zero legacy-frame construction sites on the outbound source paths", () => {
+		// Source-level outbound ratchet: constructing a legacy announcement
+		// class is a prerequisite for sending one. After B12 stage 3 the only
+		// sanctioned constructions live in replication.ts (the ResponseRole
+		// tombstone's decode conversion) and replication-info-v2-receive.ts
+		// (byte-stable fingerprint canonicalization) — both inbound-only and
+		// scheduled for stage 4. Everything the sender stack can reach must
+		// stay clean in every open mode.
+		const forbidden =
+			/new\s+(RequestReplicationInfoMessage|ResponseRoleMessage|AllReplicatingSegmentsMessage|AddedReplicationSegmentMessage|StoppedReplicating)\s*\(/g;
+		for (const file of [
+			"src/index.ts",
+			"src/replication-announcement.ts",
+			"src/replication-info-v2-send.ts",
+		]) {
+			const source = readFileSync(path.join(process.cwd(), file), "utf8");
+			const matches = [...source.matchAll(forbidden)].map((m) => m[0]);
+			expect(matches, file).to.deep.equal([]);
+		}
 	});
 });
