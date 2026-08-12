@@ -59,7 +59,8 @@ describe("document compatibility retirement", () => {
 			// was never opened.
 			expect((store.docs.log as any).syncronizer).to.be.undefined;
 			expect((store.docs.log as any).domain).to.be.undefined;
-			expect(store.docs.compatibility).to.be.undefined;
+			// B12 stage 5: the residual compatibility field is deleted outright.
+			expect((store.docs as any).compatibility).to.be.undefined;
 		});
 	}
 
@@ -71,7 +72,7 @@ describe("document compatibility retirement", () => {
 			args: { replicate: false, compatibility: undefined } as any,
 		});
 		try {
-			expect(store.docs.compatibility).to.be.undefined;
+			expect((store.docs as any).compatibility).to.be.undefined;
 			expect((store.docs.log as any).syncronizer).to.exist;
 		} finally {
 			await store.close();

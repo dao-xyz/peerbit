@@ -1098,8 +1098,6 @@ export class Documents<
 	private strictHistory: boolean;
 	canOpen?: (program: T) => Promise<boolean> | boolean;
 
-	compatibility: 6 | 7 | undefined;
-
 	constructor(properties?: {
 		id?: Uint8Array;
 		immutable?: boolean;
@@ -1241,9 +1239,6 @@ export class Documents<
 		}
 		if (options.domain) {
 			unsupported.push("custom domain");
-		}
-		if ((options as any).compatibility != null) {
-			unsupported.push("legacy compatibility");
 		}
 		if (options.strictHistory) {
 			unsupported.push("strict history");
@@ -1473,9 +1468,6 @@ export class Documents<
 		}
 		if (this.strictHistory) {
 			unsupported.push("strict history");
-		}
-		if (this.compatibility === 6) {
-			unsupported.push("legacy compatibility");
 		}
 		if (Program.isPrototypeOf(this._clazz)) {
 			unsupported.push("program-valued document type");
@@ -1823,9 +1815,6 @@ export class Documents<
 		if (this.strictHistory) {
 			unsupported.push("strict history");
 		}
-		if (this.compatibility === 6) {
-			unsupported.push("legacy compatibility");
-		}
 		if (Program.isPrototypeOf(this._clazz)) {
 			unsupported.push("program-valued document type");
 		}
@@ -1850,9 +1839,6 @@ export class Documents<
 		}
 		if (this.strictHistory) {
 			unsupported.push("strict history");
-		}
-		if (this.compatibility === 6) {
-			unsupported.push("legacy compatibility");
 		}
 		if (Program.isPrototypeOf(this._clazz)) {
 			unsupported.push("program-valued document type");
@@ -2300,9 +2286,6 @@ export class Documents<
 						indexerTypes.extractFieldValue(obj, idProperty as string[]));
 
 		this.idResolver = idResolver;
-		// B12: permanently undefined (the option rejects above); the field and
-		// its residual gates die in a later cleanup stage.
-		this.compatibility = (options as any).compatibility;
 		this.strictHistory = options.strictHistory ?? false;
 		this._hasLogTrim = options.log?.trim != null;
 
@@ -2315,7 +2298,6 @@ export class Documents<
 			documentType: this._clazz,
 			transform: options.index,
 			indexBy: idProperty,
-			compatibility: (options as any).compatibility,
 			cache: options?.index?.cache,
 			replicate: async (query, results) => {
 				// here we arrive for all the results we want to persist.
@@ -3009,24 +2991,14 @@ export class Documents<
 		}
 
 		const key = indexerTypes.toId(keyValue);
-		let operation: PutOperation | PutWithKeyOperation;
-		let encodedOperation: Uint8Array | undefined;
-		if (this.compatibility === 6) {
-			if (typeof keyValue === "string") {
-				operation = new PutWithKeyOperation({
-					key: keyValue,
-					data: encodedDocument,
-				});
-			} else {
-				throw new Error("Key must be a string in compatibility mode v6");
-			}
-		} else {
-			encodedOperation = encodePutOperationPayload(encodedDocument);
-			encodedDocument = encodedOperation.subarray(PUT_OPERATION_PREFIX_LENGTH);
-			operation = new PutOperation({
-				data: encodedDocument,
-			});
-		}
+		// B12: writes always encode PutOperation. The compatibility-6
+		// PutWithKeyOperation ENCODE branch is retired; the tag-0 DECODE stays
+		// forever (see operation-tombstone pins).
+		const encodedOperation = encodePutOperationPayload(encodedDocument);
+		encodedDocument = encodedOperation.subarray(PUT_OPERATION_PREFIX_LENGTH);
+		const operation = new PutOperation({
+			data: encodedDocument,
+		});
 		return {
 			document: doc,
 			encodedDocument,
@@ -3038,9 +3010,6 @@ export class Documents<
 	}
 
 	private preparePlainPut(doc: T): PreparedPlainPut<T> {
-		if (this.compatibility === 6) {
-			throw new Error("Plain put preparation is not supported in v6 mode");
-		}
 		const keyValue = this.idResolver(doc);
 		indexerTypes.checkId(keyValue);
 		const documentBytes = serialize(doc);
@@ -3230,7 +3199,6 @@ export class Documents<
 			this.canPerformAllowsPlainPutFastPath(doc) &&
 			!this.immutable &&
 			!this.strictHistory &&
-			this.compatibility !== 6 &&
 			!Program.isPrototypeOf(this._clazz) &&
 			!options?.canAppend &&
 			!options?.onChange &&

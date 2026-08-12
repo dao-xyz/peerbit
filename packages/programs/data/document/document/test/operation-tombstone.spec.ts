@@ -6,13 +6,17 @@
 // coercions are permanent decode tombstones. These pins freeze the wire bytes
 // and prove a store containing tag-0/tag-2 entries opens and reads back
 // WITHOUT any compatibility option.
+import { readFileSync, readdirSync } from "fs";
+import path from "path";
 import { deserialize, serialize } from "@dao-xyz/borsh";
+import { Entry } from "@peerbit/log";
 import { TestSession } from "@peerbit/test-utils";
 import { waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
 import {
 	DeleteByStringKeyOperation,
 	Operation,
+	PutOperation,
 	PutWithKeyOperation,
 } from "../src/operation.js";
 import { Documents } from "../src/program.js";
@@ -118,6 +122,65 @@ describe("document operation tombstones", () => {
 			expect(readBack!.id).to.equal(keep.id);
 			expect(readBack!.name).to.equal("kept name");
 			expect(await store.docs.index.get(removed.id)).to.equal(undefined);
+		});
+	});
+
+	describe("encode retirement", () => {
+		// B12 stage 5: the compatibility-6 ENCODE branch (PutWithKeyOperation
+		// construction at the document write path) is deleted. Writes are
+		// always PutOperation; the deprecated layouts are decode-only.
+		let session: TestSession;
+		let store: TestStore;
+
+		before(async () => {
+			session = await TestSession.connected(1);
+		});
+
+		afterEach(async () => {
+			await store?.close();
+		});
+
+		after(async () => {
+			await session.stop();
+		});
+
+		it("writes PutOperation for a default put, never PutWithKeyOperation", async () => {
+			store = new TestStore({ docs: new Documents<Document>() });
+			await session.peers[0].open(store);
+			const doc = new Document({ id: "encode-default", name: "current" });
+			const { entry } = await store.docs.put(doc);
+			const reloaded = await Entry.fromMultihash<Operation>(
+				store.docs.log.log.blocks,
+				entry.hash,
+			);
+			reloaded.init({
+				encoding: store.docs.log.log.encoding,
+				keychain: store.docs.log.log.keychain,
+			});
+			const payload = await reloaded.getPayloadValue();
+			expect(payload).to.be.instanceOf(PutOperation);
+			expect(payload).to.not.be.instanceOf(PutWithKeyOperation);
+		});
+
+		it("has zero deprecated-operation construction sites in src", () => {
+			// Source ratchet: the deprecated layouts are encode-dead. Any
+			// re-added `new PutWithKeyOperation(`/`new DeleteByStringKeyOperation(`
+			// in src is a retirement regression (decode registration in
+			// operation.ts uses only decorators, not construction).
+			const forbidden =
+				/new\s+(PutWithKeyOperation|DeleteByStringKeyOperation)\s*\(/g;
+			const sourceFiles = readdirSync(path.join(process.cwd(), "src"), {
+				recursive: true,
+			})
+				.map((entry) => String(entry))
+				.filter((entry) => entry.endsWith(".ts"))
+				.map((entry) => path.join("src", entry));
+			expect(sourceFiles.length).to.be.greaterThan(0);
+			for (const file of sourceFiles) {
+				const source = readFileSync(path.join(process.cwd(), file), "utf8");
+				const matches = [...source.matchAll(forbidden)].map((m) => m[0]);
+				expect(matches, file).to.deep.equal([]);
+			}
 		});
 	});
 });
