@@ -1,5 +1,17 @@
 # Changelog
 
+## 16.0.0
+
+### Major Changes
+
+- [#1228](https://github.com/dao-xyz/peerbit/pull/1228) [`3fad511`](https://github.com/dao-xyz/peerbit/commit/3fad511d278c5196cee8ba3e4750227f9ddff17c) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Collapse the retired compatibility plumbing (B12 stage 5, final cleanup): the always-`undefined` residual `compatibility` getter on `SharedLog` is deleted (the open option itself was removed and rejects with `CompatibilityModeRetiredError` since the B12 major), together with the permanently-false internal compat gates, the compatibility-coupled domain/synchronizer defaulting arms (defaults are now unconditionally u64 + RatelessIBLT; `ReplicationDomainTime`, `createReplicationDomainHash("u32")` and explicit `syncronizer: SimpleSyncronizer` remain first-class options), the caller-free legacy-fallback sidecar in the V2 receive coordinator, the two-phase legacy capability barrier (adverts now promote on ACK; the advertisement handle keeps `releaseLegacyBarrier()` as a no-op), the deprecated `getRoleFromReplicationSegments` helper and the announcement-session rotation shell. Wire tombstones stay registered and exported; fingerprint canonicalization still constructs the legacy canonical forms locally (byte-stable, never sent).
+
+- [#1227](https://github.com/dao-xyz/peerbit/pull/1227) [`a65b174`](https://github.com/dao-xyz/peerbit/commit/a65b1747dfbc69b391682d7671032e33342a1af6) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Delete the dead legacy inbound replication-info machinery (B12 stage 4): the ResponseRole/All/Added/Stopped dispatch arms below the unconditional default-mode drop, the legacy apply handlers, the per-peer ordering watermark and the legacy-cutover probe. Default-mode nodes have dropped these frames before any side effect since the V2 migration, and no compatibility mode can open. The wire tombstones stay registered and exported so old frames still decode; the only surface change is the removal of the deprecated `toReplicationInfoMessage()` helper from the exported `ResponseRoleMessage` tombstone (its class, variant and fields are unchanged; the sole caller was the deleted dispatch conversion). Folds into the B12 major release train.
+
+### Patch Changes
+
+- [#1225](https://github.com/dao-xyz/peerbit/pull/1225) [`a472c8e`](https://github.com/dao-xyz/peerbit/commit/a472c8e674b93c3ea58bbe9732357f90dc30e25b) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Delete the dead legacy outbound replication-info machinery (B12 stage 3): the legacy announcement broadcast tail with its retry/repair workers, the startup All/ResponseRole sends and request polling on subscription change, the legacy waitForReplicator request arm, and the close/drop empty-All broadcasts. Default-mode nodes never executed these paths since compatibility opens were retired. Internal-only: no exported symbol changes; the wire tombstones stay registered and exported, the V2 announcement/recovery stack is unchanged.
+
 ## 15.0.0
 
 ### Major Changes
