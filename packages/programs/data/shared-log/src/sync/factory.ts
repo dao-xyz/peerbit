@@ -14,7 +14,6 @@ import type {
 	Syncronizer,
 } from "./index.js";
 import { RatelessIBLTSynchronizer } from "./rateless-iblt.js";
-import { SimpleSyncronizer } from "./simple.js";
 
 export type CreateSyncronizerProps<R extends "u32" | "u64"> = {
 	// pass-through refs (snapshotted at open() time; stable post-open)
@@ -39,7 +38,6 @@ export type CreateSyncronizerProps<R extends "u32" | "u64"> = {
 	sendRawExchangeHeads: RawExchangeHeadsSender;
 	warn: (message: string) => void;
 	// construction-time scalars
-	compatibility?: number;
 	resolution: R;
 	sync?: SyncOptions<R>;
 	syncronizer?: SynchronizerConstructor<R>;
@@ -113,42 +111,30 @@ export function createSyncronizer<R extends "u32" | "u64">(
 			peerSupportsRawExchangeHeads: props.peerSupportsRawExchangeHeads,
 			sendRawExchangeHeads: props.sendRawExchangeHeads,
 		});
-	} else {
-		if (props.compatibility !== undefined && props.compatibility < 10) {
-			return new SimpleSyncronizer({
-				log: props.log,
-				rpc: props.rpc,
-				entryIndex: props.entryIndex,
-				coordinateToHash: props.coordinateToHash,
-				resolveHashesForSymbols,
-				resolveHashListForSymbols,
-				sync: props.sync,
-				isEntryRecentlyKnownByPeer: props.isEntryRecentlyKnownByPeer,
-				peerSupportsRawExchangeHeads: props.peerSupportsRawExchangeHeads,
-				sendRawExchangeHeads: props.sendRawExchangeHeads,
-			});
-		} else {
-			if (props.resolution === "u32") {
-				props.warn(
-					"u32 resolution is not recommended for RatelessIBLTSynchronizer",
-				);
-			}
-
-			return new RatelessIBLTSynchronizer<R>({
-				numbers: props.numbers,
-				entryIndex: props.entryIndex,
-				log: props.log,
-				rangeIndex: props.rangeIndex,
-				rpc: props.rpc,
-				coordinateToHash: props.coordinateToHash,
-				resolveHashesForSymbols,
-				resolveHashListForSymbols,
-				resolveHashNumbersInRange,
-				sync: props.sync,
-				isEntryRecentlyKnownByPeer: props.isEntryRecentlyKnownByPeer,
-				peerSupportsRawExchangeHeads: props.peerSupportsRawExchangeHeads,
-				sendRawExchangeHeads: props.sendRawExchangeHeads,
-			}) as Syncronizer<R>;
-		}
 	}
+
+	// Default synchronizer. SimpleSyncronizer stays a first-class explicit
+	// choice via the `syncronizer` option above; only the retired
+	// compatibility-coupled defaulting arm that once selected it is gone (B12).
+	if (props.resolution === "u32") {
+		props.warn(
+			"u32 resolution is not recommended for RatelessIBLTSynchronizer",
+		);
+	}
+
+	return new RatelessIBLTSynchronizer<R>({
+		numbers: props.numbers,
+		entryIndex: props.entryIndex,
+		log: props.log,
+		rangeIndex: props.rangeIndex,
+		rpc: props.rpc,
+		coordinateToHash: props.coordinateToHash,
+		resolveHashesForSymbols,
+		resolveHashListForSymbols,
+		resolveHashNumbersInRange,
+		sync: props.sync,
+		isEntryRecentlyKnownByPeer: props.isEntryRecentlyKnownByPeer,
+		peerSupportsRawExchangeHeads: props.peerSupportsRawExchangeHeads,
+		sendRawExchangeHeads: props.sendRawExchangeHeads,
+	}) as Syncronizer<R>;
 }

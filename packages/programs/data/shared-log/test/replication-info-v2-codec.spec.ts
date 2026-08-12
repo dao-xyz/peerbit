@@ -352,9 +352,14 @@ describe("receive admission replication-info V2 decode-only codec", () => {
 			await capabilityAdvertisement.firstAttempt;
 			const remoteHash = remote.hashcode();
 			const peerSession = log._peerSessions.current(remoteHash);
+			// B12: no legacy barrier — the startup advert is promoted ready as
+			// soon as its ACK lands.
 			expect(
-				log._v2Receive._localCapabilityContextBySession.get(peerSession)
-					.legacyBarrierReleased,
+				log._v2Receive._localCapabilityAdvertisementsByPeer.get(remoteHash)
+					?.ready,
+			).to.be.true;
+			expect(
+				log._v2Receive._localCapabilityContextBySession.has(peerSession),
 			).to.be.true;
 			expect(markReady.calledOnce).to.be.true;
 			const capability = sent.find(

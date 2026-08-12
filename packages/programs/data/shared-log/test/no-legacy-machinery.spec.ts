@@ -193,20 +193,49 @@ describe("no legacy machinery", () => {
 		expect((log._v2Receive as any).isLegacyCutover).to.equal(undefined);
 	});
 
-	it("has zero legacy-frame construction sites on the outbound source paths", () => {
-		// Source-level outbound ratchet: constructing a legacy announcement
-		// class is a prerequisite for sending one. After B12 stage 4 the only
-		// sanctioned constructions in all of src live in
-		// replication-info-v2-receive.ts (byte-stable fingerprint
-		// canonicalization, whitelisted by decision Q4) — that single file is
-		// the whitelist; every other source file must stay clean in every
-		// open mode, including replication.ts now that the ResponseRole
-		// tombstone's decode conversion is deleted.
+	it("confines legacy-frame construction to the fingerprint sites and sanctioned pins", () => {
+		// Source+test construction ratchet (B12 stage 5, final form).
+		// Constructing a legacy announcement class is a prerequisite for
+		// sending one. The Q4 whitelist is narrowed from a whole file to the
+		// exact fingerprint-canonicalization sites: in ALL of src the only
+		// sanctioned constructions are the three byte-stable canonical
+		// mappings inside replication-info-v2-receive.ts (Full -> All,
+		// Added -> Added, Stopped -> Stopped) — never a Request or Role, and
+		// never a fourth site. Every other source file stays clean in every
+		// open mode, including replication.ts.
 		const forbidden =
 			/new\s+(RequestReplicationInfoMessage|ResponseRoleMessage|AllReplicatingSegmentsMessage|AddedReplicationSegmentMessage|StoppedReplicating)\s*\(/g;
-		const whitelist = new Set(["src/replication-info-v2-receive.ts"]);
+		const fingerprintFile = path.join("src", "replication-info-v2-receive.ts");
+		let sawFingerprintFile = false;
 		for (const file of listSourceFiles()) {
-			if (whitelist.has(file)) {
+			const source = readFileSync(path.join(process.cwd(), file), "utf8");
+			const matches = [...source.matchAll(forbidden)].map((m) => m[1]);
+			if (file === fingerprintFile) {
+				sawFingerprintFile = true;
+				expect([...matches].sort(), file).to.deep.equal([
+					"AddedReplicationSegmentMessage",
+					"AllReplicatingSegmentsMessage",
+					"StoppedReplicating",
+				]);
+				continue;
+			}
+			expect(matches, file).to.deep.equal([]);
+		}
+		expect(sawFingerprintFile).to.be.true;
+
+		// Test-side leg: tombstone constructions in test files are confined to
+		// the sanctioned codec byte pins, the sender byte-equivalence pins,
+		// the migration-8-9 legacy-injection fixture and this spec's own
+		// no-effect probes. Any other spec constructing a legacy frame is a
+		// retirement regression.
+		const testWhitelist = new Set([
+			path.join("test", "migration.spec.ts"),
+			path.join("test", "no-legacy-machinery.spec.ts"),
+			path.join("test", "replication-info-v2-codec.spec.ts"),
+			path.join("test", "replication-info-v2-sender.spec.ts"),
+		]);
+		for (const file of listTestFiles()) {
+			if (testWhitelist.has(file)) {
 				continue;
 			}
 			const source = readFileSync(path.join(process.cwd(), file), "utf8");
@@ -220,12 +249,16 @@ describe("no legacy machinery", () => {
 		// All/Added/Stopped apply handlers, the request handler, the ordering
 		// watermark, the tombstone decode conversion and the legacy-cutover
 		// probe are deleted (B12 stage 4). No source file may reference their
-		// names again — the retained legacy remnants in
-		// replication-info-v2-receive.ts (the local legacy union, fingerprint
-		// canonicalization and the noteLegacyAnnouncement sidecar) do not use
-		// these names, so this leg needs no whitelist.
+		// names again — the retained fingerprint canonicalization in
+		// replication-info-v2-receive.ts does not use these names, so this leg
+		// needs no whitelist. Stage 5 extends the list with the deleted compat
+		// getters (legacyReplicationInfoEnabled, v8Behaviour), the legacy
+		// fallback sidecar (noteLegacyAnnouncement and every legacyFallback
+		// field/timer) and the two-phase barrier state (legacyBarrierReleased);
+		// the surviving no-op handle method releaseLegacyBarrier is the ONLY
+		// sanctioned legacy-named symbol left in src.
 		const forbidden =
-			/latestReplicationInfoMessage|handleReplicationInfoAnnouncement|handleStoppedReplicating|handleRequestReplicationInfo|toReplicationInfoMessage|isLegacyCutover/g;
+			/latestReplicationInfoMessage|handleReplicationInfoAnnouncement|handleStoppedReplicating|handleRequestReplicationInfo|toReplicationInfoMessage|isLegacyCutover|legacyReplicationInfoEnabled|v8Behaviour|noteLegacyAnnouncement|legacyFallback|LegacyFallback|LEGACY_FALLBACK|legacyBarrierReleased/g;
 		for (const file of listSourceFiles()) {
 			const source = readFileSync(path.join(process.cwd(), file), "utf8");
 			const matches = [...source.matchAll(forbidden)].map((m) => m[0]);
@@ -239,3 +272,9 @@ const listSourceFiles = (): string[] =>
 		.map((entry) => String(entry))
 		.filter((entry) => entry.endsWith(".ts"))
 		.map((entry) => path.join("src", entry));
+
+const listTestFiles = (): string[] =>
+	readdirSync(path.join(process.cwd(), "test"), { recursive: true })
+		.map((entry) => String(entry))
+		.filter((entry) => entry.endsWith(".ts"))
+		.map((entry) => path.join("test", entry));

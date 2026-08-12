@@ -538,7 +538,6 @@ const coerceQuery = <Resolve extends boolean | undefined>(
 		| types.IterationRequest
 		| QueryLike,
 	options?: QueryOptions<any, any, any, Resolve>,
-	compatibility?: number,
 ):
 	| types.SearchRequest
 	| types.SearchRequestIndexed
@@ -546,7 +545,6 @@ const coerceQuery = <Resolve extends boolean | undefined>(
 	const replicate =
 		typeof options?.remote !== "boolean" ? options?.remote?.replicate : false;
 	const shouldResolve = options?.resolve !== false;
-	const useLegacyRequests = compatibility != null && compatibility <= 9;
 
 	if (
 		query instanceof types.SearchRequestIndexed &&
@@ -565,39 +563,10 @@ const coerceQuery = <Resolve extends boolean | undefined>(
 	}
 
 	if (query instanceof types.IterationRequest) {
-		if (useLegacyRequests) {
-			if (query.resolve === false) {
-				return new types.SearchRequestIndexed({
-					query: query.query,
-					sort: query.sort,
-					fetch: query.fetch,
-					replicate: query.replicate ?? replicate,
-				});
-			}
-			return new types.SearchRequest({
-				query: query.query,
-				sort: query.sort,
-				fetch: query.fetch,
-			});
-		}
 		return query;
 	}
 
 	const queryObject = query as QueryLike;
-
-	if (useLegacyRequests) {
-		if (shouldResolve) {
-			return new types.SearchRequest({
-				query: indexerTypes.toQuery(queryObject.query),
-				sort: indexerTypes.toSort(queryObject.sort),
-			});
-		}
-		return new types.SearchRequestIndexed({
-			query: indexerTypes.toQuery(queryObject.query),
-			sort: indexerTypes.toSort(queryObject.sort),
-			replicate,
-		});
-	}
 
 	return new types.IterationRequest({
 		query: indexerTypes.toQuery(queryObject.query),
@@ -859,7 +828,6 @@ export type OpenOptions<
 		resolver?: number;
 		query?: QueryCacheOptions;
 	};
-	compatibility: 6 | 7 | 8 | 9 | undefined;
 	maybeOpen: (value: T & Program) => Promise<T & Program>;
 	prefetch?: boolean | Partial<PrefetchOptions>;
 	includeIndexed?: boolean; // if true, indexed representations will always be included in the search results
@@ -1099,8 +1067,6 @@ export class DocumentIndex<
 	private _prefetch?: PrefetchOptions | undefined;
 	private includeIndexed: boolean | undefined = undefined;
 	private immutable: boolean = false;
-
-	compatibility: 6 | 7 | 8 | 9 | undefined;
 
 	// Transformation, indexer
 	/* fields: IndexableFields<T, I>; */
@@ -1555,10 +1521,6 @@ export class DocumentIndex<
 		const previousEvents = this.documentEvents;
 		this.documentEvents =
 			properties.documentEvents ?? previousEvents ?? (this.events as any);
-		this.compatibility =
-			properties.compatibility !== undefined
-				? properties.compatibility
-				: this.compatibility;
 
 		let prefectOptions =
 			typeof properties.prefetch === "object"
@@ -3479,11 +3441,7 @@ export class DocumentIndex<
 			coercedOptions?.remote &&
 			typeof coercedOptions.remote !== "boolean" &&
 			coercedOptions.remote.replicate;
-		if (
-			resolve &&
-			wantsReplication &&
-			(this.compatibility == null || this.compatibility > 8)
-		) {
+		if (resolve && wantsReplication) {
 			// SearchRequest cannot carry entries, so a replicated resolved get would
 			// fetch the value and then fetch the entry again during sync.
 			requestClazz = types.SearchRequestIndexed;
@@ -4502,11 +4460,7 @@ export class DocumentIndex<
 		options?: O,
 	): Promise<ValueTypeFromRequest<Resolve, T, I>[]> {
 		// Set fetch to search size, or max value (default to max u32 (4294967295))
-		const coercedRequest = coerceQuery(
-			queryRequest,
-			options,
-			this.compatibility,
-		);
+		const coercedRequest = coerceQuery(queryRequest, options);
 		coercedRequest.fetch = coercedRequest.fetch ?? 0xffffffff;
 
 		const searchOptions =
@@ -4617,11 +4571,7 @@ export class DocumentIndex<
 			throw new Error("Cannot use resolve=false with SearchRequest"); // TODO make this work
 		}
 
-		let queryRequestCoerced = coerceQuery(
-			queryRequest ?? {},
-			options,
-			this.compatibility,
-		);
+		let queryRequestCoerced = coerceQuery(queryRequest ?? {}, options);
 
 		const self = this;
 		function normalizeUpdatesOption(u?: UpdateOptions<T, I, Resolve>): {
@@ -4760,12 +4710,7 @@ export class DocumentIndex<
 			!(queryRequestCoerced instanceof types.IterationRequest) &&
 			pushUpdates
 		) {
-			// Push streaming only works on IterationRequest; reject legacy compat and upgrade other callers.
-			if (this.compatibility !== undefined) {
-				throw new Error(
-					"updates.push requires IterationRequest support; not available when compatibility is set",
-				);
-			}
+			// Push streaming only works on IterationRequest; upgrade other callers.
 			queryRequestCoerced = new types.IterationRequest({
 				query: queryRequestCoerced.query,
 				sort: queryRequestCoerced.sort,
@@ -4782,11 +4727,7 @@ export class DocumentIndex<
 			options?.resolve !== false
 		) {
 			// Legacy requests can't carry replicate=true; swap to indexed search so replication intent is preserved.
-			if (
-				(queryRequest instanceof types.SearchRequestIndexed === false &&
-					this.compatibility == null) ||
-				(this.compatibility != null && this.compatibility > 8)
-			) {
+			if (queryRequest instanceof types.SearchRequestIndexed === false) {
 				queryRequestCoerced = new types.SearchRequestIndexed({
 					query: queryRequestCoerced.query,
 					fetch: queryRequestCoerced.fetch,

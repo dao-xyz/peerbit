@@ -53,7 +53,6 @@ describe("receive admission replication-info V2 receiver state", () => {
 		requestRetryMs?: number;
 		maxRequestRetryMs?: number;
 		requestMaxAttempts?: number;
-		legacyFallbackDelayMs?: number;
 	}) =>
 		new ReplicationInfoV2ReceiveCoordinator({
 			getSelfKey: () => self,
@@ -74,7 +73,6 @@ describe("receive admission replication-info V2 receiver state", () => {
 			requestRetryMs: options?.requestRetryMs ?? 5,
 			maxRequestRetryMs: options?.maxRequestRetryMs ?? 20,
 			requestMaxAttempts: options?.requestMaxAttempts ?? 7,
-			legacyFallbackDelayMs: options?.legacyFallbackDelayMs ?? 10,
 		});
 
 	const markLocalReady = (requestNotBeforeMs = Date.now()) =>
@@ -168,7 +166,7 @@ describe("receive admission replication-info V2 receiver state", () => {
 		]);
 	});
 
-	it("holds an ACK behind the legacy barrier and releases idempotently", async () => {
+	it("promotes an ACKed advert immediately and keeps the release handle a no-op", async () => {
 		const clock = sinon.useFakeTimers({ now: 1_000 });
 		coordinator = createCoordinator({ requestRetryMs: 5 });
 		const lifecycle = new AbortController();
@@ -183,15 +181,15 @@ describe("receive admission replication-info V2 receiver state", () => {
 		await handle.firstAttempt;
 		const advertisement =
 			coordinator._localCapabilityAdvertisementsByPeer.get(peerHash)!;
+		// B12: there is no legacy barrier — the ACK promotes readiness at once.
 		expect(advertisement.acknowledgedReady).to.exist;
-		expect(advertisement.ready).to.be.false;
-		expect(coordinator._localCapabilityReadyBySession.has(currentSession)).to.be
-			.false;
-		expect(sendRequest.notCalled).to.be.true;
+		expect(advertisement.ready).to.be.true;
+		const ready = coordinator._localCapabilityReadyBySession.get(currentSession);
+		expect(ready).to.exist;
 
+		// The retained handle method is a stable no-op: repeated release calls
+		// neither rotate nor invalidate the promoted grant.
 		handle.releaseLegacyBarrier();
-		const ready =
-			coordinator._localCapabilityReadyBySession.get(currentSession);
 		handle.releaseLegacyBarrier();
 		expect(
 			coordinator._localCapabilityReadyBySession.get(currentSession),
@@ -201,7 +199,7 @@ describe("receive admission replication-info V2 receiver state", () => {
 		expect(sendRequest.calledOnce).to.be.true;
 	});
 
-	it("promotes when the ACK arrives after the legacy barrier release", async () => {
+	it("promotes when a deferred ACK finally settles", async () => {
 		const clock = sinon.useFakeTimers({ now: 1_100 });
 		const pending = pDefer<{
 			receiverTransportSession: bigint;
@@ -218,7 +216,6 @@ describe("receive admission replication-info V2 receiver state", () => {
 			receiveEpoch: currentReceiveEpoch,
 			signal: lifecycle.signal,
 		});
-		handle.releaseLegacyBarrier();
 		expect(coordinator._localCapabilityReadyBySession.has(currentSession)).to.be
 			.false;
 		pending.resolve({
@@ -233,7 +230,7 @@ describe("receive admission replication-info V2 receiver state", () => {
 		expect(sendRequest.calledOnce).to.be.true;
 	});
 
-	it("stops retrying after an ACK while the legacy barrier remains closed", async () => {
+	it("stops retrying once a retried ACK promotes readiness", async () => {
 		const clock = sinon.useFakeTimers({ now: 1_200 });
 		refreshLocalCapability.onFirstCall().rejects(new Error("advert failed"));
 		refreshLocalCapability.onSecondCall().callsFake(async () => ({
@@ -259,16 +256,18 @@ describe("receive admission replication-info V2 receiver state", () => {
 		await clock.tickAsync(5);
 		expect(refreshLocalCapability.callCount).to.equal(2);
 		expect(advertisement.acknowledgedReady).to.exist;
-		expect(advertisement.ready).to.be.false;
-		expect(advertisement.timer).to.be.undefined;
-		await clock.tickAsync(100);
-		expect(refreshLocalCapability.callCount).to.equal(2);
-		expect(sendRequest.notCalled).to.be.true;
-
-		handle.releaseLegacyBarrier();
-		await clock.tickAsync(0);
+		// B12: the retried ACK promotes immediately — no barrier holds it back,
+		// and the bounded capability worker stops retrying once ready.
 		expect(advertisement.ready).to.be.true;
+		expect(advertisement.timer).to.be.undefined;
+		await clock.tickAsync(1);
 		expect(sendRequest.calledOnce).to.be.true;
+		// The capability advert worker never restarts after promotion (the
+		// bounded REQUEST worker may still refresh a stale grant later; that
+		// path is covered by the unpark tests).
+		expect(refreshLocalCapability.callCount).to.equal(2);
+		expect(advertisement.ready).to.be.true;
+		expect(advertisement.timer).to.be.undefined;
 	});
 
 	it("parks one failed worker across a temporary receive gate closure", async () => {
@@ -307,7 +306,7 @@ describe("receive admission replication-info V2 receiver state", () => {
 		expect(advertisement.timer).to.be.undefined;
 	});
 
-	it("keeps independent bounded capability workers and barriers for two peers", async () => {
+	it("keeps independent bounded capability workers for two peers", async () => {
 		const clock = sinon.useFakeTimers({ now: 2_000 });
 		const secondSender = key(3);
 		const sessionByPeer = new Map<string, object>();
@@ -364,16 +363,16 @@ describe("receive admission replication-info V2 receiver state", () => {
 
 		await clock.tickAsync(5);
 		expect([...attemptsByPeer.values()]).to.deep.equal([2, 2]);
+		// B12: each retried ACK promotes its own peer immediately; the workers
+		// stay per-peer bounded and independent.
 		expect(
 			[...coordinator._localCapabilityAdvertisementsByPeer.values()].every(
 				(state) =>
 					state.acknowledgedReady !== undefined &&
-					!state.ready &&
+					state.ready &&
 					state.timer === undefined,
 			),
 		).to.be.true;
-
-		handles[0].releaseLegacyBarrier();
 		expect(
 			coordinator._localCapabilityReadyBySession.has(
 				sessionByPeer.get(peerHash)!,
@@ -382,12 +381,6 @@ describe("receive admission replication-info V2 receiver state", () => {
 		expect(
 			coordinator._localCapabilityReadyBySession.has(
 				sessionByPeer.get(secondSender.hashcode())!,
-			),
-		).to.be.false;
-		handles[1].releaseLegacyBarrier();
-		expect(
-			[...coordinator._localCapabilityAdvertisementsByPeer.values()].every(
-				(state) => state.ready,
 			),
 		).to.be.true;
 	});
@@ -630,8 +623,13 @@ describe("receive admission replication-info V2 receiver state", () => {
 			.false;
 	});
 
-	it("clears an ACKed advert when transport rotates before barrier release", async () => {
+	it("clears an advert when transport rotates before its ACK settles", async () => {
 		let localTransportSession = receiverTransportSession;
+		const pendingAck = pDefer<{
+			receiverTransportSession: bigint;
+			requestNotBeforeMs: number;
+		}>();
+		refreshLocalCapability.callsFake(() => pendingAck.promise);
 		coordinator = new ReplicationInfoV2ReceiveCoordinator({
 			getSelfKey: () => self,
 			getReceiverTransportSession: () => localTransportSession,
@@ -654,13 +652,19 @@ describe("receive admission replication-info V2 receiver state", () => {
 			receiveEpoch: currentReceiveEpoch,
 			signal: lifecycle.signal,
 		});
-		await handle.firstAttempt;
 		const stale =
 			coordinator._localCapabilityAdvertisementsByPeer.get(peerHash)!;
-		expect(stale.acknowledgedReady).to.exist;
 
+		// The local transport rotates while the ACK is still in flight: the
+		// settled ACK must not promote a grant bound to the rotated-away
+		// transport, and the stale advert clears instead of retrying.
 		localTransportSession++;
-		handle.releaseLegacyBarrier();
+		pendingAck.resolve({
+			receiverTransportSession,
+			requestNotBeforeMs: Date.now(),
+		});
+		await handle.firstAttempt;
+		expect(stale.acknowledgedReady).to.be.undefined;
 		expect(stale.controller.signal.aborted).to.be.true;
 		expect(coordinator._localCapabilityAdvertisementsByPeer.size).to.equal(0);
 		expect(coordinator._localCapabilityReadyBySession.has(currentSession)).to.be
@@ -669,7 +673,7 @@ describe("receive admission replication-info V2 receiver state", () => {
 			.be.false;
 	});
 
-	it("recovers before remote capability without bypassing the opening barrier", async () => {
+	it("recovers before remote capability and promotes on the recovery ACK", async () => {
 		const clock = sinon.useFakeTimers({ now: 5_100 });
 		refreshLocalCapability.onFirstCall().rejects(new Error("advert failed"));
 		refreshLocalCapability.onSecondCall().callsFake(async () => ({
@@ -703,6 +707,7 @@ describe("receive admission replication-info V2 receiver state", () => {
 		expect(replacement).not.to.equal(openingAdvertisement);
 		expect(replacement.context).to.equal(openingAdvertisement.context);
 		expect(replacement.receiveEpoch).to.equal(currentReceiveEpoch);
+		// The receive gate is closed: no ACK can land, so no promotion yet.
 		expect(replacement.ready).to.be.false;
 		expect(refreshLocalCapability.calledOnce).to.be.true;
 
@@ -710,13 +715,9 @@ describe("receive admission replication-info V2 receiver state", () => {
 		await clock.tickAsync(5);
 		expect(refreshLocalCapability.callCount).to.equal(2);
 		expect(replacement.acknowledgedReady).to.exist;
-		expect(replacement.ready).to.be.false;
-		expect(observeSender()).to.be.true;
-		expect(coordinator._receiveStates.get(peerHash)?.receiverBinding).to.be
-			.undefined;
-
-		openingHandle.releaseLegacyBarrier();
+		// B12: the recovery ACK promotes immediately once the gate reopens.
 		expect(replacement.ready).to.be.true;
+		expect(observeSender()).to.be.true;
 		expect(coordinator._receiveStates.get(peerHash)?.receiverBinding).to.exist;
 		await clock.tickAsync(1);
 		expect(sendRequest.calledOnce).to.be.true;

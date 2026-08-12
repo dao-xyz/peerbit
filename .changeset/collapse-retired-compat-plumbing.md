@@ -1,0 +1,5 @@
+---
+"@peerbit/shared-log": major
+---
+
+Collapse the retired compatibility plumbing (B12 stage 5, final cleanup): the always-`undefined` residual `compatibility` getter on `SharedLog` is deleted (the open option itself was removed and rejects with `CompatibilityModeRetiredError` since the B12 major), together with the permanently-false internal compat gates, the compatibility-coupled domain/synchronizer defaulting arms (defaults are now unconditionally u64 + RatelessIBLT; `ReplicationDomainTime`, `createReplicationDomainHash("u32")` and explicit `syncronizer: SimpleSyncronizer` remain first-class options), the caller-free legacy-fallback sidecar in the V2 receive coordinator, the two-phase legacy capability barrier (adverts now promote on ACK; the advertisement handle keeps `releaseLegacyBarrier()` as a no-op), the deprecated `getRoleFromReplicationSegments` helper and the announcement-session rotation shell. Wire tombstones stay registered and exported; fingerprint canonicalization still constructs the legacy canonical forms locally (byte-stable, never sent).
