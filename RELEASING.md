@@ -224,32 +224,33 @@ workflow:
 - **rc** — builds and runs `pnpm run release:rc` (`aegir release-rc`) to
   publish prerelease versions.
 
-## Temporary image-size audit exception
+## Workspace-only image-size audit ignores
 
-The release security gate temporarily ignores only CVE-2025-71330 and
-CVE-2025-71329 in its two root pnpm audits. Neither advisory has a patched npm
-release yet. The committed pnpm graph is allowed only for this exact
-transitive chain:
+The release security gate's two root pnpm audits ignore exactly
+CVE-2025-71330 and CVE-2025-71329, the unpatched `image-size` advisories.
+These are narrow, documented, non-expiring ignores that exist only because
+the committed workspace `pnpm-lock.yaml` resolves with `autoInstallPeers`,
+which materializes react-native-webrtc's `react-native >=0.60.0` peer and its
+`react-native -> @react-native/community-cli-plugin -> metro -> image-size`
+subtree inside the development workspace. That subtree is dead weight for
+every published package: react-native-webrtc reaches the workspace only as a
+dependency of `@libp2p/webrtc`, whose Node implementation uses
+node-datachannel, and no published Peerbit package imports react-native or
+metro.
 
-`@libp2p/webrtc@6.0.15 -> react-native-webrtc@124.0.7 -> react-native@0.82.1 -> @react-native/community-cli-plugin@0.82.1 -> metro@0.83.7 -> image-size@1.2.1`
+The published closure is proven clean without any ignore. The packed-consumer
+smoke (`scripts/test-published-security-smoke.mjs`) installs every publishable
+package as an exact local tarball with `--legacy-peer-deps`, so npm never
+auto-installs the react-native peer subtree; it then asserts that
+react-native, metro, metro-config, metro-transform-worker, image-size, and
+every `@react-native/*` package are absent from the consumer lockfile and
+`node_modules`, and requires a strict zero-finding `npm audit --omit=dev`.
 
-The clean packed npm consumer currently resolves the declared dependency
-range to the independently pinned chain:
-
-`@libp2p/webrtc@6.0.29 -> react-native-webrtc@124.0.8 -> react-native@0.86.2 -> @react-native/community-cli-plugin@0.86.2 -> metro@0.84.4 -> image-size@1.2.1`
-
-Its three reviewed published introducers are pinned independently as well.
-
-Before either root audit runs, the gate validates that exact committed pnpm
-graph. The packed-consumer npm audit independently accepts only its exact npm
-audit v2 closure of seven vulnerability nodes and the two `image-size`
-advisory leaves. Zero audit findings always pass.
-
-The exception expires hard at **2026-08-22T00:00:00Z**. At or after that
-instant, the root graph contract fails before the audits and forces removal of
-the exception. Once an upstream patched path is available, update the
-dependency graph and remove the validator, both pnpm `--ignore` pairs, their
-contract tests, and this section together.
+If either root pnpm audit reports anything beyond these two advisories, the
+gate fails closed. Remove both `--ignore` pairs and this section together once
+the workspace lockfile no longer resolves the subtree — for example after
+`image-size` ships a patched release or an upstream `@libp2p/webrtc` release
+drops its react-native-webrtc dependency.
 
 ## Caveat: "no changeset" does not mean "no publish"
 

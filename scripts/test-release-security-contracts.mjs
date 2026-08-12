@@ -5,10 +5,6 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { validateChangesetGuardWorkflow } from "./ci/check-changeset-required.mjs";
 import {
-	IMAGE_SIZE_EXCEPTION_CVES,
-	IMAGE_SIZE_EXCEPTION_EXPIRES_AT,
-} from "./image-size-advisory-exception.mjs";
-import {
 	packageDirectories,
 	validatePublishedSecurityCoverage,
 } from "./published-security-coverage.mjs";
@@ -66,39 +62,30 @@ assert.equal(
 	viteNodeEngine,
 	"@peerbit/vite must declare the Node.js floor imposed by Vite 7",
 );
-assert.deepEqual(
-	IMAGE_SIZE_EXCEPTION_CVES,
-	["CVE-2025-71330", "CVE-2025-71329"],
-	"the temporary audit exception must name only the two image-size CVEs",
-);
-assert.equal(
-	IMAGE_SIZE_EXCEPTION_EXPIRES_AT,
-	"2026-08-22T00:00:00Z",
-	"the temporary image-size exception must retain its hard UTC expiry",
-);
 for (const marker of [
 	"CVE-2025-71330",
 	"CVE-2025-71329",
-	"2026-08-22T00:00:00Z",
-	"@libp2p/webrtc@6.0.15 -> react-native-webrtc@124.0.7",
-	"@libp2p/webrtc@6.0.29 -> react-native-webrtc@124.0.8 -> react-native@0.86.2",
+	"autoInstallPeers",
+	"--legacy-peer-deps",
+	"node-datachannel",
+	"strict zero-finding `npm audit --omit=dev`",
 ]) {
 	assert(
 		releasingGuide.includes(marker),
-		"RELEASING.md must document the temporary image-size contract marker " +
+		"RELEASING.md must document the workspace-only image-size ignore marker " +
 			marker,
 	);
 }
 
 assert.equal(
 	scripts["release:security-gate"],
-	"pnpm run test:release-security-contracts && pnpm run test:security-dependencies && pnpm run test:security-image-size-exception && pnpm run test:security-published-closure && pnpm run test:security-published && pnpm dlx pnpm@11.13.0 with current audit --prod --ignore CVE-2025-71330 --ignore CVE-2025-71329 && pnpm dlx pnpm@11.13.0 with current audit --ignore CVE-2025-71330 --ignore CVE-2025-71329",
-	"the shared release gate must fail closed on its contract tests, exact temporary advisory graph, dependency probe, focused publication-closure proof, full published-package smoke, and both root audits",
+	"pnpm run test:release-security-contracts && pnpm run test:security-dependencies && pnpm run test:security-published-closure && pnpm run test:security-published && pnpm dlx pnpm@11.13.0 with current audit --prod --ignore CVE-2025-71330 --ignore CVE-2025-71329 && pnpm dlx pnpm@11.13.0 with current audit --ignore CVE-2025-71330 --ignore CVE-2025-71329",
+	"the shared release gate must fail closed on its contract tests, dependency probe, focused publication-closure proof, full published-package smoke, and both workspace root audits, whose only ignores are the two documented workspace-only image-size CVEs",
 );
 assert.equal(
 	scripts["test:security-image-size-exception"],
-	"node --test scripts/image-size-advisory-exception.test.mjs && node scripts/test-image-size-root-graph.mjs",
-	"the root audits may ignore the image-size CVEs only after mutation tests and the committed dependency graph contract",
+	undefined,
+	"the retired image-size audit exception must not return as a package script",
 );
 assert.doesNotMatch(
 	scripts["release:security-gate"],
@@ -549,6 +536,38 @@ assert.match(
 	publishedSecuritySmoke,
 	/NPM_CONFIG_ENGINE_STRICT: "true"/,
 	"the clean published-package install must reject unsupported Node engines",
+);
+assert.match(
+	publishedSecuritySmoke,
+	/"install",\n\t{3}"--legacy-peer-deps",/,
+	"the audited consumer install must never auto-install npm peer dependencies",
+);
+for (const forbiddenPackage of [
+	"react-native",
+	"metro",
+	"metro-config",
+	"metro-transform-worker",
+	"image-size",
+]) {
+	assert(
+		publishedSecuritySmoke.includes(`\t\t"${forbiddenPackage}",`),
+		"the audited consumer must assert the absence of " + forbiddenPackage,
+	);
+}
+assert.match(
+	publishedSecuritySmoke,
+	/packageName\.startsWith\("@react-native\/"\)/,
+	"the audited consumer must assert the absence of every @react-native/* package",
+);
+assert.match(
+	publishedSecuritySmoke,
+	/\["audit", "--omit=dev", "--json"\], \{\n\t\tcwd: consumerDirectory,\n\t\tstatus: 0,/,
+	"the published consumer npm audit must demand a zero-finding exit status",
+);
+assert.doesNotMatch(
+	publishedSecuritySmoke,
+	/validateImageSizeAuditException|image-size-advisory-exception|exception/i,
+	"the published consumer audit must not carry an audit exception branch",
 );
 for (const packagePath of [
 	"packages/clients/peerbit/package.json",

@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { validateImageSizeAuditException } from "./image-size-advisory-exception.mjs";
 import {
 	discoverPublishableWorkspacePackages,
 	runtimeDependencyFields,
@@ -264,12 +264,27 @@ try {
 		cryptoSmokeFixture,
 	);
 
-	run("npm", ["install", "--no-audit", "--no-fund", "--loglevel=error"], {
-		cwd: consumerDirectory,
-		env: { NPM_CONFIG_ENGINE_STRICT: "true" },
-		status: 0,
-		timeout: 900_000,
-	});
+	// --legacy-peer-deps keeps npm from auto-installing peer dependencies, so
+	// react-native-webrtc's "react-native >=0.60.0" peer (and its metro /
+	// image-size subtree) never enters the audited published closure. The Node
+	// implementation of @libp2p/webrtc uses node-datachannel; the subtree is
+	// react-native-only dead weight here.
+	run(
+		"npm",
+		[
+			"install",
+			"--legacy-peer-deps",
+			"--no-audit",
+			"--no-fund",
+			"--loglevel=error",
+		],
+		{
+			cwd: consumerDirectory,
+			env: { NPM_CONFIG_ENGINE_STRICT: "true" },
+			status: 0,
+			timeout: 900_000,
+		},
+	);
 	const consumerManifest = JSON.parse(
 		await readFile(join(consumerDirectory, "package.json"), "utf8"),
 	);
@@ -280,31 +295,60 @@ try {
 	const lockfile = JSON.parse(
 		await readFile(join(consumerDirectory, "package-lock.json"), "utf8"),
 	);
+	const forbiddenPeerSubtreePackages = [
+		"react-native",
+		"metro",
+		"metro-config",
+		"metro-transform-worker",
+		"image-size",
+	];
+	const isForbiddenPackageName = (packageName) =>
+		forbiddenPeerSubtreePackages.includes(packageName) ||
+		packageName.startsWith("@react-native/");
+	const forbiddenLockPaths = Object.keys(lockfile.packages).filter(
+		(packagePath) =>
+			packagePath !== "" &&
+			isForbiddenPackageName(packagePath.split("node_modules/").pop()),
+	);
+	assert.deepEqual(
+		forbiddenLockPaths,
+		[],
+		"the react-native peer subtree leaked into the audited consumer lock: " +
+			forbiddenLockPaths.join(", "),
+	);
+	const forbiddenInstalledPaths = [
+		...forbiddenPeerSubtreePackages,
+		"@react-native",
+	]
+		.map((packageName) => join(consumerDirectory, "node_modules", packageName))
+		.filter((packagePath) => existsSync(packagePath));
+	assert.deepEqual(
+		forbiddenInstalledPaths,
+		[],
+		"the react-native peer subtree leaked into the audited consumer node_modules: " +
+			forbiddenInstalledPaths.join(", "),
+	);
 	const audit = run("npm", ["audit", "--omit=dev", "--json"], {
 		cwd: consumerDirectory,
+		status: 0,
 		timeout: 300_000,
 	});
 	const auditReport = JSON.parse(audit.stdout);
-	const auditValidation = validateImageSizeAuditException({
-		auditReport,
-		packageLock: lockfile,
-	});
-	if (auditValidation.status === "clean") {
-		assert.equal(audit.status, 0, audit.stderr || audit.stdout);
-	} else {
-		assert.equal(
-			audit.status,
-			1,
-			"npm audit must report findings when the temporary exception is used",
-		);
-		console.warn(
-			"Published consumer audit accepted only " +
-				auditValidation.cves.join(" and ") +
-				" through the exact image-size dependency spine; this temporary exception expires at " +
-				auditValidation.expiresAt +
-				".",
-		);
-	}
+	assert.equal(
+		auditReport.auditReportVersion,
+		2,
+		"the published consumer audit must be an npm audit report v2",
+	);
+	assert.deepEqual(
+		auditReport.vulnerabilities,
+		{},
+		"the audited published closure must contain zero vulnerability nodes",
+	);
+	assert.equal(
+		auditReport.metadata?.vulnerabilities?.total,
+		0,
+		"the audited published closure must report a zero vulnerability total",
+	);
 	assert.deepEqual(lockfile.packages[""].dependencies, dependencies);
 	const lockfilePackages = Object.entries(lockfile.packages);
 	const installedViteEntries = lockfilePackages.filter(([packagePath]) =>
@@ -386,21 +430,13 @@ try {
 		},
 	);
 	assert.match(node18.stdout, /Node 18\./);
-	const auditSummary =
-		auditValidation.status === "clean"
-			? "zero production audit findings"
-			: "only the temporary " +
-				auditValidation.cves.join(" and ") +
-				" image-size exception, expiring " +
-				auditValidation.expiresAt;
 	console.log(
 		"Published-package consumer passed with " +
 			packageDirectories.length +
 			" security roots and all " +
 			publishablePackages.length +
 			" publishable workspace packages as exact local tarballs, " +
-			auditSummary +
-			", esbuild " +
+			"a peer-free install with zero production audit findings, esbuild " +
 			esbuildVersions.join(", ") +
 			", the isolated nested crypto install, and the Node 18 crypto wire contract.",
 	);
