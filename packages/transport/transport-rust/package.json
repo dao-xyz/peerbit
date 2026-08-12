@@ -1,0 +1,86 @@
+{
+	"name": "@peerbit/transport-rust",
+	"version": "0.0.0",
+	"description": "Native rust-libp2p node transport for Peerbit: the connection layer (tcp/ws/noise/yamux/identify/relay-client) that mounts the frozen /peerbit/* protocols over the peerbit_wire codec. Opt-in, additive; the default node path stays js-libp2p.",
+	"sideEffects": false,
+	"type": "module",
+	"types": "./dist/src/index.d.ts",
+	"typesVersions": {
+		"*": {
+			"*": [
+				"*",
+				"dist/*",
+				"dist/src/*",
+				"dist/src/*/index"
+			],
+			"src/*": [
+				"*",
+				"dist/*",
+				"dist/src/*",
+				"dist/src/*/index"
+			]
+		}
+	},
+	"files": [
+		"src",
+		"dist",
+		"!dist/test",
+		"!**/*.tsbuildinfo"
+	],
+	"exports": {
+		".": {
+			"types": "./dist/src/index.d.ts",
+			"import": "./dist/src/index.js"
+		}
+	},
+	"eslintConfig": {
+		"extends": "peerbit",
+		"parserOptions": {
+			"project": true,
+			"sourceType": "module"
+		},
+		"ignorePatterns": [
+			"*.d.ts"
+		]
+	},
+	"publishConfig": {
+		"access": "public"
+	},
+	"scripts": {
+		"clean": "aegir clean && cargo clean",
+		"build": "aegir build --no-bundle",
+		"cargo:test": "cargo test",
+		"cargo:build": "cargo build --bin interop_dial_js",
+		"test": "",
+		"lint": "cargo fmt --check && aegir lint"
+	},
+	"devDependencies": {
+		"@peerbit/crypto": "workspace:*",
+		"@peerbit/network-rust": "workspace:*",
+		"@peerbit/stream-interface": "workspace:*",
+		"uint8arraylist": "^2.4.8"
+	},
+	"engines": {
+		"node": ">=16.15.1"
+	},
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/dao-xyz/peerbit.git",
+		"directory": "packages/transport/transport-rust"
+	},
+	"keywords": [
+		"peerbit",
+		"libp2p",
+		"rust",
+		"transport"
+	],
+	"author": "dao.xyz",
+	"license": "MIT",
+	"bugs": {
+		"url": "https://github.com/dao-xyz/peerbit/issues"
+	},
+	"homepage": "https://github.com/dao-xyz/peerbit#readme",
+	"localMaintainers": [
+		"dao.xyz"
+	]
+}

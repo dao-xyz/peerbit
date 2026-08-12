@@ -1,0 +1,14 @@
+{
+	"extends": "aegir/src/config/tsconfig.aegir.json",
+	"compilerOptions": {
+		"outDir": "../dist/benchmark",
+		"rootDir": ".",
+		"checkJs": false,
+		"noEmitOnError": false,
+		"declaration": false,
+		"declarationMap": false,
+		"composite": false,
+		"incremental": false
+	},
+	"include": ["."]
+}
