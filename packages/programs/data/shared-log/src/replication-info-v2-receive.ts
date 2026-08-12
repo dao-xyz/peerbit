@@ -1090,10 +1090,6 @@ export class ReplicationInfoV2ReceiveCoordinator {
 		}
 	}
 
-	isLegacyCutover(peerSession: object | null): boolean {
-		return peerSession !== null && this._cutoverPeerSessions.has(peerSession);
-	}
-
 	prepare(
 		message: ReplicationInfoV2Message,
 		properties: {

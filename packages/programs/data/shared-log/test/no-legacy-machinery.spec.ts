@@ -1,4 +1,4 @@
-import { readFileSync } from "fs";
+import { readFileSync, readdirSync } from "fs";
 import path from "path";
 import { TestSession } from "@peerbit/test-utils";
 import { expect } from "chai";
@@ -11,6 +11,7 @@ import {
 	ResponseRoleMessage,
 	StoppedReplicating,
 } from "../src/replication.js";
+import { Observer } from "../src/role.js";
 import { EventStore } from "./utils/stores/index.js";
 
 // B12 stage 3: the legacy outbound announcement machinery (primary broadcast
@@ -20,6 +21,10 @@ import { EventStore } from "./utils/stores/index.js";
 // cannot be constructed or scheduled at all, and that no legacy frame can
 // egress at the reachable seams (strengthening the migration-8-9 default
 // no-legacy-egress pin at the subscription-change seam).
+// B12 stage 4 extends the ratchet inbound: the legacy dispatch arms, apply
+// handlers and the ordering watermark are deleted, so a received legacy
+// frame must die at the unconditional B1 drop with zero side effects, and
+// no inbound apply-path symbol may reappear in src.
 describe("no legacy machinery", () => {
 	let session: TestSession | undefined;
 
@@ -120,24 +125,117 @@ describe("no legacy machinery", () => {
 		expect(sent2.filter(isLegacyFrame)).to.have.length(0);
 	});
 
+	it("applies nothing when a default-mode node receives each legacy frame", async () => {
+		// Runtime inbound ratchet: the five legacy replication-info frames die
+		// at the unconditional B1 drop, ahead of every side effect. The sender
+		// gets a live open session first, so the no-effect outcome cannot be
+		// explained by missing membership; every observation below is
+		// symbol-free (the deleted watermark, handlers and cutover probe are
+		// additionally pinned absent by name).
+		session = await TestSession.disconnected(2);
+		const db = await session.peers[0].open(new EventStore<string, any>(), {
+			args: { replicate: false, timeUntilRoleMaturity: 0 },
+		});
+		const log = db.log as any;
+		const remote = session.peers[1].identity.publicKey;
+		const remoteHash = remote.hashcode();
+		const peerSession = log._peerSessions.rotate(remoteHash, "opening");
+		log._peerSessions.unblockReplicationInfo(remoteHash);
+		log._peerSessions.markOpen(remoteHash, peerSession);
+
+		const synchronizer = sinon
+			.stub(log.syncronizer, "onMessage")
+			.resolves(false);
+		const activity = sinon.spy(log._liveness, "markReplicatorActivity");
+		const add = sinon.spy(log, "addReplicationRange");
+		const remove = sinon.spy(log, "removeReplicationRanges");
+		const send = sinon.spy(log.rpc, "send");
+		const acquireLease = sinon.spy(log, "acquirePeerReceiveLease");
+		const messages = [
+			new RequestReplicationInfoMessage(),
+			new ResponseRoleMessage({ role: new Observer() }),
+			new AllReplicatingSegmentsMessage({ segments: [] }),
+			new AddedReplicationSegmentMessage({ segments: [] }),
+			new StoppedReplicating({ segmentIds: [] }),
+		];
+		for (const [index, message] of messages.entries()) {
+			await db.log.onMessage(message, {
+				from: remote,
+				message: { header: { session: 1n, timestamp: BigInt(index + 1) } },
+			} as any);
+		}
+		// No lease, no synchronizer work, no liveness, no mutation, no reply,
+		// no apply-lane row and no per-peer V2 receive state: nothing applied.
+		expect(acquireLease.notCalled).to.be.true;
+		expect(synchronizer.notCalled).to.be.true;
+		expect(activity.notCalled).to.be.true;
+		expect(add.notCalled).to.be.true;
+		expect(remove.notCalled).to.be.true;
+		expect(send.notCalled).to.be.true;
+		expect(log._replicationInfoApplyQueueByPeer.has(remoteHash)).to.be.false;
+		expect(log._v2Receive._receiveStates.has(remoteHash)).to.be.false;
+		expect(
+			await db.log.replicationIndex.count({ query: { hash: remoteHash } }),
+		).to.equal(0);
+		// The session installed above is untouched — the drop happened before
+		// any session, epoch or blocked-set transition.
+		expect(log._peerSessions.current(remoteHash)).to.equal(peerSession);
+		// The deleted inbound machinery cannot silently return: the watermark
+		// field, the apply handlers and the cutover probe stay deleted.
+		for (const member of [
+			"latestReplicationInfoMessage",
+			"handleReplicationInfoAnnouncement",
+			"handleStoppedReplicating",
+			"handleRequestReplicationInfo",
+		]) {
+			expect(log[member], member).to.equal(undefined);
+		}
+		expect((log._v2Receive as any).isLegacyCutover).to.equal(undefined);
+	});
+
 	it("has zero legacy-frame construction sites on the outbound source paths", () => {
 		// Source-level outbound ratchet: constructing a legacy announcement
-		// class is a prerequisite for sending one. After B12 stage 3 the only
-		// sanctioned constructions live in replication.ts (the ResponseRole
-		// tombstone's decode conversion) and replication-info-v2-receive.ts
-		// (byte-stable fingerprint canonicalization) — both inbound-only and
-		// scheduled for stage 4. Everything the sender stack can reach must
-		// stay clean in every open mode.
+		// class is a prerequisite for sending one. After B12 stage 4 the only
+		// sanctioned constructions in all of src live in
+		// replication-info-v2-receive.ts (byte-stable fingerprint
+		// canonicalization, whitelisted by decision Q4) — that single file is
+		// the whitelist; every other source file must stay clean in every
+		// open mode, including replication.ts now that the ResponseRole
+		// tombstone's decode conversion is deleted.
 		const forbidden =
 			/new\s+(RequestReplicationInfoMessage|ResponseRoleMessage|AllReplicatingSegmentsMessage|AddedReplicationSegmentMessage|StoppedReplicating)\s*\(/g;
-		for (const file of [
-			"src/index.ts",
-			"src/replication-announcement.ts",
-			"src/replication-info-v2-send.ts",
-		]) {
+		const whitelist = new Set(["src/replication-info-v2-receive.ts"]);
+		for (const file of listSourceFiles()) {
+			if (whitelist.has(file)) {
+				continue;
+			}
+			const source = readFileSync(path.join(process.cwd(), file), "utf8");
+			const matches = [...source.matchAll(forbidden)].map((m) => m[0]);
+			expect(matches, file).to.deep.equal([]);
+		}
+	});
+
+	it("has zero legacy inbound apply-path symbols in src", () => {
+		// Source-level inbound ratchet: the legacy inbound dispatch arms, the
+		// All/Added/Stopped apply handlers, the request handler, the ordering
+		// watermark, the tombstone decode conversion and the legacy-cutover
+		// probe are deleted (B12 stage 4). No source file may reference their
+		// names again — the retained legacy remnants in
+		// replication-info-v2-receive.ts (the local legacy union, fingerprint
+		// canonicalization and the noteLegacyAnnouncement sidecar) do not use
+		// these names, so this leg needs no whitelist.
+		const forbidden =
+			/latestReplicationInfoMessage|handleReplicationInfoAnnouncement|handleStoppedReplicating|handleRequestReplicationInfo|toReplicationInfoMessage|isLegacyCutover/g;
+		for (const file of listSourceFiles()) {
 			const source = readFileSync(path.join(process.cwd(), file), "utf8");
 			const matches = [...source.matchAll(forbidden)].map((m) => m[0]);
 			expect(matches, file).to.deep.equal([]);
 		}
 	});
 });
+
+const listSourceFiles = (): string[] =>
+	readdirSync(path.join(process.cwd(), "src"), { recursive: true })
+		.map((entry) => String(entry))
+		.filter((entry) => entry.endsWith(".ts"))
+		.map((entry) => path.join("src", entry));
