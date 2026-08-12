@@ -1,5 +1,12 @@
 # Changelog
 
+## 15.0.1
+
+### Patch Changes
+
+- Updated dependencies [[`37ccb2b`](https://github.com/dao-xyz/peerbit/commit/37ccb2b0ac646874c2f63e8e28fe8fef0c1e13cf)]:
+  - @peerbit/shared-log@16.0.1
+
 ## 15.0.0
 
 ### Major Changes

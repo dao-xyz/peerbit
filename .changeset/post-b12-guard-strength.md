@@ -1,9 +1,0 @@
----
-"@peerbit/shared-log": patch
----
-
-Post-B12 residue cleanup. Internal only — no runtime behavior changes and nothing removed from the package's public entry.
-
-Retires the last three legacy-named symbols: `revokePeerCapability`'s `reopenLegacy` parameter (it defaulted to true, had no else-arm and no caller ever overrode it; the body it guarded now runs unconditionally), the no-op `releaseLegacyBarrier` handle method left behind by the two-phase capability barrier, and `allowLegacyOrderedReplacementPairs`, which is renamed to `allowOrderedReplacementPairs` because the relaxation is not legacy machinery but a live rolling-upgrade allowance on the V2 Added path. All three live on private methods or on types outside the `.` export map, so the emitted public `.d.ts` is unchanged.
-
-Also deletes write-only state with no readers anywhere in the repo or the native bindings: `SharedLog._replicatorsReconciled` (declaration, three writes, and the after-open guard whose entire body was one of those writes) and `PIDReplicationController.prevMemoryUsage` / `prevTotalFactor`. The PID fields differ from the rest of this change in that they ARE visible in the emitted `.d.ts` — `PIDReplicationController` is reachable through a public field — so a type-level consumer reading them would break. Patch is still the honest level for fields that were never written to be read, but the visibility is called out rather than glossed. Four inert orphan bindings in the deprecated `role.ts` (the free `overlaps` helper, which is unrelated to the `ReplicationRangeIndexable` method of the same name, and the three `*_TYPE_VARIANT` byte constants) go with them; `@variant` registration depends on the decorated classes and on `replication.ts` importing the module, not on these bindings, and `role.js` is not re-exported from the package entry.
