@@ -15824,7 +15824,7 @@ export class SharedLog<
 		const peerSession = this._peerSessions.current(peerHash);
 		const preserveV2Session =
 			peerSession?.phase === "open" && peerSession.isActive();
-		if (this.legacyReplicationInfoEnabled || !preserveV2Session) {
+		if (!preserveV2Session) {
 			this.cancelReplicationInfoRequests(peerHash);
 		}
 		this._liveness._replicatorLivenessFailures.delete(peerHash);
@@ -16986,19 +16986,7 @@ export class SharedLog<
 					}
 				}, 2_000);
 				try {
-					const reset = new AllReplicatingSegmentsMessage({ segments: [] });
-					const resets = [this._v2Send.sendTerminalReset(abort.signal)];
-					if (this.legacyReplicationInfoEnabled) {
-						resets.push(
-							this.rpc
-								.send(reset, {
-									priority: CONVERGENCE_MESSAGE_PRIORITY,
-									signal: abort.signal,
-								})
-								.catch(() => {}),
-						);
-					}
-					await Promise.all(resets);
+					await this._v2Send.sendTerminalReset(abort.signal);
 				} finally {
 					clearTimeout(abortTimer);
 				}
@@ -17118,19 +17106,7 @@ export class SharedLog<
 					}
 				}, 2_000);
 				try {
-					const reset = new AllReplicatingSegmentsMessage({ segments: [] });
-					const resets = [this._v2Send.sendTerminalReset(abort.signal)];
-					if (this.legacyReplicationInfoEnabled) {
-						resets.push(
-							this.rpc
-								.send(reset, {
-									priority: CONVERGENCE_MESSAGE_PRIORITY,
-									signal: abort.signal,
-								})
-								.catch(() => {}),
-						);
-					}
-					await Promise.all(resets);
+					await this._v2Send.sendTerminalReset(abort.signal);
 				} finally {
 					clearTimeout(abortTimer);
 				}
@@ -19866,12 +19842,6 @@ export class SharedLog<
 				// A committed V2 announcement is applied progress: the peer answers,
 				// so recovery re-solicitation may restart from the base interval.
 				this.resetReplicationInfoV2RecoveryEscalation(fromHash);
-				if (
-					msg instanceof FullReplicationInfoV2Message &&
-					this.legacyReplicationInfoEnabled
-				) {
-					this.cancelReplicationInfoRequests(fromHash);
-				}
 			});
 		} finally {
 			this._v2Receive.release(admission);
@@ -20573,34 +20543,20 @@ export class SharedLog<
 
 			requestAttempts++;
 
-			if (this.legacyReplicationInfoEnabled) {
-				this.rpc
-					.send(new RequestReplicationInfoMessage(), {
-						mode: new AcknowledgeDelivery({ redundancy: 1, to: [key] }),
-					})
-					.catch((e) => {
-						// Best-effort: missing peers / unopened RPC should not fail the wait logic.
-						if (isNotStartedError(e as Error)) {
-							return;
-						}
-						logger.error(e?.toString?.() ?? String(e));
-					});
-			} else {
-				const peerHash = key.hashcode();
-				const peerSession = this._peerSessions.current(peerHash);
-				if (peerSession?.phase === "open") {
-					this._v2Receive.resumeParkedRequest({
-						peerHash,
-						peerSession,
-						receiveEpoch: this._peerSessions.receiveEpoch(peerHash),
-					});
-				} else if (peerSession === null || peerSession.phase === "departing") {
-					// A peer can be known to routing before its SharedLog topic
-					// subscription has been observed. Legacy requests used to bootstrap
-					// that case directly; V2 needs an authoritative Subscribe snapshot
-					// before it can create a fenced PeerSession and request a Full.
-					requestSubscriberSnapshot();
-				}
+			const peerHash = key.hashcode();
+			const peerSession = this._peerSessions.current(peerHash);
+			if (peerSession?.phase === "open") {
+				this._v2Receive.resumeParkedRequest({
+					peerHash,
+					peerSession,
+					receiveEpoch: this._peerSessions.receiveEpoch(peerHash),
+				});
+			} else if (peerSession === null || peerSession.phase === "departing") {
+				// A peer can be known to routing before its SharedLog topic
+				// subscription has been observed. Legacy requests used to bootstrap
+				// that case directly; V2 needs an authoritative Subscribe snapshot
+				// before it can create a fenced PeerSession and request a Full.
+				requestSubscriberSnapshot();
 			}
 
 			if (requestAttempts < maxRequestAttempts) {
@@ -23461,6 +23417,13 @@ export class SharedLog<
 		tick();
 	}
 
+	/**
+	 * Collapsed B12 shell: the legacy request-polling body (bounded
+	 * RequestReplicationInfoMessage ticks) is deleted; V2 recovery is the
+	 * only scheduler. Retained as a named seam rather than inlined at the
+	 * callers because the liveness monitor wiring and several suites
+	 * stub/spy it by name.
+	 */
 	private scheduleReplicationInfoRequests(
 		peer: PublicSignKey,
 		replicationLifecycleController = this._instanceLifecycle
@@ -23472,75 +23435,10 @@ export class SharedLog<
 		) {
 			return;
 		}
-		if (!this.legacyReplicationInfoEnabled) {
-			this.scheduleReplicationInfoV2Recovery(
-				peer,
-				replicationLifecycleController,
-			);
-			return;
-		}
-		const peerHash = peer.hashcode();
-		const requestStates = this._replicationInfoRequestByPeer;
-		if (requestStates.has(peerHash)) {
-			return;
-		}
-
-		const state: { attempts: number; timer?: ReturnType<typeof setTimeout> } = {
-			attempts: 0,
-		};
-		requestStates.set(peerHash, state);
-		const cancel = () => {
-			if (requestStates.get(peerHash) !== state) {
-				return;
-			}
-			if (state.timer) {
-				clearTimeout(state.timer);
-			}
-			requestStates.delete(peerHash);
-		};
-
-		const intervalMs = Math.max(50, this.waitForReplicatorRequestIntervalMs);
-		const maxAttempts =
-			this.waitForReplicatorRequestMaxAttempts ??
-			Math.max(
-				WAIT_FOR_REPLICATOR_REQUEST_MIN_ATTEMPTS,
-				Math.ceil(this.waitForReplicatorTimeout / intervalMs),
-			);
-
-		const tick = () => {
-			if (!this.isReplicationLifecycleActive(replicationLifecycleController)) {
-				cancel();
-				return;
-			}
-			state.attempts++;
-
-			this.rpc
-				.send(new RequestReplicationInfoMessage(), {
-					mode: new AcknowledgeDelivery({ redundancy: 1, to: [peer] }),
-					signal: replicationLifecycleController.signal,
-				})
-				.catch((e) => {
-					// Best-effort: missing peers / unopened RPC should not fail join flows.
-					if (
-						isNotStartedError(e as Error) ||
-						(replicationLifecycleController.signal.aborted &&
-							e instanceof AbortError)
-					) {
-						return;
-					}
-					logger.error(e?.toString?.() ?? String(e));
-				});
-
-			if (state.attempts >= maxAttempts) {
-				cancel();
-				return;
-			}
-
-			state.timer = setTimeout(tick, intervalMs);
-			state.timer.unref?.();
-		};
-
-		tick();
+		this.scheduleReplicationInfoV2Recovery(
+			peer,
+			replicationLifecycleController,
+		);
 	}
 
 	async handleSubscriptionChange(
