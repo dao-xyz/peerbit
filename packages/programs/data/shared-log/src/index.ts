@@ -2075,21 +2075,12 @@ export class SharedLog<
 	// public key hash to range id to range
 	pendingMaturity!: Map<string, Map<string, PendingMaturityRecord<R>>>; // map of peerId to timeout
 
-	// Stage-4 KEEP-OLD verdict (fence B8, split by role). The watermark's
-	// FENCING role — rejecting late replication-info across unsubscribe and
-	// eviction races — is fully subsumed by the per-peer receive epoch plus
-	// the blocked set and session identity: every unsubscribe-path `now` write
-	// is preceded in the same synchronous block by a blocked-add, so an
-	// admitted handler can never observe one. Its intra-epoch ORDERING role is
-	// NOT subsumed: within one (lifecycle, session, epoch, unblocked) regime
-	// the epoch token is constant across every message from the peer, so only
-	// the two apply-lane timestamp comparisons can drop an older reset
-	// delivered after a newer add (unordered pubsub / retransmits) — an
-	// identity token carries no order. Deletion is blocked until
-	// replication-info messages carry sender-authoritative sequence numbers
-	// (stage-5 schema change); the `receive admission replication-info
-	// ordering watermark` pins fail if the read sites are removed before then.
-	private latestReplicationInfoMessage!: Map<string, bigint>;
+	// The legacy replication-info ordering watermark (fence B8) is deleted:
+	// its FENCING role was subsumed by the per-peer receive epoch, blocked set
+	// and session identity, and its intra-epoch ORDERING role existed only for
+	// the legacy apply lanes. The V2 lane orders by sender-authoritative
+	// sequence numbers, and legacy frames are dropped unconditionally at the
+	// B1 gate before any side effect.
 	// The replication-info blocked set (fence B5) lives on the peer-session
 	// registry: unsubscribed peers whose replication-info is ignored until a
 	// reconnect barrier commits. See PeerSessionRegistry._replicationInfoBlockedPeers.
@@ -3625,7 +3616,6 @@ export class SharedLog<
 		this._admittedPruneRemoves = new Set();
 		this._pendingIHave = new Map();
 		this._pendingIHaveCallbacks = new Set();
-		this.latestReplicationInfoMessage = new Map();
 		this._replicationInfoRequestByPeer = new Map();
 		this._subscriberSnapshotRequestsByPeer = new Map();
 		this._replicationInfoApplyQueueByPeer = new Map();
@@ -14229,7 +14219,6 @@ export class SharedLog<
 		this._admittedPruneRemoves = new Set();
 		this._pendingIHave = new Map();
 		this._pendingIHaveCallbacks = new Set();
-		this.latestReplicationInfoMessage = new Map();
 		this._replicationInfoRequestByPeer = new Map();
 		this._subscriberSnapshotRequestsByPeer = new Map();
 		// Terminal close/drop drains the previous lifecycle before another open can
@@ -15856,11 +15845,8 @@ export class SharedLog<
 
 	private advanceReplicationInfoRecoveryEpoch(peerHash: string) {
 		// Handlers admitted before a successful peer removal must not restore state
-		// when they eventually reach the apply lane. Reset the sender's
-		// ordering watermark with the local epoch so a later arrival can be
-		// accepted without comparing its clock to this receiver's clock.
+		// when they eventually reach the apply lane.
 		const receiveEpoch = this._peerSessions.advanceReceiveEpoch(peerHash);
-		this.latestReplicationInfoMessage.delete(peerHash);
 		const peerSession = this._peerSessions.current(peerHash);
 		if (peerSession?.phase === "open") {
 			this._v2Receive.advanceRecovery({
@@ -16842,7 +16828,6 @@ export class SharedLog<
 		captureSync(() => {
 			this._pendingIHave?.clear();
 			this._pendingIHaveCallbacks?.clear();
-			this.latestReplicationInfoMessage?.clear();
 			this._peerSessions?.clearReceiveEpochsForClose();
 			this._peerSessions?.clearCleanupGatesForClose();
 			this._activeReceiveHandlersByPeer?.clear();
@@ -23266,10 +23251,6 @@ export class SharedLog<
 				) {
 					return;
 				}
-				// The timestamp watermark belongs to the previous subscription epoch.
-				// Sender clocks are not synchronized, so carrying a local unsubscribe
-				// timestamp forward could reject every valid announcement after reconnect.
-				this.latestReplicationInfoMessage.delete(peerHash);
 				this._pendingReplicatorLeaveByPeer.delete(peerHash);
 				const openingCapabilities =
 					this._openingSyncCapabilitiesByPeer.get(peerHash);
@@ -23322,12 +23303,6 @@ export class SharedLog<
 			const disconnectedWarmupSession =
 				this.joinWarmup._warmupSessionsByTarget.get(peerHash) ?? null;
 			this.joinWarmup.cancelJoinWarmupTarget(peerHash);
-
-			const now = BigInt(+new Date());
-			const previous = this.latestReplicationInfoMessage.get(peerHash);
-			if (!previous || previous < now) {
-				this.latestReplicationInfoMessage.set(peerHash, now);
-			}
 
 			let removed = false;
 			try {
@@ -24798,15 +24773,6 @@ export class SharedLog<
 		const subscriptionEpoch = this._peerSessions.rotate(fromHash, "departing");
 		this._peerSessions.blockReplicationInfo(fromHash);
 		this._recentRepairDispatch.delete(fromHash);
-
-		// Keep a per-peer timestamp watermark when we observe an unsubscribe. This
-		// prevents late/out-of-order replication-info messages from re-introducing
-		// stale segments for a peer that has already left the topic.
-		const now = BigInt(+new Date());
-		const prev = this.latestReplicationInfoMessage.get(fromHash);
-		if (!prev || prev < now) {
-			this.latestReplicationInfoMessage.set(fromHash, now);
-		}
 		this.invalidateSharedLogTopicSubscribersCache();
 
 		return this.handleSubscriptionChange(

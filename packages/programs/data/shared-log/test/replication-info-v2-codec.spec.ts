@@ -306,7 +306,7 @@ describe("receive admission replication-info V2 decode-only codec", () => {
 			expect(add.notCalled).to.be.true;
 			expect(remove.notCalled).to.be.true;
 			expect(send.notCalled).to.be.true;
-			expect(log.latestReplicationInfoMessage.has(remoteHash)).to.be.false;
+			expect(log._v2Receive._receiveStates.has(remoteHash)).to.be.false;
 			expect(log._peerSessions.sessions.has(remoteHash)).to.be.false;
 			expect(
 				await db.log.replicationIndex.count({ query: { hash: remoteHash } }),
@@ -467,7 +467,6 @@ describe("receive admission replication-info V2 decode-only codec", () => {
 			expect(acquireLease.notCalled).to.be.true;
 			expect(validateRanges.notCalled).to.be.true;
 			expect(validateStopped.notCalled).to.be.true;
-			expect(log.latestReplicationInfoMessage.has(remoteHash)).to.be.false;
 			expect(
 				await db.log.replicationIndex.count({ query: { hash: remoteHash } }),
 			).to.equal(0);
