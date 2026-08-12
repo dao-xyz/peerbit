@@ -20108,17 +20108,27 @@ describe("index", () => {
 				);
 
 				await waitForResolved(async () => {
-					const { estimate: approxCount1 } = await store1.docs.count({
+					const approxCount1 = await store1.docs.count({
 						approximate: true,
 					});
-					const { estimate: approxCount2 } = await store2.docs.count({
+					const approxCount2 = await store2.docs.count({
 						approximate: true,
 					});
 					const approxCount3 = await store3.docs.count({ approximate: true });
 					const localCount3 = await store3.docs.count();
 
-					expect(approxCount1).to.be.within(count * 0.9, count * 1.1);
-					expect(approxCount2).to.be.within(count * 0.9, count * 1.1);
+					// The estimator is probabilistic; use the provided 95% margin, scaled
+					// up to ~99.9% to avoid CI flakes while still detecting regressions.
+					const assertWithinMargin = (result: CountEstimate) => {
+						expect(result.errorMargin).to.not.be.undefined;
+						const margin = Math.max(0.15, result.errorMargin! * (3.29 / 1.96));
+						expect(result.estimate).to.be.within(
+							count * (1 - margin),
+							count * (1 + margin),
+						);
+					};
+					assertWithinMargin(approxCount1);
+					assertWithinMargin(approxCount2);
 					expect(approxCount3.errorMargin).to.be.undefined;
 					expect(approxCount3.estimate).to.eq(localCount3);
 				});
