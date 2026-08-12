@@ -220,12 +220,16 @@ describe("no legacy machinery", () => {
 		// All/Added/Stopped apply handlers, the request handler, the ordering
 		// watermark, the tombstone decode conversion and the legacy-cutover
 		// probe are deleted (B12 stage 4). No source file may reference their
-		// names again — the retained legacy remnants in
-		// replication-info-v2-receive.ts (the local legacy union, fingerprint
-		// canonicalization and the noteLegacyAnnouncement sidecar) do not use
-		// these names, so this leg needs no whitelist.
+		// names again — the retained fingerprint canonicalization in
+		// replication-info-v2-receive.ts does not use these names, so this leg
+		// needs no whitelist. Stage 5 extends the list with the deleted compat
+		// getters (legacyReplicationInfoEnabled, v8Behaviour), the legacy
+		// fallback sidecar (noteLegacyAnnouncement and every legacyFallback
+		// field/timer) and the two-phase barrier state (legacyBarrierReleased);
+		// the surviving no-op handle method releaseLegacyBarrier is the ONLY
+		// sanctioned legacy-named symbol left in src.
 		const forbidden =
-			/latestReplicationInfoMessage|handleReplicationInfoAnnouncement|handleStoppedReplicating|handleRequestReplicationInfo|toReplicationInfoMessage|isLegacyCutover/g;
+			/latestReplicationInfoMessage|handleReplicationInfoAnnouncement|handleStoppedReplicating|handleRequestReplicationInfo|toReplicationInfoMessage|isLegacyCutover|legacyReplicationInfoEnabled|v8Behaviour|noteLegacyAnnouncement|legacyFallback|LegacyFallback|LEGACY_FALLBACK|legacyBarrierReleased/g;
 		for (const file of listSourceFiles()) {
 			const source = readFileSync(path.join(process.cwd(), file), "utf8");
 			const matches = [...source.matchAll(forbidden)].map((m) => m[0]);

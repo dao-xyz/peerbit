@@ -274,7 +274,6 @@ import {
 	maxReplicas,
 } from "./replication.js";
 import { ReplicatorLivenessMonitor } from "./replicator-liveness.js";
-import { Observer, Replicator } from "./role.js";
 import { createSyncronizer } from "./sync/factory.js";
 import type {
 	SharedLogNativeWireSync,
@@ -2084,16 +2083,17 @@ export class SharedLog<
 	// The replication-info blocked set (fence B5) lives on the peer-session
 	// registry: unsubscribed peers whose replication-info is ignored until a
 	// reconnect barrier commits. See PeerSessionRegistry._replicationInfoBlockedPeers.
+	// V2 recovery scheduler state, one row per open peer session (B12: the
+	// legacy request scheduler that shared this map is deleted).
 	private _replicationInfoRequestByPeer!: Map<
 		string,
 		{
-			// Legacy scheduler: sends issued (bounded by maxAttempts). V2 recovery
-			// scheduler: consecutive fruitless unparks — the escalation exponent
-			// for the next unpark delay, reset on any applied V2 progress.
+			// Consecutive fruitless unparks — the escalation exponent for the
+			// next unpark delay, reset on any applied V2 progress.
 			attempts: number;
 			timer?: ReturnType<typeof setTimeout>;
-			peerSession?: PeerSession;
-			// V2 recovery scheduler only: when the current park was first observed.
+			peerSession: PeerSession;
+			// When the current park was first observed.
 			parkedSinceMs?: number;
 		}
 	>;
@@ -3726,27 +3726,8 @@ export class SharedLog<
 		this._nativeStrictDurableTransactionsClosing ??= false;
 	}
 
-	get compatibility(): number | undefined {
-		// B12: the open option was removed and any defined value rejects at
-		// open(); this is permanently undefined and dies with the residual
-		// gates in a later cleanup stage.
-		return (this._logProperties as any)?.compatibility;
-	}
-
-	/**
-	 * Legacy replication-info is an explicit compatibility fallback. Current
-	 * logs never infer or re-enable it from a remote peer's capabilities.
-	 */
-	private get legacyReplicationInfoEnabled(): boolean {
-		return this.compatibility !== undefined && this.compatibility < 10;
-	}
-
 	get isAdaptiveReplicating() {
 		return this._isAdaptiveReplicating;
-	}
-
-	private get v8Behaviour() {
-		return (this.compatibility ?? Number.MAX_VALUE) < 9;
 	}
 
 	private getFanoutChannelOptions(
@@ -4653,8 +4634,7 @@ export class SharedLog<
 			(leaders.size === 0 || (leaders.size === 1 && leaders.has(selfHash)))
 		) {
 			const allowSubscriberFallback =
-				this.syncronizer instanceof SimpleSyncronizer ||
-				(this.compatibility ?? Number.MAX_VALUE) < 10;
+				this.syncronizer instanceof SimpleSyncronizer;
 			if (!allowSubscriberFallback) {
 				return;
 			}
@@ -4803,8 +4783,7 @@ export class SharedLog<
 			const set = new Set(leaders.keys());
 			let hasRemotePeers = set.has(selfHash) ? set.size > 1 : set.size > 0;
 			const allowSubscriberFallback =
-				this.syncronizer instanceof SimpleSyncronizer ||
-				(this.compatibility ?? Number.MAX_VALUE) < 10;
+				this.syncronizer instanceof SimpleSyncronizer;
 			if (!hasRemotePeers && allowSubscriberFallback) {
 				try {
 					const subscribers = await this._getTopicSubscribers(this.topic);
@@ -5265,28 +5244,6 @@ export class SharedLog<
 			expiresAt: Date.now() + LEADER_SELECTION_CONTEXT_CACHE_TTL_MS,
 			context: this.cloneLeaderSelectionContext(context),
 		};
-	}
-
-	// @deprecated
-	private getRoleFromReplicationSegments(
-		segments: ReplicationRangeIndexable<R>[],
-	) {
-		if (segments.length > 1) {
-			throw new Error(
-				"More than one replication segment found. Can only use one segment for compatbility with v8",
-			);
-		}
-
-		if (segments.length > 0) {
-			const segment = segments[0].toReplicationRange();
-			return new Replicator({
-				factor: (segment.factor as number) / MAX_U32,
-				offset: (segment.offset as number) / MAX_U32,
-			});
-		}
-
-		// TODO this is not accurate but might be good enough
-		return new Observer();
 	}
 
 	private isTerminating() {
@@ -14204,12 +14161,7 @@ export class SharedLog<
 
 		this.domain = options?.domain
 			? (options.domain(this) as unknown as D)
-			: (createReplicationDomainHash(
-					(options as any)?.compatibility !== undefined &&
-						(options as any).compatibility < 10
-						? "u32"
-						: "u64",
-				)(this) as unknown as D);
+			: (createReplicationDomainHash("u64")(this) as unknown as D);
 		this.indexableDomain = createIndexableDomainFromResolution(
 			this.domain.resolution,
 		);
@@ -14291,7 +14243,6 @@ export class SharedLog<
 		this._liveness.resetForOpen();
 		this._lastLocalAppendAt = 0;
 		this._announcements ??= this.createReplicationAnnouncementCoordinator();
-		this._announcements.resetForOpen();
 		this._v2Receive ??= this.createReplicationInfoV2ReceiveCoordinator();
 		this._v2Receive.resetForOpen();
 		this._v2Send ??= this.createReplicationInfoV2SendCoordinator();
@@ -14809,7 +14760,6 @@ export class SharedLog<
 				sendOptions?: { priority?: number; signal?: AbortSignal },
 			) => this.trySendFusedRawExchangeHeads(hashes, to, sendOptions),
 			warn,
-			compatibility: (this._logProperties as any)?.compatibility,
 			resolution: this.domain.resolution,
 			sync: options?.sync,
 			syncronizer: options?.syncronizer,
@@ -17618,16 +17568,16 @@ export class SharedLog<
 				throw new Error("Missing from in update role message");
 			}
 			if (
-				!this.legacyReplicationInfoEnabled &&
-				(msg instanceof RequestReplicationInfoMessage ||
-					msg instanceof ResponseRoleMessage ||
-					msg instanceof AllReplicatingSegmentsMessage ||
-					msg instanceof AddedReplicationSegmentMessage ||
-					msg instanceof StoppedReplicating)
+				msg instanceof RequestReplicationInfoMessage ||
+				msg instanceof ResponseRoleMessage ||
+				msg instanceof AllReplicatingSegmentsMessage ||
+				msg instanceof AddedReplicationSegmentMessage ||
+				msg instanceof StoppedReplicating
 			) {
-				// These variants remain registered decode tombstones, but current logs
-				// fail closed before leases, synchronizer work, liveness, watermarks or
-				// mutations. Only an explicit pre-v10 compatibility open admits them.
+				// These variants remain registered decode tombstones, but logs fail
+				// closed unconditionally before leases, synchronizer work, liveness,
+				// watermarks or mutations (B12: the compatibility opens that once
+				// admitted them reject at open()).
 				return;
 			}
 			// Snapshot receive ownership before any async handler gets a chance to
@@ -23030,7 +22980,7 @@ export class SharedLog<
 	 */
 	private resetReplicationInfoV2RecoveryEscalation(peerHash: string) {
 		const state = this._replicationInfoRequestByPeer.get(peerHash);
-		if (!state || state.peerSession === undefined) {
+		if (!state) {
 			return;
 		}
 		state.attempts = 0;
@@ -23358,17 +23308,15 @@ export class SharedLog<
 		// This keeps capability ACK latency off the subscription callback's
 		// critical path.
 		const receiveEpoch = this._peerSessions.receiveEpoch(peerHash);
-		const localCapabilityAdvertisement =
-			this._v2Receive.advertiseLocalCapability({
-				target: publicKey,
-				peerSession: expectedSubscriptionEpoch,
-				receiveEpoch,
-				signal: replicationLifecycleController.signal,
-			});
-		// Current logs have no legacy startup work to order ahead of RequestV2.
-		// Releasing is synchronous and exact-session fenced; the ACK may still
-		// arrive later and promote readiness through the coordinator.
-		localCapabilityAdvertisement.releaseLegacyBarrier();
+		// B12: there is no legacy startup work to order ahead of RequestV2, so
+		// the two-phase legacy barrier is gone — an ACKed advert promotes
+		// readiness through the coordinator as soon as it lands.
+		this._v2Receive.advertiseLocalCapability({
+			target: publicKey,
+			peerSession: expectedSubscriptionEpoch,
+			receiveEpoch,
+			signal: replicationLifecycleController.signal,
+		});
 		this.scheduleReplicationInfoV2Recovery(
 			publicKey,
 			replicationLifecycleController,

@@ -23,7 +23,6 @@ const REQUIRED_SENDER_CAPABILITIES =
 const DEFAULT_REQUEST_RETRY_MS = 1_000;
 const DEFAULT_MAX_REQUEST_RETRY_MS = 30_000;
 const DEFAULT_REQUEST_MAX_ATTEMPTS = 7;
-const DEFAULT_LEGACY_FALLBACK_DELAY_MS = 5_000;
 const MAX_U64 = (1n << 64n) - 1n;
 const MAX_BACKOFF_EXPONENT = 20;
 
@@ -39,13 +38,12 @@ const bytesEqual = (left: Uint8Array, right: Uint8Array): boolean => {
 	return true;
 };
 
-type LegacyReplicationInfoMessage =
-	| AllReplicatingSegmentsMessage
-	| AddedReplicationSegmentMessage
-	| StoppedReplicating;
-
+// Q4 (B12): fingerprints keep constructing the legacy-class canonical forms.
+// They are byte-stable local-only hash inputs, never sent; these are the only
+// sanctioned legacy-frame construction sites in src (see the no-legacy-
+// machinery source ratchet's narrowed whitelist).
 const replicationInfoPayloadFingerprint = (
-	message: ReplicationInfoV2Message | LegacyReplicationInfoMessage,
+	message: ReplicationInfoV2Message,
 ): Uint8Array => {
 	const canonical =
 		message instanceof FullReplicationInfoV2Message
@@ -86,6 +84,11 @@ type LocalCapabilityReadyProperties = {
 
 export type ReplicationInfoV2LocalCapabilityAdvertisementHandle = {
 	firstAttempt: Promise<void>;
+	/**
+	 * B12: the two-phase legacy barrier is retired — an ACKed advert promotes
+	 * readiness immediately. Retained as a no-op so the handle shape (and the
+	 * tests that drive it) stay stable.
+	 */
 	releaseLegacyBarrier(): void;
 };
 
@@ -93,7 +96,6 @@ export type ReplicationInfoV2LocalCapabilityContext = {
 	peerHash: string;
 	target: PublicSignKey;
 	lifecycleSignal: AbortSignal;
-	legacyBarrierReleased: boolean;
 };
 
 export type ReplicationInfoV2LocalCapabilityAdvertisement = {
@@ -141,18 +143,6 @@ export type ReplicationInfoV2ReceiveState = {
 	requestsSinceCapabilityRefresh: number;
 	requestParked: boolean;
 	capabilityRefreshRequired: boolean;
-	legacyFallbackTimer?: ReturnType<typeof setTimeout>;
-	legacyFallbackFingerprint?: Uint8Array;
-	legacyFallbackTimestamp?: bigint;
-	legacyFallbackAmbiguous: boolean;
-	lastCommittedTransportTimestamp?: bigint;
-	recentCommittedPayloads: Array<{
-		fingerprint: Uint8Array;
-		transportTimestamp: bigint;
-	}>;
-	lastLegacyObservationTimestamp?: bigint;
-	lastLegacyObservationFingerprint?: Uint8Array;
-	lastLegacyObservationAmbiguous: boolean;
 	reservedAdmission?: ReplicationInfoV2ReceiveAdmission;
 };
 
@@ -204,7 +194,6 @@ export type ReplicationInfoV2ReceiveDeps = {
 	requestRetryMs?: number;
 	maxRequestRetryMs?: number;
 	requestMaxAttempts?: number;
-	legacyFallbackDelayMs?: number;
 };
 
 /**
@@ -230,7 +219,6 @@ export class ReplicationInfoV2ReceiveCoordinator {
 	private readonly requestRetryMs: number;
 	private readonly maxRequestRetryMs: number;
 	private readonly requestMaxAttempts: number;
-	private readonly legacyFallbackDelayMs: number;
 
 	constructor(private readonly deps: ReplicationInfoV2ReceiveDeps) {
 		this.now = deps.now ?? Date.now;
@@ -245,10 +233,6 @@ export class ReplicationInfoV2ReceiveCoordinator {
 		this.requestMaxAttempts = Math.max(
 			1,
 			Math.floor(deps.requestMaxAttempts ?? DEFAULT_REQUEST_MAX_ATTEMPTS),
-		);
-		this.legacyFallbackDelayMs = Math.max(
-			this.requestRetryMs,
-			deps.legacyFallbackDelayMs ?? DEFAULT_LEGACY_FALLBACK_DELAY_MS,
 		);
 		this._receiveStates = new Map();
 		this._cutoverPeerSessions = new WeakSet();
@@ -323,10 +307,6 @@ export class ReplicationInfoV2ReceiveCoordinator {
 		if (state.requestTimer) {
 			clearTimeout(state.requestTimer);
 			state.requestTimer = undefined;
-		}
-		if (state.legacyFallbackTimer) {
-			clearTimeout(state.legacyFallbackTimer);
-			state.legacyFallbackTimer = undefined;
 		}
 		state.controller.abort();
 		state.version++;
@@ -422,9 +402,6 @@ export class ReplicationInfoV2ReceiveCoordinator {
 		if (state.timer || state.inFlight || state.ready) {
 			return;
 		}
-		if (state.acknowledgedReady && !state.context.legacyBarrierReleased) {
-			return;
-		}
 		if (!this.isLocalCapabilityAdvertisementOwnerCurrent(state)) {
 			this.clearLocalCapabilityAdvertisement(state);
 			return;
@@ -468,9 +445,7 @@ export class ReplicationInfoV2ReceiveCoordinator {
 			return;
 		}
 		if (state.acknowledgedReady) {
-			if (state.context.legacyBarrierReleased) {
-				this.promoteLocalCapabilityAdvertisement(state);
-			}
+			this.promoteLocalCapabilityAdvertisement(state);
 			return;
 		}
 		if (!this.isLocalCapabilityAdvertisementReadyOpen(state)) {
@@ -528,9 +503,7 @@ export class ReplicationInfoV2ReceiveCoordinator {
 					this.isLocalCapabilityAdvertisementGenerationCurrent(state) &&
 					!state.ready
 				) {
-					if (!state.acknowledgedReady || state.context.legacyBarrierReleased) {
-						this.armLocalCapabilityAdvertisement(state);
-					}
+					this.armLocalCapabilityAdvertisement(state);
 				}
 			});
 		state.inFlight = operation;
@@ -538,10 +511,9 @@ export class ReplicationInfoV2ReceiveCoordinator {
 	}
 
 	/**
-	 * Start local authenticated-apply advertisement independently of the legacy
-	 * join path. ACK and legacy publication are a two-phase barrier: the first
-	 * attempt always settles independently, while readiness is promoted only
-	 * after the host releases the legacy barrier. Failed attempts leave one
+	 * Start local authenticated-apply advertisement. Readiness is promoted as
+	 * soon as the ACK lands (B12: the legacy publication this once ordered
+	 * behind a two-phase barrier is retired). Failed attempts leave one
 	 * exact-session worker retrying with capped exponential backoff.
 	 */
 	advertiseLocalCapability(properties: {
@@ -581,7 +553,6 @@ export class ReplicationInfoV2ReceiveCoordinator {
 				peerHash,
 				target: properties.target,
 				lifecycleSignal: properties.signal,
-				legacyBarrierReleased: false,
 			};
 			this._localCapabilityContextBySession.set(
 				properties.peerSession,
@@ -646,43 +617,10 @@ export class ReplicationInfoV2ReceiveCoordinator {
 		const firstAttempt =
 			state.firstAttempt ??
 			(state.firstAttempt = this.runLocalCapabilityAdvertisement(state));
-		const advertisement = state;
 		return {
 			firstAttempt,
-			releaseLegacyBarrier: () =>
-				this.releaseLocalCapabilityLegacyBarrier(
-					advertisement.peerSession,
-					context,
-				),
+			releaseLegacyBarrier: () => {},
 		};
-	}
-
-	private releaseLocalCapabilityLegacyBarrier(
-		peerSession: object,
-		context: ReplicationInfoV2LocalCapabilityContext,
-	): void {
-		if (context.legacyBarrierReleased) {
-			return;
-		}
-		if (
-			this._localCapabilityContextBySession.get(peerSession) !== context ||
-			context.lifecycleSignal.aborted ||
-			this.deps.isClosed() ||
-			!this.deps.isPeerSessionCurrent(context.peerHash, peerSession)
-		) {
-			return;
-		}
-		context.legacyBarrierReleased = true;
-		const state = this._localCapabilityAdvertisementsByPeer.get(
-			context.peerHash,
-		);
-		if (state?.peerSession === peerSession && state.context === context) {
-			if (!this.isLocalCapabilityAdvertisementOwnerCurrent(state)) {
-				this.clearLocalCapabilityAdvertisement(state);
-				return;
-			}
-			this.promoteLocalCapabilityAdvertisement(state);
-		}
 	}
 
 	private promoteLocalCapabilityAdvertisement(
@@ -691,7 +629,6 @@ export class ReplicationInfoV2ReceiveCoordinator {
 		const ready = state.acknowledgedReady;
 		if (
 			state.ready ||
-			!state.context.legacyBarrierReleased ||
 			!ready ||
 			ready.receiveEpoch !== state.receiveEpoch ||
 			ready.advertisement !== state ||
@@ -725,9 +662,7 @@ export class ReplicationInfoV2ReceiveCoordinator {
 
 	/**
 	 * Re-advertise one exact current recovery epoch from the stable membership
-	 * context captured during opening. The opening handle owns barrier release;
-	 * recovery never bypasses a legacy snapshot or role publication still in
-	 * progress.
+	 * context captured during opening.
 	 */
 	reAdvertiseLocalCapabilityForRecovery(properties: {
 		peerHash: string;
@@ -946,9 +881,6 @@ export class ReplicationInfoV2ReceiveCoordinator {
 			requestsSinceCapabilityRefresh: 0,
 			requestParked: false,
 			capabilityRefreshRequired: retainedCutover,
-			legacyFallbackAmbiguous: false,
-			recentCommittedPayloads: [],
-			lastLegacyObservationAmbiguous: false,
 		};
 		this._receiveStates.set(peerHash, state);
 		const ready = this._localCapabilityReadyBySession.get(peerSession);
@@ -1231,10 +1163,6 @@ export class ReplicationInfoV2ReceiveCoordinator {
 			clearTimeout(state.requestTimer);
 			state.requestTimer = undefined;
 		}
-		if (state.legacyFallbackTimer) {
-			clearTimeout(state.legacyFallbackTimer);
-			state.legacyFallbackTimer = undefined;
-		}
 		return admission;
 	}
 
@@ -1269,156 +1197,6 @@ export class ReplicationInfoV2ReceiveCoordinator {
 			// worker so the exact current generation cannot become stranded.
 			this.armRequest(state, 0);
 		}
-		if (
-			currentState === state &&
-			this.isStateCurrent(state) &&
-			state.phase === "active" &&
-			state.legacyFallbackFingerprint !== undefined
-		) {
-			// A reservation also pauses compat sidecar recovery. Matching commits
-			// clear the evidence; an uncommitted or non-matching frame restores its
-			// bounded fallback without invalidating work in the host apply lane.
-			this.armLegacyFallback(state);
-		}
-	}
-
-	/**
-	 * B9 can lose its sender grant while keeping the topic session open. Its
-	 * unmatched legacy sidecar is the compatibility signal to re-handshake; a
-	 * matching V2 payload before or after the legacy copy suppresses the timer.
-	 */
-	noteLegacyAnnouncement(properties: {
-		peerHash: string;
-		peerSession: object;
-		receiveEpoch: object | null;
-		senderTransportSession: bigint;
-		transportTimestamp: bigint;
-		message: LegacyReplicationInfoMessage;
-	}): boolean {
-		const state = this._receiveStates.get(properties.peerHash);
-		if (
-			!state ||
-			state.peerSession !== properties.peerSession ||
-			state.receiveEpoch !== properties.receiveEpoch ||
-			state.senderTransportSession !== properties.senderTransportSession ||
-			!this._cutoverPeerSessions.has(properties.peerSession) ||
-			!this.isStateCurrent(state)
-		) {
-			return false;
-		}
-		const fingerprint = replicationInfoPayloadFingerprint(properties.message);
-		if (
-			state.lastCommittedTransportTimestamp !== undefined &&
-			properties.transportTimestamp < state.lastCommittedTransportTimestamp
-		) {
-			return true;
-		}
-		if (
-			state.recentCommittedPayloads.some(
-				(committed) =>
-					properties.transportTimestamp <= committed.transportTimestamp &&
-					bytesEqual(committed.fingerprint, fingerprint),
-			)
-		) {
-			return true;
-		}
-		if (state.lastLegacyObservationTimestamp !== undefined) {
-			if (
-				properties.transportTimestamp < state.lastLegacyObservationTimestamp
-			) {
-				return true;
-			}
-			if (
-				properties.transportTimestamp === state.lastLegacyObservationTimestamp
-			) {
-				if (
-					state.lastLegacyObservationAmbiguous ||
-					(state.lastLegacyObservationFingerprint !== undefined &&
-						bytesEqual(state.lastLegacyObservationFingerprint, fingerprint))
-				) {
-					return true;
-				}
-				state.lastLegacyObservationAmbiguous = true;
-			} else {
-				state.lastLegacyObservationTimestamp = properties.transportTimestamp;
-				state.lastLegacyObservationFingerprint = fingerprint.slice();
-				state.lastLegacyObservationAmbiguous = false;
-			}
-		} else {
-			state.lastLegacyObservationTimestamp = properties.transportTimestamp;
-			state.lastLegacyObservationFingerprint = fingerprint.slice();
-			state.lastLegacyObservationAmbiguous = false;
-		}
-		const reserved = this._reservedAdmissionsByPeer.get(properties.peerHash);
-		if (
-			reserved?.state === state &&
-			!bytesEqual(reserved.payloadFingerprint, fingerprint)
-		) {
-			// A legacy sidecar observed while a different V2 payload is applying
-			// cannot be erased by that commit. The transport has already ACKed the
-			// sidecar, so require one authoritative successor after release.
-			reserved.resyncAfterRelease = true;
-		}
-		if (!state.legacyFallbackFingerprint) {
-			state.legacyFallbackFingerprint = fingerprint;
-			state.legacyFallbackTimestamp = properties.transportTimestamp;
-			state.legacyFallbackAmbiguous = false;
-		} else {
-			if (!bytesEqual(state.legacyFallbackFingerprint, fingerprint)) {
-				state.legacyFallbackAmbiguous = true;
-			}
-			if (
-				state.legacyFallbackTimestamp === undefined ||
-				properties.transportTimestamp > state.legacyFallbackTimestamp
-			) {
-				state.legacyFallbackTimestamp = properties.transportTimestamp;
-			}
-		}
-		if (state.phase !== "active") {
-			if (state.requestParked) {
-				this.transitionToResync(state, {
-					force: true,
-					refreshCapability: true,
-				});
-			}
-			return true;
-		}
-		if (state.legacyFallbackTimer) {
-			return true;
-		}
-		this.armLegacyFallback(state);
-		return true;
-	}
-
-	private armLegacyFallback(state: ReplicationInfoV2ReceiveState): void {
-		if (
-			state.legacyFallbackTimer ||
-			state.phase !== "active" ||
-			state.legacyFallbackFingerprint === undefined ||
-			this._reservedAdmissionsByPeer.has(state.peerHash)
-		) {
-			return;
-		}
-		state.legacyFallbackTimer = setTimeout(() => {
-			state.legacyFallbackTimer = undefined;
-			if (this.isStateCurrent(state) && state.phase === "active") {
-				this.transitionToResync(state, {
-					force: true,
-					refreshCapability: true,
-				});
-			}
-		}, this.legacyFallbackDelayMs);
-		state.legacyFallbackTimer.unref?.();
-	}
-
-	private clearLegacyFallback(state: ReplicationInfoV2ReceiveState): void {
-		if (state.legacyFallbackTimer) {
-			clearTimeout(state.legacyFallbackTimer);
-			state.legacyFallbackTimer = undefined;
-		}
-		state.legacyFallbackFingerprint = undefined;
-		state.legacyFallbackTimestamp = undefined;
-		state.legacyFallbackAmbiguous = false;
 	}
 
 	isAdmissionCurrent(admission: ReplicationInfoV2ReceiveAdmission): boolean {
@@ -1460,26 +1238,6 @@ export class ReplicationInfoV2ReceiveCoordinator {
 		state.requestsSinceCapabilityRefresh = 0;
 		state.requestParked = false;
 		state.capabilityRefreshRequired = false;
-		state.lastCommittedTransportTimestamp = admission.transportTimestamp;
-		state.recentCommittedPayloads.push({
-			fingerprint: admission.payloadFingerprint.slice(),
-			transportTimestamp: admission.transportTimestamp,
-		});
-		if (state.recentCommittedPayloads.length > 8) {
-			state.recentCommittedPayloads.shift();
-		}
-		if (
-			(state.legacyFallbackTimestamp !== undefined &&
-				admission.transportTimestamp > state.legacyFallbackTimestamp) ||
-			(!state.legacyFallbackAmbiguous &&
-				state.legacyFallbackFingerprint !== undefined &&
-				bytesEqual(
-					state.legacyFallbackFingerprint,
-					admission.payloadFingerprint,
-				))
-		) {
-			this.clearLegacyFallback(state);
-		}
 		if (state.requestTimer) {
 			clearTimeout(state.requestTimer);
 			state.requestTimer = undefined;
