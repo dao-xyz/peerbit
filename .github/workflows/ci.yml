@@ -200,7 +200,14 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        node-version: [22.x, 24.x]
+        # 24.18.x is pinned, not floating 24.x: node-datachannel@0.32.3 (the
+        # newest release, and the Node WebRTC transport under @libp2p/webrtc)
+        # ships no N-API prebuild for Node 24.19.0 and its source-build
+        # fallback aborts with "does not support N-API version undefined", so
+        # the published-closure smoke cannot install. This is a real
+        # forward-compat break for consumers on 24.19, not a CI artifact —
+        # unpin once node-datachannel publishes a 24.19-capable build.
+        node-version: [22.x, 24.18.x]
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
