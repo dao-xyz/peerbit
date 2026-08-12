@@ -231,10 +231,7 @@ import {
 	shouldAssigneToRangeBoundary as shouldAssignToRangeBoundary,
 	toRebalance,
 } from "./ranges.js";
-import {
-	ReplicationAnnouncementCoordinator,
-	isTransientReplicationAnnouncementError,
-} from "./replication-announcement.js";
+import { ReplicationAnnouncementCoordinator } from "./replication-announcement.js";
 import {
 	type ReplicationDomainHash,
 	createReplicationDomainHash,
@@ -2266,7 +2263,6 @@ export class SharedLog<
 		for (const hash of this._checkedPrune?.retries.keys() ?? []) {
 			this._checkedPrune.clearRetry(hash);
 		}
-		this._announcements.cancelCurrentReplicationStateAnnouncementRetry();
 		this.joinWarmup.cancelAllJoinWarmupTargets();
 		for (const timer of this._repairRetryTimers) {
 			clearTimeout(timer);
@@ -3268,7 +3264,7 @@ export class SharedLog<
 	private rebalanceParticipationDebounced:
 		| ReturnType<typeof debounceFixedInterval>
 		| undefined;
-	private _announcements!: ReplicationAnnouncementCoordinator<R>;
+	private _announcements!: ReplicationAnnouncementCoordinator;
 	private _v2Receive!: ReplicationInfoV2ReceiveCoordinator;
 	private _v2Send!: ReplicationInfoV2SendCoordinator<R>;
 
@@ -3396,37 +3392,13 @@ export class SharedLog<
 		});
 	}
 
-	private createReplicationAnnouncementCoordinator(): ReplicationAnnouncementCoordinator<R> {
-		return new ReplicationAnnouncementCoordinator<R>({
-			// Route re-entrant queueing through the owner so coordinator spies keep
-			// observing it (the poison guard assertions in events.spec.ts depend on
-			// this).
-			queueCurrentReplicationStateAnnouncementRepair: () =>
-				this._announcements.queueCurrentReplicationStateAnnouncementRepair(),
-			queueCurrentReplicationStateAnnouncementRetry: (error: unknown) =>
-				this._announcements.queueCurrentReplicationStateAnnouncementRetry(
-					error,
-				),
+	private createReplicationAnnouncementCoordinator(): ReplicationAnnouncementCoordinator {
+		return new ReplicationAnnouncementCoordinator({
 			enqueueReplicationInfoV2: (message) => this._v2Send.enqueue(message),
-			isLegacyReplicationInfoEnabled: () => this.legacyReplicationInfoEnabled,
-			isClosed: () => this.closed,
-			getCloseSignal: () => this._closeController.signal,
-			getMyReplicationSegments: () => this.getMyReplicationSegments(),
-			validatePersistedReplicationRangeSnapshot: (ranges) =>
-				this.validatePersistedReplicationRangeSnapshot(ranges),
-			getSubscribers: () =>
-				this.node.services.pubsub.getSubscribers(this.topic),
-			getSelfHash: () => this.node.identity.publicKey.hashcode(),
-			isBlockedPeer: (hash) =>
-				this._peerSessions.isReplicationInfoBlocked(hash),
-			getRpc: () => this.rpc,
 			captureReplicationOwnershipLifecycle: () =>
 				this.captureReplicationOwnershipLifecycle(),
 			throwIfReplicationOwnershipLifecycleInactive: (controller) =>
 				this.throwIfReplicationOwnershipLifecycleInactive(controller),
-			isAdaptiveReplicating: () => this._isAdaptiveReplicating,
-			callRebalanceParticipationDebounced: () =>
-				this.rebalanceParticipationDebounced?.call(),
 		});
 	}
 
@@ -5604,12 +5576,7 @@ export class SharedLog<
 	}
 
 	private onRebalanceParticipationError(error: Error): void {
-		if (
-			this.closed ||
-			isNotStartedError(error) ||
-			(isTransientReplicationAnnouncementError(error) &&
-				this._announcements._replicationAnnouncementRetryPending)
-		) {
+		if (this.closed || isNotStartedError(error)) {
 			return;
 		}
 
@@ -14398,12 +14365,6 @@ export class SharedLog<
 		}
 
 		this._closeController = new AbortController();
-		if (this.legacyReplicationInfoEnabled) {
-			this._announcements.setupReplicationAnnouncementRetryFunction();
-			this._announcements.setupReplicationAnnouncementRepairFunction();
-		} else {
-			this._announcements.cancelCurrentReplicationStateAnnouncementRetry();
-		}
 		this._closeController.signal.addEventListener("abort", () => {
 			for (const [_peer, state] of this._replicationInfoRequestByPeer) {
 				if (state.timer) clearTimeout(state.timer);
@@ -16788,15 +16749,6 @@ export class SharedLog<
 				firstError ??= error;
 			}
 		};
-		// A borsh-deserialized instance that is closed before ever being opened
-		// has no coordinators (they are created in open()); the old inline code
-		// only touched plain fields here and never threw.
-		captureSync(() =>
-			this._announcements?.cancelCurrentReplicationStateAnnouncementRetry(),
-		);
-		if (this._announcements) {
-			this._announcements.replicationAnnouncementRetryDebounced = undefined;
-		}
 		captureSync(() => {
 			if (this._wireSyncSession) {
 				this._wireSyncSession.unregisterTopic(this.topic);
@@ -16991,7 +16943,6 @@ export class SharedLog<
 			await pruneRemoveTerminalFence.drained;
 			await this.drainPendingIHaveCallbacks();
 			this.ensureNativeDurabilityRuntimeState();
-			this._announcements.cancelCurrentReplicationStateAnnouncementRetry();
 		} catch (error) {
 			// The terminal preamble has already disabled parent attachments and the
 			// network lifecycle. Keep mutation admission fenced for an exact retry.
@@ -17140,7 +17091,6 @@ export class SharedLog<
 			await replicationRangeTerminalFence.drained;
 			await pruneRemoveTerminalFence.drained;
 			await this.drainPendingIHaveCallbacks();
-			this._announcements.cancelCurrentReplicationStateAnnouncementRetry();
 		} catch (error) {
 			// The terminal preamble is not safely reversible. Preserve the fence until
 			// a retry finishes cleanup.
@@ -25581,26 +25531,16 @@ export class SharedLog<
 						return false;
 					}
 
-					try {
-						await this.startAnnounceReplicating(
-							[dynamicRange],
-							{
-								checkDuplicates: false,
-								reset: false,
-								shouldApply: isCurrent,
-							},
-							ownershipLifecycleController,
-						);
-						if (!isCurrent()) return false;
-					} catch (error) {
-						if (
-							isTransientReplicationAnnouncementError(error) &&
-							this._announcements._replicationAnnouncementRetryPending
-						) {
-							return false;
-						}
-						throw error;
-					}
+					await this.startAnnounceReplicating(
+						[dynamicRange],
+						{
+							checkDuplicates: false,
+							reset: false,
+							shouldApply: isCurrent,
+						},
+						ownershipLifecycleController,
+					);
+					if (!isCurrent()) return false;
 
 					/* await this._updateRole(newRole, onRoleChange); */
 					if (isCurrent()) {
