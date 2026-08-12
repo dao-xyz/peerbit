@@ -352,9 +352,9 @@ describe("receive admission replication-info V2 sender streams", () => {
 		expect(accept(peerA, peerSession, challenge(11))).to.be.true;
 		await waitForResolved(() => expect(rpcSend.calledOnce).to.be.true);
 
-		coordinator.enqueue(new AddedReplicationSegmentMessage({ segments: [] }));
+		coordinator.enqueue({ added: { segments: [] } });
 		for (let index = 0; index < 10_000; index++) {
-			coordinator.enqueue(new AddedReplicationSegmentMessage({ segments: [] }));
+			coordinator.enqueue({ added: { segments: [] } });
 		}
 		const state = coordinator._sendStates.get(
 			peerA.hashcode(),
@@ -393,7 +393,7 @@ describe("receive admission replication-info V2 sender streams", () => {
 			.true;
 		coordinator.clearPeer(peerB.hashcode());
 		rpcSend.resetHistory();
-		coordinator.enqueue(new AddedReplicationSegmentMessage({ segments: [] }));
+		coordinator.enqueue({ added: { segments: [] } });
 		expect(accept(peerA, sessionA, challenge(12), 1n)).to.be.false;
 		await coordinator.drain();
 		expect(rpcSend.notCalled).to.be.true;
@@ -520,7 +520,7 @@ describe("receive admission replication-info V2 sender streams", () => {
 		const rejectedSend = pDefer<void>();
 		rpcSend.onSecondCall().returns(rejectedSend.promise);
 
-		coordinator.enqueue(new AddedReplicationSegmentMessage({ segments: [] }));
+		coordinator.enqueue({ added: { segments: [] } });
 		await clock.tickAsync(0);
 		expect(rpcSend.callCount).to.equal(2);
 		expect(rpcSend.secondCall.args[0].sequence).to.equal(2n);
@@ -566,7 +566,7 @@ describe("receive admission replication-info V2 sender streams", () => {
 				}),
 		);
 
-		coordinator.enqueue(new AddedReplicationSegmentMessage({ segments: [] }));
+		coordinator.enqueue({ added: { segments: [] } });
 		await waitForResolved(() => expect(rpcSend.calledOnce).to.be.true);
 		expect(rpcSend.firstCall.args[0].sequence).to.equal((1n << 64n) - 1n);
 		ownershipController.abort();
@@ -591,7 +591,7 @@ describe("receive admission replication-info V2 sender streams", () => {
 		).receiverChallenge.slice();
 
 		closedReadinessGates.add(oldPeerSession);
-		coordinator.enqueue(new AddedReplicationSegmentMessage({ segments: [] }));
+		coordinator.enqueue({ added: { segments: [] } });
 		expect(oldState.suspended).to.be.true;
 		expect(oldState.pending).to.deep.equal({ kind: "snapshot" });
 		openSessions.delete(oldPeerSession);
@@ -625,7 +625,7 @@ describe("receive admission replication-info V2 sender streams", () => {
 		await coordinator.drain();
 		const state = coordinator._sendStates.get(peerA.hashcode())!;
 		for (let index = 0; index < 10_000; index++) {
-			coordinator.enqueue(new AddedReplicationSegmentMessage({ segments: [] }));
+			coordinator.enqueue({ added: { segments: [] } });
 		}
 		expect(state.pending).to.deep.equal({ kind: "snapshot" });
 		expect(state.retryTimer).to.exist;
@@ -732,7 +732,7 @@ describe("receive admission replication-info V2 sender streams", () => {
 		rpcSend.resetHistory();
 		rpcSend.rejects(new Error("ambiguous final delivery"));
 
-		coordinator.enqueue(new AddedReplicationSegmentMessage({ segments: [] }));
+		coordinator.enqueue({ added: { segments: [] } });
 		await coordinator.drain();
 		expect(rpcSend.calledOnce).to.be.true;
 		expect(rpcSend.firstCall.args[0].sequence).to.equal((1n << 64n) - 1n);
@@ -765,7 +765,7 @@ describe("receive admission replication-info V2 sender streams", () => {
 		expect(coordinator._sendStates.get(peerA.hashcode())?.retryTimer).to.exist;
 		expect(coordinator._sendStates.get(peerB.hashcode())?.established).to.be
 			.true;
-		coordinator.enqueue(new AddedReplicationSegmentMessage({ segments: [] }));
+		coordinator.enqueue({ added: { segments: [] } });
 		await coordinator.drain();
 		expect(
 			rpcSend.args.some(
@@ -791,7 +791,7 @@ describe("receive admission replication-info V2 sender streams", () => {
 		state.nextSequence = (1n << 64n) - 1n;
 		rpcSend.resetHistory();
 
-		coordinator.enqueue(new AddedReplicationSegmentMessage({ segments: [] }));
+		coordinator.enqueue({ added: { segments: [] } });
 		await coordinator.drain();
 		expect(rpcSend.calledOnce).to.be.true;
 		expect(rpcSend.firstCall.args[0].sequence).to.equal((1n << 64n) - 1n);
@@ -943,7 +943,7 @@ describe("receive admission replication-info V2 sender streams", () => {
 		const state = coordinator._sendStates.get(peerA.hashcode())!;
 		state.nextSequence = (1n << 64n) - 2n;
 		rpcSend.rejects(new Error("ambiguous predecessor"));
-		coordinator.enqueue(new AddedReplicationSegmentMessage({ segments: [] }));
+		coordinator.enqueue({ added: { segments: [] } });
 		await coordinator.drain();
 		expect(state.suspended).to.be.true;
 		expect(state.nextSequence).to.equal((1n << 64n) - 1n);
@@ -977,7 +977,7 @@ describe("receive admission replication-info V2 sender streams", () => {
 		openSessions.add(peerSession);
 		expect(accept(peerA, peerSession, challenge(15))).to.be.true;
 		await coordinator.drain();
-		coordinator.enqueue(new AddedReplicationSegmentMessage({ segments: [] }));
+		coordinator.enqueue({ added: { segments: [] } });
 		await coordinator.drain();
 
 		expect(rpcSend.callCount).to.equal(2);
@@ -1351,8 +1351,9 @@ describe("receive admission replication-info V2 sender integration", () => {
 		await log._v2Send.drain();
 		send.resetHistory();
 
-		const legacy = new AddedReplicationSegmentMessage({ segments: [] });
-		await log._announcements.sendReplicationAnnouncement(legacy);
+		await log._announcements.sendReplicationAnnouncement({
+			added: { segments: [] },
+		});
 		await log._v2Send.drain();
 		const outbound = send.args.map((args: any[]) => args[0]);
 		const legacyMessages = outbound.filter(

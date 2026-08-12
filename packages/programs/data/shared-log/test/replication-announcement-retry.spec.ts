@@ -2,7 +2,6 @@ import { TestSession } from "@peerbit/test-utils";
 import { TimeoutError } from "@peerbit/time";
 import { expect } from "chai";
 import sinon from "sinon";
-import { AddedReplicationSegmentMessage } from "../src/replication.js";
 import { EventStore } from "./utils/stores/index.js";
 
 // B12: the legacy announcement retry/repair machinery is exercised only by
@@ -32,9 +31,9 @@ describe("replication announcement retries", () => {
 		log._announcements.setupReplicationAnnouncementRetryFunction(10);
 		log._announcements.setupReplicationAnnouncementRepairFunction(10, 3);
 
-		await log._announcements.sendReplicationAnnouncement(
-			new AddedReplicationSegmentMessage({ segments: [] }),
-		);
+		await log._announcements.sendReplicationAnnouncement({
+			added: { segments: [] },
+		});
 		expect(enqueueV2.calledOnce).to.be.true;
 		expect(send.notCalled).to.be.true;
 		expect(

@@ -2163,9 +2163,7 @@ describe("receive admission replication-info V2 receiver state", () => {
 		const oldBinding = state.receiverBinding!.slice();
 		const oldFull = delivered[0];
 
-		senderCoordinator.enqueue(
-			new AddedReplicationSegmentMessage({ segments: [] }),
-		);
+		senderCoordinator.enqueue({ added: { segments: [] } });
 		await senderCoordinator.drain();
 		expect(state.lastSequence).to.equal(2n);
 		senderCoordinator.advancePeerCapability(self.hashcode());
@@ -2360,7 +2358,6 @@ describe("receive admission replication-info V2 receiver integration", () => {
 		const indexedRange = range.toReplicationRangeIndexable(
 			session.peers[1].identity.publicKey,
 		);
-		const legacy = new AddedReplicationSegmentMessage({ segments: [range] });
 		const getSegments = sinon
 			.stub(senderLog, "getMyReplicationSegments")
 			.resolves([indexedRange]);
@@ -2391,7 +2388,9 @@ describe("receive admission replication-info V2 receiver integration", () => {
 		(senderLog._v2Send as any).sendRetryMs = 25;
 		(senderLog._v2Send as any).maxSendRetryMs = 50;
 		try {
-			await senderLog._announcements.sendReplicationAnnouncement(legacy);
+			await senderLog._announcements.sendReplicationAnnouncement({
+				added: { segments: [range] },
+			});
 			await senderLog._v2Send.drain();
 			const failedState = senderLog._v2Send._sendStates.get(receiverHash);
 			expect(rejectedV2Delta).to.equal(1);

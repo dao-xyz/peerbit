@@ -249,6 +249,10 @@ import {
 	type ReplicationDomain,
 	type ReplicationDomainConstructor,
 } from "./replication-domain.js";
+import type {
+	AddedReplicationInfoMutation,
+	FullReplicationInfoMutation,
+} from "./replication-info-mutation.js";
 import { ReplicationInfoV2ReceiveCoordinator } from "./replication-info-v2-receive.js";
 import { ReplicationInfoV2SendCoordinator } from "./replication-info-v2-send.js";
 import {
@@ -5714,7 +5718,7 @@ export class SharedLog<
 			mergeSegments?: boolean;
 			rebalance?: boolean;
 			announce?: (
-				msg: AddedReplicationSegmentMessage | AllReplicatingSegmentsMessage,
+				msg: AddedReplicationInfoMutation | FullReplicationInfoMutation,
 			) => void;
 		} = {},
 		replicationOwnershipLifecycleController = this.captureReplicationOwnershipLifecycle(),
@@ -5950,9 +5954,11 @@ export class SharedLog<
 
 			if (confirmedPreliminaryRemovals.length > 0) {
 				await this._announcements.sendReplicationAnnouncement(
-					new StoppedReplicating({
-						segmentIds: confirmedPreliminaryRemovals.map((x) => x.id),
-					}),
+					{
+						stopped: {
+							segmentIds: confirmedPreliminaryRemovals.map((x) => x.id),
+						},
+					},
 					replicationOwnershipLifecycleController,
 				);
 				this.throwIfReplicationOwnershipLifecycleInactive(
@@ -5977,7 +5983,7 @@ export class SharedLog<
 				);
 				this.validatePersistedReplicationRangeSnapshot(segments);
 				await this._announcements.sendReplicationAnnouncement(
-					new AllReplicatingSegmentsMessage({ segments }),
+					{ full: { segments } },
 					replicationOwnershipLifecycleController,
 				);
 			} catch (error) {
@@ -6033,7 +6039,7 @@ export class SharedLog<
 			rebalance?: boolean;
 			mergeSegments?: boolean;
 			announce?: (
-				msg: AllReplicatingSegmentsMessage | AddedReplicationSegmentMessage,
+				msg: FullReplicationInfoMutation | AddedReplicationInfoMutation,
 			) => void;
 		},
 	) {
@@ -6274,7 +6280,7 @@ export class SharedLog<
 		}
 		try {
 			await this._announcements.sendReplicationAnnouncement(
-				new StoppedReplicating({ segmentIds: removedSegmentIds }),
+				{ stopped: { segmentIds: removedSegmentIds } },
 				replicationOwnershipLifecycleController,
 			);
 			this.throwIfReplicationOwnershipLifecycleInactive(
@@ -6571,7 +6577,7 @@ export class SharedLog<
 				if (isMe && !ownerHasRanges) {
 					try {
 						await this._announcements.sendReplicationAnnouncement(
-							new AllReplicatingSegmentsMessage({ segments: [] }),
+							{ full: { segments: [] } },
 							replicationOwnershipLifecycleController,
 						);
 					} catch (error) {
@@ -7494,7 +7500,7 @@ export class SharedLog<
 			rebalance?: boolean;
 			shouldApply?: () => boolean;
 			announce?: (
-				msg: AllReplicatingSegmentsMessage | AddedReplicationSegmentMessage,
+				msg: FullReplicationInfoMutation | AddedReplicationInfoMutation,
 			) => void;
 		} = {},
 		replicationOwnershipLifecycleController = this.captureReplicationOwnershipLifecycle(),
@@ -7541,7 +7547,7 @@ export class SharedLog<
 				);
 				this.validatePersistedReplicationRangeSnapshot(segments);
 				await this._announcements.sendReplicationAnnouncement(
-					new AllReplicatingSegmentsMessage({ segments }),
+					{ full: { segments } },
 					replicationOwnershipLifecycleController,
 				);
 			} catch (error) {
@@ -7592,17 +7598,17 @@ export class SharedLog<
 				}
 
 				let message:
-					| AllReplicatingSegmentsMessage
-					| AddedReplicationSegmentMessage
+					| FullReplicationInfoMutation
+					| AddedReplicationInfoMutation
 					| undefined = undefined;
 				if (options.reset) {
-					message = new AllReplicatingSegmentsMessage({
-						segments: added.map((x) => x.range.toReplicationRange()),
-					});
+					message = {
+						full: { segments: added.map((x) => x.range.toReplicationRange()) },
+					};
 				} else {
-					message = new AddedReplicationSegmentMessage({
-						segments: added.map((x) => x.range.toReplicationRange()),
-					});
+					message = {
+						added: { segments: added.map((x) => x.range.toReplicationRange()) },
+					};
 				}
 				if (options.announce) {
 					return options.announce(message);
@@ -20556,7 +20562,7 @@ export class SharedLog<
 		throwIfInactive();
 
 		if (options?.replicate) {
-			let messageToSend: AddedReplicationSegmentMessage | undefined = undefined;
+			let messageToSend: AddedReplicationInfoMutation | undefined = undefined;
 
 			if (assumeSynced) {
 				throwIfInactive();
@@ -20584,14 +20590,14 @@ export class SharedLog<
 				// in one large message instead
 				announce: (msg) => {
 					throwIfInactive();
-					if (msg instanceof AllReplicatingSegmentsMessage) {
+					if (!("added" in msg)) {
 						throw new Error("Unexpected");
 					}
 
 					if (messageToSend) {
 						// merge segments to make it into one messages
-						for (const segment of msg.segments) {
-							messageToSend.segments.push(segment);
+						for (const segment of msg.added.segments) {
+							messageToSend.added.segments.push(segment);
 						}
 					} else {
 						messageToSend = msg;
