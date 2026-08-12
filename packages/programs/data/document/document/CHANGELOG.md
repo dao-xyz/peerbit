@@ -1,5 +1,16 @@
 # Changelog
 
+## 14.0.0
+
+### Major Changes
+
+- [#1220](https://github.com/dao-xyz/peerbit/pull/1220) [`4b0fa5a`](https://github.com/dao-xyz/peerbit/commit/4b0fa5a49a019892133688519204658c72f6c4d1) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Retire the document `compatibility: 6 | 7` open option. The option is removed from `SetupOptions` and any explicitly-defined value now rejects at open with the document-named `DocumentCompatibilityRetiredError` (an explicitly-present `undefined` stays accepted); the historical 6 -> log v8 / 7 -> log v9 mapping is gone, so no value can reach shared-log compatibility semantics. Compatibility-6 encode (`PutWithKeyOperation`) is retired, but persisted-data decode remains: `PutWithKeyOperation` (tag 0) and `DeleteByStringKeyOperation` (tag 2) stay registered and readable — old stores stay openable without any option.
+
+### Patch Changes
+
+- Updated dependencies [[`4b0fa5a`](https://github.com/dao-xyz/peerbit/commit/4b0fa5a49a019892133688519204658c72f6c4d1)]:
+  - @peerbit/shared-log@14.0.0
+
 ## 13.1.38
 
 ### Patch Changes

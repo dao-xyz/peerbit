@@ -1,5 +1,16 @@
 # Changelog
 
+## 6.0.0
+
+### Major Changes
+
+- [#1220](https://github.com/dao-xyz/peerbit/pull/1220) [`4b0fa5a`](https://github.com/dao-xyz/peerbit/commit/4b0fa5a49a019892133688519204658c72f6c4d1) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Breaking type-surface change inherited from @peerbit/shared-log: the string store's public `Args` embeds `SharedLogOptions`, whose `compatibility` option was removed. Opening a string store with an explicit `compatibility` value now rejects at open (`CompatibilityModeRetiredError`); omit the option to keep current behavior.
+
+### Patch Changes
+
+- Updated dependencies [[`4b0fa5a`](https://github.com/dao-xyz/peerbit/commit/4b0fa5a49a019892133688519204658c72f6c4d1)]:
+  - @peerbit/shared-log@14.0.0
+
 ## 5.1.103
 
 ### Patch Changes
