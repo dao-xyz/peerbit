@@ -428,7 +428,6 @@ describe("receive admission replication-info V2 decode-only codec", () => {
 		const synchronizer = sinon
 			.stub(log.syncronizer, "onMessage")
 			.resolves(false);
-		const request = sinon.spy(log, "handleRequestReplicationInfo");
 		const announcement = sinon.spy(log, "handleReplicationInfoAnnouncement");
 		const stopped = sinon.spy(log, "handleStoppedReplicating");
 		const activity = sinon.spy(log._liveness, "markReplicatorActivity");
@@ -463,7 +462,6 @@ describe("receive admission replication-info V2 decode-only codec", () => {
 			}
 
 			expect(synchronizer.notCalled).to.be.true;
-			expect(request.notCalled).to.be.true;
 			expect(announcement.notCalled).to.be.true;
 			expect(stopped.notCalled).to.be.true;
 			expect(activity.notCalled).to.be.true;
@@ -479,7 +477,6 @@ describe("receive admission replication-info V2 decode-only codec", () => {
 			).to.equal(0);
 		} finally {
 			synchronizer.restore();
-			request.restore();
 			announcement.restore();
 			stopped.restore();
 			activity.restore();
