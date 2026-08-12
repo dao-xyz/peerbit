@@ -7,13 +7,20 @@ import sinon from "sinon";
 import { v4 as uuid } from "uuid";
 import {
 	ExchangeHeadsMessage,
+	SYNC_CAPABILITY_REPLICATION_INFO_V2_APPLY,
+	SYNC_CAPABILITY_REPLICATION_INFO_V2_DECODE,
+	SYNC_CAPABILITY_REPLICATION_INFO_V2_SEND,
 	SyncCapabilitiesMessage,
 } from "../src/exchange-heads.js";
 import { ReplicationIntent } from "../src/ranges.js";
 import {
+	AddedReplicationInfoV2Message,
 	AddedReplicationSegmentMessage,
 	AllReplicatingSegmentsMessage,
+	FullReplicationInfoV2Message,
+	RequestReplicationInfoV2Message,
 	StoppedReplicating,
+	StoppedReplicationInfoV2Message,
 } from "../src/replication.js";
 import { EventStore } from "./utils/stores/index.js";
 
@@ -24,13 +31,12 @@ describe("events", () => {
 		await session.stop();
 	});
 
-	const openDisconnectedLog = async (peers = 2, compatibility?: number) => {
+	const openDisconnectedLog = async (peers = 2) => {
 		session = await TestSession.disconnected(peers);
 		const db = await session.peers[0].open(new EventStore(), {
 			args: {
 				replicate: false,
 				timeUntilRoleMaturity: 0,
-				...(compatibility !== undefined ? { compatibility } : {}),
 			},
 		});
 		return {
@@ -135,8 +141,132 @@ describe("events", () => {
 		};
 	};
 
+	// Neutral observation of the internal V2 mutation feed. Today the feed
+	// carries the legacy announcement classes; after the neutral-union retype
+	// it carries plain tagged objects. Classify by union tag or constructor
+	// name so these observations survive the retype without weakening.
+	const classifyAnnouncement = (
+		message: any,
+	): {
+		kind: "full" | "added" | "stopped";
+		segments?: any[];
+		segmentIds?: any[];
+	} => {
+		if (message?.full) {
+			return { kind: "full", segments: message.full.segments };
+		}
+		if (message?.added) {
+			return { kind: "added", segments: message.added.segments };
+		}
+		if (message?.stopped) {
+			return { kind: "stopped", segmentIds: message.stopped.segmentIds };
+		}
+		const name = message?.constructor?.name;
+		if (name === "AllReplicatingSegmentsMessage") {
+			return { kind: "full", segments: message.segments };
+		}
+		if (name === "AddedReplicationSegmentMessage") {
+			return { kind: "added", segments: message.segments };
+		}
+		if (name === "StoppedReplicating") {
+			return { kind: "stopped", segmentIds: message.segmentIds };
+		}
+		throw new Error(`Unknown announcement shape: ${String(name)}`);
+	};
+
+	const observeAnnouncementFeed = (log: any) => {
+		const announced: ReturnType<typeof classifyAnnouncement>[] = [];
+		const enqueue = (log._v2Send.enqueue as Function).bind(log._v2Send);
+		log._v2Send.enqueue = (message: any) => {
+			announced.push(classifyAnnouncement(message));
+			return enqueue(message);
+		};
+		return announced;
+	};
+
+	const localSenderCapabilities =
+		SYNC_CAPABILITY_REPLICATION_INFO_V2_DECODE |
+		SYNC_CAPABILITY_REPLICATION_INFO_V2_APPLY;
+	const remoteSenderCapabilities =
+		SYNC_CAPABILITY_REPLICATION_INFO_V2_DECODE |
+		SYNC_CAPABILITY_REPLICATION_INFO_V2_SEND;
+
+	// Establish a real directed V2 sender stream to `remote` through the
+	// receiver-led request admission, so announcement egress can be observed
+	// on the wire (the admission immediately enqueues the authoritative
+	// snapshot as sequence 1).
+	const openV2SendLane = async (log: any, remote: PublicSignKey) => {
+		const remoteHash = remote.hashcode();
+		const peerSession = log._peerSessions.rotate(remoteHash, "opening");
+		log._peerSessions.unblockReplicationInfo(remoteHash);
+		log._peerSessions.markOpen(remoteHash, peerSession);
+		const receiverTransportSession = 88n;
+		log._peerSyncCapabilities.set(remoteHash, localSenderCapabilities);
+		log._peerSyncCapabilitySessions.set(remoteHash, receiverTransportSession);
+		log._peerSyncCapabilityTimestamps.set(remoteHash, 0n);
+		await log.onMessage(
+			new RequestReplicationInfoV2Message({
+				receiverChallenge: randomBytes(32),
+				intendedSender: log.node.identity.publicKey,
+				senderSession: BigInt(log.node.services.pubsub.session),
+			}),
+			{
+				from: remote,
+				message: {
+					header: { session: receiverTransportSession, timestamp: 1n },
+				},
+			} as any,
+		);
+		await log._v2Send.drain();
+	};
+
+	// Open an authenticated V2 receive stream from `remote` so forged inbound
+	// V2 mutations can be applied through the full onMessage path.
+	const openV2ReceiveLane = async (log: any, remote: PublicSignKey) => {
+		const remoteHash = remote.hashcode();
+		const peerSession = log._peerSessions.rotate(remoteHash, "opening");
+		log._peerSessions.unblockReplicationInfo(remoteHash);
+		log._peerSessions.markOpen(remoteHash, peerSession);
+		const receiveEpoch = log._peerSessions.receiveEpoch(remoteHash);
+		const senderTransportSession = 4_242n;
+		log._peerSyncCapabilities.set(remoteHash, remoteSenderCapabilities);
+		log._peerSyncCapabilitySessions.set(remoteHash, senderTransportSession);
+		log._peerSyncCapabilityTimestamps.set(remoteHash, 1n);
+		expect(
+			log._v2Receive.markLocalCapabilityReady({
+				peerHash: remoteHash,
+				peerSession,
+				receiveEpoch,
+				receiverTransportSession: BigInt(log.node.services.pubsub.session),
+				requestNotBeforeMs: 0,
+			}),
+		).to.be.true;
+		expect(
+			log._v2Receive.observeCapability({
+				peerHash: remoteHash,
+				target: remote,
+				peerSession,
+				receiveEpoch,
+				capabilities: remoteSenderCapabilities,
+				senderTransportSession,
+				capabilityTimestamp: 1n,
+			}),
+		).to.be.true;
+		const state = log._v2Receive._receiveStates.get(remoteHash)!;
+		clearTimeout(state.requestTimer);
+		state.requestTimer = undefined;
+		return {
+			state,
+			context: (timestamp: bigint) =>
+				({
+					from: remote,
+					message: { header: { session: senderTransportSession, timestamp } },
+				}) as any,
+		};
+	};
+
 	it("announces the authoritative empty snapshot after a reset put commits then throws", async () => {
-		const { log, replicationIndex } = await openDisconnectedLog(1, 9);
+		const { log, replicationIndex } = await openDisconnectedLog(1);
 		const selfKey = session.peers[0].identity.publicKey;
 		const selfHash = selfKey.hashcode();
 		const numbers = log.indexableDomain.numbers;
@@ -172,6 +302,7 @@ describe("events", () => {
 			sent.push(message);
 			return [] as any;
 		});
+		const announced = observeAnnouncementFeed(log);
 
 		try {
 			await expect(
@@ -185,11 +316,21 @@ describe("events", () => {
 			expect(
 				await replicationIndex.count({ query: { hash: selfHash } }),
 			).to.equal(0);
-			const snapshots = sent.filter(
-				(message) => message instanceof AllReplicatingSegmentsMessage,
-			) as AllReplicatingSegmentsMessage[];
+			const snapshots = announced.filter((entry) => entry.kind === "full");
 			expect(snapshots).to.have.length(1);
 			expect(snapshots[0].segments).to.deep.equal([]);
+			expect(announced.filter((entry) => entry.kind !== "full")).to.have.length(
+				0,
+			);
+			// Default mode publishes no legacy ownership frames on the wire.
+			expect(
+				sent.filter(
+					(message) =>
+						message instanceof AllReplicatingSegmentsMessage ||
+						message instanceof AddedReplicationSegmentMessage ||
+						message instanceof StoppedReplicating,
+				),
+			).to.have.length(0);
 			expect(log._replicationRangeMutationFailure).to.be.undefined;
 		} finally {
 			put.restore();
@@ -494,8 +635,8 @@ describe("events", () => {
 		}
 	});
 
-	it("accepts only an ordered legacy replacement pair and applies its final range", async () => {
-		const { db, log, replicationIndex } = await openDisconnectedLog(2, 9);
+	it("accepts only an ordered replacement pair in a V2 Added mutation and applies its final range", async () => {
+		const { db, log, replicationIndex } = await openDisconnectedLog(2);
 		const ownerKey = session.peers[1].identity.publicKey;
 		const ownerHash = ownerKey.hashcode();
 		const id = randomBytes(32);
@@ -521,36 +662,59 @@ describe("events", () => {
 		log.events.addEventListener("replication:change", (event: any) => {
 			changes.push(event.detail.publicKey.hashcode());
 		});
+		const send = sinon.stub(log.rpc, "send").resolves([] as any);
+		const lane = await openV2ReceiveLane(log, ownerKey);
+		const senderEpoch = randomBytes(32);
+		let sequence = 0n;
+		const frame = (segments: any[]) =>
+			new AddedReplicationInfoV2Message({
+				receiverChallenge: lane.state.receiverBinding!.slice(),
+				senderEpoch,
+				sequence: ++sequence,
+				segments,
+			});
+		// The first frame of a stream must be the authoritative Full.
+		await db.log.onMessage(
+			new FullReplicationInfoV2Message({
+				receiverChallenge: lane.state.receiverBinding!.slice(),
+				senderEpoch,
+				sequence: ++sequence,
+				segments: [],
+			}),
+			lane.context(1n),
+		);
+		expect(lane.state.phase).to.equal("active");
 		const receive = (segments: any[], timestamp: bigint) =>
-			db.log.onMessage(new AddedReplicationSegmentMessage({ segments }), {
-				from: ownerKey,
-				message: { header: { timestamp } },
-			} as any);
+			db.log.onMessage(frame(segments), lane.context(timestamp));
 		const pair = [previous.toReplicationRange(), current.toReplicationRange()];
 
-		await receive(pair, 10n);
-		let durable = (
-			await replicationIndex.iterate({ query: { hash: ownerHash } }).all()
-		).map((result: any) => result.value);
-		expect(durable).to.have.length(1);
-		expect(durable[0].rangeHash).to.equal(current.rangeHash);
-		expect(changes).to.deep.equal([ownerHash]);
+		try {
+			await receive(pair, 10n);
+			let durable = (
+				await replicationIndex.iterate({ query: { hash: ownerHash } }).all()
+			).map((result: any) => result.value);
+			expect(durable).to.have.length(1);
+			expect(durable[0].rangeHash).to.equal(current.rangeHash);
+			expect(changes).to.deep.equal([ownerHash]);
 
-		await receive(pair, 11n);
-		durable = (
-			await replicationIndex.iterate({ query: { hash: ownerHash } }).all()
-		).map((result: any) => result.value);
-		expect(durable).to.have.length(1);
-		expect(durable[0].rangeHash).to.equal(current.rangeHash);
-		expect(changes).to.deep.equal([ownerHash]);
+			await receive(pair, 11n);
+			durable = (
+				await replicationIndex.iterate({ query: { hash: ownerHash } }).all()
+			).map((result: any) => result.value);
+			expect(durable).to.have.length(1);
+			expect(durable[0].rangeHash).to.equal(current.rangeHash);
+			expect(changes).to.deep.equal([ownerHash]);
 
-		await receive([...pair, unexpectedThird.toReplicationRange()], 12n);
-		durable = (
-			await replicationIndex.iterate({ query: { hash: ownerHash } }).all()
-		).map((result: any) => result.value);
-		expect(durable).to.have.length(1);
-		expect(durable[0].rangeHash).to.equal(current.rangeHash);
-		expect(changes).to.deep.equal([ownerHash]);
+			await receive([...pair, unexpectedThird.toReplicationRange()], 12n);
+			durable = (
+				await replicationIndex.iterate({ query: { hash: ownerHash } }).all()
+			).map((result: any) => result.value);
+			expect(durable).to.have.length(1);
+			expect(durable[0].rangeHash).to.equal(current.rangeHash);
+			expect(changes).to.deep.equal([ownerHash]);
+		} finally {
+			send.restore();
+		}
 	});
 
 	it("rejects a forged range owner before a reset can write or delete", async () => {
@@ -703,8 +867,9 @@ describe("events", () => {
 		});
 
 		expect(announced).to.have.length(1);
-		expect(announced[0]).to.be.instanceOf(AddedReplicationSegmentMessage);
-		const segments = (announced[0] as AddedReplicationSegmentMessage).segments;
+		const observation = classifyAnnouncement(announced[0]);
+		expect(observation.kind).to.equal("added");
+		const segments = observation.segments!;
 		expect(segments).to.have.length(1);
 		expect(segments[0].id).to.deep.equal(id);
 		expect(segments[0].offset).to.equal(replacement.start1);
@@ -745,10 +910,10 @@ describe("events", () => {
 
 			expect(recomputeOldest.callCount).to.equal(2);
 			expect(announced).to.have.length(1);
-			expect(announced[0]).to.be.instanceOf(AllReplicatingSegmentsMessage);
-			const snapshot = announced[0] as AllReplicatingSegmentsMessage;
+			const snapshot = classifyAnnouncement(announced[0]);
+			expect(snapshot.kind).to.equal("full");
 			expect(snapshot.segments).to.have.length(1);
-			expect(snapshot.segments[0].id).to.deep.equal(replacement.id);
+			expect(snapshot.segments![0].id).to.deep.equal(replacement.id);
 			const durable = await replicationIndex
 				.iterate({ query: { hash: selfHash } })
 				.all();
@@ -760,7 +925,7 @@ describe("events", () => {
 	});
 
 	it("announces the authoritative snapshot when a merge removal precedes a failed replacement", async () => {
-		const { log, replicationIndex } = await openDisconnectedLog(1, 9);
+		const { log, replicationIndex } = await openDisconnectedLog(1);
 		const selfKey = session.peers[0].identity.publicKey;
 		const selfHash = selfKey.hashcode();
 		const first = makeReplicationRange(log, {
@@ -795,11 +960,7 @@ describe("events", () => {
 			}
 			return result;
 		}) as any);
-		const sent: unknown[] = [];
-		const send = sinon.stub(log.rpc, "send").callsFake(async (message: any) => {
-			sent.push(message);
-			return [] as any;
-		});
+		const announced = observeAnnouncementFeed(log);
 		const rebalanceAdd = sinon.spy(log.replicationChangeDebounceFn, "add");
 
 		try {
@@ -824,14 +985,11 @@ describe("events", () => {
 				),
 			).to.deep.equal([first.rangeHash]);
 
-			const snapshots = sent.filter(
-				(message) => message instanceof AllReplicatingSegmentsMessage,
-			) as AllReplicatingSegmentsMessage[];
+			const snapshots = announced.filter((entry) => entry.kind === "full");
 			expect(snapshots).to.have.length(1);
 			expect(snapshots[0].segments).to.have.length(1);
-			expect(snapshots[0].segments[0].id).to.deep.equal(first.id);
-			expect(sent.some((message) => message instanceof StoppedReplicating)).to
-				.be.false;
+			expect(snapshots[0].segments![0].id).to.deep.equal(first.id);
+			expect(announced.some((entry) => entry.kind === "stopped")).to.be.false;
 			const removedDiffs = rebalanceAdd
 				.getCalls()
 				.map((call) => call.args[0])
@@ -842,12 +1000,11 @@ describe("events", () => {
 		} finally {
 			rebalanceAdd.restore();
 			put.restore();
-			send.restore();
 		}
 	});
 
 	it("queues a preliminary removal once when its delete commits then throws", async () => {
-		const { log, replicationIndex } = await openDisconnectedLog(1, 9);
+		const { log, replicationIndex } = await openDisconnectedLog(1);
 		const selfKey = session.peers[0].identity.publicKey;
 		const selfHash = selfKey.hashcode();
 		const first = makeReplicationRange(log, {
@@ -879,11 +1036,7 @@ describe("events", () => {
 			throw deletionFailure;
 		}) as any);
 		const rebalanceAdd = sinon.spy(log.replicationChangeDebounceFn, "add");
-		const sent: unknown[] = [];
-		const send = sinon.stub(log.rpc, "send").callsFake(async (message: any) => {
-			sent.push(message);
-			return [] as any;
-		});
+		const announced = observeAnnouncementFeed(log);
 
 		try {
 			await expect(
@@ -899,21 +1052,18 @@ describe("events", () => {
 				.filter((diff: any) => diff.type === "removed");
 			expect(removedDiffs).to.have.length(1);
 			expect(removedDiffs[0].range.rangeHash).to.equal(removed.rangeHash);
-			const snapshots = sent.filter(
-				(message) => message instanceof AllReplicatingSegmentsMessage,
-			) as AllReplicatingSegmentsMessage[];
+			const snapshots = announced.filter((entry) => entry.kind === "full");
 			expect(snapshots).to.have.length(1);
 			expect(snapshots[0].segments).to.have.length(1);
-			expect(snapshots[0].segments[0].id).to.deep.equal(first.id);
+			expect(snapshots[0].segments![0].id).to.deep.equal(first.id);
 		} finally {
-			send.restore();
 			rebalanceAdd.restore();
 			del.restore();
 		}
 	});
 
 	it("announces the current snapshot when post-write maturity bookkeeping fails", async () => {
-		const { log, replicationIndex } = await openDisconnectedLog(1, 9);
+		const { log, replicationIndex } = await openDisconnectedLog(1);
 		const selfHash = session.peers[0].identity.publicKey.hashcode();
 		const range = makeReplicationRange(log, {
 			id: randomBytes(32),
@@ -928,11 +1078,7 @@ describe("events", () => {
 		const scheduleMaturity = sinon
 			.stub(log, "schedulePendingMaturity")
 			.throws(bookkeepingFailure);
-		const sent: unknown[] = [];
-		const send = sinon.stub(log.rpc, "send").callsFake(async (message: any) => {
-			sent.push(message);
-			return [] as any;
-		});
+		const announced = observeAnnouncementFeed(log);
 
 		try {
 			await expect(
@@ -948,26 +1094,19 @@ describe("events", () => {
 				.all();
 			expect(durable).to.have.length(1);
 			expect(durable[0].value.rangeHash).to.equal(range.rangeHash);
-			const snapshots = sent.filter(
-				(message) => message instanceof AllReplicatingSegmentsMessage,
-			) as AllReplicatingSegmentsMessage[];
+			const snapshots = announced.filter((entry) => entry.kind === "full");
 			expect(snapshots).to.have.length(1);
 			expect(snapshots[0].segments).to.have.length(1);
-			expect(snapshots[0].segments[0].id).to.deep.equal(range.id);
-			expect(
-				sent.some(
-					(message) => message instanceof AddedReplicationSegmentMessage,
-				),
-			).to.be.false;
+			expect(snapshots[0].segments![0].id).to.deep.equal(range.id);
+			expect(announced.some((entry) => entry.kind === "added")).to.be.false;
 		} finally {
-			send.restore();
 			scheduleMaturity.restore();
 			minRoleAge.restore();
 		}
 	});
 
 	it("poisons ownership instead of announcing an invalid persisted snapshot", async () => {
-		const { log, replicationIndex } = await openDisconnectedLog(2, 9);
+		const { log, replicationIndex } = await openDisconnectedLog(2);
 		const selfKey = session.peers[0].identity.publicKey;
 		const selfHash = selfKey.hashcode();
 		const invalid = makeReplicationRange(log, {
@@ -977,7 +1116,13 @@ describe("events", () => {
 			mode: 255 as ReplicationIntent,
 		});
 		await replicationIndex.put(invalid);
-		const send = sinon.spy(log.rpc, "send");
+		const sent: unknown[] = [];
+		const send = sinon
+			.stub(log.rpc, "send")
+			.callsFake(async (message: unknown) => {
+				sent.push(message);
+				return [] as any;
+			});
 		const remoteKey = session.peers[1].identity.publicKey;
 		const validMutation = makeReplicationRange(log, {
 			id: randomBytes(32),
@@ -986,15 +1131,18 @@ describe("events", () => {
 		});
 
 		try {
-			await expect(
-				log._onSubscription({
-					detail: { from: remoteKey, topics: [log.topic] },
-				} as any),
-			).to.be.rejectedWith(
-				"Persisted replication ownership is invalid and cannot be announced",
-			);
-			expect(send.calledOnce).to.be.true;
-			expect(send.firstCall.args[0]).to.be.instanceOf(SyncCapabilitiesMessage);
+			// An admitted V2 request triggers the authoritative snapshot send;
+			// its construction must poison ownership instead of announcing the
+			// invalid persisted state.
+			await openV2SendLane(log, remoteKey);
+			expect(
+				sent.some(
+					(message) =>
+						message instanceof FullReplicationInfoV2Message ||
+						message instanceof AddedReplicationInfoV2Message ||
+						message instanceof StoppedReplicationInfoV2Message,
+				),
+			).to.be.false;
 			expect(log._replicationRangeMutationFailure).to.be.instanceOf(Error);
 			await expect(
 				log._findLeaders([log.indexableDomain.numbers.denormalize(0.5)]),
@@ -1483,7 +1631,7 @@ describe("events", () => {
 	});
 
 	it("keeps incremental owner state within the snapshot limit and reconnects at the limit", async () => {
-		const { log, replicationIndex } = await openDisconnectedLog(2, 9);
+		const { log, replicationIndex } = await openDisconnectedLog(2);
 		const selfKey = session.peers[0].identity.publicKey;
 		const selfHash = selfKey.hashcode();
 		const ranges = Array.from({ length: 4096 }, (_, index) =>
@@ -1537,14 +1685,14 @@ describe("events", () => {
 				return [] as any;
 			});
 		try {
-			await log.handleSubscriptionChange(
-				session.peers[1].identity.publicKey,
-				[log.topic],
-				true,
-			);
+			// A reconnecting peer re-learns owner state through the V2 snapshot:
+			// the authoritative Full at exactly the limit must egress and must
+			// not poison ownership (the V2 lane bounds inbound and outbound via
+			// validateReplicationRangeAnnouncement).
+			await openV2SendLane(log, session.peers[1].identity.publicKey);
 			const snapshots = sent.filter(
-				(message) => message instanceof AllReplicatingSegmentsMessage,
-			) as AllReplicatingSegmentsMessage[];
+				(message) => message instanceof FullReplicationInfoV2Message,
+			) as FullReplicationInfoV2Message[];
 			expect(snapshots).to.have.length(1);
 			expect(snapshots[0].segments).to.have.length(4096);
 			expect(log._replicationRangeMutationFailure).to.be.undefined;
@@ -1554,7 +1702,7 @@ describe("events", () => {
 	});
 
 	it("rejects over-limit stopped announcements before liveness, queues, or queries", async () => {
-		const { log, replicationIndex } = await openDisconnectedLog(2, 9);
+		const { log, replicationIndex } = await openDisconnectedLog(2);
 		const remoteKey = session.peers[1].identity.publicKey;
 		const duplicateId = randomBytes(32);
 		const markActivity = sinon.spy(log._liveness, "markReplicatorActivity");
@@ -1566,19 +1714,30 @@ describe("events", () => {
 		);
 		const iterate = sinon.spy(replicationIndex, "iterate");
 		const count = sinon.spy(replicationIndex, "count");
+		// The V2 lane bounds the raw decoded vector through
+		// validateStoppedReplicationAnnouncement before any side effect.
+		const validateStopped = sinon.spy(
+			log,
+			"validateStoppedReplicationAnnouncement",
+		);
 		const effects = observeRejectedReplicationMutation(log);
 
 		try {
 			await log.onMessage(
-				new StoppedReplicating({
+				new StoppedReplicationInfoV2Message({
+					receiverChallenge: new Uint8Array(32),
+					senderEpoch: new Uint8Array(32),
+					sequence: 1n,
 					segmentIds: new Array(4097).fill(duplicateId),
 				}),
 				{
 					from: remoteKey,
-					message: { header: { timestamp: 1n } },
+					message: { header: { session: 1n, timestamp: 1n } },
 				} as any,
 			);
 
+			expect(validateStopped.calledOnce).to.be.true;
+			expect(validateStopped.alwaysThrew()).to.be.true;
 			expect(markActivity.called).to.be.false;
 			expect(applyQueue.called).to.be.false;
 			expect(mutationLane.called).to.be.false;
@@ -1587,6 +1746,7 @@ describe("events", () => {
 			expect(count.called).to.be.false;
 			effects.assertNoEffects();
 		} finally {
+			validateStopped.restore();
 			markActivity.restore();
 			applyQueue.restore();
 			mutationLane.restore();
@@ -1838,7 +1998,8 @@ describe("events", () => {
 	}
 
 	it("orders a delayed adaptive Added announcement before the authoritative empty snapshot", async () => {
-		const { db, log } = await openDisconnectedLog(1, 9);
+		const { db, log } = await openDisconnectedLog(2);
+		const remoteKey = session.peers[1].identity.publicKey;
 		const [currentRange] = await db.log.replicate({
 			factor: 0.2,
 			offset: 0.1,
@@ -1865,18 +2026,23 @@ describe("events", () => {
 		const announcements: unknown[] = [];
 		const send = sinon.stub(log.rpc, "send").callsFake(async (message) => {
 			announcements.push(message);
-			if (message instanceof AddedReplicationSegmentMessage) {
+			if (message instanceof AddedReplicationInfoV2Message) {
 				addedStarted.resolve();
 				await releaseAdded.promise;
 			}
+			return [] as any;
 		});
 
 		try {
+			// A real directed V2 destination stream: the delayed frame below is
+			// its in-flight transport attempt.
+			await openV2SendLane(log, remoteKey);
+
 			const balancing = log.rebalanceParticipation();
 			await addedStarted.promise;
 			expect(
 				announcements.filter(
-					(message) => message instanceof AddedReplicationSegmentMessage,
+					(message) => message instanceof AddedReplicationInfoV2Message,
 				),
 			).to.have.length(1);
 
@@ -1887,30 +2053,42 @@ describe("events", () => {
 				},
 				{ timeout: 2_000, delayInterval: 5 },
 			);
+			// While the Added V2 frame is still in flight, the newer
+			// authoritative empty Full must not overtake it on the stream.
 			expect(
 				announcements.filter(
-					(message) => message instanceof AllReplicatingSegmentsMessage,
+					(message) =>
+						message instanceof FullReplicationInfoV2Message &&
+						message.segments.length === 0,
 				),
 			).to.have.length(0);
 
 			releaseAdded.resolve();
-			expect(await balancing).to.equal(false);
+			await balancing;
 			await unreplicating;
+			await log._v2Send.drain();
 
 			const ownershipAnnouncements = announcements.filter(
 				(message) =>
-					message instanceof AddedReplicationSegmentMessage ||
-					message instanceof AllReplicatingSegmentsMessage,
-			);
+					message instanceof AddedReplicationInfoV2Message ||
+					(message instanceof FullReplicationInfoV2Message &&
+						message.segments.length === 0),
+			) as (AddedReplicationInfoV2Message | FullReplicationInfoV2Message)[];
+			expect(ownershipAnnouncements).to.have.length(2);
 			expect(ownershipAnnouncements[0]).to.be.instanceOf(
-				AddedReplicationSegmentMessage,
+				AddedReplicationInfoV2Message,
 			);
 			expect(ownershipAnnouncements[1]).to.be.instanceOf(
-				AllReplicatingSegmentsMessage,
+				FullReplicationInfoV2Message,
 			);
 			expect(
-				(ownershipAnnouncements[1] as AllReplicatingSegmentsMessage).segments,
+				(ownershipAnnouncements[1] as FullReplicationInfoV2Message).segments,
 			).to.have.length(0);
+			// The stream sequence carries the ordering: the delayed Added frame
+			// keeps the earlier sequence.
+			expect(
+				ownershipAnnouncements[1].sequence > ownershipAnnouncements[0].sequence,
+			).to.be.true;
 		} finally {
 			releaseAdded.resolve();
 			getMemoryUsage.restore();
@@ -3044,172 +3222,6 @@ describe("events", () => {
 		}
 	});
 
-	it("fences a blocked replication announcement from reopened repair queues", async () => {
-		const { db, log } = await openDisconnectedLog(1, 9);
-		const announcementStarted = pDefer<void>();
-		const releaseAnnouncement = pDefer<void>();
-		let announcementSignal: AbortSignal | undefined;
-		const send = sinon
-			.stub(log.rpc, "send")
-			.callsFake(async (...args: unknown[]) => {
-				const message = args[0];
-				const options = args[1] as { signal?: AbortSignal } | undefined;
-				if (message instanceof StoppedReplicating) {
-					announcementSignal = options?.signal;
-					announcementStarted.resolve();
-					await releaseAnnouncement.promise;
-				}
-				return [] as any;
-			});
-		const queueRepair = sinon.spy(
-			log._announcements,
-			"queueCurrentReplicationStateAnnouncementRepair",
-		);
-		const queueRetry = sinon.spy(
-			log._announcements,
-			"queueCurrentReplicationStateAnnouncementRetry",
-		);
-		const ownershipLifecycleController =
-			log._instanceLifecycle?.ownershipLifecycleController;
-
-		try {
-			const announcing = log._announcements.sendReplicationAnnouncement(
-				new StoppedReplicating({ segmentIds: [] }),
-			);
-			await announcementStarted.promise;
-			expect(announcementSignal).to.equal(ownershipLifecycleController.signal);
-
-			log.poisonReplicationOwnership(new Error("forced ownership poison"));
-			expect(announcementSignal?.aborted).to.be.true;
-			await db.close();
-			await session.peers[0].open(db, {
-				args: {
-					replicate: false,
-					timeUntilRoleMaturity: 0,
-					compatibility: 9,
-				},
-			});
-			queueRepair.resetHistory();
-			queueRetry.resetHistory();
-
-			releaseAnnouncement.resolve();
-			await expect(announcing).to.be.rejectedWith(
-				"Replication ownership lifecycle is no longer active",
-			);
-			expect(queueRepair.called).to.be.false;
-			expect(queueRetry.called).to.be.false;
-		} finally {
-			releaseAnnouncement.resolve();
-			queueRepair.restore();
-			queueRetry.restore();
-			send.restore();
-			log._replicationRangeMutationFailure = undefined;
-		}
-	});
-
-	it("does not let a stale announcement retry poison reopened ownership", async () => {
-		const { db, log } = await openDisconnectedLog(1, 9);
-		const snapshotReadStarted = pDefer<void>();
-		const releaseSnapshotRead = pDefer<void>();
-		const getMyReplicationSegments = sinon
-			.stub(log, "getMyReplicationSegments")
-			.callsFake(async () => {
-				snapshotReadStarted.resolve();
-				await releaseSnapshotRead.promise;
-				return [
-					{
-						toReplicationRange: () => ({ mode: "invalid-stale-mode" }),
-					},
-				];
-			});
-
-		try {
-			const retrying =
-				log._announcements.retryCurrentReplicationStateAnnouncement();
-			await snapshotReadStarted.promise;
-			getMyReplicationSegments.restore();
-
-			log.poisonReplicationOwnership(new Error("forced ownership poison"));
-			await db.close();
-			await session.peers[0].open(db, {
-				args: {
-					replicate: false,
-					timeUntilRoleMaturity: 0,
-					compatibility: 9,
-				},
-			});
-			const reopenedLifecycle =
-				log._instanceLifecycle?.ownershipLifecycleController;
-
-			releaseSnapshotRead.resolve();
-			await retrying;
-
-			expect(log._replicationRangeMutationFailure).to.be.undefined;
-			expect(log._instanceLifecycle?.ownershipLifecycleController).to.equal(
-				reopenedLifecycle,
-			);
-			expect(reopenedLifecycle.signal.aborted).to.be.false;
-		} finally {
-			releaseSnapshotRead.resolve();
-			if ((getMyReplicationSegments as any).wrappedMethod) {
-				getMyReplicationSegments.restore();
-			}
-			log._replicationRangeMutationFailure = undefined;
-		}
-	});
-
-	it("does not let a stale announcement repair poison reopened ownership", async () => {
-		const { db, log } = await openDisconnectedLog(1, 9);
-		const snapshotReadStarted = pDefer<void>();
-		const releaseSnapshotRead = pDefer<void>();
-		const getMyReplicationSegments = sinon
-			.stub(log, "getMyReplicationSegments")
-			.callsFake(async () => {
-				snapshotReadStarted.resolve();
-				await releaseSnapshotRead.promise;
-				return [
-					{
-						toReplicationRange: () => ({ mode: "invalid-stale-mode" }),
-					},
-				];
-			});
-		log._announcements._announcementRepairBinding.pending = true;
-
-		try {
-			const repairing =
-				log._announcements.runCurrentReplicationStateAnnouncementRepair();
-			await snapshotReadStarted.promise;
-			getMyReplicationSegments.restore();
-
-			log.poisonReplicationOwnership(new Error("forced ownership poison"));
-			await db.close();
-			await session.peers[0].open(db, {
-				args: {
-					replicate: false,
-					timeUntilRoleMaturity: 0,
-					compatibility: 9,
-				},
-			});
-			const reopenedLifecycle =
-				log._instanceLifecycle?.ownershipLifecycleController;
-
-			releaseSnapshotRead.resolve();
-			await repairing;
-
-			expect(log._replicationRangeMutationFailure).to.be.undefined;
-			expect(log._instanceLifecycle?.ownershipLifecycleController).to.equal(
-				reopenedLifecycle,
-			);
-			expect(reopenedLifecycle.signal.aborted).to.be.false;
-		} finally {
-			releaseSnapshotRead.resolve();
-			if ((getMyReplicationSegments as any).wrappedMethod) {
-				getMyReplicationSegments.restore();
-			}
-			log._replicationRangeMutationFailure = undefined;
-		}
-	});
-
 	it("fences a blocked repair runner from poison and reopened frontier state", async () => {
 		const { db, log } = await openDisconnectedLog(1);
 		const firstSendStarted = pDefer<void>();
@@ -3757,7 +3769,7 @@ describe("events", () => {
 	});
 
 	it("suppresses pending maturity while terminal close is still in progress", async () => {
-		const { db, log } = await openDisconnectedLog(2, 9);
+		const { db, log } = await openDisconnectedLog(2);
 		const remoteKey = session.peers[1].identity.publicKey;
 		const numbers = log.indexableDomain.numbers;
 		const range = new log.indexableDomain.constructorRange({
@@ -3774,11 +3786,15 @@ describe("events", () => {
 			matureEvents += 1;
 		});
 		const rebalance = sinon.spy(log.replicationChangeDebounceFn, "add");
+		// Gate the V2 terminal reset frame only once armed: the destination
+		// lane's own initial snapshot is also an empty Full.
+		let terminalGateArmed = false;
 		const send = sinon
 			.stub(log.rpc, "send")
 			.callsFake(async (message: unknown) => {
 				if (
-					message instanceof AllReplicatingSegmentsMessage &&
+					terminalGateArmed &&
+					message instanceof FullReplicationInfoV2Message &&
 					message.segments.length === 0
 				) {
 					closeAnnouncementStarted.resolve();
@@ -3790,6 +3806,9 @@ describe("events", () => {
 			log._instanceLifecycle?.ownershipLifecycleController;
 
 		try {
+			await openV2SendLane(log, remoteKey);
+			terminalGateArmed = true;
+
 			log.schedulePendingMaturity(
 				{ type: "added", range, timestamp: range.timestamp },
 				remoteKey,
@@ -4237,10 +4256,10 @@ describe("events", () => {
 		session = await TestSession.connected(2);
 
 		const db1 = await session.peers[0].open(new EventStore(), {
-			args: { compatibility: 9, replicate: 1, timeUntilRoleMaturity: 0 },
+			args: { replicate: 1, timeUntilRoleMaturity: 0 },
 		});
-		await session.peers[1].open(db1.clone(), {
-			args: { compatibility: 9, replicate: 1, timeUntilRoleMaturity: 0 },
+		const db2 = await session.peers[1].open(db1.clone(), {
+			args: { replicate: 1, timeUntilRoleMaturity: 0 },
 		});
 
 		const remoteKey = session.peers[1].identity.publicKey;
@@ -4304,6 +4323,28 @@ describe("events", () => {
 
 			releaseDelete.resolve();
 			await Promise.all([oldUnsubscribe, reconnect]);
+
+			// A real reconnect is symmetric: the remote re-advertises its sender
+			// capability to the reopened session. This test simulates only the
+			// local half, so deliver that advert explicitly and let the V2
+			// recovery handshake re-learn the remote's ranges.
+			await log.onMessage(
+				new SyncCapabilitiesMessage({
+					capabilities:
+						SYNC_CAPABILITY_REPLICATION_INFO_V2_DECODE |
+						SYNC_CAPABILITY_REPLICATION_INFO_V2_SEND |
+						SYNC_CAPABILITY_REPLICATION_INFO_V2_APPLY,
+				}),
+				{
+					from: remoteKey,
+					message: {
+						header: {
+							session: BigInt((db2.node.services.pubsub as any).session),
+							timestamp: BigInt(Date.now()) * 1_000_000n,
+						},
+					},
+				} as any,
+			);
 			await waitForResolved(async () => {
 				expect(
 					await replicationIndex.iterate({ query: { hash: remoteHash } }).all(),
@@ -4540,211 +4581,6 @@ describe("events", () => {
 			releaseBlocker.resolve();
 			releaseCleanup.resolve();
 			disconnected.restore();
-		}
-	});
-
-	it("does not apply a replication message superseded while the synchronizer yields", async () => {
-		session = await TestSession.connected(2);
-
-		const db1 = await session.peers[0].open(new EventStore(), {
-			args: { replicate: 1, timeUntilRoleMaturity: 0, compatibility: 9 },
-		});
-		await session.peers[1].open(db1.clone(), {
-			args: { replicate: 1, timeUntilRoleMaturity: 0, compatibility: 9 },
-		});
-
-		const remoteKey = session.peers[1].identity.publicKey;
-		const remoteHash = remoteKey.hashcode();
-		const log = db1.log as any;
-		const replicationIndex = db1.log.replicationIndex as any;
-		let remoteRange: any;
-		await waitForResolved(async () => {
-			const ranges = await replicationIndex
-				.iterate({ query: { hash: remoteHash } })
-				.all();
-			expect(ranges).to.have.length.greaterThan(0);
-			remoteRange = ranges[0].value;
-		});
-
-		await log.removeReplicator(remoteKey, { noEvent: true });
-		expect(
-			await replicationIndex.count({ query: { hash: remoteHash } }),
-		).to.equal(0);
-
-		const delayedMessage = new AllReplicatingSegmentsMessage({
-			segments: [remoteRange.toReplicationRange()],
-		});
-		const synchronizerEntered = pDefer<void>();
-		const releaseSynchronizer = pDefer<void>();
-		const originalSynchronizerOnMessage = log.syncronizer.onMessage.bind(
-			log.syncronizer,
-		);
-		const synchronizer = sinon
-			.stub(log.syncronizer, "onMessage")
-			.callsFake(async (message: unknown, context: unknown) => {
-				if (message === delayedMessage) {
-					synchronizerEntered.resolve();
-					await releaseSynchronizer.promise;
-					return false;
-				}
-				return originalSynchronizerOnMessage(message, context);
-			});
-		const scheduleRequests = sinon
-			.stub(log, "scheduleReplicationInfoRequests")
-			.callsFake(() => {});
-		// This test manually drives the legacy receive handler; negotiated V2
-		// cutover is covered independently.
-		const forceLegacyReceivePath = sinon
-			.stub(log._v2Receive, "isLegacyCutover")
-			.returns(false);
-
-		try {
-			const delayedReceive = db1.log.onMessage(delayedMessage, {
-				from: remoteKey,
-				message: { header: { timestamp: BigInt(Date.now()) } },
-			} as any);
-			await synchronizerEntered.promise;
-
-			const unsubscribe = log._onUnsubscription({
-				detail: { from: remoteKey, topics: [db1.log.topic] },
-			});
-			releaseSynchronizer.resolve();
-			await Promise.all([delayedReceive, unsubscribe]);
-			await log._onSubscription({
-				detail: { from: remoteKey, topics: [db1.log.topic] },
-			});
-			expect(
-				await replicationIndex.count({ query: { hash: remoteHash } }),
-			).to.equal(0);
-		} finally {
-			releaseSynchronizer.resolve();
-			synchronizer.restore();
-			scheduleRequests.restore();
-			forceLegacyReceivePath.restore();
-		}
-	});
-
-	it("scopes replication timestamps to a reconnect generation", async () => {
-		session = await TestSession.connected(2);
-
-		const db1 = await session.peers[0].open(new EventStore(), {
-			args: { replicate: 1, timeUntilRoleMaturity: 0, compatibility: 9 },
-		});
-		await session.peers[1].open(db1.clone(), {
-			args: { replicate: 1, timeUntilRoleMaturity: 0, compatibility: 9 },
-		});
-
-		const remoteKey = session.peers[1].identity.publicKey;
-		const remoteHash = remoteKey.hashcode();
-		const log = db1.log as any;
-		const replicationIndex = db1.log.replicationIndex as any;
-		let remoteRange: any;
-		await waitForResolved(async () => {
-			const ranges = await replicationIndex
-				.iterate({ query: { hash: remoteHash } })
-				.all();
-			expect(ranges).to.have.length.greaterThan(0);
-			remoteRange = ranges[0].value;
-		});
-		const scheduleRequests = sinon
-			.stub(log, "scheduleReplicationInfoRequests")
-			.callsFake(() => {});
-		// This test manually drives the legacy receive handler; negotiated V2
-		// cutover is covered independently.
-		const forceLegacyReceivePath = sinon
-			.stub(log._v2Receive, "isLegacyCutover")
-			.returns(false);
-
-		try {
-			await log._onUnsubscription({
-				detail: { from: remoteKey, topics: [db1.log.topic] },
-			});
-			// Successful cleanup retires both the old receive generation and its
-			// sender-clock watermark; the unsubscribe fence rejects late traffic.
-			expect(log.latestReplicationInfoMessage.has(remoteHash)).to.be.false;
-
-			await log._onSubscription({
-				detail: { from: remoteKey, topics: [db1.log.topic] },
-			});
-			expect(log.latestReplicationInfoMessage.has(remoteHash)).to.be.false;
-
-			await db1.log.onMessage(
-				new AllReplicatingSegmentsMessage({
-					segments: [remoteRange.toReplicationRange()],
-				}),
-				{
-					from: remoteKey,
-					// Simulate a sender whose wall clock trails this receiver.
-					message: { header: { timestamp: 1n } },
-				} as any,
-			);
-
-			expect(
-				await replicationIndex.count({ query: { hash: remoteHash } }),
-			).to.be.greaterThan(0);
-			expect(log.latestReplicationInfoMessage.get(remoteHash)).to.equal(1n);
-		} finally {
-			scheduleRequests.restore();
-			forceLegacyReceivePath.restore();
-		}
-	});
-
-	it("ignores a stopped-segment message older than the latest snapshot", async () => {
-		session = await TestSession.connected(2);
-
-		const db1 = await session.peers[0].open(new EventStore(), {
-			args: { replicate: 1, timeUntilRoleMaturity: 0, compatibility: 9 },
-		});
-		await session.peers[1].open(db1.clone(), {
-			args: { replicate: 1, timeUntilRoleMaturity: 0, compatibility: 9 },
-		});
-
-		const remoteKey = session.peers[1].identity.publicKey;
-		const remoteHash = remoteKey.hashcode();
-		const log = db1.log as any;
-		const replicationIndex = db1.log.replicationIndex as any;
-		let remoteRange: any;
-		await waitForResolved(async () => {
-			const ranges = await replicationIndex
-				.iterate({ query: { hash: remoteHash } })
-				.all();
-			expect(ranges).to.have.length.greaterThan(0);
-			remoteRange = ranges[0].value;
-		});
-		// This test manually drives the legacy receive handler; negotiated V2
-		// cutover is covered independently.
-		const forceLegacyReceivePath = sinon
-			.stub(log._v2Receive, "isLegacyCutover")
-			.returns(false);
-
-		try {
-			log.latestReplicationInfoMessage.delete(remoteHash);
-			const newerTimestamp = BigInt(Date.now() + 1_000);
-			await db1.log.onMessage(
-				new AllReplicatingSegmentsMessage({
-					segments: [remoteRange.toReplicationRange()],
-				}),
-				{
-					from: remoteKey,
-					message: { header: { timestamp: newerTimestamp } },
-				} as any,
-			);
-			await db1.log.onMessage(
-				new StoppedReplicating({ segmentIds: [remoteRange.id] }),
-				{
-					from: remoteKey,
-					message: { header: { timestamp: newerTimestamp - 1n } },
-				} as any,
-			);
-
-			expect(
-				await replicationIndex.count({ query: { hash: remoteHash } }),
-			).to.be.greaterThan(0);
-			expect(log.latestReplicationInfoMessage.get(remoteHash)).to.equal(
-				newerTimestamp,
-			);
-		} finally {
-			forceLegacyReceivePath.restore();
 		}
 	});
 

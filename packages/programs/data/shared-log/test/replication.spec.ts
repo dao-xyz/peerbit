@@ -27,7 +27,6 @@ import type { ReplicationRangeIndexable } from "../src/ranges.js";
 import {
 	AbsoluteReplicas,
 	AddedReplicationInfoV2Message,
-	AllReplicatingSegmentsMessage,
 	FullReplicationInfoV2Message,
 	decodeReplicas,
 	maxReplicas,
@@ -214,59 +213,68 @@ testSetups.forEach((setup) => {
 				db2 = await session.peers[1].open(db1.clone(), {
 					args: {
 						setup,
-						compatibility: 9,
 					},
 				});
 
 				const fromHash = session.peers[0].identity.publicKey.hashcode();
-				// This test manually sends the legacy snapshot. V2 cutover is covered
-				// separately and must not satisfy the assertion through another path.
-				const forceLegacyReceivePath = sinon
-					.stub((db2.log as any)._v2Receive, "isLegacyCutover")
-					.returns(false);
+				const db2Hash = session.peers[1].identity.publicKey.hashcode();
+				// Wait for the real V2 sender stream from db1 to db2 so the probe
+				// below can ride the established, authenticated destination binding.
+				await waitForResolved(
+					() =>
+						expect(
+							(db1.log as any)._v2Send._sendStates.get(db2Hash)?.established,
+						).to.be.true,
+					{ timeout: 10_000 },
+				);
 
-				try {
-					// Ensure we start from a clean state on db2 for db1's ranges.
-					// Clearing through the network can race with periodic replication
-					// announcements and make this test flaky under CI load.
-					await db2.log.replicationIndex.del({
-						query: { hash: fromHash },
-					});
-					await waitForResolved(
-						async () =>
-							expect(
-								await db2.log.replicationIndex.count({
-									query: { hash: fromHash },
-								}),
-							).to.equal(0),
-						{ timeout: 5_000 },
-					);
+				// Ensure we start from a clean state on db2 for db1's ranges.
+				// Clearing through the network can race with periodic replication
+				// announcements and make this test flaky under CI load.
+				await db2.log.replicationIndex.del({
+					query: { hash: fromHash },
+				});
+				await waitForResolved(
+					async () =>
+						expect(
+							await db2.log.replicationIndex.count({
+								query: { hash: fromHash },
+							}),
+						).to.equal(0),
+					{ timeout: 5_000 },
+				);
 
-					// Simulate the timing-sensitive case where `Program.waitFor()` rejects.
-					(db2.log as any).waitFor = () => Promise.reject(new Error("boom"));
+				// Simulate the timing-sensitive case where `Program.waitFor()` rejects.
+				(db2.log as any).waitFor = () => Promise.reject(new Error("boom"));
 
-					const segments = (await db1.log.getMyReplicationSegments()).map((x) =>
-						x.toReplicationRange(),
-					);
-					expect(segments.length).to.be.greaterThan(0);
+				const segments = (await db1.log.getMyReplicationSegments()).map((x) =>
+					x.toReplicationRange(),
+				);
+				expect(segments.length).to.be.greaterThan(0);
 
-					await db1.log.rpc.send(
-						new AllReplicatingSegmentsMessage({ segments }),
-					);
+				// Probe with a stream-consistent authoritative V2 Full: receive-side
+				// application must not depend on waitFor().
+				const sendState = (db1.log as any)._v2Send._sendStates.get(db2Hash)!;
+				const probe = new FullReplicationInfoV2Message({
+					receiverChallenge: sendState.receiverChallenge.slice(),
+					senderEpoch: sendState.senderEpoch.slice(),
+					sequence: sendState.nextSequence,
+					segments,
+				});
+				sendState.nextSequence += 1n;
+				await db1.log.rpc.send(probe);
 
-					await waitForResolved(
-						async () =>
-							expect(
-								await db2.log.replicationIndex.count({
-									query: { hash: fromHash },
-								}),
-							).to.be.greaterThan(0),
-						{ timeout: 5_000 },
-					);
-				} finally {
-					forceLegacyReceivePath.restore();
-				}
+				await waitForResolved(
+					async () =>
+						expect(
+							await db2.log.replicationIndex.count({
+								query: { hash: fromHash },
+							}),
+						).to.be.greaterThan(0),
+					{ timeout: 5_000 },
+				);
 			});
+
 
 			it("logs are unique", async () => {
 				const entryCount = 33;

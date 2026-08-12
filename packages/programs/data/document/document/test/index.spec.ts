@@ -87,7 +87,6 @@ import {
 	DeleteOperation,
 	Operation,
 	PutOperation,
-	PutWithKeyOperation,
 	isDeleteOperation,
 } from "../src/operation.js";
 import { getCanPerformPolicyDescriptor } from "../src/policy.js";
@@ -7017,11 +7016,6 @@ describe("index", () => {
 							message: "arbitrary index transform",
 						},
 						{
-							name: "legacy compatibility",
-							options: { compatibility: 7 as const },
-							message: "legacy compatibility",
-						},
-						{
 							name: "strictHistory",
 							options: { strictHistory: true },
 							message: "strict history",
@@ -11133,66 +11127,6 @@ describe("index", () => {
 					}
 				});
 
-				describe("v7", () => {
-					it("iterate replicate", async () => {
-						stores[0] = await session.peers[0].open<TestStore>(
-							new TestStore({ docs: new Documents() }),
-							{
-								args: {
-									replicate: true,
-									compatibility: 7,
-								},
-							},
-						);
-
-						let docCount = 5;
-						for (let i = 0; i < docCount; i++) {
-							await stores[0].docs.put(
-								new Document({
-									id: String(i),
-								}),
-							);
-						}
-
-						stores[1] = await session.peers[1].open<TestStore>(
-							stores[0].clone(),
-							{
-								args: {
-									replicate: false,
-									compatibility: 7,
-								},
-							},
-						);
-
-						await stores[1].docs.index.waitFor(
-							session.peers[0].identity.publicKey,
-						);
-
-						const iterator = stores[1].docs.index.iterate(
-							new SearchRequest({
-								query: [],
-							}),
-							{ remote: { replicate: true } },
-						);
-
-						const results = [
-							...(await iterator.next(1)),
-							...(await iterator.next(1)),
-							...(await iterator.next(1)),
-							...(await iterator.next(1)),
-						];
-
-						expect(results).to.have.length(4);
-
-						await waitForResolved(async () =>
-							expect(await stores[1].docs.index.getSize()).equal(4),
-						);
-						expect(
-							await stores[1].docs.log.getMyReplicationSegments(),
-						).to.have.length(4); // no new segments
-					});
-				});
-
 				describe("v8+", () => {
 					const missingResponderTimeout = 1_000;
 					const setupMissingLaterPageResponder = async ({
@@ -12371,62 +12305,6 @@ describe("index", () => {
 							"replication:change",
 							listener,
 						);
-					});
-				});
-
-				describe("v9", () => {
-					it("uses legacy iterate request when compatibility is <= 9", async () => {
-						stores[0] = await session.peers[0].open<TestStore>(
-							new TestStore({ docs: new Documents() }),
-							{
-								args: {
-									replicate: true,
-									compatibility: 7,
-								},
-							},
-						);
-
-						const legacyDocId = "legacy-default";
-						await stores[0].docs.put(new Document({ id: legacyDocId }));
-
-						stores[1] = await session.peers[1].open<TestStore>(
-							stores[0].clone(),
-							{
-								args: {
-									replicate: false,
-									compatibility: 7,
-								},
-							},
-						);
-
-						await stores[1].docs.index.waitFor(
-							session.peers[0].identity.publicKey,
-						);
-
-						const requestSpy = sinon.spy(
-							stores[1].docs.index._query,
-							"request",
-						);
-
-						let iterator: any;
-						try {
-							iterator = stores[1].docs.index.iterate(
-								{},
-								{
-									remote: { replicate: true },
-								},
-							);
-
-							await iterator.next(1);
-
-							expect(requestSpy.callCount).to.be.greaterThan(0);
-							const firstRequest = requestSpy.getCall(0).args[0];
-							expect(firstRequest).to.be.instanceOf(SearchRequest);
-							expect(firstRequest).to.not.be.instanceOf(IterationRequest);
-						} finally {
-							await iterator?.close();
-							requestSpy.restore();
-						}
 					});
 				});
 			});
@@ -20948,54 +20826,6 @@ describe("index", () => {
 			await delay(100);
 			expect(peers).to.have.length(1);
 			expect(peers[0]).to.deep.equal(key2);
-		});
-	});
-
-	describe("migration", () => {
-		describe("v6-v7", async () => {
-			let store: TestStore;
-
-			before(async () => {
-				session = await TestSession.connected(1);
-			});
-			afterEach(async () => {
-				await store?.close();
-			});
-
-			after(async () => {
-				await session.stop();
-			});
-
-			it("can be compatible with v6", async () => {
-				store = new TestStore({
-					docs: new Documents<Document>(),
-				});
-				await session.peers[0].open(store, {
-					args: {
-						compatibility: 6,
-					},
-				});
-				const changes: DocumentsChange<Document, Document>[] = [];
-
-				store.docs.events.addEventListener("change", (evt) => {
-					changes.push(evt.detail);
-				});
-
-				let doc = new Document({
-					id: uuid(),
-					name: "Hello world",
-				});
-
-				const putOperation = (await store.docs.put(doc)).entry;
-				expect(await store.docs.index.getSize()).equal(1);
-
-				expect(changes.length).equal(1);
-				expect(changes[0].added).to.have.length(1);
-
-				const payload = await putOperation.getPayloadValue();
-				expect(payload).to.be.instanceOf(PutWithKeyOperation);
-				expect(store.docs.log.compatibility).to.be.equal(8);
-			});
 		});
 	});
 

@@ -76,47 +76,6 @@ describe("waitForReplicator", () => {
 		await session?.stop();
 	});
 
-	it("respects configured request retry limits", async () => {
-		session = await TestSession.connected(2);
-		db = await session.peers[0].open(new EventStore<string, any>(), {
-			args: {
-				compatibility: 9,
-				timeUntilRoleMaturity: 0,
-				waitForReplicatorRequestIntervalMs: 50,
-				waitForReplicatorRequestMaxAttempts: 2,
-			},
-		});
-
-		const originalSend = db.log.rpc.send.bind(db.log.rpc);
-		let requestCount = 0;
-		db.log.rpc.send = async (message: any, options: any) => {
-			if (message instanceof RequestReplicationInfoMessage) {
-				requestCount++;
-				return;
-			}
-			return originalSend(message, options);
-		};
-
-		// `open()` may schedule a best-effort replication info request to recently seen peers.
-		// We only want to count the retries issued by `waitForReplicator()`.
-		await delay(100);
-		const baseline = requestCount;
-
-		try {
-			await db.log.waitForReplicator(session.peers[1].identity.publicKey, {
-				timeout: 300,
-				eager: true,
-			});
-			throw new Error("Expected waitForReplicator() to time out");
-		} catch (error) {
-			expect(error).to.be.instanceOf(TimeoutError);
-		} finally {
-			db.log.rpc.send = originalSend;
-		}
-
-		expect(requestCount - baseline).to.equal(2);
-	});
-
 	it("nudges parked V2 recovery without sending legacy requests by default", async () => {
 		session = await TestSession.connected(2);
 		db = await session.peers[0].open(new EventStore<string, any>(), {

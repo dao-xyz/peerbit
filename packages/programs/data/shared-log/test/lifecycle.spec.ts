@@ -8,10 +8,10 @@ import sinon from "sinon";
 import { createReplicationDomainHash } from "../src/replication-domain-hash.js";
 import {
 	AllReplicatingSegmentsMessage,
+	ReplicationPingMessage,
 	RequestReplicationInfoMessage,
 	ResponseRoleMessage,
 } from "../src/replication.js";
-import { Replicator } from "../src/role.js";
 import { SimpleSyncronizer } from "../src/sync/simple.js";
 import { EventStore } from "./utils/stores/index.js";
 
@@ -182,31 +182,40 @@ describe("lifecycle", () => {
 		it(`${operation} drains an admitted subscription callback before retiring replication state`, async () => {
 			session = await TestSession.connected(2);
 			const db = await session.peers[0].open(new EventStore(), {
-				args: { compatibility: 9, replicate: { factor: 1 } },
+				args: { replicate: { factor: 1 } },
 			});
-			const sharedLog = db.log;
+			const sharedLog = db.log as any;
+			const remoteKey = session.peers[1].identity.publicKey;
+			const remoteHash = remoteKey.hashcode();
 			const replicationSegments = await sharedLog.getMyReplicationSegments();
 			expect(replicationSegments).to.have.length(1);
 
-			let markLookupStarted!: () => void;
-			const lookupStarted = new Promise<void>((resolve) => {
-				markLookupStarted = resolve;
+			// The default-mode subscription callback awaits the per-peer receive
+			// drain before the V2 capability path runs; gate it there to hold the
+			// admitted callback mid-flight.
+			let markDrainStarted!: () => void;
+			const drainStarted = new Promise<void>((resolve) => {
+				markDrainStarted = resolve;
 			});
-			let releaseLookup!: () => void;
-			const lookupGate = new Promise<void>((resolve) => {
-				releaseLookup = resolve;
+			let releaseDrain!: () => void;
+			const drainGate = new Promise<void>((resolve) => {
+				releaseDrain = resolve;
 			});
-			const lookup = sinon
-				.stub(sharedLog, "getMyReplicationSegments")
-				.callsFake(async () => {
-					markLookupStarted();
-					await lookupGate;
-					return replicationSegments;
+			const originalDrain = sharedLog.drainPeerReceiveHandlers.bind(sharedLog);
+			const drain = sinon
+				.stub(sharedLog, "drainPeerReceiveHandlers")
+				.callsFake(async (...args: unknown[]) => {
+					const peerHash = args[0] as string;
+					if (peerHash === remoteHash) {
+						markDrainStarted();
+						await drainGate;
+					}
+					return originalDrain(peerHash);
 				});
 			const sent: unknown[] = [];
 			const send = sinon
 				.stub(sharedLog.rpc, "send")
-				.callsFake(async (message) => {
+				.callsFake(async (message: unknown) => {
 					sent.push(message);
 					return [] as any;
 				});
@@ -220,44 +229,44 @@ describe("lifecycle", () => {
 				(sharedLog as any)._onSubscriptionFn(
 					new CustomEvent("subscribe", {
 						detail: {
-							from: session.peers[1].identity.publicKey,
+							from: remoteKey,
 							topics: [sharedLog.topic],
 						},
 					}),
 				);
-				await lookupStarted;
+				await drainStarted;
 
-				const terminating = db[operation]();
+				let terminalSettled = false;
+				const terminating = db[operation]().then(() => {
+					terminalSettled = true;
+				});
 				await waitForResolved(
 					() => expect(sharedLog.acceptsParentAttachments).to.be.false,
 				);
+				// The admitted callback is still parked: terminal retirement must
+				// stay blocked behind its drain, not merely lose a race.
+				await delay(50);
+				expect(terminalSettled).to.be.false;
 				expect(retire.called).to.be.false;
 
-				releaseLookup();
+				releaseDrain();
 				await terminating;
 
-				// A capability round-trip can keep an earlier duplicate subscription
-				// callback admitted. Terminal drain must settle every admitted lookup.
-				expect(lookup.called).to.be.true;
+				// Terminal drain must settle every admitted subscription callback
+				// before replication state retires.
 				expect(retire.calledOnce).to.be.true;
+				// Default mode publishes no legacy replication-info frames at all.
 				expect(
 					sent.filter(
 						(message) =>
-							message instanceof AllReplicatingSegmentsMessage &&
-							message.segments.length > 0,
-					),
-				).to.have.length(0);
-				expect(
-					sent.filter((message) => message instanceof ResponseRoleMessage),
-				).to.have.length(0);
-				expect(
-					sent.filter(
-						(message) => message instanceof RequestReplicationInfoMessage,
+							message instanceof AllReplicatingSegmentsMessage ||
+							message instanceof ResponseRoleMessage ||
+							message instanceof RequestReplicationInfoMessage,
 					),
 				).to.have.length(0);
 			} finally {
-				releaseLookup();
-				lookup.restore();
+				releaseDrain();
+				drain.restore();
 				send.restore();
 			}
 		});
@@ -354,51 +363,46 @@ describe("lifecycle", () => {
 	}
 
 	for (const operation of ["close", "drop"] as const) {
-		it(`${operation} publishes an admitted replication snapshot before the terminal reset`, async () => {
+		it(`${operation} drains an admitted subscription callback before the V2 terminal reset`, async () => {
 			session = await TestSession.connected(2);
 			const db = await session.peers[0].open(new EventStore(), {
-				args: { compatibility: 9, replicate: { factor: 1 } },
+				args: { replicate: { factor: 1 } },
 			});
-			const sharedLog = db.log;
+			const sharedLog = db.log as any;
+			const remoteKey = session.peers[1].identity.publicKey;
+			const remoteHash = remoteKey.hashcode();
 			const order: string[] = [];
-			let markSnapshotStarted!: () => void;
-			const snapshotStarted = new Promise<void>((resolve) => {
-				markSnapshotStarted = resolve;
+			let markDrainStarted!: () => void;
+			const drainStarted = new Promise<void>((resolve) => {
+				markDrainStarted = resolve;
 			});
-			let releaseSnapshot!: () => void;
-			const snapshotGate = new Promise<void>((resolve) => {
-				releaseSnapshot = resolve;
+			let releaseDrain!: () => void;
+			const drainGate = new Promise<void>((resolve) => {
+				releaseDrain = resolve;
 			});
-			let gateSnapshot = true;
+			const originalDrain = sharedLog.drainPeerReceiveHandlers.bind(sharedLog);
+			const drain = sinon
+				.stub(sharedLog, "drainPeerReceiveHandlers")
+				.callsFake(async (...args: unknown[]) => {
+					const peerHash = args[0] as string;
+					if (peerHash === remoteHash) {
+						markDrainStarted();
+						await drainGate;
+						order.push("subscription-drained");
+					}
+					return originalDrain(peerHash);
+				});
+			const sent: unknown[] = [];
 			const send = sinon
 				.stub(sharedLog.rpc, "send")
-				.callsFake(async (message) => {
-					if (
-						gateSnapshot &&
-						message instanceof AllReplicatingSegmentsMessage &&
-						message.segments.length > 0
-					) {
-						gateSnapshot = false;
-						order.push("snapshot-start");
-						markSnapshotStarted();
-						await snapshotGate;
-						order.push("snapshot-finish");
-					} else if (
-						message instanceof AllReplicatingSegmentsMessage &&
-						message.segments.length === 0
-					) {
-						order.push("terminal-reset");
-					}
+				.callsFake(async (message: unknown) => {
+					sent.push(message);
 					return [] as any;
 				});
-			const originalV2Terminal = (
-				sharedLog as any
-			)._v2Send.sendTerminalReset.bind((sharedLog as any)._v2Send);
 			const v2Terminal = sinon
-				.stub((sharedLog as any)._v2Send, "sendTerminalReset")
-				.callsFake(async (...args: unknown[]) => {
+				.stub(sharedLog._v2Send, "sendTerminalReset")
+				.callsFake(async () => {
 					order.push("v2-terminal-reset");
-					return originalV2Terminal(...args);
 				});
 			let terminating: Promise<unknown> | undefined;
 
@@ -406,12 +410,12 @@ describe("lifecycle", () => {
 				(sharedLog as any)._onSubscriptionFn(
 					new CustomEvent("subscribe", {
 						detail: {
-							from: session.peers[1].identity.publicKey,
+							from: remoteKey,
 							topics: [sharedLog.topic],
 						},
 					}),
 				);
-				await snapshotStarted;
+				await drainStarted;
 
 				let terminalSettled = false;
 				terminating = db[operation]().then(() => {
@@ -420,84 +424,47 @@ describe("lifecycle", () => {
 				await waitForResolved(
 					() => expect(sharedLog.acceptsParentAttachments).to.be.false,
 				);
+				// The admitted callback is still parked: the terminal reset must
+				// stay blocked behind its drain, not merely lose a race.
+				await delay(50);
 				expect(terminalSettled).to.be.false;
-				expect(order).to.deep.equal(["snapshot-start"]);
+				// The V2 terminal reset must not run while the admitted callback
+				// is still draining.
+				expect(order).to.deep.equal([]);
 
-				releaseSnapshot();
+				releaseDrain();
 				await terminating;
 				expect(order).to.deep.equal([
-					"snapshot-start",
-					"snapshot-finish",
+					"subscription-drained",
 					"v2-terminal-reset",
-					"terminal-reset",
 				]);
 				expect(v2Terminal.calledOnce).to.be.true;
+				// Default mode publishes no legacy terminal frames.
+				expect(
+					sent.filter(
+						(message) => message instanceof AllReplicatingSegmentsMessage,
+					),
+				).to.have.length(0);
 			} finally {
-				releaseSnapshot();
+				releaseDrain();
 				await terminating?.catch(() => {});
+				drain.restore();
 				send.restore();
 				v2Terminal.restore();
 			}
 		});
 	}
 
-	for (const compatibility of [8, 9]) {
-		it(`uses one replication-index snapshot for a v${compatibility} replication-info callback`, async () => {
-			session = await TestSession.connected(2);
-			const db = await session.peers[0].open(new EventStore(), {
-				args: { compatibility, replicate: { factor: 1 } },
-			});
-			const replicationSegments = await db.log.getMyReplicationSegments();
-			expect(replicationSegments).to.have.length(1);
-			const lookup = sinon
-				.stub(db.log, "getMyReplicationSegments")
-				.resolves(replicationSegments);
-			const sent: unknown[] = [];
-			const send = sinon.stub(db.log.rpc, "send").callsFake(async (message) => {
-				sent.push(message);
-				return [] as any;
-			});
-
-			try {
-				await db.log.handleSubscriptionChange(
-					session.peers[1].identity.publicKey,
-					[db.log.topic],
-					true,
-				);
-
-				expect(lookup.calledOnce).to.be.true;
-				const snapshots = sent.filter(
-					(message) => message instanceof AllReplicatingSegmentsMessage,
-				) as AllReplicatingSegmentsMessage[];
-				expect(snapshots).to.have.length(1);
-				expect(snapshots[0].segments).to.have.length(1);
-				expect(snapshots[0].segments[0].id).to.deep.equal(
-					replicationSegments[0].id,
-				);
-
-				const legacyRoles = sent.filter(
-					(message) => message instanceof ResponseRoleMessage,
-				) as ResponseRoleMessage[];
-				if (compatibility === 8) {
-					expect(legacyRoles).to.have.length(1);
-					expect(legacyRoles[0].role).to.be.instanceOf(Replicator);
-				} else {
-					expect(legacyRoles).to.have.length(0);
-				}
-			} finally {
-				lookup.restore();
-				send.restore();
-			}
-		});
-	}
-
-	it("does not publish a request snapshot from a closed generation after reopen", async () => {
+	it("clears active receive leases across a drained close and default reopen", async () => {
+		// Relocated B12 pin: the unique `_activeReceiveHandlersByPeer` reopen
+		// assertion previously lived only inside a compatibility-9 test. The
+		// behavior is mode-independent — a receive handler parked inside the
+		// synchronizer holds its lease, close() drains it, and a reopened
+		// instance starts with zero active leases.
 		session = await TestSession.connected(1);
-		const db = await session.peers[0].open(new EventStore(), {
-			args: { compatibility: 9, replicate: { factor: 1 } },
-		});
-		const sharedLog = db.log;
-		const requestMessage = new RequestReplicationInfoMessage();
+		const db = await session.peers[0].open(new EventStore());
+		const sharedLog = db.log as any;
+		const parkedMessage = new ReplicationPingMessage();
 		let markSynchronizerEntered!: () => void;
 		const synchronizerEntered = new Promise<void>((resolve) => {
 			markSynchronizerEntered = resolve;
@@ -512,29 +479,23 @@ describe("lifecycle", () => {
 		const synchronizer = sinon
 			.stub(sharedLog.syncronizer, "onMessage")
 			.callsFake(async (message: unknown, context: unknown) => {
-				if (message === requestMessage) {
+				if (message === parkedMessage) {
 					markSynchronizerEntered();
 					await synchronizerGate;
-					return false;
+					return true;
 				}
 				return originalSynchronizerOnMessage(message as any, context as any);
 			});
-		const sent: unknown[] = [];
-		const send = sinon
-			.stub(sharedLog.rpc, "send")
-			.callsFake(async (message) => {
-				sent.push(message);
-				return [] as any;
-			});
 		const requester = (await Ed25519Keypair.create()).publicKey;
-		let request: Promise<unknown> | undefined;
+		let receive: Promise<unknown> | undefined;
 		let closing: Promise<unknown> | undefined;
 
 		try {
-			request = sharedLog.onMessage(requestMessage, {
+			receive = sharedLog.onMessage(parkedMessage, {
 				from: requester,
 			} as any);
 			await synchronizerEntered;
+			expect(sharedLog._activeReceiveHandlersByPeer.size).to.equal(1);
 
 			let closeSettled = false;
 			closing = db.close().then(() => {
@@ -547,23 +508,15 @@ describe("lifecycle", () => {
 			expect(closeSettled).to.be.false;
 
 			releaseSynchronizer();
-			await Promise.all([request, closing]);
-			expect(
-				sent.filter(
-					(message) =>
-						message instanceof AllReplicatingSegmentsMessage &&
-						message.segments.length > 0,
-				),
-			).to.have.length(0);
+			await Promise.all([receive, closing]);
 
-			await session.peers[0].open(db, { args: { compatibility: 9 } });
-			expect((sharedLog as any)._activeReceiveHandlersByPeer.size).to.equal(0);
+			await session.peers[0].open(db);
+			expect(sharedLog._activeReceiveHandlersByPeer.size).to.equal(0);
 		} finally {
 			releaseSynchronizer();
-			await request?.catch(() => {});
+			await receive?.catch(() => {});
 			await closing?.catch(() => {});
 			synchronizer.restore();
-			send.restore();
 		}
 	});
 

@@ -17,7 +17,6 @@ import {
 } from "../src/replication.js";
 import { Replicator } from "../src/role.js";
 import { RatelessIBLTSynchronizer } from "../src/sync/rateless-iblt.js";
-import { SimpleSyncronizer } from "../src/sync/simple.js";
 import { EventStore } from "./utils/stores/event-store.js";
 
 describe(`migration-8-9`, function () {
@@ -44,7 +43,7 @@ describe(`migration-8-9`, function () {
 		message instanceof AddedReplicationSegmentMessage ||
 		message instanceof StoppedReplicating;
 
-	const setup = async (compatibility?: number, order: boolean = false) => {
+	const setup = async () => {
 		fakeOldLegacyRequests = 0;
 		fakeOldLegacyAnnouncements = 0;
 		fakeOldV2Messages = 0;
@@ -87,7 +86,6 @@ describe(`migration-8-9`, function () {
 					replicate: {
 						factor: 1,
 					},
-					compatibility,
 					onMessage: async (msg, context) => {
 						if (isReplicationInfoV2Message(msg)) {
 							fakeOldV2Messages++;
@@ -134,18 +132,12 @@ describe(`migration-8-9`, function () {
 					replicate: {
 						factor: 1,
 					},
-					compatibility,
 				},
 			});
 		};
 
-		if (order) {
-			db1 = await createV8();
-			db2 = await createV9();
-		} else {
-			db2 = await createV9();
-			db1 = await createV8();
-		}
+		db2 = await createV9();
+		db1 = await createV8();
 
 		// Install both directions of the fake-old protocol boundary before the
 		// peers connect. This prevents the current implementation hidden behind
@@ -186,30 +178,8 @@ describe(`migration-8-9`, function () {
 		await session?.stop();
 	});
 
-	it("8-9, replicates database of 1 entry", async () => {
-		await setup(8);
-
-		const value = "hello";
-
-		await db1.add(value);
-		await waitForResolved(() => expect(db2.log.log.length).equal(1));
-		expect(fakeOldLegacyRequests).to.be.greaterThan(0);
-		expect(fakeOldV2Messages).to.be.greaterThan(0);
-	});
-
-	it("9-8, replicates database of 1 entry", async () => {
-		await setup(8, true);
-
-		const value = "hello";
-
-		await db2.add(value);
-		await waitForResolved(() => expect(db1.log.log.length).equal(1));
-		expect(fakeOldLegacyRequests).to.be.greaterThan(0);
-		expect(fakeOldV2Messages).to.be.greaterThan(0);
-	});
-
 	it("does not fall back to legacy when compatibility is omitted", async () => {
-		await setup(undefined);
+		await setup();
 		const value = "hello";
 		await db1.add(value);
 		await expect(
@@ -227,26 +197,8 @@ describe(`migration-8-9`, function () {
 		expect(fakeOldV2Messages).to.be.greaterThan(0);
 	});
 
-	it("v8 uses simple sync u32", async () => {
-		await setup(8);
-		expect(db1.log.syncronizer).to.be.instanceOf(SimpleSyncronizer);
-		expect(db1.log.domain.resolution).to.equal("u32");
-	});
-
-	it("v9 uses simple sync u32", async () => {
-		await setup(9);
-		expect(db1.log.syncronizer).to.be.instanceOf(SimpleSyncronizer);
-		expect(db1.log.domain.resolution).to.equal("u32");
-	});
-
-	it("v0 stays on simple sync u32", async () => {
-		await setup(0);
-		expect(db1.log.syncronizer).to.be.instanceOf(SimpleSyncronizer);
-		expect(db1.log.domain.resolution).to.equal("u32");
-	});
-
-	it("v10+ uses iblt u64", async () => {
-		await setup(10);
+	it("default open uses iblt u64", async () => {
+		await setup();
 		expect(db1.log.syncronizer).to.be.instanceOf(RatelessIBLTSynchronizer);
 		expect(db1.log.domain.resolution).to.equal("u64");
 	});

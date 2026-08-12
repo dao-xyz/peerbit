@@ -74,7 +74,6 @@ export type Args<
 	canAppend?: CanAppend<Operation<T>>;
 	canReplicate?: (publicKey: PublicSignKey) => Promise<boolean> | boolean;
 	onMessage?: (msg: TransportMessage, context: RequestContext) => Promise<void>;
-	compatibility?: number;
 	setup?: TestSetupConfig<R>;
 	sync?: SyncOptions<R>;
 	domain?: ReplicationDomainConstructor<D>;
@@ -134,7 +133,6 @@ export class EventStore<
 				: undefined;
 
 		await this.log.open({
-			compatibility: properties?.compatibility,
 			onChange: properties?.onChange,
 			canAppend,
 			canReplicate: properties?.canReplicate,
