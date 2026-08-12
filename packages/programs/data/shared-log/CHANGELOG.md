@@ -1,5 +1,11 @@
 # Changelog
 
+## 15.0.0
+
+### Major Changes
+
+- [#1223](https://github.com/dao-xyz/peerbit/pull/1223) [`6de3dd0`](https://github.com/dao-xyz/peerbit/commit/6de3dd046be4b7fa7d9ddf2c2f99544981b8ea4a) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Internal replication announcements now flow as a neutral full/added/stopped mutation union instead of the retired legacy wire classes. The advanced `announce` callback option on `replicate()`/`startAnnounceReplicating()` receives the tagged mutation objects (`{ full: { segments } }` / `{ added: { segments } }`) instead of `AllReplicatingSegmentsMessage`/`AddedReplicationSegmentMessage` instances, and the internal `LegacyReplicationInfoMessage` type alias is no longer exported from the (non re-exported) `replication-info-v2-send` module. Wire bytes, sequencing and coalescing are unchanged; the legacy classes remain exported decode tombstones.
+
 ## 14.0.0
 
 ### Major Changes
