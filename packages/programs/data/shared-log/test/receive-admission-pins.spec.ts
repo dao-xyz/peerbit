@@ -34,11 +34,7 @@ import {
 	SyncCapabilitiesMessage,
 } from "../src/exchange-heads.js";
 import { createReplicationDomainHash } from "../src/replication-domain-hash.js";
-import {
-	AddedReplicationInfoV2Message,
-	AllReplicatingSegmentsMessage,
-	RequestReplicationInfoMessage,
-} from "../src/replication.js";
+import { AddedReplicationInfoV2Message } from "../src/replication.js";
 import {
 	ConfirmEntriesMessage,
 	RequestMaybeSync,
@@ -646,66 +642,6 @@ describe("receive admission control-plane dispatch precedence", () => {
 				admit.restore();
 				pendingDelete.restore();
 				markKnown.restore();
-			}
-		} finally {
-			await session.stop();
-		}
-	});
-
-	it("reaches the replication-info request arm only when the synchronizer declines", async () => {
-		const session = await TestSession.disconnected(2);
-		try {
-			const store = new EventStore<string, any>();
-			const source = await session.peers[0].open(store.clone(), {
-				args: { compatibility: 9, replicate: false, setup },
-			});
-			const target = await session.peers[1].open(store.clone(), {
-				args: { compatibility: 9, replicate: 1, setup },
-			});
-			const sharedLog = target.log as any;
-			const sourceKey = source.node.identity.publicKey;
-			const sourceHash = sourceKey.hashcode();
-			sharedLog._peerSessions.rotate(sourceHash, "opening");
-
-			const send = sinon.stub(sharedLog.rpc, "send").resolves();
-			const segments = sinon.spy(sharedLog, "getMyReplicationSegments");
-			let claim = true;
-			const originalSynchronizerOnMessage =
-				sharedLog.syncronizer.onMessage.bind(sharedLog.syncronizer);
-			const synchronizer = sinon
-				.stub(sharedLog.syncronizer, "onMessage")
-				.callsFake(async (message: unknown, context: unknown) => {
-					if (message instanceof RequestReplicationInfoMessage) {
-						return claim;
-					}
-					return originalSynchronizerOnMessage(message, context);
-				});
-			const sentSegmentsMessages = () =>
-				send
-					.getCalls()
-					.filter(
-						(call) => call.args[0] instanceof AllReplicatingSegmentsMessage,
-					).length;
-			try {
-				// Claimed by the synchronizer: the arm behind the delegation must
-				// not run.
-				await target.log.onMessage(new RequestReplicationInfoMessage(), {
-					from: sourceKey,
-				} as any);
-				expect(segments.called).to.be.false;
-				expect(sentSegmentsMessages()).to.equal(0);
-
-				// Declined: the arm answers with the local segments.
-				claim = false;
-				await target.log.onMessage(new RequestReplicationInfoMessage(), {
-					from: sourceKey,
-				} as any);
-				expect(segments.called).to.be.true;
-				expect(sentSegmentsMessages()).to.equal(1);
-			} finally {
-				synchronizer.restore();
-				segments.restore();
-				send.restore();
 			}
 		} finally {
 			await session.stop();

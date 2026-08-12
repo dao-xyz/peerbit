@@ -144,6 +144,7 @@ import {
 	debouncedAccumulatorMap,
 } from "./debounce.js";
 import {
+	CompatibilityModeRetiredError,
 	NativeDurableCommitError,
 	NoPeersError,
 	isNotStartedError,
@@ -428,6 +429,7 @@ export {
 	EntryReplicatedU32,
 	EntryReplicatedU64,
 	type CoverRange,
+	CompatibilityModeRetiredError,
 	NativeDurableCommitError,
 	NoPeersError,
 };
@@ -1248,7 +1250,6 @@ export type SharedLogOptions<
 	waitForPruneDelay?: number;
 	distributionDebounceTime?: number;
 	strictFullReplicaFallback?: boolean;
-	compatibility?: number;
 	domain?: ReplicationDomainConstructor<D>;
 	eagerBlocks?: EagerBlocksSetting;
 	fanout?: SharedLogFanoutOptions;
@@ -3760,7 +3761,10 @@ export class SharedLog<
 	}
 
 	get compatibility(): number | undefined {
-		return this._logProperties?.compatibility;
+		// B12: the open option was removed and any defined value rejects at
+		// open(); this is permanently undefined and dies with the residual
+		// gates in a later cleanup stage.
+		return (this._logProperties as any)?.compatibility;
 	}
 
 	/**
@@ -14166,6 +14170,17 @@ export class SharedLog<
 	}
 
 	async open(options?: Args<T, D, R>): Promise<void> {
+		// B12: replication-info network compatibility modes are retired. Read the
+		// RAW argument value (the option no longer exists on the type) so untyped
+		// JS callers cannot smuggle a value past the removed field, and reject
+		// ANY defined value — including 10, which previously behaved like the
+		// default — BEFORE any open-time side effect (rpc.open, index/native
+		// setup, domain resolution, synchronizer creation, subscription setup).
+		// An explicitly-present `undefined` stays accepted.
+		const rawCompatibility = (options as any)?.compatibility;
+		if (rawCompatibility !== undefined) {
+			throw new CompatibilityModeRetiredError(rawCompatibility);
+		}
 		this.ensureNativeDurabilityRuntimeState();
 		this._nativeStrictDurableTransactionsClosing = false;
 		this._replicationRangeMutationsClosing = false;
@@ -14227,7 +14242,8 @@ export class SharedLog<
 		this.domain = options?.domain
 			? (options.domain(this) as unknown as D)
 			: (createReplicationDomainHash(
-					options?.compatibility !== undefined && options.compatibility < 10
+					(options as any)?.compatibility !== undefined &&
+						(options as any).compatibility < 10
 						? "u32"
 						: "u64",
 				)(this) as unknown as D);
@@ -14837,7 +14853,7 @@ export class SharedLog<
 				sendOptions?: { priority?: number; signal?: AbortSignal },
 			) => this.trySendFusedRawExchangeHeads(hashes, to, sendOptions),
 			warn,
-			compatibility: this._logProperties?.compatibility,
+			compatibility: (this._logProperties as any)?.compatibility,
 			resolution: this.domain.resolution,
 			sync: options?.sync,
 			syncronizer: options?.syncronizer,

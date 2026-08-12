@@ -28,6 +28,25 @@ export class NoPeersError extends Error {
 }
 
 /**
+ * The `compatibility` open option was removed: the pre-v10 replication-info
+ * network compatibility modes are retired. Any explicitly provided value —
+ * including 10, which previously behaved like the default — rejects before
+ * open() performs any side effect. Omit the option (or pass `undefined`) to
+ * open in the only supported mode. Document-level `compatibility: 6|7` mapped
+ * onto this option and is rejected at the document layer with its own error.
+ */
+export class CompatibilityModeRetiredError extends Error {
+	constructor(value: unknown) {
+		super(
+			`The SharedLog "compatibility" open option was removed: replication-info network compatibility modes are retired. ` +
+				`Received explicit value ${String(value)}; remove the option to open this log ` +
+				`(documents previously used compatibility 6/7, which mapped onto this option and is rejected at the document layer).`,
+		);
+		this.name = "CompatibilityModeRetiredError";
+	}
+}
+
+/**
  * The native transaction committed hot/runtime facts before its entry block
  * could be mirrored to durable storage. Lower-log publication is held behind
  * the mirror barrier, but blindly retrying the user operation is unsafe because

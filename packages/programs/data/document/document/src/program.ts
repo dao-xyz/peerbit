@@ -110,6 +110,27 @@ export class NativeDocumentModeError extends Error {
 	}
 }
 
+/**
+ * The document `compatibility` open option (6 | 7) was removed: the legacy
+ * document compatibility modes are retired together with the shared-log
+ * replication-info compatibility modes they mapped onto (6 -> log v8,
+ * 7 -> log v9). Any explicitly provided value rejects at open() with this
+ * document-level error before it can reach shared-log semantics. Persisted
+ * data written by compatibility-6 stores (PutWithKeyOperation tag 0,
+ * DeleteByStringKeyOperation tag 2) remains decodable: old stores stay
+ * openable without the option.
+ */
+export class DocumentCompatibilityRetiredError extends Error {
+	constructor(value: unknown) {
+		super(
+			`The document "compatibility" open option (6 | 7) was removed: document compatibility modes are retired. ` +
+				`Received explicit value ${String(value)}; remove the option to open this store — ` +
+				`persisted data written by old compatibility modes remains readable.`,
+		);
+		this.name = "DocumentCompatibilityRetiredError";
+	}
+}
+
 type MaybePromise<T> = Promise<T> | T;
 
 /**
@@ -1022,17 +1043,13 @@ export type SetupOptions<
 	log?: {
 		trim?: TrimOptions;
 	};
-	compatibility?: 6 | 7;
 	domain?: (db: Documents<T, I, D>) => CustomDocumentDomain<InferR<D>>;
 	keep?:
 		| ((
 				entry: ShallowOrFullEntry<Operation> | EntryReplicated<InferR<D>>,
 		  ) => Promise<boolean> | boolean)
 		| "self";
-} & Omit<
-	SharedLogOptions<Operation, D, InferR<D>>,
-	"compatibility" | "domain" | "keep"
->;
+} & Omit<SharedLogOptions<Operation, D, InferR<D>>, "domain" | "keep">;
 
 export type ExtractArgs<T> =
 	T extends ReplicationDomain<infer Args, any, any> ? Args : never;
@@ -1225,7 +1242,7 @@ export class Documents<
 		if (options.domain) {
 			unsupported.push("custom domain");
 		}
-		if (options.compatibility != null) {
+		if ((options as any).compatibility != null) {
 			unsupported.push("legacy compatibility");
 		}
 		if (options.strictHistory) {
@@ -2235,6 +2252,16 @@ export class Documents<
 	}
 	private keepCache: Set<string> | undefined = undefined;
 	async open(options: SetupOptions<T, I, D>) {
+		// B12: document compatibility modes are retired. Read the RAW argument
+		// value (the option no longer exists on the type) so untyped JS callers
+		// cannot slip a 6/7 past the removed field and silently reach shared-log
+		// compatibility semantics via the historical 6 -> 8 / 7 -> 9 mapping.
+		// Reject BEFORE any open-time side effect with the DOCUMENT-named error.
+		// An explicitly-present `undefined` stays accepted.
+		const rawCompatibility = (options as any)?.compatibility;
+		if (rawCompatibility !== undefined) {
+			throw new DocumentCompatibilityRetiredError(rawCompatibility);
+		}
 		this.trackDocumentChangeListeners();
 		// Deserialized instances skip constructor/field initializers (borsh creates
 		// objects via Object.create), so re-establish constructor-only state here.
@@ -2273,7 +2300,9 @@ export class Documents<
 						indexerTypes.extractFieldValue(obj, idProperty as string[]));
 
 		this.idResolver = idResolver;
-		this.compatibility = options.compatibility;
+		// B12: permanently undefined (the option rejects above); the field and
+		// its residual gates die in a later cleanup stage.
+		this.compatibility = (options as any).compatibility;
 		this.strictHistory = options.strictHistory ?? false;
 		this._hasLogTrim = options.log?.trim != null;
 
@@ -2286,7 +2315,7 @@ export class Documents<
 			documentType: this._clazz,
 			transform: options.index,
 			indexBy: idProperty,
-			compatibility: options.compatibility,
+			compatibility: (options as any).compatibility,
 			cache: options?.index?.cache,
 			replicate: async (query, results) => {
 				// here we arrive for all the results we want to persist.
@@ -2318,14 +2347,9 @@ export class Documents<
 		this._nativeDocumentIdExtractionPlan =
 			asTrustedDocumentIndex(this._index).getNativeDocumentFieldExtractionPlan(idProperty);
 
-		// document v6 and below need log compatibility of v8 or below
-		// document v7 needs log compatibility of v9
-		let logCompatiblity: number | undefined = undefined;
-		if (options.compatibility === 6) {
-			logCompatiblity = 8;
-		} else if (options.compatibility === 7) {
-			logCompatiblity = 9;
-		}
+		// B12: the historical document->log compatibility mapping (6 -> log v8,
+		// 7 -> log v9) is retired; the rejection at the top of open() fires for
+		// any defined value before this point.
 
 		this.domain = options.domain?.(this);
 
@@ -2398,7 +2422,6 @@ export class Documents<
 			domain: options?.domain
 				? () => options.domain!(this) as unknown as D
 				: undefined,
-			compatibility: logCompatiblity,
 			eagerBlocks: options?.eagerBlocks,
 			fanout: options?.fanout,
 			keep: keepFunction,

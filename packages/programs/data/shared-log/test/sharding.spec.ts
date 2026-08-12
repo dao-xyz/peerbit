@@ -20,7 +20,6 @@ import {
 	AbsoluteReplicas,
 	AddedReplicationInfoV2Message,
 	FullReplicationInfoV2Message,
-	RequestReplicationInfoMessage,
 } from "../src/replication.js";
 import {
 	MoreSymbols,
@@ -1115,43 +1114,6 @@ testSetups.forEach((setup) => {
 					checkDuplicates: true,
 				});
 				expect((db1.log as any).uniqueReplicators.has(db2Hash)).to.be.false;
-			});
-
-			it("keeps requesting replication info through the replicator wait window", async () => {
-				db1 = await session.peers[0].open(new EventStore<string, any>(), {
-					args: {
-						setup,
-						timeUntilRoleMaturity: 0,
-						waitForReplicatorRequestIntervalMs: 50,
-						waitForReplicatorTimeout: 300,
-						compatibility: 9,
-					},
-				});
-
-				const log = db1.log as any;
-				const remoteKey = session.peers[1].identity.publicKey;
-				let requestCount = 0;
-				const send = sinon.stub(log.rpc, "send").callsFake((message: any) => {
-					if (message instanceof RequestReplicationInfoMessage) {
-						requestCount += 1;
-					}
-					return Promise.resolve();
-				});
-
-				try {
-					await log.handleSubscriptionChange(remoteKey, [db1.log.topic], true);
-
-					await waitForResolved(
-						() => expect(requestCount).to.be.greaterThan(3),
-						{
-							timeout: 1_000,
-							delayInterval: 25,
-						},
-					);
-				} finally {
-					log.cancelReplicationInfoRequests(remoteKey.hashcode());
-					send.restore();
-				}
 			});
 
 			it("will not have any prunable after balance", async () => {
