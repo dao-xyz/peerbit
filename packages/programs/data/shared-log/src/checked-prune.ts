@@ -76,6 +76,14 @@ export class CheckedPruneCoordinator<T, R extends "u32" | "u64"> {
 	readonly retries = new Map<string, CheckedPruneRetryState<T, R>>();
 	private readonly sessions = new Map<string, CheckedPruneSession<T, R>>();
 	private readonly grantSends = new Map<string, Set<Promise<void>>>();
+	// Per-peer refcount of in-flight removal fences; while non-zero the peer is
+	// withheld from the exact-replicator set (see fencePeerRemoval /
+	// isPeerRemovalFenced).
+	//
+	// PERMANENT (fence census closed NO-GO 2026-08-12): a concurrency-DEPTH
+	// refcount held across removal lanes that may span a peer reconnect, so
+	// neither a session token (it would reset mid-drain) nor lifecycle identity
+	// (it cannot count open lanes) can replace it.
 	private readonly peerRemovalFences = new Map<string, number>();
 	private readonly restartReservations = new Map<string, object>();
 	private readonly candidateTokens = new Map<string, object>();
@@ -88,6 +96,10 @@ export class CheckedPruneCoordinator<T, R extends "u32" | "u64"> {
 	// a fresh coordinator); deliberately NOT touched by close() — the release
 	// closures drain it, matching the legacy host counter which was reset
 	// only at open.
+	//
+	// PERMANENT (fence census closed NO-GO 2026-08-12): a concurrency-DEPTH
+	// counter of re-entrant removals — identity tells you which coordinator a
+	// continuation started under, never how many removals are in flight now.
 	private _checkedPruneRemoveBlocksLocalRangeMutationAdmission = 0;
 
 	/** ≡ the legacy inc / `finally`-dec pair around the admitted lower-log

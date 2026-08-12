@@ -6,18 +6,9 @@
 import { field, variant, vec } from "@dao-xyz/borsh";
 import { MAX_U32, denormalizer } from "./integers.js";
 
-export const overlaps = (x1: number, x2: number, y1: number, y2: number) => {
-	if (x1 <= y2 && y1 <= x2) {
-		return true;
-	}
-	return false;
-};
-
 export abstract class Role {
 	abstract equals(other: Role): boolean;
 }
-
-export const NO_TYPE_VARIANT = new Uint8Array([0]);
 
 @variant(0)
 export class NoType extends Role {
@@ -26,16 +17,12 @@ export class NoType extends Role {
 	}
 }
 
-export const OBSERVER_TYPE_VARIANT = new Uint8Array([1]);
-
 @variant(1)
 export class Observer extends Role {
 	equals(other: Role) {
 		return other instanceof Observer;
 	}
 }
-
-export const REPLICATOR_TYPE_VARIANT = new Uint8Array([2]);
 
 const denormalizeru32 = denormalizer("u32");
 export class RoleReplicationSegment {

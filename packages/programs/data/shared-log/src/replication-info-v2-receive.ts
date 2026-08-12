@@ -84,12 +84,6 @@ type LocalCapabilityReadyProperties = {
 
 export type ReplicationInfoV2LocalCapabilityAdvertisementHandle = {
 	firstAttempt: Promise<void>;
-	/**
-	 * B12: the two-phase legacy barrier is retired — an ACKed advert promotes
-	 * readiness immediately. Retained as a no-op so the handle shape (and the
-	 * tests that drive it) stay stable.
-	 */
-	releaseLegacyBarrier(): void;
 };
 
 export type ReplicationInfoV2LocalCapabilityContext = {
@@ -203,6 +197,14 @@ export type ReplicationInfoV2ReceiveDeps = {
  */
 export class ReplicationInfoV2ReceiveCoordinator {
 	_receiveStates!: Map<string, ReplicationInfoV2ReceiveState>;
+	/**
+	 * Post-B12 V2 resync memory: sessions that have already taken one full
+	 * replication-info snapshot. Two load-bearing reads, both in
+	 * observeCapability: phase selection (a remembered session opens in
+	 * "resync" instead of "awaiting-full"), and capability refresh (the
+	 * preserveCutover decision, which keeps the memory only when a re-advert
+	 * arrives under the same session with a ready sender).
+	 */
 	_cutoverPeerSessions!: WeakSet<object>;
 	_localCapabilityReadyBySession!: WeakMap<object, LocalCapabilityReady>;
 	_localCapabilityContextBySession!: WeakMap<
@@ -292,15 +294,17 @@ export class ReplicationInfoV2ReceiveCoordinator {
 	}
 
 	/** Revoke an unauthenticated or downgraded capability generation. */
-	revokePeerCapability(peerHash: string, reopenLegacy = true): void {
+	revokePeerCapability(peerHash: string): void {
 		const state = this._receiveStates.get(peerHash);
 		if (!state) {
 			return;
 		}
 		this.clearState(state);
-		if (reopenLegacy) {
-			this._cutoverPeerSessions.delete(state.peerSession);
-		}
+		// Unconditional: the revoked session must lose its resync memory so a
+		// re-advert starts from the first phase again. (This used to sit behind
+		// an opt-out parameter that defaulted to true, had no else-arm, and that
+		// no caller ever overrode.)
+		this._cutoverPeerSessions.delete(state.peerSession);
 	}
 
 	private clearState(state: ReplicationInfoV2ReceiveState): void {
@@ -531,7 +535,6 @@ export class ReplicationInfoV2ReceiveCoordinator {
 		) {
 			return {
 				firstAttempt: Promise.resolve(),
-				releaseLegacyBarrier: () => {},
 			};
 		}
 		let context = this._localCapabilityContextBySession.get(
@@ -545,7 +548,6 @@ export class ReplicationInfoV2ReceiveCoordinator {
 		) {
 			return {
 				firstAttempt: Promise.resolve(),
-				releaseLegacyBarrier: () => {},
 			};
 		}
 		if (!context) {
@@ -584,7 +586,6 @@ export class ReplicationInfoV2ReceiveCoordinator {
 		) {
 			return {
 				firstAttempt: Promise.resolve(),
-				releaseLegacyBarrier: () => {},
 			};
 		}
 		if (!state) {
@@ -619,7 +620,6 @@ export class ReplicationInfoV2ReceiveCoordinator {
 			(state.firstAttempt = this.runLocalCapabilityAdvertisement(state));
 		return {
 			firstAttempt,
-			releaseLegacyBarrier: () => {},
 		};
 	}
 

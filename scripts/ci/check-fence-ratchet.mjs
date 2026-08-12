@@ -10,17 +10,30 @@
 // adding a NEW fence-pattern field fails CI unless a `design-note:` comment
 // in the comment block above the declaration justifies it, and removing one
 // requires shrinking the baseline (the intended direction).
-import { readFileSync } from "node:fs";
+//
+// 2026-08-12 — CLOSED NO-GO: the "stage 5 fence collapse" (folding the
+// remaining ratcheted fields into session/lifecycle identity) was censused
+// after the B12 legacy retirement landed and is not going to happen. Do not
+// redo the census. Every remaining baseline field is structurally permanent
+// for one of exactly two reasons:
+//   1. It is a concurrency-DEPTH counter (a refcount of in-flight lanes),
+//      not a staleness token. Identity answers "is this continuation from
+//      the generation that started it?"; a depth counter answers "how many
+//      lanes are open right now?" — a question identity cannot express.
+//   2. Its lifetime is deliberately per-PEER, not per-session. The token is
+//      set under one session and read (or cleared) under a LATER one, so
+//      rotating identity would reset exactly the state that must survive the
+//      rotation.
+// Each such declaration carries a one-line permanence marker at its site;
+// keep those markers with the fields if they ever move again.
+import { readFileSync, readdirSync, statSync } from "node:fs";
 import path from "node:path";
 
 // Per-file frozen baselines. Fence fields drained out of index.ts into
 // modules stay ratcheted in their new homes; TARGETS grows when an
 // extraction creates a module holding fence-pattern fields.
 const TARGETS = new Map([
-	[
-		"packages/programs/data/shared-log/src/index.ts",
-		["_instanceLifecycle"],
-	],
+	["packages/programs/data/shared-log/src/index.ts", ["_instanceLifecycle"]],
 	[
 		"packages/programs/data/shared-log/src/coordinate-persistence.ts",
 		// The index.ts _nativeCoordinateMutationGenerations entry moved
@@ -59,6 +72,41 @@ const TARGETS = new Map([
 	[
 		"packages/programs/data/shared-log/src/peer-session.ts",
 		["_receiveCleanupGateByPeer", "_replicationInfoReceiveEpochByPeer"],
+	],
+	[
+		"packages/programs/data/shared-log/src/replication-info-v2-send.ts",
+		// _senderEpoch predates this file's TARGETS entry; it entered the
+		// baseline as existing inventory when the completeness leg below started
+		// enumerating every src file, not as fence growth.
+		["_senderEpoch"],
+	],
+	[
+		"packages/programs/data/shared-log/src/replication-info-v2-receive.ts",
+		// _reservedAdmissionsByPeer predates this file's TARGETS entry; it
+		// entered the baseline as existing inventory when the completeness leg
+		// below started enumerating every src file, not as fence growth.
+		["_reservedAdmissionsByPeer"],
+	],
+	[
+		"packages/programs/data/shared-log/src/sync/simple.ts",
+		// These three predate this file's TARGETS entry; they entered the
+		// baseline as existing inventory when the completeness leg below started
+		// enumerating every src file, not as fence growth.
+		[
+			"syncDispatchLifecycleController",
+			"syncDispatchTargetEpochCounter",
+			"syncDispatchTargetEpochs",
+		],
+	],
+	[
+		"packages/programs/data/shared-log/src/sync/rateless-iblt.ts",
+		// Both predate this file's TARGETS entry; they entered the baseline as
+		// existing inventory when the completeness leg below started enumerating
+		// every src file, not as fence growth.
+		[
+			"incomingRatelessProcessAdmissions",
+			"ratelessDispatchLifecycleController",
+		],
 	],
 	["packages/programs/data/shared-log/src/join-warmup.ts", []],
 	["packages/programs/data/shared-log/src/replication-announcement.ts", []],
@@ -108,11 +156,9 @@ const errors = [];
 let totalFound = 0;
 let totalBaseline = 0;
 
-for (const [target, baselineList] of TARGETS) {
-	const baseline = new Set(baselineList);
-	totalBaseline += baseline.size;
+// Fence-pattern declarations in one file, keyed by field name.
+const scanFile = (target) => {
 	const lines = readFileSync(path.join(root, target), "utf8").split("\n");
-
 	const found = new Map();
 	for (let i = 0; i < lines.length; i++) {
 		const m = lines[i].match(DECL);
@@ -134,6 +180,13 @@ for (const [target, baselineList] of TARGETS) {
 			.some((l) => l.includes("design-note:"));
 		found.set(name, { line: i + 1, hasDesignNote });
 	}
+	return found;
+};
+
+for (const [target, baselineList] of TARGETS) {
+	const baseline = new Set(baselineList);
+	totalBaseline += baseline.size;
+	const found = scanFile(target);
 	totalFound += found.size;
 
 	for (const [name, info] of found) {
@@ -158,6 +211,43 @@ for (const [target, baselineList] of TARGETS) {
 			);
 		}
 	}
+}
+
+// COMPLETENESS leg. The header claims this script freezes THE inventory, so a
+// hand-maintained TARGETS list is not enough: a fence-pattern field added in a
+// file nobody listed would be invisible. Enumerate every src file and require
+// that each one is either a TARGETS key or genuinely fence-free.
+//
+// Intended workflow: a new file with a fence joins TARGETS in the same commit,
+// or the declaration carries a `design-note:` marker. Declarations carrying
+// that marker are exempt here too, so the two escape hatches cannot contradict
+// each other (the per-file leg above already accepts a design-note in place of
+// a baseline entry).
+const SRC_ROOT = "packages/programs/data/shared-log/src";
+const walkTs = (dir) =>
+	readdirSync(path.join(root, dir))
+		.sort()
+		.flatMap((entry) => {
+			const rel = `${dir}/${entry}`;
+			if (statSync(path.join(root, rel)).isDirectory()) return walkTs(rel);
+			return rel.endsWith(".ts") ? [rel] : [];
+		});
+
+for (const file of walkTs(SRC_ROOT)) {
+	if (TARGETS.has(file)) continue;
+	const unlisted = [...scanFile(file)].filter(
+		([, info]) => !info.hasDesignNote,
+	);
+	if (unlisted.length === 0) continue;
+	errors.push(
+		`UNLISTED file with fence-pattern fields: ${file}. This script freezes ` +
+			`the whole shared-log/src inventory, so the file must be a TARGETS key ` +
+			`in scripts/ci/check-fence-ratchet.mjs (or every declaration must ` +
+			`carry a \`design-note:\` marker). Baseline these declarations:\n` +
+			unlisted
+				.map(([name, info]) => `    "${name}", // ${file}:${info.line}`)
+				.join("\n"),
+	);
 }
 
 if (errors.length > 0) {

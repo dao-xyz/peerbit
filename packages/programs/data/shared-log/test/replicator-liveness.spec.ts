@@ -4,10 +4,7 @@ import { waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
 import pDefer from "p-defer";
 import sinon from "sinon";
-import {
-	ReplicationPingMessage,
-	RequestReplicationInfoMessage,
-} from "../src/replication.js";
+import { ReplicationPingMessage } from "../src/replication.js";
 import { EventStore } from "./utils/stores/index.js";
 
 type LivenessTestStore = EventStore<string, any>;
@@ -110,29 +107,33 @@ describe("waitForReplicator liveness", () => {
 		const hooks = getLivenessTestHooks(db0);
 		const originalSend = db0.log.rpc.send.bind(db0.log.rpc);
 		let pingFailuresLeft = 1;
-		let failRecoveryRequests = true;
 		db0.log.rpc.send = async (...args: Parameters<typeof originalSend>) => {
 			const [message] = args;
 			if (message instanceof ReplicationPingMessage && pingFailuresLeft-- > 0) {
 				throw new Error("synthetic ping miss");
 			}
-			if (
-				failRecoveryRequests &&
-				message instanceof RequestReplicationInfoMessage
-			) {
-				throw new Error("synthetic replication-info miss");
-			}
 			return originalSend(...args);
 		};
+		// The single missed ping must be absorbed by the subscriber-presence
+		// check, ahead of the failure counter and the recovery lane. Spying the
+		// escalation proves WHICH mechanism keeps the replicator: if presence
+		// confirmation ever stopped covering this, the probe would fall through
+		// to scheduleReplicationInfoRequests and this pin would catch it.
+		const log = db0.log as any;
+		const scheduleRecovery = sinon.spy(log, "scheduleReplicationInfoRequests");
 
 		try {
 			await hooks.probeReplicatorLiveness(peerHash);
 			expect((await db0.log.getReplicators()).size).to.equal(2);
+			expect(scheduleRecovery.notCalled).to.be.true;
+			expect(log._liveness._replicatorLivenessFailures.has(peerHash)).to.be
+				.false;
 
-			failRecoveryRequests = false;
 			await hooks.probeReplicatorLiveness(peerHash);
 			expect((await db0.log.getReplicators()).size).to.equal(2);
+			expect(scheduleRecovery.notCalled).to.be.true;
 		} finally {
+			scheduleRecovery.restore();
 			db0.log.rpc.send = originalSend;
 		}
 	});
@@ -349,10 +350,7 @@ describe("waitForReplicator liveness", () => {
 			hooks.confirmReplicatorSubscriberPresence.bind(hooks);
 		db0.log.rpc.send = async (...args: Parameters<typeof originalSend>) => {
 			const [message] = args;
-			if (
-				message instanceof ReplicationPingMessage ||
-				message instanceof RequestReplicationInfoMessage
-			) {
+			if (message instanceof ReplicationPingMessage) {
 				throw new Error("synthetic liveness miss");
 			}
 			return originalSend(...args);
@@ -488,7 +486,6 @@ describe("waitForReplicator liveness", () => {
 			subscriberHooks._getTopicSubscribers.bind(subscriberHooks);
 		const originalSend = db0.log.rpc.send.bind(db0.log.rpc);
 		let pingFailuresLeft = 2;
-		let failRecoveryRequests = true;
 		pubsub.getSubscribers = (topic: string) => {
 			if (topic === db0.log.rpc.topic) {
 				return [];
@@ -506,14 +503,14 @@ describe("waitForReplicator liveness", () => {
 			if (message instanceof ReplicationPingMessage && pingFailuresLeft-- > 0) {
 				throw new Error("synthetic ping miss");
 			}
-			if (
-				failRecoveryRequests &&
-				message instanceof RequestReplicationInfoMessage
-			) {
-				throw new Error("synthetic replication-info miss");
-			}
 			return originalSend(...args);
 		};
+		// Both missed pings must be absorbed by the broader subscriber view —
+		// that is the mechanism this test is named for. Spying the escalation
+		// pins it: were the wider view to stop counting, the second probe would
+		// hit the eviction threshold via scheduleReplicationInfoRequests.
+		const log = db0.log as any;
+		const scheduleRecovery = sinon.spy(log, "scheduleReplicationInfoRequests");
 
 		try {
 			hooks.markReplicatorActivity(peerHash, Date.now() - 60_000);
@@ -521,9 +518,12 @@ describe("waitForReplicator liveness", () => {
 			hooks.markReplicatorActivity(peerHash, Date.now() - 60_000);
 			await hooks.probeReplicatorLiveness(peerHash);
 
-			failRecoveryRequests = false;
 			expect((await db0.log.getReplicators()).size).to.equal(2);
+			expect(scheduleRecovery.notCalled).to.be.true;
+			expect(log._liveness._replicatorLivenessFailures.has(peerHash)).to.be
+				.false;
 		} finally {
+			scheduleRecovery.restore();
 			pubsub.getSubscribers = originalGetSubscribers;
 			subscriberHooks._getTopicSubscribers = originalGetTopicSubscribers;
 			db0.log.rpc.send = originalSend;
@@ -690,6 +690,10 @@ describe("waitForReplicator liveness", () => {
 		const originalResumeParkedRequest = (
 			db0.log as any
 		)._v2Receive.resumeParkedRequest.bind((db0.log as any)._v2Receive);
+		// Recovery-request failure is expressed HERE, at the parked-request
+		// resume, not at rpc.send: the request lane retries itself and swallows
+		// its own send errors, so a send-level injection would never reach the
+		// liveness path.
 		const resumeParkedRequest = sinon
 			.stub((db0.log as any)._v2Receive, "resumeParkedRequest")
 			.callsFake((properties) =>
@@ -699,12 +703,6 @@ describe("waitForReplicator liveness", () => {
 			const [message] = args;
 			if (message instanceof ReplicationPingMessage && pingFailuresLeft-- > 0) {
 				throw new Error("synthetic ping miss");
-			}
-			if (
-				failRecoveryRequests &&
-				message instanceof RequestReplicationInfoMessage
-			) {
-				throw new Error("synthetic replication-info miss");
 			}
 			return originalSend(...args);
 		};
