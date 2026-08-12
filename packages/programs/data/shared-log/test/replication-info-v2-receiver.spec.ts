@@ -166,7 +166,7 @@ describe("receive admission replication-info V2 receiver state", () => {
 		]);
 	});
 
-	it("promotes an ACKed advert immediately and keeps the release handle a no-op", async () => {
+	it("promotes an ACKed advert immediately and holds the grant stable", async () => {
 		const clock = sinon.useFakeTimers({ now: 1_000 });
 		coordinator = createCoordinator({ requestRetryMs: 5 });
 		const lifecycle = new AbortController();
@@ -184,18 +184,19 @@ describe("receive admission replication-info V2 receiver state", () => {
 		// B12: there is no legacy barrier — the ACK promotes readiness at once.
 		expect(advertisement.acknowledgedReady).to.exist;
 		expect(advertisement.ready).to.be.true;
-		const ready = coordinator._localCapabilityReadyBySession.get(currentSession);
+		const ready =
+			coordinator._localCapabilityReadyBySession.get(currentSession);
 		expect(ready).to.exist;
 
-		// The retained handle method is a stable no-op: repeated release calls
-		// neither rotate nor invalidate the promoted grant.
-		handle.releaseLegacyBarrier();
-		handle.releaseLegacyBarrier();
+		// Once promoted the grant is stable: draining the timer queue neither
+		// re-arms the advert worker nor rotates the ready record.
+		await clock.tickAsync(1);
+		expect(refreshLocalCapability.calledOnce).to.be.true;
+		expect(advertisement.timer).to.be.undefined;
 		expect(
 			coordinator._localCapabilityReadyBySession.get(currentSession),
 		).to.equal(ready);
 		expect(advertisement.ready).to.be.true;
-		await clock.tickAsync(1);
 		expect(sendRequest.calledOnce).to.be.true;
 	});
 
@@ -286,7 +287,6 @@ describe("receive admission replication-info V2 receiver state", () => {
 			signal: lifecycle.signal,
 		});
 		await handle.firstAttempt;
-		handle.releaseLegacyBarrier();
 		const advertisement =
 			coordinator._localCapabilityAdvertisementsByPeer.get(peerHash)!;
 
@@ -416,13 +416,11 @@ describe("receive admission replication-info V2 receiver state", () => {
 			signal: newLifecycle.signal,
 		});
 		await replacementHandle.firstAttempt;
-		replacementHandle.releaseLegacyBarrier();
 		const replacement =
 			coordinator._localCapabilityAdvertisementsByPeer.get(peerHash)!;
 		expect(replacement.peerSession).to.equal(replacementSession);
 		expect(replacement.ready).to.be.true;
 
-		oldHandle.releaseLegacyBarrier();
 		oldAck.resolve({
 			receiverTransportSession,
 			requestNotBeforeMs: Date.now(),
@@ -474,7 +472,6 @@ describe("receive admission replication-info V2 receiver state", () => {
 		await replacement.firstAttempt;
 		expect(replacement.acknowledgedReady).to.exist;
 
-		oldHandle.releaseLegacyBarrier();
 		expect(replacement.ready).to.be.true;
 		const replacementReady =
 			coordinator._localCapabilityReadyBySession.get(peerSession);
@@ -517,7 +514,6 @@ describe("receive admission replication-info V2 receiver state", () => {
 			signal: oldLifecycle.signal,
 		});
 		oldLifecycle.abort();
-		staleHandle.releaseLegacyBarrier();
 		pending.resolve({
 			receiverTransportSession,
 			requestNotBeforeMs: Date.now(),
@@ -537,7 +533,6 @@ describe("receive admission replication-info V2 receiver state", () => {
 			signal: currentLifecycle.signal,
 		});
 		await currentHandle.firstAttempt;
-		currentHandle.releaseLegacyBarrier();
 		expect(coordinator._localCapabilityReadyBySession.has(currentSession)).to.be
 			.true;
 	});
@@ -613,7 +608,6 @@ describe("receive admission replication-info V2 receiver state", () => {
 		expect(stale.timer).to.exist;
 
 		localTransportSession++;
-		handle.releaseLegacyBarrier();
 		await clock.tickAsync(5);
 		expect(refreshLocalCapability.calledOnce).to.be.true;
 		expect(stale.controller.signal.aborted).to.be.true;
@@ -737,7 +731,6 @@ describe("receive admission replication-info V2 receiver state", () => {
 			signal: lifecycle.signal,
 		});
 		await openingHandle.firstAttempt;
-		openingHandle.releaseLegacyBarrier();
 
 		currentReceiveEpoch = {};
 		expect(
@@ -785,7 +778,6 @@ describe("receive admission replication-info V2 receiver state", () => {
 			signal: lifecycle.signal,
 		});
 		await openingHandle.firstAttempt;
-		openingHandle.releaseLegacyBarrier();
 		expect(observeSender()).to.be.true;
 		const state = coordinator._receiveStates.get(peerHash)!;
 		const full = new FullReplicationInfoV2Message({

@@ -6779,7 +6779,7 @@ export class SharedLog<
 			rebalance?: boolean;
 			checkDuplicates?: boolean;
 			timestamp?: number;
-			allowLegacyOrderedReplacementPairs?: boolean;
+			allowOrderedReplacementPairs?: boolean;
 			onConfirmedDurableStateChanged?: () => void;
 			onDurableApplyCommitted?: () => boolean | void;
 			shouldApply?: () => boolean;
@@ -6821,7 +6821,7 @@ export class SharedLog<
 			checkDuplicates,
 			timestamp: ts,
 			rebalance,
-			allowLegacyOrderedReplacementPairs,
+			allowOrderedReplacementPairs,
 			onConfirmedDurableStateChanged,
 			onDurableApplyCommitted,
 			shouldApply,
@@ -6830,7 +6830,7 @@ export class SharedLog<
 			rebalance?: boolean;
 			checkDuplicates?: boolean;
 			timestamp?: number;
-			allowLegacyOrderedReplacementPairs?: boolean;
+			allowOrderedReplacementPairs?: boolean;
 			onConfirmedDurableStateChanged?: () => void;
 			onDurableApplyCommitted?: () => boolean | void;
 			shouldApply?: () => boolean;
@@ -6869,17 +6869,19 @@ export class SharedLog<
 			incomingRangeCountsById.set(range.idString, count);
 			if (
 				count > 1 &&
-				(!allowLegacyOrderedReplacementPairs || reset === true || count > 2)
+				(!allowOrderedReplacementPairs || reset === true || count > 2)
 			) {
 				throw new Error(
 					`Duplicate replication range id in announcement: ${range.idString}`,
 				);
 			}
-			// Released peers represented a non-reset replacement as the retired
-			// geometry followed by the current geometry under the same id. The
-			// sender is already authorized to replace that id with the final item,
-			// so collapsing an exact two-item incremental pair to its last item
-			// preserves rolling-upgrade compatibility without broadening authority.
+			// Rolling-upgrade relaxation on the live V2 Added path: a peer may
+			// still express a non-reset replacement as the retired geometry
+			// followed by the current geometry under one id. The sender is already
+			// authorized to replace that id with the final item, so collapsing an
+			// EXACT two-item incremental pair to its last item accepts the older
+			// wire shape without broadening authority. Deliberately narrow — reset
+			// announcements and any run longer than two still fail as duplicates.
 			incomingRangesById.set(range.idString, range);
 		}
 		const incomingRanges = [...incomingRangesById.values()];
@@ -19652,7 +19654,7 @@ export class SharedLog<
 								reset: msg instanceof FullReplicationInfoV2Message,
 								checkDuplicates: true,
 								timestamp: Number(context.message.header.timestamp),
-								allowLegacyOrderedReplacementPairs:
+								allowOrderedReplacementPairs:
 									msg instanceof AddedReplicationInfoV2Message,
 								shouldApply: () => {
 									mutationGateChecked = true;
@@ -19760,7 +19762,6 @@ export class SharedLog<
 			this._v2Receive.release(admission);
 		}
 	}
-
 
 	async calculateTotalParticipation(options?: { sum?: boolean }) {
 		if (options?.sum) {
@@ -23063,7 +23064,11 @@ export class SharedLog<
 			}
 			const receiveEpoch = this._peerSessions.receiveEpoch(peerHash);
 			if (
-				!this._v2Receive.isRequestParked({ peerHash, peerSession, receiveEpoch })
+				!this._v2Receive.isRequestParked({
+					peerHash,
+					peerSession,
+					receiveEpoch,
+				})
 			) {
 				// Active, or a bounded request cycle is still running its own
 				// exponential retries. Keep polling for the next park.

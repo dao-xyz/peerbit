@@ -1,7 +1,7 @@
-import { readFileSync, readdirSync } from "fs";
-import path from "path";
 import { TestSession } from "@peerbit/test-utils";
 import { expect } from "chai";
+import { readFileSync, readdirSync } from "fs";
+import path from "path";
 import sinon from "sinon";
 import {
 	AddedReplicationSegmentMessage,
@@ -118,8 +118,9 @@ describe("no legacy machinery", () => {
 
 		// Positive control: the subscription-change seam announced the
 		// replicator's state through the V2 lane...
-		expect(sent1.some((message) => message instanceof FullReplicationInfoV2Message))
-			.to.be.true;
+		expect(
+			sent1.some((message) => message instanceof FullReplicationInfoV2Message),
+		).to.be.true;
 		// ...and no legacy frame crossed the wire from either side.
 		expect(sent1.filter(isLegacyFrame)).to.have.length(0);
 		expect(sent2.filter(isLegacyFrame)).to.have.length(0);
@@ -254,15 +255,75 @@ describe("no legacy machinery", () => {
 		// needs no whitelist. Stage 5 extends the list with the deleted compat
 		// getters (legacyReplicationInfoEnabled, v8Behaviour), the legacy
 		// fallback sidecar (noteLegacyAnnouncement and every legacyFallback
-		// field/timer) and the two-phase barrier state (legacyBarrierReleased);
-		// the surviving no-op handle method releaseLegacyBarrier is the ONLY
-		// sanctioned legacy-named symbol left in src.
+		// field/timer) and the two-phase barrier state (legacyBarrierReleased).
+		// Names without a "legacy" segment are what make this leg irreducible;
+		// the legacy-NAMED ones are also covered by the identifier scan below.
 		const forbidden =
 			/latestReplicationInfoMessage|handleReplicationInfoAnnouncement|handleStoppedReplicating|handleRequestReplicationInfo|toReplicationInfoMessage|isLegacyCutover|legacyReplicationInfoEnabled|v8Behaviour|noteLegacyAnnouncement|legacyFallback|LegacyFallback|LEGACY_FALLBACK|legacyBarrierReleased/g;
 		for (const file of listSourceFiles()) {
 			const source = readFileSync(path.join(process.cwd(), file), "utf8");
 			const matches = [...source.matchAll(forbidden)].map((m) => m[0]);
 			expect(matches, file).to.deep.equal([]);
+		}
+	});
+
+	it("has zero legacy-named identifiers in src", () => {
+		// This used to be a prose claim in the comment above ("the surviving
+		// no-op handle method releaseLegacyBarrier is the ONLY sanctioned
+		// legacy-named symbol left in src"), and it was wrong — three survived.
+		// A claim about which names remain has to be enforced, not asserted, so
+		// here it is as a scan with an EMPTY allowlist: no shared-log source
+		// file may declare or reference ANY identifier carrying a legacy
+		// segment. Retiring one is now the only way to keep this green.
+		//
+		// Identifier-level on purpose. The alternatives cover every casing the
+		// retired symbols actually used:
+		//   xxxLegacyYyy  camel/Pascal with an interior or trailing segment
+		//                 (releaseLegacyBarrier, isLegacyCutover, reopenLegacy)
+		//   LegacyYyy     Pascal STARTING with the segment (LegacyFallback) —
+		//                 a leading-char-required pattern alone would miss it
+		//   legacyYyy     lower camel (legacyFallback, legacy_fallback)
+		//   LEGACY_YYY    screaming snake (LEGACY_FALLBACK)
+		// The bare prose word "legacy"/"Legacy" is deliberately NOT matched:
+		// every alternative requires an adjacent identifier segment. That is
+		// what makes the empty allowlist achievable — src comments discuss
+		// legacy behavior freely, they just may not name a legacy symbol.
+		const legacyIdentifier =
+			/\b[A-Za-z0-9_$]+Legacy[A-Za-z0-9_$]*|\bLegacy[A-Za-z0-9_$]+|\blegacy[A-Z_$][A-Za-z0-9_$]*|\bLEGACY_[A-Z0-9_$]+/g;
+		const allowlist = new Set<string>();
+		expect(allowlist.size, "the allowlist must stay empty").to.equal(0);
+		let scanned = 0;
+		for (const file of listSourceFiles()) {
+			const source = readFileSync(path.join(process.cwd(), file), "utf8");
+			const matches = [...source.matchAll(legacyIdentifier)]
+				.map((m) => m[0])
+				.filter((name) => !allowlist.has(name));
+			expect(matches, file).to.deep.equal([]);
+			scanned++;
+		}
+		expect(scanned).to.be.greaterThan(0);
+
+		// The scan must be able to fail: prove the pattern catches each shape
+		// (and that prose does not trip it) rather than trusting the empty
+		// result above.
+		const matchesOf = (probe: string) =>
+			[...probe.matchAll(legacyIdentifier)].map((m) => m[0]);
+		for (const shape of [
+			"releaseLegacyBarrier",
+			"reopenLegacy",
+			"allowLegacyOrderedReplacementPairs",
+			"LegacyFallback",
+			"legacyFallback",
+			"LEGACY_FALLBACK",
+		]) {
+			expect(matchesOf(shape), shape).to.deep.equal([shape]);
+		}
+		for (const prose of [
+			"legacy",
+			"the legacy receive path is retired",
+			"Legacy requests used to bootstrap the map",
+		]) {
+			expect(matchesOf(prose), prose).to.deep.equal([]);
 		}
 	});
 });
