@@ -17683,22 +17683,14 @@ export class SharedLog<
 				this.captureReplicationOwnershipLifecycle();
 			const receiveReplicationInfoReceiveEpoch =
 				this._peerSessions.receiveEpoch(receiveFromHash);
-			if (msg instanceof ResponseRoleMessage) {
-				msg = msg.toReplicationInfoMessage(); // migration
-			}
 			if (
-				msg instanceof AllReplicatingSegmentsMessage ||
-				msg instanceof AddedReplicationSegmentMessage ||
 				msg instanceof FullReplicationInfoV2Message ||
 				msg instanceof AddedReplicationInfoV2Message
 			) {
 				// Bound decoded untrusted vectors before per-peer/global mutation
 				// queues, trusted-replicator authorization, or liveness side effects.
 				this.validateReplicationRangeAnnouncement(msg.segments);
-			} else if (
-				msg instanceof StoppedReplicating ||
-				msg instanceof StoppedReplicationInfoV2Message
-			) {
+			} else if (msg instanceof StoppedReplicationInfoV2Message) {
 				// Bound the raw decoded vector before deduplication can hide the
 				// allocation cost, and before liveness or apply-queue side effects.
 				this.validateStoppedReplicationAnnouncement(msg.segmentIds);
@@ -17706,10 +17698,7 @@ export class SharedLog<
 			if (
 				!context.from.equals(this.node.identity.publicKey) &&
 				!(msg instanceof RequestReplicationInfoV2Message) &&
-				!isReplicationInfoV2Message(msg) &&
-				!(msg instanceof AllReplicatingSegmentsMessage) &&
-				!(msg instanceof AddedReplicationSegmentMessage) &&
-				!(msg instanceof StoppedReplicating)
+				!isReplicationInfoV2Message(msg)
 			) {
 				this._liveness.markReplicatorActivity(receiveFromHash);
 			}
@@ -19424,17 +19413,6 @@ export class SharedLog<
 					});
 				} else if (msg instanceof ReplicationPingMessage) {
 					// No-op: used as an ACKed unicast liveness probe.
-				} else if (
-					msg instanceof AllReplicatingSegmentsMessage ||
-					msg instanceof AddedReplicationSegmentMessage
-				) {
-					await this.handleReplicationInfoAnnouncement(
-						msg,
-						laneRequestContext,
-						lane,
-					);
-				} else if (msg instanceof StoppedReplicating) {
-					await this.handleStoppedReplicating(msg, laneRequestContext, lane);
 				} else {
 					throw new Error("Unexpected message");
 				}
@@ -19848,239 +19826,6 @@ export class SharedLog<
 		}
 	}
 
-	private async handleReplicationInfoAnnouncement(
-		msg: AllReplicatingSegmentsMessage | AddedReplicationSegmentMessage,
-		context: ReceiveRequestContext,
-		lane: ReceiveLaneContext,
-	): Promise<void> {
-		const receiveFromHash = lane.fromHash;
-		const receiveSession = lane.session;
-		const receiveReplicationLifecycleController = lane.lifecycleController;
-		const receiveReplicationInfoReceiveEpoch = lane.receiveEpoch;
-		const peerReceiveLease = lane.lease;
-		if (context.from.equals(this.node.identity.publicKey)) {
-			return;
-		}
-
-		const replicationInfoMessage = msg as
-			| AllReplicatingSegmentsMessage
-			| AddedReplicationSegmentMessage;
-
-		// Process replication updates even if the sender isn't yet considered "ready" by
-		// `Program.waitFor()`. Dropping these messages can lead to missing replicator info
-		// (and downstream `waitForReplicator()` timeouts) under timing-sensitive joins.
-		const from = context.from!;
-		const fromHash = from.hashcode();
-		if (this._v2Receive.isLegacyCutover(receiveSession)) {
-			if (receiveSession) {
-				this._v2Receive.noteLegacyAnnouncement({
-					peerHash: fromHash,
-					peerSession: receiveSession,
-					receiveEpoch: receiveReplicationInfoReceiveEpoch,
-					senderTransportSession: context.message.header.session,
-					transportTimestamp: context.message.header.timestamp,
-					message: msg,
-				});
-			}
-			return;
-		}
-		// Pre-lane gate: lifecycle -> receive-epoch -> blocked, exactly the
-		// legacy order. isMembershipActiveFor is the unit-pinned fold of
-		// isReplicationLifecycleActive; isReceiveEpochCurrent is the
-		// relocated `===`-with-`?? null`. The DELIBERATE absence of a
-		// subscription-epoch term is preserved: the lease already validated
-		// it, and the in-lane recheck owns post-await staleness.
-		if (
-			!this._instanceLifecycle!.isMembershipActiveFor(
-				receiveReplicationLifecycleController,
-			) ||
-			!this._peerSessions.isReceiveEpochCurrent(
-				receiveFromHash,
-				receiveReplicationInfoReceiveEpoch,
-			) ||
-			this._peerSessions.isReplicationInfoBlocked(fromHash)
-		) {
-			return;
-		}
-		const messageTimestamp = context.message.header.timestamp;
-		peerReceiveLease.release();
-		await this.withReplicationInfoApplyQueue(fromHash, async () => {
-			try {
-				// The peer may have unsubscribed after this message was queued.
-				// In-lane gate: lifecycle -> subscription-epoch -> receive-epoch
-				// -> blocked, term for term as before the session migration.
-				if (
-					!this._instanceLifecycle!.isMembershipActiveFor(
-						receiveReplicationLifecycleController,
-					) ||
-					!this._peerSessions.isCurrent(fromHash, receiveSession) ||
-					!this._peerSessions.isReceiveEpochCurrent(
-						fromHash,
-						receiveReplicationInfoReceiveEpoch,
-					) ||
-					this._peerSessions.isReplicationInfoBlocked(fromHash)
-				) {
-					return;
-				}
-				if (receiveSession && this._v2Receive.isLegacyCutover(receiveSession)) {
-					this._v2Receive.noteLegacyAnnouncement({
-						peerHash: fromHash,
-						peerSession: receiveSession,
-						receiveEpoch: receiveReplicationInfoReceiveEpoch,
-						senderTransportSession: context.message.header.session,
-						transportTimestamp: context.message.header.timestamp,
-						message: msg,
-					});
-					return;
-				}
-
-				// Process in-order to avoid races where repeated reset messages arrive
-				// concurrently and trigger spurious "added" diffs / rebalancing.
-				const prev = this.latestReplicationInfoMessage.get(fromHash);
-				if (prev && prev > messageTimestamp) {
-					return;
-				}
-
-				this.latestReplicationInfoMessage.set(fromHash, messageTimestamp);
-
-				if (this.closed) {
-					return;
-				}
-
-				const reset = msg instanceof AllReplicatingSegmentsMessage;
-				const result = await this.addReplicationRange(
-					replicationInfoMessage.segments.map((x) =>
-						x.toReplicationRangeIndexable(from),
-					),
-					from,
-					{
-						reset,
-						checkDuplicates: true,
-						timestamp: Number(messageTimestamp),
-						allowLegacyOrderedReplacementPairs:
-							msg instanceof AddedReplicationSegmentMessage,
-					},
-				);
-				if (result === undefined) {
-					return;
-				}
-				this._liveness.markReplicatorActivity(fromHash);
-
-				// If the peer reports any replication segments, stop re-requesting.
-				// (Empty reports can be transient during startup.)
-				if (replicationInfoMessage.segments.length > 0) {
-					this.cancelReplicationInfoRequests(fromHash);
-				}
-			} catch (e) {
-				if (isNotStartedError(e as Error)) {
-					return;
-				}
-				logger.error(
-					`Failed to apply replication settings from '${fromHash}': ${
-						(e as any)?.message ?? e
-					}`,
-				);
-			}
-		});
-	}
-
-	private async handleStoppedReplicating(
-		msg: StoppedReplicating,
-		context: ReceiveRequestContext,
-		lane: ReceiveLaneContext,
-	): Promise<void> {
-		const receiveFromHash = lane.fromHash;
-		const receiveSession = lane.session;
-		const receiveReplicationLifecycleController = lane.lifecycleController;
-		const receiveReplicationInfoReceiveEpoch = lane.receiveEpoch;
-		const peerReceiveLease = lane.lease;
-		const from = context.from!;
-		const segmentIds = msg.segmentIds;
-		if (from.equals(this.node.identity.publicKey)) {
-			return;
-		}
-		const fromHash = from.hashcode();
-		if (this._v2Receive.isLegacyCutover(receiveSession)) {
-			if (receiveSession) {
-				this._v2Receive.noteLegacyAnnouncement({
-					peerHash: fromHash,
-					peerSession: receiveSession,
-					receiveEpoch: receiveReplicationInfoReceiveEpoch,
-					senderTransportSession: context.message.header.session,
-					transportTimestamp: context.message.header.timestamp,
-					message: msg,
-				});
-			}
-			return;
-		}
-		// Same pre-lane gate shape as Added/All above (and the same
-		// intentional absence of a subscription-epoch term).
-		if (
-			!this._instanceLifecycle!.isMembershipActiveFor(
-				receiveReplicationLifecycleController,
-			) ||
-			!this._peerSessions.isReceiveEpochCurrent(
-				receiveFromHash,
-				receiveReplicationInfoReceiveEpoch,
-			) ||
-			this._peerSessions.isReplicationInfoBlocked(fromHash)
-		) {
-			return;
-		}
-		const messageTimestamp = context.message.header.timestamp;
-		peerReceiveLease.release();
-		await this.withReplicationInfoApplyQueue(fromHash, async () => {
-			if (
-				!this._instanceLifecycle!.isMembershipActiveFor(
-					receiveReplicationLifecycleController,
-				) ||
-				!this._peerSessions.isCurrent(fromHash, receiveSession) ||
-				!this._peerSessions.isReceiveEpochCurrent(
-					fromHash,
-					receiveReplicationInfoReceiveEpoch,
-				) ||
-				this._peerSessions.isReplicationInfoBlocked(fromHash)
-			) {
-				return;
-			}
-			if (receiveSession && this._v2Receive.isLegacyCutover(receiveSession)) {
-				this._v2Receive.noteLegacyAnnouncement({
-					peerHash: fromHash,
-					peerSession: receiveSession,
-					receiveEpoch: receiveReplicationInfoReceiveEpoch,
-					senderTransportSession: context.message.header.session,
-					transportTimestamp: context.message.header.timestamp,
-					message: msg,
-				});
-				return;
-			}
-
-			const previousTimestamp = this.latestReplicationInfoMessage.get(fromHash);
-			if (previousTimestamp && previousTimestamp > messageTimestamp) {
-				return;
-			}
-			this.latestReplicationInfoMessage.set(fromHash, messageTimestamp);
-			if (this.closed) {
-				return;
-			}
-
-			const rangesToRemove = await this.resolveReplicationRangesFromIdsAndKey(
-				segmentIds,
-				from,
-			);
-
-			await this.removeReplicationRanges(rangesToRemove, from);
-			this._liveness.markReplicatorActivity(fromHash);
-			const timestamp = BigInt(+new Date());
-			for (const range of rangesToRemove) {
-				this.replicationChangeDebounceFn.add({
-					range,
-					type: "removed",
-					timestamp,
-				});
-			}
-		});
-	}
 
 	async calculateTotalParticipation(options?: { sum?: boolean }) {
 		if (options?.sum) {

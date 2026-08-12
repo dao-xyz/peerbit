@@ -7,14 +7,12 @@ import {
 	variant,
 	vec,
 } from "@dao-xyz/borsh";
-import { PublicSignKey, randomBytes } from "@peerbit/crypto";
+import { PublicSignKey } from "@peerbit/crypto";
 import { type Index } from "@peerbit/indexer-interface";
 import { TransportMessage } from "./message.js";
 import {
-	ReplicationIntent,
 	type ReplicationRangeIndexable,
 	ReplicationRangeMessage,
-	ReplicationRangeMessageU32,
 } from "./ranges.js";
 import { Observer, Replicator, Role } from "./role.js";
 
@@ -62,23 +60,6 @@ export class ResponseRoleMessage extends TransportMessage {
 	constructor(properties: { role: Observer | Replicator }) {
 		super();
 		this.role = properties.role;
-	}
-
-	toReplicationInfoMessage(): AllReplicatingSegmentsMessage {
-		return new AllReplicatingSegmentsMessage({
-			segments:
-				this.role instanceof Replicator
-					? this.role.segments.map((x) => {
-							return new ReplicationRangeMessageU32({
-								id: randomBytes(32),
-								offset: x.offset,
-								factor: x.factor,
-								timestamp: x.timestamp,
-								mode: ReplicationIntent.NonStrict,
-							});
-						})
-					: [],
-		});
 	}
 }
 
