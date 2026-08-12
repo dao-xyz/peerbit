@@ -1,3 +1,4 @@
+import { serialize } from "@dao-xyz/borsh";
 import { Ed25519PublicKey } from "@peerbit/crypto";
 import { AcknowledgeDelivery } from "@peerbit/stream-interface";
 import { TestSession } from "@peerbit/test-utils";
@@ -11,6 +12,7 @@ import {
 	SYNC_CAPABILITY_REPLICATION_INFO_V2_SEND,
 	SyncCapabilitiesMessage,
 } from "../src/exchange-heads.js";
+import { ReplicationIntent, ReplicationRangeMessageU32 } from "../src/ranges.js";
 import {
 	ReplicationInfoV2SendCoordinator,
 	type ReplicationInfoV2SendState,
@@ -19,8 +21,11 @@ import {
 import {
 	AddedReplicationInfoV2Message,
 	AddedReplicationSegmentMessage,
+	AllReplicatingSegmentsMessage,
 	FullReplicationInfoV2Message,
 	RequestReplicationInfoV2Message,
+	StoppedReplicating,
+	StoppedReplicationInfoV2Message,
 } from "../src/replication.js";
 import { EventStore } from "./utils/stores/index.js";
 
@@ -1506,5 +1511,162 @@ describe("receive admission replication-info V2 sender integration", () => {
 			log._peerSessions.unblockReplicationInfo(remoteHash);
 			peerSession.finishOpeningBarrier();
 		}
+	});
+});
+
+describe("receive admission replication-info V2 mutation byte equivalence", () => {
+	// B12 stage-2 identical-state pin: the neutral full/added/stopped mutation
+	// union must map byte-for-byte onto the V2 frames that the legacy
+	// All/Added/Stopped inputs produced before the retype. The hex fixtures
+	// below were captured from the pre-refactor legacy-input path with this
+	// exact deterministic harness (fixed keys, challenge, transport session and
+	// sender epoch) immediately before the union landed.
+	const FROZEN_PRE_REFACTOR_FRAMES = {
+		snapshot:
+			"000106dfb663ff222b5883c4625f41fa21d98a1d0122a9041a6fd9087d58c418a7526e0707070707070707070707070707070707070707070707070707070707070707010000000000000000000000",
+		full: "000106dfb663ff222b5883c4625f41fa21d98a1d0122a9041a6fd9087d58c418a7526e070707070707070707070707070707070707070707070707070707070707070702000000000000000100000000200000000b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b15030000000000007b000000c801000000",
+		added:
+			"000107dfb663ff222b5883c4625f41fa21d98a1d0122a9041a6fd9087d58c418a7526e070707070707070707070707070707070707070707070707070707070707070703000000000000000100000000200000000c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0cb80b000000000000e8030000d007000001",
+		stopped:
+			"000108dfb663ff222b5883c4625f41fa21d98a1d0122a9041a6fd9087d58c418a7526e0707070707070707070707070707070707070707070707070707070707070707040000000000000001000000200000000d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d",
+	};
+
+	const toHex = (bytes: Uint8Array) => Buffer.from(bytes).toString("hex");
+
+	const fixtureKey = (value: number) =>
+		new Ed25519PublicKey({ publicKey: new Uint8Array(32).fill(value) });
+
+	it("maps neutral mutations onto byte-identical V2 frames", async () => {
+		const self = fixtureKey(1);
+		const peer = fixtureKey(2);
+		const senderTransportSession = 0x20000000000001n;
+		const captured: Uint8Array[] = [];
+		const openSessions = new Set<object>();
+		const ownershipController = new AbortController();
+		const coordinator = new ReplicationInfoV2SendCoordinator<"u32">({
+			getRpc: () =>
+				({
+					send: async (message: unknown) => {
+						captured.push(serialize(message as any));
+						return [];
+					},
+				}) as any,
+			getSelfKey: () => self,
+			getSenderTransportSession: () => senderTransportSession,
+			getMyReplicationSegments: async () => [],
+			validatePersistedReplicationRangeSnapshot: () => {},
+			isClosed: () => false,
+			isPeerSessionCurrent: (_hash, peerSession) =>
+				openSessions.has(peerSession),
+			isPeerSessionOpen: (_hash, peerSession) => openSessions.has(peerSession),
+			captureReplicationOwnershipLifecycle: () => ownershipController,
+			isReplicationOwnershipLifecycleActive: (controller) =>
+				controller === ownershipController && !controller.signal.aborted,
+		});
+		coordinator._senderEpoch = new Uint8Array(32).fill(7);
+		const peerSession = {};
+		openSessions.add(peerSession);
+		const accepted = coordinator.acceptRequest(
+			new RequestReplicationInfoV2Message({
+				receiverChallenge: new Uint8Array(32).fill(9),
+				intendedSender: self,
+				senderSession: senderTransportSession,
+			}),
+			{
+				from: peer,
+				peerSession,
+				receiverTransportSession: 2n,
+				capabilityTimestamp: 1n,
+				requestTimestamp: 1n,
+			},
+		);
+		expect(accepted).to.be.true;
+		await coordinator.drain();
+
+		const rangeFull = new ReplicationRangeMessageU32({
+			id: new Uint8Array(32).fill(11),
+			offset: 123,
+			factor: 456,
+			timestamp: 789n,
+			mode: ReplicationIntent.NonStrict,
+		});
+		const rangeAdded = new ReplicationRangeMessageU32({
+			id: new Uint8Array(32).fill(12),
+			offset: 1000,
+			factor: 2000,
+			timestamp: 3000n,
+			mode: ReplicationIntent.Strict,
+		});
+		const stoppedId = new Uint8Array(32).fill(13);
+
+		coordinator.enqueue({ full: { segments: [rangeFull] } });
+		await coordinator.drain();
+		coordinator.enqueue({ added: { segments: [rangeAdded] } });
+		await coordinator.drain();
+		coordinator.enqueue({ stopped: { segmentIds: [stoppedId] } });
+		await coordinator.drain();
+
+		const state = coordinator._sendStates.get(peer.hashcode())!;
+		expect(state).to.exist;
+		const receiverChallenge = state.receiverChallenge.slice();
+		const senderEpoch = state.senderEpoch.slice();
+		coordinator.clearForClose();
+
+		expect(captured).to.have.length(4);
+
+		// Frozen-fixture leg: bytes must equal the pre-refactor legacy-input
+		// output exactly (variant tags, binding, epoch, sequence and payload).
+		expect(toHex(captured[0])).to.equal(FROZEN_PRE_REFACTOR_FRAMES.snapshot);
+		expect(toHex(captured[1])).to.equal(FROZEN_PRE_REFACTOR_FRAMES.full);
+		expect(toHex(captured[2])).to.equal(FROZEN_PRE_REFACTOR_FRAMES.added);
+		expect(toHex(captured[3])).to.equal(FROZEN_PRE_REFACTOR_FRAMES.stopped);
+
+		// Legacy-oracle leg: the retired wire classes remain constructible
+		// decode tombstones. Deriving the expected V2 frames from their payload
+		// fields (the exact mapping the pre-refactor sender performed) must
+		// reproduce the same bytes as the union path.
+		const legacyFull = new AllReplicatingSegmentsMessage({
+			segments: [rangeFull],
+		});
+		const legacyAdded = new AddedReplicationSegmentMessage({
+			segments: [rangeAdded],
+		});
+		const legacyStopped = new StoppedReplicating({ segmentIds: [stoppedId] });
+		expect(toHex(captured[1])).to.equal(
+			toHex(
+				serialize(
+					new FullReplicationInfoV2Message({
+						receiverChallenge,
+						senderEpoch,
+						sequence: 2n,
+						segments: legacyFull.segments,
+					}),
+				),
+			),
+		);
+		expect(toHex(captured[2])).to.equal(
+			toHex(
+				serialize(
+					new AddedReplicationInfoV2Message({
+						receiverChallenge,
+						senderEpoch,
+						sequence: 3n,
+						segments: legacyAdded.segments,
+					}),
+				),
+			),
+		);
+		expect(toHex(captured[3])).to.equal(
+			toHex(
+				serialize(
+					new StoppedReplicationInfoV2Message({
+						receiverChallenge,
+						senderEpoch,
+						sequence: 4n,
+						segmentIds: legacyStopped.segmentIds,
+					}),
+				),
+			),
+		);
 	});
 });
