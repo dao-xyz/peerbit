@@ -159,7 +159,13 @@ describe("document operation tombstones", () => {
 			});
 			const payload = await reloaded.getPayloadValue();
 			expect(payload).to.be.instanceOf(PutOperation);
-			expect(payload).to.not.be.instanceOf(PutWithKeyOperation);
+			// PutOperation and PutWithKeyOperation are @variant SIBLINGS (tags 3
+			// and 0), not a subclass relation, so `not.instanceOf` here is
+			// trivially true and pins nothing. Assert the wire tag instead: byte 0
+			// is Operation's own variant, byte 1 is the concrete operation tag.
+			// PutWithKeyOperation's frozen tag pair is [0, 0]; a default put must
+			// never produce it.
+			expect([...serialize(payload).slice(0, 2)]).to.deep.equal([0, 3]);
 		});
 
 		it("has zero deprecated-operation construction sites in src", () => {
@@ -181,6 +187,40 @@ describe("document operation tombstones", () => {
 				const matches = [...source.matchAll(forbidden)].map((m) => m[0]);
 				expect(matches, file).to.deep.equal([]);
 			}
+		});
+
+		it("has zero deprecated-operation construction sites in test", () => {
+			// Test-side leg, mirroring shared-log's no-legacy-machinery ratchet.
+			// The src leg alone cannot stop a spec from re-teaching the codebase
+			// to write the deprecated layouts: a new test that constructs one
+			// would look like sanctioned coverage. Only THIS spec is allowed to
+			// construct them, and only to seed the old-store decode fixture.
+			const forbidden =
+				/new\s+(PutWithKeyOperation|DeleteByStringKeyOperation)\s*\(/g;
+			const whitelist = new Set([
+				path.join("test", "operation-tombstone.spec.ts"),
+			]);
+			const testFiles = readdirSync(path.join(process.cwd(), "test"), {
+				recursive: true,
+			})
+				.map((entry) => String(entry))
+				.filter((entry) => entry.endsWith(".ts"))
+				.map((entry) => path.join("test", entry));
+			expect(testFiles.length).to.be.greaterThan(0);
+			let sawWhitelistedFile = false;
+			for (const file of testFiles) {
+				const source = readFileSync(path.join(process.cwd(), file), "utf8");
+				const matches = [...source.matchAll(forbidden)].map((m) => m[0]);
+				if (whitelist.has(file)) {
+					// The sanctioned spec must actually still construct them,
+					// otherwise the whitelist entry is stale cover for nothing.
+					expect(matches.length, file).to.be.greaterThan(0);
+					sawWhitelistedFile = true;
+					continue;
+				}
+				expect(matches, file).to.deep.equal([]);
+			}
+			expect(sawWhitelistedFile).to.be.true;
 		});
 	});
 });

@@ -2017,7 +2017,6 @@ export class SharedLog<
 
 	uniqueReplicators!: Set<string>;
 	private _replicatorJoinEmitted!: Set<string>;
-	private _replicatorsReconciled!: boolean;
 
 	/* private _totalParticipation!: number; */
 
@@ -3658,7 +3657,6 @@ export class SharedLog<
 		this.recentlyRebalanced = new Cache<string>({ max: 1e4, ttl: 1e5 });
 		this.uniqueReplicators = new Set();
 		this._replicatorJoinEmitted = new Set();
-		this._replicatorsReconciled = false;
 		this._liveness = this.createReplicatorLivenessMonitor();
 		this._v2Receive = this.createReplicationInfoV2ReceiveCoordinator();
 		this._v2Send = this.createReplicationInfoV2SendCoordinator();
@@ -14237,7 +14235,6 @@ export class SharedLog<
 
 		this.uniqueReplicators = new Set();
 		this._replicatorJoinEmitted = new Set();
-		this._replicatorsReconciled = false;
 		// Deserialized instances never ran the constructor; create the monitor and
 		// coordinator lazily on first open. Reopens keep the SAME instances so
 		// stale async continuations observe resets via property lookup.
@@ -15515,16 +15512,8 @@ export class SharedLog<
 		const existingSubscribersPromise = this.node.services.pubsub.getSubscribers(
 			this.topic,
 		);
-		const replicationLifecycleController =
-			this._instanceLifecycle?.membershipLifecycleController;
-
 		// We do this here, because these calls requires this.closed == false
 		void this.pruneOfflineReplicators()
-			.then(() => {
-				if (this.isReplicationLifecycleActive(replicationLifecycleController)) {
-					this._replicatorsReconciled = true;
-				}
-			})
 			.catch((error) => {
 				if (isNotStartedError(error as Error)) {
 					return;

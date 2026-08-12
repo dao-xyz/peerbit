@@ -3,8 +3,6 @@ const MIN_MEMORY_HEADROOM_BALANCE_SCALER = 0.25;
 export class PIDReplicationController {
 	integral!: number;
 	prevError!: number;
-	prevMemoryUsage!: number;
-	prevTotalFactor!: number;
 	kp: number;
 	ki: number;
 	kd: number;
@@ -41,9 +39,6 @@ export class PIDReplicationController {
 	}) {
 		let { memoryUsage, totalFactor, peerCount, cpuUsage, currentFactor } =
 			properties;
-
-		this.prevTotalFactor = totalFactor;
-		this.prevMemoryUsage = memoryUsage;
 
 		const estimatedTotalSize =
 			currentFactor > 0 ? memoryUsage / currentFactor : 1e5;
@@ -238,6 +233,5 @@ export class PIDReplicationController {
 	reset() {
 		this.prevError = 0;
 		this.integral = 0;
-		this.prevMemoryUsage = 0;
 	}
 }
