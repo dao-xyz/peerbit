@@ -10,6 +10,7 @@ import { TimeoutError, debounceFixedInterval } from "@peerbit/time";
 import { isNotStartedError } from "./errors.js";
 import type { TransportMessage } from "./message.js";
 import type { ReplicationRangeIndexable } from "./ranges.js";
+import type { ReplicationInfoMutation } from "./replication-info-mutation.js";
 import {
 	AddedReplicationSegmentMessage,
 	AllReplicatingSegmentsMessage,
@@ -206,14 +207,34 @@ export type ReplicationAnnouncementDeps<R extends "u32" | "u64"> = {
 	queueCurrentReplicationStateAnnouncementRetry: (error: unknown) => boolean;
 	// V2 is always current. Legacy publication is enabled only for an explicit
 	// compatibility open and retains its exact rejection/retry semantics there.
-	enqueueReplicationInfoV2: (message: LegacyReplicationInfoMessage) => void;
+	enqueueReplicationInfoV2: (mutation: ReplicationInfoMutation) => void;
 	isLegacyReplicationInfoEnabled: () => boolean;
 };
 
-type LegacyReplicationInfoMessage =
+/**
+ * The dormant legacy tail still broadcasts the retired wire classes when an
+ * explicit compatibility open enabled it (impossible since B12 stage 1; the
+ * tail is deleted in stage 3). Materialize the frame from the neutral
+ * mutation locally so the tail keeps its exact byte semantics until then.
+ */
+const toLegacyReplicationInfoFrame = (
+	mutation: ReplicationInfoMutation,
+):
 	| AllReplicatingSegmentsMessage
 	| AddedReplicationSegmentMessage
-	| StoppedReplicating;
+	| StoppedReplicating => {
+	if ("full" in mutation) {
+		return new AllReplicatingSegmentsMessage({
+			segments: mutation.full.segments,
+		});
+	}
+	if ("added" in mutation) {
+		return new AddedReplicationSegmentMessage({
+			segments: mutation.added.segments,
+		});
+	}
+	return new StoppedReplicating({ segmentIds: mutation.stopped.segmentIds });
+};
 
 export class ReplicationAnnouncementCoordinator<R extends "u32" | "u64"> {
 	replicationAnnouncementRetryDebounced:
@@ -627,7 +648,7 @@ export class ReplicationAnnouncementCoordinator<R extends "u32" | "u64"> {
 	}
 
 	async sendReplicationAnnouncement(
-		message: LegacyReplicationInfoMessage,
+		mutation: ReplicationInfoMutation,
 		ownershipLifecycleController = this.deps.captureReplicationOwnershipLifecycle(),
 		options?: { shouldSend?: () => boolean },
 	): Promise<void> {
@@ -652,12 +673,12 @@ export class ReplicationAnnouncementCoordinator<R extends "u32" | "u64"> {
 				// after that stale send settles.
 				this.rotateAnnouncementSession();
 				this.advanceCurrentReplicationStateAnnouncementRepairGeneration();
-				this.deps.enqueueReplicationInfoV2(message);
+				this.deps.enqueueReplicationInfoV2(mutation);
 				if (!this.deps.isLegacyReplicationInfoEnabled()) {
 					return;
 				}
 				try {
-					await this.deps.getRpc().send(message, {
+					await this.deps.getRpc().send(toLegacyReplicationInfoFrame(mutation), {
 						priority: CONVERGENCE_MESSAGE_PRIORITY,
 						signal: ownershipLifecycleController.signal,
 					});

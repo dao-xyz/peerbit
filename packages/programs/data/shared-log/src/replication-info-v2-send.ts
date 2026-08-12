@@ -8,13 +8,11 @@ import {
 import type { TransportMessage } from "./message.js";
 import type { ReplicationRangeIndexable } from "./ranges.js";
 import { deriveReplicationInfoV2ReceiverBinding } from "./replication-info-v2-binding.js";
+import type { ReplicationInfoMutation } from "./replication-info-mutation.js";
 import {
 	AddedReplicationInfoV2Message,
-	AddedReplicationSegmentMessage,
-	AllReplicatingSegmentsMessage,
 	FullReplicationInfoV2Message,
 	RequestReplicationInfoV2Message,
-	StoppedReplicating,
 	StoppedReplicationInfoV2Message,
 } from "./replication.js";
 
@@ -27,14 +25,9 @@ const MAX_BACKOFF_EXPONENT = 20;
 
 export { deriveReplicationInfoV2ReceiverBinding } from "./replication-info-v2-binding.js";
 
-export type LegacyReplicationInfoMessage =
-	| AllReplicatingSegmentsMessage
-	| AddedReplicationSegmentMessage
-	| StoppedReplicating;
-
 type SendRequest =
 	| { kind: "snapshot" }
-	| { kind: "message"; message: LegacyReplicationInfoMessage };
+	| { kind: "mutation"; mutation: ReplicationInfoMutation };
 
 export type ReplicationInfoV2SendState = {
 	peerHash: string;
@@ -393,9 +386,9 @@ export class ReplicationInfoV2SendCoordinator<R extends "u32" | "u64"> {
 		return true;
 	}
 
-	enqueue(message: LegacyReplicationInfoMessage): void {
+	enqueue(mutation: ReplicationInfoMutation): void {
 		for (const state of [...this._sendStates.values()]) {
-			this.enqueueState(state, { kind: "message", message });
+			this.enqueueState(state, { kind: "mutation", mutation });
 		}
 	}
 
@@ -538,20 +531,21 @@ export class ReplicationInfoV2SendCoordinator<R extends "u32" | "u64"> {
 			this.deps.validatePersistedReplicationRangeSnapshot(segments);
 			return new FullReplicationInfoV2Message({ ...common, segments });
 		}
-		if (request.message instanceof AllReplicatingSegmentsMessage) {
-			const segments = request.message.segments;
+		const { mutation } = request;
+		if ("full" in mutation) {
+			const segments = mutation.full.segments;
 			this.deps.validatePersistedReplicationRangeSnapshot(segments);
 			return new FullReplicationInfoV2Message({ ...common, segments });
 		}
-		if (request.message instanceof AddedReplicationSegmentMessage) {
+		if ("added" in mutation) {
 			return new AddedReplicationInfoV2Message({
 				...common,
-				segments: request.message.segments,
+				segments: mutation.added.segments,
 			});
 		}
 		return new StoppedReplicationInfoV2Message({
 			...common,
-			segmentIds: request.message.segmentIds,
+			segmentIds: mutation.stopped.segmentIds,
 		});
 	}
 
