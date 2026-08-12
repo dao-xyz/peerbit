@@ -66,10 +66,19 @@ export class InstanceLifecycle {
 	// code. Incremented synchronously with leader-cache invalidation so the
 	// handler can detect whether its pre-join plan needs one fresh
 	// post-persist audit.
+	//
+	// PERMANENT (fence census closed NO-GO 2026-08-12): a sub-generation
+	// WITHIN one lifecycle — it advances while the lifecycle identity is
+	// deliberately unchanged, so an identity/session token cannot tell a
+	// pre-invalidation plan from a post-invalidation one.
 	public _receiveOwnershipRevision = 0;
 	// Count of ownership-changing range mutations from queue admission
 	// through settlement, including mutations already pending when a receive
 	// starts.
+	//
+	// PERMANENT (fence census closed NO-GO 2026-08-12): a concurrency-DEPTH
+	// refcount, not a staleness token — identity answers "which generation
+	// started this?", never "how many mutation lanes are open right now?".
 	public _receiveOwnershipMutationAdmissions = 0;
 
 	// ---- stage 4: physically owned controllers (moved from SharedLog) ----

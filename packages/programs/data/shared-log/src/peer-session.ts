@@ -131,6 +131,11 @@ export class PeerSessionRegistry {
 	// peer stays subscribed), and it must also fence a peer that never had a
 	// session. Unlike sessions this map IS cleared at _close (see
 	// clearReceiveEpochsForClose) and replaced at open.
+	//
+	// PERMANENT (fence census closed NO-GO 2026-08-12): the per-PEER lifetime
+	// above is the whole mechanism — a session token would rotate at exactly
+	// the moments this map must survive, and could not fence a session-less
+	// peer at all.
 	_replicationInfoReceiveEpochByPeer!: Map<string, object>;
 	// Moved from SharedLog (fence B6, same name — the sanctioned file-to-file
 	// ratchet move). Refcount of in-flight destructive peer cleanups: while
@@ -140,6 +145,10 @@ export class PeerSessionRegistry {
 	// reconnect may rotate the session; a fresh session with a zero gate
 	// would reopen receive admission mid-drain. The map instance is replaced
 	// only at open (resetForOpen) and cleared in place at _close.
+	//
+	// PERMANENT (fence census closed NO-GO 2026-08-12): both structural
+	// reasons at once — a concurrency-DEPTH refcount whose per-PEER lifetime
+	// deliberately spans the session rotation a reconnect causes mid-drain.
 	_receiveCleanupGateByPeer!: Map<string, number>;
 	// Moved from SharedLog (fence B5, same name). Peers whose replication-info
 	// is fenced: added when a departure/unsubscribe rotation or a reconnect
