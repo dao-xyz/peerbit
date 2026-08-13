@@ -207,7 +207,20 @@ export class CoordinatePersistenceCoordinator<R extends "u32" | "u64"> {
 	// roll back only while that generation is still current, so a rollback
 	// superseded by a newer mutation is a strict no-op. The map deliberately
 	// survives open/close cycles of the same instance.
-	_nativeCoordinateMutationGenerations?: Map<string, number>;
+	//
+	// Each row is hold-counted: `snapshotResidentCoordinateEntries` takes one
+	// hold per hash per token, and `settleResidentCoordinateSnapshot` releases
+	// it once the token can no longer be rolled back, deleting the row at zero
+	// holds. That bounds the map by the outstanding rollback tokens instead of
+	// by lifetime throughput. Deleting a row that still has a live token would
+	// make its rollback fail open (or, worse, ABA-clobber newer state), so
+	// eviction is refcount-driven only — never TTL, LRU or a size cap. A
+	// MISSED settle merely retains a row, which is the pre-refcount behavior
+	// and therefore never a regression.
+	_nativeCoordinateMutationGenerations?: Map<
+		string,
+		{ generation: number; holds: number }
+	>;
 
 	/**
 	 * Wall-clock watermark of the last settled native coordinate journal
@@ -567,6 +580,11 @@ export class CoordinatePersistenceCoordinator<R extends "u32" | "u64"> {
 		} catch (error) {
 			this.rollbackBackboneOnlyReceiveCoordinateBatch(batch);
 			throw error;
+		} finally {
+			// The token cannot escape this function: both outcomes are
+			// observed here, and the catch arm has already consumed it by the
+			// time this runs.
+			this.settleResidentCoordinateSnapshot(batch.rollbackCoordinateEntries);
 		}
 	}
 
@@ -1012,8 +1030,14 @@ export class CoordinatePersistenceCoordinator<R extends "u32" | "u64"> {
 		const mutationGenerations = (this._nativeCoordinateMutationGenerations ??=
 			new Map());
 		for (const hash of uniqueHashes) {
-			const generation = (mutationGenerations.get(hash) ?? 0) + 1;
-			mutationGenerations.set(hash, generation);
+			// `uniqueHashes` is a Set, so this is exactly one hold per token
+			// per hash; `settleResidentCoordinateSnapshot` releases it.
+			const row = mutationGenerations.get(hash);
+			const generation = (row?.generation ?? 0) + 1;
+			mutationGenerations.set(hash, {
+				generation,
+				holds: (row?.holds ?? 0) + 1,
+			});
 			generations.set(hash, generation);
 			const entry = this._residentEntryCoordinatesByHash?.get(hash);
 			if (entry) {
@@ -1021,6 +1045,43 @@ export class CoordinatePersistenceCoordinator<R extends "u32" | "u64"> {
 			}
 		}
 		return { hashes: uniqueHashes, entries, generations };
+	}
+
+	/**
+	 * Release the holds a rollback token took on the mutation-generation map.
+	 *
+	 * Call this only where the token is TERMINAL — after the last point at
+	 * which any code path could still roll it back. A premature settle deletes
+	 * a row that a live token still needs, which silently turns that token's
+	 * rollback into a no-op (phantom coordinates) or, if the hash cycles back
+	 * to the same generation, lets it clobber newer state. A missed settle
+	 * only retains the row, which is the pre-refcount behavior.
+	 *
+	 * Idempotent by design: `settled` is set FIRST so a second settle of the
+	 * same token cannot consume another token's hold on a shared hash.
+	 */
+	settleResidentCoordinateSnapshot(
+		rollback?: NativeBackboneCoordinateRollback<R>,
+	): void {
+		if (!rollback || rollback.settled) {
+			return;
+		}
+		rollback.settled = true;
+		const mutationGenerations = this._nativeCoordinateMutationGenerations;
+		if (!mutationGenerations) {
+			return;
+		}
+		for (const hash of rollback.hashes) {
+			const row = mutationGenerations.get(hash);
+			if (!row) {
+				continue;
+			}
+			if (row.holds <= 1) {
+				mutationGenerations.delete(hash);
+			} else {
+				row.holds -= 1;
+			}
+		}
 	}
 
 	rollbackNativeBackboneCoordinateAppend(
@@ -1038,7 +1099,7 @@ export class CoordinatePersistenceCoordinator<R extends "u32" | "u64"> {
 			const expectedGeneration = rollback?.generations.get(hash);
 			if (
 				expectedGeneration !== undefined &&
-				mutationGenerations.get(hash) !== expectedGeneration
+				mutationGenerations.get(hash)?.generation !== expectedGeneration
 			) {
 				continue;
 			}
@@ -1096,7 +1157,7 @@ export class CoordinatePersistenceCoordinator<R extends "u32" | "u64"> {
 			const expectedGeneration = rollback?.generations.get(hash);
 			if (
 				expectedGeneration !== undefined &&
-				mutationGenerations.get(hash) !== expectedGeneration
+				mutationGenerations.get(hash)?.generation !== expectedGeneration
 			) {
 				continue;
 			}

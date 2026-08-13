@@ -637,6 +637,13 @@ export type NativeBackboneCoordinateRollback<R extends "u32" | "u64"> = {
 	hashes: Set<string>;
 	entries: Map<string, ResidentCoordinateEntry<R>>;
 	generations: Map<string, number>;
+	/**
+	 * Set by `settleResidentCoordinateSnapshot` once the token's holds on the
+	 * mutation-generation map have been released. Load-bearing: it makes the
+	 * settle idempotent, so a second settle of this token cannot consume a
+	 * different token's hold on a shared hash.
+	 */
+	settled?: boolean;
 };
 
 export type RepairDispatchEntry<R extends "u32" | "u64"> =
@@ -3114,9 +3121,23 @@ export class SharedLog<
 				};
 				for (const coordinate of intent.coordinates) {
 					rollback.hashes.add(coordinate.hash);
-					const generation =
-						(mutationGenerations.get(coordinate.hash) ?? 0) + 1;
-					mutationGenerations.set(coordinate.hash, generation);
+					// Same hold-counted row shape the coordinator's own
+					// snapshot writes: one hold per hash, released by the
+					// settle after the replay consumes the token below.
+					// RELIES ON `intent.coordinates` HOLDING UNIQUE HASHES —
+					// it is built from the token's `hashes` Set (see
+					// setNativeStrictDurableTransactionOperation). Holds are
+					// taken per element here but released per unique hash by
+					// the settle, so a duplicate would take two and release
+					// one and retain that row forever. That is the safe
+					// direction (a retained row, never a fail-open rollback),
+					// but keep the source a Set.
+					const row = mutationGenerations.get(coordinate.hash);
+					const generation = (row?.generation ?? 0) + 1;
+					mutationGenerations.set(coordinate.hash, {
+						generation,
+						holds: (row?.holds ?? 0) + 1,
+					});
 					rollback.generations.set(coordinate.hash, generation);
 					if (coordinate.value) {
 						const number = (value: string) =>
@@ -3142,6 +3163,9 @@ export class SharedLog<
 					"",
 					rollback,
 				);
+				// The replay fabricated these generations itself one turn
+				// earlier and has now consumed them, so the rows are dead.
+				this._coordinates.settleResidentCoordinateSnapshot(rollback);
 			}
 			for (const document of intent.documents) {
 				this.restoreNativeBackboneDocument({
@@ -10979,12 +11003,21 @@ export class SharedLog<
 			return rollbackLowerPublication(error);
 		}
 		if (!result) {
+			// Abandon arm: the token was minted but nothing downstream can
+			// roll it back from here.
+			this._coordinates.settleResidentCoordinateSnapshot(
+				lowerPublicationRollback?.coordinateEntries,
+			);
 			return this.completeNativeStrictDurableTransaction(
 				nativeStrictTransaction,
 			).then(() => undefined);
 		}
 		return mapMaybePromise(result, async (prepared) => {
 			if (!prepared) {
+				// Abandon arm: same shape as the `!result` arm above.
+				this._coordinates.settleResidentCoordinateSnapshot(
+					lowerPublicationRollback?.coordinateEntries,
+				);
 				await this.completeNativeStrictDurableTransaction(
 					nativeStrictTransaction,
 				);
@@ -11016,6 +11049,11 @@ export class SharedLog<
 				try {
 					await this._coordinates.rollbackNativeBackboneCoordinateAppendDurably(
 						prepared.appendFacts.hash,
+						lowerPublicationRollback?.coordinateEntries,
+					);
+					// Terminal: this is the last rollback consumer for the
+					// token. A throw above leaves the row, which is safe.
+					this._coordinates.settleResidentCoordinateSnapshot(
 						lowerPublicationRollback?.coordinateEntries,
 					);
 					for (const document of lowerPublicationRollback?.documents ?? []) {
@@ -11088,6 +11126,14 @@ export class SharedLog<
 			} catch (error) {
 				return rollback(error);
 			}
+			// Success seam. The last await inside the protected try is the
+			// finalizer acknowledge; `finish()` is synchronous, so no async
+			// boundary separates the catch above from this statement and
+			// `rollback` can no longer fire. Nothing downstream rolls back
+			// (the retire below only warns), so the token is terminal here.
+			this._coordinates.settleResidentCoordinateSnapshot(
+				lowerPublicationRollback?.coordinateEntries,
+			);
 			this.applyPreparedAppendFactsWithDeferredCoordinateDeletes(
 				prepared.appendFacts,
 				prepared.removed,
@@ -11544,6 +11590,12 @@ export class SharedLog<
 				}
 				return mapMaybePromise(result, async (prepared) => {
 					if (!prepared || !backboneAppend) {
+						// Abandon arm: the token was minted inside
+						// `prepareBackboneAppend` and nothing downstream of
+						// this return can roll it back.
+						this._coordinates.settleResidentCoordinateSnapshot(
+							nativeCoordinateRollback,
+						);
 						await this.completeNativeStrictDurableTransaction(
 							nativeStrictTransaction,
 						);
@@ -11635,6 +11687,10 @@ export class SharedLog<
 								prepared.appendFacts.hash,
 								rollbackCoordinateEntries,
 							);
+							// Terminal: last rollback consumer for the token.
+							this._coordinates.settleResidentCoordinateSnapshot(
+								rollbackCoordinateEntries,
+							);
 						} catch (rollbackError) {
 							rollbackFailures.push(rollbackError);
 						}
@@ -11711,6 +11767,12 @@ export class SharedLog<
 					} catch (error) {
 						return rollback(error);
 					}
+					// Success seam: the finalizer acknowledge above is the last
+					// await inside the protected try, so `rollback` can no
+					// longer fire and the retire below only warns.
+					this._coordinates.settleResidentCoordinateSnapshot(
+						rollbackCoordinateEntries,
+					);
 					this.applyPreparedAppendFactsWithDeferredCoordinateDeletes(
 						prepared.appendFacts,
 						prepared.removed,
@@ -12630,6 +12692,10 @@ export class SharedLog<
 			throw error;
 		}
 		if (!appended || !backboneAppends) {
+			// Abandon arm: no consumer downstream of this return.
+			this._coordinates.settleResidentCoordinateSnapshot(
+				batchCoordinateRollback,
+			);
 			await this.completeNativeStrictDurableTransaction(
 				nativeStrictTransaction,
 			);
@@ -12665,6 +12731,10 @@ export class SharedLog<
 			try {
 				await this._coordinates.rollbackNativeBackboneCoordinateAppendDurably(
 					appended.appendFacts[0]?.hash ?? "",
+					batchCoordinateRollback,
+				);
+				// Terminal: last rollback consumer for the batch token.
+				this._coordinates.settleResidentCoordinateSnapshot(
 					batchCoordinateRollback,
 				);
 			} catch (rollbackError) {
@@ -12798,6 +12868,11 @@ export class SharedLog<
 		} catch (error) {
 			return rollbackBatch(error);
 		}
+		// Success seam: `rollbackBatch` has exactly one call site (the catch
+		// above), and everything from here on escapes without any rollback.
+		this._coordinates.settleResidentCoordinateSnapshot(
+			batchCoordinateRollback,
+		);
 
 		this.throwIfReplicationOwnershipLifecycleInactive(
 			ownershipLifecycleController,
@@ -18907,292 +18982,305 @@ export class SharedLog<
 									reusableCoordinatePersistItems,
 								)
 							: undefined;
-						const nativePreparedJoinCommit = canUsePreparedAppendFacts
-							? this._coordinates.createNativeBackbonePreparedJoinCommit(
-									nativeReceiveCoordinateBatch,
-									(batch) => {
-										nativePreparedCoordinateBatch = batch;
-									},
-									nativeCommitVerifyHashes,
-									nativeCommitVerifyAllHashes,
-									syncProfile,
-									(committedHashes) => {
-										nativePreparedCommittedHashes = new Set(committedHashes);
-									},
-								)
-							: undefined;
-						const finishNativePreparedCoordinates = async (properties: {
-							nativePreparedCommitted: boolean;
-						}) => {
-							if (
-								!properties.nativePreparedCommitted ||
-								!nativePreparedCoordinateBatch
-							) {
-								return;
-							}
-							try {
-								nativeBackboneOnlyPersistedHashes =
-									await this._coordinates.finishBackboneOnlyReceiveCoordinateBatch(
-										nativePreparedCoordinateBatch,
+						try {
+							const nativePreparedJoinCommit = canUsePreparedAppendFacts
+								? this._coordinates.createNativeBackbonePreparedJoinCommit(
+										nativeReceiveCoordinateBatch,
+										(batch) => {
+											nativePreparedCoordinateBatch = batch;
+										},
+										nativeCommitVerifyHashes,
+										nativeCommitVerifyAllHashes,
 										syncProfile,
+										(committedHashes) => {
+											nativePreparedCommittedHashes = new Set(committedHashes);
+										},
+									)
+								: undefined;
+							const finishNativePreparedCoordinates = async (properties: {
+								nativePreparedCommitted: boolean;
+							}) => {
+								if (
+									!properties.nativePreparedCommitted ||
+									!nativePreparedCoordinateBatch
+								) {
+									return;
+								}
+								try {
+									nativeBackboneOnlyPersistedHashes =
+										await this._coordinates.finishBackboneOnlyReceiveCoordinateBatch(
+											nativePreparedCoordinateBatch,
+											syncProfile,
+										);
+									nativePreparedCoordinatesFinished = true;
+								} catch (error) {
+									this._coordinates.rollbackBackboneOnlyReceiveCoordinateBatch(
+										nativePreparedCoordinateBatch,
 									);
-								nativePreparedCoordinatesFinished = true;
-							} catch (error) {
-								this._coordinates.rollbackBackboneOnlyReceiveCoordinateBatch(
-									nativePreparedCoordinateBatch,
-								);
-								throw error;
+									throw error;
+								}
+							};
+							const preparedAppendCanValidateAppend =
+								canAppendAlreadyValidated ||
+								(nativeCommitCanValidateAppend && !!nativePreparedJoinCommit);
+							if (!preparedAppendCanValidateAppend) {
+								canUsePreparedAppendFacts = false;
 							}
-						};
-						const preparedAppendCanValidateAppend =
-							canAppendAlreadyValidated ||
-							(nativeCommitCanValidateAppend && !!nativePreparedJoinCommit);
-						if (!preparedAppendCanValidateAppend) {
-							canUsePreparedAppendFacts = false;
-						}
-						const nativePreparedJoinCommitValidatesPlan =
-							!!nativePreparedJoinCommit &&
-							(nativeCommitVerifyHashes && nativeCommitVerifyHashes.length > 0
-								? nativeCommitVerifyAllHashes
-									? !!this._nativeBackbone?.graph
-											.commitVerifiedAllPreparedRawReceiveJoinBatch ||
-										!!this._nativeBackbone?.graph
-											.commitVerifiedPreparedRawReceiveJoinBatch
+							const nativePreparedJoinCommitValidatesPlan =
+								!!nativePreparedJoinCommit &&
+								(nativeCommitVerifyHashes && nativeCommitVerifyHashes.length > 0
+									? nativeCommitVerifyAllHashes
+										? !!this._nativeBackbone?.graph
+												.commitVerifiedAllPreparedRawReceiveJoinBatch ||
+											!!this._nativeBackbone?.graph
+												.commitVerifiedPreparedRawReceiveJoinBatch
+										: !!this._nativeBackbone?.graph
+												.commitVerifiedPreparedRawReceiveJoinBatch
 									: !!this._nativeBackbone?.graph
-											.commitVerifiedPreparedRawReceiveJoinBatch
-								: !!this._nativeBackbone?.graph
-										.commitPreparedRawReceiveJoinBatch);
-						const trustedLowerLog = this.log as unknown as TrustedLowerLog<T>;
-						// With a program-level onChange consumer the hash-only
-						// sink is not used: the lower-log join dispatches the
-						// change event (lazy entry views over the prepared raw
-						// facts) so per-entry consumers observe every commit.
-						const joinOnAppendHashes = programOnChange
-							? undefined
-							: onAppendHashes;
-						const joinedPreparedFacts =
-							canUsePreparedAppendFacts &&
-							(await trustedLowerLog.joinPreparedAppendFactsBatch(
-								preparedAppendFacts,
-								{
+											.commitPreparedRawReceiveJoinBatch);
+							const trustedLowerLog = this.log as unknown as TrustedLowerLog<T>;
+							// With a program-level onChange consumer the hash-only
+							// sink is not used: the lower-log join dispatches the
+							// change event (lazy entry views over the prepared raw
+							// facts) so per-entry consumers observe every commit.
+							const joinOnAppendHashes = programOnChange
+								? undefined
+								: onAppendHashes;
+							const joinedPreparedFacts =
+								canUsePreparedAppendFacts &&
+								(await trustedLowerLog.joinPreparedAppendFactsBatch(
+									preparedAppendFacts,
+									{
+										__peerbitEntriesAlreadyMissing: true,
+										__peerbitCanAppendAlreadyValidated: true,
+										__peerbitDeferIndexWrite: true,
+										__peerbitOnAppendHashes: joinOnAppendHashes,
+										__peerbitProfile: syncProfile,
+										__peerbitNativePreparedJoinCommit: nativePreparedJoinCommit,
+										__peerbitNativePreparedJoinCommitValidatesPlan:
+											nativePreparedJoinCommitValidatesPlan,
+										__peerbitOnPreparedJoinCommitted: nativePreparedJoinCommit
+											? finishNativePreparedCoordinates
+											: undefined,
+									},
+								));
+							if (!joinedPreparedFacts) {
+								await trustedLowerLog.join(materializeAllToMergeEntries(), {
+									__peerbitBatchIndependent: true,
 									__peerbitEntriesAlreadyMissing: true,
-									__peerbitCanAppendAlreadyValidated: true,
+									__peerbitCanAppendAlreadyValidated:
+										fallbackCanAppendAlreadyValidated,
 									__peerbitDeferIndexWrite: true,
 									__peerbitOnAppendHashes: joinOnAppendHashes,
 									__peerbitProfile: syncProfile,
-									__peerbitNativePreparedJoinCommit: nativePreparedJoinCommit,
-									__peerbitNativePreparedJoinCommitValidatesPlan:
-										nativePreparedJoinCommitValidatesPlan,
-									__peerbitOnPreparedJoinCommitted: nativePreparedJoinCommit
-										? finishNativePreparedCoordinates
-										: undefined,
-								},
-							));
-						if (!joinedPreparedFacts) {
-							await trustedLowerLog.join(materializeAllToMergeEntries(), {
-								__peerbitBatchIndependent: true,
-								__peerbitEntriesAlreadyMissing: true,
-								__peerbitCanAppendAlreadyValidated:
-									fallbackCanAppendAlreadyValidated,
-								__peerbitDeferIndexWrite: true,
-								__peerbitOnAppendHashes: joinOnAppendHashes,
-								__peerbitProfile: syncProfile,
-							});
-						}
-						// A recursive lower-log join can resolve successfully while declining
-						// an individual top-level entry (for example, when one of its parents
-						// is temporarily unavailable). The public Log.join() API intentionally
-						// does not expose that per-entry result, so make local index presence the
-						// authority before publishing any SharedLog-side effects. A successful
-						// prepared-facts batch is atomic and already proves every input hash.
-						const admittedHashes = joinedPreparedFacts
-							? new Set(allToMergeHashes)
-							: await this.log.hasMany(allToMergeHashes);
-						admittedMergeHashes = admittedHashes;
-						const admittedShallowEntries =
-							admittedHashes.size === allToMergeShallowEntries.length
-								? allToMergeShallowEntries
-								: allToMergeShallowEntries.filter((entry) =>
+								});
+							}
+							// A recursive lower-log join can resolve successfully while declining
+							// an individual top-level entry (for example, when one of its parents
+							// is temporarily unavailable). The public Log.join() API intentionally
+							// does not expose that per-entry result, so make local index presence the
+							// authority before publishing any SharedLog-side effects. A successful
+							// prepared-facts batch is atomic and already proves every input hash.
+							const admittedHashes = joinedPreparedFacts
+								? new Set(allToMergeHashes)
+								: await this.log.hasMany(allToMergeHashes);
+							admittedMergeHashes = admittedHashes;
+							const admittedShallowEntries =
+								admittedHashes.size === allToMergeShallowEntries.length
+									? allToMergeShallowEntries
+									: allToMergeShallowEntries.filter((entry) =>
+											admittedHashes.has(entry.hash),
+										);
+							if (!joinedPreparedFacts) {
+								reusableCoordinatePersistItems =
+									reusableCoordinatePersistItems.filter((item) =>
+										admittedHashes.has(item.entry.hash),
+									);
+								coordinatePersistFallbackEntries =
+									coordinatePersistFallbackEntries.filter((entry) =>
 										admittedHashes.has(entry.hash),
 									);
-						if (!joinedPreparedFacts) {
-							reusableCoordinatePersistItems =
-								reusableCoordinatePersistItems.filter((item) =>
-									admittedHashes.has(item.entry.hash),
-								);
-							coordinatePersistFallbackEntries =
-								coordinatePersistFallbackEntries.filter((entry) =>
-									admittedHashes.has(entry.hash),
-								);
-						}
-						const reusableCoordinatePersistItemCount =
-							reusableCoordinatePersistItems.length;
-						if (syncProfile) {
-							emitSyncProfileDuration(syncProfile, lowerLogJoinStartedAt, {
-								name: "sharedLog.receive.lowerLogJoin",
-								component: "shared-log",
-								entries: allToMerge.length,
-								messages: 1,
-								details: {
-									hashOnlyEntryAdded,
-									batchHashOnlyEntryAdded,
-									programOnChange,
-									joinedPreparedFacts,
-									admittedEntries: admittedHashes.size,
-									nativePreparedCoordinatesFinished,
-								},
-							});
-						}
-						const coordinatePersistStartedAt = syncProfileStart(syncProfile);
-						if (nativePreparedCoordinatesFinished) {
-							// The lower-log prepared receive transaction already finished
-							// the native coordinate mirror/journal after entry-index commit.
-						} else if (nativePreparedCoordinateBatch) {
-							try {
-								nativeBackboneOnlyPersistedHashes =
-									await this._coordinates.finishBackboneOnlyReceiveCoordinateBatch(
-										nativePreparedCoordinateBatch,
-										syncProfile,
-									);
-							} catch (error) {
-								this._coordinates.rollbackBackboneOnlyReceiveCoordinateBatch(
-									nativePreparedCoordinateBatch,
-								);
-								throw error;
 							}
-						} else {
-							nativeBackboneOnlyPersistedHashes =
-								await this._coordinates.persistBackboneOnlyReceiveCoordinateBatch(
+							const reusableCoordinatePersistItemCount =
+								reusableCoordinatePersistItems.length;
+							if (syncProfile) {
+								emitSyncProfileDuration(syncProfile, lowerLogJoinStartedAt, {
+									name: "sharedLog.receive.lowerLogJoin",
+									component: "shared-log",
+									entries: allToMerge.length,
+									messages: 1,
+									details: {
+										hashOnlyEntryAdded,
+										batchHashOnlyEntryAdded,
+										programOnChange,
+										joinedPreparedFacts,
+										admittedEntries: admittedHashes.size,
+										nativePreparedCoordinatesFinished,
+									},
+								});
+							}
+							const coordinatePersistStartedAt = syncProfileStart(syncProfile);
+							if (nativePreparedCoordinatesFinished) {
+								// The lower-log prepared receive transaction already finished
+								// the native coordinate mirror/journal after entry-index commit.
+							} else if (nativePreparedCoordinateBatch) {
+								try {
+									nativeBackboneOnlyPersistedHashes =
+										await this._coordinates.finishBackboneOnlyReceiveCoordinateBatch(
+											nativePreparedCoordinateBatch,
+											syncProfile,
+										);
+								} catch (error) {
+									this._coordinates.rollbackBackboneOnlyReceiveCoordinateBatch(
+										nativePreparedCoordinateBatch,
+									);
+									throw error;
+								}
+							} else {
+								nativeBackboneOnlyPersistedHashes =
+									await this._coordinates.persistBackboneOnlyReceiveCoordinateBatch(
+										reusableCoordinatePersistItems,
+									);
+							}
+							if (
+								nativeBackboneOnlyPersistedHashes &&
+								nativeBackboneOnlyPersistedHashes.size > 0
+							) {
+								for (
+									let i = reusableCoordinatePersistItems.length - 1;
+									i >= 0;
+									i--
+								) {
+									if (
+										nativeBackboneOnlyPersistedHashes.has(
+											reusableCoordinatePersistItems[i]!.entry.hash,
+										)
+									) {
+										reusableCoordinatePersistItems.splice(i, 1);
+									}
+								}
+							}
+							if (reusableCoordinatePersistItems.length > 0) {
+								await this._coordinates.persistCoordinatesBatch(
 									reusableCoordinatePersistItems,
 								);
-						}
-						if (
-							nativeBackboneOnlyPersistedHashes &&
-							nativeBackboneOnlyPersistedHashes.size > 0
-						) {
-							for (
-								let i = reusableCoordinatePersistItems.length - 1;
-								i >= 0;
-								i--
-							) {
-								if (
-									nativeBackboneOnlyPersistedHashes.has(
-										reusableCoordinatePersistItems[i]!.entry.hash,
-									)
-								) {
-									reusableCoordinatePersistItems.splice(i, 1);
-								}
 							}
-						}
-						if (reusableCoordinatePersistItems.length > 0) {
-							await this._coordinates.persistCoordinatesBatch(
-								reusableCoordinatePersistItems,
-							);
-						}
-						if (coordinatePersistFallbackEntries.length > 0) {
-							await this.planEntryLeaderBatch(
-								coordinatePersistFallbackEntries.map((entry) => ({
-									entry,
-									replicas:
-										receiveReplicaCounts.get(entry.hash) ??
-										decodeReplicas(entry).getValue(this),
-									options: { roleAge: 0, persist: {} },
-								})),
-							);
-						}
-						if (syncProfile) {
-							emitSyncProfileDuration(syncProfile, coordinatePersistStartedAt, {
-								name: "sharedLog.receive.coordinatePersist",
-								component: "shared-log",
-								entries: entriesToPersist.length,
-								messages: 1,
-								details: {
-									reusedLeaderPlans: reusableCoordinatePersistItemCount,
-									nativeBackboneOnly:
-										nativeBackboneOnlyPersistedHashes?.size ?? 0,
-								},
-							});
-						}
-						for (const hash of admittedHashes) {
-							confirmedHashes.add(hash);
-						}
-						const checkedPruneStartedAt = syncProfileStart(syncProfile);
-						const ownershipChangedDuringReceive =
-							!this.isReceiveOwnershipSnapshotStable(receiveOwnershipRevision);
-						if (ownershipChangedDuringReceive) {
-							const freshAuditRevision =
-								this._instanceLifecycle?._receiveOwnershipRevision ?? 0;
-							const armFreshAuditRetry = () => {
-								for (const entry of admittedShallowEntries) {
-									this.scheduleCheckedPruneRetry(
-										{ entry, leaders: new Map() },
+							if (coordinatePersistFallbackEntries.length > 0) {
+								await this.planEntryLeaderBatch(
+									coordinatePersistFallbackEntries.map((entry) => ({
+										entry,
+										replicas:
+											receiveReplicaCounts.get(entry.hash) ??
+											decodeReplicas(entry).getValue(this),
+										options: { roleAge: 0, persist: {} },
+									})),
+								);
+							}
+							if (syncProfile) {
+								emitSyncProfileDuration(syncProfile, coordinatePersistStartedAt, {
+									name: "sharedLog.receive.coordinatePersist",
+									component: "shared-log",
+									entries: entriesToPersist.length,
+									messages: 1,
+									details: {
+										reusedLeaderPlans: reusableCoordinatePersistItemCount,
+										nativeBackboneOnly:
+											nativeBackboneOnlyPersistedHashes?.size ?? 0,
+									},
+								});
+							}
+							for (const hash of admittedHashes) {
+								confirmedHashes.add(hash);
+							}
+							const checkedPruneStartedAt = syncProfileStart(syncProfile);
+							const ownershipChangedDuringReceive =
+								!this.isReceiveOwnershipSnapshotStable(receiveOwnershipRevision);
+							if (ownershipChangedDuringReceive) {
+								const freshAuditRevision =
+									this._instanceLifecycle?._receiveOwnershipRevision ?? 0;
+								const armFreshAuditRetry = () => {
+									for (const entry of admittedShallowEntries) {
+										this.scheduleCheckedPruneRetry(
+											{ entry, leaders: new Map() },
+											receiveOwnershipLifecycleController,
+										);
+									}
+								};
+								try {
+									await this.pruneJoinedEntriesNoLongerLed(
+										admittedShallowEntries,
+										{
+											decodedReplicaCounts: receiveReplicaCounts,
+											freshReceiveOwnerAudit: true,
+											preserveExistingPruneOnLocalResult: true,
+											profile: syncProfile,
+										},
 										receiveOwnershipLifecycleController,
 									);
+									this.throwIfReplicationOwnershipLifecycleInactive(
+										receiveOwnershipLifecycleController,
+									);
+									if (
+										!this.isReceiveOwnershipSnapshotStable(freshAuditRevision)
+									) {
+										armFreshAuditRetry();
+									}
+								} catch {
+									// The lower-log and coordinate commits are already durable. A
+									// sender retry will filter these hashes as present, so retain a
+									// bounded local obligation instead of failing the admitted receive.
+									this.throwIfReplicationOwnershipLifecycleInactive(
+										receiveOwnershipLifecycleController,
+									);
+									armFreshAuditRetry();
 								}
-							};
-							try {
+							} else {
 								await this.pruneJoinedEntriesNoLongerLed(
 									admittedShallowEntries,
 									{
 										decodedReplicaCounts: receiveReplicaCounts,
-										freshReceiveOwnerAudit: true,
 										preserveExistingPruneOnLocalResult: true,
+										reusableLeaderPlans: reusableCoordinatePlans,
 										profile: syncProfile,
 									},
 									receiveOwnershipLifecycleController,
 								);
-								this.throwIfReplicationOwnershipLifecycleInactive(
-									receiveOwnershipLifecycleController,
-								);
-								if (
-									!this.isReceiveOwnershipSnapshotStable(freshAuditRevision)
-								) {
-									armFreshAuditRetry();
-								}
-							} catch {
-								// The lower-log and coordinate commits are already durable. A
-								// sender retry will filter these hashes as present, so retain a
-								// bounded local obligation instead of failing the admitted receive.
-								this.throwIfReplicationOwnershipLifecycleInactive(
-									receiveOwnershipLifecycleController,
-								);
-								armFreshAuditRetry();
 							}
-						} else {
-							await this.pruneJoinedEntriesNoLongerLed(
-								admittedShallowEntries,
-								{
-									decodedReplicaCounts: receiveReplicaCounts,
-									preserveExistingPruneOnLocalResult: true,
-									reusableLeaderPlans: reusableCoordinatePlans,
-									profile: syncProfile,
-								},
-								receiveOwnershipLifecycleController,
+							if (syncProfile) {
+								emitSyncProfileDuration(syncProfile, checkedPruneStartedAt, {
+									name: "sharedLog.receive.checkedPrune",
+									component: "shared-log",
+									entries: allToMerge.length,
+									messages: 1,
+								});
+							}
+
+							for (const plan of joinPlans) {
+								plan.toDelete
+									?.filter((entry) => admittedMergeHashes.has(entry.hash))
+									.map((entry) =>
+										this.pruneDebouncedFnAddIfNotKeeping({
+											key: entry.hash,
+											value: {
+												entry,
+												leaders: plan.leaders as Map<string, any>,
+											},
+										}),
+									);
+							}
+							this.rebalanceParticipationDebounced?.call();
+						} finally {
+							// Settle seam for the receive token. Every consumer that can
+							// roll it back runs inline before control leaves this block: the
+							// prepared-join callback resolves during the join await, and the
+							// late finish/rollback arm runs above. This `finally` is what
+							// closes the abandon arms (no prepared-join commit, a declined
+							// native commit, a downgrade to the plain join) without having
+							// to enumerate them.
+							this._coordinates.settleResidentCoordinateSnapshot(
+								nativeReceiveCoordinateBatch?.rollbackCoordinateEntries,
 							);
 						}
-						if (syncProfile) {
-							emitSyncProfileDuration(syncProfile, checkedPruneStartedAt, {
-								name: "sharedLog.receive.checkedPrune",
-								component: "shared-log",
-								entries: allToMerge.length,
-								messages: 1,
-							});
-						}
-
-						for (const plan of joinPlans) {
-							plan.toDelete
-								?.filter((entry) => admittedMergeHashes.has(entry.hash))
-								.map((entry) =>
-									this.pruneDebouncedFnAddIfNotKeeping({
-										key: entry.hash,
-										value: {
-											entry,
-											leaders: plan.leaders as Map<string, any>,
-										},
-									}),
-								);
-						}
-						this.rebalanceParticipationDebounced?.call();
 					}
 
 					for (const plan of joinPlans) {
