@@ -431,12 +431,13 @@ assert.doesNotMatch(
 );
 const securityJob = workflowJob(ciWorkflow, "security_dependency_contracts");
 assert.match(securityJob, /needs: build_workspace/);
-// Node 24 is deliberately absent from this matrix (see ci.yml for why, and for
-// the condition that restores it). This contract keeps that a DELIBERATE
-// omission rather than silent drift: re-adding a 24 entry while
-// node-datachannel's source build is still broken there would reintroduce a
-// permanently red lane, so it must be a conscious edit here too.
-assert.match(securityJob, /node-version: \[22\.x\]/);
+// Both supported majors must stay in this matrix. Node 24 was dropped once
+// (#1239) on the incorrect premise that a consumer resolving our published
+// manifests lands on a prebuild-less node-datachannel; it does not (see the
+// ci.yml comment for the resolution walk-through). Dropping a runtime from the
+// published-closure smoke silently narrows what "we support Node 24" means, so
+// it has to be a conscious edit here too.
+assert.match(securityJob, /node-version: \[22\.x, 24\.x\]/);
 assert.match(securityJob, /node-version: \$\{\{ matrix\.node-version \}\}/);
 assert.match(securityJob, /pnpm install --frozen-lockfile/);
 const restoreIndex = securityJob.indexOf("Restore workspace build outputs");

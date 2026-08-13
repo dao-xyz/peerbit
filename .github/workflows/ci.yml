@@ -200,29 +200,30 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Node 24 is deliberately absent, not forgotten. This job's
-        # published-closure smoke installs the packed tarballs with npm, which
-        # resolves `@libp2p/webrtc@^6.0.15` -> `node-datachannel@^0.29.0` on its
-        # own -- and 0.29.0 publishes NO prebuilt binaries, so that install
-        # always compiles from source. The source build is broken on Node 24:
-        # prebuild/prebuild-install are deprecated and their napi-build-utils
-        # cannot resolve NAPI v10, aborting with "does not support N-API version
-        # undefined" (upstream
-        # https://github.com/murat-dogan/node-datachannel/issues/428, open since
-        # 2026-07, no release since 2026-04).
+        # Node 24 was dropped from this matrix in #1239 and restored here after
+        # the reason given for dropping it turned out to be false. That reason
+        # was: the published-closure smoke installs packed tarballs with npm,
+        # which "resolves `@libp2p/webrtc@^6.0.15` -> `node-datachannel@^0.29.0`
+        # on its own", and 0.29.0 ships no prebuilds so the install compiles
+        # from source, which is broken on Node 24 (upstream
+        # https://github.com/murat-dogan/node-datachannel/issues/428).
         #
-        # The workspace install no longer has this problem -- a root pnpm
-        # override pins node-datachannel to the prebuilt 0.32.3 -- but overrides
-        # do not reach a consumer resolving our published manifests, so this one
-        # lane stayed intermittently red for a reason outside our control. A
-        # permanently failing lane trains readers to ignore red, which costs
-        # more than the forward-compat signal it was buying.
+        # `^6.0.15` admits 6.0.21+, and npm takes the highest match. A consumer
+        # resolving our published manifests gets `@libp2p/webrtc@6.0.29`, whose
+        # `node-datachannel` range is `^0.32.3` -- which does ship prebuilds.
+        # Verified by running the smoke itself on Node 24: exit 0.
         #
-        # RESTORE Node 24 here once `@libp2p/webrtc` is on a release whose
-        # `node-datachannel` ships prebuilds (6.0.21+, which needs
-        # `@libp2p/interface ^3.2.2` and therefore a libp2p stack upgrade -- see
-        # PR #1235 for why the scoped bump does not work).
-        node-version: [22.x]
+        # The mistake was conflating two different resolutions. Our OWN lockfile
+        # is held at webrtc 6.0.15 because the workspace cannot typecheck
+        # against 6.0.21+ (duplicate `@libp2p/interface`, see #1235), and the
+        # root pnpm override keeps that install on prebuilt node-datachannel
+        # 0.32.3. None of that constrains a consumer, who resolves the range
+        # fresh and lands on a webrtc new enough to be fine.
+        #
+        # So this lane is not "permanently red for an upstream reason"; it is
+        # exactly the forward-compat signal it looks like, and Node 24 belongs
+        # in it. If it does go red, read the failure before removing the lane.
+        node-version: [22.x, 24.x]
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
