@@ -1,4 +1,4 @@
-// Pins G1-G7 for the hold-counted `_nativeCoordinateMutationGenerations` map.
+// Pins G1-G8 for the hold-counted `_nativeCoordinateMutationGenerations` map.
 //
 // The map used to grow one row per distinct entry hash ever committed or
 // received, forever, with no removal path anywhere. It is now refcounted:
@@ -23,7 +23,11 @@
 // commit-only variant and a replicating log to the storage-transaction
 // variant, so both local seams are covered here. The batch seam is reached
 // through the prepared-payloads many-independent entry point (what
-// `Documents.putMany` uses) and is covered by G7.
+// `Documents.putMany` uses) and is covered by G7 and G8.
+//
+// G8 is a different kind of pin from the rest: G1-G7 pin that the settle is
+// CORRECT where it runs, G8 measures how much of the map it actually covers,
+// by counting both sides of the hold ledger over a mixed workload.
 //
 // Every assertion below is a raw value — map `.size`, `.holds`, `.generation`,
 // coordinate-index counts, resident-mirror presence, native-backbone presence.
@@ -198,6 +202,55 @@ const instrumentSnapshots = (log: any) => {
 		state,
 		restore: () => {
 			internals.snapshotResidentCoordinateEntries = original;
+		},
+	};
+};
+
+/**
+ * Count both sides of the hold ledger on a live coordinator: every token the
+ * writer mints, and every token the settle actually consumes.
+ *
+ * Already-`settled` tokens are counted separately from consumed ones — a
+ * second settle of the same token is a no-op by design (G5), so counting it as
+ * a release would inflate the released side and hide a real leak.
+ */
+const instrumentSettleBalance = (log: any) => {
+	const internals = coordinateInternals(log);
+	const originalSnapshot =
+		internals.snapshotResidentCoordinateEntries.bind(internals);
+	const originalSettle =
+		internals.settleResidentCoordinateSnapshot.bind(internals);
+	const state = {
+		tokensCreated: 0,
+		holdsTaken: 0,
+		tokensSettled: 0,
+		holdsReleased: 0,
+		redundantSettles: 0,
+	};
+	internals.snapshotResidentCoordinateEntries = (hashes: Iterable<string>) => {
+		const token = originalSnapshot(hashes);
+		if (token) {
+			state.tokensCreated++;
+			state.holdsTaken += token.hashes.size;
+		}
+		return token;
+	};
+	internals.settleResidentCoordinateSnapshot = (rollback?: any) => {
+		if (rollback) {
+			if (rollback.settled) {
+				state.redundantSettles++;
+			} else {
+				state.tokensSettled++;
+				state.holdsReleased += rollback.hashes.size;
+			}
+		}
+		return originalSettle(rollback);
+	};
+	return {
+		state,
+		restore: () => {
+			internals.snapshotResidentCoordinateEntries = originalSnapshot;
+			internals.settleResidentCoordinateSnapshot = originalSettle;
 		},
 	};
 };
@@ -710,5 +763,196 @@ describe("coordinate persistence mutation-generation receive bounds", function (
 		} finally {
 			probe.restore();
 		}
+	});
+});
+
+// G8 is the COMPLETENESS gate for the settle, as opposed to G1-G7 which pin
+// its correctness. G1/G2 only assert that the map is empty at the end of one
+// workload; that is satisfied by a settle that fires for some seams and leaks
+// for others as long as the leaked seams happen not to run. G8 counts both
+// sides of the hold ledger over a workload that deliberately drives every
+// token-minting seam, and asserts they balance exactly.
+//
+// The map has exactly five writers, and the two legs below drive four of them:
+//   1 `appendLocallyPreparedPayloadNativeBackboneCommitOnly`
+//   2 `appendLocallyPreparedPayloadNativeBackboneStorageTransaction`
+//   3 `appendLocallyPreparedPayloadsManyNativeBackboneDocumentIndexBatch`
+//     — 1-3 are leg one
+//   4 `CoordinatePersistenceCoordinator.createBackboneOnlyReceiveCoordinateBatch`
+//     — leg two, the receive seam
+//   5 the durable-recovery intent replay, which fabricates its rows inline
+//     instead of calling the snapshot writer. G6 covers that one, and it is
+//     the only known producer of a settle with no matching create, which is
+//     why the balance assertions below would fail loudly rather than silently
+//     absorb it if it ever ran inside this workload.
+//
+// MEASURED at the tip of this branch (see the leg comments for the
+// decomposition): 100% of created tokens settle and the raw map returns to
+// zero rows, on the local-append seams, the batch seam and the receive seam
+// alike. No seam leaks on a succeeding workload, so the bound asserted here
+// is 0 residual rows rather than a non-zero known-residual bound.
+//
+// The bound is 0 for a workload that SUCCEEDS. The durable-commit failure
+// arms that funnel through the shared `rollbackFailedNativeBackboneTransaction`
+// sink deliberately carry no settle, so each failed durable commit can retain
+// its token's rows forever. That is the accepted direction of the asymmetry —
+// a retained row is the pre-refcount behavior, a premature settle is the
+// silent-corruption one — and it is bounded by the number of durable commit
+// failures rather than by throughput, so it is not asserted here.
+//
+// NOT covered by this gate, and measured explicitly rather than assumed: the
+// seeded chaos suites (`test:shared-log:chaos`, and the wider `deterministic`
+// grep behind `test:shared-log:chaos:all`) mint ZERO rollback tokens —
+// 0 created / 0 settled across 12 coordinators, with all 41 settle calls
+// receiving `undefined`. Those suites run memory-session nodes, which have no
+// auto-derived durable coordinate persistence adapter and therefore never
+// reach the backbone-only receive snapshot, and their appends go through the
+// generic `db.add` route rather than the native prepared-payload seams. So the
+// chaos suites are not a completeness signal for this map in either direction,
+// and this pin is where the coverage actually lives.
+describe("coordinate persistence mutation-generation settle balance", function () {
+	this.timeout(240_000);
+
+	let peers: Peerbit[] = [];
+	let directories: string[] = [];
+
+	const createDurablePeer = async () => {
+		// Same durability requirement as the receive-bounds describe: a
+		// memory-only node never mints a receive-path token at all.
+		const directory = await fs.mkdtemp(
+			path.join(os.tmpdir(), "peerbit-coordinate-generation-balance-pins-"),
+		);
+		directories.push(directory);
+		const peer = await Peerbit.create({
+			directory,
+			...createRustPeerbitOptions(),
+		});
+		peers.push(peer);
+		return peer;
+	};
+
+	afterEach(async () => {
+		for (const peer of peers) {
+			await peer.stop();
+		}
+		peers = [];
+		for (const directory of directories) {
+			await fs.rm(directory, { recursive: true, force: true });
+		}
+		directories = [];
+	});
+
+	const singleAppends = 40;
+	const batches = 5;
+	const batchWidth = 8;
+	const genericAppends = 20;
+
+	it("G8: every token minted by a local append and batch workload settles", async () => {
+		const peer = await createDurablePeer();
+		const store = await peer.open(new EventStore<string, any>(), {
+			args: { replicate: { factor: 1 } },
+		});
+		const log = store.log as any;
+		expect(log._nativeBackbone, "native backbone").to.exist;
+		enableNativeDocumentIndex(log);
+
+		const probe = instrumentSettleBalance(log);
+		try {
+			for (let index = 0; index < singleAppends; index++) {
+				await nativeAppend(log, `g8-single-${index}`);
+			}
+			for (let batch = 0; batch < batches; batch++) {
+				await nativeBatchAppend(log, `g8-batch-${batch}`, batchWidth);
+			}
+			// Generic appends alongside the native seams, so the ledger is
+			// measured over a mixed workload rather than a hand-picked one.
+			for (let index = 0; index < genericAppends; index++) {
+				await store.add(`g8-generic-${index}`, { meta: { next: [] } });
+			}
+			await waitForResolved(() => {
+				expect(generationRowCount(log)).to.equal(0);
+			});
+		} finally {
+			probe.restore();
+		}
+
+		// MEASURED, exactly: 40 commit-only local appends mint one single-hash
+		// token each, and each of the 5 batch appends mints ONE token covering
+		// all 8 of its entries; the 20 generic `store.add` appends mint none.
+		// 45 tokens / 80 holds. Exact equality is deliberate: this is the gate
+		// that says the ledger is fully accounted for, so a new token seam
+		// appearing in this workload must be audited rather than absorbed.
+		expect(probe.state.tokensCreated, "tokens minted").to.equal(
+			singleAppends + batches,
+		);
+		expect(probe.state.holdsTaken, "holds taken").to.equal(
+			singleAppends + batches * batchWidth,
+		);
+		// The balance itself. `rows === 0` above and these two are equivalent
+		// given no other code path deletes a row, and both are asserted so a
+		// future deletion path cannot make one of them silently vacuous.
+		expect(probe.state.tokensSettled, "tokens settled").to.equal(
+			probe.state.tokensCreated,
+		);
+		expect(probe.state.holdsReleased, "holds released").to.equal(
+			probe.state.holdsTaken,
+		);
+		expect(generationRowCount(log), "residual rows").to.equal(0);
+	});
+
+	it("G8: every token minted by a cold-sync receive settles", async () => {
+		const entryCount = 150;
+		const peer1 = await createDurablePeer();
+		const peer2 = await createDurablePeer();
+		const store = new EventStore<string, any>();
+		const db1 = await peer1.open(store.clone(), {
+			args: { replicate: { factor: 1 } },
+		});
+		const db2 = await peer2.open(store.clone(), {
+			args: { replicate: { factor: 1 } },
+		});
+		const receiver = db2.log as any;
+		expect(receiver._nativeBackbone, "peer2 native backbone").to.exist;
+
+		for (let index = 0; index < entryCount; index++) {
+			await db1.add(`g8-sync-${index}`, { meta: { next: [] } });
+		}
+
+		// Only the receiver is instrumented: the sender's own `db1.add`
+		// appends mint no rollback token at all (measured 0 created / 0
+		// settled), so a balance assertion on the sender would be vacuous.
+		const probe = instrumentSettleBalance(receiver);
+		try {
+			await peer2.dial(peer1.getMultiaddrs());
+			await waitForResolved(
+				() => {
+					expect(db2.log.log.length).to.equal(entryCount);
+				},
+				{ timeout: 90_000, timeoutMessage: "receive-path cold sync" },
+			);
+			await waitForResolved(() => {
+				expect(generationRowCount(receiver)).to.equal(0);
+			});
+		} finally {
+			probe.restore();
+		}
+
+		// MEASURED: the receive seam batches, so the token COUNT is a function
+		// of how the sync chunked (2 tokens covering 150 hashes each in the
+		// reference run, i.e. 300 holds for 150 entries) and is asserted as a
+		// bound rather than an exact number. The balance is exact.
+		expect(probe.state.tokensCreated, "receive tokens minted").to.be.at.least(
+			1,
+		);
+		expect(probe.state.holdsTaken, "receive holds taken").to.be.at.least(
+			entryCount,
+		);
+		expect(probe.state.tokensSettled, "receive tokens settled").to.equal(
+			probe.state.tokensCreated,
+		);
+		expect(probe.state.holdsReleased, "receive holds released").to.equal(
+			probe.state.holdsTaken,
+		);
+		expect(generationRowCount(receiver), "residual rows").to.equal(0);
 	});
 });
