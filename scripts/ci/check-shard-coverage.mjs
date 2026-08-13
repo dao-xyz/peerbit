@@ -59,24 +59,22 @@ console.log(`OK: ${checked} literal shared-log describes are all covered by CI s
 // the one-level --roots globs never matched them; some are exercised
 // indirectly or in the Native job instead). Shrink this list when wiring a
 // package into a shard — never grow it without a deliberate decision.
+//
+// The seven Node-runnable ones were wired into part-1 by explicit roots (the
+// glob still cannot reach them). What remains needs different infrastructure,
+// not a shard entry: the rust crates build in the Native job, the e2e suites
+// need a browser runner, and the peerbit-server pair was not verified.
 const KNOWN_UNREACHABLE = new Set([
-	"packages/clients/canonical/client",
 	"packages/clients/canonical/host",
-	"packages/clients/canonical/transport",
 	"packages/clients/peerbit-server/node",
 	"packages/clients/peerbit-server/test-lib",
 	"packages/log/rust",
 	"packages/programs/data/shared-log/proxy/e2e",
 	"packages/transport/stream/e2e/browser",
-	"packages/utils/any-store/any-store",
 	"packages/utils/any-store/proxy",
 	"packages/utils/any-store/proxy/e2e",
 	"packages/utils/any-store/rust",
-	"packages/utils/indexer/cached-index",
-	"packages/utils/indexer/interface",
 	"packages/utils/indexer/rust",
-	"packages/utils/indexer/simple",
-	"packages/utils/indexer/sqlite3",
 ]);
 
 const rootTokens = new Set();
