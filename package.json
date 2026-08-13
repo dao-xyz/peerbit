@@ -82,7 +82,7 @@
 		"test:interop": "aegir run test:interop",
 		"test:docs": "aegir run test --roots ./docs -- -t node",
 		"test:part-1": "aegir run test --roots ./packages/utils/** ./packages/clients/** ./packages/log  -- -t node",
-		"test:ci:part-1": "aegir run test:cov --roots ./packages/utils/** ./packages/clients/peerbit ./packages/clients/test-utils ./packages/clients/vite ./packages/log -- --no-build && pnpm --fail-if-no-match --filter @peerbit/react run test:cov && pnpm run test:ci:react-identity && pnpm run test:ci:react-sqlite-dev",
+		"test:ci:part-1": "aegir run test:cov --roots ./packages/utils/** ./packages/utils/indexer/interface ./packages/utils/indexer/simple ./packages/utils/indexer/sqlite3 ./packages/utils/indexer/cached-index ./packages/utils/any-store/any-store ./packages/clients/peerbit ./packages/clients/test-utils ./packages/clients/vite ./packages/clients/canonical/client ./packages/clients/canonical/transport ./packages/log -- --no-build && pnpm --fail-if-no-match --filter @peerbit/react run test:cov && pnpm run test:ci:react-identity && pnpm run test:ci:react-sqlite-dev",
 		"test:react-identity": "pnpm --filter @peerbit/react-e2e-browser... build && pnpm --filter @peerbit/react-e2e-browser exec playwright test tests/identity.spec.ts",
 		"test:ci:react-identity": "pnpm --fail-if-no-match --filter @peerbit/react-e2e-browser exec playwright test tests/identity.spec.ts",
 		"test:ci:react-sqlite-dev": "PEERBIT_E2E_VITE_DEV=1 pnpm --fail-if-no-match --filter @peerbit/react-e2e-browser exec playwright test tests/sqlite3-wasm.spec.ts",
