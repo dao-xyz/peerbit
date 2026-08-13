@@ -200,20 +200,29 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # 24.18.x is pinned, not floating 24.x, to keep the published-closure
-        # smoke deterministic. node-datachannel (the Node WebRTC transport
-        # under @libp2p/webrtc) installs a prebuilt binary, and that download
-        # is occasionally flaky on CI. Its source-build FALLBACK is broken on
-        # Node 24: prebuild/prebuild-install are deprecated and their
-        # napi-build-utils cannot resolve NAPI v10, aborting with "does not
-        # support N-API version undefined" -- upstream
-        # https://github.com/murat-dogan/node-datachannel/issues/428. So on
-        # Node 24 a transient download blip becomes a hard install failure
-        # instead of a slow-but-successful build. The normal path is fine:
-        # `npm install node-datachannel@0.32.3` succeeds on Node 24 (verified
-        # locally), so this is NOT a forward-compat break for consumers.
-        # Unpin once node-datachannel replaces its prebuild toolchain.
-        node-version: [22.x, 24.18.x]
+        # Node 24 is deliberately absent, not forgotten. This job's
+        # published-closure smoke installs the packed tarballs with npm, which
+        # resolves `@libp2p/webrtc@^6.0.15` -> `node-datachannel@^0.29.0` on its
+        # own -- and 0.29.0 publishes NO prebuilt binaries, so that install
+        # always compiles from source. The source build is broken on Node 24:
+        # prebuild/prebuild-install are deprecated and their napi-build-utils
+        # cannot resolve NAPI v10, aborting with "does not support N-API version
+        # undefined" (upstream
+        # https://github.com/murat-dogan/node-datachannel/issues/428, open since
+        # 2026-07, no release since 2026-04).
+        #
+        # The workspace install no longer has this problem -- a root pnpm
+        # override pins node-datachannel to the prebuilt 0.32.3 -- but overrides
+        # do not reach a consumer resolving our published manifests, so this one
+        # lane stayed intermittently red for a reason outside our control. A
+        # permanently failing lane trains readers to ignore red, which costs
+        # more than the forward-compat signal it was buying.
+        #
+        # RESTORE Node 24 here once `@libp2p/webrtc` is on a release whose
+        # `node-datachannel` ships prebuilds (6.0.21+, which needs
+        # `@libp2p/interface ^3.2.2` and therefore a libp2p stack upgrade -- see
+        # PR #1235 for why the scoped bump does not work).
+        node-version: [22.x]
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
