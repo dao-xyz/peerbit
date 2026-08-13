@@ -762,6 +762,21 @@ jobs:
       - name: Cargo test indexer core crate
         # Pure Rust crate without a package.json, so it is invoked directly.
         run: cargo test --manifest-path packages/utils/indexer/core/Cargo.toml
+      - name: Test @peerbit/indexer-rust
+        # Added 2026-08-14: this crate had NO test step at all, so its 296 tests
+        # -- the RustIndex half of the indexer parity contract -- had never run
+        # in CI, while check-shard-coverage's baseline excused it as "tested in
+        # the Native job". That baseline entry is now enforced against this
+        # step's name. Spelled out rather than `pnpm --filter ... run test`
+        # because the package script runs aegir without "-t node" (same reason
+        # as @peerbit/log-rust below), and because the shared conformance suite
+        # it consumes must be built first.
+        run: |
+          cd packages/utils/indexer/rust
+          cargo test
+          pnpm --filter @peerbit/indexer-tests build
+          pnpm run build
+          pnpm exec aegir test -t node
       - name: Test @peerbit/any-store-rust
         run: pnpm --filter @peerbit/any-store-rust run test
       - name: Test @peerbit/native-backbone

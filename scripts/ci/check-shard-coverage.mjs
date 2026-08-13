@@ -63,16 +63,35 @@ console.log(`OK: ${checked} literal shared-log describes are all covered by CI s
 // Every Node-runnable package has now been wired in by explicit roots (the
 // glob still cannot reach them): eleven into part-1, and the peerbit-server
 // pair into part-5a because its 132 tests take ~33s and part-5a is light.
-// What remains genuinely needs different infrastructure rather than a shard
-// entry: the rust crates build in the Native job, and the three playwright
-// suites need a browser runner.
-const KNOWN_UNREACHABLE = new Set([
+//
+// What is left falls in two categories, and they are kept apart on purpose:
+// "some other job runs it" is a claim that can rot, while "nothing runs it" is
+// a claim that cannot. Writing both as one prose sentence is how the rot hid.
+//
+// NATIVE_JOB_TESTED: run by a hand-rolled `cd`-and-run step in the Native job,
+// which this script's --roots/--filter parser cannot see. That excuse is now
+// ENFORCED below by requiring a matching `name: Test <pkg>` step in ci.yml --
+// until 2026-08-14 the comment claimed all three rust crates were covered this
+// way, and @peerbit/indexer-rust had NO such step: 296 tests (108 local plus
+// two runs of the shared @peerbit/indexer-tests conformance suite) covering the
+// RustIndex backend had never executed in CI.
+const NATIVE_JOB_TESTED = new Set([
 	"packages/log/rust",
+	"packages/utils/any-store/rust",
+	"packages/utils/indexer/rust",
+]);
+
+// BROWSER_E2E_UNRUN: playwright suites with no runner wired up. These really
+// are not executed anywhere -- an honest debt entry, not a redirection.
+const BROWSER_E2E_UNRUN = new Set([
 	"packages/programs/data/shared-log/proxy/e2e",
 	"packages/transport/stream/e2e/browser",
 	"packages/utils/any-store/proxy/e2e",
-	"packages/utils/any-store/rust",
-	"packages/utils/indexer/rust",
+]);
+
+const KNOWN_UNREACHABLE = new Set([
+	...NATIVE_JOB_TESTED,
+	...BROWSER_E2E_UNRUN,
 ]);
 
 const rootTokens = new Set();
@@ -159,6 +178,34 @@ for (const dir of KNOWN_UNREACHABLE) {
 		);
 		process.exit(1);
 	}
+}
+
+// A package excused as "the Native job runs it" must actually have a step in
+// the Native job that runs it. Without this, the excuse is unfalsifiable prose
+// and a package can sit in the baseline for months with nothing executing its
+// tests -- which is exactly what happened to @peerbit/indexer-rust.
+const ciWorkflow = readFileSync(
+	path.join(root, ".github/workflows/ci.yml"),
+	"utf8",
+);
+const unproven = [];
+for (const dir of NATIVE_JOB_TESTED) {
+	const name = JSON.parse(
+		readFileSync(path.join(root, dir, "package.json"), "utf8"),
+	).name;
+	if (!ciWorkflow.includes(`name: Test ${name}`)) {
+		unproven.push(`${dir} (${name})`);
+	}
+}
+if (unproven.length > 0) {
+	console.error(
+		"Packages excused as NATIVE_JOB_TESTED with no `name: Test <pkg>` step in ci.yml (nothing runs their tests):",
+	);
+	for (const u of unproven) console.error(`  ${u}`);
+	console.error(
+		"Add the Native job step, or move the package to BROWSER_E2E_UNRUN / wire it into a shard.",
+	);
+	process.exit(1);
 }
 
 if (unreachable.length > 0) {
