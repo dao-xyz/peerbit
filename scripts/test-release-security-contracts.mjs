@@ -431,11 +431,12 @@ assert.doesNotMatch(
 );
 const securityJob = workflowJob(ciWorkflow, "security_dependency_contracts");
 assert.match(securityJob, /needs: build_workspace/);
-// The 24 entry is pinned to a patch line on purpose (see ci.yml); this
-// contract keeps it a DELIBERATE pin rather than silent drift, and fails if
-// anyone floats it back to 24.x while node-datachannel's source-build
-// fallback remains broken on Node 24 (upstream issue 428).
-assert.match(securityJob, /node-version: \[22\.x, 24\.18\.x\]/);
+// Node 24 is deliberately absent from this matrix (see ci.yml for why, and for
+// the condition that restores it). This contract keeps that a DELIBERATE
+// omission rather than silent drift: re-adding a 24 entry while
+// node-datachannel's source build is still broken there would reintroduce a
+// permanently red lane, so it must be a conscious edit here too.
+assert.match(securityJob, /node-version: \[22\.x\]/);
 assert.match(securityJob, /node-version: \$\{\{ matrix\.node-version \}\}/);
 assert.match(securityJob, /pnpm install --frozen-lockfile/);
 const restoreIndex = securityJob.indexOf("Restore workspace build outputs");
