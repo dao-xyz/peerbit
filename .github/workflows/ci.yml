@@ -13,9 +13,19 @@ permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  # PRs: superseded pushes cancel the stale run. Master pushes queue instead of
-  # cancelling each other, so every master commit gets a completed CI verdict.
+  # PRs share a group per PR number so a superseded push cancels the stale run.
+  # Master pushes get a UNIQUE group (run_id) so they can never cancel or evict
+  # one another, and every master commit gets its own completed CI verdict.
+  #
+  # The previous form grouped master pushes by github.ref with
+  # cancel-in-progress false, on the theory that they would queue. They do not
+  # reliably: GitHub holds at most ONE pending run per concurrency group, and a
+  # third run CANCELS the one waiting rather than lining up behind it. On
+  # 2026-08-13, #1245/#1244/#1246 merged within 38 minutes and #1244 -- the
+  # version-bump commit that published to npm -- was cancelled with no CI
+  # verdict on master at all. A unique group per push is the only form that
+  # actually delivers the guarantee the old comment claimed.
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 env:
   WASM_PACK_VERSION: 0.13.1

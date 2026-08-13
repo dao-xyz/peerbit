@@ -209,6 +209,17 @@ assert.doesNotMatch(
 	/\$\{\{\s*secrets\./,
 	"CI must not depend on long-lived repository secrets",
 );
+// Master pushes must land in a UNIQUE concurrency group. Grouping them by
+// github.ref does not queue them: GitHub keeps only one pending run per group
+// and cancels the waiting one when a third arrives, so a burst of merges
+// silently leaves master commits with no CI verdict (this happened to the
+// #1244 publish commit on 2026-08-13). run_id is unique per run, so no master
+// push can ever evict another.
+assert.match(
+	ciWorkflow,
+	/group: \$\{\{ github\.workflow \}\}-\$\{\{ github\.event\.pull_request\.number \|\| github\.run_id \}\}/,
+	"CI concurrency must fall back to github.run_id, not github.ref, so master pushes cannot evict each other",
+);
 assert.doesNotMatch(
 	ciWorkflow,
 	/^\s*pull_request_target:/m,
