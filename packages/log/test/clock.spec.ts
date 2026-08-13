@@ -38,21 +38,29 @@ describe("hlc", () => {
 	const t = {
 		equals: (a: any, b: any) => expect(a).equal(b),
 		deepEquals: (a: any, b: any) => expect(a).to.deep.equal(b),
-		throws: async (a: any, error: any) => {
-			if (typeof a === "function") {
-				// TODO check instance
-				try {
-					const result = await a();
-					expect(result).to.throw();
-				} catch (error) {
-					expect(error).to.deep.equal(error);
-				}
-			} else {
-				await expect(a).rejectedWith(error);
+		// This asserted nothing until 2026-08-14. `catch (error)` shadowed the
+		// expected-error parameter and the body compared the caught error to
+		// ITSELF, which is true for any value; and when the call did not throw
+		// at all, the `expect(result).to.throw()` that was supposed to catch
+		// that raised an AssertionError into the very same catch, where the
+		// self-comparison swallowed it. It was also `async` and never awaited,
+		// so even a genuine rejection landed after the test had passed.
+		throws: (call: () => unknown, expected: Error) => {
+			let caught: unknown;
+			try {
+				call();
+			} catch (error) {
+				caught = error;
 			}
+			expect(caught, "the call was expected to throw").to.be.instanceOf(
+				expected.constructor as new (...args: any[]) => Error,
+			);
+			// The error classes encode their operands in the message, so this
+			// pins the values and not merely the type.
+			expect((caught as Error).message).to.equal(expected.message);
 		},
-		ok: (x: any) => x === true,
-		fail: (x: any) => expect(x).to.not.throw(),
+		ok: (x: any) => expect(x).to.equal(true),
+		fail: (message: string) => expect.fail(message),
 	};
 
 	it(".now() returns a new timestamp", () => {
@@ -268,13 +276,20 @@ describe("hlc", () => {
 			if (error instanceof ClockOffsetError === false) {
 				throw error;
 			}
-			t.deepEquals(error, new ClockOffsetError(error.offset, error.maxOffset));
+			// Was `deepEquals(error, new ClockOffsetError(error.offset,
+			// error.maxOffset))` — the expectation was built out of the actual
+			// error's own fields, so it could only fail if the constructor
+			// mangled them. Assert the scenario instead: the configured limit,
+			// and that the rejected offset genuinely exceeded it.
+			expect(error.maxOffset).to.equal(BigInt(60 * 1e9));
+			expect(error.offset > error.maxOffset).to.equal(true);
 		}
 	});
 	it("example-2: clock drift", () => {
+		// Hoisted out of the try so the catch below can assert against it.
+		const wallTimeUpperBound =
+			BigInt(new Date("2022-01-01T00:00:00.000Z").getTime()) * BigInt(1e6);
 		try {
-			const wallTimeUpperBound =
-				BigInt(new Date("2022-01-01T00:00:00.000Z").getTime()) * BigInt(1e6);
 			const clock = new HLC({
 				wallTime: () => wallTimeUpperBound + 1n, // Faking a wallTime that is beyond the max we allow
 				wallTimeUpperBound,
@@ -285,27 +300,34 @@ describe("hlc", () => {
 			if (error instanceof WallTimeOverflowError === false) {
 				throw error;
 			}
-			t.deepEquals(error, new WallTimeOverflowError(error.time, error.maxTime));
+			// Same self-comparison as above, but this scenario is fully
+			// deterministic, so both operands can be pinned exactly.
+			expect(error.maxTime).to.equal(wallTimeUpperBound);
+			expect(error.time).to.equal(wallTimeUpperBound + 1n);
 		}
 	});
-	it("example-3: clock drift", () => {
+	it("example-3: clock drift", async () => {
 		const clock = new HLC({
 			toleratedForwardClockJump: BigInt(1e6) /* 1 ms in nanoseconds */,
 		});
-		setTimeout(() => {
-			try {
-				clock.now();
-				t.fail("error should have thrown");
-			} catch (error: any) {
-				if (error instanceof ForwardJumpError === false) {
-					throw error;
-				}
-				t.deepEquals(
-					error,
-					new ForwardJumpError(error.timejump, error.tolerance),
-				);
-			}
-		}, 10); // we didn't update the clock in 10 seconds
+		// Until 2026-08-14 this was a SYNCHRONOUS test whose only assertions
+		// lived inside a setTimeout: mocha passed it the moment the callback
+		// was scheduled, so the drift detection was never actually checked, and
+		// a failure would have surfaced 10ms later as an unhandled error
+		// attributed to whichever test was running by then.
+		await new Promise((resolve) => setTimeout(resolve, 10));
+		let caught: unknown;
+		try {
+			clock.now();
+		} catch (error) {
+			caught = error;
+		}
+		expect(caught, "the clock jump should have been rejected").to.be.instanceOf(
+			ForwardJumpError,
+		);
+		const error = caught as ForwardJumpError;
+		expect(error.tolerance).to.equal(BigInt(1e6));
+		expect(error.timejump > error.tolerance).to.equal(true);
 	});
 	it("example: drift monitoring", () => {
 		class CockroachHLC extends HLC {
