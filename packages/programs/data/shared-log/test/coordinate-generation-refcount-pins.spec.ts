@@ -1,4 +1,4 @@
-// Pins G1-G6 for the hold-counted `_nativeCoordinateMutationGenerations` map.
+// Pins G1-G7 for the hold-counted `_nativeCoordinateMutationGenerations` map.
 //
 // The map used to grow one row per distinct entry hash ever committed or
 // received, forever, with no removal path anywhere. It is now refcounted:
@@ -11,15 +11,19 @@
 // PREMATURE settle deletes a row a live token still needs — which silently
 // turns that token's rollback into a no-op, or, once the hash's generation
 // numbering restarts from 1, lets a stale token clobber newer state (ABA).
-// So G3 and G4 carry the real weight: they assert that rollbacks that are
-// still OWED continue to fire, and that supersession is still detected.
+// So G3, G4 and G7 carry the real weight: they assert that rollbacks that are
+// still OWED continue to fire, and that supersession is still detected. G3 and
+// G7 pin that shape at two different settle families — the single-append
+// storage-transaction seam and the batch seam.
 //
-// The rollback tokens are minted only on the native-backbone local-append and
-// receive paths. The local-append paths are reached through the prepared
-// payload commit-only entry point (`target: "none"`), which is how the
-// Documents program appends; a non-replicating log routes it to the
+// The rollback tokens are minted only on the native-backbone local-append,
+// batch-append and receive paths. The local-append paths are reached through
+// the prepared payload commit-only entry point (`target: "none"`), which is
+// how the Documents program appends; a non-replicating log routes it to the
 // commit-only variant and a replicating log to the storage-transaction
-// variant, so both local seams are covered here.
+// variant, so both local seams are covered here. The batch seam is reached
+// through the prepared-payloads many-independent entry point (what
+// `Documents.putMany` uses) and is covered by G7.
 //
 // Every assertion below is a raw value — map `.size`, `.holds`, `.generation`,
 // coordinate-index counts, resident-mirror presence, native-backbone presence.
@@ -74,6 +78,99 @@ const nativeAppend = (log: any, value: string) =>
 		payload(value),
 		{ target: "none", replicate: false, meta: { next: [] } },
 		undefined,
+	);
+
+const writeU32 = (out: number[], value: number) => {
+	out.push(
+		value & 0xff,
+		(value >> 8) & 0xff,
+		(value >> 16) & 0xff,
+		value >>> 24,
+	);
+};
+
+const writeString = (out: number[], value: string) => {
+	const bytes = new TextEncoder().encode(value);
+	writeU32(out, bytes.byteLength);
+	out.push(...bytes);
+};
+
+/**
+ * The minimal native document schema IR (a document whose only field group is
+ * the five `__context` fields), byte-identical to the one the native-backbone
+ * suite and the document-put benchmark use.
+ *
+ * The batch append seam refuses to run without a configured schema IR, because
+ * it always commits a native document-index row alongside the entry. The
+ * Documents program configures this from its own indexed schema; a shared-log
+ * pin has no Documents program, so it configures the context-only IR directly
+ * and commits an empty value prefix (again exactly as the benchmark does).
+ */
+const contextOnlyDocumentSchemaIr = (): Uint8Array => {
+	const out: number[] = [1, 14];
+	writeU32(out, 1);
+	out.push(0);
+	writeU32(out, 5);
+	writeString(out, "created");
+	writeU32(out, 1);
+	writeU32(out, 101);
+	out.push(4);
+	writeString(out, "modified");
+	writeU32(out, 2);
+	writeU32(out, 102);
+	out.push(4);
+	writeString(out, "head");
+	writeU32(out, 3);
+	writeU32(out, 103);
+	out.push(12);
+	writeString(out, "gid");
+	writeU32(out, 4);
+	writeU32(out, 104);
+	out.push(12);
+	writeString(out, "size");
+	writeU32(out, 5);
+	writeU32(out, 105);
+	out.push(3);
+	return Uint8Array.from(out);
+};
+
+/** Arm a live log's native backbone for native document-index commits. */
+const enableNativeDocumentIndex = (log: any) => {
+	log._nativeBackbone.configureDocumentSchemaIr(contextOnlyDocumentSchemaIr());
+	log._nativeBackbone.setDocumentContextFields?.({
+		created: 1,
+		modified: 2,
+		head: 3,
+		gid: 4,
+		size: 5,
+	});
+	log._nativeBackbone.setDocumentContextHeadField?.(3);
+};
+
+/**
+ * Drive ONE native-backbone batch append (the
+ * `appendLocallyPreparedPayloadsManyNativeBackboneDocumentIndexBatch` seam,
+ * which is what `Documents.putMany` reaches). The whole batch mints exactly
+ * one rollback token covering every entry hash in it.
+ *
+ * `target: "none"` and an absent `replicate` are load-bearing: the batch seam
+ * bails to the generic path for any other target, for `replicate: true`, for a
+ * set `delivery`, and for non-empty prepared nexts.
+ */
+const nativeBatchAppend = (log: any, label: string, size: number) =>
+	log.appendLocallyPreparedPayloadsManyIndependent(
+		Array.from({ length: size }, (_, index) => payload(`${label}-${index}`)),
+		{ target: "none" },
+		{
+			nativeBackboneDocumentIndexes: Array.from(
+				{ length: size },
+				(_, index) => ({
+					key: `${label}-key-${index}`,
+					valuePrefixBytes: new Uint8Array(0),
+					byteElementIndexLimit: 0,
+				}),
+			),
+		},
 	);
 
 /**
@@ -321,6 +418,125 @@ describe("coordinate persistence mutation-generation bounds", function () {
 	// fails there, which is why it is deliberately not run.
 	it("G3: an owed rollback still fires after the success seam was added", async () => {
 		await owedRollbackLeg({ factor: 1 }, "g3-storage-transaction");
+	});
+
+	// G7 pins the BATCH settle family. G3 covers the storage-transaction
+	// single-append family; the batch family is the one whose success settle is
+	// placed EARLIEST relative to the end of its function — it fires the moment
+	// the try/catch around the coordinate persistence loop is left, ~60 lines
+	// and one `throwIfReplicationOwnershipLifecycleInactive` before the method
+	// returns — so it is the settle most exposed to a future edit that moves a
+	// rollback consumer below it. `rollbackBatch` (the catch arm) is that
+	// consumer today.
+	const batchSize = 3;
+
+	it("G7: an owed rollback still fires at the batch success seam", async () => {
+		const log = await openStore({ replicate: { factor: 1 } });
+		enableNativeDocumentIndex(log);
+
+		// Half one: the success side of the seam. A clean batch append must
+		// settle its token, so the map is empty again with nothing owed.
+		const successProbe = instrumentSnapshots(log);
+		let succeeded: any;
+		try {
+			succeeded = await nativeBatchAppend(log, "g7-batch-ok", batchSize);
+		} finally {
+			successProbe.restore();
+		}
+		expect(succeeded?.entries?.length, "batch committed").to.equal(batchSize);
+		// Teeth: exactly ONE token for the whole batch is the batch seam's
+		// signature. A fallback to the per-entry seam would mint `batchSize`
+		// tokens (or none), so this is what keeps the pin honest about which
+		// settle family it is exercising.
+		expect(successProbe.state.calls, "one token for the whole batch").to.equal(
+			1,
+		);
+		expect(
+			successProbe.state.tokens[0]?.hashes.size,
+			"the token covers every entry in the batch",
+		).to.equal(batchSize);
+		expect(successProbe.state.maxSize, "rows resident mid-batch").to.equal(
+			batchSize,
+		);
+		expect(
+			generationRowCount(log),
+			"success settle released the rows",
+		).to.equal(0);
+
+		// Half two: the failure side. Fault-inject the durable lower-marker
+		// write, which runs inside `nativeCommittedAppendFinalizer.acknowledge`
+		// — i.e. after the batch's native coordinates are committed and inside
+		// the try whose catch calls `rollbackBatch`, so a rollback is genuinely
+		// owed at the injection point.
+		const failProbe = instrumentSnapshots(log);
+		const originalMarker =
+			log.markNativeStrictDurableTransactionLowerMarker.bind(log);
+		let injectionsFired = 0;
+		let committedAtFailure: string[] = [];
+		let residentAtFailure: string[] = [];
+		let armed = true;
+		log.markNativeStrictDurableTransactionLowerMarker = async (
+			...args: any[]
+		) => {
+			if (armed) {
+				armed = false;
+				injectionsFired++;
+				// Snapshot the state the rollback is owed against, so the
+				// post-rollback probes below assert a visibly DIFFERENT state.
+				const owed = [...tokenHashes(failProbe.state.tokens)];
+				committedAtFailure = owed.filter((hash) => backboneHas(log, hash));
+				residentAtFailure = owed.filter((hash) =>
+					log._residentEntryCoordinatesByHash.has(hash),
+				);
+				throw new Error("pinned batch lower-marker durability failure");
+			}
+			return originalMarker(...args);
+		};
+
+		let error: any;
+		try {
+			await nativeBatchAppend(log, "g7-batch-doomed", batchSize);
+		} catch (caught) {
+			error = caught;
+		} finally {
+			log.markNativeStrictDurableTransactionLowerMarker = originalMarker;
+			failProbe.restore();
+		}
+
+		// Teeth: the injection really fired, it fired on the batch seam (one
+		// token), and it fired while the whole batch's native coordinates were
+		// committed. Without these the assertions below would pass for a batch
+		// that never reached the guarded path.
+		expect(injectionsFired, "fault injection fired").to.equal(1);
+		expect(error, "the batch append must fail").to.exist;
+		expect(failProbe.state.calls, "one token for the doomed batch").to.equal(1);
+		expect(
+			committedAtFailure.length,
+			"every batch coordinate was live in the backbone at failure",
+		).to.equal(batchSize);
+		expect(
+			residentAtFailure.length,
+			"every batch coordinate was live in the resident mirror at failure",
+		).to.equal(batchSize);
+
+		// The rollback was still owed and must have erased the whole batch.
+		// With the success settle moved above `rollbackBatch`'s consumer, the
+		// rows are already gone, the generation gate in
+		// `rollbackNativeBackboneCoordinateAppend` reads `undefined` for every
+		// hash, every branch `continue`s, and these probes report exactly
+		// `batchSize` phantom coordinates instead of zero (measured).
+		for (const hash of committedAtFailure) {
+			expect(log._residentEntryCoordinatesByHash.has(hash), `resident ${hash}`)
+				.to.be.false;
+			expect(backboneHas(log, hash), `backbone ${hash}`).to.be.false;
+		}
+		// `countIndexed` is deliberately NOT probed here: measured against this
+		// seam the generic coordinate index holds 0 rows for these hashes even
+		// at failure time (the batch persists into the native journal and the
+		// resident mirror), so a post-rollback `countIndexed === 0` would be
+		// vacuous — it passes whether or not the rollback fired. The resident
+		// mirror and the native backbone are the two probes that discriminate.
+		expect(generationRowCount(log)).to.equal(0);
 	});
 
 	it("G4: a superseded token stays a strict no-op, which plain delete would break", async () => {
