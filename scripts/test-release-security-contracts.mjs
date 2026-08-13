@@ -197,6 +197,16 @@ assert.doesNotMatch(
 	/run: pnpm run --if-present release(?::rc)?/,
 	"release workflows must not silently skip a missing guarded script",
 );
+// Release runs must serialize. Without a concurrency group, two master merges
+// close together publish at the same time and race package by package; the
+// loser fails with E403 on an already-published version (2026-08-13, #1244 vs
+// #1246). cancel-in-progress must stay false so a publish is never interrupted
+// half-way -- that is the path to a genuinely partial release.
+assert.match(
+	releaseWorkflow,
+	/^concurrency:\n {2}group: release-\$\{\{ github\.ref \}\}\n {2}cancel-in-progress: false$/m,
+	"release runs must serialize on a per-ref concurrency group and never cancel a publish in flight",
+);
 
 const ciWorkflow = await readRepositoryFile(".github/workflows/ci.yml");
 assert.match(
