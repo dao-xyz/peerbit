@@ -1,4 +1,4 @@
-// Pins G1-G6 for the hold-counted `_nativeCoordinateMutationGenerations` map.
+// Pins G1-G8 for the hold-counted `_nativeCoordinateMutationGenerations` map.
 //
 // The map used to grow one row per distinct entry hash ever committed or
 // received, forever, with no removal path anywhere. It is now refcounted:
@@ -11,15 +11,23 @@
 // PREMATURE settle deletes a row a live token still needs — which silently
 // turns that token's rollback into a no-op, or, once the hash's generation
 // numbering restarts from 1, lets a stale token clobber newer state (ABA).
-// So G3 and G4 carry the real weight: they assert that rollbacks that are
-// still OWED continue to fire, and that supersession is still detected.
+// So G3, G4 and G7 carry the real weight: they assert that rollbacks that are
+// still OWED continue to fire, and that supersession is still detected. G3 and
+// G7 pin that shape at two different settle families — the single-append
+// storage-transaction seam and the batch seam.
 //
-// The rollback tokens are minted only on the native-backbone local-append and
-// receive paths. The local-append paths are reached through the prepared
-// payload commit-only entry point (`target: "none"`), which is how the
-// Documents program appends; a non-replicating log routes it to the
+// The rollback tokens are minted only on the native-backbone local-append,
+// batch-append and receive paths. The local-append paths are reached through
+// the prepared payload commit-only entry point (`target: "none"`), which is
+// how the Documents program appends; a non-replicating log routes it to the
 // commit-only variant and a replicating log to the storage-transaction
-// variant, so both local seams are covered here.
+// variant, so both local seams are covered here. The batch seam is reached
+// through the prepared-payloads many-independent entry point (what
+// `Documents.putMany` uses) and is covered by G7 and G8.
+//
+// G8 is a different kind of pin from the rest: G1-G7 pin that the settle is
+// CORRECT where it runs, G8 measures how much of the map it actually covers,
+// by counting both sides of the hold ledger over a mixed workload.
 //
 // Every assertion below is a raw value — map `.size`, `.holds`, `.generation`,
 // coordinate-index counts, resident-mirror presence, native-backbone presence.
@@ -76,6 +84,99 @@ const nativeAppend = (log: any, value: string) =>
 		undefined,
 	);
 
+const writeU32 = (out: number[], value: number) => {
+	out.push(
+		value & 0xff,
+		(value >> 8) & 0xff,
+		(value >> 16) & 0xff,
+		value >>> 24,
+	);
+};
+
+const writeString = (out: number[], value: string) => {
+	const bytes = new TextEncoder().encode(value);
+	writeU32(out, bytes.byteLength);
+	out.push(...bytes);
+};
+
+/**
+ * The minimal native document schema IR (a document whose only field group is
+ * the five `__context` fields), byte-identical to the one the native-backbone
+ * suite and the document-put benchmark use.
+ *
+ * The batch append seam refuses to run without a configured schema IR, because
+ * it always commits a native document-index row alongside the entry. The
+ * Documents program configures this from its own indexed schema; a shared-log
+ * pin has no Documents program, so it configures the context-only IR directly
+ * and commits an empty value prefix (again exactly as the benchmark does).
+ */
+const contextOnlyDocumentSchemaIr = (): Uint8Array => {
+	const out: number[] = [1, 14];
+	writeU32(out, 1);
+	out.push(0);
+	writeU32(out, 5);
+	writeString(out, "created");
+	writeU32(out, 1);
+	writeU32(out, 101);
+	out.push(4);
+	writeString(out, "modified");
+	writeU32(out, 2);
+	writeU32(out, 102);
+	out.push(4);
+	writeString(out, "head");
+	writeU32(out, 3);
+	writeU32(out, 103);
+	out.push(12);
+	writeString(out, "gid");
+	writeU32(out, 4);
+	writeU32(out, 104);
+	out.push(12);
+	writeString(out, "size");
+	writeU32(out, 5);
+	writeU32(out, 105);
+	out.push(3);
+	return Uint8Array.from(out);
+};
+
+/** Arm a live log's native backbone for native document-index commits. */
+const enableNativeDocumentIndex = (log: any) => {
+	log._nativeBackbone.configureDocumentSchemaIr(contextOnlyDocumentSchemaIr());
+	log._nativeBackbone.setDocumentContextFields?.({
+		created: 1,
+		modified: 2,
+		head: 3,
+		gid: 4,
+		size: 5,
+	});
+	log._nativeBackbone.setDocumentContextHeadField?.(3);
+};
+
+/**
+ * Drive ONE native-backbone batch append (the
+ * `appendLocallyPreparedPayloadsManyNativeBackboneDocumentIndexBatch` seam,
+ * which is what `Documents.putMany` reaches). The whole batch mints exactly
+ * one rollback token covering every entry hash in it.
+ *
+ * `target: "none"` and an absent `replicate` are load-bearing: the batch seam
+ * bails to the generic path for any other target, for `replicate: true`, for a
+ * set `delivery`, and for non-empty prepared nexts.
+ */
+const nativeBatchAppend = (log: any, label: string, size: number) =>
+	log.appendLocallyPreparedPayloadsManyIndependent(
+		Array.from({ length: size }, (_, index) => payload(`${label}-${index}`)),
+		{ target: "none" },
+		{
+			nativeBackboneDocumentIndexes: Array.from(
+				{ length: size },
+				(_, index) => ({
+					key: `${label}-key-${index}`,
+					valuePrefixBytes: new Uint8Array(0),
+					byteElementIndexLimit: 0,
+				}),
+			),
+		},
+	);
+
 /**
  * Wrap `snapshotResidentCoordinateEntries` on a live coordinator so a pin can
  * prove the writer actually ran (an empty map is only a bound if rows were
@@ -101,6 +202,55 @@ const instrumentSnapshots = (log: any) => {
 		state,
 		restore: () => {
 			internals.snapshotResidentCoordinateEntries = original;
+		},
+	};
+};
+
+/**
+ * Count both sides of the hold ledger on a live coordinator: every token the
+ * writer mints, and every token the settle actually consumes.
+ *
+ * Already-`settled` tokens are counted separately from consumed ones — a
+ * second settle of the same token is a no-op by design (G5), so counting it as
+ * a release would inflate the released side and hide a real leak.
+ */
+const instrumentSettleBalance = (log: any) => {
+	const internals = coordinateInternals(log);
+	const originalSnapshot =
+		internals.snapshotResidentCoordinateEntries.bind(internals);
+	const originalSettle =
+		internals.settleResidentCoordinateSnapshot.bind(internals);
+	const state = {
+		tokensCreated: 0,
+		holdsTaken: 0,
+		tokensSettled: 0,
+		holdsReleased: 0,
+		redundantSettles: 0,
+	};
+	internals.snapshotResidentCoordinateEntries = (hashes: Iterable<string>) => {
+		const token = originalSnapshot(hashes);
+		if (token) {
+			state.tokensCreated++;
+			state.holdsTaken += token.hashes.size;
+		}
+		return token;
+	};
+	internals.settleResidentCoordinateSnapshot = (rollback?: any) => {
+		if (rollback) {
+			if (rollback.settled) {
+				state.redundantSettles++;
+			} else {
+				state.tokensSettled++;
+				state.holdsReleased += rollback.hashes.size;
+			}
+		}
+		return originalSettle(rollback);
+	};
+	return {
+		state,
+		restore: () => {
+			internals.snapshotResidentCoordinateEntries = originalSnapshot;
+			internals.settleResidentCoordinateSnapshot = originalSettle;
 		},
 	};
 };
@@ -323,6 +473,125 @@ describe("coordinate persistence mutation-generation bounds", function () {
 		await owedRollbackLeg({ factor: 1 }, "g3-storage-transaction");
 	});
 
+	// G7 pins the BATCH settle family. G3 covers the storage-transaction
+	// single-append family; the batch family is the one whose success settle is
+	// placed EARLIEST relative to the end of its function — it fires the moment
+	// the try/catch around the coordinate persistence loop is left, ~60 lines
+	// and one `throwIfReplicationOwnershipLifecycleInactive` before the method
+	// returns — so it is the settle most exposed to a future edit that moves a
+	// rollback consumer below it. `rollbackBatch` (the catch arm) is that
+	// consumer today.
+	const batchSize = 3;
+
+	it("G7: an owed rollback still fires at the batch success seam", async () => {
+		const log = await openStore({ replicate: { factor: 1 } });
+		enableNativeDocumentIndex(log);
+
+		// Half one: the success side of the seam. A clean batch append must
+		// settle its token, so the map is empty again with nothing owed.
+		const successProbe = instrumentSnapshots(log);
+		let succeeded: any;
+		try {
+			succeeded = await nativeBatchAppend(log, "g7-batch-ok", batchSize);
+		} finally {
+			successProbe.restore();
+		}
+		expect(succeeded?.entries?.length, "batch committed").to.equal(batchSize);
+		// Teeth: exactly ONE token for the whole batch is the batch seam's
+		// signature. A fallback to the per-entry seam would mint `batchSize`
+		// tokens (or none), so this is what keeps the pin honest about which
+		// settle family it is exercising.
+		expect(successProbe.state.calls, "one token for the whole batch").to.equal(
+			1,
+		);
+		expect(
+			successProbe.state.tokens[0]?.hashes.size,
+			"the token covers every entry in the batch",
+		).to.equal(batchSize);
+		expect(successProbe.state.maxSize, "rows resident mid-batch").to.equal(
+			batchSize,
+		);
+		expect(
+			generationRowCount(log),
+			"success settle released the rows",
+		).to.equal(0);
+
+		// Half two: the failure side. Fault-inject the durable lower-marker
+		// write, which runs inside `nativeCommittedAppendFinalizer.acknowledge`
+		// — i.e. after the batch's native coordinates are committed and inside
+		// the try whose catch calls `rollbackBatch`, so a rollback is genuinely
+		// owed at the injection point.
+		const failProbe = instrumentSnapshots(log);
+		const originalMarker =
+			log.markNativeStrictDurableTransactionLowerMarker.bind(log);
+		let injectionsFired = 0;
+		let committedAtFailure: string[] = [];
+		let residentAtFailure: string[] = [];
+		let armed = true;
+		log.markNativeStrictDurableTransactionLowerMarker = async (
+			...args: any[]
+		) => {
+			if (armed) {
+				armed = false;
+				injectionsFired++;
+				// Snapshot the state the rollback is owed against, so the
+				// post-rollback probes below assert a visibly DIFFERENT state.
+				const owed = [...tokenHashes(failProbe.state.tokens)];
+				committedAtFailure = owed.filter((hash) => backboneHas(log, hash));
+				residentAtFailure = owed.filter((hash) =>
+					log._residentEntryCoordinatesByHash.has(hash),
+				);
+				throw new Error("pinned batch lower-marker durability failure");
+			}
+			return originalMarker(...args);
+		};
+
+		let error: any;
+		try {
+			await nativeBatchAppend(log, "g7-batch-doomed", batchSize);
+		} catch (caught) {
+			error = caught;
+		} finally {
+			log.markNativeStrictDurableTransactionLowerMarker = originalMarker;
+			failProbe.restore();
+		}
+
+		// Teeth: the injection really fired, it fired on the batch seam (one
+		// token), and it fired while the whole batch's native coordinates were
+		// committed. Without these the assertions below would pass for a batch
+		// that never reached the guarded path.
+		expect(injectionsFired, "fault injection fired").to.equal(1);
+		expect(error, "the batch append must fail").to.exist;
+		expect(failProbe.state.calls, "one token for the doomed batch").to.equal(1);
+		expect(
+			committedAtFailure.length,
+			"every batch coordinate was live in the backbone at failure",
+		).to.equal(batchSize);
+		expect(
+			residentAtFailure.length,
+			"every batch coordinate was live in the resident mirror at failure",
+		).to.equal(batchSize);
+
+		// The rollback was still owed and must have erased the whole batch.
+		// With the success settle moved above `rollbackBatch`'s consumer, the
+		// rows are already gone, the generation gate in
+		// `rollbackNativeBackboneCoordinateAppend` reads `undefined` for every
+		// hash, every branch `continue`s, and these probes report exactly
+		// `batchSize` phantom coordinates instead of zero (measured).
+		for (const hash of committedAtFailure) {
+			expect(log._residentEntryCoordinatesByHash.has(hash), `resident ${hash}`)
+				.to.be.false;
+			expect(backboneHas(log, hash), `backbone ${hash}`).to.be.false;
+		}
+		// `countIndexed` is deliberately NOT probed here: measured against this
+		// seam the generic coordinate index holds 0 rows for these hashes even
+		// at failure time (the batch persists into the native journal and the
+		// resident mirror), so a post-rollback `countIndexed === 0` would be
+		// vacuous — it passes whether or not the rollback fired. The resident
+		// mirror and the native backbone are the two probes that discriminate.
+		expect(generationRowCount(log)).to.equal(0);
+	});
+
 	it("G4: a superseded token stays a strict no-op, which plain delete would break", async () => {
 		const log = await openStore({ replicate: { factor: 1 } });
 		const internals = coordinateInternals(log);
@@ -494,5 +763,249 @@ describe("coordinate persistence mutation-generation receive bounds", function (
 		} finally {
 			probe.restore();
 		}
+	});
+});
+
+// G8 is the COMPLETENESS gate for the settle, as opposed to G1-G7 which pin
+// its correctness. G1/G2 only assert that the map is empty at the end of one
+// workload; that is satisfied by a settle that fires for some seams and leaks
+// for others as long as the leaked seams happen not to run. G8 counts both
+// sides of the hold ledger over a workload that deliberately drives every
+// token-minting seam, and asserts they balance exactly.
+//
+// The map has exactly five writers, and the three legs below drive four:
+//   1 `appendLocallyPreparedPayloadNativeBackboneCommitOnly`
+//     — leg one-a, which MUST open non-replicating. Head-coordinate
+//       persistence is deferred only when `!this._isReplicating` (see
+//       shouldDeferHeadCoordinatePersistence), and a replicating log
+//       short-circuits into writer 2 before this seam's body ever runs. This
+//       is the seam a non-replicating Documents log uses, and it owns four
+//       settle sites of its own, so measuring it separately is the point.
+//   2 `appendLocallyPreparedPayloadNativeBackboneStorageTransaction`
+//   3 `appendLocallyPreparedPayloadsManyNativeBackboneDocumentIndexBatch`
+//     — 2-3 are leg one-b, which opens replicating
+//   4 `CoordinatePersistenceCoordinator.createBackboneOnlyReceiveCoordinateBatch`
+//     — leg two, the receive seam
+//   5 the durable-recovery intent replay, which fabricates its rows inline
+//     instead of calling the snapshot writer. G6 covers that one, and it is
+//     the only known producer of a settle with no matching create, which is
+//     why the balance assertions below would fail loudly rather than silently
+//     absorb it if it ever ran inside this workload.
+//
+// MEASURED at the tip of this branch (see the leg comments for the
+// decomposition): 100% of created tokens settle and the raw map returns to
+// zero rows, on the local-append seams, the batch seam and the receive seam
+// alike. No seam leaks on a succeeding workload, so the bound asserted here
+// is 0 residual rows rather than a non-zero known-residual bound.
+//
+// The bound is 0 for a workload that SUCCEEDS. The durable-commit failure
+// arms that funnel through the shared `rollbackFailedNativeBackboneTransaction`
+// sink deliberately carry no settle, so each failed durable commit can retain
+// its token's rows forever. That is the accepted direction of the asymmetry —
+// a retained row is the pre-refcount behavior, a premature settle is the
+// silent-corruption one — and it is bounded by the number of durable commit
+// failures rather than by throughput, so it is not asserted here.
+//
+// NOT covered by this gate, and measured explicitly rather than assumed: the
+// seeded chaos suites (`test:shared-log:chaos`, and the wider `deterministic`
+// grep behind `test:shared-log:chaos:all`) mint ZERO rollback tokens —
+// 0 created / 0 settled across 12 coordinators, with all 41 settle calls
+// receiving `undefined`. Those suites run memory-session nodes, which have no
+// auto-derived durable coordinate persistence adapter and therefore never
+// reach the backbone-only receive snapshot, and their appends go through the
+// generic `db.add` route rather than the native prepared-payload seams. So the
+// chaos suites are not a completeness signal for this map in either direction,
+// and this pin is where the coverage actually lives.
+describe("coordinate persistence mutation-generation settle balance", function () {
+	this.timeout(240_000);
+
+	let peers: Peerbit[] = [];
+	let directories: string[] = [];
+
+	const createDurablePeer = async () => {
+		// Same durability requirement as the receive-bounds describe: a
+		// memory-only node never mints a receive-path token at all.
+		const directory = await fs.mkdtemp(
+			path.join(os.tmpdir(), "peerbit-coordinate-generation-balance-pins-"),
+		);
+		directories.push(directory);
+		const peer = await Peerbit.create({
+			directory,
+			...createRustPeerbitOptions(),
+		});
+		peers.push(peer);
+		return peer;
+	};
+
+	afterEach(async () => {
+		for (const peer of peers) {
+			await peer.stop();
+		}
+		peers = [];
+		for (const directory of directories) {
+			await fs.rm(directory, { recursive: true, force: true });
+		}
+		directories = [];
+	});
+
+	const singleAppends = 40;
+	const batches = 5;
+	const batchWidth = 8;
+	const genericAppends = 20;
+
+	it("G8: every token minted by the commit-only append seam settles", async () => {
+		// Writer 1, the backbone-only commit-only seam. It is reachable ONLY
+		// from a non-replicating log: `shouldDeferHeadCoordinatePersistence`
+		// begins `!this._isReplicating`, so the replicating leg below diverts
+		// into the storage-transaction seam before this body runs. Without
+		// this leg the balance gate would claim to cover writer 1 while never
+		// executing it — a completeness gate asserting coverage it lacks.
+		const peer = await createDurablePeer();
+		const store = await peer.open(new EventStore<string, any>(), {
+			args: { replicate: false },
+		});
+		const log = store.log as any;
+		expect(log._nativeBackbone, "native backbone").to.exist;
+		enableNativeDocumentIndex(log);
+
+		const probe = instrumentSettleBalance(log);
+		try {
+			for (let index = 0; index < singleAppends; index++) {
+				await nativeAppend(log, `g8-commit-only-${index}`);
+			}
+			await waitForResolved(() => {
+				expect(generationRowCount(log)).to.equal(0);
+			});
+		} finally {
+			probe.restore();
+		}
+
+		// Teeth: this leg is worthless unless it actually reached writer 1.
+		// A non-zero mint count is the only evidence that the commit-only
+		// branch ran rather than silently diverting, which is exactly the
+		// failure this leg exists to rule out.
+		expect(
+			probe.state.tokensCreated,
+			"commit-only seam must mint tokens",
+		).to.equal(singleAppends);
+		expect(probe.state.holdsTaken, "holds taken").to.equal(singleAppends);
+		expect(probe.state.tokensSettled, "tokens settled").to.equal(
+			probe.state.tokensCreated,
+		);
+		expect(probe.state.holdsReleased, "holds released").to.equal(
+			probe.state.holdsTaken,
+		);
+		expect(generationRowCount(log), "residual rows").to.equal(0);
+	});
+
+	it("G8: every token minted by a local append and batch workload settles", async () => {
+		const peer = await createDurablePeer();
+		const store = await peer.open(new EventStore<string, any>(), {
+			args: { replicate: { factor: 1 } },
+		});
+		const log = store.log as any;
+		expect(log._nativeBackbone, "native backbone").to.exist;
+		enableNativeDocumentIndex(log);
+
+		const probe = instrumentSettleBalance(log);
+		try {
+			for (let index = 0; index < singleAppends; index++) {
+				await nativeAppend(log, `g8-single-${index}`);
+			}
+			for (let batch = 0; batch < batches; batch++) {
+				await nativeBatchAppend(log, `g8-batch-${batch}`, batchWidth);
+			}
+			// Generic appends alongside the native seams, so the ledger is
+			// measured over a mixed workload rather than a hand-picked one.
+			for (let index = 0; index < genericAppends; index++) {
+				await store.add(`g8-generic-${index}`, { meta: { next: [] } });
+			}
+			await waitForResolved(() => {
+				expect(generationRowCount(log)).to.equal(0);
+			});
+		} finally {
+			probe.restore();
+		}
+
+		// MEASURED, exactly: this log is REPLICATING, so its 40 single appends
+		// take the storage-transaction seam (writer 2), not the commit-only one
+		// — the non-replicating seam is measured by its own leg above. Each
+		// mints one single-hash token; each of the 5 batch appends mints ONE
+		// token covering all 8 entries; the 20 generic `store.add` mint none.
+		// 45 tokens / 80 holds. Exact equality is deliberate: this is the gate
+		// that says the ledger is fully accounted for, so a new token seam
+		// appearing in this workload must be audited rather than absorbed.
+		expect(probe.state.tokensCreated, "tokens minted").to.equal(
+			singleAppends + batches,
+		);
+		expect(probe.state.holdsTaken, "holds taken").to.equal(
+			singleAppends + batches * batchWidth,
+		);
+		// The balance itself. `rows === 0` above and these two are equivalent
+		// given no other code path deletes a row, and both are asserted so a
+		// future deletion path cannot make one of them silently vacuous.
+		expect(probe.state.tokensSettled, "tokens settled").to.equal(
+			probe.state.tokensCreated,
+		);
+		expect(probe.state.holdsReleased, "holds released").to.equal(
+			probe.state.holdsTaken,
+		);
+		expect(generationRowCount(log), "residual rows").to.equal(0);
+	});
+
+	it("G8: every token minted by a cold-sync receive settles", async () => {
+		const entryCount = 150;
+		const peer1 = await createDurablePeer();
+		const peer2 = await createDurablePeer();
+		const store = new EventStore<string, any>();
+		const db1 = await peer1.open(store.clone(), {
+			args: { replicate: { factor: 1 } },
+		});
+		const db2 = await peer2.open(store.clone(), {
+			args: { replicate: { factor: 1 } },
+		});
+		const receiver = db2.log as any;
+		expect(receiver._nativeBackbone, "peer2 native backbone").to.exist;
+
+		for (let index = 0; index < entryCount; index++) {
+			await db1.add(`g8-sync-${index}`, { meta: { next: [] } });
+		}
+
+		// Only the receiver is instrumented: the sender's own `db1.add`
+		// appends mint no rollback token at all (measured 0 created / 0
+		// settled), so a balance assertion on the sender would be vacuous.
+		const probe = instrumentSettleBalance(receiver);
+		try {
+			await peer2.dial(peer1.getMultiaddrs());
+			await waitForResolved(
+				() => {
+					expect(db2.log.log.length).to.equal(entryCount);
+				},
+				{ timeout: 90_000, timeoutMessage: "receive-path cold sync" },
+			);
+			await waitForResolved(() => {
+				expect(generationRowCount(receiver)).to.equal(0);
+			});
+		} finally {
+			probe.restore();
+		}
+
+		// MEASURED: the receive seam batches, so the token COUNT is a function
+		// of how the sync chunked (2 tokens covering 150 hashes each in the
+		// reference run, i.e. 300 holds for 150 entries) and is asserted as a
+		// bound rather than an exact number. The balance is exact.
+		expect(probe.state.tokensCreated, "receive tokens minted").to.be.at.least(
+			1,
+		);
+		expect(probe.state.holdsTaken, "receive holds taken").to.be.at.least(
+			entryCount,
+		);
+		expect(probe.state.tokensSettled, "receive tokens settled").to.equal(
+			probe.state.tokensCreated,
+		);
+		expect(probe.state.holdsReleased, "receive holds released").to.equal(
+			probe.state.holdsTaken,
+		);
+		expect(generationRowCount(receiver), "residual rows").to.equal(0);
 	});
 });
