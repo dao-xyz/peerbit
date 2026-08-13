@@ -2038,7 +2038,58 @@ export class SharedLog<
 
 	/* private _totalParticipation!: number; */
 
-	// gid -> coordinate -> publicKeyHash list (of owners)
+	// gid -> set of publicKeyHashes known to hold that gid's entries.
+	//
+	// This is a suppression memo, not a source of truth. A present row lets the
+	// rebalance and repair paths skip re-sending an entry to a peer that already
+	// has it. Every read is `?.has(peer)` guarded, and a MISSING row always
+	// means "assume nothing is known", which produces strictly MORE work --
+	// redundant unchecked delivery in the rebalance loop, redundant queueing in
+	// the repair planner -- and never a wrong prune, a wrong quorum, or data
+	// loss. Losing a row costs bandwidth; keeping a stale row costs a little
+	// memory. That asymmetry is what the rest of this note turns on.
+	//
+	// GROWTH SHAPE. Rows are released by `deleteGidPeerHistory` on the two prune
+	// paths, by `removePeerFromGidPeerHistory` once a gid's last peer drops (the
+	// routine disconnect outcome), by `rebalanceAll({ clearCache: true })`, and
+	// wholesale on close/reset. Nothing on the TRIM path releases a row, so a
+	// node that bounds its log with trim rather than prune accumulates one row
+	// per distinct gid it has ever held. A gid names a graph, not an entry: an
+	// entry with `meta.next` inherits `min(next.meta.gid)` (see
+	// packages/log/src/entry-v0.ts), so document updates fold into the gid of
+	// the first put and the row count tracks distinct chain roots -- distinct
+	// document ids -- rather than entry count. Insert-only workloads mint a
+	// fresh gid per append and so do grow one row per entry. Merges are a
+	// smaller second source: when a join links two graphs the losing entries
+	// keep their own `meta.gid` on disk, and shared-log does not subscribe to
+	// the log's `onGidRemoved`, so the shadowed gid's row lingers too.
+	//
+	// WHY TRIM DOES NOT SIMPLY CALL `deleteGidPeerHistory` AS WELL. Both prune
+	// callers delete a whole row from a single entry's gid, and under the
+	// default hash domain that is correct by construction: the coordinate is a
+	// pure function of the gid (replication-domain-hash.ts sha256s
+	// `entry.meta.gid`), so identical gid => identical coordinates => identical
+	// leader set => every local sibling of that gid is prune-eligible in the
+	// same batch. The gid really is finished locally. Trim offers no such
+	// guarantee. It walks oldest-first against a length/bytelength/age bound and
+	// stops the instant the bound is met (packages/log/src/trim.ts); its only
+	// use of gid is memoizing the caller's `canTrim` verdict, never grouping
+	// deletes. So trim routinely removes the OLDEST entry of a gid while newer
+	// siblings -- same gid, same coordinates, still local, still replicated --
+	// remain. Copying the prune call onto trim would therefore delete a LIVE row
+	// on the common path, paying for the freed memory in repeated re-delivery of
+	// entries that are still here. That trade is not worth it.
+	//
+	// Bounding this correctly requires a per-gid count of locally held entries,
+	// dropping the row only when it reaches zero -- a real reverse index, not a
+	// one-line delete. Deliberately not built: the growth is bounded by distinct
+	// gids, and the cheap version is a bandwidth regression.
+	//
+	// Existing, deliberate imprecision: under the time domain the coordinate is
+	// `meta.clock.timestamp.wallTime` (replication-domain-time.ts) and is
+	// gid-independent, so siblings of one gid can carry different leader sets
+	// and prune's whole-row delete is already over-eager there. The cost is the
+	// same bounded extra traffic, never a wrong prune.
 	_gidPeersHistory!: Map<string, Set<string>>;
 
 	private _onSubscriptionFn!: (arg: any) => any;
