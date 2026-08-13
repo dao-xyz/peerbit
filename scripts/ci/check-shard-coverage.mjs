@@ -240,7 +240,44 @@ const findPackages = (dir, acc) => {
 	return acc;
 };
 
+// Being reachable from a shard is worthless if the script does nothing. `docs`
+// was wired into part-5a's --roots and counted toward "N packages reachable"
+// while its test:cov was the shell builtin `true` -- 15 documentation example
+// suites, added 2024-04-08, executed nowhere from 2026-03-08 until 2026-08-14.
+// The commit that neutered it called the package an "empty test workspace";
+// the specs had been there for nearly two years. Reachability and execution are
+// different claims, and only one of them was being checked.
+const NO_OP_SCRIPT = /^(?:\s*(?:true|:|exit\s+0|echo\b[^&|;]*|#.*)\s*)$/;
+const isNoOpScript = (script) =>
+	script.trim() === "" ||
+	NO_OP_SCRIPT.test(script) ||
+	/^node\s+(?:-e|--eval)\s+["']?process\.exit\(0\)["']?$/.test(script.trim());
+
+// Packages that legitimately have a placeholder test:cov because they contain
+// no tests at all. Unlike a bare comment, this is checked: the package must
+// genuinely contain no spec/test file, so adding one turns the placeholder into
+// a hard failure instead of silently swallowing the new suite.
+const NO_TESTS_BY_DESIGN = new Set(["packages/utils/build-assets"]);
+const containsTestFiles = (dir) => {
+	const stack = [dir];
+	while (stack.length > 0) {
+		const current = stack.pop();
+		for (const entry of readdirSync(path.join(root, current), {
+			withFileTypes: true,
+		})) {
+			if (entry.name === "node_modules" || entry.name === "dist") continue;
+			if (entry.isDirectory()) {
+				stack.push(`${current}/${entry.name}`);
+			} else if (/\.(spec|test)\.[cm]?[jt]sx?$/.test(entry.name)) {
+				return `${current}/${entry.name}`;
+			}
+		}
+	}
+	return null;
+};
+
 const unreachable = [];
+const noOpScripts = [];
 let reachableCount = 0;
 for (const dir of ["docs", ...findPackages("packages", [])]) {
 	let manifest;
@@ -254,6 +291,17 @@ for (const dir of ["docs", ...findPackages("packages", [])]) {
 	if (!manifest.scripts?.["test:cov"]) continue;
 	if (reachableDirs.has(dir) || filterNames.has(manifest.name)) {
 		reachableCount++;
+		if (isNoOpScript(manifest.scripts["test:cov"])) {
+			const stray = NO_TESTS_BY_DESIGN.has(dir) ? containsTestFiles(dir) : true;
+			if (stray) {
+				noOpScripts.push(
+					`${dir} (${manifest.name}): test:cov = ${JSON.stringify(manifest.scripts["test:cov"])}` +
+						(typeof stray === "string"
+							? ` — but it now contains ${stray}`
+							: ""),
+				);
+			}
+		}
 	} else if (!KNOWN_UNREACHABLE.has(dir)) {
 		unreachable.push(`${dir} (${manifest.name})`);
 	}
@@ -296,6 +344,16 @@ if (unproven.length > 0) {
 	process.exit(1);
 }
 
+if (noOpScripts.length > 0) {
+	console.error(
+		"Packages wired into a CI shard whose test:cov does nothing (they inflate the reachable count while running no tests):",
+	);
+	for (const s of noOpScripts) console.error(`  ${s}`);
+	console.error(
+		"Give the package a real test:cov, or remove it from the shard roots so it is counted as unreachable honestly.",
+	);
+	process.exit(1);
+}
 if (unreachable.length > 0) {
 	console.error(
 		"Packages with a test:cov script not reachable from any test:ci:* script (their tests never run in CI):",
