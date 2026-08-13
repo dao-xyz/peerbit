@@ -60,18 +60,16 @@ console.log(`OK: ${checked} literal shared-log describes are all covered by CI s
 // indirectly or in the Native job instead). Shrink this list when wiring a
 // package into a shard — never grow it without a deliberate decision.
 //
-// The seven Node-runnable ones were wired into part-1 by explicit roots (the
-// glob still cannot reach them). What remains needs different infrastructure,
-// not a shard entry: the rust crates build in the Native job, the e2e suites
-// need a browser runner, and the peerbit-server pair was not verified.
+// Every Node-runnable package has now been wired in by explicit roots (the
+// glob still cannot reach them): eleven into part-1, and the peerbit-server
+// pair into part-5a because its 132 tests take ~33s and part-5a is light.
+// What remains genuinely needs different infrastructure rather than a shard
+// entry: the rust crates build in the Native job, and the three playwright
+// suites need a browser runner.
 const KNOWN_UNREACHABLE = new Set([
-	"packages/clients/canonical/host",
-	"packages/clients/peerbit-server/node",
-	"packages/clients/peerbit-server/test-lib",
 	"packages/log/rust",
 	"packages/programs/data/shared-log/proxy/e2e",
 	"packages/transport/stream/e2e/browser",
-	"packages/utils/any-store/proxy",
 	"packages/utils/any-store/proxy/e2e",
 	"packages/utils/any-store/rust",
 	"packages/utils/indexer/rust",
