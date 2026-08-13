@@ -26,24 +26,110 @@ if (greps.length === 0) {
 }
 
 const testDir = path.join(root, "packages/programs/data/shared-log/test");
+
+// A spec file's OUTERMOST describes are the ones a shard --grep must match:
+// mocha builds a full title by joining the describe chain, and every shard grep
+// is anchored with ^, so only the first link decides whether a suite is
+// selected. Until 2026-08-14 "outermost" was approximated by "starts at column
+// 0", which silently excluded every file whose outermost describe sits inside a
+// `for`/`forEach` -- ranges, sharding, replication and durable-restart-
+// conformance, i.e. the four largest suites in the package and the entire
+// content of shards part-7a..7e. The guard reported "OK: 72" and never
+// mentioned that 4 of 59 files contributed nothing to that number.
+//
+// Indentation of the shallowest describe is the right proxy: a nested describe
+// is always more indented than the one containing it, so the minimum indent in
+// a file is its top level whether or not a loop wraps it.
+const outermostDescribes = (src) => {
+	const hits = [...src.matchAll(/^([\t ]*)describe\(\s*(.*)$/gm)];
+	if (hits.length === 0) return [];
+	const top = Math.min(...hits.map((m) => m[1].length));
+	return hits.filter((m) => m[1].length === top).map((m) => m[2]);
+};
+
+// Parameterized outermost describes cannot be read off the call site, so they
+// are expanded from the array that drives the loop. Deriving them (rather than
+// hardcoding the titles) means uncommenting a setup or adding a backend makes
+// the guard demand a shard grep for it, instead of quietly widening the blind
+// spot. Every entry is proven live below: a file listed here that no longer has
+// a non-literal outermost describe is a hard failure, not a silent no-op.
+const stripBlockComments = (src) => src.replace(/\/\*[\s\S]*?\*\//g, "");
+const arrayStrings = (src, identifier) => {
+	const m = stripBlockComments(src).match(
+		new RegExp(`\\b${identifier}\\b[^=]*=\\s*\\[([\\s\\S]*?)\\]`),
+	);
+	return m ? [...m[1].matchAll(/["'`]([^"'`]+)["'`]/g)].map((x) => x[1]) : [];
+};
+const setupNames = (src) => {
+	const m = stripBlockComments(src).match(
+		/\btestSetups\b[^=]*=\s*\[([\s\S]*?)\n\];/,
+	);
+	return m ? [...m[1].matchAll(/name:\s*["'`]([^"'`]+)["'`]/g)].map((x) => x[1]) : [];
+};
+const PARAMETERIZED = {
+	// describe("ranges: " + resolution, ...) over `resolutions`
+	"ranges.spec.ts": (src) =>
+		arrayStrings(src, "resolutions").map((r) => `ranges: ${r}`),
+	// describe(setup.name, ...) over the file's own `testSetups`
+	"sharding.spec.ts": setupNames,
+	"replication.spec.ts": setupNames,
+	// describe(`durable restart conformance (${backend})`, ...) over `BACKENDS`
+	"durable-restart-conformance.spec.ts": (src) =>
+		arrayStrings(src, "BACKENDS").map(
+			(b) => `durable restart conformance (${b})`,
+		),
+};
+
 const uncovered = [];
+const unresolved = [];
+const unusedParameterized = new Set(Object.keys(PARAMETERIZED));
 let checked = 0;
 for (const file of readdirSync(testDir).sort()) {
 	if (!file.endsWith(".spec.ts")) continue;
 	const src = readFileSync(path.join(testDir, file), "utf8");
-	for (const m of src.matchAll(/^describe\((["'`])((?:(?!\1).)*)\1/gm)) {
-		const title = m[2];
-		// Titles interpolating the setup name (`${setup.name} sharding` etc)
-		// are parameterized and covered by the ^u32-simple/^u64-iblt part-7
-		// greps; they cannot be resolved statically, so skip them here.
-		if (title.includes("${")) continue;
-		checked++;
-		if (!greps.some((g) => g.test(title))) {
-			uncovered.push(`${file}: "${title}"`);
+	for (const call of outermostDescribes(src)) {
+		const literal = call.match(/^(["'`])((?:(?!\1).)*)\1\s*,/);
+		let titles;
+		if (literal && !literal[2].includes("${")) {
+			titles = [literal[2]];
+		} else {
+			// Non-literal outermost describe: it MUST be expandable, otherwise
+			// this guard is blind to the file. Failing here is the whole point
+			// -- the previous version skipped these and reported success.
+			const expand = PARAMETERIZED[file];
+			titles = expand ? expand(src) : [];
+			unusedParameterized.delete(file);
+			if (titles.length === 0) {
+				unresolved.push(`${file}: describe(${call.slice(0, 60)}`);
+				continue;
+			}
+		}
+		for (const title of titles) {
+			checked++;
+			if (!greps.some((g) => g.test(title))) {
+				uncovered.push(`${file}: "${title}"`);
+			}
 		}
 	}
 }
 
+if (unresolved.length > 0) {
+	console.error(
+		"Outermost describes with a non-literal title that this guard cannot expand (it therefore cannot tell whether any shard runs them):",
+	);
+	for (const u of unresolved) console.error(`  ${u}`);
+	console.error(
+		"Add an expander for the file to PARAMETERIZED in this script, or give the describe a literal title.",
+	);
+	process.exit(1);
+}
+if (unusedParameterized.size > 0) {
+	console.error(
+		"PARAMETERIZED entries whose file no longer has a non-literal outermost describe (stale, remove them):",
+	);
+	for (const f of unusedParameterized) console.error(`  ${f}`);
+	process.exit(1);
+}
 if (uncovered.length > 0) {
 	console.error(
 		"Top-level describes not matched by any test:ci:part-* grep (these tests never run in CI):",
@@ -51,7 +137,9 @@ if (uncovered.length > 0) {
 	for (const u of uncovered) console.error(`  ${u}`);
 	process.exit(1);
 }
-console.log(`OK: ${checked} literal shared-log describes are all covered by CI shard greps.`);
+console.log(
+	`OK: ${checked} shared-log top-level describe titles (literal and expanded) are all covered by CI shard greps.`,
+);
 
 // --- Package-level reachability -------------------------------------------
 // Pre-existing debt baseline: these packages have a test:cov script but have
