@@ -1,5 +1,20 @@
 # Changelog
 
+## 16.0.3
+
+### Patch Changes
+
+- [#1240](https://github.com/dao-xyz/peerbit/pull/1240) [`683cecb`](https://github.com/dao-xyz/peerbit/commit/683cecbe4e2f952c83d05661ccf511770f80ebf6) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Bound the native coordinate mutation-generation map with a hold-counted settle.
+
+  The map previously grew one row per distinct entry hash ever committed or
+  received and had no removal path, so it was monotone in lifetime throughput for
+  the life of a SharedLog instance. Each row is now hold-counted: taking a
+  rollback snapshot takes one hold per hash, and the token is settled at every
+  point where it can no longer be rolled back, deleting the row at zero holds.
+  Rollback semantics are unchanged - the generation gate still makes a superseded
+  rollback a strict no-op - and a token that is never settled simply retains its
+  row, which is the previous behavior.
+
 ## 16.0.2
 
 ### Patch Changes
