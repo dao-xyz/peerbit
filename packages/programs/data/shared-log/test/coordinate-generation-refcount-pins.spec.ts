@@ -773,11 +773,17 @@ describe("coordinate persistence mutation-generation receive bounds", function (
 // sides of the hold ledger over a workload that deliberately drives every
 // token-minting seam, and asserts they balance exactly.
 //
-// The map has exactly five writers, and the two legs below drive four of them:
+// The map has exactly five writers, and the three legs below drive four:
 //   1 `appendLocallyPreparedPayloadNativeBackboneCommitOnly`
+//     — leg one-a, which MUST open non-replicating. Head-coordinate
+//       persistence is deferred only when `!this._isReplicating` (see
+//       shouldDeferHeadCoordinatePersistence), and a replicating log
+//       short-circuits into writer 2 before this seam's body ever runs. This
+//       is the seam a non-replicating Documents log uses, and it owns four
+//       settle sites of its own, so measuring it separately is the point.
 //   2 `appendLocallyPreparedPayloadNativeBackboneStorageTransaction`
 //   3 `appendLocallyPreparedPayloadsManyNativeBackboneDocumentIndexBatch`
-//     — 1-3 are leg one
+//     — 2-3 are leg one-b, which opens replicating
 //   4 `CoordinatePersistenceCoordinator.createBackboneOnlyReceiveCoordinateBatch`
 //     — leg two, the receive seam
 //   5 the durable-recovery intent replay, which fabricates its rows inline
@@ -847,6 +853,51 @@ describe("coordinate persistence mutation-generation settle balance", function (
 	const batchWidth = 8;
 	const genericAppends = 20;
 
+	it("G8: every token minted by the commit-only append seam settles", async () => {
+		// Writer 1, the backbone-only commit-only seam. It is reachable ONLY
+		// from a non-replicating log: `shouldDeferHeadCoordinatePersistence`
+		// begins `!this._isReplicating`, so the replicating leg below diverts
+		// into the storage-transaction seam before this body runs. Without
+		// this leg the balance gate would claim to cover writer 1 while never
+		// executing it — a completeness gate asserting coverage it lacks.
+		const peer = await createDurablePeer();
+		const store = await peer.open(new EventStore<string, any>(), {
+			args: { replicate: false },
+		});
+		const log = store.log as any;
+		expect(log._nativeBackbone, "native backbone").to.exist;
+		enableNativeDocumentIndex(log);
+
+		const probe = instrumentSettleBalance(log);
+		try {
+			for (let index = 0; index < singleAppends; index++) {
+				await nativeAppend(log, `g8-commit-only-${index}`);
+			}
+			await waitForResolved(() => {
+				expect(generationRowCount(log)).to.equal(0);
+			});
+		} finally {
+			probe.restore();
+		}
+
+		// Teeth: this leg is worthless unless it actually reached writer 1.
+		// A non-zero mint count is the only evidence that the commit-only
+		// branch ran rather than silently diverting, which is exactly the
+		// failure this leg exists to rule out.
+		expect(
+			probe.state.tokensCreated,
+			"commit-only seam must mint tokens",
+		).to.equal(singleAppends);
+		expect(probe.state.holdsTaken, "holds taken").to.equal(singleAppends);
+		expect(probe.state.tokensSettled, "tokens settled").to.equal(
+			probe.state.tokensCreated,
+		);
+		expect(probe.state.holdsReleased, "holds released").to.equal(
+			probe.state.holdsTaken,
+		);
+		expect(generationRowCount(log), "residual rows").to.equal(0);
+	});
+
 	it("G8: every token minted by a local append and batch workload settles", async () => {
 		const peer = await createDurablePeer();
 		const store = await peer.open(new EventStore<string, any>(), {
@@ -876,9 +927,11 @@ describe("coordinate persistence mutation-generation settle balance", function (
 			probe.restore();
 		}
 
-		// MEASURED, exactly: 40 commit-only local appends mint one single-hash
-		// token each, and each of the 5 batch appends mints ONE token covering
-		// all 8 of its entries; the 20 generic `store.add` appends mint none.
+		// MEASURED, exactly: this log is REPLICATING, so its 40 single appends
+		// take the storage-transaction seam (writer 2), not the commit-only one
+		// — the non-replicating seam is measured by its own leg above. Each
+		// mints one single-hash token; each of the 5 batch appends mints ONE
+		// token covering all 8 entries; the 20 generic `store.add` mint none.
 		// 45 tokens / 80 holds. Exact equality is deliberate: this is the gate
 		// that says the ledger is fully accounted for, so a new token seam
 		// appearing in this workload must be audited rather than absorbed.
