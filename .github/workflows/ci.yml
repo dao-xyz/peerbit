@@ -200,13 +200,19 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # 24.18.x is pinned, not floating 24.x: node-datachannel@0.32.3 (the
-        # newest release, and the Node WebRTC transport under @libp2p/webrtc)
-        # ships no N-API prebuild for Node 24.19.0 and its source-build
-        # fallback aborts with "does not support N-API version undefined", so
-        # the published-closure smoke cannot install. This is a real
-        # forward-compat break for consumers on 24.19, not a CI artifact —
-        # unpin once node-datachannel publishes a 24.19-capable build.
+        # 24.18.x is pinned, not floating 24.x, to keep the published-closure
+        # smoke deterministic. node-datachannel (the Node WebRTC transport
+        # under @libp2p/webrtc) installs a prebuilt binary, and that download
+        # is occasionally flaky on CI. Its source-build FALLBACK is broken on
+        # Node 24: prebuild/prebuild-install are deprecated and their
+        # napi-build-utils cannot resolve NAPI v10, aborting with "does not
+        # support N-API version undefined" -- upstream
+        # https://github.com/murat-dogan/node-datachannel/issues/428. So on
+        # Node 24 a transient download blip becomes a hard install failure
+        # instead of a slow-but-successful build. The normal path is fine:
+        # `npm install node-datachannel@0.32.3` succeeds on Node 24 (verified
+        # locally), so this is NOT a forward-compat break for consumers.
+        # Unpin once node-datachannel replaces its prebuild toolchain.
         node-version: [22.x, 24.18.x]
     steps:
       - uses: actions/checkout@v4
