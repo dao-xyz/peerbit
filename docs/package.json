@@ -16,9 +16,9 @@
 	"scripts": {
 		"clean": "#not used",
 		"build": "tsc -p tsconfig.json",
-		"test": "true",
+		"test": "aegir test -t node",
 		"lint": "aegir lint",
-		"test:cov": "true"
+		"test:cov": "aegir test -t node --cov"
 	},
 	"dependencies": {
 		"@dao-xyz/borsh": "^6.0.0",
