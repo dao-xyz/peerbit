@@ -290,6 +290,7 @@ import {
 } from "./sync/profile.js";
 import {
 	ConfirmEntriesMessage,
+	RECENT_KNOWN_EXCHANGE_HEAD_SUPPRESSION_MS,
 	SYNC_MESSAGE_PRIORITY,
 	SimpleSyncronizer,
 } from "./sync/simple.js";
@@ -1439,6 +1440,16 @@ const JOIN_AUTHORITATIVE_RETRY_SCHEDULE_MS = [
 ];
 const APPEND_BACKFILL_RETRY_SCHEDULE_MS = [0, 1_000, 3_000, 7_000];
 const RECENT_KNOWN_REPAIR_SUPPRESSION_MS = 30_000;
+// `_entryKnownPeerObservedAt` is read ONLY through isEntryRecentlyKnownByPeer,
+// which treats an over-age row and an absent row identically (both false). So
+// rows older than the longest horizon any caller asks about are dead weight,
+// and dropping them is behaviour-identical rather than merely safe. Derived
+// from the horizons themselves -- never hardcode it -- so a future caller with
+// a longer window cannot silently outlive the retention that serves it.
+const ENTRY_KNOWN_PEER_OBSERVED_AT_RETENTION_MS = Math.max(
+	RECENT_KNOWN_REPAIR_SUPPRESSION_MS,
+	RECENT_KNOWN_EXCHANGE_HEAD_SUPPRESSION_MS,
+);
 const JOIN_AUTHORITATIVE_REPAIR_DELAY_MS = 2_000;
 const JOIN_AUTHORITATIVE_REPAIR_SWEEP_DELAYS_MS = [
 	JOIN_AUTHORITATIVE_REPAIR_DELAY_MS,
@@ -3294,6 +3305,7 @@ export class SharedLog<
 	private _repairSweepOptimisticGidsByPeer!: Map<string, Set<string>>;
 	private _entryKnownPeers!: Map<string, Set<string>>;
 	private _entryKnownPeerObservedAt!: Map<string, Map<string, number>>;
+	private _entryKnownPeerObservedAtSweptAt = 0;
 	private _joinAuthoritativeRepairTimersByDelay!: Map<
 		number,
 		ReturnType<typeof setTimeout>
@@ -3644,6 +3656,7 @@ export class SharedLog<
 		this._repairSweepOptimisticGidsByPeer = new Map();
 		this._entryKnownPeers = new Map();
 		this._entryKnownPeerObservedAt = new Map();
+		this._entryKnownPeerObservedAtSweptAt = 0;
 		this._joinAuthoritativeRepairTimersByDelay = new Map();
 		this._joinAuthoritativeRepairPeersByDelay = new Map();
 		this._appendBackfillPendingByTarget = new Map();
@@ -7649,6 +7662,16 @@ export class SharedLog<
 		this._nativeSharedLogState?.markEntriesKnownByPeer(hashArray, peer);
 		this._nativeBackbone?.markEntriesKnownByPeer(hashArray, peer);
 		const now = Date.now();
+		// Growth is driven by writes, so the sweep rides the write path rather
+		// than a timer or the rebalance pass: cost stays proportional to the
+		// traffic that creates rows. Rate-limited to one pass per retention
+		// window, over a map that after the first pass holds one window of marks.
+		if (
+			now - this._entryKnownPeerObservedAtSweptAt >=
+			ENTRY_KNOWN_PEER_OBSERVED_AT_RETENTION_MS
+		) {
+			this.sweepEntryKnownPeerObservedAt(now);
+		}
 		for (const hash of hashArray) {
 			let peers = this._entryKnownPeers.get(hash);
 			if (!peers) {
@@ -7716,6 +7739,28 @@ export class SharedLog<
 	) {
 		const observedAt = this._entryKnownPeerObservedAt.get(hash)?.get(peer);
 		return observedAt != null && Date.now() - observedAt <= maxAgeMs;
+	}
+
+	/** Drop recency marks no reader can still act on.
+	 *
+	 * Touches ONLY `_entryKnownPeerObservedAt`. `_entryKnownPeers` carries
+	 * membership, not recency, and its rows stay until the peer dimension
+	 * clears them; the native mirrors have no recency dimension at all
+	 * (mark/remove/removePeer only), so this must not call into them or the
+	 * two sides would disagree.
+	 */
+	private sweepEntryKnownPeerObservedAt(now: number) {
+		for (const [hash, observedAt] of this._entryKnownPeerObservedAt) {
+			for (const [peer, timestamp] of observedAt) {
+				if (now - timestamp > ENTRY_KNOWN_PEER_OBSERVED_AT_RETENTION_MS) {
+					observedAt.delete(peer);
+				}
+			}
+			if (observedAt.size === 0) {
+				this._entryKnownPeerObservedAt.delete(hash);
+			}
+		}
+		this._entryKnownPeerObservedAtSweptAt = now;
 	}
 
 	private markRepairSweepOptimisticPeer(
@@ -14213,6 +14258,7 @@ export class SharedLog<
 		this._repairSweepOptimisticGidsByPeer = new Map();
 		this._entryKnownPeers = new Map();
 		this._entryKnownPeerObservedAt = new Map();
+		this._entryKnownPeerObservedAtSweptAt = 0;
 		this._joinAuthoritativeRepairTimersByDelay = new Map();
 		this._joinAuthoritativeRepairPeersByDelay = new Map();
 		this._assumeSyncedRepairSuppressedUntil = 0;

@@ -325,7 +325,7 @@ export const SYNC_MESSAGE_PRIORITY = CONVERGENCE_MESSAGE_PRIORITY;
 // large historical backfills.
 const SIMPLE_SYNC_RETRY_AFTER_MS = 10_000;
 const EXCHANGE_HEAD_RESPONSE_DEDUPE_TTL_MS = SIMPLE_SYNC_RETRY_AFTER_MS - 1_000;
-const RECENT_KNOWN_EXCHANGE_HEAD_SUPPRESSION_MS = 30_000;
+export const RECENT_KNOWN_EXCHANGE_HEAD_SUPPRESSION_MS = 30_000;
 const PENDING_MAYBE_SYNC_RESPONSE_TTL_MS = 30_000;
 // An incoming maybe-sync claim keeps one retry candidate in both
 // syncInFlightQueue and syncInFlightQueueInverted. Bound associations rather
