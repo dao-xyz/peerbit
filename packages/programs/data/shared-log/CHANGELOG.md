@@ -1,5 +1,11 @@
 # Changelog
 
+## 16.0.4
+
+### Patch Changes
+
+- [#1243](https://github.com/dao-xyz/peerbit/pull/1243) [`afd495e`](https://github.com/dao-xyz/peerbit/commit/afd495ec103726641cdc041141f948535c9999b4) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Document why the `_gidPeersHistory` map cannot be released from the trim path. Comment only; no behavior change. The note records the growth shape (one row per distinct gid ever held, released only by prune, last-peer-drop, an explicit cache-clearing rebalance, and close/reset), why copying prune's whole-row delete onto trim would drop a live suppression memo and pay for the freed memory in redundant delivery and repair traffic, and what a correct bound would require.
+
 ## 16.0.3
 
 ### Patch Changes
