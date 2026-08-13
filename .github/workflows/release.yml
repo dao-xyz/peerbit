@@ -21,6 +21,27 @@ on:
 permissions:
   contents: read
 
+# Releases must never run concurrently. Two master merges close together each
+# start a Release run; both check out a tree carrying the same pending version
+# bumps, both call `changeset publish`, and they race package by package. The
+# loser gets `E403 You cannot publish over the previously published versions`
+# and the whole run fails -- exactly what happened on 2026-08-13 when #1244 and
+# #1246 merged two minutes apart (#1244's run died on
+# @peerbit/identity-access-controller@6.0.90, which #1246's run had just
+# published; the packages themselves all landed, so the damage was a false-red
+# run rather than a partial publish, but a partial publish is the failure mode
+# this invites).
+#
+# cancel-in-progress MUST stay false: interrupting a run mid-publish is the one
+# way to actually leave npm half-updated. A queued run being superseded by a
+# newer one is harmless here -- `changeset publish` publishes whatever versions
+# are missing from the registry, so the newest run subsumes any it evicts. This
+# is the opposite trade-off from ci.yml, where each push needs its own verdict
+# and so each push gets its own group.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 name: Release
 jobs:
   # Stable release flow. On push to master, changesets/action opens/updates a
