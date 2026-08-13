@@ -433,8 +433,8 @@ const securityJob = workflowJob(ciWorkflow, "security_dependency_contracts");
 assert.match(securityJob, /needs: build_workspace/);
 // The 24 entry is pinned to a patch line on purpose (see ci.yml); this
 // contract keeps it a DELIBERATE pin rather than silent drift, and fails if
-// anyone floats it back to 24.x while node-datachannel still lacks a
-// 24.19-capable prebuild.
+// anyone floats it back to 24.x while node-datachannel's source-build
+// fallback remains broken on Node 24 (upstream issue 428).
 assert.match(securityJob, /node-version: \[22\.x, 24\.18\.x\]/);
 assert.match(securityJob, /node-version: \$\{\{ matrix\.node-version \}\}/);
 assert.match(securityJob, /pnpm install --frozen-lockfile/);
