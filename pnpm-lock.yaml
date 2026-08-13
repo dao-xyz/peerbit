@@ -32,6 +32,7 @@ overrides:
   ws@6: 6.2.6
   ws@7: 7.5.13
   ws@8: 8.21.1
+  node-datachannel: 0.32.3
 
 importers:
 
@@ -9256,8 +9257,8 @@ packages:
     resolution: {integrity: sha512-LyPuZJcI9HVwzXK1GPxWNzrr+vr8Hp/3UqlmWxxh8p54U1ZbclOqbSog9lWHaCX+dBaiGi6n/hIX+mKu74GmPA==}
     engines: {node: '>=10'}
 
-  node-datachannel@0.29.0:
-    resolution: {integrity: sha512-aCRJA5uZRqxMvQAl2QtOnCkodF1qJa1dCUVaXW9D7rku2p6F7PWe5OuRLcIgOYe+e2ZyJu0LefIQ95TtCn6xxA==}
+  node-datachannel@0.32.3:
+    resolution: {integrity: sha512-Aok1ZhLsll472lRefgWYuWJ0070jh0ecHravTdRyZEmoESumebMEQV8Y+poBwSW2ZbEwAokAOGsK5Cu8pDDT2g==}
     engines: {node: '>=18.20.0'}
 
   node-emoji@2.2.0:
@@ -13527,7 +13528,7 @@ snapshots:
       it-stream-types: 2.0.2
       main-event: 1.0.1
       multiformats: 13.4.2
-      node-datachannel: 0.29.0
+      node-datachannel: 0.32.3
       p-defer: 4.0.1
       p-event: 7.1.0
       p-timeout: 7.0.1
@@ -14984,7 +14985,7 @@ snapshots:
       obug: 2.1.3
       std-env: 4.2.0
       tinyrainbow: 3.1.0
-      vitest: 4.1.10(@types/node@22.20.1)(@vitest/coverage-v8@4.1.10)(happy-dom@20.10.6)(jsdom@26.1.0)(vite@7.3.6(@types/node@22.20.1)(jiti@2.6.1)(lightningcss@1.30.2)(terser@5.49.0)(yaml@2.9.0))
+      vitest: 4.1.10(@types/node@26.1.1)(@vitest/coverage-v8@4.1.10)(happy-dom@20.10.6)(jsdom@26.1.0)(vite@7.3.6(@types/node@26.1.1)(jiti@2.6.1)(lightningcss@1.30.2)(terser@5.49.0)(yaml@2.9.0))
 
   '@vitest/expect@4.1.10':
     dependencies:
@@ -19784,7 +19785,7 @@ snapshots:
     dependencies:
       semver: 7.8.5
 
-  node-datachannel@0.29.0:
+  node-datachannel@0.32.3:
     dependencies:
       prebuild-install: 7.1.3
 
