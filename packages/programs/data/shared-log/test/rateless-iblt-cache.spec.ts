@@ -180,14 +180,14 @@ describe("rateless-iblt-syncronizer cache", () => {
 		}
 	});
 
-	it("frees a cached encoder clone once when decoder conversion throws", async () => {
+	it("does not free the cached encoder when decoder conversion throws", async () => {
 		const conversionError = new Error("decoder conversion failed");
-		const clone = {
-			to_decoder: sinon.stub().throws(conversionError),
-			free: sinon.spy(),
-		};
+		// `to_decoder` borrows (&self) and clones internally, so the cached
+		// encoder must survive a throw and must not be copied first. `clone`
+		// is spied purely so reintroducing the redundant copy fails here.
 		const encoder = {
-			clone: sinon.stub().returns(clone),
+			to_decoder: sinon.stub().throws(conversionError),
+			clone: sinon.spy(),
 			free: sinon.spy(),
 		};
 		const sync = new RatelessIBLTSynchronizer<"u64">({
@@ -214,12 +214,10 @@ describe("rateless-iblt-syncronizer cache", () => {
 				(sync as any).getLocalDecoderForRange(ranges),
 			).to.be.rejectedWith(conversionError.message);
 
-			expect(encoder.clone.calledOnce).to.equal(true);
-			expect(clone.to_decoder.calledOnce).to.equal(true);
-			expect(clone.free.calledOnce).to.equal(true);
+			expect(encoder.to_decoder.calledOnce).to.equal(true);
+			expect(encoder.clone.called).to.equal(false);
 			expect(encoder.free.called).to.equal(false);
 			await sync.close();
-			expect(clone.free.calledOnce).to.equal(true);
 			expect(encoder.free.calledOnce).to.equal(true);
 		} finally {
 			await sync.close();
@@ -229,12 +227,9 @@ describe("rateless-iblt-syncronizer cache", () => {
 	it("frees a produced cached decoder when local-decoder profiling throws", async () => {
 		const profileError = new Error("local decoder profile failed");
 		const decoder = { free: sinon.spy() };
-		const clone = {
-			to_decoder: sinon.stub().returns(decoder),
-			free: sinon.spy(),
-		};
 		const encoder = {
-			clone: sinon.stub().returns(clone),
+			to_decoder: sinon.stub().returns(decoder),
+			clone: sinon.spy(),
 			free: sinon.spy(),
 		};
 		const sync = new RatelessIBLTSynchronizer<"u64">({
@@ -268,13 +263,11 @@ describe("rateless-iblt-syncronizer cache", () => {
 				(sync as any).getLocalDecoderForRange(ranges),
 			).to.be.rejectedWith(profileError.message);
 
-			expect(encoder.clone.calledOnce).to.equal(true);
-			expect(clone.to_decoder.calledOnce).to.equal(true);
-			expect(clone.free.calledOnce).to.equal(true);
+			expect(encoder.to_decoder.calledOnce).to.equal(true);
+			expect(encoder.clone.called).to.equal(false);
 			expect(decoder.free.calledOnce).to.equal(true);
 			expect(encoder.free.called).to.equal(false);
 			await sync.close();
-			expect(clone.free.calledOnce).to.equal(true);
 			expect(decoder.free.calledOnce).to.equal(true);
 			expect(encoder.free.calledOnce).to.equal(true);
 		} finally {
