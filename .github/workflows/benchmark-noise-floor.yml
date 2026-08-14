@@ -1,0 +1,536 @@
+name: Benchmark noise floor
+# Runs ONE commit's benchmark suites N times so the per-task "delta mean %"
+# that .github/workflows/benchmarks.yml prints for base vs head can be judged
+# against a measured floor. A delta smaller than the floor is not evidence.
+#
+# Deliberate scope limit: install and build happen ONCE and every repeat reuses
+# that single build, so this measures RUN-TO-RUN noise on a fixed build. It
+# therefore EXCLUDES build-to-build variance (dependency resolution, codegen and
+# layout differences, wasm artifacts), which the A/B job DOES include because it
+# installs and builds base and head separately. The floor produced here is a
+# LOWER bound on the noise in a benchmarks.yml comparison, never an upper bound.
+#
+# Every action pin, toolchain step, env block, working directory and benchmark
+# invocation below is copied from benchmarks.yml. That fidelity is the point: a
+# floor measured with a different toolchain, or with different suite parameters,
+# does not apply to that job's numbers.
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Ref (branch, tag or SHA) to measure repeatedly
+        required: false
+        default: master
+        type: string
+      repeats:
+        description: How many times to run the suites on the one build (2-10)
+        required: false
+        default: "4"
+        type: string
+      suites:
+        description: >-
+          Comma-separated subset of shared-log, transport, document - the same
+          three suite groups benchmarks.yml selects from a PR's changed files.
+        required: false
+        default: shared-log,transport,document
+        type: string
+
+permissions: {}
+
+jobs:
+  noise-floor:
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: read
+    # BUDGET. An earlier version of this comment claimed "<= 12 min" for
+    # sync-batch-sweep on the strength of SWEEP_TIMEOUT. That was wrong, and the
+    # whole 25 min/repeat figure derived from it was wrong with it. What that
+    # timeout actually covers, from benchmark/sync-batch-sweep.ts:
+    #
+    #   BOUNDED by SWEEP_TIMEOUT (120000 ms): the catch-up wait only -- the
+    #     waitForResolved that watches db2's log length. Nothing else reads it.
+    #   NOT BOUNDED by anything: the ts-node child startup and type-load, the
+    #     two-peer session open, the SWEEP_ENTRY_COUNT (20000) sequential
+    #     db1.add() preload that runs BEFORE the timed section, the dial, and
+    #     the drop/stop teardown. One such child is spawned per batch size, so
+    #     all of that happens 6 times.
+    #
+    # So SWEEP_TIMEOUT funds 6 x 2 = 12 min of *bounded* wait and says nothing
+    # about the rest. Per-repeat allowance, stated as an allowance and not as an
+    # upper bound, because only the first line of each pair is actually enforced:
+    #
+    #   sync-batch-sweep  6 x (2 min bounded wait
+    #                          + 5 min unbounded: ~1 min child start,
+    #                            ~3 min for 20000 offline appends,
+    #                            ~1 min open/dial/teardown)        =  42 min
+    #   file-ingest       (FILE_INGEST_WARMUP 1 + ITERATIONS 3) x
+    #                     FILE_INGEST_READY_TIMEOUT_MS 30000 ms = 2 min bounded,
+    #                     + 2 min unbounded setup/teardown        =   4 min
+    #   chunk-transfer    (CHUNK_TRANSFER_WARMUP 1 + ITERATIONS 3) x
+    #                     CHUNK_TRANSFER_TIMEOUT_MS 30000 ms = 2 min bounded,
+    #                     + 2 min unbounded setup/teardown        =   4 min
+    #   rateless-iblt-startsync-cache, rateless-iblt-sender-startsync,
+    #                     pid-convergence and document-put carry NO timeout at
+    #                     all. benchmarks.yml fits two passes of them, plus two
+    #                     installs and two builds, inside its own 120 min, so
+    #                     9 min per pass is a generous allowance   =   9 min
+    #                                                               -------
+    #                                                                 59 min
+    #
+    # Round to 60 min per repeat. Install + wasm-pack + build run ONCE: 45 min,
+    # on the same reasoning as before (benchmarks.yml funds two of them inside
+    # 120 min alongside its sweeps).
+    #
+    #   default repeats 5  -> 45 + 5 x 60  = 345 min   fits
+    #   maximum repeats 10 -> 45 + 10 x 60 = 645 min   does NOT fit, and cannot:
+    #                                                  GitHub-hosted jobs are
+    #                                                  killed at 6 h regardless
+    #                                                  of this setting.
+    #
+    # 350 is therefore the honest number: it is under the platform ceiling, so
+    # WE cut the job off rather than the platform, and the "Report noise floor"
+    # step below runs on failure and publishes a partial floor from the repeats
+    # that did finish. A partial floor is passed --min-runs = repeats, so it
+    # comes out NOT TRUSTWORTHY and non-zero; it can inform the next dispatch
+    # but it can never be quoted as a floor. High repeat counts are expected to
+    # land there, and that is a better outcome than silence after 6 h.
+    timeout-minutes: 350
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+    concurrency:
+      # Serialize per measured ref, but never cancel: a floor run is hours of
+      # measurement, and a second dispatch should queue behind it rather than
+      # destroy it. (benchmarks.yml cancels because a superseded PR benchmark is
+      # worthless; a completed floor is not.)
+      group: bench-noise-floor-${{ inputs.ref }}
+      cancel-in-progress: false
+
+    steps:
+      - name: Resolve run plan
+        id: plan
+        env:
+          RAW_REPEATS: ${{ inputs.repeats }}
+          RAW_SUITES: ${{ inputs.suites }}
+        run: |
+          set -euo pipefail
+          # Both values are dispatcher-controlled text. They are read from the
+          # environment rather than interpolated into this script, and they only
+          # reach $GITHUB_OUTPUT after matching a strict pattern. REPEATS in
+          # particular is later used in an arithmetic for-loop, where unvalidated
+          # text would be evaluated, not just compared.
+          repeats="${RAW_REPEATS//[[:space:]]/}"
+          if [[ ! "$repeats" =~ ^([2-9]|10)$ ]]; then
+            echo "::error::repeats must be an integer between 2 and 10; got '${RAW_REPEATS}'. One run measures nothing, and the timeout budget is sized for at most 10."
+            exit 1
+          fi
+
+          # Fail closed on an empty selection. benchmarks.yml tolerates "no
+          # suites" because a PR may legitimately touch none of them; here the
+          # operator asked for a measurement, so producing no runs at all would
+          # be a green job with an empty report. This has to be checked BEFORE
+          # the split: `read -a` returns non-zero on an empty here-string, so
+          # under `set -e` an empty value would otherwise abort this step with no
+          # diagnostic at all.
+          normalized="${RAW_SUITES//[[:space:]]/}"
+          if [ -z "$normalized" ]; then
+            echo "::error::suites must name at least one of shared-log, transport, document."
+            exit 1
+          fi
+
+          run_shared_log=false
+          run_transport=false
+          run_document=false
+
+          IFS=',' read -r -a requested <<< "$normalized"
+          for suite in "${requested[@]}"; do
+            case "$suite" in
+              shared-log) run_shared_log=true ;;
+              transport) run_transport=true ;;
+              document) run_document=true ;;
+              "")
+                echo "::error::suites has an empty entry; it must be a comma-separated subset of shared-log, transport, document."
+                exit 1
+                ;;
+              *)
+                echo "::error::unknown suite '${suite}'; suites must be a comma-separated subset of shared-log, transport, document."
+                exit 1
+                ;;
+            esac
+          done
+
+          # Rebuilt from the flags, so a repeated suite name cannot duplicate an
+          # entry here. Same order and spelling as benchmarks.yml's "selected".
+          selected=""
+          if [ "$run_shared_log" = true ]; then
+            selected="shared-log"
+          fi
+          if [ "$run_transport" = true ]; then
+            selected="${selected:+${selected},}transport"
+          fi
+          if [ "$run_document" = true ]; then
+            selected="${selected:+${selected},}document"
+          fi
+
+          {
+            echo "repeats=${repeats}"
+            echo "run_shared_log=${run_shared_log}"
+            echo "run_transport=${run_transport}"
+            echo "run_document=${run_document}"
+            echo "selected=${selected}"
+          } >> "$GITHUB_OUTPUT"
+
+          echo "Measuring ${selected} ${repeats} times."
+
+      # This job executes whatever code lives at "ref". It holds no secrets and
+      # only read access to contents, and it publishes nothing back to GitHub:
+      # the artifact and the step summary are its entire output.
+      - name: Checkout ref
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22.x
+
+      # Runs on the pinned Node, and early enough that a failure anywhere below
+      # still leaves an attributable artifact. The artifact upload is gated on
+      # this step, so a rejected dispatch input fails once rather than twice.
+      - name: Record run metadata
+        id: metadata
+        env:
+          NOISE_FLOOR_REF: ${{ inputs.ref }}
+          NOISE_FLOOR_REPEATS: ${{ steps.plan.outputs.repeats }}
+          NOISE_FLOOR_SELECTED: ${{ steps.plan.outputs.selected }}
+        run: |
+          set -euo pipefail
+          mkdir -p bench-results
+          # bench-results/ is the results-dir handed to scripts/bench/noise-floor.mjs.
+          # Non-run entries are expected there: the script's own default report
+          # path is <results-dir>/noise-floor.json.
+          NOISE_FLOOR_SHA="$(git rev-parse HEAD)" node --input-type=module -e '
+            import { writeFileSync } from "node:fs";
+
+            const metadata = {
+              kind: "benchmark-noise-floor",
+              note: "One commit, one build, repeated runs. Measures run-to-run noise only; build-to-build variance is excluded here but present in the A/B benchmarks job.",
+              ref: process.env.NOISE_FLOOR_REF,
+              sha: process.env.NOISE_FLOOR_SHA,
+              repeats: Number(process.env.NOISE_FLOOR_REPEATS),
+              selected_suites: process.env.NOISE_FLOOR_SELECTED.split(","),
+              run_url: `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`,
+            };
+
+            writeFileSync(
+              "bench-results/metadata.json",
+              JSON.stringify(metadata, null, 2) + "\n",
+            );
+          '
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
+        with:
+          version: 10.24.0
+          run_install: false
+
+      # Copied verbatim from benchmarks.yml, including the version pin and the
+      # target pre-install. No caching anywhere in this job: benchmarks.yml
+      # caches nothing either, and a restore-keys-style cache could serve one
+      # ref's compiled output to another ref's measurement, which would corrupt
+      # the very quantity this job exists to measure.
+      - name: Install wasm-pack
+        run: |
+          cargo install wasm-pack --version '=0.13.1' --locked
+          # Pre-install the wasm target once: concurrent wasm-pack builds
+          # otherwise race their own `rustup target add` and fail on a
+          # component conflict (observed in run 30832179916).
+          rustup target add wasm32-unknown-unknown
+
+      - name: Install deps
+        run: pnpm install --frozen-lockfile=false
+
+      # Built once, on purpose. Every repeat below measures this exact build, so
+      # the resulting floor contains no build-to-build variance.
+      - name: Build
+        env:
+          RUN_SHARED_LOG: ${{ steps.plan.outputs.run_shared_log }}
+          RUN_TRANSPORT: ${{ steps.plan.outputs.run_transport }}
+          RUN_DOCUMENT: ${{ steps.plan.outputs.run_document }}
+        run: |
+          set -euo pipefail
+          if [ "$RUN_SHARED_LOG" = "true" ]; then
+            pnpm --filter @peerbit/shared-log... run build
+          fi
+          if [ "$RUN_TRANSPORT" = "true" ]; then
+            pnpm --filter @peerbit/stream... run build
+          fi
+          if [ "$RUN_DOCUMENT" = "true" ]; then
+            pnpm --filter @peerbit/document... run build
+          fi
+
+      # benchmarks.yml skips a benchmark that is absent from one side, because a
+      # base/head asymmetry is a normal thing for it to tolerate. Here the ref is
+      # fixed, so an absent entrypoint would silently drop that task from every
+      # run and shrink the floor's coverage without saying so. Fail closed, up
+      # front, before spending an hour of runner time.
+      - name: Verify benchmark entrypoints and reporter exist
+        env:
+          RUN_SHARED_LOG: ${{ steps.plan.outputs.run_shared_log }}
+          RUN_TRANSPORT: ${{ steps.plan.outputs.run_transport }}
+          RUN_DOCUMENT: ${{ steps.plan.outputs.run_document }}
+        run: |
+          set -euo pipefail
+          missing=0
+          require_file() {
+            if [ ! -f "$1" ]; then
+              echo "::error::${1} does not exist at this ref."
+              missing=1
+            fi
+          }
+
+          # The report step runs the reporter from the SAME ref that is being
+          # measured. Finding out it is absent after hours of measurement would
+          # waste the entire run.
+          require_file scripts/bench/noise-floor.mjs
+
+          if [ "$RUN_SHARED_LOG" = "true" ]; then
+            require_file packages/programs/data/shared-log/benchmark/rateless-iblt-startsync-cache.ts
+            require_file packages/programs/data/shared-log/benchmark/rateless-iblt-sender-startsync.ts
+            require_file packages/programs/data/shared-log/benchmark/sync-batch-sweep.ts
+            require_file packages/programs/data/shared-log/benchmark/pid-convergence.ts
+          fi
+          if [ "$RUN_DOCUMENT" = "true" ]; then
+            require_file packages/programs/data/document/document/benchmark/document-put.ts
+            require_file packages/programs/data/document/document/benchmark/file-ingest.ts
+          fi
+          if [ "$RUN_TRANSPORT" = "true" ]; then
+            # benchmarks.yml runs the compiled artifact for this one, so this is
+            # also a check that the build above produced it.
+            require_file packages/transport/stream/dist/benchmark/chunk-transfer.js
+          fi
+
+          if [ "$missing" -ne 0 ]; then
+            echo "::error::This ref cannot produce a floor (see the errors above). Deselect the affected suite with the 'suites' input, or measure a ref that carries every file this run needs."
+            exit 1
+          fi
+
+      - name: Run benchmark repeats
+        env:
+          REPEATS: ${{ steps.plan.outputs.repeats }}
+          RUN_SHARED_LOG: ${{ steps.plan.outputs.run_shared_log }}
+          RUN_TRANSPORT: ${{ steps.plan.outputs.run_transport }}
+          RUN_DOCUMENT: ${{ steps.plan.outputs.run_document }}
+          # Every value below is copied verbatim from benchmarks.yml's three
+          # per-suite env blocks. The variable names are disjoint across the
+          # suites (RIBLT_*/SWEEP_*, DOC_*/FILE_INGEST_*, CHUNK_TRANSFER_*) and
+          # NODE_OPTIONS/BENCH_JSON are identical in all three, so this single
+          # merged block hands each benchmark exactly the environment the A/B job
+          # hands it.
+          NODE_OPTIONS: --no-warnings
+          BENCH_JSON: "1"
+          RIBLT_SIZES: "1000,10000,50000"
+          RIBLT_WARMUP: "2"
+          RIBLT_ITERATIONS: "10"
+          SWEEP_BATCH_SIZES: "256,512,1024,4096,16384,65536"
+          SWEEP_ENTRY_COUNT: "20000"
+          SWEEP_WARMUP_RUNS: "0"
+          SWEEP_RUNS: "1"
+          SWEEP_TIMEOUT: "120000"
+          DOC_WARMUP: "2"
+          DOC_ITERATIONS: "10"
+          FILE_INGEST_WARMUP: "1"
+          FILE_INGEST_ITERATIONS: "3"
+          FILE_INGEST_CHUNKS: "24"
+          FILE_INGEST_CHUNK_BYTES: "262144"
+          FILE_INGEST_READY_TIMEOUT_MS: "30000"
+          CHUNK_TRANSFER_WARMUP: "1"
+          CHUNK_TRANSFER_ITERATIONS: "3"
+          CHUNK_TRANSFER_CHUNKS: "24"
+          CHUNK_TRANSFER_CHUNK_BYTES: "262144"
+          CHUNK_TRANSFER_TIMEOUT_MS: "30000"
+        run: |
+          # -e alone is the GitHub default; -o pipefail and -u are added on
+          # purpose. Everything in the loop below is a simple command, so -e
+          # aborts the whole job on the first failing benchmark instead of
+          # marching on to the next repeat with a hole in the results.
+          set -euo pipefail
+
+          shared_log_directory="$GITHUB_WORKSPACE/packages/programs/data/shared-log"
+          document_directory="$GITHUB_WORKSPACE/packages/programs/data/document/document"
+          stream_directory="$GITHUB_WORKSPACE/packages/transport/stream"
+
+          # A benchmark that dies after the shell opened its redirect leaves a
+          # zero-byte or half-written file behind. Counting that as a run would
+          # make the floor look tighter than it is - exactly the failure mode
+          # this job exists to rule out - so every suite file is proved before
+          # the next benchmark starts.
+          # TWO SHAPES, both real, and this assert used to know only one of
+          # them. Six suites emit tinybench's { tasks: [{ name, mean_ms, hz }] };
+          # document-put.ts emits { name, rows: [{ name, opsPerSecond,
+          # totalPutMs, ... }], meta } and has no `tasks` key at all, so the old
+          # "carries no benchmark tasks" check rejected every valid document-put
+          # run and this job could never have completed with `document` selected.
+          # The field mapping below is the same one
+          # scripts/bench/noise-floor.mjs applies (totalPutMs -> mean_ms,
+          # opsPerSecond -> hz); the two must agree or a file this step accepts
+          # could still be dropped by the reporter.
+          #
+          # NOTE, deliberately not fixed from here: .github/workflows/
+          # benchmarks.yml makes the same `tasks`-only assumption in its A/B
+          # comparison, which is why its "document: put" table renders empty.
+          # That is a separate change to a workflow this one only copies from.
+          assert_suite_json() {
+            SUITE_JSON_FILE="$1" node --input-type=module -e '
+              import { readFileSync } from "node:fs";
+
+              const file = process.env.SUITE_JSON_FILE;
+              const raw = readFileSync(file, "utf8");
+              if (raw.trim() === "") {
+                throw new Error(`${file} is empty`);
+              }
+
+              const parsed = JSON.parse(raw);
+              const isTasksShape = Array.isArray(parsed.tasks);
+              const rows = isTasksShape
+                ? parsed.tasks
+                : Array.isArray(parsed.rows)
+                  ? parsed.rows
+                  : null;
+              if (rows === null || rows.length === 0) {
+                throw new Error(
+                  `${file} carries neither a non-empty "tasks" array nor a non-empty "rows" array`,
+                );
+              }
+
+              // Only the fields the noise-floor reporter actually consumes are
+              // required. A half-written file loses them, which is the exact
+              // truncation this assert exists to catch.
+              const durationField = isTasksShape ? "mean_ms" : "totalPutMs";
+              const rateField = isTasksShape ? "hz" : "opsPerSecond";
+              for (const row of rows) {
+                if (typeof row?.name !== "string") {
+                  throw new Error(`${file} carries an entry without a name`);
+                }
+                if (!Number.isFinite(row?.[durationField])) {
+                  throw new Error(
+                    `${file} entry "${row.name}" has no finite ${durationField}`,
+                  );
+                }
+                if (!isTasksShape && !Number.isFinite(row?.[rateField])) {
+                  throw new Error(
+                    `${file} entry "${row.name}" has no finite ${rateField}`,
+                  );
+                }
+              }
+            '
+          }
+
+          # No pipes in either runner. A pipeline reports its LAST command's
+          # status, so `node ... | tee` would hide a failing benchmark even with
+          # -e set, and `$?` after a pipe would be tee's status, not node's.
+          run_ts_benchmark() {
+            local directory="$1"
+            local entrypoint="$2"
+            local destination="$3"
+            ( cd "$directory" && node --loader ts-node/esm "$entrypoint" ) > "$destination"
+            assert_suite_json "$destination"
+          }
+
+          run_js_benchmark() {
+            local directory="$1"
+            local entrypoint="$2"
+            local destination="$3"
+            ( cd "$directory" && node "$entrypoint" ) > "$destination"
+            assert_suite_json "$destination"
+          }
+
+          # REPEATS matched ^([2-9]|10)$ in the plan step, so this arithmetic
+          # context evaluates a number and nothing else.
+          for (( repeat = 1; repeat <= REPEATS; repeat++ )); do
+            destination="$GITHUB_WORKSPACE/bench-results/run-${repeat}"
+            mkdir -p "$destination"
+            echo "::group::Repeat ${repeat} of ${REPEATS}"
+
+            # Suite order inside a repeat matches one side of benchmarks.yml.
+            if [ "$RUN_SHARED_LOG" = "true" ]; then
+              run_ts_benchmark "$shared_log_directory" ./benchmark/rateless-iblt-startsync-cache.ts "$destination/rateless-iblt-startsync-cache.json"
+              run_ts_benchmark "$shared_log_directory" ./benchmark/rateless-iblt-sender-startsync.ts "$destination/rateless-iblt-sender-startsync.json"
+              run_ts_benchmark "$shared_log_directory" ./benchmark/sync-batch-sweep.ts "$destination/sync-batch-sweep.json"
+              run_ts_benchmark "$shared_log_directory" ./benchmark/pid-convergence.ts "$destination/pid-convergence.json"
+            fi
+            if [ "$RUN_DOCUMENT" = "true" ]; then
+              run_ts_benchmark "$document_directory" ./benchmark/document-put.ts "$destination/document-put.json"
+              run_ts_benchmark "$document_directory" ./benchmark/file-ingest.ts "$destination/file-ingest.json"
+            fi
+            if [ "$RUN_TRANSPORT" = "true" ]; then
+              run_js_benchmark "$stream_directory" ./dist/benchmark/chunk-transfer.js "$destination/chunk-transfer.json"
+            fi
+
+            echo "::endgroup::"
+          done
+
+      - name: Report noise floor
+        # always(), not the default success(). The measurement step above can
+        # burn hours and then die -- a hung suite, or this job's own
+        # timeout-minutes -- and under success() that published NOTHING: no
+        # summary, no per-task numbers, no way to tell which repeat it got to. A
+        # partial floor is strictly more useful than silence, and it cannot be
+        # mistaken for a real one: --min-runs is the requested repeat count, so
+        # fewer completed repeats is a blocking `insufficient-runs` and the
+        # report says NOT TRUSTWORTHY and exits non-zero. Gated on metadata for
+        # the same reason the upload is: a rejected dispatch input should fail
+        # once, on the validation step, not again here.
+        if: always() && steps.metadata.conclusion == 'success'
+        env:
+          REPEATS: ${{ steps.plan.outputs.repeats }}
+        run: |
+          set -euo pipefail
+
+          # How far the measurement actually got. Counted from the directories on
+          # disk rather than from the previous step's status, so a partial result
+          # is labelled with a number instead of an adjective.
+          completed=0
+          for candidate in bench-results/run-*/; do
+            if [ -d "$candidate" ]; then
+              completed=$(( completed + 1 ))
+            fi
+          done
+
+          banner=""
+          if [ "$completed" -lt "$REPEATS" ]; then
+            banner="> [!CAUTION]\n> **PARTIAL RUN.** ${completed} of ${REPEATS} requested repeat(s) produced a run directory; the measurement step did not finish. Everything below is computed from those ${completed} repeat(s) only. It is reported as NOT TRUSTWORTHY on purpose and must not be quoted as a noise floor -- a floor from a truncated, non-random subset of runs reads LOW, and a low floor makes every perf claim look significant. Re-dispatch, or lower 'repeats', to get a quotable number.\n"
+            echo "::warning::Partial noise-floor run: ${completed}/${REPEATS} repeats completed. Publishing a partial, explicitly untrustworthy report."
+          fi
+
+          # Deliberately not `node ... | tee "$GITHUB_STEP_SUMMARY"`: a
+          # pipeline's status is the LAST command's, so tee would report success
+          # for a script that judged the floor untrustworthy and exited non-zero.
+          # Capture the status directly, publish the report either way, then
+          # re-raise it.
+          status=0
+          node scripts/bench/noise-floor.mjs bench-results --min-runs "$REPEATS" > noise-floor-body.md || status=$?
+          {
+            if [ -n "$banner" ]; then
+              printf '%b\n' "$banner"
+            fi
+            cat noise-floor-body.md
+          } > noise-floor-report.md
+          rm -f noise-floor-body.md
+
+          cat noise-floor-report.md
+          cat noise-floor-report.md >> "$GITHUB_STEP_SUMMARY"
+          cp noise-floor-report.md bench-results/noise-floor-report.md
+          exit "$status"
+
+      - name: Upload noise-floor results
+        # Gated on the metadata step so a rejected dispatch input fails once, on
+        # the validation step, instead of failing again on a missing directory.
+        if: always() && steps.metadata.conclusion == 'success'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: benchmark-noise-floor-${{ github.run_id }}-${{ github.run_attempt }}
+          path: bench-results
+          if-no-files-found: error
+          retention-days: 14

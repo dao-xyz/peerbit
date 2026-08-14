@@ -148,6 +148,12 @@ jobs:
       - name: Validate release automation tools
         if: steps.workspace_dist_cache.outputs.cache-hit != 'true'
         run: node --test tools/*.spec.mjs
+      # Same rule for scripts/bench/. The noise-floor reporter's whole job is to
+      # refuse to publish an understated number, so an unrun spec would defeat it
+      # silently -- exactly the failure it exists to catch.
+      - name: Validate benchmark analysis scripts
+        if: steps.workspace_dist_cache.outputs.cache-hit != 'true'
+        run: node --test scripts/bench/*.spec.mjs
       - name: Validate the supabase edge functions
         if: steps.workspace_dist_cache.outputs.cache-hit != 'true'
         run: |
