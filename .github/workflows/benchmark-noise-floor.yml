@@ -210,7 +210,7 @@ jobs:
           # bench-results/ is the results-dir handed to scripts/bench/noise-floor.mjs.
           # Non-run entries are expected there: the script's own default report
           # path is <results-dir>/noise-floor.json.
-          NOISE_FLOOR_SHA="$(git rev-parse HEAD)" node --input-type=module -e '
+          NOISE_FLOOR_SHA="$(git rev-parse HEAD)" node --input-type=module <<'NODE'
             import { writeFileSync } from "node:fs";
 
             const metadata = {
@@ -227,7 +227,7 @@ jobs:
               "bench-results/metadata.json",
               JSON.stringify(metadata, null, 2) + "\n",
             );
-          '
+          NODE
 
       # No `version:` here, deliberately, and this is the one place where copying
       # benchmarks.yml verbatim is WRONG rather than faithful.
@@ -398,7 +398,7 @@ jobs:
           # comparison, which is why its "document: put" table renders empty.
           # That is a separate change to a workflow this one only copies from.
           assert_suite_json() {
-            SUITE_JSON_FILE="$1" node --input-type=module -e '
+            SUITE_JSON_FILE="$1" node --input-type=module <<'NODE'
               import { readFileSync } from "node:fs";
 
               const file = process.env.SUITE_JSON_FILE;
@@ -459,7 +459,7 @@ jobs:
                   `::notice::${file}: ${unusable.length}/${rows.length} entr(ies) carry no finite ${durationField} and will publish no floor: ${unusable.join(", ")}`,
                 );
               }
-            '
+          NODE
           }
 
           # No pipes in either runner. A pipeline reports its LAST command's
