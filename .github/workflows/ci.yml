@@ -141,9 +141,13 @@ jobs:
         run: |
           node --test scripts/validate-retired-domain-references.test.mjs
           node scripts/validate-retired-domain-references.mjs
-      - name: Validate bootstrap rollout PR generation
+      # Globbed, not enumerated: a spec added under tools/ must not be able to
+      # sit unrun because nobody remembered to name it here. If the glob ever
+      # matches nothing, bash passes it through literally and node --test fails
+      # loudly rather than reporting a green run of zero files.
+      - name: Validate release automation tools
         if: steps.workspace_dist_cache.outputs.cache-hit != 'true'
-        run: node --test tools/sync-bootstrap-rollout.spec.mjs
+        run: node --test tools/*.spec.mjs
       - name: Validate the supabase edge functions
         if: steps.workspace_dist_cache.outputs.cache-hit != 'true'
         run: |
