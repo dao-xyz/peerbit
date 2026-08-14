@@ -324,13 +324,56 @@ const ciWorkflow = readFileSync(
 	path.join(root, ".github/workflows/ci.yml"),
 	"utf8",
 );
+// A step NAME only proves a step exists, not what it runs. @peerbit/any-store-rust
+// satisfied the name check via `pnpm --filter @peerbit/any-store-rust run test`
+// while its `test:e2e` script -- 3 browser OPFS persistence tests under e2e/ --
+// was invoked by nothing. So every EXTRA test script (anything matching test:*
+// other than test:cov, which the shard-reachability leg above covers) must be
+// invoked inside that package's own step, or be declared unrun below.
+//
+// The step body has to be isolated first: a repo-wide substring search for
+// "run test:e2e" matches the @peerbit/shared-log-rust step and would credit it
+// to any-store, which is the same unscoped-match bug this guard exists to catch.
+const nativeStepBody = (pkgName) => {
+	const marker = `- name: Test ${pkgName}\n`;
+	const start = ciWorkflow.indexOf(marker);
+	if (start < 0) return null;
+	const rest = ciWorkflow.slice(start + marker.length);
+	const next = rest.search(/^ {6}- (?:name|uses):/m);
+	return next < 0 ? rest : rest.slice(0, next);
+};
+
+// Extra test scripts that genuinely have no runner. Same honest-debt category as
+// BROWSER_E2E_UNRUN: playwright against a browser, with no browser leg wired up.
+const NATIVE_JOB_UNRUN_SCRIPTS = new Map([
+	["packages/utils/any-store/rust", ["test:e2e"]],
+]);
+
 const unproven = [];
+const uninvoked = [];
 for (const dir of NATIVE_JOB_TESTED) {
-	const name = JSON.parse(
+	const manifest = JSON.parse(
 		readFileSync(path.join(root, dir, "package.json"), "utf8"),
-	).name;
-	if (!ciWorkflow.includes(`name: Test ${name}`)) {
-		unproven.push(`${dir} (${name})`);
+	);
+	const body = nativeStepBody(manifest.name);
+	if (body === null) {
+		unproven.push(`${dir} (${manifest.name})`);
+		continue;
+	}
+	const declaredUnrun = new Set(NATIVE_JOB_UNRUN_SCRIPTS.get(dir) ?? []);
+	for (const script of Object.keys(manifest.scripts ?? {})) {
+		if (!script.startsWith("test:") || script === "test:cov") continue;
+		if (declaredUnrun.has(script)) continue;
+		if (!body.includes(`run ${script}`)) {
+			uninvoked.push(`${dir} (${manifest.name}): ${script}`);
+		}
+	}
+	for (const script of declaredUnrun) {
+		if (!manifest.scripts?.[script]) {
+			uninvoked.push(
+				`${dir}: NATIVE_JOB_UNRUN_SCRIPTS lists "${script}", which no longer exists — remove it`,
+			);
+		}
 	}
 }
 if (unproven.length > 0) {
@@ -340,6 +383,16 @@ if (unproven.length > 0) {
 	for (const u of unproven) console.error(`  ${u}`);
 	console.error(
 		"Add the Native job step, or move the package to BROWSER_E2E_UNRUN / wire it into a shard.",
+	);
+	process.exit(1);
+}
+if (uninvoked.length > 0) {
+	console.error(
+		"Native-job packages with a test:* script their own step never invokes (those suites run nowhere):",
+	);
+	for (const u of uninvoked) console.error(`  ${u}`);
+	console.error(
+		"Invoke it from that package's Native job step, or list it in NATIVE_JOB_UNRUN_SCRIPTS as declared debt.",
 	);
 	process.exit(1);
 }
