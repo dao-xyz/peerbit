@@ -420,25 +420,44 @@ jobs:
                 );
               }
 
-              // Only the fields the noise-floor reporter actually consumes are
-              // required. A half-written file loses them, which is the exact
-              // truncation this assert exists to catch.
+              // This assert answers exactly one question: is this file a whole
+              // benchmark result, or a truncated one? It must NOT also decide
+              // which metrics are measurable -- that is the reporter's job, and
+              // the reporter's rule is deliberately more subtle (a metric
+              // invalid in every run is a warning, because it cannot bias the
+              // floor; invalid in only some runs is blocking, because it can).
+              //
+              // Requiring EVERY row to be finite conflated the two and killed a
+              // healthy run: pid-convergence emits
+              // `mean_ms: null` for "memory-limited (2 peers, 25% cap)" on a
+              // perfectly good run -- present in all four historical artifacts
+              // too -- and that aborted repeat 1 of run 31830970341 after the
+              // whole build. A file is truncated when it has NO usable row, not
+              // when one task reports nothing.
               const durationField = isTasksShape ? "mean_ms" : "totalPutMs";
               const rateField = isTasksShape ? "hz" : "opsPerSecond";
+              const unusable = [];
+              let usable = 0;
               for (const row of rows) {
                 if (typeof row?.name !== "string") {
                   throw new Error(`${file} carries an entry without a name`);
                 }
-                if (!Number.isFinite(row?.[durationField])) {
-                  throw new Error(
-                    `${file} entry "${row.name}" has no finite ${durationField}`,
-                  );
-                }
-                if (!isTasksShape && !Number.isFinite(row?.[rateField])) {
-                  throw new Error(
-                    `${file} entry "${row.name}" has no finite ${rateField}`,
-                  );
-                }
+                const hasDuration = Number.isFinite(row?.[durationField]);
+                const hasRate = isTasksShape || Number.isFinite(row?.[rateField]);
+                if (hasDuration && hasRate) usable += 1;
+                else unusable.push(row.name);
+              }
+              if (usable === 0) {
+                throw new Error(
+                  `${file} has ${rows.length} entr(ies) but not one carries a finite ${durationField}; this is a truncated or failed benchmark, not a result`,
+                );
+              }
+              if (unusable.length > 0) {
+                // Surfaced, never silent: the reporter will classify these, and
+                // a task that reports nothing must not read as a stable task.
+                console.log(
+                  `::notice::${file}: ${unusable.length}/${rows.length} entr(ies) carry no finite ${durationField} and will publish no floor: ${unusable.join(", ")}`,
+                );
               }
             '
           }
