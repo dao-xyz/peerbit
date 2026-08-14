@@ -75,7 +75,7 @@
 		"@peerbit/pubsub-interface": "workspace:*",
 		"@peerbit/stream-interface": "workspace:*",
 		"@peerbit/time": "workspace:*",
-		"libp2p": "^3.1.7",
+		"libp2p": "^3.3.8",
 		"libsodium-wrappers": "0.7.15",
 		"p-queue": "^8.0.1",
 		"path-browserify": "^1.0.1",
