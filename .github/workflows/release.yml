@@ -21,6 +21,12 @@ on:
 permissions:
   contents: read
 
+# Must match ci.yml. Until 2026-08-14 both publish jobs installed wasm-pack with
+# `curl .../init.sh | sh`, which resolves LATEST, so the version CI validated
+# against was not the version that built the published wasm artifacts.
+env:
+  WASM_PACK_VERSION: 0.13.1
+
 # Releases must never run concurrently. Two master merges close together each
 # start a Release run; both check out a tree carrying the same pending version
 # bumps, both call `changeset publish`, and they race package by package. The
@@ -95,7 +101,7 @@ jobs:
       # the changesets action runs (several packages ship wasm-pack artifacts).
       - name: Install deps
         run: |
-          curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+          ./scripts/ci/install-wasm-pack.sh
           rustup target add wasm32-unknown-unknown
           pnpm install --frozen-lockfile
 
@@ -218,7 +224,7 @@ jobs:
 
       - name: Install deps
         run: |
-          curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+          ./scripts/ci/install-wasm-pack.sh
           rustup target add wasm32-unknown-unknown
           pnpm install --frozen-lockfile
 

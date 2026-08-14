@@ -197,6 +197,29 @@ assert.doesNotMatch(
 	/run: pnpm run --if-present release(?::rc)?/,
 	"release workflows must not silently skip a missing guarded script",
 );
+// Several published packages ship wasm-pack output, so the toolchain that
+// builds them is part of the supply chain. Until 2026-08-14 both publish jobs
+// installed it with `curl .../wasm-pack/installer/init.sh -sSf | sh`, which
+// (a) resolves LATEST, so the repo-wide WASM_PACK_VERSION pin governed the jobs
+// that VALIDATE wasm but not the jobs that PUBLISH it, and (b) swallows curl's
+// exit status, because GitHub's default `bash -e` does not set pipefail and the
+// pipeline reports `sh`'s status instead. install-wasm-pack.sh pins the version,
+// runs under `set -euo pipefail`, and verifies the binary after install.
+assert.doesNotMatch(
+	releaseWorkflow,
+	/wasm-pack\/installer\/init\.sh/,
+	"release jobs must not install wasm-pack from the unpinned upstream installer",
+);
+assert.match(
+	releaseWorkflow,
+	/\.\/scripts\/ci\/install-wasm-pack\.sh/,
+	"release jobs must install wasm-pack through the pinned, fail-closed script",
+);
+assert.match(
+	releaseWorkflow,
+	/^env:\n {2}WASM_PACK_VERSION: /m,
+	"the release workflow must pin WASM_PACK_VERSION explicitly rather than inherit the script default",
+);
 // Release runs must serialize. Without a concurrency group, two master merges
 // close together publish at the same time and race package by package; the
 // loser fails with E403 on an already-published version (2026-08-13, #1244 vs

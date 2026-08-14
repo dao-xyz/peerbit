@@ -191,7 +191,7 @@ jobs:
 
       - name: Install deps
         run: |
-          curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+          ./scripts/ci/install-wasm-pack.sh
           rustup target add wasm32-unknown-unknown
           pnpm install --frozen-lockfile=false
 
