@@ -14,8 +14,13 @@ import {
 	Signatures,
 	TracedDelivery,
 } from "@peerbit/stream-interface";
-import { cpSync, mkdtempSync, rmSync, writeFileSync } from "fs";
-import { tmpdir } from "os";
+import {
+	cpSync,
+	existsSync,
+	mkdtempSync,
+	rmSync,
+	writeFileSync,
+} from "fs";
 import path from "path";
 import { Uint8ArrayList } from "uint8arraylist";
 import { pathToFileURL } from "url";
@@ -34,17 +39,42 @@ const serializeUnsignedMessage = (message: DataMessage) => {
 const toByteArray = (bytes: Uint8Array | Uint8ArrayList) =>
 	bytes instanceof Uint8Array ? bytes : bytes.subarray();
 
+// Loads a SECOND, independent copy of @peerbit/crypto so the test can prove a
+// signature produced by a foreign module identity still normalizes.
+//
+// Two details are load-bearing, and getting either wrong kills the whole run
+// rather than failing this test. Until 2026-08-14 this copied `src` into
+// os.tmpdir() and imported `index.ts`:
+//
+//   1. os.tmpdir() is outside every node_modules, so the copy's ten bare
+//      specifiers (@dao-xyz/borsh, @libp2p/crypto, @noble/curves, ...) cannot
+//      resolve — Node walks up from /tmp and finds nothing.
+//   2. importing raw `.ts` puts the file through aegir's TypeScript loader with
+//      no tsconfig context.
+//
+// The failure was not a failing test: the process exited 0 mid-run, mocha
+// printed no summary, and every spec after this one silently never executed —
+// 46 of ~187 tests ran and CI stayed green.
+//
+// So: copy the COMPILED output, and stage it INSIDE the crypto package where
+// its own dependencies resolve.
 const importForeignCrypto = async () => {
-	const tempRoot = mkdtempSync(path.join(tmpdir(), "peerbit-crypto-duplicate-"));
-	const cryptoSrc = path.resolve(process.cwd(), "../../utils/crypto/src");
-	cpSync(cryptoSrc, path.join(tempRoot, "src"), { recursive: true });
-	writeFileSync(
-		path.join(tempRoot, "package.json"),
-		JSON.stringify({ type: "module" }),
-	);
+	const cryptoRoot = path.resolve(process.cwd(), "../../utils/crypto");
+	const cryptoDist = path.join(cryptoRoot, "dist/src");
+	if (!existsSync(path.join(cryptoDist, "index.js"))) {
+		throw new Error(
+			`@peerbit/crypto must be built before this test: ${cryptoDist}/index.js is missing`,
+		);
+	}
+	const tempRoot = mkdtempSync(path.join(cryptoRoot, ".foreign-crypto-"));
 	try {
+		cpSync(cryptoDist, path.join(tempRoot, "src"), { recursive: true });
+		writeFileSync(
+			path.join(tempRoot, "package.json"),
+			JSON.stringify({ type: "module" }),
+		);
 		const moduleUrl =
-			pathToFileURL(path.join(tempRoot, "src/index.ts")).href +
+			pathToFileURL(path.join(tempRoot, "src/index.js")).href +
 			`?t=${Date.now()}`;
 		const foreign = await import(moduleUrl);
 		return {
