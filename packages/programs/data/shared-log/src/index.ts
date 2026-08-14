@@ -25014,7 +25014,22 @@ export class SharedLog<
 
 				const peersSize = (await peers.getSize()) || 1;
 				if (!isCurrent()) return false;
-				const totalParticipation = await this.calculateTotalParticipation();
+				// `{ sum: true }` totals widthNormalized over the replication
+				// index in ONE query. The default path instead calls
+				// appromixateCoverage({ samples: 25 }), which Monte-Carlo
+				// estimates the same quantity -- the mean coverage of the
+				// domain IS the sum of the range widths -- using 25 sequential
+				// count() queries. So this is the exact value at 1/25th of the
+				// index traffic, and it is 25 of the 27 queries this 1 Hz tick
+				// issued per open adaptive log.
+				//
+				// The controller consequently sees a stable input instead of a
+				// sampled one; that is a behaviour change, not just a speedup,
+				// which is why it is landing against the convergence suites
+				// rather than on the strength of the query count alone.
+				const totalParticipation = await this.calculateTotalParticipation({
+					sum: true,
+				});
 				if (!isCurrent()) return false;
 
 				const newFactor = this.replicationController.step({
