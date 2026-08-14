@@ -1,5 +1,50 @@
 # Changelog
 
+## 16.0.5
+
+### Patch Changes
+
+- [#1263](https://github.com/dao-xyz/peerbit/pull/1263) [`6e13606`](https://github.com/dao-xyz/peerbit/commit/6e1360642fe2e31f5996ab3dcddb877401f4f6b1) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Refresh the libp2p stack to a single deduplicated resolution.
+
+  The lockfile held every libp2p package at the floor of its own caret range, so
+  `@libp2p/interface` sat at 3.1.1 while the current stack is on 3.2.5. Updating
+  the family in one resolution moves `libp2p` to 3.3.8, `@libp2p/webrtc` to
+  6.0.29, and `@libp2p/interface` to a single 3.2.5 copy, which removes the
+  duplicate branded `Transport` type that made an isolated webrtc bump fail.
+
+  `uint8arraylist` and `it-length-prefixed` move to their v3/v11 lines to match,
+  and the `node-datachannel` override is dropped: webrtc 6.0.29 requires a
+  prebuilt `^0.32.3` on its own, so the workspace now resolves what a consumer of
+  the published manifests already resolved.
+
+  No source or public API changes.
+
+- [#1266](https://github.com/dao-xyz/peerbit/pull/1266) [`a43b838`](https://github.com/dao-xyz/peerbit/commit/a43b8383f1f6d0d1ab8fc612dce08e4b22d6f265) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Drop a redundant full encoder copy per rateless-IBLT sync.
+
+  `decoderFromCachedEncoder` cloned the cached encoder before calling
+  `to_decoder()`, then freed the clone. `to_decoder` takes `&self` and clones the
+  encoder state internally, so this produced two copies of the same buffer where
+  one suffices. The encoder is roughly 48 bytes per entry in range, so a
+  100k-entry range copied ~4.8 MB per StartSync purely to discard it.
+
+  Behaviour is unchanged: the borrow already guarantees the cached encoder
+  survives, which is what the clone was defending.
+
+- Updated dependencies [[`6e13606`](https://github.com/dao-xyz/peerbit/commit/6e1360642fe2e31f5996ab3dcddb877401f4f6b1)]:
+  - @peerbit/blocks@4.2.11
+  - @peerbit/crypto@3.1.6
+  - @peerbit/log@6.2.18
+  - @peerbit/logger@2.0.2
+  - @peerbit/program@6.0.50
+  - @peerbit/pubsub@5.4.2
+  - @peerbit/pubsub-interface@5.2.2
+  - @peerbit/stream-interface@6.0.16
+  - @peerbit/rpc@6.1.18
+  - @peerbit/blocks-interface@2.1.6
+  - @peerbit/any-store@2.2.15
+  - @peerbit/indexer-interface@3.0.10
+  - @peerbit/indexer-sqlite3@3.0.15
+
 ## 16.0.4
 
 ### Patch Changes

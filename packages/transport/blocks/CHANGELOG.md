@@ -1,5 +1,32 @@
 # Changelog
 
+## 4.2.11
+
+### Patch Changes
+
+- [#1263](https://github.com/dao-xyz/peerbit/pull/1263) [`6e13606`](https://github.com/dao-xyz/peerbit/commit/6e1360642fe2e31f5996ab3dcddb877401f4f6b1) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Refresh the libp2p stack to a single deduplicated resolution.
+
+  The lockfile held every libp2p package at the floor of its own caret range, so
+  `@libp2p/interface` sat at 3.1.1 while the current stack is on 3.2.5. Updating
+  the family in one resolution moves `libp2p` to 3.3.8, `@libp2p/webrtc` to
+  6.0.29, and `@libp2p/interface` to a single 3.2.5 copy, which removes the
+  duplicate branded `Transport` type that made an isolated webrtc bump fail.
+
+  `uint8arraylist` and `it-length-prefixed` move to their v3/v11 lines to match,
+  and the `node-datachannel` override is dropped: webrtc 6.0.29 requires a
+  prebuilt `^0.32.3` on its own, so the workspace now resolves what a consumer of
+  the published manifests already resolved.
+
+  No source or public API changes.
+
+- Updated dependencies [[`6e13606`](https://github.com/dao-xyz/peerbit/commit/6e1360642fe2e31f5996ab3dcddb877401f4f6b1)]:
+  - @peerbit/crypto@3.1.6
+  - @peerbit/logger@2.0.2
+  - @peerbit/stream-interface@6.0.16
+  - @peerbit/blocks-interface@2.1.6
+  - @peerbit/stream@5.2.1
+  - @peerbit/any-store@2.2.15
+
 ## 4.2.10
 
 ### Patch Changes

@@ -1,5 +1,31 @@
 # Changelog
 
+## 6.0.91
+
+### Patch Changes
+
+- [#1263](https://github.com/dao-xyz/peerbit/pull/1263) [`6e13606`](https://github.com/dao-xyz/peerbit/commit/6e1360642fe2e31f5996ab3dcddb877401f4f6b1) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Refresh the libp2p stack to a single deduplicated resolution.
+
+  The lockfile held every libp2p package at the floor of its own caret range, so
+  `@libp2p/interface` sat at 3.1.1 while the current stack is on 3.2.5. Updating
+  the family in one resolution moves `libp2p` to 3.3.8, `@libp2p/webrtc` to
+  6.0.29, and `@libp2p/interface` to a single 3.2.5 copy, which removes the
+  duplicate branded `Transport` type that made an isolated webrtc bump fail.
+
+  `uint8arraylist` and `it-length-prefixed` move to their v3/v11 lines to match,
+  and the `node-datachannel` override is dropped: webrtc 6.0.29 requires a
+  prebuilt `^0.32.3` on its own, so the workspace now resolves what a consumer of
+  the published manifests already resolved.
+
+  No source or public API changes.
+
+- Updated dependencies [[`6e13606`](https://github.com/dao-xyz/peerbit/commit/6e1360642fe2e31f5996ab3dcddb877401f4f6b1), [`a43b838`](https://github.com/dao-xyz/peerbit/commit/a43b8383f1f6d0d1ab8fc612dce08e4b22d6f265)]:
+  - @peerbit/crypto@3.1.6
+  - @peerbit/document@15.0.5
+  - @peerbit/log@6.2.18
+  - @peerbit/program@6.0.50
+  - @peerbit/shared-log@16.0.5
+
 ## 6.0.90
 
 ### Patch Changes
