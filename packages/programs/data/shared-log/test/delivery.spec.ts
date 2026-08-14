@@ -18,6 +18,48 @@ import {
 import { NoPeersError } from "../src/index.js";
 import { EventStore } from "./utils/stores/index.js";
 
+// The ack gates below resolve only if the LOCAL publish interceptor recorded the
+// foreground message id before the REMOTE interceptor sees its ACK. When the
+// native (rust-core) data plane plans and sends the delivery without passing
+// through the patched JS `publishMessage`, nothing is recorded, the gate never
+// matches, and a bare `await ackAttempted.promise` hangs until mocha's 60s
+// timeout with no clue why -- which is exactly how this suite failed
+// intermittently in the Native CI job (~13% of runs) while reporting nothing
+// but "Timeout of 60000ms exceeded".
+//
+// Bounding the wait does not remove the race; it turns a silent hang into a
+// failure that names the state needed to diagnose it. `gate` is released on the
+// failure path so the in-flight append cannot wedge teardown.
+const awaitAckGate = async (
+	ackAttempted: { promise: Promise<void> },
+	gate: { resolve: () => void },
+	describeState: () => string,
+	timeoutMs = 20e3,
+) => {
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	try {
+		await Promise.race([
+			ackAttempted.promise,
+			new Promise<never>((_, reject) => {
+				timer = setTimeout(
+					() =>
+						reject(
+							new Error(
+								`ack gate never fired within ${timeoutMs}ms — ${describeState()}`,
+							),
+						),
+					timeoutMs,
+				);
+			}),
+		]);
+	} catch (error) {
+		gate.resolve();
+		throw error;
+	} finally {
+		if (timer) clearTimeout(timer);
+	}
+};
+
 type DeliveryPeerServices = TestSession["peers"][number]["services"] & {
 	fanout: FanoutTree;
 };
@@ -260,7 +302,13 @@ describe("append delivery options", () => {
 				return result;
 			});
 
-		await ackAttempted.promise;
+		await awaitAckGate(
+			ackAttempted,
+			gate,
+			() =>
+				`foregroundMessageId=${foregroundMessageId ?? "(never published via the JS path)"}, ` +
+				`recorded=${JSON.stringify([...deliveryPriorityByMessageId])}`,
+		);
 		expect(resolved).to.equal(false);
 		expect(foregroundAckedMessageId).to.equal(foregroundMessageId);
 		expect(deliveryPriorityByMessageId.get(foregroundAckedMessageId!)).to.equal(
@@ -440,7 +488,11 @@ describe("append delivery options", () => {
 				return result;
 			});
 
-		await ackAttempted.promise;
+		await awaitAckGate(
+			ackAttempted,
+			gate,
+			() => "no acknowledged delivery reached the remote publish interceptor",
+		);
 		expect(resolved).to.equal(false);
 
 		gate.resolve();
