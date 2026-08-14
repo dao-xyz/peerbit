@@ -93,11 +93,28 @@
 //   * a task present in some runs only    -> blocking, and its n is printed
 //                                            next to its floor either way
 //   * null / NaN / Infinity / <= 0        -> the metric is marked invalid, not
-//                                            averaged over the valid subset. A
+//     in SOME runs                           averaged over the valid subset. A
 //                                            relative delta against a zero
 //                                            baseline is undefined; emitting
 //                                            Infinity or a 0% "floor" would be
 //                                            a lie in the dangerous direction.
+//                                            BLOCKING, because the runs that
+//                                            produced a number are the runs
+//                                            where nothing went wrong.
+//   * the same, but in EVERY run          -> warning, not blocking. It never
+//                                            reaches the summary, so it cannot
+//                                            bias the floor. Some of these are
+//                                            constants rather than failures:
+//                                            chunk-transfer's completion-LAG
+//                                            tasks are structurally 0 when the
+//                                            ordering runs the other way, and
+//                                            blocking on them made a clean
+//                                            transport run NOT TRUSTWORTHY
+//                                            (run 31827888077). Still listed
+//                                            loudly, and the note says the task
+//                                            tells you nothing about that
+//                                            metric -- its absence from the
+//                                            table is not evidence of stability.
 //   * a floor of exactly 0                -> labelled `no variation resolved`,
 //                                            never `deterministic`. Identical
 //                                            values across runs mean no
@@ -729,30 +746,57 @@ export const analyze = ({ resultsDir, minRuns = DEFAULT_MIN_RUNS }) => {
 				}
 
 				if (invalid.length > 0) {
+					// Blocking is reserved for what can BIAS the floor downward.
+					//
+					// A metric invalid in only SOME runs is exactly that: the runs that
+					// produced a number are the runs where nothing went wrong, so a
+					// floor built from the survivors is biased toward stability.
+					//
+					// A metric invalid in EVERY run cannot bias anything -- it never
+					// reaches the summary in the first place. Some of these are real
+					// constants rather than failures: chunk-transfer's
+					// "silent: sender-after-receiver" and "ack: receiver-after-sender"
+					// are completion *lags* that are structurally 0 whenever the
+					// ordering runs the other way, and a relative delta against 0 is
+					// undefined no matter how healthy the benchmark is. Blocking on
+					// those made a clean transport run NOT TRUSTWORTHY (run
+					// 31827888077) and would have made the number unusable for the
+					// wrong reason.
+					//
+					// So it stays loud -- it is listed, and the task publishes no floor
+					// -- but it does not condemn the whole report.
+					const neverMeasurable = values.length === 0;
 					for (const entry of invalid) {
 						// Naming the underlying field matters for the `rows` shape: a
 						// document-put row that lost `totalPutMs` must not read as "the
 						// mean_ms was null", which points at the wrong thing.
 						const field = sourceFields.get(entry.run) ?? metric.key;
 						add(
-							"blocking",
-							"invalid-metric-value",
+							neverMeasurable ? "warning" : "blocking",
+							neverMeasurable
+								? "metric-never-measurable"
+								: "invalid-metric-value",
 							`${suite.file} task "${name}" has ${metric.key} = ${entry.reason} in ${entry.run}${
 								field === metric.key
 									? ""
 									: ` (read from the row field "${field}")`
-							}; a relative delta against it is undefined, so no floor is computed for this metric`,
+							}; a relative delta against it is undefined, so no floor is computed for this metric${
+								neverMeasurable
+									? `. It is ${entry.reason} in ALL ${invalid.length} run(s), so it cannot bias the floor -- but this task therefore tells you NOTHING about a regression in ${metric.key}, so do not read its absence from the table as stability`
+									: `. It is valid in ${values.length} of ${seenIn.length} run(s), and a floor built from only the runs that worked is biased toward stability`
+							}`,
 							{
 								suite: suite.file,
 								run: entry.run,
 								task: name,
 								metric: metric.key,
 								sourceField: field,
+								neverMeasurable,
 							},
 						);
 					}
 					metrics[metric.key] = {
-						status: "invalid",
+						status: neverMeasurable ? "never-measurable" : "invalid",
 						n: values.length,
 						invalidSamples: invalid,
 						mean: null,
