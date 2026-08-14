@@ -1326,3 +1326,70 @@ test("byte-identical run directories are called out instead of yielding a silent
 		);
 	});
 });
+
+// Real data, run 31827888077: chunk-transfer's completion-lag tasks are
+// structurally 0 whenever the ordering runs the other way, in every run. A
+// relative delta against 0 is undefined however healthy the benchmark is, so
+// blocking on them condemned an otherwise clean transport run. Blocking is for
+// what can BIAS the floor; a metric that never yields a value in any run never
+// reaches the summary, so it cannot.
+test("a metric invalid in EVERY run warns; invalid in only SOME runs still blocks", () => {
+	withFixture((root) => {
+		const rows = (lagAlwaysZero, sometimes) => [
+			{ name: "silent: sender-complete", mean_ms: "19.1", hz: "52.3" },
+			// The real shape: mean_ms 0 and hz null, in every run.
+			{
+				name: "silent: sender-after-receiver",
+				mean_ms: lagAlwaysZero,
+				hz: "null",
+			},
+			{ name: "flaky-task", mean_ms: sometimes, hz: sometimes },
+		];
+		writeSuite(root, "run-1", "chunk-transfer.json", rawSuite(rows("0", "10")));
+		writeSuite(root, "run-2", "chunk-transfer.json", rawSuite(rows("0", "11")));
+		writeSuite(root, "run-3", "chunk-transfer.json", rawSuite(rows("0", "12")));
+
+		const withFlakeOk = analyze({ resultsDir: root, minRuns: 3 });
+		// The always-zero lag alone must NOT condemn the report.
+		assert.equal(
+			withFlakeOk.trustworthy,
+			true,
+			"an always-invalid metric must not be blocking",
+		);
+		const lag = findTask(
+			withFlakeOk,
+			"chunk-transfer.json",
+			"silent: sender-after-receiver",
+		);
+		assert.equal(lag.metrics.mean_ms.status, "never-measurable");
+		assert.equal(lag.metrics.mean_ms.max_abs_delta_pct, null);
+		assert.ok(
+			codes(withFlakeOk, "warning").includes("metric-never-measurable"),
+			"it must still be listed loudly as a warning",
+		);
+		assert.ok(
+			!codes(withFlakeOk, "blocking").includes("metric-never-measurable"),
+		);
+		// And it must say the task tells you nothing, not merely that it is absent.
+		const note = withFlakeOk.problems.find(
+			(problem) => problem.code === "metric-never-measurable",
+		);
+		assert.match(note.message, /tells you NOTHING/);
+		assert.equal(note.neverMeasurable, true);
+
+		// Now make the OTHER task invalid in one run only: that biases the floor
+		// toward the runs that worked, so it must block.
+		writeSuite(root, "run-3", "chunk-transfer.json", rawSuite(rows("0", "0")));
+		const withFlakeBroken = analyze({ resultsDir: root, minRuns: 3 });
+		assert.equal(withFlakeBroken.trustworthy, false);
+		const blocking = codes(withFlakeBroken, "blocking");
+		assert.ok(blocking.includes("invalid-metric-value"));
+		assert.equal(
+			findTask(withFlakeBroken, "chunk-transfer.json", "flaky-task").metrics
+				.mean_ms.status,
+			"invalid",
+		);
+		// The always-zero lag is still only a warning even in this run.
+		assert.ok(!blocking.includes("metric-never-measurable"));
+	});
+});
