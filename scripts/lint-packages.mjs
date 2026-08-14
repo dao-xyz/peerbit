@@ -24,7 +24,16 @@ const listedFiles = spawnSync(
 		"--others",
 		"--exclude-standard",
 		"--",
+		// Until 2026-08-14 this enumerated only `packages`, so 147 source files
+		// were never linted -- every .ts/.tsx of the shipped website under
+		// apps/, the docs examples, tools/, and all of scripts/ including the
+		// CI guard scripts themselves. All four roots were already clean when
+		// widened, so this cost no cleanup; it only stops the next regression.
 		"packages",
+		"apps",
+		"docs",
+		"scripts",
+		"tools",
 	],
 	{
 		cwd: repositoryRoot,
@@ -42,6 +51,20 @@ assert.equal(
 	`git could not enumerate package sources:\n${listedFiles.stderr}`,
 );
 
+// The changeset guard runs under `pull_request_target` with elevated
+// permissions, so check-changeset-required.mjs and its test are a frozen
+// root-of-trust boundary: the guard itself fails any PR whose copy is not
+// byte-identical to the trusted base ("frozen executable root-of-trust
+// boundary"), which is what stops a PR from editing the check that decides
+// whether that PR is safe. A lint autofix is still an edit, so these two files
+// cannot be linted through a PR at all -- widening the scope in 2026-08 hit
+// exactly that wall with three cosmetic `no-regex-spaces` findings. They are
+// excluded rather than worked around; their real guard is the 2,604-line
+// self-test, and their content can only change by a direct push to master.
+const frozenRootOfTrust = new Set([
+	["scripts", "ci", "check-changeset-required.mjs"].join(sep),
+	["scripts", "ci", "check-changeset-required.test.mjs"].join(sep),
+]);
 const publicSegment = `${sep}public${sep}`;
 const sourceFiles = listedFiles.stdout
 	.split("\0")
@@ -50,7 +73,8 @@ const sourceFiles = listedFiles.stdout
 	.filter(
 		(filePath) =>
 			sourceExtensions.has(extname(filePath)) &&
-			!`${sep}${filePath}`.includes(publicSegment),
+			!`${sep}${filePath}`.includes(publicSegment) &&
+			!frozenRootOfTrust.has(filePath),
 	)
 	.sort();
 assert(sourceFiles.length > 0, "package source discovery returned no files");
@@ -78,6 +102,19 @@ const warningCount = results.reduce(
 	(count, result) => count + result.warningCount,
 	0,
 );
-if (errorCount > 0 || warningCount > 9_999) {
+// Warning ratchet. This was 9_999 against an actual count of 15, which made
+// every `warn`-level rule in eslint.config.js structurally non-blocking --
+// unused vars and the rest could be added without limit and CI stayed green.
+// Pin it at the real count so the budget is a ratchet rather than decoration.
+// This number may go DOWN when warnings are fixed; raising it means deciding to
+// accept a new warning, which should be a visible edit in a PR.
+const MAX_WARNINGS = 15;
+if (warningCount > MAX_WARNINGS) {
+	process.stdout.write(
+		`\nlint: ${warningCount} warnings exceeds the ratchet of ${MAX_WARNINGS}.\n` +
+			"Fix the new warning, or lower/raise MAX_WARNINGS in scripts/lint-packages.mjs deliberately.\n",
+	);
+}
+if (errorCount > 0 || warningCount > MAX_WARNINGS) {
 	process.exitCode = 1;
 }
