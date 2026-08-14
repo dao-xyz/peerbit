@@ -229,14 +229,30 @@ jobs:
             );
           '
 
+      # No `version:` here, deliberately, and this is the one place where copying
+      # benchmarks.yml verbatim is WRONG rather than faithful.
+      #
+      # pnpm/action-setup refuses to start when a version is given both as an
+      # input and as package.json's `packageManager`, and it looks for that
+      # package.json at the workspace root. benchmarks.yml checks the repo out
+      # into `path: bench-base`, so its root has no package.json and its
+      # `version: 10.24.0` is the only source the action can see. This job checks
+      # out at the root, so package.json IS visible and passing the input too is
+      # a hard error:
+      #
+      #   Error: Multiple versions of pnpm specified  (run 31825116300)
+      #
+      # Taking the version from `packageManager` is also simply better: one
+      # source of truth, and it carries the integrity hash. ci.yml does the same.
       - name: Setup pnpm
         uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
         with:
-          version: 10.24.0
           run_install: false
 
-      # Copied verbatim from benchmarks.yml, including the version pin and the
-      # target pre-install. No caching anywhere in this job: benchmarks.yml
+      # Copied from benchmarks.yml, including the target pre-install (but see the
+      # pnpm step above: its `version:` input is the one line that must NOT be
+      # copied, because this job checks out at the workspace root and that one
+      # differs by layout). No caching anywhere in this job: benchmarks.yml
       # caches nothing either, and a restore-keys-style cache could serve one
       # ref's compiled output to another ref's measurement, which would corrupt
       # the very quantity this job exists to measure.
