@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.2.15
+
+### Patch Changes
+
+- Updated dependencies [[`6e13606`](https://github.com/dao-xyz/peerbit/commit/6e1360642fe2e31f5996ab3dcddb877401f4f6b1)]:
+  - @peerbit/crypto@3.1.6
+  - @peerbit/logger@2.0.2
+  - @peerbit/any-store-opfs@1.1.13
+
 ## 2.2.14
 
 ### Patch Changes

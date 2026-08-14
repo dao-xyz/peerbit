@@ -1,5 +1,13 @@
 # Changelog
 
+## 3.0.10
+
+### Patch Changes
+
+- Updated dependencies [[`6e13606`](https://github.com/dao-xyz/peerbit/commit/6e1360642fe2e31f5996ab3dcddb877401f4f6b1)]:
+  - @peerbit/crypto@3.1.6
+  - @peerbit/indexer-interface@3.0.10
+
 ## 3.0.9
 
 ### Patch Changes

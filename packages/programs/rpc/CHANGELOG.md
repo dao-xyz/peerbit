@@ -1,5 +1,17 @@
 # Changelog
 
+## 6.1.18
+
+### Patch Changes
+
+- Updated dependencies [[`6e13606`](https://github.com/dao-xyz/peerbit/commit/6e1360642fe2e31f5996ab3dcddb877401f4f6b1)]:
+  - @peerbit/crypto@3.1.6
+  - @peerbit/logger@2.0.2
+  - @peerbit/program@6.0.50
+  - @peerbit/pubsub@5.4.2
+  - @peerbit/pubsub-interface@5.2.2
+  - @peerbit/stream-interface@6.0.16
+
 ## 6.1.17
 
 ### Patch Changes
