@@ -138,8 +138,20 @@ jobs:
         run: |
           node tools/sync-bootstrap-rollout.mjs peerbit-bootstrap "${{ steps.server.outputs.version }}"
 
+      # `npm ci` below downloads tarballs the Release run published minutes ago.
+      # Run 31805881609 raced that and died on a 404 for peerbit-5.3.24.tgz, a
+      # version that served 200 shortly after. Kept as its own step so a
+      # propagation stall is visibly distinct from a real rollout failure.
+      - name: Wait for released tarballs to be fetchable
+        if: ${{ steps.server.outputs.changed == 'true' && steps.auth.outputs.enabled == 'true' }}
+        timeout-minutes: 12
+        working-directory: peerbit-bootstrap
+        run: |
+          node "$GITHUB_WORKSPACE/tools/wait-for-registry-tarballs.mjs" . "${{ steps.server.outputs.version }}"
+
       - name: Validate generated rollout
         if: ${{ steps.server.outputs.changed == 'true' && steps.auth.outputs.enabled == 'true' }}
+        timeout-minutes: 20
         working-directory: peerbit-bootstrap
         run: |
           npm ci --ignore-scripts --no-audit --no-fund
