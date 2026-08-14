@@ -39,6 +39,39 @@ if (uninvokedRootTests.length > 0) {
 	process.exit(1);
 }
 
+// Supabase edge functions are Deno, so no tsconfig and no shard reaches them;
+// their only typecheck is an explicit `deno check` line in ci.yml. Four of the
+// five entrypoints were named nowhere until 2026-08-14 and were compiled by
+// nothing on the way to deployment. Each entrypoint must appear in a deno check
+// invocation by name -- transitive coverage of _shared/* comes free from that.
+const edgeFunctionsDir = path.join(
+	root,
+	"apps/peerbit-org/supabase/functions",
+);
+if (existsSync(edgeFunctionsDir)) {
+	const ciWorkflowText = readFileSync(
+		path.join(root, ".github/workflows/ci.yml"),
+		"utf8",
+	);
+	const uncheckedFunctions = [];
+	for (const entry of readdirSync(edgeFunctionsDir, { withFileTypes: true })) {
+		if (!entry.isDirectory() || entry.name.startsWith("_")) continue;
+		const relative = `apps/peerbit-org/supabase/functions/${entry.name}/index.ts`;
+		if (!existsSync(path.join(root, relative))) continue;
+		if (!ciWorkflowText.includes(relative)) uncheckedFunctions.push(relative);
+	}
+	if (uncheckedFunctions.length > 0) {
+		console.error(
+			"Supabase edge function entrypoints that no `deno check` in ci.yml names (nothing typechecks them before deploy):",
+		);
+		for (const f of uncheckedFunctions) console.error(`  ${f}`);
+		console.error(
+			"Add the entrypoint to the `Validate the supabase edge functions` step in .github/workflows/ci.yml.",
+		);
+		process.exit(1);
+	}
+}
+
 const greps = [];
 for (const [name, cmd] of Object.entries(pkg.scripts)) {
 	if (!name.startsWith("test:ci:part-")) continue;

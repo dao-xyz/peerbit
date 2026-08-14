@@ -144,13 +144,26 @@ jobs:
       - name: Validate bootstrap rollout PR generation
         if: steps.workspace_dist_cache.outputs.cache-hit != 'true'
         run: node --test tools/sync-bootstrap-rollout.spec.mjs
-      - name: Validate managed DNS lease edge function
+      - name: Validate the supabase edge functions
         if: steps.workspace_dist_cache.outputs.cache-hit != 'true'
         run: |
           pnpm dlx deno@2.9.2 check \
             --frozen \
             --config apps/peerbit-org/supabase/functions/dns-lease/deno.json \
             apps/peerbit-org/supabase/functions/dns-lease/index.ts
+          # The updates-* entrypoints were typechecked by nothing until
+          # 2026-08-14. `deno check` is transitive, so the dns-lease line above
+          # covers _shared/{cloudflare-dns,crypto,dns-lease,dns-lease-renewal}
+          # but reaches neither these four nor _shared/{cors,resend}.ts, which
+          # only they import. They have no deno.json of their own -- they import
+          # supabase-js by URL rather than the pinned npm: specifier dns-lease
+          # uses -- so they are checked as they are written, which does mean this
+          # line fetches type declarations from esm.sh.
+          pnpm dlx deno@2.9.2 check \
+            apps/peerbit-org/supabase/functions/updates-confirm/index.ts \
+            apps/peerbit-org/supabase/functions/updates-subscribe/index.ts \
+            apps/peerbit-org/supabase/functions/updates-sync/index.ts \
+            apps/peerbit-org/supabase/functions/updates-unsubscribe/index.ts
           node --test \
             apps/peerbit-org/supabase/functions/_shared/dns-lease.test.ts \
             apps/peerbit-org/supabase/functions/_shared/cloudflare-dns.test.ts \
