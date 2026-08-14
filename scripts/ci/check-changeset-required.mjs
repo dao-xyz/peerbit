@@ -1710,7 +1710,7 @@ export const validateChangesetGuardWorkflow = (
 		);
 	}
 	const jobsSource = source.slice(source.indexOf("\njobs:\n") + 7);
-	const jobNames = [...jobsSource.matchAll(/^ {2}([a-z_][a-z0-9_-]*):$/gm)].map(
+	const jobNames = [...jobsSource.matchAll(/^  ([a-z_][a-z0-9_-]*):$/gm)].map(
 		(match) => match[1],
 	);
 	if (!isDeepStrictEqual(jobNames, ["changeset_guard"])) {
@@ -1734,11 +1734,11 @@ export const validateChangesetGuardWorkflow = (
 			);
 		}
 	}
-	const steps = [...source.matchAll(/^ {6}- name: /gm)];
+	const steps = [...source.matchAll(/^      - name: /gm)];
 	if (steps.length !== 3) {
 		fail(`${path} must contain exactly three named steps`);
 	}
-	const uses = [...source.matchAll(/^ {8}uses: ([^\n]+)$/gm)].map(
+	const uses = [...source.matchAll(/^        uses: ([^\n]+)$/gm)].map(
 		(match) => match[1],
 	);
 	if (

@@ -51,6 +51,20 @@ assert.equal(
 	`git could not enumerate package sources:\n${listedFiles.stderr}`,
 );
 
+// The changeset guard runs under `pull_request_target` with elevated
+// permissions, so check-changeset-required.mjs and its test are a frozen
+// root-of-trust boundary: the guard itself fails any PR whose copy is not
+// byte-identical to the trusted base ("frozen executable root-of-trust
+// boundary"), which is what stops a PR from editing the check that decides
+// whether that PR is safe. A lint autofix is still an edit, so these two files
+// cannot be linted through a PR at all -- widening the scope in 2026-08 hit
+// exactly that wall with three cosmetic `no-regex-spaces` findings. They are
+// excluded rather than worked around; their real guard is the 2,604-line
+// self-test, and their content can only change by a direct push to master.
+const frozenRootOfTrust = new Set([
+	["scripts", "ci", "check-changeset-required.mjs"].join(sep),
+	["scripts", "ci", "check-changeset-required.test.mjs"].join(sep),
+]);
 const publicSegment = `${sep}public${sep}`;
 const sourceFiles = listedFiles.stdout
 	.split("\0")
@@ -59,7 +73,8 @@ const sourceFiles = listedFiles.stdout
 	.filter(
 		(filePath) =>
 			sourceExtensions.has(extname(filePath)) &&
-			!`${sep}${filePath}`.includes(publicSegment),
+			!`${sep}${filePath}`.includes(publicSegment) &&
+			!frozenRootOfTrust.has(filePath),
 	)
 	.sort();
 assert(sourceFiles.length > 0, "package source discovery returned no files");
