@@ -292,7 +292,10 @@ describe("events", () => {
 
 		it("throws on no topics", async () => {
 			const test = new ProgramWithoutTopics();
-			expect(test.getReady()).rejectedWith(
+			// `rejectedWith` returns a promise; without awaiting it the assertion
+			// resolved after the test had already passed, so this test asserted
+			// nothing at all (it was its only assertion).
+			await expect(test.getReady()).rejectedWith(
 				"Program has no topics, cannot get ready",
 			);
 		});
@@ -302,7 +305,9 @@ describe("events", () => {
 			peer = await creatMockPeer();
 			await peer.open(test, { args: { dontOpenNested: true } });
 			expect(() => test.nested.getTopics()).to.throw(ClosedError);
-			expect(test.getReady()).rejectedWith(
+			// Same missing await as above: the ClosedError half of this test's
+			// claim was real, the getReady half was not being checked.
+			await expect(test.getReady()).rejectedWith(
 				"Program has no topics, cannot get ready", // will throw this error because now no topics will exist
 			);
 		});
