@@ -33,6 +33,7 @@ overrides:
   ws@7: 7.5.13
   ws@8: 8.21.1
   interface-datastore: 10.0.1
+  uint8arraylist: 3.0.2
 
 importers:
 
@@ -2202,7 +2203,7 @@ importers:
         specifier: workspace:*
         version: link:../stream-interface
       uint8arraylist:
-        specifier: ^3.0.2
+        specifier: 3.0.2
         version: 3.0.2
 
   packages/transport/pubsub:
@@ -2268,7 +2269,7 @@ importers:
         specifier: ^4.0.0
         version: 4.0.1
       uint8arraylist:
-        specifier: ^3.0.2
+        specifier: 3.0.2
         version: 3.0.2
       uint8arrays:
         specifier: ^5.1.0
@@ -2293,7 +2294,7 @@ importers:
         specifier: workspace:*
         version: link:../stream-interface
       uint8arraylist:
-        specifier: ^3.0.2
+        specifier: 3.0.2
         version: 3.0.2
 
   packages/transport/stream:
@@ -2308,22 +2309,22 @@ importers:
         specifier: ^6.0.0
         version: 6.0.1
       '@libp2p/interface':
-        specifier: ^3.2.5
+        specifier: ^3.1.1
         version: 3.2.5
       '@libp2p/interface-internal':
-        specifier: ^3.1.11
+        specifier: ^3.0.14
         version: 3.1.11
       '@libp2p/tcp':
-        specifier: ^11.0.26
+        specifier: ^11.0.14
         version: 11.0.26
       '@libp2p/websockets':
-        specifier: ^10.1.19
+        specifier: ^10.1.7
         version: 10.1.19
       '@multiformats/multiaddr':
-        specifier: ^13.0.3
+        specifier: ^13.0.1
         version: 13.0.3
       '@multiformats/multiaddr-matcher':
-        specifier: ^3.0.2
+        specifier: ^3.0.1
         version: 3.0.2
       '@peerbit/cache':
         specifier: workspace:*
@@ -2353,8 +2354,8 @@ importers:
         specifier: ^3.0.9
         version: 3.0.11
       it-length-prefixed:
-        specifier: ^11.0.1
-        version: 11.0.1
+        specifier: ^10.0.1
+        version: 10.0.2
       it-pipe:
         specifier: ^3.0.1
         version: 3.0.1
@@ -2362,7 +2363,7 @@ importers:
         specifier: ^3.1.4
         version: 3.2.4
       libp2p:
-        specifier: ^3.3.8
+        specifier: ^3.1.7
         version: 3.3.8
       p-defer:
         specifier: ^4.0.0
@@ -2371,7 +2372,7 @@ importers:
         specifier: ^8.0.1
         version: 8.1.1
       uint8arraylist:
-        specifier: ^3.0.2
+        specifier: 3.0.2
         version: 3.0.2
       uint8arrays:
         specifier: ^5.1.0
@@ -2381,7 +2382,7 @@ importers:
         version: 5.0.0
     devDependencies:
       '@libp2p/crypto':
-        specifier: ^5.1.22
+        specifier: ^5.1.14
         version: 5.1.22
       '@peerbit/libp2p-test-utils':
         specifier: workspace:*
@@ -2408,7 +2409,7 @@ importers:
         specifier: workspace:*
         version: link:../../utils/crypto
       uint8arraylist:
-        specifier: ^3.0.2
+        specifier: 3.0.2
         version: 3.0.2
 
   packages/transport/stream/e2e/browser:
@@ -2418,22 +2419,22 @@ importers:
         version: link:../..
     devDependencies:
       '@libp2p/circuit-relay-v2':
-        specifier: ^4.2.11
+        specifier: ^4.1.7
         version: 4.2.11
       '@libp2p/identify':
-        specifier: ^4.1.12
+        specifier: ^4.0.14
         version: 4.1.12
 
   packages/transport/stream/e2e/browser/browser-node:
     dependencies:
       '@libp2p/circuit-relay-v2':
-        specifier: ^4.2.11
+        specifier: ^4.1.7
         version: 4.2.11
       '@libp2p/identify':
-        specifier: ^4.1.12
+        specifier: ^4.0.14
         version: 4.1.12
       '@libp2p/webrtc':
-        specifier: ^6.0.29
+        specifier: ^6.0.15
         version: 6.0.29(react-native@0.82.1(@babel/core@7.29.7)(@types/react@19.2.17)(react@19.2.8))
       '@peerbit/network-rust':
         specifier: workspace:*
@@ -2442,7 +2443,7 @@ importers:
         specifier: workspace:*
         version: link:../../..
       libp2p:
-        specifier: ^3.3.8
+        specifier: ^3.1.7
         version: 3.3.8
       react:
         specifier: ^19.2.0
@@ -8314,6 +8315,9 @@ packages:
   it-length-prefixed-stream@3.0.1:
     resolution: {integrity: sha512-XffBM6F8exghmr9jLQa2TdnwYm/Y5a1zC/v9NFFIiGrDb4lgJfo3YBlXHwjtCqbOJBQ4idO5agY8uUM9VUEb8Q==}
 
+  it-length-prefixed@10.0.2:
+    resolution: {integrity: sha512-RrNBs4d7baK8AKGHleC55l/JtvzxDw6DPXs3CvFgQwdwFzLBFDvlpKgDDNDFwXJjPSy1nEX1A44nL110+EKc3g==}
+
   it-length-prefixed@11.0.1:
     resolution: {integrity: sha512-0Cy4RHFiL2CH060Lkigq0N37VaPg7oSylG6YjXErq+ccJFYcNEWNzxNjbqceio/sY1C+q84vZXOCE6/C0flYfQ==}
 
@@ -8344,6 +8348,10 @@ packages:
 
   it-queueless-pushable@2.0.5:
     resolution: {integrity: sha512-BaKqGLL1AQMR1AEaxiM09vzJQVXHHhfhh9UV0qPqORw/8Rm8igDQqT1qHregfHIb1NIW9jxQ/aXBibHJyuivuQ==}
+
+  it-reader@6.0.5:
+    resolution: {integrity: sha512-xdSVkCsVyWmKaE7ZIlqb1QbzitY7Zty7//F2YeZ/9Py5i3RzQHVoPqlHELH+1EouumUdPyfuKoANJ7Q5w4IEBg==}
+    engines: {node: '>=16.0.0', npm: '>=7.0.0'}
 
   it-reader@7.0.0:
     resolution: {integrity: sha512-bTWQPHH1if8N1K9XeidDjhTDm51ALbOksMa9uCZVVsQkoIPXP0XVKM88/Ynqr7HS18La/P1Kvu7C73j4rRoKWQ==}
@@ -11321,9 +11329,6 @@ packages:
   uint8-varint@3.0.0:
     resolution: {integrity: sha512-S4DdpXBaLwKcFo7f0bWzWfHjbZ/i3QhM842qn+ZvHjxqFCfUcEB9SQNcmI69S+zMlcmIcKxsk9Iyw77S2Kxv6Q==}
 
-  uint8arraylist@2.4.8:
-    resolution: {integrity: sha512-vc1PlGOzglLF0eae1M8mLRTBivsvrGsdmJ5RbK3e+QRvRLOZfZhQROTwH/OfyF3+ZVUg9/8hE8bmKP2CvP9quQ==}
-
   uint8arraylist@3.0.2:
     resolution: {integrity: sha512-LDVoq9BQaGJzGDUovEnoX6rpKCvnY/Jbtws4ikwnBzjRbq5qBAFpBZevUEbSmMM87aO0Sp+wOZy2ZXf5yODmXQ==}
 
@@ -12398,7 +12403,7 @@ snapshots:
       '@noble/curves': 2.0.1
       '@noble/hashes': 2.0.1
       protons-runtime: 5.6.0
-      uint8arraylist: 2.4.8
+      uint8arraylist: 3.0.2
       uint8arrays: 5.1.1
       wherearewe: 2.0.1
 
@@ -12407,7 +12412,7 @@ snapshots:
       '@libp2p/interface': 3.2.5
       '@libp2p/utils': 7.3.2
       race-signal: 2.0.0
-      uint8arraylist: 2.4.8
+      uint8arraylist: 3.0.2
 
   '@chainsafe/netmask@2.0.0':
     dependencies:
@@ -18439,6 +18444,14 @@ snapshots:
       uint8-varint: 3.0.0
       uint8arraylist: 3.0.2
 
+  it-length-prefixed@10.0.2:
+    dependencies:
+      it-reader: 6.0.5
+      it-stream-types: 2.0.2
+      uint8-varint: 2.0.4
+      uint8arraylist: 3.0.2
+      uint8arrays: 5.1.1
+
   it-length-prefixed@11.0.1:
     dependencies:
       it-reader: 7.0.0
@@ -18491,6 +18504,11 @@ snapshots:
       abort-error: 1.0.2
       p-defer: 4.0.1
       race-signal: 2.0.0
+
+  it-reader@6.0.5:
+    dependencies:
+      it-stream-types: 2.0.2
+      uint8arraylist: 3.0.2
 
   it-reader@7.0.0:
     dependencies:
@@ -20628,7 +20646,7 @@ snapshots:
   protons-runtime@5.6.0:
     dependencies:
       uint8-varint: 2.0.4
-      uint8arraylist: 2.4.8
+      uint8arraylist: 3.0.2
       uint8arrays: 5.1.1
 
   protons-runtime@7.0.0:
@@ -22217,17 +22235,13 @@ snapshots:
 
   uint8-varint@2.0.4:
     dependencies:
-      uint8arraylist: 2.4.8
+      uint8arraylist: 3.0.2
       uint8arrays: 5.1.1
 
   uint8-varint@3.0.0:
     dependencies:
       uint8arraylist: 3.0.2
       uint8arrays: 6.1.1
-
-  uint8arraylist@2.4.8:
-    dependencies:
-      uint8arrays: 5.1.1
 
   uint8arraylist@3.0.2:
     dependencies:
