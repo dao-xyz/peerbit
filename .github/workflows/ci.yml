@@ -141,6 +141,15 @@ jobs:
         run: |
           node --test scripts/validate-retired-domain-references.test.mjs
           node scripts/validate-retired-domain-references.mjs
+      # An apostrophe inside an inline `-e '...'` script silently ends the shell
+      # string and the rest is executed as commands. `bash -n` does not catch it
+      # (verified against the revision that failed run 31844749062), so the guard
+      # has to be structural.
+      - name: Validate workflow shell safety
+        if: steps.workspace_dist_cache.outputs.cache-hit != 'true'
+        run: |
+          node --test scripts/ci/check-workflow-shell-safety.test.mjs
+          node scripts/ci/check-workflow-shell-safety.mjs
       # Globbed, not enumerated: a spec added under tools/ must not be able to
       # sit unrun because nobody remembered to name it here. If the glob ever
       # matches nothing, bash passes it through literally and node --test fails
