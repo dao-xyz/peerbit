@@ -1278,30 +1278,23 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 		encoder: EncoderWrapper,
 		beforeDecoderTransfer?: () => void,
 	): DecoderWrapper {
-		const clone = encoder.clone();
-		let cloneFreed = false;
+		// `to_decoder` takes &self and clones the encoder state internally
+		// (encoding.rs: `decoder.window = self.clone()`), so the caller's
+		// encoder is never consumed. Cloning here first was therefore a second
+		// full copy of the same buffer, immediately freed again: at N entries
+		// in range the encoder is ~48N bytes across three Vecs, so a 100k-entry
+		// range copied ~4.8 MB per StartSync for nothing. Callers pass the
+		// CACHED encoder, which the borrow already protects.
 		let decoder: DecoderWrapper | undefined;
 		let decoderTransferred = false;
-		const freeClone = () => {
-			if (cloneFreed) {
-				return;
-			}
-			cloneFreed = true;
-			clone.free();
-		};
 		try {
-			decoder = clone.to_decoder();
+			decoder = encoder.to_decoder();
 			beforeDecoderTransfer?.();
-			freeClone();
 			decoderTransferred = true;
 			return decoder;
 		} finally {
-			try {
-				freeClone();
-			} finally {
-				if (!decoderTransferred) {
-					decoder?.free();
-				}
+			if (!decoderTransferred) {
+				decoder?.free();
 			}
 		}
 	}
