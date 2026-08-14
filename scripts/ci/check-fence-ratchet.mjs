@@ -71,7 +71,13 @@ const TARGETS = new Map([
 	],
 	[
 		"packages/programs/data/shared-log/src/peer-session.ts",
-		["_receiveCleanupGateByPeer", "_replicationInfoReceiveEpochByPeer"],
+		[
+			"_receiveCleanupGateByPeer",
+			"_replicationInfoReceiveEpochByPeer",
+			// Grandfathered 2026-08-14: became visible when the scanner learned
+			// to read modifier-less class fields. Pre-existing, not reviewed.
+			"replicationLifecycleController",
+		],
 	],
 	[
 		"packages/programs/data/shared-log/src/replication-info-v2-send.ts",
@@ -114,13 +120,37 @@ const TARGETS = new Map([
 	["packages/programs/data/shared-log/src/sync/factory.ts", []],
 	// Stage 4: the pending-sync record store moved the simple synchronizer's
 	// admission/claim state file-to-file. Its fields are deliberately plain
-	// (no visibility modifier, no _-prefix), so any future fence-pattern
-	// declaration matching DECL here is new growth and needs a design-note.
-	["packages/programs/data/shared-log/src/sync/pending-sync-store.ts", []],
+	// (no visibility modifier, no _-prefix).
+	//
+	// That plainness was recorded here as if it made the file SAFER -- the
+	// original note said any future fence-pattern declaration "matching DECL
+	// here is new growth and needs a design-note". It is the exact opposite:
+	// DECL could not match a plain field at all, so this `[]` meant the scanner
+	// saw nothing in the file, and the eight admission fields below had been
+	// invisible since the extraction. Grandfathered 2026-08-14 when the scanner
+	// learned to read them; pre-existing, not individually reviewed.
+	[
+		"packages/programs/data/shared-log/src/sync/pending-sync-store.ts",
+		[
+			"pendingSyncAdmissionExpiryNodes",
+			"pendingSyncAdmissionCount",
+			"pendingSyncActiveAdmissionReservations",
+			"pendingSyncAdmissionCountByPeer",
+			"pendingSyncAdmissionIdentitiesByPeer",
+			"pendingSyncAdmissionReservations",
+			"pendingSyncAdmissionReservationsByPeer",
+			"pendingSyncAdmissionReservationsByIdentity",
+		],
+	],
 	// Stage 4: the shared dispatch-lifecycle registry moved the simple and
 	// rateless synchronizers' duplicated lifecycle mechanics file-to-file.
 	["packages/programs/data/shared-log/src/sync/dispatch-lifecycle.ts", []],
 	["packages/programs/data/shared-log/src/sync/sync-peer-state.ts", []],
+	// Never listed at all until 2026-08-14: the completeness leg uses the same
+	// scanner as the per-file leg, so a file whose only fence field was written
+	// in the plain style looked fence-free and was never required to join
+	// TARGETS. Grandfathered; pre-existing, not individually reviewed.
+	["packages/programs/data/shared-log/src/replication.ts", ["senderEpoch"]],
 ]);
 // Token match is per camelCase/underscore segment so "generationOfLastPrune"
 // and "epochCounter" are caught while "aggregateTotals" is not.
@@ -151,6 +181,25 @@ const matchesFenceTokens = (name) =>
 const DECL =
 	/^\s*(?:(?:private|protected|public)\s+(?:static\s+)?(?:override\s+)?(?:readonly\s+)?([A-Za-z0-9_#]+)|(?:static\s+)?(?:readonly\s+)?([_#][A-Za-z0-9_]+))\s*[?!]?\s*[:=]/;
 
+// DECL above requires a visibility modifier or an _/# prefix, so it cannot see
+// the field idiom the newest extracted modules actually use --
+// `syncInFlightQueue: Map<...>` with no modifier and no underscore. Until
+// 2026-08-14 that made four baselines VACUOUS rather than clean: sync/factory,
+// sync/pending-sync-store, sync/dispatch-lifecycle and sync/sync-peer-state
+// each yielded ZERO declarations of any kind, so `[]` meant "this scanner
+// cannot see anything here", not "there is nothing here". pending-sync-store
+// alone was hiding EIGHT fields matching the `admission` token.
+//
+// Two restrictions keep this from over-matching. It only applies while the
+// nearest preceding top-level declaration is a `class`, which excludes the
+// `name: Type;` members of the interfaces and type literals those same files
+// are full of; and it requires exactly one tab of indentation, which excludes
+// object-literal properties built inside method bodies.
+const BARE_CLASS_FIELD =
+	/^\t(?!\t)(?:static\s+)?(?:readonly\s+)?([A-Za-z][A-Za-z0-9_]*)\s*[?!]?\s*[:=]/;
+const TOP_LEVEL_DECL =
+	/^(?:export\s+)?(?:abstract\s+)?(class|interface|type|const|function|enum)\b/;
+
 const root = process.cwd();
 const errors = [];
 let totalFound = 0;
@@ -160,9 +209,16 @@ let totalBaseline = 0;
 const scanFile = (target) => {
 	const lines = readFileSync(path.join(root, target), "utf8").split("\n");
 	const found = new Map();
+	let topLevelKind = null;
 	for (let i = 0; i < lines.length; i++) {
+		const top = lines[i].match(TOP_LEVEL_DECL);
+		if (top) topLevelKind = top[1];
 		const m = lines[i].match(DECL);
-		const name = m?.[1] ?? m?.[2];
+		const bare =
+			m === null && topLevelKind === "class"
+				? lines[i].match(BARE_CLASS_FIELD)
+				: null;
+		const name = m?.[1] ?? m?.[2] ?? bare?.[1];
 		if (!name || !matchesFenceTokens(name)) continue;
 		// Accept a design-note: anywhere in the contiguous comment block
 		// directly above the declaration (or within 5 lines when there is no
