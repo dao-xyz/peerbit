@@ -60,8 +60,8 @@
 	"license": "MIT",
 	"dependencies": {
 		"@dao-xyz/borsh": "^6.0.0",
-		"@libp2p/interface": "^3.1.1",
-		"@multiformats/multiaddr": "^13.0.1",
+		"@libp2p/interface": "^3.2.5",
+		"@multiformats/multiaddr": "^13.0.3",
 		"@peerbit/any-store-interface": "workspace:*",
 		"@peerbit/blocks": "workspace:*",
 		"@peerbit/blocks-interface": "workspace:*",

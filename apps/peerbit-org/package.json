@@ -16,8 +16,8 @@
 		"test:cov": "vitest run --config vitest.config.ts --coverage"
 	},
 	"dependencies": {
-		"@libp2p/interface": "^3.1.1",
-		"@multiformats/multiaddr": "^13.0.1",
+		"@libp2p/interface": "^3.2.5",
+		"@multiformats/multiaddr": "^13.0.3",
 		"@peerbit/crypto": "workspace:*",
 		"@peerbit/pubsub": "workspace:*",
 		"@peerbit/stream-interface": "workspace:*",

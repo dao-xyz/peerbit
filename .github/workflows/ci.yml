@@ -236,12 +236,16 @@ jobs:
         # `node-datachannel` range is `^0.32.3` -- which does ship prebuilds.
         # Verified by running the smoke itself on Node 24: exit 0.
         #
-        # The mistake was conflating two different resolutions. Our OWN lockfile
-        # is held at webrtc 6.0.15 because the workspace cannot typecheck
-        # against 6.0.21+ (duplicate `@libp2p/interface`, see #1235), and the
-        # root pnpm override keeps that install on prebuilt node-datachannel
-        # 0.32.3. None of that constrains a consumer, who resolves the range
-        # fresh and lands on a webrtc new enough to be fine.
+        # The mistake was conflating two different resolutions: our OWN lockfile
+        # was held at webrtc 6.0.15, which never constrained a consumer, who
+        # resolves the range fresh and lands on a webrtc new enough to be fine.
+        #
+        # That lockfile gap is now closed too -- the workspace runs webrtc 6.0.29
+        # on the same `@libp2p/interface` 3.2.5 as everything else, so the
+        # `node-datachannel` override that used to force a prebuilt 0.32.3 is
+        # gone: webrtc requires `^0.32.3` on its own. #1235 failed only because
+        # it bumped webrtc alone while the lockfile pinned the rest of the stack
+        # to interface 3.1.1, duplicating a branded type.
         #
         # So this lane is not "permanently red for an upstream reason"; it is
         # exactly the forward-compat signal it looks like, and Node 24 belongs

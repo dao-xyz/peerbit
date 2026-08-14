@@ -12,7 +12,7 @@
 	},
 	"dependencies": {
 		"@dao-xyz/borsh": "^6.0.0",
-		"@libp2p/websockets": "^10.1.7",
+		"@libp2p/websockets": "^10.1.19",
 		"@peerbit/any-store-proxy": "workspace:*",
 		"@peerbit/canonical-client": "workspace:*",
 		"@peerbit/canonical-host": "workspace:*",
