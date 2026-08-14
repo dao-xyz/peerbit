@@ -35,6 +35,20 @@ const child = spawn(existsSync(local) ? local : command, args, {
 let passing = 0;
 let sawSummary = false;
 let buffered = "";
+// Aggregating across packages is not enough. When `aegir run` drives several
+// packages, it prefixes every line with "<pkg>: ", and a package whose process
+// dies mid-run simply stops printing -- its neighbours still emit summaries, so
+// the totals above stay healthy and the shard passes.
+//
+// That is not hypothetical: @peerbit/stream ran 46 of ~187 tests and printed no
+// summary at all, because a test imported a duplicate module from os.tmpdir()
+// and exited the process with code 0 (see the fix in messages-signing.spec.ts).
+// part-3 stayed green for as long as that was true.
+//
+// So track it per package: anything that produced test-runner output must also
+// produce its own summary line.
+const sawTests = new Set();
+const sawPackageSummary = new Set();
 child.stdout.on("data", (chunk) => {
 	process.stdout.write(chunk);
 	buffered += chunk.toString();
@@ -42,10 +56,18 @@ child.stdout.on("data", (chunk) => {
 	const lines = buffered.split("\n");
 	buffered = lines.pop() ?? "";
 	for (const line of lines) {
-		const m = line.match(/(\d+) passing/);
+		const prefixed = line.match(/^(\S+):\s/);
+		const pkg = prefixed ? prefixed[1] : "";
+		// A tick means this package's runner actually started reporting tests.
+		if (/[✔✓]/.test(line)) sawTests.add(pkg);
+		// mocha prints "N passing", playwright "N passed", vitest
+		// "Tests  N passed" -- accept all three so this guard is not
+		// silently inert on the non-mocha shards.
+		const m = line.match(/(\d+)\s+(?:passing|passed|failing|failed)\b/);
 		if (m) {
 			sawSummary = true;
-			passing += Number(m[1]);
+			sawPackageSummary.add(pkg);
+			if (/passing|passed/.test(line)) passing += Number(m[1]);
 		}
 	}
 });
@@ -57,6 +79,18 @@ child.on("close", (code, signal) => {
 	}
 	if (code !== 0) {
 		process.exit(code ?? 1);
+	}
+	const silent = [...sawTests].filter((pkg) => !sawPackageSummary.has(pkg));
+	if (silent.length > 0) {
+		console.error(
+			"\nassert-tests-ran: these packages reported tests but never printed a summary, so their run ended early:",
+		);
+		for (const pkg of silent) console.error(`  ${pkg || "(unprefixed)"}`);
+		console.error(
+			"A process that exits mid-suite takes every later spec with it while the shard stays green. " +
+				"Find what ends the process — a stray process.exit, or an import that kills the loader.",
+		);
+		process.exit(1);
 	}
 	if (!sawSummary || passing === 0) {
 		console.error(
