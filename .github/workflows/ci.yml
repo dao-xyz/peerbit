@@ -320,6 +320,7 @@ jobs:
           pnpm run lint
           node ./scripts/ci/check-shard-coverage.mjs
           node ./scripts/ci/check-fence-ratchet.mjs
+          pnpm run bench:file-share:test
       - name: Tests
         env:
           PEERBIT_MOCHA_LOG_TEST_START: ${{ (matrix.test_cmd == 'pnpm run test:ci:part-4' || matrix.test_cmd == 'pnpm run test:ci:part-6' || startsWith(matrix.test_cmd, 'pnpm run test:ci:part-7')) && '1' || '0' }}
@@ -503,6 +504,7 @@ jobs:
           pnpm run lint
           node ./scripts/ci/check-shard-coverage.mjs
           node ./scripts/ci/check-fence-ratchet.mjs
+          pnpm run bench:file-share:test
       - name: Tests
         env:
           PEERBIT_MOCHA_LOG_TEST_START: ${{ (matrix.test_cmd == 'pnpm run test:ci:part-4' || matrix.test_cmd == 'pnpm run test:ci:part-6' || startsWith(matrix.test_cmd, 'pnpm run test:ci:part-7')) && '1' || '0' }}
