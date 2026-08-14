@@ -13,6 +13,32 @@ import path from "node:path";
 const root = process.cwd();
 const pkg = JSON.parse(readFileSync(path.join(root, "package.json"), "utf8"));
 
+// Root scripts that run a test runner directly are outside every mechanism
+// below: they are not a package's test:cov, so the reachability leg cannot see
+// them, and they carry no --grep, so the shard legs cannot either. `node --test
+// ./scripts/file-share/*.test.mjs` sat in `bench:file-share:test` with no
+// workflow invoking it -- 223 passing tests over the file-share benchmark
+// harness that had run in CI exactly zero times since they were added.
+const workflowsDir = path.join(root, ".github/workflows");
+const allWorkflows = readdirSync(workflowsDir)
+	.map((f) => readFileSync(path.join(workflowsDir, f), "utf8"))
+	.join("\n");
+const uninvokedRootTests = [];
+for (const [name, cmd] of Object.entries(pkg.scripts)) {
+	if (!/\bnode --test\b/.test(cmd)) continue;
+	if (!allWorkflows.includes(`run ${name}`)) uninvokedRootTests.push(name);
+}
+if (uninvokedRootTests.length > 0) {
+	console.error(
+		"Root scripts that run `node --test` but which no workflow invokes (those tests never run in CI):",
+	);
+	for (const s of uninvokedRootTests) console.error(`  ${s}: ${pkg.scripts[s]}`);
+	console.error(
+		"Invoke the script from a workflow step (the Lint step is the usual home for repo-tooling tests).",
+	);
+	process.exit(1);
+}
+
 const greps = [];
 for (const [name, cmd] of Object.entries(pkg.scripts)) {
 	if (!name.startsWith("test:ci:part-")) continue;
@@ -279,7 +305,15 @@ const containsTestFiles = (dir) => {
 const unreachable = [];
 const noOpScripts = [];
 let reachableCount = 0;
-for (const dir of ["docs", ...findPackages("packages", [])]) {
+// `apps/*` is a workspace root in both pnpm-workspace.yaml and the root
+// package.json `workspaces`, but this leg only ever walked `packages/` and
+// `docs`. apps/peerbit-org declares a real test:cov (vitest) and the guard
+// whose stated job is to make an unreachable suite loud could not see it.
+for (const dir of [
+	"docs",
+	...findPackages("packages", []),
+	...findPackages("apps", []),
+]) {
 	let manifest;
 	try {
 		manifest = JSON.parse(
