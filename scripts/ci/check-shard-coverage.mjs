@@ -195,13 +195,17 @@ const NATIVE_JOB_TESTED = new Set([
 	"packages/utils/indexer/rust",
 ]);
 
-// BROWSER_E2E_UNRUN: playwright suites with no runner wired up. These really
-// are not executed anywhere -- an honest debt entry, not a redirection.
-const BROWSER_E2E_UNRUN = new Set([
-	"packages/programs/data/shared-log/proxy/e2e",
-	"packages/transport/stream/e2e/browser",
-	"packages/utils/any-store/proxy/e2e",
-]);
+// BROWSER_E2E_UNRUN is now EMPTY, and that is the point: nothing in this repo
+// has a test:cov that no CI job runs.
+//
+// It used to hold the three playwright suites, excused as "needing a browser
+// runner". They did not. CI already installs chromium for part-1 and part-2c,
+// and part-2c already ran @peerbit/document-canonical-e2e -- whose two siblings
+// are byte-for-byte the same shape (same scripts, same index.html /
+// playwright.config.ts / service-worker.ts layout, only the dev-server port
+// differs: 5260/5261/5262). The excuse was inherited prose, not a measurement;
+// all three pass unchanged and are wired into part-2c below.
+const BROWSER_E2E_UNRUN = new Set([]);
 
 const KNOWN_UNREACHABLE = new Set([
 	...NATIVE_JOB_TESTED,
@@ -378,10 +382,10 @@ const nativeStepBody = (pkgName) => {
 };
 
 // Extra test scripts that genuinely have no runner. Same honest-debt category as
-// BROWSER_E2E_UNRUN: playwright against a browser, with no browser leg wired up.
-const NATIVE_JOB_UNRUN_SCRIPTS = new Map([
-	["packages/utils/any-store/rust", ["test:e2e"]],
-]);
+// Also empty now. any-store-rust's test:e2e (the OPFS persistence suite) was
+// the last declared-unrun script; the Native job already installs chromium, so
+// its own step runs it rather than declaring it as debt.
+const NATIVE_JOB_UNRUN_SCRIPTS = new Map([]);
 
 const unproven = [];
 const uninvoked = [];

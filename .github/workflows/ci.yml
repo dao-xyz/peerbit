@@ -780,7 +780,13 @@ jobs:
           pnpm run build
           pnpm exec aegir test -t node
       - name: Test @peerbit/any-store-rust
-        run: pnpm --filter @peerbit/any-store-rust run test
+        # test:e2e is the OPFS persistence suite (WAL/sublevel survival across
+        # worker and page reloads, incomplete-checkpoint fallback). It is a
+        # separate script, so `run test` alone left it unexecuted -- chromium is
+        # already installed above for the browser legs.
+        run: |
+          pnpm --filter @peerbit/any-store-rust run test
+          pnpm --filter @peerbit/any-store-rust run test:e2e
       - name: Test @peerbit/native-backbone
         run: pnpm --filter @peerbit/native-backbone run test
       - name: Test @peerbit/log-rust
