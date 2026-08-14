@@ -134,7 +134,7 @@ function buildRssFeed({
 				"<item>",
 				`<title>${xmlEscape(i.title)}</title>`,
 				`<link>${xmlEscape(link)}</link>`,
-				`<guid isPermaLink=\"true\">${xmlEscape(link)}</guid>`,
+				`<guid isPermaLink="true">${xmlEscape(link)}</guid>`,
 				`<pubDate>${xmlEscape(pubDate)}</pubDate>`,
 				desc ? `<description>${desc}</description>` : "",
 				"</item>",

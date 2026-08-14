@@ -3616,6 +3616,14 @@ test.describe("generated transfer-validity benchmark", () => {
 				]),
 			);
 			if (ownershipCleanupFailures.length > 0) {
+				// A throw in `finally` normally discards the in-flight
+				// exception, which is what no-unsafe-finally guards against.
+				// Here it cannot: the catch above assigns
+				// `benchmarkFailure = error` as its very first statement, and
+				// the ternary below folds that failure into the AggregateError,
+				// so the original benchmark error is reported alongside the
+				// cleanup failures rather than replaced by them.
+				// eslint-disable-next-line no-unsafe-finally
 				throw new AggregateError(
 					benchmarkFailure === undefined
 						? ownershipCleanupFailures

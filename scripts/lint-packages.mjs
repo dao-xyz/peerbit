@@ -24,7 +24,16 @@ const listedFiles = spawnSync(
 		"--others",
 		"--exclude-standard",
 		"--",
+		// Until 2026-08-14 this enumerated only `packages`, so 147 source files
+		// were never linted -- every .ts/.tsx of the shipped website under
+		// apps/, the docs examples, tools/, and all of scripts/ including the
+		// CI guard scripts themselves. All four roots were already clean when
+		// widened, so this cost no cleanup; it only stops the next regression.
 		"packages",
+		"apps",
+		"docs",
+		"scripts",
+		"tools",
 	],
 	{
 		cwd: repositoryRoot,
@@ -78,6 +87,19 @@ const warningCount = results.reduce(
 	(count, result) => count + result.warningCount,
 	0,
 );
-if (errorCount > 0 || warningCount > 9_999) {
+// Warning ratchet. This was 9_999 against an actual count of 15, which made
+// every `warn`-level rule in eslint.config.js structurally non-blocking --
+// unused vars and the rest could be added without limit and CI stayed green.
+// Pin it at the real count so the budget is a ratchet rather than decoration.
+// This number may go DOWN when warnings are fixed; raising it means deciding to
+// accept a new warning, which should be a visible edit in a PR.
+const MAX_WARNINGS = 15;
+if (warningCount > MAX_WARNINGS) {
+	process.stdout.write(
+		`\nlint: ${warningCount} warnings exceeds the ratchet of ${MAX_WARNINGS}.\n` +
+			"Fix the new warning, or lower/raise MAX_WARNINGS in scripts/lint-packages.mjs deliberately.\n",
+	);
+}
+if (errorCount > 0 || warningCount > MAX_WARNINGS) {
 	process.exitCode = 1;
 }
