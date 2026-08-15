@@ -1,5 +1,14 @@
 # @peerbit/shared-log-rust
 
+## 0.1.5
+
+### Patch Changes
+
+- [#1285](https://github.com/dao-xyz/peerbit/pull/1285) [`96b6dc3`](https://github.com/dao-xyz/peerbit/commit/96b6dc33d62000021ff8950ec102f1ce84de6492) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Preserve the native receiver when committing entry coordinate batches.
+
+- [#1284](https://github.com/dao-xyz/peerbit/pull/1284) [`b8eb614`](https://github.com/dao-xyz/peerbit/commit/b8eb614e8715d2e179304c910beec235a385f197) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Avoid scanning every replication range during native append when the exact
+  resident owner count proves full-replica delivery cannot apply.
+
 ## 0.1.4
 
 ### Patch Changes
