@@ -4480,12 +4480,29 @@ export class Log<T> {
 				remote,
 				resolveRemoteFrom,
 			});
-			this._joining.set(entry.hash, p);
-			p.finally(() => {
-				this._joining.delete(entry.hash);
-			});
+			this.trackJoining(entry.hash, p);
 			await p;
 		}
+	}
+
+	// Registers an in-flight join in the `_joining` dedup map and removes it again
+	// once the join settles.
+	//
+	// The removal must not be written as a bare `p.finally(...)`: that returns a
+	// NEW promise which rejects with the same reason as `p` and which nothing ever
+	// awaits. A rejected join would then surface as an unhandled rejection - fatal
+	// under Node's default `--unhandled-rejections=throw` - even though every real
+	// consumer of `p` (the `await p` below, and other joiners awaiting the same
+	// hash) handled the failure. Only the bookkeeping derivative is neutralized
+	// here; `p` itself is still awaited by the caller, so genuine join errors keep
+	// propagating exactly as before.
+	private trackJoining(hash: string, p: Promise<any>): void {
+		this._joining.set(hash, p);
+		p.finally(() => {
+			this._joining.delete(hash);
+		}).catch(() => {
+			// Ownership of this rejection belongs to whoever awaits `p`.
+		});
 	}
 
 	// Internal trusted receive path for callers that can supply prepared append facts.
@@ -5160,10 +5177,7 @@ export class Log<T> {
 					nested,
 					options.isHead ? { ...options, isHead: false } : options,
 				);
-				this._joining.set(nested.hash, p);
-				p.finally(() => {
-					this._joining.delete(nested.hash);
-				});
+				this.trackJoining(nested.hash, p);
 				await p;
 			}
 		}

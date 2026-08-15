@@ -15,12 +15,6 @@ import {
 	sha256Base64Sync,
 } from "@peerbit/crypto";
 import * as types from "@peerbit/document-interface";
-import {
-	type SimpleDocumentFieldExtractionPlan,
-	type SimpleDocumentProjectionContext,
-	type SimpleDocumentProjectionPlan,
-	tryProjectDocumentIndexSimple,
-} from "./native-rust.js";
 import { CachedIndex, type QueryCacheOptions } from "@peerbit/indexer-cache";
 import * as indexerTypes from "@peerbit/indexer-interface";
 import { HashmapIndex } from "@peerbit/indexer-simple";
@@ -56,6 +50,12 @@ import type { QueryPredictor } from "./most-common-query-predictor.js";
 import MostCommonQueryPredictor, {
 	idAgnosticQueryKey,
 } from "./most-common-query-predictor.js";
+import {
+	type SimpleDocumentFieldExtractionPlan,
+	type SimpleDocumentProjectionContext,
+	type SimpleDocumentProjectionPlan,
+	tryProjectDocumentIndexSimple,
+} from "./native-rust.js";
 import { type Operation, isPutOperation } from "./operation.js";
 import { Prefetch } from "./prefetch.js";
 import type { ExtractArgs } from "./program.js";
@@ -67,13 +67,13 @@ import {
 } from "./result-shape.js";
 import { ResumableIterators } from "./resumable-iterator.js";
 import {
+	type DocumentTransformDescriptor,
+	type DocumentTransformFacts,
+	type DocumentTransformer,
 	canPrepareDocumentTransformBeforeAppend,
 	canPrepareDocumentTransformWithAppendFacts,
 	documentTransformPreservesFieldPath,
 	getDocumentTransformDescriptor,
-	type DocumentTransformFacts,
-	type DocumentTransformDescriptor,
-	type DocumentTransformer,
 } from "./transform.js";
 
 const WARNING_WHEN_ITERATING_FOR_MORE_THAN = 1e5;
@@ -1221,10 +1221,9 @@ export class DocumentIndex<
 			} catch {
 				// A native-backed head may be hollow until read from the block store.
 			}
-			return Entry.fromMultihash<Operation>(
-				this._log.log.blocks,
-				hash,
-			).catch(() => head);
+			return Entry.fromMultihash<Operation>(this._log.log.blocks, hash).catch(
+				() => head,
+			);
 		}
 		return Entry.fromMultihash<Operation>(this._log.log.blocks, hash);
 	}
@@ -1458,18 +1457,12 @@ export class DocumentIndex<
 							claimedIds = wrapped
 								.map((result) =>
 									result instanceof types.ResultValue && result.indexed
-										? indexerTypes.toId(
-												this.indexByResolver(result.indexed),
-											)
+										? indexerTypes.toId(this.indexByResolver(result.indexed))
 										: result instanceof types.ResultIndexedValue
-											? indexerTypes.toId(
-													this.indexByResolver(result.value),
-												)
+											? indexerTypes.toId(this.indexByResolver(result.value))
 											: undefined,
 								)
-								.filter(
-									(id): id is indexerTypes.IdKey => id !== undefined,
-								);
+								.filter((id): id is indexerTypes.IdKey => id !== undefined);
 						}
 					}
 					if (batches.length) {
@@ -1792,9 +1785,7 @@ export class DocumentIndex<
 	private canPrepareNativeBackboneDocumentIndexCommit(): boolean {
 		return (
 			(this.transformerIsIdentity && this.indexedTypeIsDocumentType) ||
-			canPrepareDocumentTransformBeforeAppend(
-				this.nativeTransformDescriptor,
-			)
+			canPrepareDocumentTransformBeforeAppend(this.nativeTransformDescriptor)
 		);
 	}
 
@@ -1802,9 +1793,7 @@ export class DocumentIndex<
 		return (
 			this.canPrepareNativeBackboneDocumentIndexCommit() ||
 			!!this.nativeTransformProjectionPlan ||
-			canPrepareDocumentTransformWithAppendFacts(
-				this.nativeTransformDescriptor,
-			)
+			canPrepareDocumentTransformWithAppendFacts(this.nativeTransformDescriptor)
 		);
 	}
 
@@ -1865,9 +1854,7 @@ export class DocumentIndex<
 			};
 		}
 		if (
-			!canPrepareDocumentTransformBeforeAppend(
-				this.nativeTransformDescriptor,
-			)
+			!canPrepareDocumentTransformBeforeAppend(this.nativeTransformDescriptor)
 		) {
 			return;
 		}
@@ -1950,9 +1937,7 @@ export class DocumentIndex<
 			!canPrepareDocumentTransformWithAppendFacts(
 				this.nativeTransformDescriptor,
 			) &&
-			!canPrepareDocumentTransformBeforeAppend(
-				this.nativeTransformDescriptor,
-			)
+			!canPrepareDocumentTransformBeforeAppend(this.nativeTransformDescriptor)
 		) {
 			return;
 		}
@@ -1991,9 +1976,7 @@ export class DocumentIndex<
 			!canPrepareDocumentTransformWithAppendFacts(
 				this.nativeTransformDescriptor,
 			) &&
-			!canPrepareDocumentTransformBeforeAppend(
-				this.nativeTransformDescriptor,
-			)
+			!canPrepareDocumentTransformBeforeAppend(this.nativeTransformDescriptor)
 		) {
 			return;
 		}
@@ -2488,9 +2471,7 @@ export class DocumentIndex<
 		return indexed?.id;
 	}
 
-	private getIndexedKeyByHead(
-		head: string,
-	): indexerTypes.IdKey | undefined {
+	private getIndexedKeyByHead(head: string): indexerTypes.IdKey | undefined {
 		const getIdByHead = (this.index as ContextHeadIndex<I>).getIdByContextHead;
 		return typeof getIdByHead === "function"
 			? getIdByHead.call(this.index, head)
@@ -2507,9 +2488,10 @@ export class DocumentIndex<
 		return heads.map((head) => getIdByHead.call(this.index, head));
 	}
 
-	public tryGetIdentityIndexedKeyByHead(
-		head: string,
-	): { supported: boolean; key?: indexerTypes.IdKey } {
+	public tryGetIdentityIndexedKeyByHead(head: string): {
+		supported: boolean;
+		key?: indexerTypes.IdKey;
+	} {
 		const getIdByHead = (this.index as ContextHeadIndex<I>).getIdByContextHead;
 		if (typeof getIdByHead !== "function") {
 			return { supported: false };
@@ -2849,12 +2831,18 @@ export class DocumentIndex<
 				return false;
 			}
 			return isPromiseLike(persistResult)
-				? persistResult.then(() => true, (error: unknown) => {
-						if (error instanceof indexerTypes.NotStartedError && this.closed) {
-							return true;
-						}
-						throw error;
-					})
+				? persistResult.then(
+						() => true,
+						(error: unknown) => {
+							if (
+								error instanceof indexerTypes.NotStartedError &&
+								this.closed
+							) {
+								return true;
+							}
+							throw error;
+						},
+					)
 				: true;
 		} catch (error) {
 			if (error instanceof indexerTypes.NotStartedError && this.closed) {
@@ -2974,9 +2962,7 @@ export class DocumentIndex<
 		}
 		const batchValues: Array<{
 			id: indexerTypes.IdKey;
-			encodedValueParts: NonNullable<
-				ContextualPutOptions["encodedValueParts"]
-			>;
+			encodedValueParts: NonNullable<ContextualPutOptions["encodedValueParts"]>;
 			options?: { replace?: boolean };
 		}> = [];
 		for (const item of values) {
@@ -3341,6 +3327,29 @@ export class DocumentIndex<
 		});
 	}
 
+	/**
+	 * The removal counterpart of `putWithContext`'s guard. Once this index is
+	 * closed there is nothing left to remove from, so a `NotStartedError` marks
+	 * the teardown window rather than a failure.
+	 *
+	 * This exists because the guard used to be one-legged: the read leg
+	 * (`Documents.getLocalIndexedContextForChange`) tolerated a closed index while
+	 * the remove leg did not, so a DELETE-carrying change still threw out of a
+	 * join in exactly the window the read guard was written for. A guard that
+	 * covers one direction of the same operation is worse than none, because it
+	 * reads as covered.
+	 *
+	 * Narrow in the same way as the read leg: only `NotStartedError`, and only
+	 * once this index is actually closed. An indexer that breaks while open still
+	 * throws.
+	 */
+	private recoverClosedRemoval(error: unknown): void {
+		if (error instanceof indexerTypes.NotStartedError && this.closed) {
+			return;
+		}
+		throw error;
+	}
+
 	public async delMany(keys: indexerTypes.IdKey[]): Promise<void> {
 		if (keys.length === 0) {
 			return;
@@ -3348,17 +3357,21 @@ export class DocumentIndex<
 		for (const key of keys) {
 			this.deleteResolvedCacheForKey(key);
 		}
-		const delIdsNoReturn = (this.index as ExactDeleteIndex).delIdsNoReturn;
-		if (delIdsNoReturn) {
-			await delIdsNoReturn.call(this.index, keys);
-			return;
+		try {
+			const delIdsNoReturn = (this.index as ExactDeleteIndex).delIdsNoReturn;
+			if (delIdsNoReturn) {
+				await delIdsNoReturn.call(this.index, keys);
+				return;
+			}
+			const delIds = (this.index as ExactDeleteIndex).delIds;
+			if (delIds) {
+				await delIds.call(this.index, keys);
+				return;
+			}
+			await Promise.all(keys.map((key) => this.del(key)));
+		} catch (error) {
+			this.recoverClosedRemoval(error);
 		}
-		const delIds = (this.index as ExactDeleteIndex).delIds;
-		if (delIds) {
-			await delIds.call(this.index, keys);
-			return;
-		}
-		await Promise.all(keys.map((key) => this.del(key)));
 	}
 
 	public clearResolvedCacheForKeys(keys: indexerTypes.IdKey[]): void {
@@ -3374,17 +3387,28 @@ export class DocumentIndex<
 		for (const key of keys) {
 			this.deleteResolvedCacheForKey(key);
 		}
-		const delIdsNoReturn = (this.index as ExactDeleteIndex).delIdsNoReturn;
-		if (delIdsNoReturn) {
-			const result = delIdsNoReturn.call(this.index, keys);
-			return isPromiseLike(result) ? result.then(() => undefined) : undefined;
+		// The native index answers synchronously and may throw synchronously, so
+		// both shapes need the guard - see recoverClosedRemoval.
+		const guard = (result: MaybePromise<unknown>): MaybePromise<void> =>
+			isPromiseLike(result)
+				? result.then(
+						() => undefined,
+						(error: unknown) => this.recoverClosedRemoval(error),
+					)
+				: undefined;
+		try {
+			const delIdsNoReturn = (this.index as ExactDeleteIndex).delIdsNoReturn;
+			if (delIdsNoReturn) {
+				return guard(delIdsNoReturn.call(this.index, keys));
+			}
+			const delIds = (this.index as ExactDeleteIndex).delIds;
+			if (delIds) {
+				return guard(delIds.call(this.index, keys));
+			}
+			return guard(Promise.all(keys.map((key) => this.del(key))));
+		} catch (error) {
+			return this.recoverClosedRemoval(error);
 		}
-		const delIds = (this.index as ExactDeleteIndex).delIds;
-		if (delIds) {
-			const result = delIds.call(this.index, keys);
-			return isPromiseLike(result) ? result.then(() => undefined) : undefined;
-		}
-		return Promise.all(keys.map((key) => this.del(key))).then(() => undefined);
 	}
 
 	public async getDetailed<
@@ -5457,7 +5481,7 @@ export class DocumentIndex<
 										"Failed to collect sorted results from self. " + e?.message,
 									);
 									peerBufferMap.delete(peer);
-										}),
+								}),
 						);
 					} else {
 						// Fetch remotely
@@ -5823,9 +5847,7 @@ export class DocumentIndex<
 				keepRemoteAlive
 					? [...peerBufferMap.keys()].filter((peer) => peer !== selfHash)
 					: [...peerBufferMap.entries()]
-							.filter(
-								([peer, buffer]) => peer !== selfHash && buffer.kept > 0,
-							)
+							.filter(([peer, buffer]) => peer !== selfHash && buffer.kept > 0)
 							.map(([peer]) => peer),
 			);
 			for (const peer of remoteIteratorPeersToClose) {
@@ -5859,8 +5881,9 @@ export class DocumentIndex<
 					if (activeRemotePeers.has(peer)) {
 						ids.push(remoteIteratorIds?.get(peer) ?? queryRequestCoerced.id);
 					}
-					for (const staleRemoteIteratorId of
-						staleRemoteIteratorIds.get(peer) ?? []) {
+					for (const staleRemoteIteratorId of staleRemoteIteratorIds.get(
+						peer,
+					) ?? []) {
 						if (!ids.some((id) => equals(id, staleRemoteIteratorId))) {
 							ids.push(staleRemoteIteratorId);
 						}

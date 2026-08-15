@@ -658,6 +658,20 @@ export abstract class Program<
 		return current === base;
 	}
 
+	/**
+	 * Teardown rank of a child during close()/drop(). Children sharing a rank are
+	 * torn down concurrently (the default for every child); a child with a higher
+	 * rank is not started until every lower-ranked child has settled.
+	 *
+	 * Override this when one child is a view derived from another and must outlive
+	 * it: the deriving child keeps producing while it closes, so stopping the view
+	 * first is a use-after-close. A failing low rank still opens the gate, so this
+	 * changes ordering only - never whether a child is torn down.
+	 */
+	protected terminalChildOrder(child: Program): number {
+		return 0;
+	}
+
 	private async processEnd(
 		type: TerminalOperation,
 		from: Program | undefined,
@@ -695,6 +709,25 @@ export abstract class Program<
 			cleanupLease?: object;
 		}[] = [];
 		const tailsByChild = new Map<Program, Promise<boolean>>();
+		// Children may declare a teardown order (see `terminalChildOrder`). Children
+		// sharing a rank still tear down concurrently; a higher rank waits until
+		// every lower rank has SETTLED, so a failing child never skips the teardown
+		// of the ranks behind it and every attempt below is still recorded.
+		const rankOf = new Map<Program, number>();
+		for (const child of children) {
+			if (!rankOf.has(child)) {
+				rankOf.set(child, this.terminalChildOrder(child));
+			}
+		}
+		const ranks = [...new Set(rankOf.values())].sort((a, b) => a - b);
+		const rankGates = new Map<number, Promise<void>>();
+		const openRankGates = new Map<number, () => void>();
+		for (const rank of ranks.slice(1)) {
+			rankGates.set(
+				rank,
+				new Promise<void>((resolve) => openRankGates.set(rank, resolve)),
+			);
+		}
 		const childPromises = children.map((child) => {
 			const previous = previousFailures.find(
 				(failure) => failure.program === child && !claimedFailures.has(failure),
@@ -777,7 +810,8 @@ export abstract class Program<
 				}
 				return result;
 			};
-			const predecessor = tailsByChild.get(child);
+			const predecessor =
+				tailsByChild.get(child) ?? rankGates.get(rankOf.get(child)!);
 			const promise = predecessor
 				? predecessor.then(run, (error) => {
 						// Duplicate appearances represent distinct ownership references.
@@ -790,6 +824,17 @@ export abstract class Program<
 			tailsByChild.set(child, promise);
 			return promise;
 		});
+		// Each rank opens once every child of the preceding rank has settled. Ranks
+		// chain, so a gate transitively covers every earlier rank as well.
+		for (let index = 1; index < ranks.length; index++) {
+			const previousRank = ranks[index - 1]!;
+			const previousPromises = childPromises.filter(
+				(_, childIndex) => rankOf.get(children[childIndex]!) === previousRank,
+			);
+			void Promise.allSettled(previousPromises).then(() =>
+				openRankGates.get(ranks[index]!)!(),
+			);
+		}
 		const results = await Promise.allSettled(childPromises);
 		const failedChildren: FailedTerminalChild[] = [];
 		let firstChildError: unknown;

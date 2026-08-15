@@ -1272,4 +1272,101 @@ describe("join", function () {
 			expect(entry.size).equal(245);
 		});
 	});
+
+	describe("failed join rejection ownership", () => {
+		// Regression: `Log.join` tracked in-flight joins with a bare
+		// `p.finally(() => this._joining.delete(hash))`. That expression returns a
+		// NEW promise which rejects with the same reason as `p` and which nothing
+		// awaits, so any failing join produced an unhandled rejection even though
+		// the caller awaiting `p` handled the error. Under Node's default
+		// `--unhandled-rejections=throw` that terminated the process; it is how a
+		// recoverable NotStartedError from a closing document index killed the
+		// file-ingest benchmark.
+		let log: Log<Uint8Array>;
+		let unhandled: unknown[];
+		let onUnhandledRejection: (reason: unknown) => void;
+
+		beforeEach(async () => {
+			unhandled = [];
+			onUnhandledRejection = (reason: unknown) => {
+				unhandled.push(reason);
+			};
+			process.on("unhandledRejection", onUnhandledRejection);
+			log = new Log<Uint8Array>();
+		});
+
+		afterEach(async () => {
+			process.off("unhandledRejection", onUnhandledRejection);
+			await log.close().catch(() => {});
+		});
+
+		const settleUnhandledRejectionChecks = async () => {
+			// Node reports unhandled rejections after the microtask checkpoint that
+			// followed the rejection. Two macrotask turns is strictly past that, so
+			// this is an ordering wait, not a timing guess.
+			await new Promise((resolve) => setImmediate(resolve));
+			await new Promise((resolve) => setImmediate(resolve));
+		};
+
+		it("reports a failing join to its caller and to nobody else", async () => {
+			await log.open(session.peers[0].services.blocks, signKey, {
+				onChange: async () => {
+					throw new Error("onChange failed");
+				},
+			});
+
+			const entry = await createEntry({
+				store: session.peers[0].services.blocks,
+				identity: {
+					...signKey,
+					sign: (data: Uint8Array) => signKey.sign(data),
+				},
+				data: new Uint8Array([0, 1]),
+			});
+
+			let caught: unknown;
+			try {
+				await log.join([entry]);
+			} catch (error) {
+				caught = error;
+			}
+			await settleUnhandledRejectionChecks();
+
+			expect((caught as Error)?.message).equal("onChange failed");
+			expect(
+				unhandled.map((reason) => (reason as Error)?.message),
+			).to.deep.equal([]);
+		});
+
+		it("still removes the entry from the in-flight join set when a join fails", async () => {
+			let fail = true;
+			await log.open(session.peers[0].services.blocks, signKey, {
+				onChange: async () => {
+					if (fail) {
+						throw new Error("onChange failed");
+					}
+				},
+			});
+
+			const entry = await createEntry({
+				store: session.peers[0].services.blocks,
+				identity: {
+					...signKey,
+					sign: (data: Uint8Array) => signKey.sign(data),
+				},
+				data: new Uint8Array([0, 2]),
+			});
+
+			await expect(log.join([entry])).to.be.rejectedWith("onChange failed");
+			fail = false;
+			// A retry must not observe the failed join still parked in `_joining`.
+			await log.join([entry]);
+			await settleUnhandledRejectionChecks();
+
+			expect(log.length).equal(1);
+			expect(
+				unhandled.map((reason) => (reason as Error)?.message),
+			).to.deep.equal([]);
+		});
+	});
 });
