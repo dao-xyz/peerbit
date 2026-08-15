@@ -599,6 +599,11 @@ type NativePeerbitBackboneHandle = {
 	clear: () => void;
 	clear_shared_log: () => void;
 	clear_entry_coordinates: () => void;
+	/** @internal */
+	full_replica_candidates_for: (
+		minReplicas: number,
+		selfHash: string,
+	) => string[];
 	put_range: (
 		id: string,
 		hash: string,
@@ -6825,6 +6830,11 @@ export class NativePeerbitBackbone {
 
 	clearSharedLog(): void {
 		this.native.clear_shared_log();
+	}
+
+	/** @internal */
+	fullReplicaCandidatesFor(minReplicas: number, selfHash: string): string[] {
+		return this.native.full_replica_candidates_for(minReplicas, selfHash);
 	}
 
 	clearEntryCoordinates(): void {

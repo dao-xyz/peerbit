@@ -915,6 +915,13 @@ type NativeAppendEntryPlan<R extends "u32" | "u64"> = {
 	committedNativeCoordinateDeletes?: boolean;
 };
 
+type NativeFullReplicaCandidateSource = {
+	fullReplicaCandidatesFor?: (
+		minReplicas: number,
+		selfHash: string,
+	) => string[];
+};
+
 type EntryLeaderBatchItem<R extends "u32" | "u64"> = {
 	entry: ShallowOrFullEntry<any> | EntryReplicated<R>;
 	replicas: number;
@@ -8050,6 +8057,21 @@ export class SharedLog<
 		return candidates;
 	}
 
+	private async getNativeFullReplicaDeliveryCandidates(
+		minReplicas: number,
+		selfHash: string,
+	): Promise<Set<string>> {
+		const source = (this._nativeBackbone ?? this._nativeSharedLogState) as
+			| NativeFullReplicaCandidateSource
+			| undefined;
+		if (typeof source?.fullReplicaCandidatesFor === "function") {
+			return new Set(source.fullReplicaCandidatesFor(minReplicas, selfHash));
+		}
+		return this.getFullReplicaRepairCandidates(undefined, {
+			includeSubscribers: false,
+		});
+	}
+
 	private removeRepairFrontierTarget(
 		target: string,
 		options?: { expectedWarmupSession?: WarmupSession | null },
@@ -13566,9 +13588,10 @@ export class SharedLog<
 			ownershipLifecycleController,
 		);
 		const fullReplicaDeliveryCandidates =
-			await this.getFullReplicaRepairCandidates(undefined, {
-				includeSubscribers: false,
-			});
+			await this.getNativeFullReplicaDeliveryCandidates(
+				replicas,
+				context.selfHash,
+			);
 		this.throwIfReplicationOwnershipLifecycleInactive(
 			ownershipLifecycleController,
 		);
@@ -13712,9 +13735,10 @@ export class SharedLog<
 			ownershipLifecycleController,
 		);
 		const fullReplicaDeliveryCandidates =
-			await this.getFullReplicaRepairCandidates(undefined, {
-				includeSubscribers: false,
-			});
+			await this.getNativeFullReplicaDeliveryCandidates(
+				replicas,
+				context.selfHash,
+			);
 		this.throwIfReplicationOwnershipLifecycleInactive(
 			ownershipLifecycleController,
 		);
@@ -13924,9 +13948,10 @@ export class SharedLog<
 			ownershipLifecycleController,
 		);
 		const fullReplicaDeliveryCandidates =
-			await this.getFullReplicaRepairCandidates(undefined, {
-				includeSubscribers: false,
-			});
+			await this.getNativeFullReplicaDeliveryCandidates(
+				replicas,
+				context.selfHash,
+			);
 		this.throwIfReplicationOwnershipLifecycleInactive(
 			ownershipLifecycleController,
 		);

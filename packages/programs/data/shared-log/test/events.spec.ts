@@ -3001,6 +3001,33 @@ describe("events", () => {
 		}
 	});
 
+	it("uses resident native owners for append full-replica candidates", async () => {
+		const { db, log } = await openDisconnectedLog(1);
+		const nativePlanner = log._nativeBackbone ?? log._nativeSharedLogState;
+		expect(nativePlanner).to.exist;
+		const nativeCandidates = sinon
+			.stub(nativePlanner, "fullReplicaCandidatesFor")
+			.returns([]);
+		const indexCandidates = sinon
+			.stub(log, "getFullReplicaRepairCandidates")
+			.rejects(new Error("replication index scan should not run"));
+
+		try {
+			const { entry } = await db.add("native-append-resident-candidates");
+			expect(entry).to.exist;
+			expect(
+				nativeCandidates.calledOnceWithExactly(
+					2,
+					session.peers[0].identity.publicKey.hashcode(),
+				),
+			).to.be.true;
+			expect(indexCandidates.notCalled).to.be.true;
+		} finally {
+			nativeCandidates.restore();
+			indexCandidates.restore();
+		}
+	});
+
 	it("fences native append planning across its second await and reopen", async () => {
 		const { db, log } = await openDisconnectedLog(1);
 		const { entry } = await db.add("native-append-planner-generation");

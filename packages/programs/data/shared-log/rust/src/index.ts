@@ -310,6 +310,11 @@ type NativeRangePlannerHandle = {
 type NativeSharedLogStateHandle = {
 	len: () => number;
 	clear: () => void;
+	/** @internal */
+	full_replica_candidates_for: (
+		minReplicas: number,
+		selfHash: string,
+	) => string[];
 	put: NativeRangePlannerHandle["put"];
 	delete: NativeRangePlannerHandle["delete"];
 	put_entry_coordinates: (
@@ -1060,6 +1065,11 @@ export class SharedLogNativeState {
 
 	clear(): void {
 		this.native.clear();
+	}
+
+	/** @internal */
+	fullReplicaCandidatesFor(minReplicas: number, selfHash: string): string[] {
+		return this.native.full_replica_candidates_for(minReplicas, selfHash);
 	}
 
 	put(range: NativeReplicationRange): void {

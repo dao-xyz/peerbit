@@ -412,6 +412,29 @@ describe("native shared-log range planner", () => {
 		);
 	});
 
+	it("short-circuits and tracks exact full-replica candidates", async () => {
+		const state = await createSharedLogState("u32");
+		state.put(range({ id: "self", hash: "peer-self", start1: 0, end1: 10 }));
+		state.put(range({ id: "a-1", hash: "peer-a", start1: 10, end1: 20 }));
+		state.put(range({ id: "a-2", hash: "peer-a", start1: 20, end1: 30 }));
+		state.put(range({ id: "b", hash: "peer-b", start1: 30, end1: 30 }));
+
+		expect(state.fullReplicaCandidatesFor(2, "peer-self")).to.deep.equal([]);
+		expect(state.fullReplicaCandidatesFor(3, "peer-self")).to.deep.equal([
+			"peer-self",
+			"peer-a",
+			"peer-b",
+		]);
+
+		expect(state.delete("a-1")).equal(true);
+		expect(state.fullReplicaCandidatesFor(2, "peer-self")).to.deep.equal([]);
+		expect(state.delete("a-2")).equal(true);
+		expect(state.fullReplicaCandidatesFor(2, "peer-self")).to.deep.equal([
+			"peer-self",
+			"peer-b",
+		]);
+	});
+
 	it("plans entry assignment metadata from resident shared-log state", async () => {
 		const planner = await createRangePlanner("u32");
 		const state = await createSharedLogState("u32");
