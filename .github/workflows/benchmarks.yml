@@ -192,6 +192,27 @@ jobs:
         run: |
           echo "Benchmarks are only supported for same-repo branches (forks are skipped for security)."
 
+      # The noise floor is workflow tooling, not PR content, so it is fetched
+      # from the dispatched ref rather than from either benchmark checkout: the
+      # baseline that the reporter below understands is the one that ships with
+      # this workflow file. bench-head is never a source -- a PR that shipped its
+      # own baseline could set every floor to 999% and make its own regression
+      # render as "within noise".
+      #
+      # Sparse, and continue-on-error: a missing or failed baseline checkout must
+      # degrade the report to UNKNOWN, never fail the benchmark job.
+      - name: Checkout noise-floor baseline
+        if: always() && steps.pr.outputs.same_repo == 'true'
+        continue-on-error: true
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: ${{ github.sha }}
+          path: bench-floor
+          sparse-checkout: scripts/bench/noise-floor-baseline.json
+          sparse-checkout-cone-mode: false
+          fetch-depth: 1
+          persist-credentials: false
+
       - name: Checkout base
         if: steps.pr.outputs.same_repo == 'true' && steps.pr.outputs.run_any == 'true'
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
@@ -410,75 +431,316 @@ jobs:
         run: |
           node <<'NODE'
             const fs = require('node:fs');
+            const path = require('node:path');
 
             fs.mkdirSync('bench-results', { recursive: true });
-            const [owner, repo] = process.env.GITHUB_REPOSITORY.split('/');
-            const runUrl = `${process.env.GITHUB_SERVER_URL}/${owner}/${repo}/actions/runs/${process.env.GITHUB_RUN_ID}`;
-            const selected = process.env.BENCH_SELECTED_SUITES || 'none';
+
             const advisory =
               '> [!WARNING]\n> Advisory/untrusted output: PR head code runs in the same runner and workspace as the base benchmark and can modify results, metadata, and this report before upload. Reproduce material findings independently before merging.\n\n';
 
+            const errorMessage = (error) =>
+              error instanceof Error && error.message ? error.message : String(error);
+
+            const writeReport = (text) => {
+              try {
+                fs.writeFileSync('bench-results/report.md', text);
+              } catch (error) {
+                console.error(`report write failed: ${errorMessage(error)}`);
+              }
+            };
+
+            // Advisory first, before anything below can throw: even a crash has to
+            // leave the warning on disk for the upload step.
+            writeReport(`# Benchmarks\n\n${advisory}`);
+
+            const isPlainObject = (value) =>
+              typeof value === 'object' && value !== null && !Array.isArray(value);
+            const finiteOrNull = (value) =>
+              typeof value === 'number' && Number.isFinite(value) ? value : null;
+            const numberOrNull = (value) => {
+              if (value === null || value === undefined) return null;
+              const parsed = Number(value);
+              return Number.isFinite(parsed) ? parsed : null;
+            };
+
+            // Everything interpolated into the report from a file is squeezed onto
+            // one line and length-capped first: a stray newline or pipe would break
+            // the table or the blockquote it lands in.
+            const safeText = (value, max = 120) => {
+              if (typeof value !== 'string') return null;
+              const cleaned = value.replace(/[\r\n|`]/g, ' ').trim();
+              if (cleaned.length === 0) return null;
+              return cleaned.length > max ? `${cleaned.slice(0, max)}...` : cleaned;
+            };
+
+            const shortSha = (value) => {
+              const text = safeText(value, 64);
+              if (text === null) return null;
+              return /^[0-9a-f]{7,40}$/i.test(text) ? text.slice(0, 12) : text;
+            };
+
+            const safeUrl = (value) => {
+              const text = safeText(value, 300);
+              if (text === null) return null;
+              return /^https:\/\/[^\s<>()]+$/.test(text) ? text : null;
+            };
+
+            // Task names come from PR-produced JSON; a stray pipe or newline would
+            // break the table they are rendered into.
+            const cell = (value) =>
+              String(value).replace(/\r?\n/g, ' ').replace(/\|/g, '\\|');
+
+            // `file` is both the results filename and the key the noise-floor
+            // baseline rows are keyed by, so it is named once and everything
+            // derives from it. A typo here turns tasks UNKNOWN rather than
+            // silently blessing them, which is the safe failure direction.
             const suites = [
               {
+                file: 'rateless-iblt-startsync-cache.json',
                 title: 'shared-log: StartSync local decoder cache',
-                base: 'bench-results/base/rateless-iblt-startsync-cache.json',
-                head: 'bench-results/head/rateless-iblt-startsync-cache.json',
               },
               {
+                file: 'rateless-iblt-sender-startsync.json',
                 title: 'shared-log: sender StartSync setup (onMaybeMissingEntries)',
-                base: 'bench-results/base/rateless-iblt-sender-startsync.json',
-                head: 'bench-results/head/rateless-iblt-sender-startsync.json',
               },
               {
+                file: 'sync-batch-sweep.json',
                 title: 'shared-log: sync catch-up batch sweep (including large-edge batch)',
-                base: 'bench-results/base/sync-batch-sweep.json',
-                head: 'bench-results/head/sync-batch-sweep.json',
               },
               {
+                file: 'pid-convergence.json',
                 title: 'shared-log: PID convergence (model)',
-                base: 'bench-results/base/pid-convergence.json',
-                head: 'bench-results/head/pid-convergence.json',
               },
+              { file: 'document-put.json', title: 'document: put' },
               {
-                title: 'document: put',
-                base: 'bench-results/base/document-put.json',
-                head: 'bench-results/head/document-put.json',
-              },
-              {
+                file: 'chunk-transfer.json',
                 title: 'transport: multi-hop chunk transfer',
-                base: 'bench-results/base/chunk-transfer.json',
-                head: 'bench-results/head/chunk-transfer.json',
               },
-              {
-                title: 'document: chunked file-ingest',
-                base: 'bench-results/base/file-ingest.json',
-                head: 'bench-results/head/file-ingest.json',
-              },
+              { file: 'file-ingest.json', title: 'document: chunked file-ingest' },
             ];
+
+            // ----------------------------------------------------------------
+            // Noise-floor baseline (scripts/bench/noise-floor.mjs --emit-baseline).
+            //
+            // The floor is workflow tooling, not PR content, so it is read from
+            // the dispatched ref first and from the PR base second. bench-head is
+            // deliberately NOT a source: a PR that shipped its own baseline could
+            // set every floor to 999% and make its own regression render as
+            // "within noise".
+            // ----------------------------------------------------------------
+            const BASELINE_FILE = 'scripts/bench/noise-floor-baseline.json';
+            const BASELINE_SCHEMA = 'peerbit-bench-noise-floor-baseline/1';
+            const baselineCandidates = [
+              { path: `bench-floor/${BASELINE_FILE}`, origin: 'workflow-ref checkout' },
+              { path: `bench-base/${BASELINE_FILE}`, origin: 'PR base checkout' },
+              { path: BASELINE_FILE, origin: 'workspace root' },
+            ];
+
+            // TWO SHAPES, BOTH ACCEPTED. The emitter has published the floors as a
+            // suite-keyed object and as a flat row array; both are structurally
+            // unambiguous, so both are read rather than guessed at. Guessing wrong
+            // leaves every row UNKNOWN while the file looks perfectly well-formed,
+            // which is the one failure mode this whole feature exists to prevent.
+            //
+            //   object: { "<suite>.json": { "<task>": { mean_ms, hz, n, unusable? } } }
+            //   array : [ { suite, task, n, max_abs_delta_pct: { mean_ms, hz } } ]
+            //
+            // Maps, not rebuilt objects: a task really can be named "1000"
+            // (RIBLT_SIZES produces exactly that), and JS reorders integer-like
+            // keys ahead of every string key. A Map also cannot be reached by a
+            // `__proto__` key coming out of JSON.
+            const readFloorTable = (tasksField) => {
+              const bySuite = new Map();
+              let rowCount = 0;
+              const put = (suite, task, entry) => {
+                if (typeof suite !== 'string' || typeof task !== 'string') return;
+                if (!isPlainObject(entry)) return;
+                if (!bySuite.has(suite)) bySuite.set(suite, new Map());
+                bySuite.get(suite).set(task, entry);
+                rowCount += 1;
+              };
+              if (Array.isArray(tasksField)) {
+                for (const row of tasksField) {
+                  if (!isPlainObject(row)) continue;
+                  const floors = isPlainObject(row.max_abs_delta_pct)
+                    ? { ...row.max_abs_delta_pct, unusable: row.unusable, n: row.n }
+                    : row;
+                  put(row.suite, row.task, floors);
+                }
+              } else if (isPlainObject(tasksField)) {
+                for (const [suite, suiteTasks] of Object.entries(tasksField)) {
+                  if (!isPlainObject(suiteTasks)) continue;
+                  for (const [task, entry] of Object.entries(suiteTasks)) put(suite, task, entry);
+                }
+              }
+              return { bySuite, rowCount };
+            };
+
+            // Provenance has been spelled both camelCase and snake_case. Read
+            // both; a header that says "unknown ref" next to a real measurement
+            // teaches readers to distrust the annotation itself.
+            const pick = (object, ...keys) => {
+              if (!isPlainObject(object)) return null;
+              for (const key of keys) {
+                const value = object[key];
+                if (value !== null && value !== undefined) return value;
+              }
+              return null;
+            };
+
+            const loadBaseline = () => {
+              const looked = [];
+              for (const candidate of baselineCandidates) {
+                looked.push(`\`${candidate.path}\``);
+                if (!fs.existsSync(candidate.path)) continue;
+                let parsed;
+                try {
+                  parsed = JSON.parse(fs.readFileSync(candidate.path, 'utf8'));
+                } catch (error) {
+                  return {
+                    ok: false,
+                    reason: `\`${candidate.path}\` is unparseable (${errorMessage(error)})`,
+                  };
+                }
+                if (!isPlainObject(parsed)) {
+                  return { ok: false, reason: `\`${candidate.path}\` is not a JSON object` };
+                }
+                // A future schema may mean different things by the same field
+                // names, so an unrecognised one is refused rather than guessed at.
+                if (parsed.schema !== BASELINE_SCHEMA) {
+                  const declared = safeText(parsed.schema, 60) ?? String(parsed.schema);
+                  return {
+                    ok: false,
+                    reason: `\`${candidate.path}\` declares schema \`${declared}\`; this report only understands \`${BASELINE_SCHEMA}\``,
+                  };
+                }
+                // The committed placeholder has status "not-yet-measured" and no
+                // task entries. It is a real file with no floors in it, and it
+                // must read as "no floor", never as "everything is fine".
+                if (parsed.status !== 'measured') {
+                  const status = safeText(parsed.status, 40) ?? 'unknown';
+                  return {
+                    ok: false,
+                    reason: `\`${candidate.path}\` is status \`${status}\` and carries no measured floors`,
+                  };
+                }
+                const { bySuite, rowCount } = readFloorTable(parsed.tasks);
+                if (rowCount === 0) {
+                  return {
+                    ok: false,
+                    reason: `\`${candidate.path}\` carries no usable (suite, task) rows`,
+                  };
+                }
+                return {
+                  ok: true,
+                  source: candidate,
+                  provenance: isPlainObject(parsed.provenance) ? parsed.provenance : {},
+                  bySuite,
+                  rowCount,
+                };
+              }
+              return { ok: false, reason: `no baseline found; looked in ${looked.join(', ')}` };
+            };
+
+            let baseline;
+            try {
+              baseline = loadBaseline();
+            } catch (error) {
+              baseline = { ok: false, reason: `baseline unreadable (${errorMessage(error)})` };
+            }
+
+            const suiteRows = (file) =>
+              baseline.ok ? baseline.bySuite.get(file) ?? null : null;
+
+            // The emitter publishes `null` for a metric whose floor it could not
+            // measure and records the reason in `unusable`. null is UNKNOWN and is
+            // never read as 0 -- a 0% floor would clear every later delta on that
+            // task forever. Exact task-name match only: a renamed task must land in
+            // UNKNOWN, not inherit the floor of the task it used to be.
+            const floorFor = (rows, suiteFile, taskName, metricKey) => {
+              if (!baseline.ok) return { floor: null, reason: 'no baseline' };
+              if (rows === null) return { floor: null, reason: 'suite not in baseline' };
+              const row = rows.get(taskName);
+              if (row === undefined) return { floor: null, reason: 'task not in baseline' };
+              const value = finiteOrNull(row[metricKey]);
+              if (value === null || value <= 0) {
+                const why = isPlainObject(row.unusable)
+                  ? safeText(row.unusable[metricKey], 40)
+                  : null;
+                return { floor: null, reason: why === null ? 'no floor measured' : `no floor: ${why}` };
+              }
+              return { floor: value, reason: null };
+            };
+
+            const WITHIN = 'within';
+            const ABOVE = 'above';
+            const UNKNOWN = 'unknown';
+
+            // scripts/bench/noise-floor.mjs defines the floor as
+            // |a - b| / min(a, b) * 100, so the comparison uses that same
+            // statistic rather than the signed, base-divided Δ in the neighbouring
+            // column. The two agree when head is the slower side, and this one is
+            // the larger when head is the faster side. Leaning high is the safe
+            // direction: a floor that reads low blesses every perf claim.
+            const floorMagnitude = (a, b) => {
+              if (a === null || b === null) return null;
+              const low = Math.min(a, b);
+              if (!Number.isFinite(low) || low <= 0) return null;
+              return (Math.abs(a - b) / low) * 100;
+            };
+
+            const classify = (baseValue, headValue, floorInfo) => {
+              const magnitude = floorMagnitude(baseValue, headValue);
+              if (magnitude === null) return { state: UNKNOWN, detail: 'no comparable Δ' };
+              if (floorInfo.floor === null) return { state: UNKNOWN, detail: floorInfo.reason };
+              return {
+                state: magnitude <= floorInfo.floor ? WITHIN : ABOVE,
+                magnitude,
+                floor: floorInfo.floor,
+              };
+            };
+
+            const renderVerdict = (verdict) => {
+              if (verdict.state === WITHIN) {
+                return `within (${verdict.magnitude.toFixed(2)}% <= ${verdict.floor.toFixed(2)}%)`;
+              }
+              if (verdict.state === ABOVE) {
+                return `**ABOVE FLOOR** (${verdict.magnitude.toFixed(2)}% > ${verdict.floor.toFixed(2)}%)`;
+              }
+              return `**UNKNOWN** (${verdict.detail})`;
+            };
+
+            // ABOVE beats UNKNOWN beats within. A task the floor cannot speak for
+            // must never be counted as clean.
+            const worstState = (states) =>
+              states.includes(ABOVE) ? ABOVE : states.includes(UNKNOWN) ? UNKNOWN : WITHIN;
 
             const readJson = (file) => {
               try {
-                return JSON.parse(fs.readFileSync(file, 'utf8'));
+                const parsed = JSON.parse(fs.readFileSync(file, 'utf8'));
+                if (!isPlainObject(parsed)) {
+                  return { tasks: [], __parseError: 'top-level JSON is not an object' };
+                }
+                return parsed;
               } catch (error) {
-                return {
-                  tasks: [],
-                  __parseError: error instanceof Error ? error.message : String(error),
-                };
+                return { tasks: [], __parseError: errorMessage(error) };
               }
             };
 
             const format = (value, digits = 3) => {
-              if (value === null || value === undefined || Number.isNaN(value)) return '-';
-              return Number(value).toFixed(digits);
+              const parsed = numberOrNull(value);
+              if (parsed === null) return '-';
+              return parsed.toFixed(digits);
             };
 
             const formatPercent = (value) => {
-              if (value === null || value === undefined || Number.isNaN(value)) return '-';
+              if (value === null || value === undefined || !Number.isFinite(value)) return '-';
               const sign = value > 0 ? '+' : '';
               return `${sign}${value.toFixed(2)}%`;
             };
 
-            const formatSuite = (baseJson, headJson) => {
+            const formatSuite = (suite, baseJson, headJson) => {
+              const rows = suiteRows(suite.file);
               const baseTasks = Array.isArray(baseJson.tasks) ? baseJson.tasks : [];
               const headTasks = Array.isArray(headJson.tasks) ? headJson.tasks : [];
               const baseMap = new Map(baseTasks.filter((t) => typeof t?.name === 'string').map((t) => [t.name, t]));
@@ -486,68 +748,260 @@ jobs:
               const taskNames = Array.from(new Set([...baseMap.keys(), ...headMap.keys()]));
               taskNames.sort();
 
+              const counts = { [WITHIN]: 0, [ABOVE]: 0, [UNKNOWN]: 0 };
+              const aboveTasks = [];
+              const unknownTasks = [];
+
               const lines = [];
-              lines.push('| Task | base mean (ms) | head mean (ms) | Δ mean | base ops/s | head ops/s | Δ ops/s |');
-              lines.push('|---|---:|---:|---:|---:|---:|---:|');
+              lines.push(
+                '| Task | base mean (ms) | head mean (ms) | Δ mean | mean vs floor | base ops/s | head ops/s | Δ ops/s | ops/s vs floor |',
+              );
+              lines.push('|---|---:|---:|---:|:---|---:|---:|---:|:---|');
 
               for (const name of taskNames) {
                 const b = baseMap.get(name);
                 const h = headMap.get(name);
-                const baseMean = b?.mean_ms ?? null;
-                const headMean = h?.mean_ms ?? null;
-                const baseHz = b?.hz ?? null;
-                const headHz = h?.hz ?? null;
+                const baseMean = numberOrNull(b?.mean_ms);
+                const headMean = numberOrNull(h?.mean_ms);
+                const baseHz = numberOrNull(b?.hz);
+                const headHz = numberOrNull(h?.hz);
 
                 const meanDelta =
-                  baseMean != null && headMean != null ? ((headMean - baseMean) / baseMean) * 100 : null;
-                const hzDelta = baseHz != null && headHz != null ? ((headHz - baseHz) / baseHz) * 100 : null;
+                  baseMean !== null && headMean !== null && baseMean !== 0
+                    ? ((headMean - baseMean) / baseMean) * 100
+                    : null;
+                const hzDelta =
+                  baseHz !== null && headHz !== null && baseHz !== 0
+                    ? ((headHz - baseHz) / baseHz) * 100
+                    : null;
+
+                const meanVerdict = classify(baseMean, headMean, floorFor(rows, suite.file, name, 'mean_ms'));
+                const hzVerdict = classify(baseHz, headHz, floorFor(rows, suite.file, name, 'hz'));
+                const state = worstState([meanVerdict.state, hzVerdict.state]);
+                counts[state] += 1;
+                if (state === ABOVE) aboveTasks.push(name);
+                if (state === UNKNOWN) unknownTasks.push(name);
 
                 lines.push(
-                  `| ${name} | ${format(baseMean, 6)} | ${format(headMean, 6)} | ${formatPercent(meanDelta)} | ${format(baseHz, 0)} | ${format(headHz, 0)} | ${formatPercent(hzDelta)} |`,
+                  `| ${cell(name)} | ${format(baseMean, 6)} | ${format(headMean, 6)} | ${formatPercent(meanDelta)} | ${renderVerdict(meanVerdict)} | ${format(baseHz, 0)} | ${format(headHz, 0)} | ${formatPercent(hzDelta)} | ${renderVerdict(hzVerdict)} |`,
                 );
               }
 
-              return lines.join('\n');
+              const notes = [];
+              if (taskNames.length === 0) {
+                // Also the symptom of a suite whose JSON is not the tinybench
+                // { tasks: [...] } shape at all -- document-put.json emits `rows`.
+                notes.push(
+                  '_No comparable tasks were parsed from this suite. An empty table is missing data, not agreement._',
+                );
+              } else {
+                if (baseline.ok && rows === null) {
+                  notes.push(
+                    `_The baseline has no rows for \`${suite.file}\`, so every task above is **UNKNOWN**._`,
+                  );
+                }
+                notes.push(
+                  `_${taskNames.length} task(s): ${counts[WITHIN]} within noise, ${counts[ABOVE]} **ABOVE FLOOR**, ${counts[UNKNOWN]} **UNKNOWN**._`,
+                );
+              }
+
+              return {
+                table: lines.join('\n'),
+                notes,
+                counts,
+                taskCount: taskNames.length,
+                aboveTasks,
+                unknownTasks,
+              };
             };
 
-            let body =
-              '# Benchmarks\n\n' +
-              advisory +
-              'Run: ' +
-              runUrl +
-              '\n\nSelected: ' +
-              selected +
-              '\n\n';
-            // Write the warning before parsing any PR-produced JSON so even a
-            // malformed benchmark result leaves an advisory report to upload.
-            fs.writeFileSync('bench-results/report.md', body);
-
-            let includedSuites = 0;
-            for (const suite of suites) {
-              const baseExists = fs.existsSync(suite.base);
-              const headExists = fs.existsSync(suite.head);
-              if (!baseExists && !headExists) continue;
-
-              const baseJson = baseExists ? readJson(suite.base) : { tasks: [] };
-              const headJson = headExists ? readJson(suite.head) : { tasks: [] };
-              body += `### ${suite.title}\n\n`;
-              body += formatSuite(baseJson, headJson);
-              if (baseJson.__parseError || headJson.__parseError) {
-                body += '\n\n';
-                body += [
-                  baseJson.__parseError ? `base parse error: ${baseJson.__parseError}` : null,
-                  headJson.__parseError ? `head parse error: ${headJson.__parseError}` : null,
-                ].filter(Boolean).join(' • ');
+            const buildFloorSection = () => {
+              const out = ['## Noise floor', ''];
+              if (!baseline.ok) {
+                out.push('> [!CAUTION]');
+                out.push(`> **No noise-floor baseline was available** - ${baseline.reason}.`);
+                out.push('> Nothing below has been cleared as noise: every task reads **UNKNOWN**, and a Δ of');
+                out.push('> any size may be pure run-to-run variance. Dispatch');
+                out.push('> `.github/workflows/benchmark-noise-floor.yml`, then regenerate');
+                out.push(`> \`${BASELINE_FILE}\` with \`node scripts/bench/noise-floor.mjs <results-dir> --emit-baseline ${BASELINE_FILE}\`.`);
+                out.push('');
+                return out.join('\n');
               }
-              body += `\n\n`;
-              includedSuites += 1;
-            }
 
-            if (includedSuites === 0) {
-              body += '_No matching benchmark suites ran for this PR._\n';
-            }
+              const p = baseline.provenance;
+              const ref = safeText(pick(p, 'ref')) ?? 'unknown ref';
+              const sha = shortSha(pick(p, 'sha'));
+              const measuredAt = safeText(pick(p, 'measuredAt', 'measured_at')) ?? 'unknown date';
+              const measuredAtSource = safeText(pick(p, 'measuredAtSource', 'measured_at_source'), 40);
+              const runs = finiteOrNull(pick(p, 'runs'));
+              const pairs = finiteOrNull(pick(p, 'pairsPerTask', 'pairs_per_task'));
+              const url = safeUrl(pick(p, 'runUrl', 'run_url'));
 
-            fs.writeFileSync('bench-results/report.md', body);
+              out.push('Every Δ below is judged against a **measured** floor: the largest |Δ%| that repeated');
+              out.push('runs of *identical* code produced for that same (suite, task, metric).');
+              out.push('');
+              out.push(`- Baseline: \`${BASELINE_FILE}\`, read from the ${baseline.source.origin}`);
+              out.push(
+                `- Measured on: \`${ref}\`${sha === null ? '' : ` @ \`${sha}\``} - ${measuredAt}${measuredAtSource === null ? '' : ` (${measuredAtSource})`}`,
+              );
+              out.push(
+                `- Runs: ${runs === null ? 'unknown' : runs}${pairs === null ? '' : ` (${pairs} pair(s) per task)`}, ${baseline.rowCount} (suite, task) row(s)`,
+              );
+              out.push(`- Measurement run: ${url === null ? '_not recorded_' : url}`);
+              out.push('');
+              out.push('> [!IMPORTANT]');
+              out.push('> **`within noise` is not proof that nothing changed.** The floor is measured by');
+              out.push('> building ONCE and repeating the run, so it **excludes build-to-build variance**;');
+              out.push('> this job builds base and head separately. The floor is therefore a **lower bound**');
+              out.push('> on the noise in this comparison.');
+              out.push('>');
+              out.push('> The floor is an absolute |Δ%| while the Δ columns are signed: a -40% "improvement"');
+              out.push('> on a task with a 38% floor is exactly as much noise as +40%. **ABOVE FLOOR** means');
+              out.push('> the magnitude falls outside the floor in *either* direction; it does not by itself');
+              out.push('> mean regression.');
+              out.push('>');
+              out.push('> The `vs floor` columns quote the statistic the floor is defined by,');
+              out.push('> `|base - head| / min(base, head) * 100`, which is why they can read slightly larger');
+              out.push('> than the signed, base-divided Δ beside them.');
+              out.push('');
+              out.push(
+                'Legend: `within (x% <= f%)` is inside the floor measured for that task; `**ABOVE FLOOR**` is outside it and is the row worth reading; `**UNKNOWN**` means no floor exists for this (suite, task, metric) - a new task, a renamed task, a stale baseline, or a metric the A/A run could not resolve. **UNKNOWN is not "fine".**',
+              );
+              out.push('');
+              return out.join('\n');
+            };
+
+            const listNames = (names, limit = 20) => {
+              const shown = names.slice(0, limit).map((name) => `\`${cell(name)}\``);
+              const extra = names.length - shown.length;
+              return shown.join(', ') + (extra > 0 ? `, and ${extra} more` : '');
+            };
+
+            const buildSummary = (rows) => {
+              const out = ['## Noise-floor summary', ''];
+              out.push('| Suite | tasks | within noise | ABOVE FLOOR | UNKNOWN |');
+              out.push('|---|---:|---:|---:|---:|');
+
+              const total = { [WITHIN]: 0, [ABOVE]: 0, [UNKNOWN]: 0 };
+              let totalTasks = 0;
+              for (const row of rows) {
+                out.push(
+                  `| ${cell(row.title)} | ${row.taskCount} | ${row.counts[WITHIN]} | ${row.counts[ABOVE]} | ${row.counts[UNKNOWN]} |`,
+                );
+                total[WITHIN] += row.counts[WITHIN];
+                total[ABOVE] += row.counts[ABOVE];
+                total[UNKNOWN] += row.counts[UNKNOWN];
+                totalTasks += row.taskCount;
+              }
+              out.push(
+                `| **Total** | **${totalTasks}** | **${total[WITHIN]}** | **${total[ABOVE]}** | **${total[UNKNOWN]}** |`,
+              );
+              out.push('');
+
+              // A suite that produced no comparable tasks reads as `0 | 0 | 0 | 0`
+              // in the table above, which looks like a clean sweep. Name it.
+              const emptySuites = rows.filter((row) => row.taskCount === 0).map((row) => row.file);
+              if (emptySuites.length > 0) {
+                out.push(
+                  `**No comparable tasks** (missing data, not agreement): ${listNames(emptySuites)}`,
+                );
+                out.push('');
+              }
+
+              const qualify = (row, name) => `${row.file} > ${name}`;
+              const aboveAll = rows.flatMap((row) => row.aboveTasks.map((name) => qualify(row, name)));
+              const unknownAll = rows.flatMap((row) => row.unknownTasks.map((name) => qualify(row, name)));
+
+              if (aboveAll.length > 0) {
+                out.push(`**Above their floor**, read these first: ${listNames(aboveAll)}`);
+                out.push('');
+              } else if (baseline.ok && totalTasks > 0) {
+                out.push(
+                  '_No task exceeded its measured floor. That is a lower bound, not a clean bill of health - the floor excludes build-to-build variance._',
+                );
+                out.push('');
+              }
+
+              if (unknownAll.length > 0) {
+                out.push(`**No floor, so not cleared**: ${listNames(unknownAll)}`);
+                out.push('');
+              }
+
+              return out.join('\n');
+            };
+
+            const render = () => {
+              const [owner, repo] = (process.env.GITHUB_REPOSITORY || '/').split('/');
+              const runUrl = `${process.env.GITHUB_SERVER_URL}/${owner}/${repo}/actions/runs/${process.env.GITHUB_RUN_ID}`;
+              const selected = process.env.BENCH_SELECTED_SUITES || 'none';
+
+              const header =
+                '# Benchmarks\n\n' +
+                advisory +
+                'Run: ' +
+                runUrl +
+                '\n\nSelected: ' +
+                selected +
+                '\n\n' +
+                buildFloorSection() +
+                '\n';
+
+              // Write the warning and the floor caveats before parsing any
+              // PR-produced JSON, so even a malformed benchmark result leaves an
+              // advisory report to upload.
+              writeReport(header);
+
+              const rows = [];
+              let suitesBody = '';
+              for (const suite of suites) {
+                const basePath = `bench-results/base/${suite.file}`;
+                const headPath = `bench-results/head/${suite.file}`;
+                const baseExists = fs.existsSync(basePath);
+                const headExists = fs.existsSync(headPath);
+                if (!baseExists && !headExists) continue;
+
+                const baseJson = baseExists ? readJson(basePath) : { tasks: [] };
+                const headJson = headExists ? readJson(headPath) : { tasks: [] };
+                const rendered = formatSuite(suite, baseJson, headJson);
+                rows.push({ title: suite.title, file: suite.file, ...rendered });
+
+                suitesBody += `### ${suite.title}\n\n`;
+                suitesBody += rendered.table;
+                suitesBody += '\n\n';
+                if (rendered.notes.length > 0) {
+                  // Blank line between notes: two adjacent italic lines would
+                  // otherwise render as one run-on paragraph.
+                  suitesBody += `${rendered.notes.join('\n\n')}\n\n`;
+                }
+                if (baseJson.__parseError || headJson.__parseError) {
+                  suitesBody += [
+                    baseJson.__parseError ? `base parse error: ${baseJson.__parseError}` : null,
+                    headJson.__parseError ? `head parse error: ${headJson.__parseError}` : null,
+                  ]
+                    .filter(Boolean)
+                    .join(' • ');
+                  suitesBody += '\n\n';
+                }
+              }
+
+              if (rows.length === 0) {
+                return `${header}_No matching benchmark suites ran for this PR._\n`;
+              }
+
+              return header + buildSummary(rows) + '\n' + suitesBody;
+            };
+
+            // A report is never a gate; this step runs under `if: always()` for a
+            // reason. Whatever happens above, exit 0 and leave the most complete
+            // report that could be built.
+            try {
+              writeReport(render());
+            } catch (error) {
+              writeReport(
+                `# Benchmarks\n\n${advisory}> [!CAUTION]\n> The benchmark report failed to render (${errorMessage(error)}).\n> No Δ in this run was compared against the noise floor.\n`,
+              );
+              console.error(`benchmark report rendering failed: ${errorMessage(error)}`);
+            }
           NODE
 
       - name: Upload benchmark results

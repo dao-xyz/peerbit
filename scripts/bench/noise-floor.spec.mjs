@@ -5,12 +5,16 @@ import path from "node:path";
 import test from "node:test";
 import {
 	analyze,
+	buildBaseline,
+	ceilTo,
 	median,
 	p95IsJustTheMaximum,
 	pairwiseAbsDeltasPct,
 	percentileNearestRank,
+	readMeasurementMetadata,
 	renderMarkdown,
 	runCli,
+	stringifyBaseline,
 } from "./noise-floor.mjs";
 
 const withFixture = (body) => {
@@ -107,6 +111,72 @@ const captureCli = (argv) => {
 	});
 	return { code, stdout: stdout.join("\n"), stderr: stderr.join("\n") };
 };
+
+// Field-for-field what .github/workflows/benchmark-noise-floor.yml's "Record run
+// metadata" step writes into the results directory. The baseline emitter reads
+// its entire provenance from here, so a fixture that drifts from that step is a
+// test that proves nothing.
+const METADATA = {
+	kind: "benchmark-noise-floor",
+	note: "One commit, one build, repeated runs.",
+	ref: "master",
+	sha: "b776198cd0bb1a2c3d4e5f60718293a4b5c6d7e8",
+	repeats: 3,
+	selected_suites: ["shared-log", "transport", "document"],
+	run_url: "https://github.com/dao-xyz/peerbit/actions/runs/31844749062",
+	measured_at: "2026-08-15T09:00:00.000Z",
+};
+
+const writeMetadata = (root, overrides = {}) => {
+	const metadata = { ...METADATA, ...overrides };
+	// An explicit `undefined` in `overrides` means "this run wrote no such
+	// field", which is how the artifacts predating `measured_at` look.
+	for (const [key, value] of Object.entries(overrides))
+		if (value === undefined) delete metadata[key];
+	fs.writeFileSync(
+		path.join(root, "metadata.json"),
+		typeof overrides.raw === "string"
+			? overrides.raw
+			: `${JSON.stringify(metadata, null, 2)}\n`,
+	);
+	return metadata;
+};
+
+// Three runs of one suite plus the metadata the emitter demands: the smallest
+// input a committable baseline is allowed to come from.
+const baselineFixture = (root, means = [100, 101, 102.7249], overrides = {}) => {
+	means.forEach((meanMs, index) =>
+		writeSuite(
+			root,
+			`run-${index + 1}`,
+			"pid-convergence.json",
+			suite(task("T", meanMs)),
+		),
+	);
+	return writeMetadata(root, overrides);
+};
+
+const readBaseline = (file) => JSON.parse(fs.readFileSync(file, "utf8"));
+
+// Exactly how .github/workflows/benchmarks.yml reads a floor: index by the suite
+// FILE name, then by the task name, then take the metric straight off the entry.
+// Going through this helper rather than poking at the object keeps the tests
+// honest about the contract that matters.
+const consumerFloor = (baseline, file, taskName, metricKey) => {
+	const floors = baseline.tasks[file];
+	if (!floors || !Object.hasOwn(floors, taskName)) return null;
+	const entry = floors[taskName];
+	if (!entry || !Object.hasOwn(entry, metricKey)) return null;
+	const value = entry[metricKey];
+	return typeof value === "number" && Number.isFinite(value) && value >= 0
+		? value
+		: null;
+};
+
+const COMMITTED_BASELINE = new URL(
+	"./noise-floor-baseline.json",
+	import.meta.url,
+);
 
 const round6 = (value) => Number(value.toFixed(6));
 
@@ -1391,5 +1461,480 @@ test("a metric invalid in EVERY run warns; invalid in only SOME runs still block
 		);
 		// The always-zero lag is still only a warning even in this run.
 		assert.ok(!blocking.includes("metric-never-measurable"));
+	});
+});
+
+// --------------------------------------------------------------------------
+// --emit-baseline: the committable file.
+
+test("the emitted baseline carries the per-task floor, rounded away from zero", () => {
+	// Rounding a floor DOWN would let the rounding step itself turn noise into a
+	// signal: a task whose identical code moved 2.7249% must not be published as
+	// 2.72%, because a later A/B delta of 2.73% would then read as "above the
+	// floor". 1.1 is the float trap -- Math.ceil(1.1 * 100) / 100 is 1.11.
+	assert.equal(ceilTo(2.7249, 2), 2.73);
+	assert.equal(ceilTo(2.72, 2), 2.72);
+	assert.equal(ceilTo(1.1, 2), 1.1);
+	assert.equal(ceilTo(0, 2), 0);
+	assert.equal(ceilTo(null, 2), null);
+
+	withFixture((root) => {
+		baselineFixture(root);
+		const out = path.join(root, "baseline.json");
+		const { code, stderr } = captureCli([root, "--emit-baseline", out]);
+		assert.equal(code, 0);
+
+		const baseline = readBaseline(out);
+		assert.equal(baseline.schema, "peerbit-bench-noise-floor-baseline/1");
+		assert.equal(baseline.status, "measured");
+		assert.equal(baseline.provenance.tasksPublished, 1);
+
+		// 100 vs 102.7249 is the widest pair, so the floor is 2.7249% -> 2.73%,
+		// and |Δ%| is reciprocal-invariant so hz reports the same number. Read the
+		// way the consumer reads it: tasks[<suite file>][<task name>][<metric>].
+		assert.equal(consumerFloor(baseline, "pid-convergence.json", "T", "mean_ms"), 2.73);
+		assert.equal(consumerFloor(baseline, "pid-convergence.json", "T", "hz"), 2.73);
+		const entry = baseline.tasks["pid-convergence.json"].T;
+		assert.equal(entry.n, 3);
+		// `unusable` is present only when something is unusable.
+		assert.equal("unusable" in entry, false);
+		// A task the baseline has never heard of stays unknown -- no inheriting
+		// the floor of a neighbour, and no suite-level default.
+		assert.equal(consumerFloor(baseline, "pid-convergence.json", "T2", "mean_ms"), null);
+		assert.equal(consumerFloor(baseline, "file-ingest.json", "T", "mean_ms"), null);
+
+		// The A/A report's own numbers travel with it, so a reader can see how
+		// wide the whole distribution was without the artifact.
+		assert.equal(baseline.headline.mean_ms.tasksMeasured, 1);
+		assert.equal(baseline.headline.mean_ms.worstMax, 2.73);
+		assert.deepEqual(baseline.headline.mean_ms.worstTask, {
+			suite: "pid-convergence.json",
+			task: "T",
+		});
+		assert.equal(baseline.provenance.runs, 3);
+		assert.equal(baseline.provenance.pairsPerTask, 3);
+		assert.match(stderr, /baseline written to/);
+	});
+});
+
+test("the baseline is byte-deterministic with sorted keys and stable task order", () => {
+	withFixture((root) => {
+		// Two suites whose order in the SUITES list is the REVERSE of their
+		// alphabetical order (sync-batch-sweep is declared before pid-convergence),
+		// and tasks written in reverse order within a file. Anything that leans on
+		// discovery order instead of sorting therefore shows up as a diff.
+		for (const [run, offset] of [
+			["run-1", 0],
+			["run-2", 1],
+			["run-3", 3],
+		]) {
+			writeSuite(
+				root,
+				run,
+				"sync-batch-sweep.json",
+				suite(task("zeta", 10 + offset), task("alpha", 20 + offset)),
+			);
+			writeSuite(
+				root,
+				run,
+				"pid-convergence.json",
+				suite(task("beta", 30 + offset)),
+			);
+		}
+		writeMetadata(root);
+
+		const first = path.join(root, "one.json");
+		const second = path.join(root, "two.json");
+		assert.equal(captureCli([root, "--emit-baseline", first]).code, 0);
+		assert.equal(captureCli([root, "--emit-baseline", second]).code, 0);
+		const bytes = fs.readFileSync(first, "utf8");
+		assert.equal(bytes, fs.readFileSync(second, "utf8"));
+
+		// Keys sorted at every depth -- including the suite and task names, which
+		// are data -- independent of the SUITES declaration order, so reordering
+		// that list can never produce a committed diff with no content in it.
+		const baseline = JSON.parse(bytes);
+		const sorted = (value) => [...Object.keys(value)].sort();
+		assert.deepEqual(Object.keys(baseline.tasks), [
+			"pid-convergence.json",
+			"sync-batch-sweep.json",
+		]);
+		assert.deepEqual(Object.keys(baseline.tasks["sync-batch-sweep.json"]), [
+			"alpha",
+			"zeta",
+		]);
+		assert.deepEqual(Object.keys(baseline), sorted(baseline));
+		assert.deepEqual(
+			Object.keys(baseline.provenance),
+			sorted(baseline.provenance),
+		);
+
+		// Two-space indent, trailing newline, and the serialiser rather than the
+		// construction order is what guarantees the ordering, so the committed
+		// file re-serialises to itself byte for byte.
+		assert.equal(stringifyBaseline(baseline), bytes);
+		assert.ok(bytes.endsWith("}\n"));
+	});
+});
+
+test("provenance is read from metadata.json, never invented", () => {
+	withFixture((root) => {
+		baselineFixture(root);
+		const out = path.join(root, "baseline.json");
+		assert.equal(captureCli([root, "--emit-baseline", out]).code, 0);
+
+		const { provenance } = readBaseline(out);
+		// Every one of these is quoted straight from the file the workflow wrote.
+		// A baseline whose ref/sha/run URL came from the machine that happened to
+		// run the emitter would point at the wrong commit entirely. The camelCase
+		// spelling is the consumer's: benchmarks.yml reads p.runUrl / p.measuredAt
+		// / p.pairsPerTask, and a snake_case producer renders "unknown date" and
+		// "_not recorded_" while looking perfectly well-formed.
+		assert.equal(provenance.ref, METADATA.ref);
+		assert.equal(provenance.sha, METADATA.sha);
+		assert.equal(provenance.runUrl, METADATA.run_url);
+		assert.equal(provenance.measuredAt, METADATA.measured_at);
+		assert.match(provenance.measuredAtSource, /field measured_at/);
+		assert.deepEqual(provenance.selectedSuites, METADATA.selected_suites);
+		assert.equal(provenance.repeatsRequested, METADATA.repeats);
+		assert.equal(provenance.runs, 3);
+		assert.equal(provenance.pairsPerTask, 3);
+		assert.equal(provenance.suitesKnown, 7);
+		assert.equal(provenance.suitesCollected, 1);
+		assert.equal(
+			provenance.generator,
+			"scripts/bench/noise-floor.mjs --emit-baseline",
+		);
+	});
+
+	// The artifacts measured before the workflow recorded a timestamp still have
+	// to yield a dated baseline, so the file's own mtime stands in -- and says
+	// so, because a weaker source a reader can see beats a fabricated one.
+	withFixture((root) => {
+		baselineFixture(root, [100, 101, 102], { measured_at: undefined });
+		// Pinned to a distinctly past mtime on purpose: a fixture written moments
+		// ago has an mtime of ~now, so a fallback that quietly used `new Date()`
+		// would pass by coincidence.
+		const metadataFile = path.join(root, "metadata.json");
+		const measured = new Date("2026-02-03T04:05:06.789Z");
+		fs.utimesSync(metadataFile, measured, measured);
+
+		const out = path.join(root, "baseline.json");
+		assert.equal(captureCli([root, "--emit-baseline", out]).code, 0);
+
+		const { provenance } = readBaseline(out);
+		assert.equal(provenance.measuredAt, "2026-02-03T04:05:06.789Z");
+		assert.equal(
+			provenance.measuredAt,
+			fs.statSync(metadataFile).mtime.toISOString(),
+		);
+		assert.match(provenance.measuredAtSource, /mtime/);
+	});
+});
+
+test("a floor of zero is published as unknown, never as a usable 0%", () => {
+	withFixture((root) => {
+		// Three shapes in one suite: a task that never moved, a task whose metric
+		// is structurally 0 in every run (chunk-transfer's completion lags), and a
+		// task that actually varied.
+		const rows = (moving) => [
+			{ name: "identical", mean_ms: "12.5", hz: "80" },
+			{ name: "lag", mean_ms: "0", hz: "null" },
+			{ name: "moving", mean_ms: moving, hz: `${1000 / Number(moving)}` },
+		];
+		writeSuite(root, "run-1", "chunk-transfer.json", rawSuite(rows("10")));
+		writeSuite(root, "run-2", "chunk-transfer.json", rawSuite(rows("11")));
+		writeSuite(root, "run-3", "chunk-transfer.json", rawSuite(rows("12")));
+		writeMetadata(root);
+
+		const out = path.join(root, "baseline.json");
+		assert.equal(captureCli([root, "--emit-baseline", out]).code, 0);
+		const baseline = readBaseline(out);
+
+		// A committed 0 would be permanent permission: benchmarks.yml's taskFloor()
+		// accepts any finite value >= 0, so every later A/B delta on that task
+		// would clear it. Identical runs mean no variation was RESOLVED, which is
+		// not the same as a task that cannot move -- so the floor must read as
+		// unknown, and the reason has to survive somewhere a human can see it.
+		const floors = baseline.tasks["chunk-transfer.json"];
+		assert.equal(
+			consumerFloor(baseline, "chunk-transfer.json", "identical", "mean_ms"),
+			null,
+		);
+		assert.equal(floors.identical.unusable.mean_ms, "no-variation-resolved");
+		assert.equal(floors.identical.unusable.hz, "no-variation-resolved");
+
+		assert.equal(
+			consumerFloor(baseline, "chunk-transfer.json", "lag", "mean_ms"),
+			null,
+		);
+		assert.equal(floors.lag.unusable.mean_ms, "never-measurable");
+
+		// The real one still publishes a floor: 10 -> 12 is 20%.
+		assert.equal(
+			consumerFloor(baseline, "chunk-transfer.json", "moving", "mean_ms"),
+			20,
+		);
+
+		// Nothing anywhere in the file is a zero floor, and the key is present
+		// holding null rather than dropped -- both readings have to be unknown.
+		for (const [name, entry] of Object.entries(floors))
+			for (const metric of ["mean_ms", "hz"]) {
+				assert.ok(Object.hasOwn(entry, metric), `${name} dropped ${metric}`);
+				assert.notEqual(entry[metric], 0, `${name} published a 0% floor`);
+			}
+	});
+});
+
+test("refuses to emit a baseline from a NOT TRUSTWORTHY report", () => {
+	withFixture((root) => {
+		// A task that appears in only two of three runs: blocking, because the
+		// runs that produced it are the runs where nothing went wrong.
+		writeSuite(root, "run-1", "pid-convergence.json", suite(task("T", 100)));
+		writeSuite(root, "run-2", "pid-convergence.json", suite(task("T", 101)));
+		writeSuite(
+			root,
+			"run-3",
+			"pid-convergence.json",
+			suite(task("T", 102), task("only-here", 5)),
+		);
+		writeMetadata(root);
+
+		const out = path.join(root, "baseline.json");
+		const { code, stdout, stderr } = captureCli([root, "--emit-baseline", out]);
+		assert.equal(code, 1);
+		// Refusing must leave NOTHING behind: a half-written baseline would be
+		// committed as readily as a good one.
+		assert.equal(fs.existsSync(out), false);
+		assert.match(stderr, /refusing to emit a committable baseline/);
+		assert.match(stderr, /NOT TRUSTWORTHY/);
+		// The diagnosis is still printed, which is the whole point of publishing
+		// the report even when it is unusable.
+		assert.match(stdout, /task-missing-in-run/);
+
+		// Control: with the stray task removed the same directory emits.
+		writeSuite(root, "run-3", "pid-convergence.json", suite(task("T", 102)));
+		assert.equal(captureCli([root, "--emit-baseline", out]).code, 0);
+		assert.equal(fs.existsSync(out), true);
+	});
+});
+
+test("refuses a baseline from too few runs, or from a partial run", () => {
+	// Two runs give ONE pair, so the "max" is a single observation with no tail.
+	// The REPORT may be published from that; a committed file may not, and
+	// --min-runs 2 must not be able to buy its way past that.
+	withFixture((root) => {
+		baselineFixture(root, [100, 110], { repeats: 2 });
+		const out = path.join(root, "baseline.json");
+
+		const plain = captureCli([root, "--min-runs", "2"]);
+		assert.equal(plain.code, 0, "the report itself is publishable");
+
+		const { code, stderr } = captureCli([
+			root,
+			"--min-runs",
+			"2",
+			"--emit-baseline",
+			out,
+		]);
+		assert.equal(code, 1);
+		assert.equal(fs.existsSync(out), false);
+		assert.match(stderr, /only 2 usable run\(s\); a committed baseline needs/);
+	});
+
+	// A run that asked for 4 repeats and produced 3 is a NON-RANDOM subset --
+	// the repeats that finished -- and its floor reads low. The report cannot see
+	// this on its own: --min-runs 3 makes it trustworthy. metadata.json can.
+	withFixture((root) => {
+		baselineFixture(root, [100, 101, 102], { repeats: 4 });
+		const out = path.join(root, "baseline.json");
+
+		assert.equal(captureCli([root]).code, 0, "the report itself is publishable");
+		const { code, stderr } = captureCli([root, "--emit-baseline", out]);
+		assert.equal(code, 1);
+		assert.equal(fs.existsSync(out), false);
+		assert.match(stderr, /asked for 4 repeat\(s\) but only 3/);
+	});
+
+	// Every task unmeasurable: the file would answer "unknown" for every row it
+	// was ever consulted about, which is the placeholder's job, not a
+	// measurement's.
+	withFixture((root) => {
+		for (const run of ["run-1", "run-2", "run-3"])
+			writeSuite(
+				root,
+				run,
+				"chunk-transfer.json",
+				rawSuite([{ name: "lag", mean_ms: "0", hz: "null" }]),
+			);
+		writeMetadata(root);
+		const out = path.join(root, "baseline.json");
+		const { code, stderr } = captureCli([root, "--emit-baseline", out]);
+		assert.equal(code, 1);
+		assert.equal(fs.existsSync(out), false);
+		assert.match(stderr, /not one \(suite, task, metric\) produced a usable floor/);
+	});
+
+	// The same refusal is what stops copied run directories from being committed
+	// as a floor of zeros. analyze() only WARNS about byte-identical runs (a
+	// deterministic model suite can legitimately produce them), so the report
+	// stays publishable -- but every metric comes out no-variation-resolved, and
+	// a file that blesses every future A/B delta on every task must not be
+	// committed on the strength of a warning nobody read.
+	withFixture((root) => {
+		for (const run of ["run-1", "run-2", "run-3"])
+			writeSuite(root, run, "file-ingest.json", suite(task("ingest", 12.5)));
+		writeMetadata(root);
+		const out = path.join(root, "baseline.json");
+
+		assert.equal(captureCli([root]).code, 0, "the report itself is publishable");
+		const { code, stderr } = captureCli([root, "--emit-baseline", out]);
+		assert.equal(code, 1);
+		assert.equal(fs.existsSync(out), false);
+		assert.match(stderr, /not one \(suite, task, metric\) produced a usable floor/);
+	});
+});
+
+test("refuses a baseline when metadata.json is absent, malformed or not ours", () => {
+	// Exit 2, not 1: the directory is not a noise-floor results directory at all,
+	// which is a different thing from a measurement that came out badly.
+	withFixture((root) => {
+		baselineFixture(root);
+		fs.rmSync(path.join(root, "metadata.json"));
+		const out = path.join(root, "baseline.json");
+		const { code, stderr } = captureCli([root, "--emit-baseline", out]);
+		assert.equal(code, 2);
+		assert.equal(fs.existsSync(out), false);
+		assert.match(stderr, /metadata\.json: not found/);
+		assert.match(stderr, /cannot be traced to a commit/);
+	});
+
+	const cases = [
+		["unparseable", { raw: "{ not json" }, /JSON parse error/],
+		["not an object", { raw: "[]\n" }, /is not a JSON object/],
+		[
+			"another job's metadata",
+			{ kind: "benchmark-ab" },
+			/does not look like a noise-floor results directory/,
+		],
+		["no ref", { ref: "" }, /ref must be a non-empty string/],
+		["no sha", { sha: undefined }, /sha must be a hex commit id/],
+		["repeats as text", { repeats: "3" }, /repeats must be a whole number/],
+		[
+			"no suites",
+			{ selected_suites: [] },
+			/selected_suites must be a non-empty array/,
+		],
+		// This is what "Record run metadata" literally writes when it is run
+		// outside Actions: every GITHUB_* variable interpolates as "undefined".
+		[
+			"a run URL from outside Actions",
+			{ run_url: "undefined/undefined/actions/runs/undefined" },
+			/run_url must look like/,
+		],
+		[
+			"a non-ISO measured_at",
+			{ measured_at: "last tuesday" },
+			/measured_at, when present, must be an ISO-8601 timestamp/,
+		],
+	];
+	for (const [label, overrides, expected] of cases)
+		withFixture((root) => {
+			baselineFixture(root, [100, 101, 102], overrides);
+			const out = path.join(root, "baseline.json");
+			const { code, stderr } = captureCli([root, "--emit-baseline", out]);
+			assert.equal(code, 2, `${label} must be refused with exit 2`);
+			assert.equal(fs.existsSync(out), false, `${label} wrote a baseline`);
+			assert.match(stderr, expected, label);
+		});
+
+	// The reader is a plain function, so the refusal is available to callers that
+	// never touch the CLI.
+	withFixture((root) => {
+		baselineFixture(root);
+		assert.equal(readMeasurementMetadata(root).sha, METADATA.sha);
+		assert.throws(
+			() => readMeasurementMetadata(path.join(root, "run-1")),
+			(error) => error.exitCode === 2,
+		);
+	});
+});
+
+test("the committed placeholder has the emitted shape and answers unknown everywhere", () => {
+	const bytes = fs.readFileSync(COMMITTED_BASELINE, "utf8");
+	const placeholder = JSON.parse(bytes);
+
+	// It is a placeholder, loudly: nothing in it may be read as a measurement.
+	assert.equal(placeholder.status, "not-yet-measured");
+	assert.deepEqual(placeholder.tasks, {});
+	assert.equal(placeholder.provenance.ref, null);
+	assert.equal(placeholder.provenance.sha, null);
+	assert.equal(placeholder.provenance.runUrl, null);
+	assert.equal(placeholder.provenance.measuredAt, null);
+	assert.equal(placeholder.provenance.runs, 0);
+	assert.equal(placeholder.provenance.tasksPublished, 0);
+	for (const metric of ["mean_ms", "hz"]) {
+		assert.equal(placeholder.headline[metric].tasksMeasured, 0);
+		assert.equal(placeholder.headline[metric].worstMax, null);
+	}
+
+	// The consumer's "unknown" branch, exercised against the real committed file:
+	// `tasks` must be a plain OBJECT (an array reads to benchmarks.yml as a
+	// broken baseline, which is a louder and less accurate story than "nothing
+	// measured yet"), and every lookup through it must come back null.
+	assert.equal(Array.isArray(placeholder.tasks), false);
+	assert.equal(typeof placeholder.tasks, "object");
+	assert.notEqual(placeholder.tasks, null);
+	assert.equal(
+		consumerFloor(placeholder, "pid-convergence.json", "anything", "mean_ms"),
+		null,
+	);
+	// Committed in the emitter's own serialisation, so a hand-edit that breaks
+	// key order or indentation is caught here rather than in a review diff.
+	assert.equal(stringifyBaseline(placeholder), bytes);
+
+	// The consuming workflow reads one shape. If the emitter grows a field the
+	// placeholder does not have, the "not yet measured" path stops exercising the
+	// real thing and starts exercising a fossil.
+	const emitted = withFixture((root) => {
+		baselineFixture(root);
+		const out = path.join(root, "baseline.json");
+		assert.equal(captureCli([root, "--emit-baseline", out]).code, 0);
+		return readBaseline(out);
+	});
+	assert.deepEqual(Object.keys(placeholder), Object.keys(emitted));
+	assert.deepEqual(
+		Object.keys(placeholder.provenance),
+		Object.keys(emitted.provenance),
+	);
+	assert.deepEqual(Object.keys(placeholder.headline), Object.keys(emitted.headline));
+	for (const metric of ["mean_ms", "hz"])
+		assert.deepEqual(
+			Object.keys(placeholder.headline[metric]),
+			Object.keys(emitted.headline[metric]),
+		);
+	assert.equal(placeholder.schema, emitted.schema);
+	assert.equal(placeholder.decisionRule, emitted.decisionRule);
+	assert.equal(placeholder.deltaDefinition, emitted.deltaDefinition);
+	assert.equal(placeholder.headlineStatistic, emitted.headlineStatistic);
+	assert.equal(placeholder.rounding, emitted.rounding);
+	assert.equal(placeholder.provenance.generator, emitted.provenance.generator);
+	assert.equal(placeholder.provenance.suitesKnown, emitted.provenance.suitesKnown);
+	assert.notEqual(placeholder.status, emitted.status);
+});
+
+test("buildBaseline is callable without the CLI and refuses the same things", () => {
+	withFixture((root) => {
+		baselineFixture(root);
+		const report = analyze({ resultsDir: root, minRuns: 3 });
+		const metadata = readMeasurementMetadata(root);
+		assert.equal(
+			buildBaseline({ report, metadata }).provenance.tasksPublished,
+			1,
+		);
+		assert.throws(
+			() => buildBaseline({ report, metadata: { ...metadata, repeats: 9 } }),
+			(error) => error.exitCode === 1 && /only 3 produced/.test(error.message),
+		);
 	});
 });
