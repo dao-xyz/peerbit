@@ -79,6 +79,11 @@ jobs:
         env:
           BENCH_JSON: "1"
           NODE_OPTIONS: --no-warnings
+          # TestSession's "mock" mode selects loopback TCP and disables relay; it
+          # does not mock shared-log, crypto, storage, or indexer behavior. The
+          # default WebSocket listener was unavailable after the long offline
+          # preload in both attempts of run 31897535074.
+          PEERBIT_TEST_SESSION: mock
           PROFILE: ${{ matrix.profile }}
           RECEIVE_PRUNE_COUNTS: "100,1000,5000"
           RECEIVE_PRUNE_RUNS: "1"
