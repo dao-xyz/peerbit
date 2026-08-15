@@ -1,0 +1,132 @@
+name: Shared log re-census
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Ref (branch, tag or SHA) to profile
+        required: false
+        default: master
+        type: string
+
+permissions: {}
+
+jobs:
+  profile:
+    name: Profile (${{ matrix.profile }})
+    runs-on: ubuntu-22.04
+    timeout-minutes: 180
+    permissions:
+      contents: read
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+    strategy:
+      fail-fast: false
+      matrix:
+        profile:
+          - sync-phase
+          - receive-prune
+    concurrency:
+      group: shared-log-recensus-${{ inputs.ref }}-${{ matrix.profile }}
+      cancel-in-progress: false
+
+    steps:
+      # This runs code from the requested ref without secrets or write access. The
+      # raw artifact is the output; the workflow does not publish benchmark data.
+      - name: Checkout ref
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22.x
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
+        with:
+          run_install: false
+
+      - name: Record profile metadata
+        env:
+          PROFILE: ${{ matrix.profile }}
+          REQUESTED_REF: ${{ inputs.ref }}
+        run: |
+          set -euo pipefail
+          mkdir -p profile-results
+          {
+            printf 'profile=%s\n' "$PROFILE"
+            printf 'requested_ref=%s\n' "$REQUESTED_REF"
+            printf 'sha=%s\n' "$(git rev-parse HEAD)"
+            printf 'run_url=%s/%s/actions/runs/%s\n' "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID"
+          } > profile-results/metadata.txt
+
+      - name: Install wasm-pack
+        run: |
+          cargo install wasm-pack --version '=0.13.1' --locked
+          rustup target add wasm32-unknown-unknown
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile=false
+
+      - name: Build shared-log workspace
+        run: pnpm --filter @peerbit/shared-log... run build
+
+      - name: Run profile
+        id: profile
+        working-directory: packages/programs/data/shared-log
+        env:
+          BENCH_JSON: "1"
+          NODE_OPTIONS: --no-warnings
+          PROFILE: ${{ matrix.profile }}
+          RECEIVE_PRUNE_COUNTS: "100,1000,5000"
+          RECEIVE_PRUNE_RUNS: "1"
+          RECEIVE_PRUNE_WARMUP_RUNS: "0"
+        run: |
+          set -euo pipefail
+          destination="$GITHUB_WORKSPACE/profile-results/${PROFILE}.json"
+
+          case "$PROFILE" in
+            sync-phase)
+              node --loader ts-node/esm ./benchmark/sync-phase-profile.ts \
+                --entries 20000 \
+                --seededEntries 10000 \
+                --runs 1 \
+                --json > "$destination"
+              ;;
+            receive-prune)
+              node --loader ts-node/esm ./benchmark/receive-prune.ts > "$destination"
+              ;;
+            *)
+              echo "::error::Unknown profile '$PROFILE'."
+              exit 1
+              ;;
+          esac
+
+          PROFILE_RESULT="$destination" node --input-type=module <<'NODE'
+            import { readFileSync } from "node:fs";
+
+            const file = process.env.PROFILE_RESULT;
+            const result = JSON.parse(readFileSync(file, "utf8"));
+            const expectedName =
+              process.env.PROFILE === "sync-phase"
+                ? "shared-log-sync-phase-profile"
+                : "shared-log-receive-prune";
+            if (result.name !== expectedName) {
+              throw new Error(`${file} has profile name '${result.name}', expected '${expectedName}'`);
+            }
+            const rows = result.runs ?? result.aggregateRows;
+            if (!Array.isArray(rows) || rows.length === 0) {
+              throw new Error(`${file} carries no measured profile rows`);
+            }
+          NODE
+
+      - name: Upload profile
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: shared-log-recensus-${{ matrix.profile }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: profile-results
+          if-no-files-found: warn
+          retention-days: 14
