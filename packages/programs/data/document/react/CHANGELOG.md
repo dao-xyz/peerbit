@@ -1,5 +1,13 @@
 # @peerbit/document-react
 
+## 1.0.93
+
+### Patch Changes
+
+- Updated dependencies [[`02766f9`](https://github.com/dao-xyz/peerbit/commit/02766f9b8125fdd1856c2667c707e2571fa15a79)]:
+  - @peerbit/document@15.0.6
+  - @peerbit/react@1.1.50
+
 ## 1.0.92
 
 ### Patch Changes

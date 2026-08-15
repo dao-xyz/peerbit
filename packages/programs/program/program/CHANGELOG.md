@@ -1,5 +1,23 @@
 # Changelog
 
+## 6.0.51
+
+### Patch Changes
+
+- [#1278](https://github.com/dao-xyz/peerbit/pull/1278) [`02766f9`](https://github.com/dao-xyz/peerbit/commit/02766f9b8125fdd1856c2667c707e2571fa15a79) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Fix the `NotStartedError: Not started` crash when a `Documents` store is closed while replication is still joining entries.
+
+  `Documents` owns two sub-programs: `log` (a `SharedLog`, the source of changes) and `_index` (a `DocumentIndex`, a view derived from it). `Program` tore all children down concurrently, so `DocumentIndex.close()` -> `indexer.stop()` could finish while a `Log.joinRecursively()` was still in flight. That join dispatches `Documents.handleChanges`, which reads the index (`getLocalIndexedContext`) before it writes, so the read hit an indexer already in state `"closed"` and threw. The existing `NotStartedError && this.closed` guards in `DocumentIndex` all sit on put paths, one call too late. This was previously filed as a benchmark flake; it is a lifecycle bug that any consumer closing a store mid-replication can hit.
+
+  `Program` gains a `terminalChildOrder(child)` hook: children sharing a rank are torn down concurrently exactly as before (the default for every child, so nothing changes for existing programs), while a higher rank waits until every lower rank has _settled_. A failing low rank still opens the gate, so this changes ordering only, never whether a child is torn down, and the existing per-child attempt, retry and cleanup-lease bookkeeping is untouched. `Documents` uses it to rank `_index` behind `log`: `SharedLog.close()` drains its in-flight receives and closes the lower `Log` first, so every change already committed to the log is applied to the index before the index goes away. The change is preserved, not dropped — which matters for a persisted indexer, where a dropped change is a permanent, silently unreconciled divergence between the log and the document index.
+
+  `Documents` reaches the backing indexer directly when reading the prior version of a changed document, bypassing `DocumentIndex`'s guarded wrappers. A new `getLocalIndexedContextForChange` recovers from `NotStartedError` there — but only while the document index is actually closed, matching the existing write-side policy, and covering the paths the ordering does not (notably `drop()`, and a child index closed on its own). An indexer that breaks while the index is open still throws.
+
+  That recovery is deliberately **not** on the shared `getLocalIndexedContext`, which has five callers of which only change delivery may treat a closed index as "no prior version". Putting it there — as an earlier revision did — made `put()` against a closed index return _success_ with the entry committed to the log and silently absent from the index, manufacturing on the public write path exactly the log/index divergence this fix exists to prevent; and it turned `_canAppend`'s delete-history check from REJECT into ALLOW for inbound remote deletes. Those four callers still throw, and a test pins `put()` rejecting with the index closed and the log unchanged.
+
+  `DocumentIndex.delMany`/`delManyMaybe` gain the same narrow guard. The read leg tolerating a closed index while the remove leg did not left `handleChanges`' removal path throwing the very error the read guard was written for, in the same window — a guard covering one direction of an operation reads as covered while not being so.
+
+  Separately, `Log.join` tracked in-flight joins with a bare `p.finally(() => this._joining.delete(hash))`. That expression returns a _new_ promise which rejects with the same reason as `p` and which nothing awaits, so any failing join raised an unhandled rejection even though the caller awaiting `p` had handled it — under Node's default `--unhandled-rejections=throw` that terminated the process. This is why a recoverable index error killed the file-ingest benchmark outright and left a zero-byte result file instead of being swallowed by `SharedLog.onMessage`, which already returns silently on `NotStartedError`. The bookkeeping derivative is now handled; `p` itself is still awaited, so genuine join errors propagate exactly as before.
+
 ## 6.0.50
 
 ### Patch Changes
