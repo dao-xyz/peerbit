@@ -3001,6 +3001,96 @@ describe("events", () => {
 		}
 	});
 
+	it("uses resident native owners for append full-replica candidates", async () => {
+		const { db, log } = await openDisconnectedLog(1);
+		const nativePlanner = log._nativeBackbone ?? log._nativeSharedLogState;
+		expect(nativePlanner).to.exist;
+		const nativeCandidates = sinon
+			.stub(nativePlanner, "fullReplicaCandidatesFor")
+			.returns([]);
+		const indexCandidates = sinon
+			.stub(log, "getFullReplicaRepairCandidates")
+			.rejects(new Error("replication index scan should not run"));
+
+		try {
+			const { entry } = await db.add("native-append-resident-candidates");
+			expect(entry).to.exist;
+			expect(
+				nativeCandidates.calledOnceWithExactly(
+					2,
+					session.peers[0].identity.publicKey.hashcode(),
+				),
+			).to.be.true;
+			expect(indexCandidates.notCalled).to.be.true;
+		} finally {
+			nativeCandidates.restore();
+			indexCandidates.restore();
+		}
+	});
+
+	it("rehydrates native append candidates from persisted owner ranges", async () => {
+		const { db, log, replicationIndex } = await openDisconnectedLog(3);
+		const owners = session.peers
+			.slice(1)
+			.map((peer) => peer.identity.publicKey);
+		for (const [index, owner] of owners.entries()) {
+			await log.addReplicationRange(
+				[
+					makeReplicationRange(log, {
+						id: new Uint8Array([index + 1]),
+						ownerHash: owner.hashcode(),
+						offset: 0.1 + index * 0.4,
+					}),
+				],
+				owner,
+				{ checkDuplicates: false, rebalance: false },
+			);
+		}
+		for (const owner of owners) {
+			expect(
+				await replicationIndex.count({ query: { hash: owner.hashcode() } }),
+			).to.equal(1);
+		}
+
+		const originalNative = log._nativeBackbone ?? log._nativeSharedLogState;
+		expect(originalNative).to.exist;
+		await db.close();
+		const reopened = await session.peers[0].open(db, {
+			args: { replicate: false, timeUntilRoleMaturity: 0 },
+		});
+		const reopenedLog = reopened.log as any;
+		const nativePlanner =
+			reopenedLog._nativeBackbone ?? reopenedLog._nativeSharedLogState;
+		expect(nativePlanner).to.exist.and.not.equal(originalNative);
+		const selfHash = session.peers[0].identity.publicKey.hashcode();
+		const hydratedCandidates = nativePlanner.fullReplicaCandidatesFor(
+			owners.length + 1,
+			selfHash,
+		);
+		expect(hydratedCandidates[0]).to.equal(selfHash);
+		expect(hydratedCandidates).to.have.members([
+			selfHash,
+			...owners.map((owner) => owner.hashcode()),
+		]);
+
+		const nativeCandidates = sinon.spy(
+			nativePlanner,
+			"fullReplicaCandidatesFor",
+		);
+		const indexCandidates = sinon
+			.stub(reopenedLog, "getFullReplicaRepairCandidates")
+			.rejects(new Error("replication index scan should not run after reopen"));
+		try {
+			const { entry } = await reopened.add("native-append-hydrated-candidates");
+			expect(entry).to.exist;
+			expect(nativeCandidates.calledOnceWithExactly(2, selfHash)).to.be.true;
+			expect(indexCandidates.notCalled).to.be.true;
+		} finally {
+			nativeCandidates.restore();
+			indexCandidates.restore();
+		}
+	});
+
 	it("fences native append planning across its second await and reopen", async () => {
 		const { db, log } = await openDisconnectedLog(1);
 		const { entry } = await db.add("native-append-planner-generation");

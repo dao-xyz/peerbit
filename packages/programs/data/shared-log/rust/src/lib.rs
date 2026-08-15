@@ -334,6 +334,26 @@ impl RangePlanner {
         }
     }
 
+    /// Materialize owners only when full-replica expansion can actually apply;
+    /// otherwise return no rows so the caller avoids an owner-sized transfer.
+    fn full_replica_candidates_for(&self, min_replicas: usize, self_hash: &str) -> Vec<String> {
+        let candidate_count =
+            self.peer_ranges.len() + usize::from(!self.peer_ranges.contains_key(self_hash));
+        if min_replicas < candidate_count {
+            return Vec::new();
+        }
+
+        let mut candidates = Vec::with_capacity(candidate_count);
+        candidates.push(self_hash.to_string());
+        candidates.extend(
+            self.peer_ranges
+                .keys()
+                .filter(|hash| hash.as_str() != self_hash)
+                .cloned(),
+        );
+        candidates
+    }
+
     /// Sample order is a native contract the TypeScript implementation cannot
     /// offer: cursors are visited in input order, intersecting matches surface
     /// in range-put order (containment buckets keep insertion order across
@@ -2277,6 +2297,14 @@ impl NativeSharedLogState {
 
     pub fn clear(&mut self) {
         self.inner.clear_all();
+    }
+
+    pub fn full_replica_candidates_for(&self, min_replicas: usize, self_hash: String) -> Array {
+        strings_to_array(
+            self.inner
+                .range_planner
+                .full_replica_candidates_for(min_replicas, &self_hash),
+        )
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -4283,6 +4311,81 @@ mod tests {
 
         assert_eq!(samples.len(), 1);
         assert_eq!(samples[0].hash, "peer-b");
+    }
+
+    #[test]
+    fn skips_full_replica_candidate_materialization_when_not_all_peers_are_requested() {
+        let mut planner = RangePlanner::new("u32");
+        planner.put(ReplicationRange::new("a", "peer-a", 0, 0, 10, 0, 10, 10, 0));
+        planner.put(ReplicationRange::new(
+            "b", "peer-b", 0, 10, 20, 10, 20, 10, 0,
+        ));
+
+        assert!(planner
+            .full_replica_candidates_for(2, "peer-self")
+            .is_empty());
+    }
+
+    #[test]
+    fn lists_each_full_replica_candidate_once_with_self_first() {
+        let mut planner = RangePlanner::new("u32");
+        planner.put(ReplicationRange::new(
+            "self",
+            "peer-self",
+            0,
+            0,
+            10,
+            0,
+            10,
+            10,
+            0,
+        ));
+        planner.put(ReplicationRange::new(
+            "a-1", "peer-a", 0, 10, 20, 10, 20, 10, 0,
+        ));
+        planner.put(ReplicationRange::new(
+            "a-2", "peer-a", 0, 20, 30, 20, 30, 10, 0,
+        ));
+        planner.put(ReplicationRange::new(
+            "b", "peer-b", 0, 30, 30, 30, 30, 0, 1,
+        ));
+
+        assert_eq!(
+            planner.full_replica_candidates_for(3, "peer-self"),
+            vec!["peer-self", "peer-a", "peer-b"]
+        );
+    }
+
+    #[test]
+    fn tracks_owner_replacement_and_last_range_deletion() {
+        let mut planner = RangePlanner::new("u32");
+        planner.put(ReplicationRange::new(
+            "a-1", "peer-a", 0, 0, 10, 0, 10, 10, 0,
+        ));
+        planner.put(ReplicationRange::new(
+            "a-2", "peer-a", 0, 10, 20, 10, 20, 10, 0,
+        ));
+        planner.put(ReplicationRange::new(
+            "b", "peer-b", 0, 20, 30, 20, 30, 10, 0,
+        ));
+
+        assert!(planner.delete("a-1"));
+        assert!(planner
+            .full_replica_candidates_for(2, "peer-self")
+            .is_empty());
+        assert!(planner.delete("a-2"));
+        assert_eq!(
+            planner.full_replica_candidates_for(2, "peer-self"),
+            vec!["peer-self", "peer-b"]
+        );
+
+        planner.put(ReplicationRange::new(
+            "b", "peer-c", 0, 20, 30, 20, 30, 10, 0,
+        ));
+        assert_eq!(
+            planner.full_replica_candidates_for(2, "peer-self"),
+            vec!["peer-self", "peer-c"]
+        );
     }
 
     #[test]

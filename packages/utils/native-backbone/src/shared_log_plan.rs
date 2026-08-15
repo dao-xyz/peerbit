@@ -362,6 +362,11 @@ impl NativePeerbitBackbone {
         self.clear_coordinate_core();
     }
 
+    pub fn full_replica_candidates_for(&self, min_replicas: usize, self_hash: String) -> Array {
+        self.shared_log
+            .full_replica_candidates_for(min_replicas, self_hash)
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub fn put_range(
         &mut self,

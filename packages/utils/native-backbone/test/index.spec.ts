@@ -355,6 +355,39 @@ describe("native peerbit backbone", () => {
 		);
 	});
 
+	it("bridges exact full-replica candidate discovery", async () => {
+		const backbone = await createNativePeerbitBackbone({
+			clockId: publicKey,
+			privateKey,
+			publicKey,
+			resolution: "u32",
+		});
+		for (const [id, hash, start, end, mode] of [
+			["a-1", "peer-a", 0, 10, 0],
+			["a-2", "peer-a", 10, 20, 0],
+			["b", "peer-b", 20, 20, 1],
+		] as const) {
+			backbone.putRange({
+				id,
+				hash,
+				timestamp: 0,
+				start1: start,
+				end1: end,
+				start2: start,
+				end2: end,
+				width: end - start,
+				mode,
+			});
+		}
+
+		expect(backbone.fullReplicaCandidatesFor(2, "peer-self")).to.deep.equal([]);
+		expect(backbone.fullReplicaCandidatesFor(3, "peer-self")).to.deep.equal([
+			"peer-self",
+			"peer-a",
+			"peer-b",
+		]);
+	});
+
 	it("defaults buffered coordinate WAL to bounded pending bytes", () => {
 		const persistence = new NativeBackboneCoordinatePersistence(
 			new NativeBackboneMemoryCoordinatePersistenceStore(),
