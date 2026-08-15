@@ -3,44 +3,391 @@
   "deltaDefinition": "|a - b| / min(a, b) * 100 over all unordered run pairs",
   "headline": {
     "hz": {
-      "medianOfMax": null,
-      "tasksAbove10Pct": 0,
-      "tasksAbove5Pct": 0,
-      "tasksMeasured": 0,
-      "worstMax": null,
-      "worstTask": null
+      "medianOfMax": 9.36,
+      "tasksAbove10Pct": 28,
+      "tasksAbove5Pct": 35,
+      "tasksMeasured": 59,
+      "worstMax": 142.6,
+      "worstTask": {
+        "suite": "file-ingest.json",
+        "task": "adaptive: observer-join"
+      }
     },
     "mean_ms": {
-      "medianOfMax": null,
-      "tasksAbove10Pct": 0,
-      "tasksAbove5Pct": 0,
-      "tasksMeasured": 0,
-      "worstMax": null,
-      "worstTask": null
+      "medianOfMax": 9.31,
+      "tasksAbove10Pct": 28,
+      "tasksAbove5Pct": 35,
+      "tasksMeasured": 59,
+      "worstMax": 142.6,
+      "worstTask": {
+        "suite": "file-ingest.json",
+        "task": "adaptive: observer-join"
+      }
     }
   },
   "headlineStatistic": "max |Δ%| observed across all unordered run pairs (never the p95: see the header comment)",
-  "note": "PLACEHOLDER. No A/A measurement has been committed yet: `tasks` is empty, so every tasks[<suite file>][<task name>] lookup misses and every A/B delta must read as UNKNOWN. Nothing here may be used to call a delta noise. Replace this file wholesale with the output of `node scripts/bench/noise-floor.mjs <results-dir> --emit-baseline scripts/bench/noise-floor-baseline.json`, run against a completed artifact from .github/workflows/benchmark-noise-floor.yml. That emitter refuses untrustworthy, partial and provenance-less measurements, so a file with status \"measured\" and a filled-in provenance block is one that passed those checks. Once measured, compare an A/B |Δ%| against `mean_ms` or `hz` on the matching entry; a null floor stays UNKNOWN and is never read as 0.",
+  "note": "Per-task A/A noise floor: the largest |Δ%| that IDENTICAL code produced between two runs. Look an entry up as tasks[<suite file>][<task name>] and compare the A/B |Δ%| against `mean_ms` or `hz` on it. A null floor means no floor was measured for that metric (see `unusable`) and MUST be treated as unknown, never as 0 -- in particular `no-variation-resolved` means the runs agreed to the source's own rounding step, which is not the same as a benchmark that cannot move.",
   "provenance": {
-    "distinctRuns": 0,
+    "distinctRuns": 4,
     "generator": "scripts/bench/noise-floor.mjs --emit-baseline",
-    "measuredAt": null,
-    "measuredAtSource": null,
-    "minRuns": null,
-    "pairsPerTask": 0,
-    "ref": null,
-    "repeatsRequested": null,
-    "runUrl": null,
-    "runs": 0,
-    "selectedSuites": [],
-    "sha": null,
-    "sourceReportSchema": null,
-    "suitesCollected": 0,
+    "measuredAt": "2026-08-15T15:57:51.406Z",
+    "measuredAtSource": "metadata.json mtime (the run that wrote it recorded no measured_at field)",
+    "minRuns": 4,
+    "pairsPerTask": 6,
+    "ref": "master",
+    "repeatsRequested": 4,
+    "runUrl": "https://github.com/dao-xyz/peerbit/actions/runs/31890449831",
+    "runs": 4,
+    "selectedSuites": [
+      "shared-log",
+      "transport",
+      "document"
+    ],
+    "sha": "b776198cd8dd20bd896a3c7b6b49d819e3142fd9",
+    "sourceReportSchema": "peerbit-bench-noise-floor/2",
+    "suitesCollected": 7,
     "suitesKnown": 7,
-    "tasksPublished": 0
+    "tasksPublished": 62
   },
   "rounding": "floors are rounded to 2 decimals AWAY from zero, so a published floor is never below the floor that was measured",
   "schema": "peerbit-bench-noise-floor-baseline/1",
-  "status": "not-yet-measured",
-  "tasks": {}
+  "status": "measured",
+  "tasks": {
+    "chunk-transfer.json": {
+      "ack: receiver-after-sender": {
+        "hz": null,
+        "mean_ms": null,
+        "n": 4,
+        "unusable": {
+          "hz": "never-measurable",
+          "mean_ms": "never-measurable"
+        }
+      },
+      "ack: receiver-complete": {
+        "hz": 7.3,
+        "mean_ms": 7.3,
+        "n": 4
+      },
+      "ack: sender-after-receiver": {
+        "hz": 20.01,
+        "mean_ms": 20.01,
+        "n": 4
+      },
+      "ack: sender-complete": {
+        "hz": 7.35,
+        "mean_ms": 7.35,
+        "n": 4
+      },
+      "silent: receiver-after-sender": {
+        "hz": 3.62,
+        "mean_ms": 3.62,
+        "n": 4
+      },
+      "silent: receiver-complete": {
+        "hz": 3.69,
+        "mean_ms": 3.69,
+        "n": 4
+      },
+      "silent: sender-after-receiver": {
+        "hz": null,
+        "mean_ms": null,
+        "n": 4,
+        "unusable": {
+          "hz": "never-measurable",
+          "mean_ms": "never-measurable"
+        }
+      },
+      "silent: sender-complete": {
+        "hz": 8.45,
+        "mean_ms": 8.45,
+        "n": 4
+      }
+    },
+    "document-put.json": {
+      "compat-path": {
+        "hz": 1.43,
+        "mean_ms": 1.43,
+        "n": 4
+      },
+      "hybrid-anystore": {
+        "hz": 13.06,
+        "mean_ms": 13.03,
+        "n": 4
+      },
+      "native-block-store": {
+        "hz": 14.74,
+        "mean_ms": 14.71,
+        "n": 4
+      },
+      "native-graph": {
+        "hz": 13.76,
+        "mean_ms": 13.84,
+        "n": 4
+      },
+      "rust-peerbit": {
+        "hz": 5.98,
+        "mean_ms": 6.02,
+        "n": 4
+      },
+      "rust-peerbit-transient-index": {
+        "hz": 6.88,
+        "mean_ms": 6.87,
+        "n": 4
+      },
+      "simple-index": {
+        "hz": 18.98,
+        "mean_ms": 18.91,
+        "n": 4
+      },
+      "sqlite-index": {
+        "hz": 9.37,
+        "mean_ms": 9.31,
+        "n": 4
+      }
+    },
+    "file-ingest.json": {
+      "adaptive: observer-chunk-entries-known": {
+        "hz": 35.86,
+        "mean_ms": 35.86,
+        "n": 4
+      },
+      "adaptive: observer-chunk-entries-known-tail": {
+        "hz": 42.13,
+        "mean_ms": 42.13,
+        "n": 4
+      },
+      "adaptive: observer-chunk-search": {
+        "hz": 77.5,
+        "mean_ms": 77.5,
+        "n": 4
+      },
+      "adaptive: observer-chunks-ready": {
+        "hz": 35.86,
+        "mean_ms": 35.86,
+        "n": 4
+      },
+      "adaptive: observer-chunks-tail": {
+        "hz": 42.13,
+        "mean_ms": 42.13,
+        "n": 4
+      },
+      "adaptive: observer-final-manifest-entry-known": {
+        "hz": 35.86,
+        "mean_ms": 35.86,
+        "n": 4
+      },
+      "adaptive: observer-final-manifest-entry-known-tail": {
+        "hz": 42.13,
+        "mean_ms": 42.13,
+        "n": 4
+      },
+      "adaptive: observer-join": {
+        "hz": 142.6,
+        "mean_ms": 142.6,
+        "n": 4
+      },
+      "adaptive: observer-manifest-ready": {
+        "hz": 49.78,
+        "mean_ms": 49.78,
+        "n": 4
+      },
+      "adaptive: observer-manifest-search": {
+        "hz": 26.8,
+        "mean_ms": 26.8,
+        "n": 4
+      },
+      "adaptive: observer-manifest-tail": {
+        "hz": 85.89,
+        "mean_ms": 85.89,
+        "n": 4
+      },
+      "adaptive: writer-complete": {
+        "hz": 9.36,
+        "mean_ms": 9.36,
+        "n": 4
+      },
+      "fixed1: observer-chunk-entries-known": {
+        "hz": 20.31,
+        "mean_ms": 20.31,
+        "n": 4
+      },
+      "fixed1: observer-chunk-entries-known-tail": {
+        "hz": 23.76,
+        "mean_ms": 23.76,
+        "n": 4
+      },
+      "fixed1: observer-chunk-search": {
+        "hz": 19.24,
+        "mean_ms": 19.24,
+        "n": 4
+      },
+      "fixed1: observer-chunks-ready": {
+        "hz": 20.31,
+        "mean_ms": 20.31,
+        "n": 4
+      },
+      "fixed1: observer-chunks-tail": {
+        "hz": 23.76,
+        "mean_ms": 23.76,
+        "n": 4
+      },
+      "fixed1: observer-final-manifest-entry-known": {
+        "hz": 20.31,
+        "mean_ms": 20.31,
+        "n": 4
+      },
+      "fixed1: observer-final-manifest-entry-known-tail": {
+        "hz": 23.76,
+        "mean_ms": 23.76,
+        "n": 4
+      },
+      "fixed1: observer-join": {
+        "hz": 81.27,
+        "mean_ms": 81.27,
+        "n": 4
+      },
+      "fixed1: observer-manifest-ready": {
+        "hz": 44.93,
+        "mean_ms": 44.93,
+        "n": 4
+      },
+      "fixed1: observer-manifest-search": {
+        "hz": 60.65,
+        "mean_ms": 60.65,
+        "n": 4
+      },
+      "fixed1: observer-manifest-tail": {
+        "hz": 67.12,
+        "mean_ms": 67.12,
+        "n": 4
+      },
+      "fixed1: writer-complete": {
+        "hz": 1.63,
+        "mean_ms": 1.63,
+        "n": 4
+      }
+    },
+    "pid-convergence.json": {
+      "even (peers=2)": {
+        "hz": 2.39,
+        "mean_ms": 2.63,
+        "n": 4
+      },
+      "even (peers=3)": {
+        "hz": 0.95,
+        "mean_ms": 0.6,
+        "n": 4
+      },
+      "even (peers=5)": {
+        "hz": 3.43,
+        "mean_ms": 3.34,
+        "n": 4
+      },
+      "memory-limited (2 peers, 25% cap)": {
+        "hz": null,
+        "mean_ms": null,
+        "n": 4,
+        "unusable": {
+          "hz": "never-measurable",
+          "mean_ms": "never-measurable"
+        }
+      }
+    },
+    "rateless-iblt-sender-startsync.json": {
+      "onMaybeMissingEntries (rateless IBLT, n=1000)": {
+        "hz": 1.25,
+        "mean_ms": 1.29,
+        "n": 4
+      },
+      "onMaybeMissingEntries (rateless IBLT, n=10000)": {
+        "hz": 1.63,
+        "mean_ms": 1.63,
+        "n": 4
+      },
+      "onMaybeMissingEntries (rateless IBLT, n=50000)": {
+        "hz": 2.48,
+        "mean_ms": 2.56,
+        "n": 4
+      }
+    },
+    "rateless-iblt-startsync-cache.json": {
+      "StartSync local decoder (after invalidation, n=1000)": {
+        "hz": 1.04,
+        "mean_ms": 0.95,
+        "n": 4
+      },
+      "StartSync local decoder (after invalidation, n=10000)": {
+        "hz": 0.72,
+        "mean_ms": 1,
+        "n": 4
+      },
+      "StartSync local decoder (after invalidation, n=50000)": {
+        "hz": 4.19,
+        "mean_ms": 4.11,
+        "n": 4
+      },
+      "StartSync local decoder (cold, n=1000)": {
+        "hz": 2.64,
+        "mean_ms": 3.09,
+        "n": 4
+      },
+      "StartSync local decoder (cold, n=10000)": {
+        "hz": 1.78,
+        "mean_ms": 1.81,
+        "n": 4
+      },
+      "StartSync local decoder (cold, n=50000)": {
+        "hz": 3.4,
+        "mean_ms": 3.29,
+        "n": 4
+      },
+      "StartSync local decoder (warm, n=1000)": {
+        "hz": 0.72,
+        "mean_ms": 1.18,
+        "n": 4
+      },
+      "StartSync local decoder (warm, n=10000)": {
+        "hz": 12.58,
+        "mean_ms": 12.25,
+        "n": 4
+      },
+      "StartSync local decoder (warm, n=50000)": {
+        "hz": 1.22,
+        "mean_ms": 1.23,
+        "n": 4
+      }
+    },
+    "sync-batch-sweep.json": {
+      "repairSweepTargetBufferSize=1024": {
+        "hz": 1.32,
+        "mean_ms": 1.32,
+        "n": 4
+      },
+      "repairSweepTargetBufferSize=16384": {
+        "hz": 2.09,
+        "mean_ms": 2.09,
+        "n": 4
+      },
+      "repairSweepTargetBufferSize=256": {
+        "hz": 3.74,
+        "mean_ms": 3.74,
+        "n": 4
+      },
+      "repairSweepTargetBufferSize=4096": {
+        "hz": 3.37,
+        "mean_ms": 3.37,
+        "n": 4
+      },
+      "repairSweepTargetBufferSize=512": {
+        "hz": 3.34,
+        "mean_ms": 3.34,
+        "n": 4
+      },
+      "repairSweepTargetBufferSize=65536": {
+        "hz": 2.54,
+        "mean_ms": 2.54,
+        "n": 4
+      }
+    }
+  }
 }
