@@ -450,6 +450,39 @@ describe("native shared-log range planner", () => {
 		expect(state.getEntryCoordinates("old-head")).to.equal(undefined);
 	});
 
+	it("commits entry coordinate batches with the native receiver", async () => {
+		const state = await createSharedLogState("u32");
+		state.putEntryCoordinates("old-head", "old-gid", [1, 2]);
+
+		state.commitEntryCoordinatesBatch([
+			{
+				hash: "new-head",
+				gid: "new-gid",
+				coordinates: [3, 4],
+				nextHashes: ["old-head"],
+				assignedToRangeBoundary: true,
+				requestedReplicas: 2,
+				hashNumber: 42,
+			},
+			{
+				hash: "independent-head",
+				gid: "independent-gid",
+				coordinates: [5],
+				nextHashes: [],
+				requestedReplicas: 1,
+				hashNumber: 7,
+			},
+		]);
+
+		expect(state.getEntryCoordinates("new-head")).to.deep.equal([3, 4]);
+		expect(state.getEntryCoordinates("independent-head")).to.deep.equal([5]);
+		expect(state.getEntryCoordinates("old-head")).to.equal(undefined);
+		expect([...state.getEntryHashesForHashNumbers([42, 7])]).to.deep.equal([
+			[42n, ["new-head"]],
+			[7n, ["independent-head"]],
+		]);
+	});
+
 	it("lists resident entry coordinate hashes", async () => {
 		const state = await createSharedLogState("u32");
 		state.putEntryCoordinates("head-a", "gid-a", [1]);

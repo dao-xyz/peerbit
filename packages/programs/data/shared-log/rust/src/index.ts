@@ -1247,7 +1247,8 @@ export class SharedLogNativeState {
 			}
 			return;
 		}
-		nativeCommitBatch(
+		nativeCommitBatch.call(
+			this.native,
 			rows.map((row) => row.hash),
 			rows.map((row) => row.gid),
 			rows.map((row) => row.hashNumber),
