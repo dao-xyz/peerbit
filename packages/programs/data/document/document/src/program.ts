@@ -1991,6 +1991,75 @@ export class Documents<
 		>;
 	}
 
+	/**
+	 * The change-delivery variant of `getLocalIndexedContext`, and the ONLY caller
+	 * allowed to treat a closed index as "no prior version".
+	 *
+	 * `getLocalIndexedContext` reaches the backing indexer directly, bypassing
+	 * `DocumentIndex`'s guarded wrappers. `terminalChildOrder` now tears the index
+	 * down after the log, but a change can still be delivered against a closed
+	 * index on paths that do not go through that ordering: a `DocumentIndex` closed
+	 * on its own rather than through its parent, and a log teardown that fails,
+	 * which opens the rank gate without having drained. For a change that the log
+	 * has ALREADY committed, "there is no prior version to compare against" is the
+	 * right reading, and the write leg - which already returns without persisting
+	 * once the index is closed, see `DocumentIndex.putWithContext` - drops it.
+	 *
+	 * WHY THIS IS NOT ON THE SHARED HELPER. It was, and that was wrong. The helper
+	 * has five callers and only this one is a post-commit change:
+	 *
+	 *   :2689 resolveCanPerformDeleteValue - feeds the user's canPerform policy
+	 *   :2794 _canAppend PUT   - immutable-overwrite protection
+	 *   :2863 _canAppend DELETE - delete-history validation
+	 *   :3124 putCompatDocumentBackend - the user-initiated put() path
+	 *
+	 * Swallowing there is actively harmful rather than merely broad. On :3124 a
+	 * put() against a closed index returned SUCCESS with the entry committed to the
+	 * log and silently absent from the index - the exact log/index divergence this
+	 * recovery exists to avoid, manufactured on the public write path with no error
+	 * signal. On :2863 a swallowed read reads as "already deleted" and returns
+	 * `assume ok`, turning a REJECT into an ALLOW for inbound remote deletes.
+	 *
+	 * Those callers must keep throwing: outside change delivery, a closed index is
+	 * a caller error, not a state to paper over.
+	 */
+	private getLocalIndexedContextForChange(
+		key: indexerTypes.IdKey,
+	): Promise<indexerTypes.IndexedResult<IndexedContextOnly<I>> | undefined> {
+		// Not every backing index resolves asynchronously (the native one answers
+		// synchronously, and may throw synchronously), so guard both shapes without
+		// forcing a promise on the fast path.
+		type LocalIndexedContext =
+			| indexerTypes.IndexedResult<IndexedContextOnly<I>>
+			| undefined;
+		try {
+			const result = this.getLocalIndexedContext(
+				key,
+			) as MaybePromise<LocalIndexedContext>;
+			return (
+				isPromiseLike(result)
+					? result.catch((error) => this.recoverClosedIndexContextRead(error))
+					: result
+			) as Promise<LocalIndexedContext>;
+		} catch (error) {
+			return this.recoverClosedIndexContextRead(
+				error,
+			) as unknown as Promise<LocalIndexedContext>;
+		}
+	}
+
+	/**
+	 * Deliberately narrow: only `NotStartedError`, and only once the document index
+	 * is actually closed. An indexer that breaks while the index is open still
+	 * throws. Reachable only from `getLocalIndexedContextForChange`.
+	 */
+	private recoverClosedIndexContextRead(error: unknown): undefined {
+		if (error instanceof indexerTypes.NotStartedError && this._index.closed) {
+			return undefined;
+		}
+		throw error;
+	}
+
 	private getNativeEntrySignerPublicKeys(
 		hashes: string[],
 	): Array<Uint8Array | undefined> | undefined {
@@ -2440,6 +2509,27 @@ export class Documents<
 
 	async recover() {
 		return this.log.recover();
+	}
+
+	/**
+	 * `Documents` owns two sub-programs: `log` (the source of changes) and
+	 * `_index` (a view derived from it, backed by an indexer). `Program` tears
+	 * children down concurrently by default, so nothing stopped
+	 * `DocumentIndex.close()` -> `indexer.stop()` from completing while a
+	 * `Log.joinRecursively()` was still in flight. That join calls `handleChanges`
+	 * with an entry it has *already* committed to the log, and `handleChanges`
+	 * reads the index (`getLocalIndexedContext`) before it writes - so the read hit
+	 * an indexer in state "closed" and threw `NotStartedError` out of a join that
+	 * had no business failing.
+	 *
+	 * Ranking the index behind the log fixes the ordering rather than the symptom:
+	 * `SharedLog.close()` drains its in-flight receives and then closes the lower
+	 * `Log`, so by the time the index is torn down no further change can be
+	 * dispatched, and every change already committed to the log has been applied to
+	 * the index. Nothing is dropped.
+	 */
+	protected terminalChildOrder(child: Program): number {
+		return child === (this._index as Program) ? 1 : 0;
 	}
 
 	private async _resolveEntry(
@@ -5369,7 +5459,7 @@ export class Documents<
 								? reference.existing
 								: this.isNativeMode()
 									? this.getNativeModeIndexedContext(key) || null
-									: (await this.getLocalIndexedContext(key)) || null;
+									: (await this.getLocalIndexedContextForChange(key)) || null;
 					if (!this.strictHistory && existing) {
 						// if immutable use oldest, else use newest
 						let shouldIgnoreChange = this.immutable
