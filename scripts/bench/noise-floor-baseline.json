@@ -1,0 +1,46 @@
+{
+  "decisionRule": "An A/B delta on task T is evidence only if it exceeds T's A/A max |Δ%|. Compare against the max column, not the p95 column.",
+  "deltaDefinition": "|a - b| / min(a, b) * 100 over all unordered run pairs",
+  "headline": {
+    "hz": {
+      "medianOfMax": null,
+      "tasksAbove10Pct": 0,
+      "tasksAbove5Pct": 0,
+      "tasksMeasured": 0,
+      "worstMax": null,
+      "worstTask": null
+    },
+    "mean_ms": {
+      "medianOfMax": null,
+      "tasksAbove10Pct": 0,
+      "tasksAbove5Pct": 0,
+      "tasksMeasured": 0,
+      "worstMax": null,
+      "worstTask": null
+    }
+  },
+  "headlineStatistic": "max |Δ%| observed across all unordered run pairs (never the p95: see the header comment)",
+  "note": "PLACEHOLDER. No A/A measurement has been committed yet: `tasks` is empty, so every tasks[<suite file>][<task name>] lookup misses and every A/B delta must read as UNKNOWN. Nothing here may be used to call a delta noise. Replace this file wholesale with the output of `node scripts/bench/noise-floor.mjs <results-dir> --emit-baseline scripts/bench/noise-floor-baseline.json`, run against a completed artifact from .github/workflows/benchmark-noise-floor.yml. That emitter refuses untrustworthy, partial and provenance-less measurements, so a file with status \"measured\" and a filled-in provenance block is one that passed those checks. Once measured, compare an A/B |Δ%| against `mean_ms` or `hz` on the matching entry; a null floor stays UNKNOWN and is never read as 0.",
+  "provenance": {
+    "distinctRuns": 0,
+    "generator": "scripts/bench/noise-floor.mjs --emit-baseline",
+    "measuredAt": null,
+    "measuredAtSource": null,
+    "minRuns": null,
+    "pairsPerTask": 0,
+    "ref": null,
+    "repeatsRequested": null,
+    "runUrl": null,
+    "runs": 0,
+    "selectedSuites": [],
+    "sha": null,
+    "sourceReportSchema": null,
+    "suitesCollected": 0,
+    "suitesKnown": 7,
+    "tasksPublished": 0
+  },
+  "rounding": "floors are rounded to 2 decimals AWAY from zero, so a published floor is never below the floor that was measured",
+  "schema": "peerbit-bench-noise-floor-baseline/1",
+  "status": "not-yet-measured",
+  "tasks": {}
+}

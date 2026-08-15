@@ -11,6 +11,7 @@
 //
 // Usage:
 //   node scripts/bench/noise-floor.mjs <results-dir> [--min-runs <n>] [--json-out <path>]
+//                                      [--emit-baseline <path>]
 //
 // <results-dir> holds run-1/ ... run-N/, each containing the suite JSON files
 // benchmarks.yml already writes (same names).
@@ -153,17 +154,107 @@
 //
 // Output is a pure function of the input files: no timestamps, no randomness,
 // every list explicitly sorted.
+//
+// ---------------------------------------------------------------------------
+// THE COMMITTABLE BASELINE (--emit-baseline <path>)
+//
+// The report above lives for 14 days in an artifact. The A/B job that actually
+// needs it -- .github/workflows/benchmarks.yml, which prints a per-task "Δ mean"
+// with nothing to judge it against -- runs on every PR and cannot reach an
+// artifact. So `--emit-baseline` distils a completed results directory into one
+// small file (scripts/bench/noise-floor-baseline.json) that IS committed and can
+// be read at PR time.
+//
+// THE SHAPE IS A CONTRACT WITH A CONSUMER THAT ALREADY EXISTS. benchmarks.yml's
+// reporter indexes the file by the suite FILE name -- the same string it uses to
+// find bench-results/{base,head}/<file>.json -- and then by the exact task name
+// it is already rendering, and reads the metric straight off that entry:
+//
+//     tasks: { "<suite>.json": { "<task name>": { mean_ms, hz, n, unusable? } } }
+//     provenance: { ref, sha, runUrl, measuredAt, runs, pairsPerTask, ... }
+//
+// so `mean_ms` / `hz` are direct properties of the task entry (not nested one
+// level deeper), and provenance is camelCase like the report's own fields, not
+// metadata.json's snake_case. Both of those are the consumer's spelling; a
+// producer that invents its own would leave every row UNKNOWN forever while
+// looking perfectly well-formed. `n` and `unusable` ride along in the same
+// entry, ignored by that reader and there for a human.
+//
+// (One caveat this file cannot fix from here: JS object key order puts
+// integer-like keys first regardless of insertion order, so a benchmark task
+// literally named "1000" would sort ahead of the rest. Output stays
+// byte-deterministic either way -- that ordering is specified, not arbitrary --
+// it just would not be alphabetical. No current suite names a task that way.)
+//
+// A BASELINE IS COMMITTED, SO IT OUTLIVES ITS EXCUSES. That asymmetry drives
+// every rule below:
+//
+//   * Provenance is mandatory, and it is READ, never invented. ref, sha,
+//     run_url, repeats and the selected suites all come from the results
+//     directory's own metadata.json (written by benchmark-noise-floor.yml's
+//     "Record run metadata" step). Absent, unreadable, not that kind of
+//     directory, or carrying a run_url like "undefined/undefined/actions/runs/
+//     undefined" -- which is exactly what that step produces when it is run
+//     outside Actions -- and this refuses with exit 2. A number a reader cannot
+//     trace to a commit and a run is worse than no number: it cannot be
+//     re-measured, aged out, or argued with.
+//
+//   * measured_at prefers metadata.json's own `measured_at`; when the workflow
+//     that wrote the directory predates that field, it falls back to the file's
+//     mtime and SAYS SO in measured_at_source. A labelled weaker source beats
+//     both a fabricated timestamp and no date at all.
+//
+//   * It refuses to emit from a NOT TRUSTWORTHY report (exit 1). The whole
+//     failure mode this file exists to prevent is a floor that reads low, and
+//     baking one into the repo makes it permanent and invisible.
+//
+//   * It refuses below BASELINE_MIN_RUNS usable runs even when --min-runs was
+//     set lower, and refuses when metadata.json asked for more repeats than
+//     produced usable runs. A partial run is a non-random subset -- the repeats
+//     that finished -- and its floor reads low.
+//
+//   * A floor of 0 is emitted as null, not as 0. `noVariationResolved` means no
+//     variation was RESOLVED (see above); committing it as a hard 0% would let
+//     every later A/B delta on that task clear the bar forever. null routes the
+//     consumer to its "unknown" path, and the reason survives in `unusable` so
+//     nothing is hidden. Same for never-measurable / invalid / single-sample
+//     metrics.
+//
+//   * Rounding is to 2 decimals AWAY from zero, never toward it: a 2.7249%
+//     measured floor is published as 2.73%, so rounding can never turn noise
+//     into a signal.
+//
+// The placeholder committed at scripts/bench/noise-floor-baseline.json has this
+// exact shape with status "not-yet-measured", zero tasks and null provenance, so
+// the consuming workflow always has a file to read and its "unknown" branch is
+// exercisable before any measurement lands.
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
 const USAGE =
-	"Usage: node scripts/bench/noise-floor.mjs <results-dir> [--min-runs <n>] [--json-out <path>]";
+	"Usage: node scripts/bench/noise-floor.mjs <results-dir> [--min-runs <n>] [--json-out <path>] [--emit-baseline <path>]";
 
 const DEFAULT_MIN_RUNS = 3;
 const ABSOLUTE_MIN_RUNS = 2;
 const DEFAULT_REPORT_NAME = "noise-floor.json";
+const METADATA_NAME = "metadata.json";
+const METADATA_KIND = "benchmark-noise-floor";
+const BASELINE_SCHEMA = "peerbit-bench-noise-floor-baseline/1";
+const BASELINE_DIGITS = 2;
+// Stricter than DEFAULT_MIN_RUNS is free here and ABSOLUTE_MIN_RUNS is not
+// enough: 2 runs give ONE pair, so the "max" is a single observation with no
+// tail at all. A report may be published from that; a committed baseline may
+// not.
+const BASELINE_MIN_RUNS = 3;
+// Exactly the shape benchmark-noise-floor.yml builds:
+// `${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}`.
+// Run that step outside Actions and every variable interpolates as the literal
+// string "undefined"; this pattern is what stops the resulting nonsense from
+// being committed as provenance.
+const RUN_URL_PATTERN = /^https:\/\/\S+\/actions\/runs\/\d+$/;
+const SHA_PATTERN = /^[0-9a-f]{7,64}$/;
 const P95_FRACTION = 0.95;
 const MAX_LISTED_PROBLEMS = 50;
 const SCHEMA = "peerbit-bench-noise-floor/2";
@@ -211,6 +302,17 @@ const METRICS = [
 
 export class UsageError extends Error {}
 
+// Refusal to publish a COMMITTED baseline. `exitCode` separates the two causes a
+// caller can act on differently: 2 means the directory is not a noise-floor
+// results directory (its metadata is missing or malformed), 1 means it is one
+// and the measurement in it is not good enough to commit.
+export class BaselineRefusal extends Error {
+	constructor(message, exitCode) {
+		super(message);
+		this.exitCode = exitCode;
+	}
+}
+
 const ensure = (condition, message) => {
 	if (!condition) throw new Error(message);
 };
@@ -224,6 +326,7 @@ export const parseArgs = (argv) => {
 	let resultsDir;
 	let minRuns = DEFAULT_MIN_RUNS;
 	let jsonOut;
+	let emitBaseline;
 	const pending = [...argv];
 
 	const takeValue = (flag, inline) => {
@@ -252,6 +355,8 @@ export const parseArgs = (argv) => {
 			minRuns = parsed;
 		} else if (flag === "--json-out") {
 			jsonOut = takeValue(flag, inline);
+		} else if (flag === "--emit-baseline") {
+			emitBaseline = takeValue(flag, inline);
 		} else if (argument.startsWith("-")) {
 			throw new UsageError(`Unknown option: ${argument}`);
 		} else if (resultsDir === undefined) {
@@ -266,6 +371,7 @@ export const parseArgs = (argv) => {
 		resultsDir,
 		minRuns,
 		jsonOut: jsonOut ?? path.join(resultsDir, DEFAULT_REPORT_NAME),
+		emitBaseline,
 	};
 };
 
@@ -565,9 +671,22 @@ export const analyze = ({ resultsDir, minRuns = DEFAULT_MIN_RUNS }) => {
 	// identical bytes twice -- see the `deterministic` handling below.
 	const signatures = new Map();
 	for (const read of usable) {
+		// Signature over NORMALISED measurements, not raw bytes. A byte digest is
+		// defeated by any re-serialise - pretty-printing, key order, a trailing
+		// newline - and what matters is whether two run directories carry the same
+		// numbers, not whether one writer produced both. A hand-made copy that has
+		// been round-tripped through JSON.parse/stringify is exactly the case that
+		// must not slip through, because buildBaseline now refuses on this.
 		const parts = [...read.suites.entries()]
-			.filter(([, suite]) => suite.digest !== null)
-			.map(([file, suite]) => `${file}\u0000${suite.digest}`)
+			.filter(([, suite]) => suite.tasks.size > 0)
+			.map(([file, suite]) =>
+				[
+					file,
+					...[...suite.tasks.values()]
+						.map((task) => `${task.name}=${task.mean_ms}/${task.hz}`)
+						.sort(byName),
+				].join("\u0000"),
+			)
 			.sort(byName);
 		if (parts.length === 0) continue;
 		const signature = crypto
@@ -588,6 +707,11 @@ export const analyze = ({ resultsDir, minRuns = DEFAULT_MIN_RUNS }) => {
 		);
 
 	const runCount = usable.length;
+	// Directories, not measurements. `signatures` groups runs by their normalised
+	// contents, so its size is how many INDEPENDENT measurements we actually have.
+	// buildBaseline refuses on this rather than on runCount: a padded results
+	// directory would otherwise commit a baseline asserting a run count it never had.
+	const distinctRunCount = signatures.size > 0 ? signatures.size : usable.length;
 	if (discovered.length === 0)
 		add(
 			"blocking",
@@ -977,6 +1101,7 @@ export const analyze = ({ resultsDir, minRuns = DEFAULT_MIN_RUNS }) => {
 		})),
 		excludedRuns: excluded.map((read) => read.run.name),
 		runCount,
+		distinctRunCount,
 		pairsPerTask,
 		// "Collected" means at least one run produced usable tasks. A suite that is
 		// present-but-broken everywhere is NOT collected and is counted separately,
@@ -1197,6 +1322,257 @@ export const renderMarkdown = (report) => {
 	return lines.join("\n");
 };
 
+// Rounds AWAY from zero, never toward it. `Number(x.toFixed(2))` alone would
+// publish a measured 2.7249% floor as 2.72%, and a subsequent A/B delta of
+// 2.73% would then read as "above the floor" on the strength of a rounding
+// step. toFixed first (not `Math.ceil(x * 100) / 100`, which turns 1.1 into
+// 1.11 because 1.1 * 100 is 110.00000000000001), then nudge by one unit in the
+// last place only when the rounded value actually landed below the input.
+export const ceilTo = (value, digits) => {
+	if (value === null || value === undefined) return null;
+	const rounded = Number(value.toFixed(digits));
+	if (rounded >= value) return rounded;
+	return Number((rounded + 10 ** -digits).toFixed(digits));
+};
+
+// Byte-stable serialisation: object keys sorted at every depth, two-space
+// indent, trailing newline. Sorting here rather than at construction means the
+// order is a property of the writer, so a later field added anywhere still lands
+// in the same place. (Suite and task names are data, and JS hoists integer-like
+// keys ahead of the rest on output -- deterministic, just not alphabetical.)
+const sortKeysDeep = (value) => {
+	if (Array.isArray(value)) return value.map(sortKeysDeep);
+	if (value !== null && typeof value === "object")
+		return Object.fromEntries(
+			Object.keys(value)
+				.sort(byName)
+				.map((key) => [key, sortKeysDeep(value[key])]),
+		);
+	return value;
+};
+
+export const stringifyBaseline = (baseline) =>
+	`${JSON.stringify(sortKeysDeep(baseline), null, 2)}\n`;
+
+// The provenance source. Read from the results directory, never synthesised:
+// benchmark-noise-floor.yml's "Record run metadata" step writes this file before
+// a single benchmark runs, precisely so the numbers can be traced back to a ref,
+// a commit and a run.
+export const readMeasurementMetadata = (resultsDir) => {
+	const file = path.join(resultsDir, METADATA_NAME);
+	// The standing sentence comes BEFORE the list, so a bulleted complaint is
+	// never mistaken for carrying it.
+	const refuse = (detail, list = []) =>
+		new BaselineRefusal(
+			`${file}: ${detail}. A committed baseline without provenance cannot be traced to a commit, re-measured, or aged out, so it is worse than no baseline; refusing to emit one.${list
+				.map((entry) => `\n  - ${entry}`)
+				.join("")}`,
+			2,
+		);
+
+	let raw;
+	let stats;
+	try {
+		raw = fs.readFileSync(file, "utf8");
+		stats = fs.statSync(file);
+	} catch (error) {
+		throw refuse(
+			error.code === "ENOENT"
+				? `not found (benchmark-noise-floor.yml writes it into the results directory; a hand-assembled directory has to carry one too)`
+				: `unreadable (${error.message})`,
+		);
+	}
+
+	let parsed;
+	try {
+		parsed = JSON.parse(raw);
+	} catch (error) {
+		throw refuse(`JSON parse error: ${error.message}`);
+	}
+	if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed))
+		throw refuse("is not a JSON object");
+
+	const complaints = [];
+	if (parsed.kind !== METADATA_KIND)
+		complaints.push(
+			`kind must be "${METADATA_KIND}" (got ${JSON.stringify(parsed.kind)}) -- this does not look like a noise-floor results directory`,
+		);
+	if (typeof parsed.ref !== "string" || parsed.ref.trim() === "")
+		complaints.push("ref must be a non-empty string");
+	if (typeof parsed.sha !== "string" || !SHA_PATTERN.test(parsed.sha))
+		complaints.push(
+			`sha must be a hex commit id (got ${JSON.stringify(parsed.sha)})`,
+		);
+	if (!Number.isInteger(parsed.repeats) || parsed.repeats < ABSOLUTE_MIN_RUNS)
+		complaints.push(
+			`repeats must be a whole number >= ${ABSOLUTE_MIN_RUNS} (got ${JSON.stringify(parsed.repeats)})`,
+		);
+	if (
+		!Array.isArray(parsed.selected_suites) ||
+		parsed.selected_suites.length === 0 ||
+		parsed.selected_suites.some(
+			(entry) => typeof entry !== "string" || entry.trim() === "",
+		)
+	)
+		complaints.push("selected_suites must be a non-empty array of strings");
+	if (typeof parsed.run_url !== "string" || !RUN_URL_PATTERN.test(parsed.run_url))
+		complaints.push(
+			`run_url must look like https://<host>/<owner>/<repo>/actions/runs/<id> (got ${JSON.stringify(parsed.run_url)}); a metadata step run outside Actions emits "undefined/undefined/actions/runs/undefined" here, and that must never be committed as provenance`,
+		);
+	// Optional, and only because the workflow that produced the first artifacts
+	// did not write it. When it is present it is authoritative; when it is not,
+	// the mtime stands in and the baseline says which one it used.
+	if (
+		parsed.measured_at !== undefined &&
+		(typeof parsed.measured_at !== "string" ||
+			Number.isNaN(Date.parse(parsed.measured_at)))
+	)
+		complaints.push(
+			`measured_at, when present, must be an ISO-8601 timestamp (got ${JSON.stringify(parsed.measured_at)})`,
+		);
+	if (complaints.length > 0)
+		throw refuse(
+			`${complaints.length} problem(s) with the recorded run metadata`,
+			complaints,
+		);
+
+	const measuredAt = parsed.measured_at ?? stats.mtime.toISOString();
+	return {
+		kind: parsed.kind,
+		ref: parsed.ref,
+		sha: parsed.sha,
+		repeats: parsed.repeats,
+		selected_suites: [...parsed.selected_suites],
+		run_url: parsed.run_url,
+		measured_at: measuredAt,
+		measured_at_source:
+			parsed.measured_at === undefined
+				? `${METADATA_NAME} mtime (the run that wrote it recorded no measured_at field)`
+				: `${METADATA_NAME} field measured_at`,
+	};
+};
+
+// Why a metric publishes no floor. All four route a consumer to its "unknown"
+// branch; they are distinguished so the baseline can say WHICH kind of nothing
+// it is holding. "no-variation-resolved" is the dangerous one -- it has a
+// number, 0, and that number must not be published as a floor.
+const unusableReason = (stats) => {
+	if (!stats) return "unmeasured";
+	if (stats.status !== "ok") return stats.status;
+	return stats.noVariationResolved ? "no-variation-resolved" : null;
+};
+
+export const buildBaseline = ({ report, metadata }) => {
+	const tasks = {};
+	let taskCount = 0;
+	let withFloor = 0;
+	for (const suite of report.suites) {
+		if (suite.tasks.length === 0) continue;
+		const bySuite = {};
+		for (const task of suite.tasks) {
+			const entry = { n: task.n };
+			const unusable = {};
+			for (const metric of METRICS) {
+				const stats = task.metrics[metric.key];
+				const reason = unusableReason(stats);
+				if (reason === null) {
+					entry[metric.key] = ceilTo(stats.max_abs_delta_pct, BASELINE_DIGITS);
+					withFloor += 1;
+				} else {
+					// The key is still present, holding null. benchmarks.yml's
+					// taskFloor() requires a finite value > 0, so an omitted key and
+					// a 0 would both be wrong in the same direction; null is the only
+					// value that routes it to UNKNOWN.
+					entry[metric.key] = null;
+					unusable[metric.key] = reason;
+				}
+			}
+			if (Object.keys(unusable).length > 0) entry.unusable = unusable;
+			bySuite[task.name] = entry;
+			taskCount += 1;
+		}
+		tasks[suite.file] = bySuite;
+	}
+
+	const refusals = [];
+	if (!report.trustworthy)
+		refusals.push(
+			`the report is NOT TRUSTWORTHY (${report.blockingCount} blocking problem(s)); every blocking problem this script raises is one that can bias the floor DOWNWARD, and a floor committed too low silently blesses every later perf claim`,
+		);
+	if (report.runCount < BASELINE_MIN_RUNS)
+		refusals.push(
+			`only ${report.runCount} usable run(s); a committed baseline needs at least ${BASELINE_MIN_RUNS} (${ABSOLUTE_MIN_RUNS} runs give a single pair, so the "max" would be one observation with no tail)`,
+		);
+	if (report.distinctRunCount < BASELINE_MIN_RUNS)
+		refusals.push(
+			`${report.runCount} run director(ies) carry only ${report.distinctRunCount} distinct measurement(s); duplicated runs contribute a fabricated 0% to every pair, which drags the max DOWN, and the committed file would still claim runs: ${report.runCount}. A baseline is read for months after the results directory is gone, so it must not assert a run count it never had`,
+		);
+	if (report.runCount < metadata.repeats)
+		refusals.push(
+			`${METADATA_NAME} asked for ${metadata.repeats} repeat(s) but only ${report.runCount} produced a usable run; the repeats that finished are not a random subset of the repeats that were asked for, so their floor reads low. Re-run this with --min-runs ${metadata.repeats} to see what went missing`,
+		);
+	if (withFloor === 0)
+		refusals.push(
+			"not one (suite, task, metric) produced a usable floor, so the baseline would answer \"unknown\" for every row it was consulted about; that is what the not-yet-measured placeholder is for",
+		);
+	if (refusals.length > 0)
+		throw new BaselineRefusal(
+			refusals.map((entry) => `  - ${entry}`).join("\n"),
+			1,
+		);
+
+	const headline = {};
+	for (const metric of METRICS) {
+		const stats = report.summary[metric.key];
+		headline[metric.key] = {
+			tasksMeasured: stats.tasksMeasured,
+			medianOfMax: ceilTo(stats.medianOfMax, BASELINE_DIGITS),
+			worstMax: ceilTo(stats.worstMax, BASELINE_DIGITS),
+			worstTask: stats.worstTask
+				? { suite: stats.worstTask.suite, task: stats.worstTask.task }
+				: null,
+			tasksAbove5Pct: stats.tasksAbove5Pct,
+			tasksAbove10Pct: stats.tasksAbove10Pct,
+		};
+	}
+
+	return {
+		schema: BASELINE_SCHEMA,
+		status: "measured",
+		note: "Per-task A/A noise floor: the largest |Δ%| that IDENTICAL code produced between two runs. Look an entry up as tasks[<suite file>][<task name>] and compare the A/B |Δ%| against `mean_ms` or `hz` on it. A null floor means no floor was measured for that metric (see `unusable`) and MUST be treated as unknown, never as 0 -- in particular `no-variation-resolved` means the runs agreed to the source's own rounding step, which is not the same as a benchmark that cannot move.",
+		decisionRule: DECISION_RULE,
+		deltaDefinition: report.deltaDefinition,
+		headlineStatistic: HEADLINE_STATISTIC,
+		rounding: `floors are rounded to ${BASELINE_DIGITS} decimals AWAY from zero, so a published floor is never below the floor that was measured`,
+		provenance: {
+			generator: "scripts/bench/noise-floor.mjs --emit-baseline",
+			sourceReportSchema: report.schema,
+			ref: metadata.ref,
+			sha: metadata.sha,
+			runUrl: metadata.run_url,
+			measuredAt: metadata.measured_at,
+			measuredAtSource: metadata.measured_at_source,
+			selectedSuites: metadata.selected_suites,
+			repeatsRequested: metadata.repeats,
+			runs: report.runCount,
+			// Recorded, not merely checked. The refusal above only rejects a results
+			// directory whose distinct count falls below BASELINE_MIN_RUNS, so some
+			// duplication can still pass - and a legitimately deterministic model
+			// suite really can emit two identical runs. Committing both numbers keeps
+			// the file honest about what it is: `runs` is directories, `distinctRuns`
+			// is independent measurements, and only the second bounds the tail.
+			distinctRuns: report.distinctRunCount,
+			pairsPerTask: report.pairsPerTask,
+			minRuns: report.minRuns,
+			suitesCollected: report.suitesCollected,
+			suitesKnown: report.suitesKnown,
+			tasksPublished: taskCount,
+		},
+		headline,
+		tasks,
+	};
+};
+
 export const runCli = (
 	argv,
 	{ log = console.log, logError = console.error } = {},
@@ -1231,6 +1607,33 @@ export const runCli = (
 	fs.mkdirSync(path.dirname(jsonOut), { recursive: true });
 	fs.writeFileSync(jsonOut, `${JSON.stringify(report, null, 2)}\n`);
 	log(renderMarkdown(report));
+
+	// Additive, not a separate mode: the markdown above is the diagnosis, and a
+	// refusal to emit a baseline is exactly when a reader most needs it printed
+	// next to the reason.
+	if (options.emitBaseline !== undefined) {
+		let baseline;
+		try {
+			baseline = buildBaseline({
+				report,
+				metadata: readMeasurementMetadata(root),
+			});
+		} catch (error) {
+			if (!(error instanceof BaselineRefusal)) throw error;
+			logError(
+				`noise-floor: refusing to emit a committable baseline from ${root}:`,
+			);
+			logError(error.message);
+			return error.exitCode;
+		}
+		const baselineOut = path.resolve(options.emitBaseline);
+		fs.mkdirSync(path.dirname(baselineOut), { recursive: true });
+		fs.writeFileSync(baselineOut, stringifyBaseline(baseline));
+		logError(
+			`noise-floor: baseline written to ${baselineOut} (${baseline.provenance.tasksPublished} task(s), measured at ${baseline.provenance.sha} in ${baseline.provenance.runUrl})`,
+		);
+	}
+
 	if (!report.trustworthy) {
 		logError(
 			`noise-floor: ${report.blockingCount} blocking problem(s); the measured floor would be understated. Report written to ${jsonOut}`,

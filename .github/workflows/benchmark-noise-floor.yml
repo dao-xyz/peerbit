@@ -221,6 +221,15 @@ jobs:
               repeats: Number(process.env.NOISE_FLOOR_REPEATS),
               selected_suites: process.env.NOISE_FLOOR_SELECTED.split(","),
               run_url: `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`,
+              // When this measurement was taken. It exists because a floor ages:
+              // a baseline emitted from this directory is committed to the repo
+              // (scripts/bench/noise-floor.mjs --emit-baseline) and a reader has
+              // to be able to ask how old it is. This step runs before the first
+              // benchmark, so it is the START of the measurement, which is the
+              // conservative end to quote. Absent this field the emitter falls
+              // back to metadata.json's mtime and labels it as such -- correct,
+              // but weaker provenance than a recorded timestamp.
+              measured_at: new Date().toISOString(),
             };
 
             writeFileSync(
