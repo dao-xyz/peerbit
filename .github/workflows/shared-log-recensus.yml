@@ -25,6 +25,7 @@ jobs:
         profile:
           - sync-phase
           - receive-prune
+          - resident-scale
     concurrency:
       group: shared-log-recensus-${{ inputs.ref }}-${{ matrix.profile }}
       cancel-in-progress: false
@@ -103,6 +104,12 @@ jobs:
             receive-prune)
               node --loader ts-node/esm ./benchmark/receive-prune.ts > "$destination"
               ;;
+            resident-scale)
+              node "$GITHUB_WORKSPACE/scripts/bench/shared-log-scale-census.mjs" \
+                --counts 100000,1000000 \
+                --runs 1 \
+                --json > "$destination"
+              ;;
             *)
               echo "::error::Unknown profile '$PROFILE'."
               exit 1
@@ -114,14 +121,19 @@ jobs:
 
             const file = process.env.PROFILE_RESULT;
             const result = JSON.parse(readFileSync(file, "utf8"));
-            const expectedName =
-              process.env.PROFILE === "sync-phase"
-                ? "shared-log-sync-phase-profile"
-                : "shared-log-receive-prune";
+            const expectedNames = {
+              "sync-phase": "shared-log-sync-phase-profile",
+              "receive-prune": "shared-log-receive-prune",
+              "resident-scale": "shared-log-resident-scale-census",
+            };
+            const expectedName = expectedNames[process.env.PROFILE];
+            if (!expectedName) {
+              throw new Error(`Unknown profile '${process.env.PROFILE}'`);
+            }
             if (result.name !== expectedName) {
               throw new Error(`${file} has profile name '${result.name}', expected '${expectedName}'`);
             }
-            const rows = result.runs ?? result.aggregateRows;
+            const rows = result.runs ?? result.aggregateRows ?? result.rows;
             if (!Array.isArray(rows) || rows.length === 0) {
               throw new Error(`${file} carries no measured profile rows`);
             }
