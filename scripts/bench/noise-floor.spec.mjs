@@ -1860,35 +1860,85 @@ test("refuses a baseline when metadata.json is absent, malformed or not ours", (
 	});
 });
 
-test("the committed placeholder has the emitted shape and answers unknown everywhere", () => {
+test("the committed baseline has the emitted shape and answers the consumer correctly", () => {
 	const bytes = fs.readFileSync(COMMITTED_BASELINE, "utf8");
 	const placeholder = JSON.parse(bytes);
 
-	// It is a placeholder, loudly: nothing in it may be read as a measurement.
-	assert.equal(placeholder.status, "not-yet-measured");
-	assert.deepEqual(placeholder.tasks, {});
-	assert.equal(placeholder.provenance.ref, null);
-	assert.equal(placeholder.provenance.sha, null);
-	assert.equal(placeholder.provenance.runUrl, null);
-	assert.equal(placeholder.provenance.measuredAt, null);
-	assert.equal(placeholder.provenance.runs, 0);
-	assert.equal(placeholder.provenance.tasksPublished, 0);
-	for (const metric of ["mean_ms", "hz"]) {
-		assert.equal(placeholder.headline[metric].tasksMeasured, 0);
-		assert.equal(placeholder.headline[metric].worstMax, null);
+	// The committed file is legitimately either state: the not-yet-measured
+	// placeholder before a floor has been distilled, or a real measurement after.
+	// Both must satisfy every shape and consumer property below; only the
+	// measurement-specific assertions differ, and each state is pinned so the
+	// other cannot drift in unnoticed.
+	assert.ok(
+		placeholder.status === "not-yet-measured" ||
+			placeholder.status === "measured",
+		`unexpected committed baseline status ${placeholder.status}`,
+	);
+	const measured = placeholder.status === "measured";
+
+	if (measured) {
+		// A measurement must be traceable: without provenance it cannot be
+		// re-measured or aged out, and a floor nobody can date is a floor nobody
+		// should trust.
+		assert.equal(typeof placeholder.provenance.ref, "string");
+		assert.match(placeholder.provenance.sha, /^[0-9a-f]{40}$/);
+		assert.match(placeholder.provenance.runUrl, /\/actions\/runs\/\d+$/);
+		assert.equal(typeof placeholder.provenance.measuredAt, "string");
+		assert.ok(placeholder.provenance.runs >= 3);
+		// Directories are not measurements; the emitter refuses when these
+		// disagree below the minimum, and the committed file records both.
+		assert.equal(
+			placeholder.provenance.distinctRuns,
+			placeholder.provenance.runs,
+		);
+		assert.ok(placeholder.provenance.tasksPublished > 0);
+		assert.ok(Object.keys(placeholder.tasks).length > 0);
+	} else {
+		// It is a placeholder, loudly: nothing in it may be read as a measurement.
+		assert.deepEqual(placeholder.tasks, {});
+		assert.equal(placeholder.provenance.ref, null);
+		assert.equal(placeholder.provenance.sha, null);
+		assert.equal(placeholder.provenance.runUrl, null);
+		assert.equal(placeholder.provenance.measuredAt, null);
+		assert.equal(placeholder.provenance.runs, 0);
+		assert.equal(placeholder.provenance.tasksPublished, 0);
+		for (const metric of ["mean_ms", "hz"]) {
+			assert.equal(placeholder.headline[metric].tasksMeasured, 0);
+			assert.equal(placeholder.headline[metric].worstMax, null);
+		}
 	}
 
 	// The consumer's "unknown" branch, exercised against the real committed file:
 	// `tasks` must be a plain OBJECT (an array reads to benchmarks.yml as a
 	// broken baseline, which is a louder and less accurate story than "nothing
-	// measured yet"), and every lookup through it must come back null.
+	// measured yet"), and a task nobody measured must come back null in EITHER
+	// state - that is the row benchmarks.yml renders as UNKNOWN.
 	assert.equal(Array.isArray(placeholder.tasks), false);
 	assert.equal(typeof placeholder.tasks, "object");
 	assert.notEqual(placeholder.tasks, null);
 	assert.equal(
-		consumerFloor(placeholder, "pid-convergence.json", "anything", "mean_ms"),
+		consumerFloor(
+			placeholder,
+			"pid-convergence.json",
+			"a task no run ever produced",
+			"mean_ms",
+		),
 		null,
 	);
+	if (measured) {
+		// ...and a task that WAS measured must resolve to a usable number, or the
+		// annotation silently degrades to UNKNOWN for everything.
+		const [suiteFile, tasks] = Object.entries(placeholder.tasks).find(
+			([, entries]) =>
+				Object.values(entries).some((entry) => entry.mean_ms !== null),
+		);
+		const taskName = Object.keys(tasks).find(
+			(name) => tasks[name].mean_ms !== null,
+		);
+		const floor = consumerFloor(placeholder, suiteFile, taskName, "mean_ms");
+		assert.equal(typeof floor, "number");
+		assert.ok(floor > 0);
+	}
 	// Committed in the emitter's own serialisation, so a hand-edit that breaks
 	// key order or indentation is caught here rather than in a review diff.
 	assert.equal(stringifyBaseline(placeholder), bytes);
@@ -1920,7 +1970,11 @@ test("the committed placeholder has the emitted shape and answers unknown everyw
 	assert.equal(placeholder.rounding, emitted.rounding);
 	assert.equal(placeholder.provenance.generator, emitted.provenance.generator);
 	assert.equal(placeholder.provenance.suitesKnown, emitted.provenance.suitesKnown);
-	assert.notEqual(placeholder.status, emitted.status);
+	// The fixture is a healthy 3-run measurement, so a successful emit is always
+	// "measured". (This used to assert the committed file DIFFERED from a fresh
+	// emission, which only held while the committed file was the placeholder; the
+	// committed status is checked against both valid states at the top instead.)
+	assert.equal(emitted.status, "measured");
 });
 
 test("buildBaseline is callable without the CLI and refuses the same things", () => {
