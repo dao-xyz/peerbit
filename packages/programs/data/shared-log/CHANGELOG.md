@@ -1,5 +1,15 @@
 # Changelog
 
+## 16.0.7
+
+### Patch Changes
+
+- [#1284](https://github.com/dao-xyz/peerbit/pull/1284) [`b8eb614`](https://github.com/dao-xyz/peerbit/commit/b8eb614e8715d2e179304c910beec235a385f197) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Avoid scanning every replication range during native append when the exact
+  resident owner count proves full-replica delivery cannot apply.
+- Updated dependencies []:
+  - @peerbit/log@6.2.19
+  - @peerbit/rpc@6.1.19
+
 ## 16.0.6
 
 ### Patch Changes
