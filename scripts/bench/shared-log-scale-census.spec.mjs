@@ -48,6 +48,18 @@ test("accepts explicit and environment scale census options", () => {
 	);
 
 	assert.equal(parseScaleCensusArgs([], { BENCH_JSON: "1" }).json, true);
+	assert.equal(
+		parseScaleCensusArgs([], {
+			SHARED_LOG_SCALE_OUTPUT: "/tmp/scale-census.json",
+		}).output,
+		"/tmp/scale-census.json",
+	);
+	assert.equal(
+		parseScaleCensusArgs(["--output", "/tmp/explicit-scale-census.json"], {
+			SHARED_LOG_SCALE_OUTPUT: "/tmp/environment-scale-census.json",
+		}).output,
+		"/tmp/explicit-scale-census.json",
+	);
 	assert.deepEqual(parseScaleCensusArgs(["--", "--counts", "1000"], {}), {
 		mode: "parent",
 		counts: [1_000],
@@ -193,6 +205,24 @@ test("rejects ambiguous or invalid workloads", () => {
 		() => parseScaleCensusArgs(["--phase", "seed"], {}),
 		/worker-only/,
 	);
+	assert.throws(
+		() =>
+			parseScaleCensusArgs(
+				[
+					"--worker",
+					"--scenario",
+					"native-graph-chain",
+					"--count",
+					"100",
+					"--run",
+					"1",
+					"--output",
+					"/tmp/result.json",
+				],
+				{},
+			),
+		/worker mode does not accept --output/,
+	);
 });
 
 test("builds fixed-width unique synthetic identifiers", () => {
@@ -263,7 +293,7 @@ test("builds a versioned machine-readable report", () => {
 		}),
 		{
 			name: SCALE_CENSUS_NAME,
-			schemaVersion: 2,
+			schemaVersion: 3,
 			meta: {
 				counts: [100],
 				scenarios: ["native-graph-chain"],
@@ -275,7 +305,64 @@ test("builds a versioned machine-readable report", () => {
 				node: "v22.0.0",
 				platform: "linux",
 			},
+			progress: {
+				expectedRows: 1,
+				completedRows: 1,
+				complete: true,
+				activeRow: null,
+			},
 			rows: [{ scenario: "native-graph-chain", count: 100 }],
+		},
+	);
+});
+
+test("reports checkpoint progress and a terminal row failure", () => {
+	assert.deepEqual(
+		buildScaleCensusReport({
+			counts: [100, 1_000],
+			scenarios: ["native-graph-chain"],
+			runs: 1,
+			rows: [{ scenario: "native-graph-chain", count: 100, run: 1 }],
+			host: { node: "v22.0.0" },
+			activeRow: {
+				scenario: "native-graph-chain",
+				count: 1_000,
+				run: 1,
+			},
+		}).progress,
+		{
+			expectedRows: 2,
+			completedRows: 1,
+			complete: false,
+			activeRow: {
+				scenario: "native-graph-chain",
+				count: 1_000,
+				run: 1,
+			},
+		},
+	);
+
+	const failure = {
+		scenario: "native-graph-chain",
+		count: 1_000,
+		run: 1,
+		message: "worker failed",
+	};
+	assert.deepEqual(
+		buildScaleCensusReport({
+			counts: [100, 1_000],
+			scenarios: ["native-graph-chain"],
+			runs: 1,
+			rows: [{ scenario: "native-graph-chain", count: 100, run: 1 }],
+			host: { node: "v22.0.0" },
+			failure,
+		}).progress,
+		{
+			expectedRows: 2,
+			completedRows: 1,
+			complete: false,
+			activeRow: null,
+			failure,
 		},
 	);
 });

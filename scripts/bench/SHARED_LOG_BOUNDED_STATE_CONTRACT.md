@@ -119,7 +119,9 @@ Before claiming the 100-million-entry target:
    buckets if the workload cannot bound one component.
 6. Progress through distributed 10M and 100M global-entry soaks.
 
-The rebalancing implementation handoff should begin after step 1 records the
-persistent 100k/1M results. At that point the planner has measured local-state
-budgets and this lifecycle contract, rather than an unconstrained global-entry
-goal.
+The rebalancing implementation handoff can begin after step 1 records complete
+100k results and a measured or censored 1M boundary. A timeout with preserved
+progress is valid boundary evidence; complete 1M metric rows remain measurement
+work, not a prerequisite for bounded planner design. At that point the planner
+has local-state budgets and this lifecycle contract, rather than an
+unconstrained global-entry goal.

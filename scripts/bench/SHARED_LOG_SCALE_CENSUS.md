@@ -82,10 +82,25 @@ Machine-readable output uses a versioned JSON envelope:
 BENCH_JSON=1 pnpm run bench:shared-log-scale-census > scale-census.json
 ```
 
+For long runs, use `--output` instead of relying only on stdout:
+
+```bash
+pnpm run bench:shared-log-scale-census -- \
+  --output scale-census.json \
+  --json > /dev/null
+```
+
+The output file is replaced atomically before a row starts and after it
+finishes. Schema version 3 includes `progress.expectedRows`, `completedRows`,
+`activeRow`, and `complete`, so a timeout preserves completed rows and identifies
+the censored row.
+
 The `Shared log re-census` manual workflow runs canonical 100k and 1M sizes and
-uploads the JSON result. Ordinary pull-request CI runs the
-argument/report tests and tiny persistent round trips; it does not allocate
-million-entry states.
+uploads the JSON result. Resident, persistent chain, persistent roots, and
+persistent coordinate workloads use independent jobs, giving each slow reopen
+its own timeout and artifact. Ordinary pull-request CI runs the argument/report
+tests and tiny persistent round trips; it does not allocate million-entry
+states.
 
 ## Development-machine observation
 
@@ -104,6 +119,15 @@ real `Log.open()` path had not completed at a 30-minute local censor point. It
 was still CPU-bound at roughly 4.3 GiB RSS. That RSS is partial, not a final
 peak, and endpoint validation had not yet run. The result rules out treating one
 million locally materialized rows as a healthy ordinary-peer startup target.
+
+Manual workflow
+[run 31939388160](https://github.com/dao-xyz/peerbit/actions/runs/31939388160)
+provided a second censor point on an Ubuntu runner. The persistent chain 1M row
+advanced to the next scenario after about 1 hour 59 minutes. The roots 1M row
+was still running 56 minutes later when the combined job reached its three-hour
+limit; the persistent coordinate row was never reached. These are wall-clock
+boundaries from progress logs, not complete metric rows. They motivated the
+independent workflow jobs and checkpointed report format above.
 
 ## Interpretation
 
