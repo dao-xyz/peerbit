@@ -183,7 +183,9 @@ const emptySequentialIndex = <R extends Resolution>(properties?: {
 	};
 };
 
-for (const resolution of ["u32", "u64"] as const) {
+const resolutions = ["u32", "u64"] as const satisfies readonly Resolution[];
+
+for (const resolution of resolutions) {
 	describe(`rebalance scan planner: ${resolution}`, () => {
 		it("is pure and canonical for independent change permutations", () => {
 			const first = makeRange(resolution, {

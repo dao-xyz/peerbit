@@ -137,6 +137,11 @@ const PARAMETERIZED = {
 		arrayStrings(src, "BACKENDS").map(
 			(b) => `durable restart conformance (${b})`,
 		),
+	// describe(`rebalance scan planner: ${resolution}`, ...) over `resolutions`
+	"rebalance-planner.spec.ts": (src) =>
+		arrayStrings(src, "resolutions").map(
+			(resolution) => `rebalance scan planner: ${resolution}`,
+		),
 };
 
 const uncovered = [];
