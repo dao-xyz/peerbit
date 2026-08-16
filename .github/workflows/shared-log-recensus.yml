@@ -25,7 +25,7 @@ jobs:
         profile:
           - sync-phase
           - receive-prune
-          - resident-scale
+          - scale-census
     concurrency:
       group: shared-log-recensus-${{ inputs.ref }}-${{ matrix.profile }}
       cancel-in-progress: false
@@ -104,7 +104,7 @@ jobs:
             receive-prune)
               node --loader ts-node/esm ./benchmark/receive-prune.ts > "$destination"
               ;;
-            resident-scale)
+            scale-census)
               node "$GITHUB_WORKSPACE/scripts/bench/shared-log-scale-census.mjs" \
                 --counts 100000,1000000 \
                 --runs 1 \
@@ -124,7 +124,7 @@ jobs:
             const expectedNames = {
               "sync-phase": "shared-log-sync-phase-profile",
               "receive-prune": "shared-log-receive-prune",
-              "resident-scale": "shared-log-resident-scale-census",
+              "scale-census": "shared-log-scale-census",
             };
             const expectedName = expectedNames[process.env.PROFILE];
             if (!expectedName) {
