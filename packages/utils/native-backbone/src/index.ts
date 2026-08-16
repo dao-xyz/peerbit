@@ -54,12 +54,14 @@ type NativePeerbitBackboneHandle = {
 		end1: string,
 		start2: string,
 		end2: string,
+		limit?: number,
 	) => unknown[];
 	entry_hash_numbers_in_range_u64?: (
 		start1: string,
 		end1: string,
 		start2: string,
 		end2: string,
+		limit?: number,
 	) => BigUint64Array;
 	count_entry_coordinates_in_ranges: (
 		start1: string[],
@@ -6332,6 +6334,7 @@ export class NativePeerbitBackbone {
 		end1: bigint | number | string;
 		start2: bigint | number | string;
 		end2: bigint | number | string;
+		limit?: number;
 	}): bigint[] {
 		return rowsToNumbers(
 			"u64",
@@ -6340,6 +6343,7 @@ export class NativePeerbitBackbone {
 				integerString(range.end1),
 				integerString(range.start2),
 				integerString(range.end2),
+				range.limit,
 			),
 		) as bigint[];
 	}
@@ -6349,6 +6353,7 @@ export class NativePeerbitBackbone {
 		end1: bigint | number | string;
 		start2: bigint | number | string;
 		end2: bigint | number | string;
+		limit?: number;
 	}): BigUint64Array | undefined {
 		if (
 			typeof BigUint64Array === "undefined" ||
@@ -6361,6 +6366,7 @@ export class NativePeerbitBackbone {
 			integerString(range.end1),
 			integerString(range.start2),
 			integerString(range.end2),
+			range.limit,
 		);
 	}
 

@@ -6,12 +6,22 @@ import { equals } from "uint8arrays";
 const logger = loggerFn("peerbit:indexer:simple");
 const warn = logger.newScope("warn");
 
+const normalizeIteratorAmount = (amount: number) => {
+	if (amount === Infinity) {
+		return amount;
+	}
+	return Number.isFinite(amount) ? Math.max(0, Math.floor(amount)) : 0;
+};
+
 const getBatchFromResults = <T extends Record<string, any>>(
 	results: types.IndexedValue<T>[],
 	wantedSize: number,
 	/* properties: types.IteratorBatchProperties */
 ) => {
 	const batch: types.IndexedValue<T>[] = [];
+	if (wantedSize <= 0) {
+		return batch;
+	}
 	/* let size = 0; */
 	for (const result of results) {
 		batch.push(result);
@@ -229,6 +239,18 @@ export class HashmapIndex<T extends Record<string, any>, NestedType = any>
 			| types.SumOptions,
 	): Promise<types.IndexedValue<T>[]> {
 		const queryCoerced = types.toQuery(query?.query);
+		const directResults = this.getDirectResults(queryCoerced);
+		if (directResults) {
+			return directResults;
+		}
+
+		// Handle query normally
+		return this._queryDocuments((doc) => this.matchesQuery(queryCoerced, doc));
+	}
+
+	private getDirectResults(
+		queryCoerced: types.Query[],
+	): types.IndexedValue<T>[] | undefined {
 		if (
 			queryCoerced.length === 1 &&
 			(queryCoerced[0] instanceof types.ByteMatchQuery ||
@@ -248,19 +270,19 @@ export class HashmapIndex<T extends Record<string, any>, NestedType = any>
 				return doc ? [doc] : [];
 			}
 		}
+	}
 
-		// Handle query normally
-		const indexedDocuments = await this._queryDocuments(async (doc) => {
-			let innerHits = new Map();
-			for (const f of queryCoerced) {
-				if (!(await this.handleQueryObject(f, doc.value, innerHits))) {
-					return false;
-				}
+	private async matchesQuery(
+		queryCoerced: types.Query[],
+		doc: types.IndexedValue<T>,
+	): Promise<boolean> {
+		let innerHits = new Map();
+		for (const f of queryCoerced) {
+			if (!(await this.handleQueryObject(f, doc.value, innerHits))) {
+				return false;
 			}
-			return true;
-		});
-
-		return indexedDocuments;
+		}
+		return true;
 	}
 
 	iterate<S extends types.Shape | undefined>(
@@ -271,6 +293,21 @@ export class HashmapIndex<T extends Record<string, any>, NestedType = any>
 			return this.closedIterator<S>();
 		}
 		this.assertOpen();
+		const sort = query?.sort
+			? Array.isArray(query.sort)
+				? query.sort
+				: [query.sort]
+			: [];
+		return sort.length > 0
+			? this.sortedIterator(query, properties, sort)
+			: this.unsortedIterator(query, properties);
+	}
+
+	private sortedIterator<S extends types.Shape | undefined>(
+		query: types.IterateOptions | undefined,
+		properties: { shape?: S; reference?: boolean } | undefined,
+		sort: types.Sort[],
+	): types.IndexIterator<T, S> {
 		let done: boolean | undefined = undefined;
 		let queue:
 			| {
@@ -290,19 +327,12 @@ export class HashmapIndex<T extends Record<string, any>, NestedType = any>
 			if (!queue && !done) {
 				const indexedDocuments = await this.queryAll(query);
 				if (indexedDocuments.length > 1) {
-					// Sort
-					if (query?.sort) {
-						const sortArr = Array.isArray(query.sort)
-							? query.sort
-							: [query.sort];
-						sortArr.length > 0 &&
-							indexedDocuments.sort((a, b) =>
-								types.extractSortCompare(a.value, b.value, sortArr, undefined, {
-									a: a.id,
-									b: b.id,
-								}),
-							);
-					}
+					indexedDocuments.sort((a, b) =>
+						types.extractSortCompare(a.value, b.value, sort, undefined, {
+							a: a.id,
+							b: b.id,
+						}),
+					);
 				}
 
 				if (indexedDocuments.length > 0) {
@@ -323,11 +353,15 @@ export class HashmapIndex<T extends Record<string, any>, NestedType = any>
 				return [];
 			}
 
+			const wantedSize = normalizeIteratorAmount(n);
 			const batch = getBatchFromResults<T>(
 				queue.arr,
-				n,
+				wantedSize,
 				/* this.properties.iterator.batch */
 			);
+			if (queue.arr.length === 0) {
+				done = true;
+			}
 
 			return (
 				queue.reference ? batch : cloneResults(batch, this.properties.schema)
@@ -365,6 +399,170 @@ export class HashmapIndex<T extends Record<string, any>, NestedType = any>
 			close: () => {
 				done = true;
 				queue = undefined;
+			},
+		};
+	}
+
+	private unsortedIterator<S extends types.Shape | undefined>(
+		query: types.IterateOptions | undefined,
+		properties: { shape?: S; reference?: boolean } | undefined,
+	): types.IndexIterator<T, S> {
+		const queryCoerced = types.toQuery(query?.query);
+		let done: boolean | undefined;
+		let closed = false;
+		let cursor: Iterator<types.IndexedValue<T>> | undefined;
+		let remainingRaw: number | undefined;
+		let sourceExhausted = false;
+		const buffered: types.IndexedValue<T>[] = [];
+
+		const initialize = () => {
+			if (cursor) {
+				return;
+			}
+			const directResults = this.getDirectResults(queryCoerced);
+			const source = directResults ?? this._index.values();
+			cursor = source[Symbol.iterator]();
+			remainingRaw = directResults?.length ?? this._index.size;
+			done = false;
+		};
+
+		// A forward Map cursor is live under mutation. Cap raw reads at the size
+		// observed when iteration starts so appended rows cannot create an
+		// unbounded tail. Unvisited deletes can disappear and replacements can be
+		// observed; sorted iterators retain the eager snapshot behavior above.
+		const nextSourceMatch = async (): Promise<
+			types.IndexedValue<T> | undefined
+		> => {
+			while (!closed && !sourceExhausted && remainingRaw! > 0) {
+				const activeCursor = cursor;
+				if (!activeCursor) {
+					sourceExhausted = true;
+					remainingRaw = 0;
+					return;
+				}
+				const next = activeCursor.next();
+				if (next.done) {
+					sourceExhausted = true;
+					remainingRaw = 0;
+					return;
+				}
+				remainingRaw = remainingRaw! - 1;
+				const matches = await this.matchesQuery(queryCoerced, next.value);
+				if (closed) {
+					return;
+				}
+				if (matches) {
+					return next.value;
+				}
+			}
+			if (!closed) {
+				sourceExhausted = true;
+			}
+		};
+
+		const refreshDone = () => {
+			done = sourceExhausted && buffered.length === 0;
+		};
+
+		const fetch = async (
+			n: number,
+		): Promise<types.IndexedResults<types.ReturnTypeFromShape<T, S>>> => {
+			if (this.isClosing()) {
+				done = true;
+				closed = true;
+				sourceExhausted = true;
+				remainingRaw = 0;
+				cursor = undefined;
+				buffered.length = 0;
+				return [];
+			}
+			this.assertOpen();
+			if (closed || done) {
+				return [];
+			}
+
+			const wantedSize = normalizeIteratorAmount(n);
+			if (wantedSize === 0) {
+				return [];
+			}
+			initialize();
+
+			const batch = getBatchFromResults(buffered, wantedSize);
+			while (batch.length < wantedSize) {
+				const next = await nextSourceMatch();
+				if (closed) {
+					return [];
+				}
+				if (!next) {
+					break;
+				}
+				batch.push(next);
+			}
+			if (closed) {
+				return [];
+			}
+
+			if (wantedSize !== Infinity && batch.length === wantedSize) {
+				const next = await nextSourceMatch();
+				if (closed) {
+					return [];
+				}
+				if (next) {
+					buffered.push(next);
+				}
+			}
+			refreshDone();
+
+			return (
+				properties?.reference
+					? batch
+					: cloneResults(batch, this.properties.schema)
+			) as types.IndexedResults<types.ReturnTypeFromShape<T, S>>;
+		};
+
+		const pending = async () => {
+			if (this.isClosing()) {
+				done = true;
+				closed = true;
+				sourceExhausted = true;
+				remainingRaw = 0;
+				cursor = undefined;
+				buffered.length = 0;
+				return 0;
+			}
+			this.assertOpen();
+			if (closed || done) {
+				return 0;
+			}
+			initialize();
+			while (!sourceExhausted) {
+				const next = await nextSourceMatch();
+				if (closed) {
+					return 0;
+				}
+				if (next) {
+					buffered.push(next);
+				}
+			}
+			if (closed) {
+				return 0;
+			}
+			refreshDone();
+			return buffered.length;
+		};
+
+		return {
+			all: () => fetch(Infinity),
+			next: fetch,
+			done: () => (this.isClosing() ? true : done),
+			pending,
+			close: () => {
+				closed = true;
+				done = true;
+				sourceExhausted = true;
+				remainingRaw = 0;
+				cursor = undefined;
+				buffered.length = 0;
 			},
 		};
 	}
@@ -598,7 +796,7 @@ export class HashmapIndex<T extends Record<string, any>, NestedType = any>
 	}
 
 	private async _queryDocuments(
-		filter: (doc: types.IndexedValue) => Promise<boolean>,
+		filter: (doc: types.IndexedValue<T>) => Promise<boolean>,
 	): Promise<types.IndexedValue<T>[]> {
 		// Whether we return the full operation data or just the db value
 		const results: types.IndexedValue<T>[] = [];

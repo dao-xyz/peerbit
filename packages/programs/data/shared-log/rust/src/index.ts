@@ -340,12 +340,14 @@ type NativeSharedLogStateHandle = {
 		end1: string,
 		start2: string,
 		end2: string,
+		limit?: number,
 	) => unknown[];
 	entry_hash_numbers_in_range_u64?: (
 		start1: string,
 		end1: string,
 		start2: string,
 		end2: string,
+		limit?: number,
 	) => BigUint64Array;
 	commit_entry_coordinates: (
 		hash: string,
@@ -1162,6 +1164,7 @@ export class SharedLogNativeState {
 		end1: bigint | number | string;
 		start2: bigint | number | string;
 		end2: bigint | number | string;
+		limit?: number;
 	}): bigint[] {
 		return rowsToNumbers(
 			"u64",
@@ -1170,6 +1173,7 @@ export class SharedLogNativeState {
 				asIntegerString(range.end1),
 				asIntegerString(range.start2),
 				asIntegerString(range.end2),
+				range.limit,
 			),
 		) as bigint[];
 	}
@@ -1179,6 +1183,7 @@ export class SharedLogNativeState {
 		end1: bigint | number | string;
 		start2: bigint | number | string;
 		end2: bigint | number | string;
+		limit?: number;
 	}): BigUint64Array | undefined {
 		if (
 			typeof BigUint64Array === "undefined" ||
@@ -1191,6 +1196,7 @@ export class SharedLogNativeState {
 			asIntegerString(range.end1),
 			asIntegerString(range.start2),
 			asIntegerString(range.end2),
+			range.limit,
 		);
 	}
 

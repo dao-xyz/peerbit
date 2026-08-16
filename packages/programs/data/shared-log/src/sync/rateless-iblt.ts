@@ -91,6 +91,11 @@ const CODED_SYMBOL_WORDS = 3;
 const CODED_SYMBOL_WORD_BYTES = 8;
 const CODED_SYMBOL_BYTES = CODED_SYMBOL_WORDS * CODED_SYMBOL_WORD_BYTES;
 const MAX_CODED_SYMBOL_BATCH_SIZE = 1_024;
+const DEFAULT_MAX_RATELESS_RECEIVE_RANGE_ENTRIES = 16_384;
+const RATELESS_RANGE_QUERY_PAGE_SIZE = 1_024;
+// Native range resolvers accept a u32 limit. Keep one value available as the
+// overflow sentinel used to distinguish an exact fit from a larger range.
+const MAX_RATELESS_RANGE_ENTRIES = 0xffff_fffe;
 const BIG_UINT64_ARRAY_IS_LITTLE_ENDIAN =
 	typeof BigUint64Array !== "undefined" &&
 	new Uint8Array(new BigUint64Array([1n]).buffer)[0] === 1;
@@ -656,6 +661,7 @@ const buildEncoderOrDecoderFromRange = async <
 	},
 	entryIndex: Index<EntryReplicated<D>>,
 	type: T,
+	maxEntries: number,
 	profile?: SyncProfileFn,
 	resolveHashNumbersInRange?: HashSymbolRangeResolver,
 ): Promise<E | false> => {
@@ -665,6 +671,7 @@ const buildEncoderOrDecoderFromRange = async <
 	let transferred = false;
 	try {
 		const rangeQueryStartedAt = syncProfileStart(profile);
+		const queryLimit = maxEntries + 1;
 		let hashNumbers: Array<bigint | number> | BigUint64Array | undefined;
 		let source = "index";
 		const resolved = await resolveHashNumbersInRange?.({
@@ -672,45 +679,86 @@ const buildEncoderOrDecoderFromRange = async <
 			start1: ranges.start1,
 			end2: ranges.end2,
 			start2: ranges.start2,
+			limit: queryLimit,
 		});
 		if (resolved) {
 			source = "native";
-			hashNumbers =
+			if (
 				typeof BigUint64Array !== "undefined" &&
 				resolved instanceof BigUint64Array
-					? resolved
-					: [...resolved];
+			) {
+				hashNumbers = resolved;
+			} else {
+				hashNumbers = [];
+				const iterator = resolved[Symbol.iterator]();
+				let exhausted = false;
+				try {
+					while (hashNumbers.length < queryLimit) {
+						const next = iterator.next();
+						if (next.done) {
+							exhausted = true;
+							break;
+						}
+						hashNumbers.push(next.value);
+					}
+				} finally {
+					if (!exhausted) {
+						iterator.return?.();
+					}
+				}
+			}
 		} else {
-			const entries = await entryIndex
-				.iterate(
-					{
-						// Range sync for IBLT is done in hashNumber space.
-						query: matchEntriesByHashNumberInRangeQuery({
-							end1: ranges.end1,
-							start1: ranges.start1,
-							end2: ranges.end2,
-							start2: ranges.start2,
-						}),
+			const iterator = entryIndex.iterate(
+				{
+					// Range sync for IBLT is done in hashNumber space.
+					query: matchEntriesByHashNumberInRangeQuery({
+						end1: ranges.end1,
+						start1: ranges.start1,
+						end2: ranges.end2,
+						start2: ranges.start2,
+					}),
+				},
+				{
+					shape: {
+						hash: true,
+						hashNumber: true,
 					},
-					{
-						shape: {
-							hash: true,
-							hashNumber: true,
-						},
-					},
-				)
-				.all();
-			hashNumbers = entries.map((entry) => entry.value.hashNumber);
+				},
+			);
+			hashNumbers = [];
+			try {
+				while (hashNumbers.length < queryLimit) {
+					const remaining = queryLimit - hashNumbers.length;
+					const entries = await iterator.next(
+						Math.min(RATELESS_RANGE_QUERY_PAGE_SIZE, remaining),
+					);
+					if (entries.length === 0) {
+						break;
+					}
+					for (const entry of entries) {
+						if (hashNumbers.length >= queryLimit) {
+							break;
+						}
+						hashNumbers.push(entry.value.hashNumber);
+					}
+					if (iterator.done()) {
+						break;
+					}
+				}
+			} finally {
+				await iterator.close();
+			}
 		}
+		const overflow = hashNumbers.length > maxEntries;
 		if (profile) {
 			emitSyncProfileDuration(profile, rangeQueryStartedAt, {
 				name: "rateless.rangeQuery",
 				entries: hashNumbers.length,
-				details: { type, source },
+				details: { type, source, overflow, maxEntries },
 			});
 		}
 
-		if (hashNumbers.length === 0) {
+		if (hashNumbers.length === 0 || overflow) {
 			return false;
 		}
 
@@ -910,6 +958,13 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 		return value && Number.isFinite(value) && value > 0
 			? Math.max(1, Math.floor(value))
 			: DEFAULT_MAX_CONVERGENT_TRACKED_HASHES;
+	}
+
+	private get maxRatelessReceiveRangeEntries() {
+		const value = this.properties.sync?.maxRatelessReceiveRangeEntries;
+		return value && Number.isFinite(value) && value > 0
+			? Math.min(MAX_RATELESS_RANGE_ENTRIES, Math.max(1, Math.floor(value)))
+			: DEFAULT_MAX_RATELESS_RECEIVE_RANGE_ENTRIES;
 	}
 
 	private normalizeRetryIntervals(retryIntervalsMs?: number[]): number[] {
@@ -1342,6 +1397,7 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 			ranges,
 			this.properties.entryIndex,
 			"encoder",
+			this.maxRatelessReceiveRangeEntries,
 			profile,
 			this.properties.resolveHashNumbersInRange,
 		)) as EncoderWrapper | false;

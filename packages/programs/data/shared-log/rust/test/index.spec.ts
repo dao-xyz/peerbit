@@ -584,6 +584,29 @@ describe("native shared-log range planner", () => {
 			"90",
 			"90",
 		]);
+		expect(
+			state
+				.getEntryHashNumbersInRange({
+					start1: 0n,
+					end1: 10n,
+					start2: 80n,
+					end2: 100n,
+					limit: 3,
+				})
+				.map((value) => value.toString()),
+		).to.deep.equal(["5", "8", "90"]);
+		expect(
+			Array.from(
+				state.getEntryHashNumbersInRangeU64({
+					start1: 0n,
+					end1: 10n,
+					start2: 80n,
+					end2: 100n,
+					limit: 2,
+				})!,
+				(value) => value.toString(),
+			),
+		).to.deep.equal(["5", "8"]);
 
 		state.deleteEntryCoordinates("head-c");
 		expect(

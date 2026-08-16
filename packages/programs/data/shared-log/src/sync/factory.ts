@@ -87,6 +87,7 @@ export function createSyncronizer<R extends "u32" | "u64">(
 		end1: bigint | number;
 		start2: bigint | number;
 		end2: bigint | number;
+		limit: number;
 	}) => {
 		const nativeState = props.getNativeState();
 		return (
