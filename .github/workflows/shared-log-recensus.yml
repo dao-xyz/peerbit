@@ -7,6 +7,19 @@ on:
         required: false
         default: master
         type: string
+      profile:
+        description: Profile to run
+        required: false
+        default: all
+        type: choice
+        options:
+          - all
+          - sync-phase
+          - receive-prune
+          - scale-resident
+          - scale-persistent-chain
+          - scale-persistent-roots
+          - scale-persistent-coordinate
 
 permissions: {}
 
@@ -22,13 +35,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        profile:
-          - sync-phase
-          - receive-prune
-          - scale-resident
-          - scale-persistent-chain
-          - scale-persistent-roots
-          - scale-persistent-coordinate
+        profile: ${{ fromJSON(inputs.profile == 'all' && '["sync-phase","receive-prune","scale-resident","scale-persistent-chain","scale-persistent-roots","scale-persistent-coordinate"]' || format('["{0}"]', inputs.profile)) }}
     concurrency:
       group: shared-log-recensus-${{ inputs.ref }}-${{ matrix.profile }}
       cancel-in-progress: false

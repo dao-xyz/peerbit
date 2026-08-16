@@ -98,9 +98,9 @@ the censored row.
 The `Shared log re-census` manual workflow runs canonical 100k and 1M sizes and
 uploads the JSON result. Resident, persistent chain, persistent roots, and
 persistent coordinate workloads use independent jobs, giving each slow reopen
-its own timeout and artifact. Ordinary pull-request CI runs the argument/report
-tests and tiny persistent round trips; it does not allocate million-entry
-states.
+its own timeout and artifact. Its `profile` input can select one workload for a
+focused rerun. Ordinary pull-request CI runs the argument/report tests and tiny
+persistent round trips; it does not allocate million-entry states.
 
 ## Development-machine observation
 
