@@ -476,7 +476,10 @@ export type NumericType = "u32" | "u64";
  * We always do the conversion to bigints internally.
  */
 export function toSegmentsBigInt<N extends NumericType>(
-	range: ReplicationRangeIndexable<N>,
+	range: Pick<
+		ReplicationRangeIndexable<N>,
+		"start1" | "end1" | "start2" | "end2"
+	>,
 ): Array<[bigint, bigint]> {
 	// Safely convert the numeric fields to bigint
 	const s1: bigint =
@@ -2864,39 +2867,142 @@ const replicationRangeGeometryKey = <R extends NumericType>(
 // margin below SQLite's default expression-depth limit (1000), including the
 // nested comparisons needed for wrapped ranges.
 const MAX_REBALANCE_QUERY_RANGES = 128;
+const MAX_REBALANCE_TASKS_PER_PAGE = 8;
 
-type RebalanceOwnedInterval = {
+export type RebalanceQueryRange<R extends NumericType> = Readonly<{
+	start1: NumberFromType<R>;
+	end1: NumberFromType<R>;
+	start2: NumberFromType<R>;
+	end2: NumberFromType<R>;
+	mode: ReplicationIntent.Strict;
+}>;
+
+export type RebalanceOwnedInterval = Readonly<{
 	start: bigint;
 	end: bigint;
-	batch: number;
-};
+	geometryTask: number;
+}>;
 
-type RebalanceQueryPlan<R extends NumericType> = {
-	boundaryChanges?: ReplicationChange<ReplicationRangeIndexable<R>>[];
-	geometryBatches: ReplicationChange<ReplicationRangeIndexable<R>>[][];
-	ownedIntervals: RebalanceOwnedInterval[];
-};
+export type RebalanceHistoryMutation = Readonly<{
+	rangeHash: string;
+	present: boolean;
+}>;
 
-const createRebalanceQueryPlan = <R extends NumericType>(
-	changes: ReplicationChange<ReplicationRangeIndexable<R>>[],
-	includeBoundaryWhenEmpty: boolean,
-): RebalanceQueryPlan<R> => {
-	const boundarySource = changes.find(
-		(change) =>
-			change.rebalanceBoundaryOnly ||
-			change.range.mode === ReplicationIntent.NonStrict,
+/**
+ * Complete control-plane query geometry. Its size is proportional to the input
+ * range metadata; use task pages to bound query construction, not plan memory.
+ * @internal
+ */
+export type RebalanceScanPlan<R extends NumericType> = Readonly<{
+	boundary: boolean;
+	geometryRanges: readonly RebalanceQueryRange<R>[];
+	ownedIntervals: readonly RebalanceOwnedInterval[];
+	taskCount: number;
+	historyMutations: readonly RebalanceHistoryMutation[];
+}>;
+
+export type RebalanceScanTask<R extends NumericType> =
+	| Readonly<{
+			kind: "boundary";
+			ordinal: number;
+	  }>
+	| Readonly<{
+			kind: "geometry";
+			ordinal: number;
+			geometryTask: number;
+			ranges: readonly RebalanceQueryRange<R>[];
+	  }>;
+
+/**
+ * Ephemeral offset within one immutable plan. It is not a restart cursor: any
+ * durable executor must bind progress to an exact plan and placement view.
+ */
+export type RebalanceTaskCursor = Readonly<{ nextTask: number }>;
+
+export type RebalanceTaskPage<R extends NumericType> = Readonly<{
+	tasks: readonly RebalanceScanTask<R>[];
+	next?: RebalanceTaskCursor;
+}>;
+
+type RebalanceQueryGeometryPlan<R extends NumericType> = Pick<
+	RebalanceScanPlan<R>,
+	"boundary" | "geometryRanges" | "ownedIntervals" | "taskCount"
+>;
+
+const buildStrictQueryRangeDTOs = <R extends NumericType>(
+	segments: Array<[bigint, bigint]>,
+	template: ReplicationRangeIndexable<R>,
+): RebalanceQueryRange<R>[] => {
+	const merged = mergeBigIntSegments(
+		segments
+			.filter(([start, end]) => start < end)
+			.map(([start, end]) => [start, end]),
 	);
-	const boundaryChanges =
-		boundarySource || includeBoundaryWhenEmpty
-			? boundarySource
-				? [{ ...boundarySource, rebalanceBoundaryOnly: true }]
-				: []
-			: undefined;
+	if (merged.length === 0) {
+		return [];
+	}
+
+	const max = isU32Range(template) ? BigInt(MAX_U32) : MAX_U64;
+	const arcs: Array<{
+		first: [bigint, bigint];
+		second?: [bigint, bigint];
+	}> = [];
+	if (
+		merged.length > 1 &&
+		merged[0][0] === 0n &&
+		merged[merged.length - 1][1] === max
+	) {
+		// Preserve the historical seam-first order. Apart from compatibility, this
+		// keeps the two linear pieces of a wrapped query range in one task.
+		arcs.push({
+			first: merged[merged.length - 1],
+			second: merged[0],
+		});
+		for (let i = 1; i + 1 < merged.length; i++) {
+			arcs.push({ first: merged[i] });
+		}
+	} else {
+		for (const segment of merged) {
+			arcs.push({ first: segment });
+		}
+	}
+
+	return arcs.map(({ first, second }) => {
+		const [start1, end1] = toOriginalType(first, template);
+		const [start2, end2] = second
+			? toOriginalType(second, template)
+			: ([start1, end1] as [NumberFromType<R>, NumberFromType<R>]);
+		return {
+			start1,
+			end1,
+			start2,
+			end2,
+			mode: ReplicationIntent.Strict,
+		};
+	});
+};
+
+const createRebalanceQueryGeometryPlan = <R extends NumericType>(
+	changes: readonly ReplicationChange<ReplicationRangeIndexable<R>>[],
+	includeBoundaryWhenEmpty: boolean,
+): RebalanceQueryGeometryPlan<R> => {
+	const boundary =
+		includeBoundaryWhenEmpty ||
+		changes.some(
+			(change) =>
+				change.rebalanceBoundaryOnly ||
+				change.range.mode === ReplicationIntent.NonStrict,
+		);
 	const geometryChanges = changes.filter(
 		(change) => !change.rebalanceBoundaryOnly,
 	);
 	if (geometryChanges.length === 0) {
-		return { boundaryChanges, geometryBatches: [], ownedIntervals: [] };
+		return {
+			boundary,
+			geometryRanges: [],
+			ownedIntervals: [],
+			taskCount: boundary ? 1 : 0,
+		};
 	}
 
 	const template = geometryChanges[geometryChanges.length - 1];
@@ -2906,37 +3012,23 @@ const createRebalanceQueryPlan = <R extends NumericType>(
 			.filter(([start, end]) => start < end)
 			.map(([start, end]) => [start, end]),
 	);
-	const exactRanges = buildStrictQueryRanges(exactSegments, template.range);
-	const exactChanges: ReplicationChange<ReplicationRangeIndexable<R>>[] =
-		exactRanges.map((range) => ({
-			range,
-			type: "replaced",
-			timestamp: template.timestamp,
-		}));
-	const geometryBatches: ReplicationChange<ReplicationRangeIndexable<R>>[][] =
-		[];
-	for (
-		let offset = 0;
-		offset < exactChanges.length;
-		offset += MAX_REBALANCE_QUERY_RANGES
-	) {
-		geometryBatches.push(
-			exactChanges.slice(offset, offset + MAX_REBALANCE_QUERY_RANGES),
-		);
-	}
+	const geometryRanges = buildStrictQueryRangeDTOs(
+		exactSegments,
+		template.range,
+	);
 
 	// A row can contain coordinates in several query batches. Assign every exact
 	// linear interval to its batch up front so candidates can be de-duplicated with
 	// O(component-count) plan memory instead of an unbounded set of emitted hashes.
 	// The two linear pieces of a wrapped seam range inherit the same batch tag.
-	const ownedIntervals = exactRanges
+	const ownedIntervals = geometryRanges
 		.flatMap((range, rangeIndex) =>
 			toSegmentsBigInt(range)
 				.filter(([start, end]) => start < end)
 				.map(([start, end]) => ({
 					start,
 					end,
-					batch: Math.floor(rangeIndex / MAX_REBALANCE_QUERY_RANGES),
+					geometryTask: Math.floor(rangeIndex / MAX_REBALANCE_QUERY_RANGES),
 				})),
 		)
 		.sort((a, b) =>
@@ -2956,12 +3048,60 @@ const createRebalanceQueryPlan = <R extends NumericType>(
 		}
 	}
 
-	return { boundaryChanges, geometryBatches, ownedIntervals };
+	return {
+		boundary,
+		geometryRanges,
+		ownedIntervals,
+		taskCount:
+			(boundary ? 1 : 0) +
+			Math.ceil(geometryRanges.length / MAX_REBALANCE_QUERY_RANGES),
+	};
 };
 
-const findOwningRebalanceBatch = (
-	coordinates: Array<number | bigint>,
-	intervals: RebalanceOwnedInterval[],
+/**
+ * Bounds control-plane query construction only. A task can still match an
+ * arbitrary number of local rows, so executors must apply their own durable
+ * row/byte/time budgets while scanning it.
+ */
+export const getRebalanceScanTaskPage = <R extends NumericType>(
+	plan: RebalanceScanPlan<R>,
+	cursor?: RebalanceTaskCursor,
+): RebalanceTaskPage<R> => {
+	const start = cursor?.nextTask ?? 0;
+	if (!Number.isSafeInteger(start) || start < 0 || start > plan.taskCount) {
+		throw new Error("Invalid rebalance task cursor");
+	}
+
+	const end = Math.min(start + MAX_REBALANCE_TASKS_PER_PAGE, plan.taskCount);
+	const boundaryOffset = plan.boundary ? 1 : 0;
+	const tasks: RebalanceScanTask<R>[] = [];
+	for (let ordinal = start; ordinal < end; ordinal++) {
+		if (plan.boundary && ordinal === 0) {
+			tasks.push({ kind: "boundary", ordinal });
+			continue;
+		}
+		const geometryTask = ordinal - boundaryOffset;
+		const rangeOffset = geometryTask * MAX_REBALANCE_QUERY_RANGES;
+		tasks.push({
+			kind: "geometry",
+			ordinal,
+			geometryTask,
+			ranges: plan.geometryRanges.slice(
+				rangeOffset,
+				rangeOffset + MAX_REBALANCE_QUERY_RANGES,
+			),
+		});
+	}
+
+	return {
+		tasks,
+		next: end < plan.taskCount ? { nextTask: end } : undefined,
+	};
+};
+
+export const findOwningRebalanceTask = (
+	coordinates: readonly (number | bigint)[],
+	intervals: readonly RebalanceOwnedInterval[],
 ): number | undefined => {
 	let minimum: number | undefined;
 	for (const value of coordinates) {
@@ -2977,7 +3117,9 @@ const findOwningRebalanceBatch = (
 				low = middle + 1;
 			} else {
 				minimum =
-					minimum == null ? interval.batch : Math.min(minimum, interval.batch);
+					minimum == null
+						? interval.geometryTask
+						: Math.min(minimum, interval.geometryTask);
 				break;
 			}
 		}
@@ -2989,7 +3131,7 @@ const findOwningRebalanceBatch = (
 };
 
 const rotateRebalanceHistory = <R extends NumericType>(
-	changes: ReplicationChange<ReplicationRangeIndexable<R>>[],
+	changes: readonly ReplicationChange<ReplicationRangeIndexable<R>>[],
 	rebalanceHistory: Cache<string>,
 ) => {
 	// Only original source changes may enter history, and observed order defines
@@ -3003,12 +3145,24 @@ const rotateRebalanceHistory = <R extends NumericType>(
 	}
 };
 
-export const mergeReplicationChanges = <R extends NumericType>(
+const snapshotRebalanceHistory = (
+	rebalanceHistory: Cache<string>,
+): ReadonlySet<string> => {
+	// Expiration is a cache concern, not a planner concern. Resolve it once and
+	// give the pure planner a stable view for the complete plan.
+	rebalanceHistory.trim();
+	return new Set(
+		[...rebalanceHistory.map.keys()].filter(
+			(key): key is string => typeof key === "string",
+		),
+	);
+};
+
+const mergeReplicationChangesFromHistory = <R extends NumericType>(
 	changesOrChangesArr:
 		| ReplicationChanges<ReplicationRangeIndexable<R>>
 		| ReplicationChanges<ReplicationRangeIndexable<R>>[],
-	rebalanceHistory: Cache<string>,
-	options?: { updateHistory?: boolean },
+	rebalanceHistory: ReadonlySet<string>,
 ): ReplicationChange<ReplicationRangeIndexable<R>>[] => {
 	// Work from an immutable snapshot. In particular, synthetic difference ranges
 	// must never become input events or rebalance-history entries.
@@ -3214,10 +3368,62 @@ export const mergeReplicationChanges = <R extends NumericType>(
 			rebalanceBoundaryOnly: true,
 		});
 	}
+	return deduplicated;
+};
+
+export const mergeReplicationChanges = <R extends NumericType>(
+	changesOrChangesArr:
+		| ReplicationChanges<ReplicationRangeIndexable<R>>
+		| ReplicationChanges<ReplicationRangeIndexable<R>>[],
+	rebalanceHistory: Cache<string>,
+	options?: { updateHistory?: boolean },
+): ReplicationChange<ReplicationRangeIndexable<R>>[] => {
+	const changes = flattenReplicationChanges(changesOrChangesArr);
+	const merged = mergeReplicationChangesFromHistory(
+		changes,
+		snapshotRebalanceHistory(rebalanceHistory),
+	);
 	if (options?.updateHistory !== false) {
 		rotateRebalanceHistory(changes, rebalanceHistory);
 	}
-	return deduplicated;
+	return merged;
+};
+
+export const createRebalanceScanPlan = <R extends NumericType>(input: {
+	changes: readonly ReplicationChange<ReplicationRangeIndexable<R>>[];
+	history: ReadonlySet<string>;
+	forceFresh?: boolean;
+}): RebalanceScanPlan<R> => {
+	const sourceChanges = [...input.changes];
+	const queryChanges = input.forceFresh
+		? sourceChanges
+		: mergeReplicationChangesFromHistory(sourceChanges, input.history);
+	const geometry = createRebalanceQueryGeometryPlan(
+		queryChanges,
+		sourceChanges.length === 0,
+	);
+	return {
+		...geometry,
+		historyMutations: input.forceFresh
+			? []
+			: sourceChanges.map((change) => ({
+					rangeHash: change.range.rangeHash,
+					present: change.type === "added",
+				})),
+	};
+};
+
+const applyRebalanceHistoryMutations = (
+	mutations: readonly RebalanceHistoryMutation[],
+	rebalanceHistory: Cache<string>,
+) => {
+	for (const mutation of mutations) {
+		if (mutation.present) {
+			rebalanceHistory.add(mutation.rangeHash);
+		} else {
+			rebalanceHistory.del(mutation.rangeHash);
+		}
+	}
 };
 
 const REBALANCE_ITERATOR_BATCH_SIZE = 1048;
@@ -3231,85 +3437,80 @@ export const toRebalance = <R extends "u32" | "u64">(
 	options?: { forceFresh?: boolean },
 ): AsyncIterable<EntryReplicated<R>> => {
 	const sourceChanges = flattenReplicationChanges(changeOrChanges);
-	const queryChanges = options?.forceFresh
-		? sourceChanges
-		: mergeReplicationChanges(sourceChanges, rebalanceHistory, {
-				updateHistory: false,
-			});
-	const plan = createRebalanceQueryPlan(
-		queryChanges,
-		sourceChanges.length === 0,
-	);
+	const plan = createRebalanceScanPlan({
+		changes: sourceChanges,
+		history: options?.forceFresh
+			? new Set<string>()
+			: snapshotRebalanceHistory(rebalanceHistory),
+		forceFresh: options?.forceFresh,
+	});
 	return {
 		[Symbol.asyncIterator]: async function* () {
 			let completed = false;
 			try {
-				const passes: Array<{
-					changes: ReplicationChange<ReplicationRangeIndexable<R>>[];
-					geometryBatch?: number;
-				}> = [];
-				if (plan.boundaryChanges) {
-					passes.push({ changes: plan.boundaryChanges });
-				}
-				for (let batch = 0; batch < plan.geometryBatches.length; batch++) {
-					passes.push({
-						changes: plan.geometryBatches[batch],
-						geometryBatch: batch,
-					});
-				}
-
-				for (const pass of passes) {
-					const isGeometry = pass.geometryBatch != null;
-					const iterator = index.iterate({
-						query: createAssignedRangesQuery(pass.changes, {
-							strict: isGeometry,
-							includeBoundaryWhenEmpty: !isGeometry,
-						}),
-					});
-					let passCompleted = false;
-					try {
-						while (iterator.done() !== true) {
-							const entries = await iterator.next(
-								REBALANCE_ITERATOR_BATCH_SIZE,
-							);
-							if (entries.length === 0) {
-								break;
-							}
-							for (const entry of entries) {
-								if (isGeometry) {
-									if (
-										plan.boundaryChanges &&
-										entry.value.assignedToRangeBoundary
-									) {
-										continue;
-									}
-									if (
-										findOwningRebalanceBatch(
-											entry.value.coordinates,
-											plan.ownedIntervals,
-										) !== pass.geometryBatch
-									) {
-										continue;
-									}
+				let cursor: RebalanceTaskCursor | undefined;
+				for (;;) {
+					const page = getRebalanceScanTaskPage(plan, cursor);
+					for (const task of page.tasks) {
+						const isGeometry = task.kind === "geometry";
+						const iterator = index.iterate({
+							query: createAssignedRangesQuery(
+								isGeometry ? task.ranges.map((range) => ({ range })) : [],
+								{
+									strict: isGeometry,
+									includeBoundaryWhenEmpty: !isGeometry,
+								},
+							),
+						});
+						let taskCompleted = false;
+						try {
+							while (iterator.done() !== true) {
+								const entries = await iterator.next(
+									REBALANCE_ITERATOR_BATCH_SIZE,
+								);
+								if (entries.length === 0) {
+									break;
 								}
-								yield entry.value;
+								for (const entry of entries) {
+									if (isGeometry) {
+										if (plan.boundary && entry.value.assignedToRangeBoundary) {
+											continue;
+										}
+										if (
+											findOwningRebalanceTask(
+												entry.value.coordinates,
+												plan.ownedIntervals,
+											) !== task.geometryTask
+										) {
+											continue;
+										}
+									}
+									yield entry.value;
+								}
 							}
+							taskCompleted = iterator.done() === true;
+						} finally {
+							await iterator.close();
 						}
-						passCompleted = iterator.done() === true;
-					} finally {
-						await iterator.close();
+						if (!taskCompleted) {
+							return;
+						}
 					}
-					if (!passCompleted) {
-						return;
+					if (!page.next) {
+						break;
 					}
+					cursor = page.next;
 				}
 				completed = true;
 			} finally {
 				// An early consumer return, iterator error, incomplete empty batch, or
 				// close failure in any sequential pass must leave history untouched so the
 				// next event retries the complete query. forceFresh preserves its bypass.
-				if (completed && !options?.forceFresh) {
-					rotateRebalanceHistory(sourceChanges, rebalanceHistory);
+				if (completed) {
+					applyRebalanceHistoryMutations(
+						plan.historyMutations,
+						rebalanceHistory,
+					);
 				}
 			}
 		},
