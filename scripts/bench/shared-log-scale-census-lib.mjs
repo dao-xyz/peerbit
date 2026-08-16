@@ -86,6 +86,7 @@ export const parseScaleCensusArgs = (args, env = {}) => {
 			counts: { type: "string" },
 			scenarios: { type: "string" },
 			runs: { type: "string" },
+			output: { type: "string" },
 			json: { type: "boolean" },
 			help: { type: "boolean" },
 			worker: { type: "boolean" },
@@ -102,6 +103,9 @@ export const parseScaleCensusArgs = (args, env = {}) => {
 	}
 
 	if (values.worker) {
+		if (values.output) {
+			throw new Error("worker mode does not accept --output");
+		}
 		if (!values.scenario || !values.count || !values.run) {
 			throw new Error("worker mode requires --scenario, --count, and --run");
 		}
@@ -161,6 +165,9 @@ export const parseScaleCensusArgs = (args, env = {}) => {
 			values.runs ?? env.SHARED_LOG_SCALE_RUNS ?? "1",
 			"runs",
 		),
+		...((values.output ?? env.SHARED_LOG_SCALE_OUTPUT)
+			? { output: values.output ?? env.SHARED_LOG_SCALE_OUTPUT }
+			: {}),
 		json: values.json === true || env.BENCH_JSON === "1",
 	};
 };
@@ -191,9 +198,11 @@ export const buildScaleCensusReport = ({
 	runs,
 	rows,
 	host,
+	activeRow = null,
+	failure = null,
 }) => ({
 	name: SCALE_CENSUS_NAME,
-	schemaVersion: 2,
+	schemaVersion: 3,
 	meta: {
 		counts,
 		scenarios,
@@ -203,6 +212,16 @@ export const buildScaleCensusReport = ({
 		measurement:
 			"resident growth plus persistent index disk, close, and fresh-process reopen costs",
 		...host,
+	},
+	progress: {
+		expectedRows: counts.length * scenarios.length * runs,
+		completedRows: rows.length,
+		complete:
+			rows.length === counts.length * scenarios.length * runs &&
+			activeRow === null &&
+			failure === null,
+		activeRow,
+		...(failure ? { failure } : {}),
 	},
 	rows,
 });

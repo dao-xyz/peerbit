@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 
 import { spawnSync } from "node:child_process";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rename, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
-import { join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { performance } from "node:perf_hooks";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
@@ -318,6 +318,14 @@ const renderHuman = (report) => {
 	);
 };
 
+const writeReport = async (path, report) => {
+	const destination = resolve(path);
+	await mkdir(dirname(destination), { recursive: true });
+	const temporary = `${destination}.${process.pid}.tmp`;
+	await writeFile(temporary, `${JSON.stringify(report, null, 2)}\n`);
+	await rename(temporary, destination);
+};
+
 const usage = () => `Usage:
   node scripts/bench/shared-log-scale-census.mjs [options]
 
@@ -325,6 +333,7 @@ Options:
   --counts <csv>       Entry counts (default: 100000,1000000)
   --scenarios <csv>    ${SCALE_CENSUS_SCENARIOS.join(",")}
   --runs <n>           Isolated runs per scenario/count (default: 1)
+  --output <path>      Atomically checkpoint the JSON report after each row
   --json               Emit the versioned JSON report
   --help               Show this help
 `;
@@ -353,27 +362,56 @@ const main = async () => {
 	}
 
 	const rows = [];
+	const host = hostMetadata();
+	let activeRow = null;
+	let failure = null;
+	const report = () =>
+		buildScaleCensusReport({
+			counts: options.counts,
+			scenarios: options.scenarios,
+			runs: options.runs,
+			rows,
+			host,
+			activeRow,
+			failure,
+		});
+	const checkpoint = async () => {
+		if (options.output) {
+			await writeReport(options.output, report());
+		}
+	};
+	await checkpoint();
 	for (const scenario of options.scenarios) {
 		for (const count of options.counts) {
 			for (let run = 1; run <= options.runs; run++) {
+				activeRow = { scenario, count, run };
+				await checkpoint();
 				console.error(
 					`[scale-census] scenario=${scenario} count=${count} run=${run}/${options.runs}`,
 				);
-				rows.push(await runIsolatedRow({ scenario, count, run }));
+				let row;
+				try {
+					row = await runIsolatedRow({ scenario, count, run });
+				} catch (error) {
+					failure = {
+						...activeRow,
+						message: error instanceof Error ? error.message : String(error),
+					};
+					activeRow = null;
+					await checkpoint();
+					throw error;
+				}
+				rows.push(row);
+				activeRow = null;
+				await checkpoint();
 			}
 		}
 	}
-	const report = buildScaleCensusReport({
-		counts: options.counts,
-		scenarios: options.scenarios,
-		runs: options.runs,
-		rows,
-		host: hostMetadata(),
-	});
+	const completedReport = report();
 	if (options.json) {
-		console.log(JSON.stringify(report, null, 2));
+		console.log(JSON.stringify(completedReport, null, 2));
 	} else {
-		renderHuman(report);
+		renderHuman(completedReport);
 	}
 };
 
