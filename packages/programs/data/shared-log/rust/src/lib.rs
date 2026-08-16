@@ -2518,15 +2518,17 @@ impl NativeSharedLogState {
         end1: String,
         start2: String,
         end2: String,
+        limit: Option<u32>,
     ) -> Result<Array, JsValue> {
         let start1 = parse_u64(&start1)?;
         let end1 = parse_u64(&end1)?;
         let start2 = parse_u64(&start2)?;
         let end2 = parse_u64(&end2)?;
         let out = Array::new();
-        self.push_entry_hash_numbers_in_segment(&out, start1, end1);
-        if start2 != end2 {
-            self.push_entry_hash_numbers_in_segment(&out, start2, end2);
+        let mut remaining = limit.map(|value| value as usize).unwrap_or(usize::MAX);
+        remaining = self.push_entry_hash_numbers_in_segment(&out, start1, end1, remaining);
+        if remaining > 0 && start2 != end2 {
+            self.push_entry_hash_numbers_in_segment(&out, start2, end2, remaining);
         }
         Ok(out)
     }
@@ -2537,38 +2539,63 @@ impl NativeSharedLogState {
         end1: String,
         start2: String,
         end2: String,
+        limit: Option<u32>,
     ) -> Result<BigUint64Array, JsValue> {
         let start1 = parse_u64(&start1)?;
         let end1 = parse_u64(&end1)?;
         let start2 = parse_u64(&start2)?;
         let end2 = parse_u64(&end2)?;
         let mut out = Vec::new();
-        self.collect_entry_hash_numbers_in_segment(&mut out, start1, end1);
-        if start2 != end2 {
-            self.collect_entry_hash_numbers_in_segment(&mut out, start2, end2);
+        let mut remaining = limit.map(|value| value as usize).unwrap_or(usize::MAX);
+        remaining = self.collect_entry_hash_numbers_in_segment(&mut out, start1, end1, remaining);
+        if remaining > 0 && start2 != end2 {
+            self.collect_entry_hash_numbers_in_segment(&mut out, start2, end2, remaining);
         }
         Ok(BigUint64Array::from(out.as_slice()))
     }
 
-    fn push_entry_hash_numbers_in_segment(&self, out: &Array, start: u64, end: u64) {
-        if start >= end {
-            return;
+    fn push_entry_hash_numbers_in_segment(
+        &self,
+        out: &Array,
+        start: u64,
+        end: u64,
+        mut remaining: usize,
+    ) -> usize {
+        if start >= end || remaining == 0 {
+            return remaining;
         }
         for (hash_number, hashes) in self.inner.entry_hashes_by_hash_number.range(start..end) {
             let value = JsValue::from_str(&hash_number.to_string());
             for _ in hashes {
+                if remaining == 0 {
+                    return remaining;
+                }
                 out.push(&value);
+                remaining -= 1;
             }
         }
+        remaining
     }
 
-    fn collect_entry_hash_numbers_in_segment(&self, out: &mut Vec<u64>, start: u64, end: u64) {
-        if start >= end {
-            return;
+    fn collect_entry_hash_numbers_in_segment(
+        &self,
+        out: &mut Vec<u64>,
+        start: u64,
+        end: u64,
+        mut remaining: usize,
+    ) -> usize {
+        if start >= end || remaining == 0 {
+            return remaining;
         }
         for (hash_number, hashes) in self.inner.entry_hashes_by_hash_number.range(start..end) {
-            out.resize(out.len() + hashes.len(), *hash_number);
+            let take = hashes.len().min(remaining);
+            out.resize(out.len() + take, *hash_number);
+            remaining -= take;
+            if remaining == 0 {
+                return remaining;
+            }
         }
+        remaining
     }
 
     pub fn commit_entry_coordinates(

@@ -3105,6 +3105,46 @@ describe("sync-chunking", () => {
 		).to.deep.equal(["head-a"]);
 	});
 
+	it("bounds fallback coordinate index materialization", async () => {
+		const next = sinon.stub();
+		next
+			.onFirstCall()
+			.resolves([{ value: { hash: "head-a", hashNumber: 42n } }]);
+		next.onSecondCall().resolves([]);
+		const close = sinon.stub().resolves();
+		const all = sinon
+			.stub()
+			.throws(new Error("coordinate lookup must not materialize all matches"));
+		const done = sinon.stub().returns(false);
+		const iterate = sinon.stub().returns({ next, close, all, done });
+		const sync = new SimpleSyncronizer<"u64">({
+			rpc: { send: sinon.stub().resolves() } as any,
+			entryIndex: { iterate } as any,
+			log: {} as any,
+			coordinateToHash: new Cache<string>({ max: 10 }),
+		});
+		const ship = sinon.stub(sync as any, "shipExchangeHeads").resolves({
+			messages: 1,
+			fused: false,
+		});
+
+		try {
+			await sync.onMessage(
+				new RequestMaybeSyncCoordinate({ hashNumbers: [42n] }),
+				{ from: peerA } as any,
+			);
+
+			expect(next.callCount).to.equal(2);
+			expect(next.getCall(0).args).to.deep.equal([1_024]);
+			expect(next.getCall(1).args).to.deep.equal([1_024]);
+			expect(close.calledOnce).to.equal(true);
+			expect(all.called).to.equal(false);
+			expect(ship.firstCall.args[0]).to.deep.equal(["head-a"]);
+		} finally {
+			await sync.close();
+		}
+	});
+
 	it("uses native flat coordinate symbol resolver for response lookup", async () => {
 		const send = sinon.stub().resolves();
 		const iterate = sinon

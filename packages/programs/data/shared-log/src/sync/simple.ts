@@ -139,6 +139,8 @@ type KnownSyncKeys = {
 	checkedHashes: boolean;
 };
 
+const SIMPLE_COORDINATE_INDEX_PAGE_SIZE = 1_024;
+
 const getHashesFromSymbols = async (
 	symbols: bigint[],
 	entryIndex: Index<EntryReplicated<any>, any>,
@@ -151,6 +153,7 @@ const getHashesFromSymbols = async (
 	let batchSize = 128; // TODO arg
 	let results = new Set<string>();
 	let missingSymbols: bigint[] = [];
+	let remainingIndexCandidates = maxHashes;
 	const addHash = (hash: string) => {
 		if (results.has(hash)) {
 			return true;
@@ -171,22 +174,47 @@ const getHashesFromSymbols = async (
 	};
 	const handleBatch = async (end = false) => {
 		if (queries.length >= batchSize || (end && queries.length > 0)) {
-			const entries = await entryIndex
-				.iterate(
-					{ query: queries.length > 1 ? new Or(queries) : queries },
-					{ shape: { hash: true, hashNumber: true } },
-				)
-				.all();
+			const remainingHashes = maxHashes - results.size;
+			if (remainingHashes <= 0 || remainingIndexCandidates <= 0) {
+				queries = [];
+				return;
+			}
+			const iterator = entryIndex.iterate(
+				{ query: queries.length > 1 ? new Or(queries) : queries },
+				{ shape: { hash: true, hashNumber: true } },
+			);
 			queries = [];
-
-			for (const entry of entries) {
-				if (!addHash(entry.value.hash)) {
-					break;
+			try {
+				while (results.size < maxHashes && remainingIndexCandidates > 0) {
+					const entries = await iterator.next(
+						Math.min(
+							SIMPLE_COORDINATE_INDEX_PAGE_SIZE,
+							maxHashes - results.size,
+							remainingIndexCandidates,
+						),
+					);
+					if (entries.length === 0) {
+						break;
+					}
+					for (const entry of entries) {
+						if (remainingIndexCandidates <= 0) {
+							break;
+						}
+						remainingIndexCandidates -= 1;
+						if (!addHash(entry.value.hash)) {
+							break;
+						}
+						coordinateToHash.add(entry.value.hashNumber, entry.value.hash);
+						if (results.size >= maxHashes) {
+							break;
+						}
+					}
+					if (iterator.done()) {
+						break;
+					}
 				}
-				coordinateToHash.add(entry.value.hashNumber, entry.value.hash);
-				if (results.size >= maxHashes) {
-					break;
-				}
+			} finally {
+				await iterator.close();
 			}
 		}
 	};

@@ -310,9 +310,10 @@ impl NativePeerbitBackbone {
         end1: String,
         start2: String,
         end2: String,
+        limit: Option<u32>,
     ) -> Result<Array, JsValue> {
         self.shared_log
-            .entry_hash_numbers_in_range(start1, end1, start2, end2)
+            .entry_hash_numbers_in_range(start1, end1, start2, end2, limit)
     }
 
     pub fn entry_hash_numbers_in_range_u64(
@@ -321,9 +322,10 @@ impl NativePeerbitBackbone {
         end1: String,
         start2: String,
         end2: String,
+        limit: Option<u32>,
     ) -> Result<BigUint64Array, JsValue> {
         self.shared_log
-            .entry_hash_numbers_in_range_u64(start1, end1, start2, end2)
+            .entry_hash_numbers_in_range_u64(start1, end1, start2, end2, limit)
     }
 
     pub fn count_entry_coordinates_in_ranges(

@@ -5,6 +5,7 @@ import { expect } from "chai";
 import sinon from "sinon";
 import {
 	RatelessIBLTSynchronizer,
+	RequestAll,
 	StartSync,
 } from "../src/sync/rateless-iblt.js";
 
@@ -16,16 +17,18 @@ describe("rateless-iblt-syncronizer cache", () => {
 	});
 
 	it("reuses cached local range encoder across StartSync", async () => {
-		const iterate = sinon.stub().returns({
-			all: async () => [
-				{
-					value: {
-						hash: "h0",
-						hashNumber: 1n,
-					},
+		const next = sinon.stub().resolves([
+			{
+				value: {
+					hash: "h0",
+					hashNumber: 1n,
 				},
-			],
-		});
+			},
+		]);
+		const close = sinon.stub().resolves();
+		const all = sinon.stub().throws(new Error("all() must not be used"));
+		const done = sinon.stub().returns(true);
+		const iterate = sinon.stub().returns({ next, close, all, done });
 
 		const send = sinon.stub().resolves();
 		const sync = new RatelessIBLTSynchronizer<"u64">({
@@ -45,6 +48,9 @@ describe("rateless-iblt-syncronizer cache", () => {
 		expect(await sync.onMessage(createStartSync(), context)).to.equal(true);
 
 		expect(iterate.callCount).to.equal(1);
+		expect(next.calledOnceWithExactly(1_024)).to.equal(true);
+		expect(close.calledOnce).to.equal(true);
+		expect(all.called).to.equal(false);
 
 		await sync.close();
 	});
@@ -62,6 +68,7 @@ describe("rateless-iblt-syncronizer cache", () => {
 			coordinateToHash: new Cache<string>({ max: 10 }),
 			numbers: { maxValue: 2n ** 64n - 1n } as any,
 			resolveHashNumbersInRange,
+			sync: { maxRatelessReceiveRangeEntries: 2 },
 		});
 
 		expect(
@@ -77,9 +84,130 @@ describe("rateless-iblt-syncronizer cache", () => {
 			end1: 10n,
 			start2: 0n,
 			end2: 0n,
+			limit: 3,
 		});
 
 		await sync.close();
+	});
+
+	it("falls back to simple sync when the native range exceeds the cap", async () => {
+		const free = sinon.spy(EncoderWrapper.prototype, "free");
+		const send = sinon.stub().resolves();
+		const resolveHashNumbersInRange = sinon
+			.stub()
+			.returns(new BigUint64Array([1n, 2n, 3n]));
+		const sync = new RatelessIBLTSynchronizer<"u64">({
+			rpc: { send } as any,
+			rangeIndex: {} as any,
+			entryIndex: {
+				iterate: sinon
+					.stub()
+					.throws(new Error("entry index should not be used")),
+			} as any,
+			log: {} as any,
+			coordinateToHash: new Cache<string>({ max: 10 }),
+			numbers: { maxValue: 2n ** 64n - 1n } as any,
+			resolveHashNumbersInRange,
+			sync: { maxRatelessReceiveRangeEntries: 2 },
+		});
+
+		try {
+			expect(
+				await sync.onMessage(
+					new StartSync({ from: 0n, to: 10n, symbols: [] }),
+					{ from: peer } as any,
+				),
+			).to.equal(true);
+
+			expect(resolveHashNumbersInRange.firstCall.args[0].limit).to.equal(3);
+			expect(free.calledOnce).to.equal(true);
+			expect(send.calledOnce).to.equal(true);
+			expect(send.firstCall.args[0]).to.be.instanceOf(RequestAll);
+			expect((sync as any).localRangeEncoderCache.size).to.equal(0);
+		} finally {
+			await sync.close();
+			free.restore();
+		}
+	});
+
+	it("bounds index iteration and falls back without calling all()", async () => {
+		const next = sinon.stub().resolves(
+			[1n, 2n, 3n].map((hashNumber) => ({
+				value: { hash: `h${hashNumber}`, hashNumber },
+			})),
+		);
+		const close = sinon.stub().resolves();
+		const all = sinon.stub().throws(new Error("all() must not be used"));
+		const done = sinon.stub().returns(true);
+		const send = sinon.stub().resolves();
+		const sync = new RatelessIBLTSynchronizer<"u64">({
+			rpc: { send } as any,
+			rangeIndex: {} as any,
+			entryIndex: {
+				iterate: sinon.stub().returns({ next, close, all, done }),
+			} as any,
+			log: {} as any,
+			coordinateToHash: new Cache<string>({ max: 10 }),
+			numbers: { maxValue: 2n ** 64n - 1n } as any,
+			sync: { maxRatelessReceiveRangeEntries: 2 },
+		});
+
+		try {
+			await sync.onMessage(new StartSync({ from: 0n, to: 10n, symbols: [] }), {
+				from: peer,
+			} as any);
+
+			expect(next.calledOnceWithExactly(3)).to.equal(true);
+			expect(close.calledOnce).to.equal(true);
+			expect(all.called).to.equal(false);
+			expect(send.calledOnce).to.equal(true);
+			expect(send.firstCall.args[0]).to.be.instanceOf(RequestAll);
+		} finally {
+			await sync.close();
+		}
+	});
+
+	it("continues through short index pages up to the overflow sentinel", async () => {
+		const next = sinon.stub();
+		next.onCall(0).resolves([{ value: { hash: "h1", hashNumber: 1n } }]);
+		next.onCall(1).resolves([{ value: { hash: "h2", hashNumber: 2n } }]);
+		next
+			.onCall(2)
+			.resolves([
+				{ value: { hash: "h3", hashNumber: 3n } },
+				{ value: { hash: "h4", hashNumber: 4n } },
+			]);
+		const close = sinon.stub().resolves();
+		const all = sinon.stub().throws(new Error("all() must not be used"));
+		const done = sinon.stub().returns(false);
+		const send = sinon.stub().resolves();
+		const sync = new RatelessIBLTSynchronizer<"u64">({
+			rpc: { send } as any,
+			rangeIndex: {} as any,
+			entryIndex: {
+				iterate: sinon.stub().returns({ next, close, all, done }),
+			} as any,
+			log: {} as any,
+			coordinateToHash: new Cache<string>({ max: 10 }),
+			numbers: { maxValue: 2n ** 64n - 1n } as any,
+			sync: { maxRatelessReceiveRangeEntries: 3 },
+		});
+
+		try {
+			await sync.onMessage(new StartSync({ from: 0n, to: 10n, symbols: [] }), {
+				from: peer,
+			} as any);
+
+			expect(next.callCount).to.equal(3);
+			expect(next.getCall(0).args).to.deep.equal([4]);
+			expect(next.getCall(1).args).to.deep.equal([3]);
+			expect(next.getCall(2).args).to.deep.equal([2]);
+			expect(close.calledOnce).to.equal(true);
+			expect(all.called).to.equal(false);
+			expect(send.firstCall.args[0]).to.be.instanceOf(RequestAll);
+		} finally {
+			await sync.close();
+		}
 	});
 
 	it("frees an empty native range encoder before requesting all", async () => {
@@ -276,16 +404,22 @@ describe("rateless-iblt-syncronizer cache", () => {
 	});
 
 	it("invalidates cached range encoder on entry removal", async () => {
-		const iterate = sinon.stub().returns({
-			all: async () => [
-				{
-					value: {
-						hash: "h0",
-						hashNumber: 1n,
-					},
+		const all = sinon.stub().throws(new Error("all() must not be used"));
+		const close = sinon.stub().resolves();
+		const next = sinon.stub().resolves([
+			{
+				value: {
+					hash: "h0",
+					hashNumber: 1n,
 				},
-			],
-		});
+			},
+		]);
+		const iterate = sinon.stub().callsFake(() => ({
+			all,
+			close,
+			next,
+			done: sinon.stub().returns(true),
+		}));
 
 		const send = sinon.stub().resolves();
 		const sync = new RatelessIBLTSynchronizer<"u64">({
@@ -306,6 +440,9 @@ describe("rateless-iblt-syncronizer cache", () => {
 		await sync.onMessage(createStartSync(), context);
 
 		expect(iterate.callCount).to.equal(2);
+		expect(next.callCount).to.equal(2);
+		expect(close.callCount).to.equal(2);
+		expect(all.called).to.equal(false);
 
 		await sync.close();
 	});
