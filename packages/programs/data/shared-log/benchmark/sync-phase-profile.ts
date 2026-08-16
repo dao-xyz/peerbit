@@ -233,6 +233,8 @@ const setup = {
 	name: "u64-iblt",
 };
 
+const SEEDED_JOIN_BATCH_SIZE = 1_024;
+
 const runCatchup = async (properties: {
 	batchSize: number;
 	entryCount: number;
@@ -263,6 +265,19 @@ const runCatchup = async (properties: {
 			},
 		});
 
+		// Keep the source as the only active replica during offline preload. Opening
+		// both programs first can leave delivery/maintenance work competing with the
+		// first Noise handshake on slower runners.
+		const seededEntries: Parameters<typeof db1.log.join>[0] = [];
+		for (let i = 0; i < properties.seededEntries; i++) {
+			const out = await db1.add(`seed-${i}`, { meta: { next: [] } });
+			seededEntries.push(out.entry);
+		}
+
+		for (let i = 0; i < properties.entryCount; i++) {
+			await db1.add(`entry-${i}`, { meta: { next: [] } });
+		}
+
 		db2 = await session.peers[1].open(store.clone(), {
 			args: {
 				replicate: { factor: 2 },
@@ -274,13 +289,14 @@ const runCatchup = async (properties: {
 			},
 		});
 
-		for (let i = 0; i < properties.seededEntries; i++) {
-			const out = await db1.add(`seed-${i}`, { meta: { next: [] } });
-			await db2.log.join([out.entry]);
-		}
-
-		for (let i = 0; i < properties.entryCount; i++) {
-			await db1.add(`entry-${i}`, { meta: { next: [] } });
+		for (
+			let offset = 0;
+			offset < seededEntries.length;
+			offset += SEEDED_JOIN_BATCH_SIZE
+		) {
+			await db2.log.join(
+				seededEntries.slice(offset, offset + SEEDED_JOIN_BATCH_SIZE),
+			);
 		}
 
 		const expectedLength = properties.seededEntries + properties.entryCount;

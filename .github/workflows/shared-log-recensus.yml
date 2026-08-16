@@ -7,6 +7,19 @@ on:
         required: false
         default: master
         type: string
+      profile:
+        description: Profile to run
+        required: false
+        default: all
+        type: choice
+        options:
+          - all
+          - sync-phase
+          - receive-prune
+          - scale-resident
+          - scale-persistent-chain
+          - scale-persistent-roots
+          - scale-persistent-coordinate
 
 permissions: {}
 
@@ -22,9 +35,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        profile:
-          - sync-phase
-          - receive-prune
+        profile: ${{ fromJSON(inputs.profile == 'all' && '["sync-phase","receive-prune","scale-resident","scale-persistent-chain","scale-persistent-roots","scale-persistent-coordinate"]' || format('["{0}"]', inputs.profile)) }}
     concurrency:
       group: shared-log-recensus-${{ inputs.ref }}-${{ matrix.profile }}
       cancel-in-progress: false
@@ -103,6 +114,32 @@ jobs:
             receive-prune)
               node --loader ts-node/esm ./benchmark/receive-prune.ts > "$destination"
               ;;
+            scale-*)
+              case "$PROFILE" in
+                scale-resident)
+                  scenarios="native-graph-chain,native-graph-roots,coordinate-frontier"
+                  ;;
+                scale-persistent-chain)
+                  scenarios="persistent-head-index-graph-chain"
+                  ;;
+                scale-persistent-roots)
+                  scenarios="persistent-head-index-graph-roots"
+                  ;;
+                scale-persistent-coordinate)
+                  scenarios="persistent-coordinate-index"
+                  ;;
+                *)
+                  echo "::error::Unknown scale profile '$PROFILE'."
+                  exit 1
+                  ;;
+              esac
+              node "$GITHUB_WORKSPACE/scripts/bench/shared-log-scale-census.mjs" \
+                --counts 100000,1000000 \
+                --scenarios "$scenarios" \
+                --runs 1 \
+                --output "$destination" \
+                --json > /dev/null
+              ;;
             *)
               echo "::error::Unknown profile '$PROFILE'."
               exit 1
@@ -114,16 +151,25 @@ jobs:
 
             const file = process.env.PROFILE_RESULT;
             const result = JSON.parse(readFileSync(file, "utf8"));
-            const expectedName =
-              process.env.PROFILE === "sync-phase"
-                ? "shared-log-sync-phase-profile"
-                : "shared-log-receive-prune";
+            const expectedNames = {
+              "sync-phase": "shared-log-sync-phase-profile",
+              "receive-prune": "shared-log-receive-prune",
+            };
+            const expectedName = process.env.PROFILE.startsWith("scale-")
+              ? "shared-log-scale-census"
+              : expectedNames[process.env.PROFILE];
+            if (!expectedName) {
+              throw new Error(`Unknown profile '${process.env.PROFILE}'`);
+            }
             if (result.name !== expectedName) {
               throw new Error(`${file} has profile name '${result.name}', expected '${expectedName}'`);
             }
-            const rows = result.runs ?? result.aggregateRows;
+            const rows = result.runs ?? result.aggregateRows ?? result.rows;
             if (!Array.isArray(rows) || rows.length === 0) {
               throw new Error(`${file} carries no measured profile rows`);
+            }
+            if (expectedName === "shared-log-scale-census" && result.progress?.complete !== true) {
+              throw new Error(`${file} is an incomplete scale-census checkpoint`);
             }
           NODE
 
