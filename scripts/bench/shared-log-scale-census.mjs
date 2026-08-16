@@ -1,14 +1,21 @@
 #!/usr/bin/env node
 
 import { spawnSync } from "node:child_process";
+import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
+import { join } from "node:path";
 import { performance } from "node:perf_hooks";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 import {
+	SCALE_CENSUS_GID_CHARACTERS,
+	SCALE_CENSUS_HASH_CHARACTERS,
 	SCALE_CENSUS_NAME,
 	SCALE_CENSUS_SCENARIOS,
 	buildScaleCensusReport,
+	isPersistentScaleCensusScenario,
+	makeScaleCensusGid,
+	makeScaleCensusHash,
 	memoryDeltas,
 	parseScaleCensusArgs,
 } from "./shared-log-scale-census-lib.mjs";
@@ -23,18 +30,7 @@ const SHARED_LOG_RUST_URL = new URL(
 	import.meta.url,
 );
 
-const HASH_PREFIX = "bafybeigdyrzt";
-const HASH_SUFFIX_LENGTH = 59 - HASH_PREFIX.length;
-const GID_PREFIX = "gid-";
-const GID_SUFFIX_LENGTH = 44 - GID_PREFIX.length;
-
-const makeHash = (index) =>
-	`${HASH_PREFIX}${index.toString(36).padStart(HASH_SUFFIX_LENGTH, "0")}`;
-
-const makeGid = (index) =>
-	`${GID_PREFIX}${index.toString(36).padStart(GID_SUFFIX_LENGTH, "0")}`;
-
-const chainGid = makeGid(0);
+const chainGid = makeScaleCensusGid(0);
 
 const collectGarbage = () => {
 	if (typeof globalThis.gc !== "function") {
@@ -56,9 +52,10 @@ const memorySnapshot = () => {
 };
 
 const graphEntry = (index, topology) => ({
-	hash: makeHash(index),
-	gid: topology === "chain" ? chainGid : makeGid(index),
-	next: topology === "chain" && index > 0 ? [makeHash(index - 1)] : [],
+	hash: makeScaleCensusHash(index),
+	gid: topology === "chain" ? chainGid : makeScaleCensusGid(index),
+	next:
+		topology === "chain" && index > 0 ? [makeScaleCensusHash(index - 1)] : [],
 	type: 0,
 	head: true,
 	payloadSize: 1,
@@ -81,7 +78,10 @@ const measureNativeGraph = async (scenario, count) => {
 			`native graph retained ${graph.length} of ${count} entries`,
 		);
 	}
-	if (!graph.has(makeHash(0)) || !graph.has(makeHash(count - 1))) {
+	if (
+		!graph.has(makeScaleCensusHash(0)) ||
+		!graph.has(makeScaleCensusHash(count - 1))
+	) {
 		throw new Error("native graph failed endpoint membership validation");
 	}
 	collectGarbage();
@@ -104,8 +104,8 @@ const measureCoordinateFrontier = async (count) => {
 	const started = performance.now();
 	for (let index = 0; index < count; index++) {
 		state.putEntryCoordinates(
-			makeHash(index),
-			makeGid(index),
+			makeScaleCensusHash(index),
+			makeScaleCensusGid(index),
 			[index],
 			false,
 			1,
@@ -113,8 +113,8 @@ const measureCoordinateFrontier = async (count) => {
 		);
 	}
 	const elapsedMs = performance.now() - started;
-	const first = state.getEntryCoordinates(makeHash(0));
-	const last = state.getEntryCoordinates(makeHash(count - 1));
+	const first = state.getEntryCoordinates(makeScaleCensusHash(0));
+	const last = state.getEntryCoordinates(makeScaleCensusHash(count - 1));
 	if (first?.[0] !== 0 || last?.[0] !== count - 1) {
 		throw new Error("coordinate frontier failed endpoint validation");
 	}
@@ -146,34 +146,37 @@ const runWorker = async ({ scenario, count, run }) => {
 		opsPerSecond: Math.round((count / measured.elapsedMs) * 1000),
 		fixedRuntimeRssBytes: measured.empty.rss - processStart.rss,
 		maxRssBytes: process.resourceUsage().maxRSS * 1024,
+		phase: "measure",
 		...memoryDeltas(measured.empty, measured.populated, count),
 		validation: measured.validation,
 	};
 };
 
-const runIsolatedRow = ({ scenario, count, run }) => {
-	const child = spawnSync(
-		process.execPath,
-		[
-			"--expose-gc",
-			SCRIPT_PATH,
-			"--worker",
-			"--scenario",
-			scenario,
-			"--count",
-			String(count),
-			"--run",
-			String(run),
-		],
-		{
-			encoding: "utf8",
-			env: process.env,
-			maxBuffer: 1024 * 1024,
-		},
-	);
+const runWorkerProcess = ({ scenario, count, run, phase, directory }) => {
+	const workerArguments = [
+		"--expose-gc",
+		SCRIPT_PATH,
+		"--worker",
+		"--scenario",
+		scenario,
+		"--count",
+		String(count),
+		"--run",
+		String(run),
+		"--phase",
+		phase,
+	];
+	if (directory) {
+		workerArguments.push("--directory", directory);
+	}
+	const child = spawnSync(process.execPath, workerArguments, {
+		encoding: "utf8",
+		env: process.env,
+		maxBuffer: 1024 * 1024,
+	});
 	if (child.status !== 0) {
 		throw new Error(
-			`scale-census worker failed (${scenario}, count=${count}, run=${run})\n${child.stderr || child.stdout}`,
+			`scale-census worker failed (${scenario}, count=${count}, run=${run}, phase=${phase})\n${child.stderr || child.stdout}`,
 		);
 	}
 	const output = child.stdout.trim();
@@ -188,12 +191,83 @@ const runIsolatedRow = ({ scenario, count, run }) => {
 			cause: error,
 		});
 	}
-	if (row?.scenario !== scenario || row?.count !== count || row?.run !== run) {
+	if (
+		row?.scenario !== scenario ||
+		row?.count !== count ||
+		row?.run !== run ||
+		row?.phase !== phase
+	) {
 		throw new Error(
-			`scale-census worker returned the wrong row for ${scenario}, count=${count}, run=${run}`,
+			`scale-census worker returned the wrong row for ${scenario}, count=${count}, run=${run}, phase=${phase}`,
 		);
 	}
 	return row;
+};
+
+const withoutWorkerIdentity = (workerRow) => {
+	const metrics = { ...workerRow };
+	for (const key of ["scenario", "count", "run", "phase"]) {
+		delete metrics[key];
+	}
+	return metrics;
+};
+
+const sameLogicalFootprint = (before, after) =>
+	before.logicalBytes === after.logicalBytes &&
+	before.files.length === after.files.length &&
+	before.files.every(
+		(file, index) =>
+			file.path === after.files[index].path &&
+			file.logicalBytes === after.files[index].logicalBytes,
+	);
+
+const runIsolatedRow = async ({ scenario, count, run }) => {
+	if (!isPersistentScaleCensusScenario(scenario)) {
+		return {
+			kind: "resident",
+			...withoutWorkerIdentity(
+				runWorkerProcess({ scenario, count, run, phase: "measure" }),
+			),
+			scenario,
+			count,
+			run,
+		};
+	}
+
+	const directory = await mkdtemp(
+		join(os.tmpdir(), "peerbit-shared-log-scale-census-"),
+	);
+	try {
+		const seed = runWorkerProcess({
+			scenario,
+			count,
+			run,
+			phase: "seed",
+			directory,
+		});
+		const reopen = runWorkerProcess({
+			scenario,
+			count,
+			run,
+			phase: "reopen",
+			directory,
+		});
+		return {
+			scenario,
+			count,
+			run,
+			kind: "persistent-reopen",
+			seed: withoutWorkerIdentity(seed),
+			reopen: withoutWorkerIdentity(reopen),
+			validation: {
+				seededEntries: seed.validation.retainedEntriesInSnapshot,
+				reopenedEntries: reopen.validation.retainedEntries,
+				logicalFootprintStable: sameLogicalFootprint(seed.disk, reopen.disk),
+			},
+		};
+	} finally {
+		await rm(directory, { recursive: true, force: true });
+	}
 };
 
 const hostMetadata = () => ({
@@ -204,23 +278,43 @@ const hostMetadata = () => ({
 	cpu: os.cpus()[0]?.model ?? "unknown",
 	logicalCpus: os.cpus().length,
 	totalMemoryBytes: os.totalmem(),
-	hashCharacters: 59,
-	gidCharacters: 44,
+	hashCharacters: SCALE_CENSUS_HASH_CHARACTERS,
+	gidCharacters: SCALE_CENSUS_GID_CHARACTERS,
 	payloadSizeMetadataBytes: 1,
 });
 
 const renderHuman = (report) => {
 	console.log(`${SCALE_CENSUS_NAME} (${report.meta.node}, ${report.meta.cpu})`);
 	console.table(
-		report.rows.map((row) => ({
-			scenario: row.scenario,
-			entries: row.count,
-			run: row.run,
-			elapsedMs: row.elapsedMs,
-			opsPerSecond: row.opsPerSecond,
-			rssDeltaMiB: Math.round((row.rssDeltaBytes / 1024 / 1024) * 10) / 10,
-			rssBytesPerEntry: row.rssBytesPerEntry,
-		})),
+		report.rows.map((row) =>
+			row.kind === "resident"
+				? {
+						scenario: row.scenario,
+						entries: row.count,
+						run: row.run,
+						operationMs: row.elapsedMs,
+						opsPerSecond: row.opsPerSecond,
+						rssDeltaMiB:
+							Math.round((row.rssDeltaBytes / 1024 / 1024) * 10) / 10,
+						rssBytesPerEntry: row.rssBytesPerEntry,
+					}
+				: {
+						scenario: row.scenario,
+						entries: row.count,
+						run: row.run,
+						operationMs: row.reopen.openMs,
+						opsPerSecond: row.reopen.openEntriesPerSecond,
+						rssDeltaMiB:
+							Math.round((row.reopen.rssDeltaBytes / 1024 / 1024) * 10) / 10,
+						rssBytesPerEntry: row.reopen.rssBytesPerEntry,
+						diskMiB:
+							Math.round((row.reopen.disk.logicalBytes / 1024 / 1024) * 10) /
+							10,
+						diskBytesPerEntry: row.reopen.disk.logicalBytesPerEntry,
+						snapshotMs: row.seed.snapshotMs,
+						reopenCloseMs: row.reopen.closeMs,
+					},
+		),
 	);
 };
 
@@ -242,6 +336,18 @@ const main = async () => {
 		return;
 	}
 	if (options.mode === "worker") {
+		if (isPersistentScaleCensusScenario(options.scenario)) {
+			const { reopenPersistentScaleScenario, seedPersistentScaleScenario } =
+				await import("./shared-log-scale-persistence.mjs");
+			console.log(
+				JSON.stringify(
+					options.phase === "seed"
+						? await seedPersistentScaleScenario(options)
+						: await reopenPersistentScaleScenario(options),
+				),
+			);
+			return;
+		}
 		console.log(JSON.stringify(await runWorker(options)));
 		return;
 	}
@@ -253,7 +359,7 @@ const main = async () => {
 				console.error(
 					`[scale-census] scenario=${scenario} count=${count} run=${run}/${options.runs}`,
 				);
-				rows.push(runIsolatedRow({ scenario, count, run }));
+				rows.push(await runIsolatedRow({ scenario, count, run }));
 			}
 		}
 	}

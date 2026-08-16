@@ -1,12 +1,40 @@
 import { parseArgs } from "node:util";
 
-export const SCALE_CENSUS_NAME = "shared-log-resident-scale-census";
+export const SCALE_CENSUS_NAME = "shared-log-scale-census";
 
-export const SCALE_CENSUS_SCENARIOS = Object.freeze([
+export const SCALE_CENSUS_RESIDENT_SCENARIOS = Object.freeze([
 	"native-graph-chain",
 	"native-graph-roots",
 	"coordinate-frontier",
 ]);
+
+export const SCALE_CENSUS_PERSISTENT_SCENARIOS = Object.freeze([
+	"persistent-head-index-graph-chain",
+	"persistent-head-index-graph-roots",
+	"persistent-coordinate-index",
+]);
+
+export const SCALE_CENSUS_SCENARIOS = Object.freeze([
+	...SCALE_CENSUS_RESIDENT_SCENARIOS,
+	...SCALE_CENSUS_PERSISTENT_SCENARIOS,
+]);
+
+export const isPersistentScaleCensusScenario = (scenario) =>
+	SCALE_CENSUS_PERSISTENT_SCENARIOS.includes(scenario);
+
+export const SCALE_CENSUS_HASH_CHARACTERS = 59;
+export const SCALE_CENSUS_GID_CHARACTERS = 44;
+
+const HASH_PREFIX = "bafybeigdyrzt";
+const HASH_SUFFIX_LENGTH = SCALE_CENSUS_HASH_CHARACTERS - HASH_PREFIX.length;
+const GID_PREFIX = "gid-";
+const GID_SUFFIX_LENGTH = SCALE_CENSUS_GID_CHARACTERS - GID_PREFIX.length;
+
+export const makeScaleCensusHash = (index) =>
+	`${HASH_PREFIX}${index.toString(36).padStart(HASH_SUFFIX_LENGTH, "0")}`;
+
+export const makeScaleCensusGid = (index) =>
+	`${GID_PREFIX}${index.toString(36).padStart(GID_SUFFIX_LENGTH, "0")}`;
 
 const parsePositiveInteger = (value, label) => {
 	const normalized = String(value).replaceAll("_", "");
@@ -64,6 +92,8 @@ export const parseScaleCensusArgs = (args, env = {}) => {
 			scenario: { type: "string" },
 			count: { type: "string" },
 			run: { type: "string" },
+			phase: { type: "string" },
+			directory: { type: "string" },
 		},
 	});
 
@@ -79,16 +109,42 @@ export const parseScaleCensusArgs = (args, env = {}) => {
 		if (values.scenario.includes(",")) {
 			throw new Error("worker mode accepts exactly one scenario");
 		}
+		const persistent = isPersistentScaleCensusScenario(scenario);
+		const phase = values.phase ?? (persistent ? undefined : "measure");
+		if (persistent && phase !== "seed" && phase !== "reopen") {
+			throw new Error(
+				"persistent worker mode requires --phase seed or --phase reopen",
+			);
+		}
+		if (!persistent && phase !== "measure") {
+			throw new Error("resident worker mode only accepts --phase measure");
+		}
+		if (persistent && !values.directory) {
+			throw new Error("persistent worker mode requires --directory");
+		}
+		if (!persistent && values.directory) {
+			throw new Error("resident worker mode does not accept --directory");
+		}
 		return {
 			mode: "worker",
 			scenario,
 			count: parsePositiveInteger(values.count, "count"),
 			run: parsePositiveInteger(values.run, "run"),
+			phase,
+			...(values.directory ? { directory: values.directory } : {}),
 		};
 	}
 
-	if (values.scenario || values.count || values.run) {
-		throw new Error("--scenario, --count, and --run are worker-only options");
+	if (
+		values.scenario ||
+		values.count ||
+		values.run ||
+		values.phase ||
+		values.directory
+	) {
+		throw new Error(
+			"--scenario, --count, --run, --phase, and --directory are worker-only options",
+		);
 	}
 
 	return {
@@ -137,14 +193,15 @@ export const buildScaleCensusReport = ({
 	host,
 }) => ({
 	name: SCALE_CENSUS_NAME,
-	schemaVersion: 1,
+	schemaVersion: 2,
 	meta: {
 		counts,
 		scenarios,
 		runs,
-		isolation: "one fresh process per row",
+		isolation:
+			"resident rows use one fresh process; persistent rows use separate seed and reopen processes",
 		measurement:
-			"resident state added after WASM and an empty index are loaded",
+			"resident growth plus persistent index disk, close, and fresh-process reopen costs",
 		...host,
 	},
 	rows,
