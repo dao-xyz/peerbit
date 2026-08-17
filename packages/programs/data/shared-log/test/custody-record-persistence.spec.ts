@@ -318,19 +318,20 @@ describe("custody record persistence", function () {
 
 	it("round-trips point rows across reopen with a stable namespace and advancing writer fence", async () => {
 		const directory = await temporaryDirectory("roundtrip");
-		const key = digest(31);
-		const bytes = new Uint8Array([1, 3, 5, 7]);
+		const value = await manifest();
+		const key = value.moveKey;
 		const first = await open(directory);
-		await first.persistence.write(key, "a", bytes);
-		bytes.fill(0);
-		await first.persistence.durableBarrier!(key, "a");
+		await first.store.prepareSource(0n, value.bytes);
+		const firstRead = (await first.persistence.read(key, "a", 16 * 1024))!;
+		const expected = new Uint8Array(firstRead);
+		firstRead.fill(0);
 		const firstFacts = first.facts;
 		await close(first);
 
 		const second = await open(directory);
-		expect([...(await second.persistence.read(key, "a", 4))!]).to.deep.equal([
-			1, 3, 5, 7,
-		]);
+		expect(await second.persistence.read(key, "a", 16 * 1024)).to.deep.equal(
+			expected,
+		);
 		expect(second.facts.namespace).to.equal(firstFacts.namespace);
 		expect(second.facts.namespaceEpoch).to.equal(firstFacts.namespaceEpoch);
 		expect(second.facts.domainId).to.equal(firstFacts.domainId);
@@ -345,9 +346,9 @@ describe("custody record persistence", function () {
 		const opened = await open(directory, {
 			dependencies: instrumentedDependencies(controller),
 		});
-		const key = digest(32);
-		await opened.persistence.write(key, "a", new Uint8Array([1, 2, 3]));
-		await opened.persistence.durableBarrier!(key, "a");
+		const value = await manifest();
+		const key = value.moveKey;
+		await opened.store.prepareSource(0n, value.bytes);
 
 		let shadowReads = 0;
 		controller.transformNextRead((value) => {
@@ -367,9 +368,9 @@ describe("custody record persistence", function () {
 				},
 			];
 		});
-		await expect(opened.persistence.read(key, "a", 128)).to.be.rejectedWith(
-			"Invalid bounded custody record frame",
-		);
+		await expect(
+			opened.persistence.read(key, "a", 16 * 1024),
+		).to.be.rejectedWith("Invalid bounded custody record frame");
 		expect(shadowReads).to.equal(0);
 
 		let prototypeReads = 0;
