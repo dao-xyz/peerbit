@@ -56,6 +56,27 @@ const range = (properties: {
 };
 
 describe("native shared-log range planner", () => {
+	it("closes idempotently and rejects before consuming caller iterables", async () => {
+		const planner = await createRangePlanner("u32");
+		planner.close();
+		planner.close();
+		planner.free();
+
+		expect(() => planner.length).to.throw("SharedLogRangePlanner is closed");
+		expect(() => planner.clear()).to.throw("SharedLogRangePlanner is closed");
+		let consumed = false;
+		const items: Iterable<{ cursors: number[]; replicas: number }> = {
+			*[Symbol.iterator]() {
+				consumed = true;
+				yield { cursors: [1], replicas: 1 };
+			},
+		};
+		expect(() => planner.findLeadersBatch(items)).to.throw(
+			"SharedLogRangePlanner is closed",
+		);
+		expect(consumed).to.equal(false);
+	});
+
 	it("returns intersecting leaders", async () => {
 		const planner = await createRangePlanner("u32");
 		planner.put(range({ id: "a", hash: "peer-a", start1: 10, end1: 20 }));
