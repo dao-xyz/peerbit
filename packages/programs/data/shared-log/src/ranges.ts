@@ -1813,13 +1813,44 @@ const joinIterator = <S extends Shape | undefined, R extends "u32" | "u64">(
 	direction: "above" | "below" | "closest",
 	numbers: Numbers<R>,
 ): IndexIterator<ReplicationRangeIndexable<R>, S> => {
+	type QueuedResult = {
+		result: IndexedResult<ReturnTypeFromShape<ReplicationRangeIndexable<R>, S>>;
+		dist: NumberFromType<R>;
+	};
+
+	const compareQueuedResults = (left: QueuedResult, right: QueuedResult) => {
+		if (left.dist < right.dist) return -1;
+		if (left.dist > right.dist) return 1;
+
+		// Match the native closest-range total order. The shaped iterator users do
+		// not always project every tie field, so only compare a field when both
+		// results carry it; getSamples uses complete ranges and therefore always
+		// follows distance, timestamp, owner hash, then range id.
+		const leftValue = left.result.value as Partial<
+			ReplicationRangeIndexable<R>
+		>;
+		const rightValue = right.result.value as Partial<
+			ReplicationRangeIndexable<R>
+		>;
+		if (leftValue.timestamp != null && rightValue.timestamp != null) {
+			if (leftValue.timestamp < rightValue.timestamp) return -1;
+			if (leftValue.timestamp > rightValue.timestamp) return 1;
+		}
+		if (leftValue.hash != null && rightValue.hash != null) {
+			if (leftValue.hash < rightValue.hash) return -1;
+			if (leftValue.hash > rightValue.hash) return 1;
+		}
+		const leftId = leftValue.id == null ? undefined : toBase64(leftValue.id);
+		const rightId = rightValue.id == null ? undefined : toBase64(rightValue.id);
+		if (leftId != null && rightId != null) {
+			if (leftId < rightId) return -1;
+			if (leftId > rightId) return 1;
+		}
+		return 0;
+	};
+
 	let queues: {
-		elements: {
-			result: IndexedResult<
-				ReturnTypeFromShape<ReplicationRangeIndexable<R>, S>
-			>;
-			dist: NumberFromType<R>;
-		}[];
+		elements: QueuedResult[];
 	}[] = [];
 
 	return {
@@ -1887,13 +1918,16 @@ const joinIterator = <S extends Shape | undefined, R extends "u32" | "u64">(
 
 			for (let i = 0; i < count; i++) {
 				let closestQueue = -1;
-				let closestDist: bigint | number = Number.MAX_VALUE;
+				let selected: QueuedResult | undefined;
 				for (let j = 0; j < queues.length; j++) {
 					let queue = queues[j];
 					if (queue && queue.elements.length > 0) {
-						let closest = queue.elements[0];
-						if (closest.dist < closestDist) {
-							closestDist = closest.dist;
+						const candidate = queue.elements[0];
+						if (
+							candidate &&
+							(!selected || compareQueuedResults(candidate, selected) < 0)
+						) {
+							selected = candidate;
 							closestQueue = j;
 						}
 					}
@@ -1903,7 +1937,7 @@ const joinIterator = <S extends Shape | undefined, R extends "u32" | "u64">(
 					break;
 				}
 
-				let closest = queues[closestQueue]?.elements.shift();
+				const closest = queues[closestQueue]?.elements.shift();
 				if (closest) {
 					results.push(closest.result);
 				}
@@ -2131,7 +2165,7 @@ export const getSamples = async <R extends "u32" | "u64">(
 	}
 
 	const now = +new Date();
-	let matured = 0;
+	const matureOwners = new Set<string>();
 
 	let uniqueVisited = new Set<string>();
 	const peerFilter = options?.peerFilter;
@@ -2149,10 +2183,10 @@ export const getSamples = async <R extends "u32" | "u64">(
 			}
 			uniqueVisited.add(rect.value.hash);
 			let prev = leaders.get(rect.value.hash);
+			if (isMatured(rect.value, now, roleAge)) {
+				matureOwners.add(rect.value.hash);
+			}
 			if (!prev) {
-				if (isMatured(rect.value, now, roleAge)) {
-					matured++;
-				}
 				leaders.set(rect.value.hash, { intersecting: true });
 			} else {
 				prev.intersecting = true;
@@ -2168,7 +2202,7 @@ export const getSamples = async <R extends "u32" | "u64">(
 			}
 		}
 
-		if (options?.onlyIntersecting || matured > i) {
+		if (options?.onlyIntersecting || matureOwners.size > i) {
 			continue;
 		}
 
@@ -2183,11 +2217,11 @@ export const getSamples = async <R extends "u32" | "u64">(
 				uniqueVisited.add(rect.hash);
 				const prev = leaders.get(rect.hash);
 				if (m) {
+					matureOwners.add(rect.hash);
 					if (!prev) {
-						matured++;
 						leaders.set(rect.hash, { intersecting: false });
 					}
-					if (matured > i) {
+					if (matureOwners.size > i) {
 						foundOneUniqueMatured = true;
 					}
 				}
