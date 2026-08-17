@@ -8,6 +8,11 @@ import {
 	NativeDurabilityLeaseDirectorySyncError,
 	NativeDurabilityLeaseStateError,
 	NativeDurabilityLeaseUnavailableError,
+	type NativeDurabilityLock,
+	NativeDurabilityLockClosedError,
+	NativeDurabilityLockDirectorySyncError,
+	NativeDurabilityLockStateError,
+	NativeDurabilityLockUnavailableError,
 } from "./lease.js";
 
 export const NATIVE_DURABILITY_NODE_LEASE_DIRECTORY_NAME =
@@ -153,6 +158,104 @@ const syncDirectory = async (
 	}
 };
 
+const syncLockDirectory = async (
+	fs: NodeFsPromises,
+	directory: string,
+): Promise<void> => {
+	let handle: Awaited<ReturnType<NodeFsPromises["open"]>> | undefined;
+	let syncError: NativeDurabilityLockDirectorySyncError | undefined;
+	try {
+		handle = await fs.open(directory, "r");
+		await handle.sync();
+	} catch (error) {
+		syncError = new NativeDurabilityLockDirectorySyncError(directory, {
+			cause: error,
+		});
+	}
+	let closeFailed = false;
+	let closeError: unknown;
+	if (handle) {
+		try {
+			await handle.close();
+		} catch (error) {
+			closeFailed = true;
+			closeError = error;
+		}
+	}
+	if (syncError && closeFailed) {
+		throw new AggregateError(
+			[syncError, closeError],
+			`Failed to synchronize and close native durability lock directory: ${directory}`,
+		);
+	}
+	if (syncError) {
+		throw syncError;
+	}
+	if (closeFailed) {
+		throw new NativeDurabilityLockDirectorySyncError(directory, {
+			cause: closeError,
+		});
+	}
+};
+
+class NodeNativeDurabilityLock implements NativeDurabilityLock {
+	private state: "held" | "closing" | "closed" = "held";
+	private closePromise?: Promise<void>;
+	private activeOperations = 0;
+	private drainPromise?: Promise<void>;
+	private resolveDrain?: () => void;
+
+	constructor(
+		private readonly directory: string,
+		private readonly database: NativeLevelDatabase,
+	) {}
+
+	async assertHeld(): Promise<void> {
+		if (this.state !== "held" || this.database.status !== "open") {
+			throw new NativeDurabilityLockClosedError(this.directory);
+		}
+	}
+
+	async runWhileHeld<T>(operation: () => Promise<T>): Promise<T> {
+		if (this.state !== "held" || this.database.status !== "open") {
+			throw new NativeDurabilityLockClosedError(this.directory);
+		}
+		// Admission and the counter increment are synchronous. Once close() marks
+		// the lock as closing it cannot release the OS lock underneath an admitted
+		// asynchronous operation, and no later operation can enter.
+		this.activeOperations++;
+		try {
+			return await operation();
+		} finally {
+			this.activeOperations--;
+			if (this.activeOperations === 0) {
+				this.resolveDrain?.();
+				this.resolveDrain = undefined;
+				this.drainPromise = undefined;
+			}
+		}
+	}
+
+	close(): Promise<void> {
+		if (this.closePromise) {
+			return this.closePromise;
+		}
+		this.state = "closing";
+		if (this.activeOperations > 0 && !this.drainPromise) {
+			this.drainPromise = new Promise<void>((resolve) => {
+				this.resolveDrain = resolve;
+			});
+		}
+		this.closePromise = (this.drainPromise ?? Promise.resolve())
+			.then(() => this.database.close())
+			.finally(() => {
+				// A failed close must never revive admission through this capability.
+				this.state = "closed";
+			});
+		return this.closePromise;
+	}
+}
+
 class NodeNativeDurabilityLease implements NativeDurabilityLease {
 	private state: "held" | "closing" | "closed" = "held";
 	private closePromise?: Promise<void>;
@@ -208,6 +311,95 @@ class NodeNativeDurabilityLease implements NativeDurabilityLease {
 		return this.closePromise;
 	}
 }
+
+/**
+ * Acquire a crash-released, unfenced Node ownership lock for an existing
+ * program directory.
+ *
+ * This opens the same canonical ClassicLevel namespace as
+ * `acquireNativeDurabilityNodeLease()`, so locks and fenced leases are mutually
+ * exclusive even through symlink aliases. It intentionally does not read or
+ * write the persisted fence record. The lock database directory and its parent
+ * namespace are fsynced before the capability is returned.
+ */
+export const acquireNativeDurabilityNodeLock = async (
+	programDirectory: string,
+): Promise<NativeDurabilityLock> => {
+	const [fs, path, ClassicLevel] = await Promise.all([
+		dynamicImport<NodeFsPromises>("node:fs/promises"),
+		dynamicImport<NodePath>("node:path"),
+		importClassicLevel(),
+	]);
+	let canonicalDirectory: string;
+	try {
+		canonicalDirectory = await fs.realpath(programDirectory);
+	} catch (error) {
+		throw new NativeDurabilityLockStateError(
+			programDirectory,
+			`Native durability program directory must already exist: ${programDirectory}`,
+			{ cause: error },
+		);
+	}
+	const lockDirectory = path.join(
+		canonicalDirectory,
+		NATIVE_DURABILITY_NODE_LEASE_DIRECTORY_NAME,
+	);
+	const database = new ClassicLevel(lockDirectory, {
+		keyEncoding: "utf8",
+		valueEncoding: "utf8",
+	});
+
+	try {
+		await database.open();
+	} catch (error) {
+		if (hasErrorCode(error, "LEVEL_LOCKED")) {
+			throw new NativeDurabilityLockUnavailableError(canonicalDirectory, {
+				cause: error,
+			});
+		}
+		throw error;
+	}
+
+	try {
+		let resolvedLockDirectory: string;
+		try {
+			resolvedLockDirectory = await fs.realpath(lockDirectory);
+		} catch (error) {
+			throw new NativeDurabilityLockStateError(
+				lockDirectory,
+				`Native durability lock directory could not be canonicalized: ${lockDirectory}`,
+				{ cause: error },
+			);
+		}
+		if (resolvedLockDirectory !== lockDirectory) {
+			throw new NativeDurabilityLockStateError(
+				lockDirectory,
+				`Native durability lock directory must not redirect through a symbolic link: ${lockDirectory}`,
+			);
+		}
+		// ClassicLevel open may create the namespace. No application key is read
+		// or written: this primitive owns only the native LevelDB LOCK lifetime.
+		await syncLockDirectory(fs, lockDirectory);
+		await syncLockDirectory(fs, canonicalDirectory);
+		return new NodeNativeDurabilityLock(canonicalDirectory, database);
+	} catch (acquisitionError) {
+		let closeFailed = false;
+		let closeError: unknown;
+		try {
+			await database.close();
+		} catch (error) {
+			closeFailed = true;
+			closeError = error;
+		}
+		if (closeFailed) {
+			throw new AggregateError(
+				[acquisitionError, closeError],
+				`Failed to acquire and close native durability lock: ${canonicalDirectory}`,
+			);
+		}
+		throw acquisitionError;
+	}
+};
 
 /**
  * Acquire the crash-released Node ownership lease for an existing program
