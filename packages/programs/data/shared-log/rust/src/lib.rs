@@ -364,7 +364,7 @@ impl RangePlanner {
     /// consumers must only rely on membership.
     pub fn get_samples(&self, cursors: &[u64], options: &SampleOptions) -> Vec<LeaderSample> {
         let mut leaders: IndexMap<String, bool> = IndexMap::new();
-        let mut matured = 0usize;
+        let mut mature_owners: HashSet<String> = HashSet::new();
         let mut unique_visited: IndexSet<String> = IndexSet::new();
 
         for (i, point) in cursors.iter().copied().enumerate() {
@@ -378,14 +378,14 @@ impl RangePlanner {
                     continue;
                 }
                 unique_visited.insert(range.hash.clone());
+                if range.is_matured(options.now, options.role_age_ms) {
+                    mature_owners.insert(range.hash.clone());
+                }
                 match leaders.get_mut(&range.hash) {
                     Some(intersecting) => {
                         *intersecting = true;
                     }
                     None => {
-                        if range.is_matured(options.now, options.role_age_ms) {
-                            matured += 1;
-                        }
                         leaders.insert(range.hash.clone(), true);
                     }
                 }
@@ -400,7 +400,7 @@ impl RangePlanner {
                 }
             }
 
-            if options.only_intersecting || matured > i {
+            if options.only_intersecting || mature_owners.len() > i {
                 continue;
             }
 
@@ -413,11 +413,11 @@ impl RangePlanner {
                 if !range.is_matured(options.now, options.role_age_ms) {
                     continue;
                 }
+                mature_owners.insert(range.hash.clone());
                 if !leaders.contains_key(&range.hash) {
-                    matured += 1;
                     leaders.insert(range.hash.clone(), false);
                 }
-                if matured > i {
+                if mature_owners.len() > i {
                     break;
                 }
             }
@@ -436,7 +436,7 @@ impl RangePlanner {
         target_hash: &str,
     ) -> bool {
         let mut leaders: HashSet<String> = HashSet::new();
-        let mut matured = 0usize;
+        let mut mature_owners: HashSet<String> = HashSet::new();
         let mut unique_visited: HashSet<String> = HashSet::new();
 
         for (i, point) in cursors.iter().copied().enumerate() {
@@ -453,11 +453,10 @@ impl RangePlanner {
                     return true;
                 }
                 unique_visited.insert(range.hash.clone());
-                if leaders.insert(range.hash.clone())
-                    && range.is_matured(options.now, options.role_age_ms)
-                {
-                    matured += 1;
+                if range.is_matured(options.now, options.role_age_ms) {
+                    mature_owners.insert(range.hash.clone());
                 }
+                leaders.insert(range.hash.clone());
             }
 
             if let Some(unique_replicators) = &options.unique_replicators {
@@ -469,7 +468,7 @@ impl RangePlanner {
                 }
             }
 
-            if options.only_intersecting || matured > i {
+            if options.only_intersecting || mature_owners.len() > i {
                 continue;
             }
 
@@ -485,10 +484,9 @@ impl RangePlanner {
                 if !range.is_matured(options.now, options.role_age_ms) {
                     continue;
                 }
-                if leaders.insert(range.hash.clone()) {
-                    matured += 1;
-                }
-                if matured > i {
+                mature_owners.insert(range.hash.clone());
+                leaders.insert(range.hash.clone());
+                if mature_owners.len() > i {
                     break;
                 }
             }
@@ -768,6 +766,34 @@ impl RangePlanner {
             .find_map(|key| self.candidate_from_key(key, peer_filter, seen_ids))
     }
 
+    fn first_candidate_from_descending_key_groups<'a, I>(
+        &'a self,
+        keys: I,
+        peer_filter: Option<&HashSet<String>>,
+        seen_ids: &HashSet<String>,
+    ) -> Option<&'a ReplicationRange>
+    where
+        I: IntoIterator<Item = &'a RangeIndexKey>,
+    {
+        let mut current_value = None;
+        let mut best = None;
+        for key in keys {
+            if current_value != Some(key.value) {
+                if best.is_some() {
+                    return best;
+                }
+                current_value = Some(key.value);
+            }
+            // The keys arrive in full reverse order: coordinate descending and
+            // metadata descending. Keep replacing within one coordinate group
+            // so the last eligible row is the metadata-lowest candidate.
+            if let Some(candidate) = self.candidate_from_key(key, peer_filter, seen_ids) {
+                best = Some(candidate);
+            }
+        }
+        best
+    }
+
     fn closest_start_candidate(
         &self,
         point: u64,
@@ -785,13 +811,17 @@ impl RangePlanner {
                 self.first_candidate_from_keys(self.by_start1.iter(), peer_filter, seen_ids)
             })
         } else {
-            self.first_candidate_from_keys(
+            self.first_candidate_from_descending_key_groups(
                 self.by_start1.range(..=RangeIndexKey::max_at(point)).rev(),
                 peer_filter,
                 seen_ids,
             )
             .or_else(|| {
-                self.first_candidate_from_keys(self.by_start1.iter().rev(), peer_filter, seen_ids)
+                self.first_candidate_from_descending_key_groups(
+                    self.by_start1.iter().rev(),
+                    peer_filter,
+                    seen_ids,
+                )
             })
         }
     }
@@ -811,13 +841,17 @@ impl RangePlanner {
             )
             .or_else(|| self.first_candidate_from_keys(self.by_end2.iter(), peer_filter, seen_ids))
         } else {
-            self.first_candidate_from_keys(
+            self.first_candidate_from_descending_key_groups(
                 self.by_end2.range(..=RangeIndexKey::max_at(point)).rev(),
                 peer_filter,
                 seen_ids,
             )
             .or_else(|| {
-                self.first_candidate_from_keys(self.by_end2.iter().rev(), peer_filter, seen_ids)
+                self.first_candidate_from_descending_key_groups(
+                    self.by_end2.iter().rev(),
+                    peer_filter,
+                    seen_ids,
+                )
             })
         }
     }
@@ -4288,6 +4322,133 @@ mod tests {
         assert!(!samples[0].intersecting);
         assert_eq!(samples[1].hash, "peer-b");
         assert!(!samples[1].intersecting);
+    }
+
+    #[test]
+    fn counts_mature_evidence_for_an_existing_owner_in_any_put_order() {
+        for immature_first in [true, false] {
+            let mut planner = RangePlanner::new("u32");
+            let immature =
+                ReplicationRange::new("a-immature", "peer-a", 950, 40, 60, 40, 60, 20, 0);
+            let mature = ReplicationRange::new("a-mature", "peer-a", 0, 40, 60, 40, 60, 20, 0);
+            if immature_first {
+                planner.put(immature);
+                planner.put(mature);
+            } else {
+                planner.put(mature);
+                planner.put(immature);
+            }
+            planner.put(ReplicationRange::new(
+                "b-fallback",
+                "peer-b",
+                0,
+                70,
+                80,
+                70,
+                80,
+                10,
+                0,
+            ));
+            let options = SampleOptions {
+                role_age_ms: 100,
+                now: 1_000,
+                ..Default::default()
+            };
+
+            assert_eq!(
+                planner.get_samples(&[50], &options),
+                vec![LeaderSample {
+                    hash: "peer-a".to_string(),
+                    intersecting: true,
+                }],
+            );
+            assert!(planner.contains_sample_hash(&[50], &options, "peer-a"));
+            assert!(!planner.contains_sample_hash(&[50], &options, "peer-b"));
+        }
+    }
+
+    #[test]
+    fn breaks_exact_cross_direction_fallback_ties_by_total_order() {
+        let mut planner = RangePlanner::new("u32");
+        planner.put(ReplicationRange::new(
+            "z-below", "peer-z", 0, 40, 45, 40, 45, 5, 0,
+        ));
+        planner.put(ReplicationRange::new(
+            "a-above", "peer-a", 0, 55, 60, 55, 60, 5, 0,
+        ));
+        let options = SampleOptions {
+            now: 1_000,
+            ..Default::default()
+        };
+
+        assert_eq!(
+            planner.get_samples(&[50], &options),
+            vec![LeaderSample {
+                hash: "peer-a".to_string(),
+                intersecting: false,
+            }],
+        );
+        assert!(planner.contains_sample_hash(&[50], &options, "peer-a"));
+        assert!(!planner.contains_sample_hash(&[50], &options, "peer-z"));
+    }
+
+    #[test]
+    fn keeps_metadata_ascending_within_descending_coordinate_groups() {
+        for (cursor, below_start, below_end) in [
+            (50, 40, 45),
+            // Exercise the wrapped descending fallback when no endpoint is
+            // directly below the cursor.
+            (5, MAX_U32 - 10, MAX_U32 - 5),
+        ] {
+            let mut planner = RangePlanner::new("u32");
+            planner.put(ReplicationRange::new(
+                "z-below",
+                "peer-z",
+                0,
+                below_start,
+                below_end,
+                below_start,
+                below_end,
+                5,
+                0,
+            ));
+            planner.put(ReplicationRange::new(
+                "a-below",
+                "peer-a",
+                0,
+                below_start,
+                below_end,
+                below_start,
+                below_end,
+                5,
+                0,
+            ));
+            planner.put(ReplicationRange::new(
+                "far-above",
+                "peer-m",
+                0,
+                100,
+                105,
+                100,
+                105,
+                5,
+                0,
+            ));
+            let options = SampleOptions {
+                now: 1_000,
+                ..Default::default()
+            };
+
+            assert_eq!(
+                planner.get_samples(&[cursor], &options),
+                vec![LeaderSample {
+                    hash: "peer-a".to_string(),
+                    intersecting: false,
+                }],
+            );
+            assert!(planner.contains_sample_hash(&[cursor], &options, "peer-a"));
+            assert!(!planner.contains_sample_hash(&[cursor], &options, "peer-z"));
+        }
     }
 
     #[test]

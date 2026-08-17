@@ -1446,6 +1446,43 @@ resolutions.forEach((resolution) => {
 					});
 				});
 
+				it("uses the native total order for an exact below-above tie", async () => {
+					const [lowerHashOwner, higherHashOwner] = [a, c].sort(
+						(left, right) => (left.hashcode() < right.hashcode() ? -1 : 1),
+					);
+					const below = createReplicationRange({
+						id: new Uint8Array([1]),
+						publicKey: higherHashOwner,
+						offset: 40,
+						width: 5,
+						timestamp: 0n,
+					});
+					const above = createReplicationRange({
+						id: new Uint8Array([2]),
+						publicKey: lowerHashOwner,
+						offset: 55,
+						width: 5,
+						timestamp: 0n,
+					});
+
+					for (const ranges of [
+						[below, above],
+						[above, below],
+					]) {
+						await create(...ranges);
+						const leaders = await getSamplesMap(
+							[coerceNumber(50)],
+							peers,
+							0,
+							numbers,
+						);
+
+						expect([...leaders.entries()]).to.deep.equal([
+							[lowerHashOwner.hashcode(), { intersecting: false }],
+						]);
+					}
+				});
+
 				it("factor 0 ", async () => {
 					await create(
 						createReplicationRangeFromNormalized({
@@ -1577,6 +1614,47 @@ resolutions.forEach((resolution) => {
 				});
 
 				describe("maturity", () => {
+					it("counts mature evidence for an existing owner in any input order", async () => {
+						for (const immatureFirst of [true, false]) {
+							const immature = createReplicationRange({
+								id: new Uint8Array([1]),
+								publicKey: a,
+								offset: 40,
+								width: 20,
+								timestamp: BigInt(Date.now() + 60_000),
+							});
+							const mature = createReplicationRange({
+								id: new Uint8Array([2]),
+								publicKey: a,
+								offset: 40,
+								width: 20,
+								timestamp: 0n,
+							});
+							const fallback = createReplicationRange({
+								id: new Uint8Array([3]),
+								publicKey: b,
+								offset: 70,
+								width: 10,
+								timestamp: 0n,
+							});
+							await create(
+								...(immatureFirst
+									? [immature, mature, fallback]
+									: [mature, immature, fallback]),
+							);
+
+							const leaders = await getSamplesMap(
+								[coerceNumber(50)],
+								peers,
+								100,
+								numbers,
+							);
+							expect([...leaders.entries()]).to.deep.equal([
+								[a.hashcode(), { intersecting: true }],
+							]);
+						}
+					});
+
 					it("starting at unmatured", async () => {
 						await create(
 							createReplicationRangeFromNormalized({
