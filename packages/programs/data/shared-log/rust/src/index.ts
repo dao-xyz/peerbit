@@ -227,6 +227,7 @@ type ResidentRepairDispatchPlanInput = Omit<
 type RepairDispatchPlan = Map<string, Map<string, string[]>>;
 
 type NativeRangePlannerHandle = {
+	free: () => void;
 	len: () => number;
 	clear: () => void;
 	put: (
@@ -959,10 +960,19 @@ const appendDeliveryPlanFromRow = (
 });
 
 export class SharedLogRangePlanner {
+	private closed = false;
+
 	private constructor(
 		private readonly native: NativeRangePlannerHandle,
 		private readonly resolution: RangeResolution,
 	) {}
+
+	private handle(): NativeRangePlannerHandle {
+		if (this.closed) {
+			throw new Error("SharedLogRangePlanner is closed");
+		}
+		return this.native;
+	}
 
 	static async create(
 		resolution: RangeResolution,
@@ -975,15 +985,15 @@ export class SharedLogRangePlanner {
 	}
 
 	get length(): number {
-		return this.native.len();
+		return this.handle().len();
 	}
 
 	clear(): void {
-		this.native.clear();
+		this.handle().clear();
 	}
 
 	put(range: NativeReplicationRange): void {
-		this.native.put(
+		this.handle().put(
 			range.id,
 			range.hash,
 			asIntegerString(range.timestamp),
@@ -997,14 +1007,14 @@ export class SharedLogRangePlanner {
 	}
 
 	delete(id: string): boolean {
-		return this.native.delete(id);
+		return this.handle().delete(id);
 	}
 
 	getSamples(
 		cursors: Iterable<bigint | number | string>,
 		options?: SampleOptions,
 	): Map<string, LeaderSample> {
-		const rows = this.native.get_samples(
+		const rows = this.handle().get_samples(
 			[...cursors].map(asIntegerString),
 			options?.roleAge ?? 0,
 			asIntegerString(options?.now ?? Date.now()),
@@ -1020,7 +1030,7 @@ export class SharedLogRangePlanner {
 		replicas: number,
 		options?: FindLeaderOptions,
 	): Map<string, LeaderSample> {
-		const rows = this.native.find_leaders(
+		const rows = this.handle().find_leaders(
 			[...cursors].map(asIntegerString),
 			replicas,
 			...findLeaderArguments(options),
@@ -1032,6 +1042,7 @@ export class SharedLogRangePlanner {
 		items: Iterable<LeaderBatchInput>,
 		options?: FindLeaderOptions,
 	): Array<Map<string, LeaderSample>> {
+		const native = this.handle();
 		const cursorBatches: string[][] = [];
 		const replicaCounts: number[] = [];
 		for (const item of items) {
@@ -1039,7 +1050,7 @@ export class SharedLogRangePlanner {
 			replicaCounts.push(item.replicas);
 		}
 
-		const rows = this.native.find_leaders_batch(
+		const rows = native.find_leaders_batch(
 			cursorBatches,
 			replicaCounts,
 			...findLeaderArguments(options),
@@ -1052,7 +1063,7 @@ export class SharedLogRangePlanner {
 		replicas: number,
 		options?: FindLeaderOptions,
 	): Map<string, LeaderSample> {
-		const rows = this.native.find_leaders_for_gid(
+		const rows = this.handle().find_leaders_for_gid(
 			gid,
 			replicas,
 			...findLeaderArguments(options),
@@ -1065,7 +1076,7 @@ export class SharedLogRangePlanner {
 		replicas: number,
 		options?: FindLeaderOptions,
 	): LeaderPlan {
-		const [coordinateRows, leaderRows] = this.native.plan_leaders_for_gid(
+		const [coordinateRows, leaderRows] = this.handle().plan_leaders_for_gid(
 			gid,
 			replicas,
 			...findLeaderArguments(options),
@@ -1080,6 +1091,7 @@ export class SharedLogRangePlanner {
 		items: Iterable<LeaderGidBatchInput>,
 		options?: FindLeaderOptions,
 	): LeaderPlan[] {
+		const native = this.handle();
 		const gids: string[] = [];
 		const replicaCounts: number[] = [];
 		for (const item of items) {
@@ -1087,7 +1099,7 @@ export class SharedLogRangePlanner {
 			replicaCounts.push(item.replicas);
 		}
 
-		const rows = this.native.plan_leaders_for_gids_batch(
+		const rows = native.plan_leaders_for_gids_batch(
 			gids,
 			replicaCounts,
 			...findLeaderArguments(options),
@@ -1105,7 +1117,8 @@ export class SharedLogRangePlanner {
 		items: Iterable<LeaderGidHashBatchInput>,
 		options?: FindLeaderOptions,
 	): Set<string> | undefined {
-		if (!this.native.plan_local_leaders_for_gids_batch) {
+		const native = this.handle();
+		if (!native.plan_local_leaders_for_gids_batch) {
 			return undefined;
 		}
 		const hashes: string[] = [];
@@ -1117,7 +1130,7 @@ export class SharedLogRangePlanner {
 			replicaCounts.push(item.replicas);
 		}
 		return new Set(
-			this.native.plan_local_leaders_for_gids_batch(
+			native.plan_local_leaders_for_gids_batch(
 				hashes,
 				gids,
 				replicaCounts,
@@ -1127,9 +1140,10 @@ export class SharedLogRangePlanner {
 	}
 
 	planRepairDispatchBatch(input: RepairDispatchPlanInput): RepairDispatchPlan {
+		const native = this.handle();
 		const entries = [...input.entries];
 		const pendingModes = [...input.pendingModes];
-		const rows = this.native.plan_repair_dispatch(
+		const rows = native.plan_repair_dispatch(
 			entries.map((entry) => entry.hash),
 			entries.map((entry) => entry.gid),
 			entries.map((entry) => entry.requestedReplicas),
@@ -1164,9 +1178,10 @@ export class SharedLogRangePlanner {
 		input: RepairDispatchEntryPlanInput,
 		options?: FindLeaderOptions,
 	): RepairDispatchPlan {
+		const native = this.handle();
 		const entries = [...input.entries];
 		const pendingModes = [...input.pendingModes];
-		const rows = this.native.plan_repair_dispatch_for_entries(
+		const rows = native.plan_repair_dispatch_for_entries(
 			entries.map((entry) => entry.hash),
 			entries.map((entry) => entry.gid),
 			entries.map((entry) => entry.requestedReplicas),
@@ -1204,7 +1219,7 @@ export class SharedLogRangePlanner {
 		replicas: number,
 		options?: FullReplicaLeaderOptions,
 	): Map<string, LeaderSample> | undefined {
-		const rows = this.native.get_full_replica_leaders(
+		const rows = this.handle().get_full_replica_leaders(
 			replicas,
 			options?.roleAge ?? 0,
 			asIntegerString(options?.now ?? Date.now()),
@@ -1219,7 +1234,7 @@ export class SharedLogRangePlanner {
 		replicas: number,
 		options: MaturedPeerOptions,
 	): Set<string> | undefined {
-		const peers = this.native.include_matured_peers(
+		const peers = this.handle().include_matured_peers(
 			peerFilter ? [...peerFilter] : undefined,
 			replicas,
 			options.roleAge ?? 0,
@@ -1236,15 +1251,27 @@ export class SharedLogRangePlanner {
 	): Array<number | bigint> {
 		return rowsToNumbers(
 			this.resolution,
-			this.native.get_grid(asIntegerString(from), count),
+			this.handle().get_grid(asIntegerString(from), count),
 		);
 	}
 
 	getGidCoordinates(gid: string, count: number): Array<number | bigint> {
 		return rowsToNumbers(
 			this.resolution,
-			this.native.get_gid_coordinates(gid, count),
+			this.handle().get_gid_coordinates(gid, count),
 		);
+	}
+
+	/** Release the owned wasm allocation. Safe to call more than once. */
+	close(): void {
+		if (this.closed) return;
+		this.closed = true;
+		this.native.free();
+	}
+
+	/** wasm-style alias for callers that own this planner directly. */
+	free(): void {
+		this.close();
 	}
 }
 
