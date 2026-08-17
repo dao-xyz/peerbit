@@ -24,6 +24,14 @@ const MAX_CONTAINMENT_BUCKETS_PER_RANGE: usize = 8;
 // before another compaction.
 const CONTAINMENT_RETAINED_CAPACITY_RATIO: usize = 2;
 const CONTAINMENT_RETAINED_CAPACITY_SLACK: usize = 8;
+const MAX_RANGE_SNAPSHOT_OWNERS: usize = 4096;
+const MAX_RANGE_SNAPSHOT_RANGES: usize = 16_384;
+const MAX_RANGE_SNAPSHOT_RANGES_PER_OWNER: usize = 4096;
+// Local placement views admit at most 512 raw id bytes. Runtime ids use
+// padded standard base64, whose largest encoding for 512 bytes is 684 bytes.
+const MAX_RANGE_SNAPSHOT_RANGE_ID_BYTES: usize = 684;
+const MAX_RANGE_SNAPSHOT_OWNER_HASH_BYTES: usize = 512;
+const MAX_RANGE_SNAPSHOT_BYTES: usize = 4 * 1024 * 1024;
 const MAX_REBALANCE_COLLISION_BUCKET_ROWS: usize = 1024;
 const MAX_REBALANCE_COLLISION_BUCKET_IDENTIFIER_BYTES: usize = 512;
 const MAX_REBALANCE_COLLISION_BUCKET_COORDINATE_VALUES: usize = 1024 * 100;
@@ -434,6 +442,54 @@ struct PeerRangeStats {
     non_strict: BTreeSet<PeerRangeKey>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct RangeSnapshotLimits {
+    max_owners: usize,
+    max_ranges: usize,
+    max_ranges_per_owner: usize,
+    max_range_id_bytes: usize,
+    max_owner_hash_bytes: usize,
+    max_bytes: usize,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RangeSnapshotOverflow {
+    Owners,
+    Ranges,
+    RangesPerOwner,
+    RangeId,
+    OwnerHash,
+    Bytes,
+}
+
+impl RangeSnapshotOverflow {
+    fn code(self) -> &'static str {
+        match self {
+            Self::Owners => "owners",
+            Self::Ranges => "ranges",
+            Self::RangesPerOwner => "ranges-per-owner",
+            Self::RangeId => "range-id",
+            Self::OwnerHash => "owner-hash",
+            Self::Bytes => "bytes",
+        }
+    }
+}
+
+#[derive(Debug)]
+struct RangeSnapshot<'a> {
+    owners: usize,
+    range_id_bytes: usize,
+    owner_hash_bytes: usize,
+    bytes: usize,
+    ranges: Vec<&'a ReplicationRange>,
+}
+
+#[derive(Debug)]
+enum RangeSnapshotPreflight<'a> {
+    Overflow(RangeSnapshotOverflow),
+    Snapshot(RangeSnapshot<'a>),
+}
+
 impl PeerRangeStats {
     fn insert(&mut self, range: &ReplicationRange) {
         let key = PeerRangeKey::from_range(range);
@@ -503,6 +559,214 @@ impl RangePlanner {
         self.wide_containment_ranges = IndexSet::new();
         self.containment_put_order = IndexSet::new();
         self.peer_ranges.clear();
+    }
+
+    fn preflight_range_snapshot(
+        &self,
+        limits: RangeSnapshotLimits,
+    ) -> Result<RangeSnapshotPreflight<'_>, SharedLogError> {
+        validate_range_snapshot_limits(limits)?;
+
+        // These two cardinality gates are O(1). An accidentally global or
+        // corrupt planner is rejected before any range-sized scan or output
+        // allocation. Every check below therefore visits at most the caller's
+        // bounded maximum number of native rows.
+        if self.ranges.len() > limits.max_ranges {
+            return Ok(RangeSnapshotPreflight::Overflow(
+                RangeSnapshotOverflow::Ranges,
+            ));
+        }
+        if self.peer_ranges.len() > limits.max_owners {
+            return Ok(RangeSnapshotPreflight::Overflow(
+                RangeSnapshotOverflow::Owners,
+            ));
+        }
+
+        let coordinate_width = match self.resolution {
+            Resolution::U32 => 4usize,
+            Resolution::U64 => 8usize,
+        };
+        // Canonical logical binary bytes: owner/range counts, a u32 byte length
+        // before both strings, the UTF-8 strings, timestamp, five coordinates,
+        // and mode. This is deliberately not an estimate of decimal-string and
+        // array allocation across the WASM bridge; cardinality/string caps bound
+        // that allocation independently.
+        let fixed_range_bytes = 4usize
+            .checked_add(4)
+            .and_then(|value| value.checked_add(8))
+            .and_then(|value| value.checked_add(5 * coordinate_width))
+            .and_then(|value| value.checked_add(1))
+            .ok_or(SharedLogError::RangeSnapshotAccountingOverflow)?;
+        let mut bytes = 8usize;
+        if bytes > limits.max_bytes {
+            return Ok(RangeSnapshotPreflight::Overflow(
+                RangeSnapshotOverflow::Bytes,
+            ));
+        }
+        let mut range_id_bytes = 0usize;
+        let mut owner_hash_bytes = 0usize;
+        let mut owner_counts: HashMap<&str, (usize, usize)> = HashMap::new();
+        let mut ranges = Vec::with_capacity(self.ranges.len());
+
+        for (map_id, range) in &self.ranges {
+            if map_id != &range.id {
+                return Err(SharedLogError::RangeSnapshotIndexInconsistent);
+            }
+            if range.id.is_empty() || range.hash.is_empty() || range.mode > 1 {
+                return Err(SharedLogError::RangeSnapshotInvalidRange);
+            }
+            if !self.range_geometry_is_valid(range) {
+                return Err(match self.resolution {
+                    Resolution::U32
+                        if [
+                            range.start1,
+                            range.end1,
+                            range.start2,
+                            range.end2,
+                            range.width,
+                        ]
+                        .iter()
+                        .any(|value| *value > MAX_U32) =>
+                    {
+                        SharedLogError::RangeSnapshotResolutionMismatch
+                    }
+                    _ => SharedLogError::RangeSnapshotInvalidRange,
+                });
+            }
+            if range.id.len() > limits.max_range_id_bytes {
+                return Ok(RangeSnapshotPreflight::Overflow(
+                    RangeSnapshotOverflow::RangeId,
+                ));
+            }
+            if range.hash.len() > limits.max_owner_hash_bytes {
+                return Ok(RangeSnapshotPreflight::Overflow(
+                    RangeSnapshotOverflow::OwnerHash,
+                ));
+            }
+
+            let counts = owner_counts.entry(range.hash.as_str()).or_default();
+            counts.0 = counts
+                .0
+                .checked_add(1)
+                .ok_or(SharedLogError::RangeSnapshotAccountingOverflow)?;
+            if range.mode == MODE_NON_STRICT {
+                counts.1 = counts
+                    .1
+                    .checked_add(1)
+                    .ok_or(SharedLogError::RangeSnapshotAccountingOverflow)?;
+            }
+            if counts.0 > limits.max_ranges_per_owner {
+                return Ok(RangeSnapshotPreflight::Overflow(
+                    RangeSnapshotOverflow::RangesPerOwner,
+                ));
+            }
+            if owner_counts.len() > limits.max_owners {
+                return Ok(RangeSnapshotPreflight::Overflow(
+                    RangeSnapshotOverflow::Owners,
+                ));
+            }
+
+            range_id_bytes = range_id_bytes
+                .checked_add(range.id.len())
+                .ok_or(SharedLogError::RangeSnapshotAccountingOverflow)?;
+            owner_hash_bytes = owner_hash_bytes
+                .checked_add(range.hash.len())
+                .ok_or(SharedLogError::RangeSnapshotAccountingOverflow)?;
+            bytes = bytes
+                .checked_add(fixed_range_bytes)
+                .and_then(|value| value.checked_add(range.id.len()))
+                .and_then(|value| value.checked_add(range.hash.len()))
+                .ok_or(SharedLogError::RangeSnapshotAccountingOverflow)?;
+            if bytes > limits.max_bytes {
+                return Ok(RangeSnapshotPreflight::Overflow(
+                    RangeSnapshotOverflow::Bytes,
+                ));
+            }
+
+            let Some(stats) = self.peer_ranges.get(&range.hash) else {
+                return Err(SharedLogError::RangeSnapshotIndexInconsistent);
+            };
+            let key = PeerRangeKey::from_range(range);
+            if !stats.all.contains(&key)
+                || stats.non_strict.contains(&key) != (range.mode == MODE_NON_STRICT)
+            {
+                return Err(SharedLogError::RangeSnapshotIndexInconsistent);
+            }
+            ranges.push(range);
+        }
+
+        if owner_counts.len() != self.peer_ranges.len() {
+            return Err(SharedLogError::RangeSnapshotIndexInconsistent);
+        }
+        for (hash, stats) in &self.peer_ranges {
+            let Some((all, non_strict)) = owner_counts.get(hash.as_str()) else {
+                return Err(SharedLogError::RangeSnapshotIndexInconsistent);
+            };
+            if stats.all.len() != *all || stats.non_strict.len() != *non_strict {
+                return Err(SharedLogError::RangeSnapshotIndexInconsistent);
+            }
+        }
+
+        ranges.sort_unstable_by(|left, right| {
+            left.hash
+                .cmp(&right.hash)
+                .then_with(|| left.id.cmp(&right.id))
+                .then_with(|| left.timestamp.cmp(&right.timestamp))
+                .then_with(|| left.start1.cmp(&right.start1))
+                .then_with(|| left.end1.cmp(&right.end1))
+                .then_with(|| left.start2.cmp(&right.start2))
+                .then_with(|| left.end2.cmp(&right.end2))
+                .then_with(|| left.width.cmp(&right.width))
+                .then_with(|| left.mode.cmp(&right.mode))
+        });
+        Ok(RangeSnapshotPreflight::Snapshot(RangeSnapshot {
+            owners: owner_counts.len(),
+            range_id_bytes,
+            owner_hash_bytes,
+            bytes,
+            ranges,
+        }))
+    }
+
+    fn range_geometry_is_valid(&self, range: &ReplicationRange) -> bool {
+        let maximum = self.resolution.max_value();
+        if [
+            range.start1,
+            range.end1,
+            range.start2,
+            range.end2,
+            range.width,
+        ]
+        .iter()
+        .any(|value| *value > maximum)
+        {
+            return false;
+        }
+        let unscaled_end = range.start1 as u128 + range.width as u128;
+        let expected_end1 = unscaled_end.min(maximum as u128) as u64;
+        let (expected_start2, expected_end2) = if unscaled_end > maximum as u128 {
+            let end2 = if range.width == maximum {
+                range.start1 % maximum
+            } else {
+                (unscaled_end % maximum as u128) as u64
+            };
+            (0, end2)
+        } else {
+            (range.start1, expected_end1)
+        };
+        if range.end1 != expected_end1
+            || range.start2 != expected_start2
+            || range.end2 != expected_end2
+        {
+            return false;
+        }
+        let reconstructed_width = (range.end1 - range.start1)
+            + if range.end2 < range.end1 {
+                range.end2 - range.start2
+            } else {
+                0
+            };
+        range.width == reconstructed_width
     }
 
     pub fn put(&mut self, range: ReplicationRange) {
@@ -1114,6 +1378,73 @@ impl RangePlanner {
         }
         Some(range)
     }
+}
+
+fn validate_range_snapshot_limits(limits: RangeSnapshotLimits) -> Result<(), SharedLogError> {
+    let valid = [
+        (limits.max_owners, MAX_RANGE_SNAPSHOT_OWNERS, "maxOwners"),
+        (limits.max_ranges, MAX_RANGE_SNAPSHOT_RANGES, "maxRanges"),
+        (
+            limits.max_ranges_per_owner,
+            MAX_RANGE_SNAPSHOT_RANGES_PER_OWNER,
+            "maxRangesPerOwner",
+        ),
+        (
+            limits.max_range_id_bytes,
+            MAX_RANGE_SNAPSHOT_RANGE_ID_BYTES,
+            "maxRangeIdBytes",
+        ),
+        (
+            limits.max_owner_hash_bytes,
+            MAX_RANGE_SNAPSHOT_OWNER_HASH_BYTES,
+            "maxOwnerHashBytes",
+        ),
+        (limits.max_bytes, MAX_RANGE_SNAPSHOT_BYTES, "maxBytes"),
+    ];
+    for (value, maximum, label) in valid {
+        if value == 0 || value > maximum {
+            return Err(SharedLogError::InvalidRangeSnapshotLimit(label));
+        }
+    }
+    Ok(())
+}
+
+fn range_snapshot_to_rows(
+    planner: &RangePlanner,
+    limits: RangeSnapshotLimits,
+) -> Result<Array, JsValue> {
+    let preflight = planner.preflight_range_snapshot(limits)?;
+    let out = Array::new();
+    match preflight {
+        RangeSnapshotPreflight::Overflow(overflow) => {
+            out.push(&JsValue::from_f64(2.0));
+            out.push(&JsValue::from_str(overflow.code()));
+        }
+        RangeSnapshotPreflight::Snapshot(snapshot) => {
+            let rows = Array::new();
+            for range in snapshot.ranges {
+                let row = Array::new();
+                row.push(&JsValue::from_str(&range.id));
+                row.push(&JsValue::from_str(&range.hash));
+                row.push(&JsValue::from_str(&range.timestamp.to_string()));
+                row.push(&JsValue::from_str(&range.start1.to_string()));
+                row.push(&JsValue::from_str(&range.end1.to_string()));
+                row.push(&JsValue::from_str(&range.start2.to_string()));
+                row.push(&JsValue::from_str(&range.end2.to_string()));
+                row.push(&JsValue::from_str(&range.width.to_string()));
+                row.push(&JsValue::from_f64(range.mode as f64));
+                rows.push(&row);
+            }
+            out.push(&JsValue::from_f64(1.0));
+            out.push(&JsValue::from_f64(snapshot.owners as f64));
+            out.push(&JsValue::from_f64(rows.length() as f64));
+            out.push(&JsValue::from_f64(snapshot.bytes as f64));
+            out.push(&JsValue::from_f64(snapshot.range_id_bytes as f64));
+            out.push(&JsValue::from_f64(snapshot.owner_hash_bytes as f64));
+            out.push(&rows);
+        }
+    }
+    Ok(out)
 }
 
 fn compare_closest(
@@ -2146,6 +2477,31 @@ impl NativeRangePlanner {
         self.inner.clear();
     }
 
+    /// Return either every resident range or one overflow code. Cardinality
+    /// and byte limits are checked before any range row is exposed to JS.
+    #[allow(clippy::too_many_arguments)]
+    pub fn read_range_snapshot(
+        &self,
+        max_owners: usize,
+        max_ranges: usize,
+        max_ranges_per_owner: usize,
+        max_range_id_bytes: usize,
+        max_owner_hash_bytes: usize,
+        max_bytes: usize,
+    ) -> Result<Array, JsValue> {
+        range_snapshot_to_rows(
+            &self.inner,
+            RangeSnapshotLimits {
+                max_owners,
+                max_ranges,
+                max_ranges_per_owner,
+                max_range_id_bytes,
+                max_owner_hash_bytes,
+                max_bytes,
+            },
+        )
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub fn put(
         &mut self,
@@ -2771,6 +3127,31 @@ impl NativeSharedLogState {
 
     pub fn clear(&mut self) {
         self.inner.clear_all();
+    }
+
+    /// Return either every resident range or one overflow code. This snapshots
+    /// only placement geometry and owner hashes; it authenticates no identity.
+    #[allow(clippy::too_many_arguments)]
+    pub fn read_range_snapshot(
+        &self,
+        max_owners: usize,
+        max_ranges: usize,
+        max_ranges_per_owner: usize,
+        max_range_id_bytes: usize,
+        max_owner_hash_bytes: usize,
+        max_bytes: usize,
+    ) -> Result<Array, JsValue> {
+        range_snapshot_to_rows(
+            &self.inner.range_planner,
+            RangeSnapshotLimits {
+                max_owners,
+                max_ranges,
+                max_ranges_per_owner,
+                max_range_id_bytes,
+                max_owner_hash_bytes,
+                max_bytes,
+            },
+        )
     }
 
     pub fn full_replica_candidates_for(&self, min_replicas: usize, self_hash: String) -> Array {
@@ -4811,11 +5192,14 @@ mod tests {
     use super::{
         compare_closest, find_leaders_with_prepared_options, ContainmentIndexLocation,
         EntryCoordinateState, FallbackCandidateStreams, FallbackKeyStream, LeaderSample,
-        NativeSharedLogState, RangePlanner, RebalanceCollisionBucketLimits,
-        RebalanceCollisionBucketOverflow, RebalanceCollisionBucketPreflight, ReplicationRange,
-        SampleOptions, SharedLogError, CONTAINMENT_BUCKETS, CONTAINMENT_RETAINED_CAPACITY_RATIO,
-        CONTAINMENT_RETAINED_CAPACITY_SLACK, MAX_CONTAINMENT_BUCKETS_PER_RANGE, MAX_U32, MAX_U64,
-        MODE_NON_STRICT,
+        NativeSharedLogState, RangePlanner, RangeSnapshotLimits, RangeSnapshotOverflow,
+        RangeSnapshotPreflight, RebalanceCollisionBucketLimits, RebalanceCollisionBucketOverflow,
+        RebalanceCollisionBucketPreflight, ReplicationRange, SampleOptions, SharedLogError,
+        CONTAINMENT_BUCKETS, CONTAINMENT_RETAINED_CAPACITY_RATIO,
+        CONTAINMENT_RETAINED_CAPACITY_SLACK, MAX_CONTAINMENT_BUCKETS_PER_RANGE,
+        MAX_RANGE_SNAPSHOT_BYTES, MAX_RANGE_SNAPSHOT_OWNERS, MAX_RANGE_SNAPSHOT_OWNER_HASH_BYTES,
+        MAX_RANGE_SNAPSHOT_RANGES, MAX_RANGE_SNAPSHOT_RANGES_PER_OWNER,
+        MAX_RANGE_SNAPSHOT_RANGE_ID_BYTES, MAX_U32, MAX_U64, MODE_NON_STRICT,
     };
     use indexmap::IndexSet;
     use std::collections::HashSet;
@@ -4829,6 +5213,31 @@ mod tests {
             max_coordinate_bytes: 4 * 1024 * 1024,
             max_bytes: 4 * 1024 * 1024,
         }
+    }
+
+    fn range_snapshot_limits() -> RangeSnapshotLimits {
+        RangeSnapshotLimits {
+            max_owners: MAX_RANGE_SNAPSHOT_OWNERS,
+            max_ranges: MAX_RANGE_SNAPSHOT_RANGES,
+            max_ranges_per_owner: MAX_RANGE_SNAPSHOT_RANGES_PER_OWNER,
+            max_range_id_bytes: MAX_RANGE_SNAPSHOT_RANGE_ID_BYTES,
+            max_owner_hash_bytes: MAX_RANGE_SNAPSHOT_OWNER_HASH_BYTES,
+            max_bytes: MAX_RANGE_SNAPSHOT_BYTES,
+        }
+    }
+
+    fn snapshot_range(id: &str, hash: &str, start: u64, width: u64) -> ReplicationRange {
+        ReplicationRange::new(
+            id,
+            hash,
+            0,
+            start,
+            start + width,
+            start,
+            start + width,
+            width,
+            MODE_NON_STRICT,
+        )
     }
 
     fn intersecting_options() -> SampleOptions {
@@ -4908,6 +5317,257 @@ mod tests {
         *state ^= *state >> 7;
         *state ^= *state << 17;
         *state
+    }
+
+    #[test]
+    fn range_snapshot_is_complete_sorted_and_exactly_accounted() {
+        let mut planner = RangePlanner::new("u32");
+        planner.put(snapshot_range("z", "owner-b", 20, 5));
+        planner.put(snapshot_range("b", "owner-a", 10, 5));
+        planner.put(snapshot_range("a", "owner-a", 0, 5));
+
+        let RangeSnapshotPreflight::Snapshot(snapshot) = planner
+            .preflight_range_snapshot(range_snapshot_limits())
+            .unwrap()
+        else {
+            panic!("expected complete snapshot");
+        };
+        assert_eq!(snapshot.owners, 2);
+        assert_eq!(snapshot.ranges.len(), 3);
+        assert_eq!(
+            snapshot
+                .ranges
+                .iter()
+                .map(|range| range.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["a", "b", "z"]
+        );
+        assert_eq!(snapshot.range_id_bytes, 3);
+        assert_eq!(snapshot.owner_hash_bytes, 21);
+        // Header 8 + three u32 rows * 37 fixed bytes + string bytes.
+        assert_eq!(snapshot.bytes, 8 + 3 * 37 + 3 + 21);
+    }
+
+    #[test]
+    fn range_snapshot_accepts_exact_empty_header_cap() {
+        let planner = RangePlanner::new("u64");
+        let mut limits = range_snapshot_limits();
+        limits.max_bytes = 7;
+        assert!(matches!(
+            planner.preflight_range_snapshot(limits).unwrap(),
+            RangeSnapshotPreflight::Overflow(RangeSnapshotOverflow::Bytes)
+        ));
+        limits.max_bytes = 8;
+        let RangeSnapshotPreflight::Snapshot(snapshot) =
+            planner.preflight_range_snapshot(limits).unwrap()
+        else {
+            panic!("expected exact-cap empty snapshot");
+        };
+        assert_eq!(snapshot.bytes, 8);
+        assert!(snapshot.ranges.is_empty());
+    }
+
+    #[test]
+    fn range_snapshot_accepts_valid_edge_geometry_for_both_resolutions() {
+        for (resolution, maximum) in [("u32", MAX_U32), ("u64", MAX_U64)] {
+            let mut planner = RangePlanner::new(resolution);
+            planner.put(ReplicationRange::new(
+                "nonwrapped",
+                "owner",
+                0,
+                10,
+                15,
+                10,
+                15,
+                5,
+                MODE_NON_STRICT,
+            ));
+            planner.put(ReplicationRange::new(
+                "wrapped",
+                "owner",
+                0,
+                maximum - 2,
+                maximum,
+                0,
+                3,
+                5,
+                MODE_NON_STRICT,
+            ));
+            planner.put(ReplicationRange::new(
+                "full-width",
+                "owner",
+                0,
+                10,
+                maximum,
+                0,
+                10,
+                maximum,
+                MODE_NON_STRICT,
+            ));
+            planner.put(ReplicationRange::new(
+                "maximum-edge",
+                "owner",
+                0,
+                maximum - 1,
+                maximum,
+                maximum - 1,
+                maximum,
+                1,
+                MODE_NON_STRICT,
+            ));
+
+            let RangeSnapshotPreflight::Snapshot(snapshot) = planner
+                .preflight_range_snapshot(range_snapshot_limits())
+                .unwrap()
+            else {
+                panic!("expected valid {resolution} edge snapshot");
+            };
+            assert_eq!(snapshot.ranges.len(), 4);
+        }
+    }
+
+    #[test]
+    fn range_snapshot_rejects_every_cap_without_a_partial_prefix() {
+        let mut planner = RangePlanner::new("u32");
+        planner.put(snapshot_range("aa", "owner-a", 0, 5));
+        planner.put(snapshot_range("b", "owner-a", 10, 5));
+        planner.put(snapshot_range("c", "owner-b", 20, 5));
+
+        let cases = [
+            (
+                RangeSnapshotLimits {
+                    max_owners: 1,
+                    ..range_snapshot_limits()
+                },
+                RangeSnapshotOverflow::Owners,
+            ),
+            (
+                RangeSnapshotLimits {
+                    max_ranges: 2,
+                    ..range_snapshot_limits()
+                },
+                RangeSnapshotOverflow::Ranges,
+            ),
+            (
+                RangeSnapshotLimits {
+                    max_ranges_per_owner: 1,
+                    ..range_snapshot_limits()
+                },
+                RangeSnapshotOverflow::RangesPerOwner,
+            ),
+            (
+                RangeSnapshotLimits {
+                    max_range_id_bytes: 1,
+                    ..range_snapshot_limits()
+                },
+                RangeSnapshotOverflow::RangeId,
+            ),
+            (
+                RangeSnapshotLimits {
+                    max_owner_hash_bytes: 6,
+                    ..range_snapshot_limits()
+                },
+                RangeSnapshotOverflow::OwnerHash,
+            ),
+            (
+                RangeSnapshotLimits {
+                    max_bytes: 10,
+                    ..range_snapshot_limits()
+                },
+                RangeSnapshotOverflow::Bytes,
+            ),
+        ];
+        for (limits, expected) in cases {
+            assert!(matches!(
+                planner.preflight_range_snapshot(limits).unwrap(),
+                RangeSnapshotPreflight::Overflow(actual) if actual == expected
+            ));
+        }
+        let RangeSnapshotPreflight::Snapshot(retry) = planner
+            .preflight_range_snapshot(range_snapshot_limits())
+            .unwrap()
+        else {
+            panic!("expected complete retry");
+        };
+        assert_eq!(retry.ranges.len(), 3);
+    }
+
+    #[test]
+    fn range_snapshot_cardinality_gate_precedes_row_validation() {
+        let mut planner = RangePlanner::new("u32");
+        planner.put(ReplicationRange::new("bad", "owner-a", 0, 0, 1, 0, 1, 1, 9));
+        planner.put(snapshot_range("good", "owner-b", 10, 1));
+        let limits = RangeSnapshotLimits {
+            max_ranges: 1,
+            ..range_snapshot_limits()
+        };
+        assert!(matches!(
+            planner.preflight_range_snapshot(limits).unwrap(),
+            RangeSnapshotPreflight::Overflow(RangeSnapshotOverflow::Ranges)
+        ));
+    }
+
+    #[test]
+    fn range_snapshot_detects_corrupt_geometry_resolution_and_owner_index() {
+        let mut invalid_mode = RangePlanner::new("u32");
+        invalid_mode.put(ReplicationRange::new("a", "owner", 0, 0, 1, 0, 1, 1, 2));
+        assert_eq!(
+            invalid_mode
+                .preflight_range_snapshot(range_snapshot_limits())
+                .unwrap_err(),
+            SharedLogError::RangeSnapshotInvalidRange
+        );
+
+        let mut invalid_geometry = RangePlanner::new("u32");
+        invalid_geometry.put(ReplicationRange::new("a", "owner", 0, 0, 2, 0, 2, 1, 0));
+        assert_eq!(
+            invalid_geometry
+                .preflight_range_snapshot(range_snapshot_limits())
+                .unwrap_err(),
+            SharedLogError::RangeSnapshotInvalidRange
+        );
+
+        let mut wrong_resolution = RangePlanner::new("u32");
+        wrong_resolution.put(ReplicationRange::new(
+            "a",
+            "owner",
+            0,
+            MAX_U32 + 1,
+            MAX_U32 + 1,
+            MAX_U32 + 1,
+            MAX_U32 + 1,
+            0,
+            0,
+        ));
+        assert_eq!(
+            wrong_resolution
+                .preflight_range_snapshot(range_snapshot_limits())
+                .unwrap_err(),
+            SharedLogError::RangeSnapshotResolutionMismatch
+        );
+
+        let mut inconsistent = RangePlanner::new("u32");
+        inconsistent.put(snapshot_range("a", "owner", 0, 1));
+        inconsistent.peer_ranges.clear();
+        assert_eq!(
+            inconsistent
+                .preflight_range_snapshot(range_snapshot_limits())
+                .unwrap_err(),
+            SharedLogError::RangeSnapshotIndexInconsistent
+        );
+    }
+
+    #[test]
+    fn range_snapshot_rejects_invalid_public_limits() {
+        let planner = RangePlanner::new("u32");
+        let limits = RangeSnapshotLimits {
+            max_owners: 0,
+            ..range_snapshot_limits()
+        };
+        assert_eq!(
+            planner.preflight_range_snapshot(limits).unwrap_err(),
+            SharedLogError::InvalidRangeSnapshotLimit("maxOwners")
+        );
     }
 
     #[test]
