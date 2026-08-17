@@ -3036,7 +3036,11 @@ export type NativeBackboneCoordinatePersistenceOptions =
 	};
 
 export type NativeBackboneCoordinatePersistenceStore = {
-	read(name: string): Promise<Uint8Array | undefined>;
+	/**
+	 * When `maxBytes` is supplied, reject before materializing a larger value.
+	 * Custom stores must preserve this pre-allocation bound.
+	 */
+	read(name: string, maxBytes?: number): Promise<Uint8Array | undefined>;
 	write(name: string, bytes: Uint8Array): Promise<void>;
 	/**
 	 * Appends `bytes` to the named file. Callers hand over ownership of
@@ -3054,6 +3058,21 @@ export type NativeBackboneCoordinatePersistenceStore = {
 	flush?(name?: string): Promise<void>;
 	close?(options?: { flush?: boolean }): Promise<void>;
 };
+
+export class NativeBackboneCoordinatePersistenceReadLimitError extends Error {
+	readonly code = "ERR_NATIVE_BACKBONE_COORDINATE_READ_LIMIT";
+
+	constructor(
+		readonly file: string,
+		readonly maxBytes: number,
+		readonly observedBytes: bigint,
+	) {
+		super(
+			`Native backbone coordinate persistence file ${file} exceeds the ${maxBytes} byte read limit (${observedBytes.toString()} bytes)`,
+		);
+		this.name = "NativeBackboneCoordinatePersistenceReadLimitError";
+	}
+}
 
 export type NativeBackboneCoordinatePersistenceAdapter = {
 	/**
@@ -3227,6 +3246,13 @@ type NativeBackboneNodeFs = {
 
 type NativeBackboneNodeAppendFileHandle = {
 	write(data: Uint8Array): Promise<{ bytesWritten: number }>;
+	read?(
+		buffer: Uint8Array,
+		offset: number,
+		length: number,
+		position: number,
+	): Promise<{ bytesRead: number }>;
+	stat?(options: { bigint: true }): Promise<{ size: bigint }>;
 	sync?(): Promise<unknown>;
 	close(): Promise<unknown>;
 };
@@ -3336,6 +3362,34 @@ const validateCoordinatePersistenceName = (name: string): string => {
 		);
 	}
 	return name;
+};
+
+const validateCoordinatePersistenceReadMaxBytes = (
+	maxBytes: number | undefined,
+): number | undefined => {
+	if (
+		maxBytes !== undefined &&
+		(!Number.isSafeInteger(maxBytes) || maxBytes < 0)
+	) {
+		throw new RangeError(
+			"Native backbone coordinate persistence read limit must be a non-negative safe integer",
+		);
+	}
+	return maxBytes;
+};
+
+const assertCoordinatePersistenceReadWithinLimit = (
+	name: string,
+	maxBytes: number | undefined,
+	observedBytes: number | bigint,
+): void => {
+	if (maxBytes !== undefined && BigInt(observedBytes) > BigInt(maxBytes)) {
+		throw new NativeBackboneCoordinatePersistenceReadLimitError(
+			name,
+			maxBytes,
+			BigInt(observedBytes),
+		);
+	}
 };
 
 type NativeBackboneCoordinateDropTombstoneBody = {
@@ -8808,8 +8862,17 @@ export class NativeBackboneMemoryCoordinatePersistenceStore
 {
 	readonly files = new Map<string, Uint8Array>();
 
-	async read(name: string): Promise<Uint8Array | undefined> {
-		const file = this.files.get(validateCoordinatePersistenceName(name));
+	async read(name: string, maxBytes?: number): Promise<Uint8Array | undefined> {
+		const validName = validateCoordinatePersistenceName(name);
+		const limit = validateCoordinatePersistenceReadMaxBytes(maxBytes);
+		const file = this.files.get(validName);
+		if (file) {
+			assertCoordinatePersistenceReadWithinLimit(
+				validName,
+				limit,
+				file.byteLength,
+			);
+		}
 		return file ? copyBytes(file) : undefined;
 	}
 
@@ -8904,15 +8967,118 @@ export class NativeBackboneNodeCoordinatePersistenceStore
 		return handle;
 	}
 
-	async read(name: string): Promise<Uint8Array | undefined> {
+	async read(name: string, maxBytes?: number): Promise<Uint8Array | undefined> {
+		const validName = validateCoordinatePersistenceName(name);
+		const limit = validateCoordinatePersistenceReadMaxBytes(maxBytes);
 		const fs = await this.nodeFs();
+		const path = await this.filePath(validName);
+		if (limit === undefined) {
+			try {
+				return await fs.readFile(path);
+			} catch (error) {
+				if (isNotFoundError(error)) {
+					return undefined;
+				}
+				throw error;
+			}
+		}
+		if (!fs.open) {
+			throw new Error(
+				"Node coordinate persistence bounded reads require FileHandle.open",
+			);
+		}
+		let handle: NativeBackboneNodeAppendFileHandle | undefined;
 		try {
-			return await fs.readFile(await this.filePath(name));
+			handle = await fs.open(path, "r");
 		} catch (error) {
 			if (isNotFoundError(error)) {
 				return undefined;
 			}
 			throw error;
+		}
+		try {
+			if (!handle.stat || !handle.read) {
+				throw new Error(
+					"Node coordinate persistence bounded reads require FileHandle.stat and FileHandle.read",
+				);
+			}
+			const initial = await handle.stat({ bigint: true });
+			if (typeof initial.size !== "bigint" || initial.size < 0n) {
+				throw new Error(
+					"Node coordinate persistence returned an invalid bigint file size",
+				);
+			}
+			assertCoordinatePersistenceReadWithinLimit(
+				validName,
+				limit,
+				initial.size,
+			);
+			if (initial.size > BigInt(Number.MAX_SAFE_INTEGER)) {
+				throw new RangeError(
+					"Node coordinate persistence file is too large to materialize safely",
+				);
+			}
+			const byteLength = Number(initial.size);
+			const bytes = new Uint8Array(byteLength);
+			let offset = 0;
+			while (offset < byteLength) {
+				const { bytesRead } = await handle.read(
+					bytes,
+					offset,
+					byteLength - offset,
+					offset,
+				);
+				if (
+					!Number.isSafeInteger(bytesRead) ||
+					bytesRead <= 0 ||
+					bytesRead > byteLength - offset
+				) {
+					throw new Error(
+						"Node coordinate persistence file changed during a bounded read",
+					);
+				}
+				offset += bytesRead;
+			}
+			const growthProbe = new Uint8Array(1);
+			const { bytesRead: growthBytes } = await handle.read(
+				growthProbe,
+				0,
+				1,
+				byteLength,
+			);
+			if (
+				!Number.isSafeInteger(growthBytes) ||
+				growthBytes < 0 ||
+				growthBytes > 1
+			) {
+				throw new Error(
+					"Node coordinate persistence returned invalid bounded read progress",
+				);
+			}
+			const final = await handle.stat({ bigint: true });
+			if (typeof final.size !== "bigint" || final.size < 0n) {
+				throw new Error(
+					"Node coordinate persistence returned an invalid bigint file size",
+				);
+			}
+			if (growthBytes !== 0 || final.size > initial.size) {
+				assertCoordinatePersistenceReadWithinLimit(
+					validName,
+					limit,
+					final.size > initial.size ? final.size : initial.size + 1n,
+				);
+				throw new Error(
+					"Node coordinate persistence file changed during a bounded read",
+				);
+			}
+			if (final.size !== initial.size) {
+				throw new Error(
+					"Node coordinate persistence file changed during a bounded read",
+				);
+			}
+			return bytes;
+		} finally {
+			await handle.close();
 		}
 	}
 
@@ -9100,14 +9266,27 @@ export class NativeBackboneOPFSCoordinatePersistenceStore
 		return parts.map(validateCoordinatePersistenceName);
 	}
 
-	async read(name: string): Promise<Uint8Array | undefined> {
+	async read(name: string, maxBytes?: number): Promise<Uint8Array | undefined> {
+		const validName = validateCoordinatePersistenceName(name);
+		const limit = validateCoordinatePersistenceReadMaxBytes(maxBytes);
 		try {
-			const handle = await this.directory.getFileHandle(
-				validateCoordinatePersistenceName(name),
-				{ create: false },
-			);
+			const handle = await this.directory.getFileHandle(validName, {
+				create: false,
+			});
 			const file = await handle.getFile();
-			return new Uint8Array(await file.arrayBuffer());
+			if (!Number.isSafeInteger(file.size) || file.size < 0) {
+				throw new Error(
+					"OPFS coordinate persistence returned an invalid file size",
+				);
+			}
+			assertCoordinatePersistenceReadWithinLimit(validName, limit, file.size);
+			const buffer = await file.arrayBuffer();
+			if (buffer.byteLength !== file.size) {
+				throw new Error(
+					"OPFS coordinate persistence file changed during a bounded read",
+				);
+			}
+			return new Uint8Array(buffer);
 		} catch (error) {
 			if (isNotFoundError(error)) {
 				return undefined;
@@ -9264,9 +9443,46 @@ export class NativeBackboneBufferedCoordinatePersistenceStore
 		return buffer;
 	}
 
-	async read(name: string): Promise<Uint8Array | undefined> {
-		await this.flush(name);
-		return this.inner.read(name);
+	async read(name: string, maxBytes?: number): Promise<Uint8Array | undefined> {
+		const limit = validateCoordinatePersistenceReadMaxBytes(maxBytes);
+		if (limit === undefined) {
+			await this.flush(name);
+			return this.inner.read(name);
+		}
+		const validName = validateCoordinatePersistenceName(name);
+		const pending = this.buffers.get(validName);
+		if (!pending || pending.length === 0) {
+			return this.inner.read(validName, limit);
+		}
+		const pendingLength = pending.length;
+		let pendingBytes = 0n;
+		for (const chunk of pending) {
+			pendingBytes += BigInt(chunk.byteLength);
+		}
+		assertCoordinatePersistenceReadWithinLimit(validName, limit, pendingBytes);
+		const remaining = limit - Number(pendingBytes);
+		const existingBytes = (await this.inner.read(validName, remaining))
+			?.byteLength;
+		let confirmedPendingBytes = 0n;
+		for (const chunk of pending) {
+			confirmedPendingBytes += BigInt(chunk.byteLength);
+		}
+		if (
+			this.buffers.get(validName) !== pending ||
+			pending.length !== pendingLength ||
+			confirmedPendingBytes !== pendingBytes
+		) {
+			throw new Error(
+				"Native backbone coordinate persistence pending bytes changed during a bounded read",
+			);
+		}
+		assertCoordinatePersistenceReadWithinLimit(
+			validName,
+			limit,
+			pendingBytes + BigInt(existingBytes ?? 0),
+		);
+		await this.flush(validName);
+		return this.inner.read(validName, limit);
 	}
 
 	async write(name: string, bytes: Uint8Array): Promise<void> {

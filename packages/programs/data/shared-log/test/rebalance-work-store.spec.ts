@@ -20,6 +20,8 @@ class MemoryPersistence implements RebalanceWorkPersistence {
 	readonly barriers: string[] = [];
 	readonly flushes: string[] = [];
 	closeCalls = 0;
+	private writeFailureArmed = false;
+	private writeFailure: unknown;
 	private barrierFailureArmed = false;
 	private barrierFailure: unknown;
 	private closeFailureArmed = false;
@@ -57,6 +59,10 @@ class MemoryPersistence implements RebalanceWorkPersistence {
 	}
 
 	async write(name: string, bytes: Uint8Array) {
+		if (this.writeFailureArmed) {
+			this.writeFailureArmed = false;
+			throw this.writeFailure;
+		}
 		this.writes.push(name);
 		this.files.set(name, new Uint8Array(bytes));
 	}
@@ -120,6 +126,11 @@ class MemoryPersistence implements RebalanceWorkPersistence {
 	failNextBarrierWith(error: unknown) {
 		this.barrierFailureArmed = true;
 		this.barrierFailure = error;
+	}
+
+	failNextWriteWith(error: unknown) {
+		this.writeFailureArmed = true;
+		this.writeFailure = error;
 	}
 
 	failNextCloseWith(error: unknown) {
@@ -1007,6 +1018,278 @@ describe("rebalance work store", () => {
 		await store.close();
 		const reopened = await openStrict(persistence);
 		await reopened.close();
+	});
+
+	it("terminally drops incomplete work and keeps ownership until close", async () => {
+		const persistence = new MemoryPersistence();
+		const store = await openStrict(persistence);
+		const installed = await store.install(0n, {
+			resolution: "u32",
+			viewId: viewId("0"),
+			plan: makePlanU32(),
+		});
+		const fence = installed.durableCommit!.fence!;
+		const writesBeforeDrop = persistence.writes.length;
+
+		await expect(store.clear(fence, 2n)).to.be.rejectedWith(
+			"Cannot clear incomplete rebalance work",
+		);
+		const dropping = store.beginDrop();
+		expect(store.beginDrop()).to.equal(dropping);
+		expect(() => store.snapshot()).to.throw("dropping");
+		expect(() => store.currentDurableCommit()).to.throw("dropping");
+		await expect(
+			store.checkpoint(fence, 2n, { taskOrdinal: 0 }),
+		).to.be.rejectedWith("dropping");
+		await expect(store.clear(fence, 2n)).to.be.rejectedWith("dropping");
+
+		const dropped = await dropping;
+		expect(dropped.snapshot).to.deep.equal({
+			revision: 3n,
+			active: undefined,
+		});
+		expect(dropped.durableCommit).to.deep.include({
+			revision: 3n,
+			fence: undefined,
+		});
+		expect(persistence.writes).to.have.length(writesBeforeDrop + 1);
+		await expect(openStrict(persistence)).to.be.rejectedWith("already open");
+
+		await store.close();
+		const reopened = await openStrict(persistence);
+		const writesBeforeRetry = persistence.writes.length;
+		const retry = reopened.beginDrop();
+		expect(reopened.beginDrop()).to.equal(retry);
+		expect((await retry).snapshot).to.deep.equal(dropped.snapshot);
+		expect(persistence.writes).to.have.length(writesBeforeRetry);
+		await reopened.close();
+	});
+
+	it("rejects a cached drop result after the persistence lease is released", async () => {
+		const persistence = new MemoryPersistence();
+		const original = await openStrict(persistence);
+		await original.install(0n, {
+			resolution: "u32",
+			viewId: viewId("4"),
+			plan: makePlanU32(),
+		});
+		const dropped = await original.beginDrop();
+		await original.close();
+
+		const replacement = await openStrict(persistence);
+		const installed = await replacement.install(dropped.snapshot.revision, {
+			resolution: "u32",
+			viewId: viewId("5"),
+			plan: makePlanU32(30),
+		});
+		await expect(original.beginDrop()).to.be.rejectedWith("closing");
+		expect(replacement.snapshot()).to.deep.equal(installed.snapshot);
+		expect(replacement.snapshot().active).not.to.equal(undefined);
+		await replacement.close();
+	});
+
+	it("treats an implicit empty namespace as authoritative cleared state", async () => {
+		const persistence = new MemoryPersistence();
+		const store = await openStrict(persistence);
+		const dropped = await store.beginDrop();
+
+		expect(dropped.snapshot).to.deep.equal({
+			revision: 0n,
+			active: undefined,
+		});
+		expect(dropped.durableCommit).to.equal(undefined);
+		expect(persistence.writes).to.have.length(0);
+		expect(persistence.barriers).to.have.length(0);
+		await store.close();
+		const reopened = await openStrict(persistence);
+		expect(reopened.snapshot()).to.deep.equal(dropped.snapshot);
+		expect(persistence.writes).to.have.length(0);
+		await reopened.close();
+	});
+
+	it("drains admitted success and stale failure before drop and close", async () => {
+		const persistence = new MemoryPersistence();
+		const store = await openStrict(persistence);
+		const installed = await store.install(0n, {
+			resolution: "u32",
+			viewId: viewId("1"),
+			plan: makePlanU32(),
+		});
+		const fence = installed.durableCommit!.fence!;
+		const admittedGate = persistence.blockNextBarrier();
+		const admitted = store.checkpoint(fence, 2n, {
+			taskOrdinal: 0,
+			bucket: {
+				hashNumber: 11,
+				hashes: ["hash-11"],
+				nextIndex: 0,
+			},
+		});
+		await admittedGate.entered;
+		const stale = store.checkpoint(fence, 2n, { taskOrdinal: 0 });
+		const staleRejected = expect(stale).to.be.rejectedWith(
+			"Stale rebalance work revision",
+		);
+		const dropping = store.beginDrop();
+		expect(store.beginDrop()).to.equal(dropping);
+		const dropGate = persistence.blockNextBarrier();
+		const closing = store.close();
+		expect(store.close()).to.equal(closing);
+		expect(store.beginDrop()).to.equal(dropping);
+
+		await expect(
+			store.checkpoint(fence, 3n, { taskOrdinal: 0 }),
+		).to.be.rejectedWith("dropping");
+		await expect(openStrict(persistence)).to.be.rejectedWith("already open");
+		admittedGate.release();
+		await admitted;
+		await staleRejected;
+		await dropGate.entered;
+		expect(persistence.closeCalls).to.equal(0);
+		await expect(openStrict(persistence)).to.be.rejectedWith("already open");
+		dropGate.release();
+
+		const dropped = await dropping;
+		expect(dropped.snapshot).to.deep.equal({
+			revision: 4n,
+			active: undefined,
+		});
+		await closing;
+		expect(persistence.closeCalls).to.equal(1);
+	});
+
+	it("lets close win admission before a terminal drop starts", async () => {
+		const persistence = new MemoryPersistence();
+		const store = await openStrict(persistence);
+		const closing = store.close();
+		await expect(store.beginDrop()).to.be.rejectedWith("closing");
+		await closing;
+		expect(persistence.writes).to.have.length(0);
+	});
+
+	it("retries terminal drop after a falsey pre-write failure and reopen", async () => {
+		const persistence = new MemoryPersistence();
+		const store = await openStrict(persistence);
+		await store.install(0n, {
+			resolution: "u32",
+			viewId: viewId("2"),
+			plan: makePlanU32(),
+		});
+		const writesBeforeDrop = persistence.writes.length;
+		persistence.failNextWriteWith(null);
+		await expect(store.beginDrop()).to.be.rejectedWith(
+			"Failed to persist rebalance work frame",
+		);
+		expect(persistence.writes).to.have.length(writesBeforeDrop);
+		await expect(store.close()).to.be.rejectedWith("poisoned");
+
+		const recoveredPersistence = persistence.fork();
+		const recovered = await openStrict(recoveredPersistence);
+		expect(recovered.snapshot().active).not.to.equal(undefined);
+		expect(recovered.snapshot().revision).to.equal(2n);
+		const dropped = await recovered.beginDrop();
+		expect(dropped.snapshot).to.deep.equal({
+			revision: 3n,
+			active: undefined,
+		});
+		expect(recoveredPersistence.writes).to.have.length(1);
+		await recovered.close();
+	});
+
+	it("recovers an ambiguous falsey-barrier drop without sequence churn", async () => {
+		const persistence = new MemoryPersistence();
+		const store = await openStrict(persistence);
+		const installed = await store.install(0n, {
+			resolution: "u32",
+			viewId: viewId("2"),
+			plan: makePlanU32(),
+		});
+		persistence.failNextBarrierWith(undefined);
+		const dropping = store.beginDrop();
+		expect(store.beginDrop()).to.equal(dropping);
+		persistence.failNextCloseWith(0);
+		const closing = store.close();
+		const closeOutcome = closing.then(
+			() => undefined,
+			(error: unknown) => error,
+		);
+		await expect(dropping).to.be.rejectedWith(
+			"Failed to persist rebalance work frame",
+		);
+		expect(() => store.snapshot()).to.throw("poisoned");
+		await expect(
+			store.checkpoint(installed.durableCommit!.fence!, 2n, {
+				taskOrdinal: 0,
+			}),
+		).to.be.rejectedWith("dropping");
+		const closeFailure = await closeOutcome;
+		expect(closeFailure).to.be.instanceOf(AggregateError);
+		expect((closeFailure as AggregateError).message).to.include("poisoned");
+		expect((closeFailure as AggregateError).errors[1]).to.equal(0);
+		expect(persistence.closeCalls).to.equal(1);
+
+		const recoveredPersistence = persistence.fork();
+		const recovered = await openStrict(recoveredPersistence);
+		expect(recovered.snapshot()).to.deep.equal({
+			revision: 3n,
+			active: undefined,
+		});
+		const writesBeforeRetry = recoveredPersistence.writes.length;
+		const retried = await recovered.beginDrop();
+		expect(retried.snapshot.revision).to.equal(3n);
+		expect(retried.durableCommit?.revision).to.equal(3n);
+		expect(recoveredPersistence.writes).to.have.length(writesBeforeRetry);
+		await recovered.close();
+	});
+
+	it("enforces sequence bounds for active and cleared terminal state", async () => {
+		const persistence = new MemoryPersistence();
+		const store = await openStrict(persistence);
+		await store.install(0n, {
+			resolution: "u32",
+			viewId: viewId("3"),
+			plan: makePlanU32(),
+		});
+		await store.close();
+
+		const activeFile = REBALANCE_WORK_FILES[0];
+		const { payload } = readFrame(persistence.files.get(activeFile)!);
+		payload.sequence = (MAX_U64 - 1n).toString();
+		persistence.files.set(activeFile, encodeFramePayload(payload));
+		const lastWritable = await openStrict(persistence);
+		const writesBeforeLast = persistence.writes.length;
+		const finalTombstone = await lastWritable.beginDrop();
+		expect(finalTombstone.snapshot.revision).to.equal(MAX_U64);
+		expect(persistence.writes).to.have.length(writesBeforeLast + 1);
+		await lastWritable.close();
+
+		payload.sequence = MAX_U64.toString();
+		persistence.files.set(activeFile, encodeFramePayload(payload));
+		persistence.files.delete(REBALANCE_WORK_FILES[1]);
+		const atMaximum = await openStrict(persistence);
+		const writesAtMaximum = persistence.writes.length;
+		const failedDrop = atMaximum.beginDrop();
+		await expect(failedDrop).to.be.rejectedWith(
+			"Rebalance work sequence exhausted",
+		);
+		expect(atMaximum.beginDrop()).to.equal(failedDrop);
+		expect(persistence.writes).to.have.length(writesAtMaximum);
+		await expect(atMaximum.close()).to.be.rejectedWith(
+			"Rebalance work sequence exhausted",
+		);
+
+		payload.state = "cleared";
+		payload.value = null;
+		persistence.files.set(activeFile, encodeFramePayload(payload));
+		const alreadyCleared = await openStrict(persistence);
+		const writesBeforeClearedDrop = persistence.writes.length;
+		const dropped = await alreadyCleared.beginDrop();
+		expect(dropped.snapshot).to.deep.equal({
+			revision: MAX_U64,
+			active: undefined,
+		});
+		expect(persistence.writes).to.have.length(writesBeforeClearedDrop);
+		await alreadyCleared.close();
 	});
 
 	it("drains admitted work on close and rejects late mutations", async () => {
