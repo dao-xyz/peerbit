@@ -1,6 +1,7 @@
 import { expect } from "chai";
 import { benchmarkPlainCommittedNoNextStorageAppendTransactionLoop } from "../src/benchmark.js";
 import {
+	MAX_NATIVE_REBALANCE_COLLISION_BUCKET_LIMITS,
 	NativeBackboneBufferedCoordinatePersistenceStore,
 	NativeBackboneCoordinatePersistence,
 	type NativeBackboneCoordinatePersistenceStore,
@@ -9,12 +10,21 @@ import {
 	NativeBackboneNodeCoordinatePersistenceStore,
 	NativeBackboneOPFSCoordinatePersistenceStore,
 	type NativeBackboneOPFSDirectoryHandle,
+	type NativeRebalanceCollisionBucketLimits,
+	NativeRebalanceCollisionBucketOverflowError,
 	createBufferedNativeBackboneCoordinatePersistence,
 	createBufferedNativeBackboneNodeCoordinatePersistence,
 	createNativeBackboneCoordinatePersistence,
 	createNativePeerbitBackbone,
 	defaultNativeBackboneCoordinateFlushMaxPendingBytes,
 } from "../src/index.js";
+
+const rebalanceBucketLimits = (
+	overrides?: Partial<NativeRebalanceCollisionBucketLimits>,
+): NativeRebalanceCollisionBucketLimits => ({
+	...MAX_NATIVE_REBALANCE_COLLISION_BUCKET_LIMITS,
+	...overrides,
+});
 
 const fromHex = (hex: string) =>
 	Uint8Array.from(
@@ -2434,6 +2444,91 @@ describe("native peerbit backbone", () => {
 		expect(backbone.hasCoordinateIndexHash("hash-c")).equal(false);
 		expect(backbone.hasCoordinateIndexHash("hash-d")).equal(true);
 		expect(backbone.hasCoordinateIndexHash("hash-e")).equal(true);
+	});
+
+	it("matches the complete native rebalance collision-bucket wrapper contract", async () => {
+		const backbone = await createNativePeerbitBackbone({
+			clockId: publicKey,
+			privateKey,
+			publicKey,
+			resolution: "u64",
+		});
+		const hashNumber = 0xffff_ffff_ffff_ffffn;
+		backbone.putEntryCoordinates(
+			"beta",
+			"gid-beta",
+			[2n, 3n],
+			true,
+			2,
+			hashNumber,
+		);
+		backbone.putEntryCoordinates(
+			"alpha",
+			"gid-alpha",
+			[1n],
+			false,
+			1,
+			hashNumber,
+		);
+
+		const bucket = backbone.readNextRebalanceCollisionBucket(
+			undefined,
+			rebalanceBucketLimits(),
+		);
+		if (bucket.eof) throw new Error("expected native-backbone bucket");
+		expect(bucket).to.deep.include({
+			resolution: "u64",
+			hashNumber,
+			visited: 2,
+			results: 2,
+			identifierBytes: 9,
+			coordinateValues: 3,
+			coordinateBytes: 24,
+			bytes: 43,
+		});
+		expect(bucket.candidates).to.deep.equal([
+			{
+				hash: "alpha",
+				coordinates: [1n],
+				assignedToRangeBoundary: false,
+			},
+			{
+				hash: "beta",
+				coordinates: [2n, 3n],
+				assignedToRangeBoundary: true,
+			},
+		]);
+		expect(
+			backbone.readNextRebalanceCollisionBucket(
+				hashNumber,
+				rebalanceBucketLimits(),
+			).eof,
+		).to.equal(true);
+
+		let overflow: unknown;
+		try {
+			backbone.readNextRebalanceCollisionBucket(
+				undefined,
+				rebalanceBucketLimits({ maxRows: 1 }),
+			);
+		} catch (error) {
+			overflow = error;
+		}
+		expect(overflow).to.be.instanceOf(
+			NativeRebalanceCollisionBucketOverflowError,
+		);
+		expect(
+			(overflow as NativeRebalanceCollisionBucketOverflowError).code,
+		).to.equal("rows");
+		expect(() =>
+			backbone.readNextRebalanceCollisionBucket(1.5, rebalanceBucketLimits()),
+		).to.throw("Invalid native rebalance collision bucket cursor");
+		expect(() =>
+			backbone.readNextRebalanceCollisionBucket(undefined, {
+				...rebalanceBucketLimits(),
+				maxRows: 0,
+			}),
+		).to.throw("Invalid native rebalance collision bucket limit: maxRows");
 	});
 
 	it("coalesces storage-backed no-next append with shared-log coordinate state", async () => {
