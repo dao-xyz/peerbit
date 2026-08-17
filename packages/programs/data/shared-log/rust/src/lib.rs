@@ -3,6 +3,7 @@ use js_sys::{Array, BigUint64Array, Uint8Array};
 use sha2::{Digest, Sha256};
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::ops::Bound::{Excluded, Unbounded};
 use wasm_bindgen::prelude::*;
 
 mod error;
@@ -13,6 +14,10 @@ const MODE_NON_STRICT: u8 = 0;
 const MAX_U32: u64 = u32::MAX as u64;
 const MAX_U64: u64 = u64::MAX;
 const CONTAINMENT_BUCKETS: usize = 4096;
+const MAX_REBALANCE_COLLISION_BUCKET_ROWS: usize = 1024;
+const MAX_REBALANCE_COLLISION_BUCKET_IDENTIFIER_BYTES: usize = 512;
+const MAX_REBALANCE_COLLISION_BUCKET_COORDINATE_VALUES: usize = 1024 * 100;
+const MAX_REBALANCE_COLLISION_BUCKET_BYTES: usize = 4 * 1024 * 1024;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Resolution {
@@ -1455,6 +1460,53 @@ struct EntryCoordinateState {
     requested_replicas: usize,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct RebalanceCollisionBucketLimits {
+    max_rows: usize,
+    max_identifier_bytes: usize,
+    max_identifier_bytes_total: usize,
+    max_coordinate_values: usize,
+    max_coordinate_bytes: usize,
+    max_bytes: usize,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RebalanceCollisionBucketOverflow {
+    Rows,
+    Identifier,
+    IdentifierBytes,
+    CoordinateValues,
+    CoordinateBytes,
+    Bytes,
+}
+
+impl RebalanceCollisionBucketOverflow {
+    fn code(self) -> &'static str {
+        match self {
+            Self::Rows => "rows",
+            Self::Identifier => "identifier",
+            Self::IdentifierBytes => "identifier-bytes",
+            Self::CoordinateValues => "coordinate-values",
+            Self::CoordinateBytes => "coordinate-bytes",
+            Self::Bytes => "bytes",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RebalanceCollisionBucketPreflight {
+    Eof,
+    Overflow(RebalanceCollisionBucketOverflow),
+    Bucket {
+        hash_number: u64,
+        rows: usize,
+        identifier_bytes: usize,
+        coordinate_values: usize,
+        coordinate_bytes: usize,
+        bytes: usize,
+    },
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct EntryCoordinateCommit {
     pub hash: String,
@@ -1526,6 +1578,170 @@ impl SharedLogStateInner {
         }
         true
     }
+
+    fn preflight_next_rebalance_collision_bucket(
+        &self,
+        after_hash_number: Option<u64>,
+        limits: RebalanceCollisionBucketLimits,
+    ) -> Result<RebalanceCollisionBucketPreflight, SharedLogError> {
+        validate_rebalance_collision_bucket_limits(limits)?;
+        if self.range_planner.resolution == Resolution::U32
+            && after_hash_number.is_some_and(|value| value > MAX_U32)
+        {
+            return Err(SharedLogError::RebalanceCollisionBucketResolutionMismatch);
+        }
+        let next = match after_hash_number {
+            Some(after) => self
+                .entry_hashes_by_hash_number
+                .range((Excluded(after), Unbounded))
+                .next(),
+            None => self.entry_hashes_by_hash_number.iter().next(),
+        };
+        let Some((&hash_number, hashes)) = next else {
+            return Ok(RebalanceCollisionBucketPreflight::Eof);
+        };
+        if hashes.is_empty() {
+            return Err(SharedLogError::RebalanceCollisionBucketIndexInconsistent);
+        }
+        // BTreeMap/IndexSet cardinality proves the exact cap+1 overflow case
+        // without scanning or materializing a partial prefix.
+        if hashes.len() > limits.max_rows {
+            return Ok(RebalanceCollisionBucketPreflight::Overflow(
+                RebalanceCollisionBucketOverflow::Rows,
+            ));
+        }
+        if self.range_planner.resolution == Resolution::U32 && hash_number > MAX_U32 {
+            return Err(SharedLogError::RebalanceCollisionBucketResolutionMismatch);
+        }
+
+        let coordinate_width = match self.range_planner.resolution {
+            Resolution::U32 => 4,
+            Resolution::U64 => 8,
+        };
+        for hash in hashes {
+            if hash.is_empty() {
+                return Err(SharedLogError::RebalanceCollisionBucketIndexInconsistent);
+            }
+            if hash.len() > limits.max_identifier_bytes {
+                return Ok(RebalanceCollisionBucketPreflight::Overflow(
+                    RebalanceCollisionBucketOverflow::Identifier,
+                ));
+            }
+        }
+        let mut identifier_bytes = 0usize;
+        for hash in hashes {
+            identifier_bytes = identifier_bytes
+                .checked_add(hash.len())
+                .ok_or(SharedLogError::RebalanceCollisionBucketAccountingOverflow)?;
+            if identifier_bytes > limits.max_identifier_bytes_total {
+                return Ok(RebalanceCollisionBucketPreflight::Overflow(
+                    RebalanceCollisionBucketOverflow::IdentifierBytes,
+                ));
+            }
+        }
+        let mut coordinate_values = 0usize;
+        for hash in hashes {
+            let entry = self
+                .entry_coordinates
+                .get(hash)
+                .ok_or(SharedLogError::RebalanceCollisionBucketIndexInconsistent)?;
+            if entry.hash_number != hash_number {
+                return Err(SharedLogError::RebalanceCollisionBucketIndexInconsistent);
+            }
+            coordinate_values = coordinate_values
+                .checked_add(entry.coordinates.len())
+                .ok_or(SharedLogError::RebalanceCollisionBucketAccountingOverflow)?;
+            if coordinate_values > limits.max_coordinate_values {
+                return Ok(RebalanceCollisionBucketPreflight::Overflow(
+                    RebalanceCollisionBucketOverflow::CoordinateValues,
+                ));
+            }
+        }
+        let coordinate_bytes = coordinate_values
+            .checked_mul(coordinate_width)
+            .ok_or(SharedLogError::RebalanceCollisionBucketAccountingOverflow)?;
+        if coordinate_bytes > limits.max_coordinate_bytes {
+            return Ok(RebalanceCollisionBucketPreflight::Overflow(
+                RebalanceCollisionBucketOverflow::CoordinateBytes,
+            ));
+        }
+        // Logical returned bytes are the bucket key, UTF-8 identifiers, one
+        // boundary byte per row, and fixed-width coordinates.
+        let bytes = coordinate_width
+            .checked_add(identifier_bytes)
+            .and_then(|value| value.checked_add(hashes.len()))
+            .and_then(|value| value.checked_add(coordinate_bytes))
+            .ok_or(SharedLogError::RebalanceCollisionBucketAccountingOverflow)?;
+        if bytes > limits.max_bytes {
+            return Ok(RebalanceCollisionBucketPreflight::Overflow(
+                RebalanceCollisionBucketOverflow::Bytes,
+            ));
+        }
+        if self.range_planner.resolution == Resolution::U32 {
+            for hash in hashes {
+                let entry = self
+                    .entry_coordinates
+                    .get(hash)
+                    .ok_or(SharedLogError::RebalanceCollisionBucketIndexInconsistent)?;
+                // Coordinate contents are scanned only after their total count
+                // and byte width have passed the caller and native hard caps.
+                if entry.coordinates.iter().any(|value| *value > MAX_U32) {
+                    return Err(SharedLogError::RebalanceCollisionBucketResolutionMismatch);
+                }
+            }
+        }
+        Ok(RebalanceCollisionBucketPreflight::Bucket {
+            hash_number,
+            rows: hashes.len(),
+            identifier_bytes,
+            coordinate_values,
+            coordinate_bytes,
+            bytes,
+        })
+    }
+}
+
+fn validate_rebalance_collision_bucket_limits(
+    limits: RebalanceCollisionBucketLimits,
+) -> Result<(), SharedLogError> {
+    let valid = [
+        (
+            limits.max_rows,
+            MAX_REBALANCE_COLLISION_BUCKET_ROWS,
+            "maxRows",
+        ),
+        (
+            limits.max_identifier_bytes,
+            MAX_REBALANCE_COLLISION_BUCKET_IDENTIFIER_BYTES,
+            "maxIdentifierBytes",
+        ),
+        (
+            limits.max_identifier_bytes_total,
+            MAX_REBALANCE_COLLISION_BUCKET_BYTES,
+            "maxIdentifierBytesTotal",
+        ),
+        (
+            limits.max_coordinate_values,
+            MAX_REBALANCE_COLLISION_BUCKET_COORDINATE_VALUES,
+            "maxCoordinateValues",
+        ),
+        (
+            limits.max_coordinate_bytes,
+            MAX_REBALANCE_COLLISION_BUCKET_BYTES,
+            "maxCoordinateBytes",
+        ),
+        (
+            limits.max_bytes,
+            MAX_REBALANCE_COLLISION_BUCKET_BYTES,
+            "maxBytes",
+        ),
+    ];
+    for (value, maximum, label) in valid {
+        if value == 0 || value > maximum {
+            return Err(SharedLogError::InvalidRebalanceCollisionBucketLimit(label));
+        }
+    }
+    Ok(())
 }
 
 #[wasm_bindgen]
@@ -2482,6 +2698,99 @@ impl NativeSharedLogState {
 
     pub fn entry_hashes_for_hash_numbers_flat_u64(&self, hash_numbers: BigUint64Array) -> Array {
         self.entry_hashes_for_hash_number_values_flat(hash_numbers.to_vec())
+    }
+
+    /// Reads the complete smallest physical hash-number collision bucket
+    /// strictly after `after_hash_number`. Status row 0 is authoritative EOF,
+    /// status 1 is a complete bucket, and status 2 identifies the exceeded
+    /// preflight limit. All limits are checked before any candidate JS output
+    /// exists.
+    #[allow(clippy::too_many_arguments)]
+    pub fn read_next_rebalance_collision_bucket(
+        &self,
+        after_hash_number: Option<String>,
+        max_rows: usize,
+        max_identifier_bytes: usize,
+        max_identifier_bytes_total: usize,
+        max_coordinate_values: usize,
+        max_coordinate_bytes: usize,
+        max_bytes: usize,
+    ) -> Result<Array, JsValue> {
+        let after_hash_number = after_hash_number
+            .map(|value| parse_u64(&value))
+            .transpose()?;
+        let preflight = self.inner.preflight_next_rebalance_collision_bucket(
+            after_hash_number,
+            RebalanceCollisionBucketLimits {
+                max_rows,
+                max_identifier_bytes,
+                max_identifier_bytes_total,
+                max_coordinate_values,
+                max_coordinate_bytes,
+                max_bytes,
+            },
+        )?;
+        let out = Array::new();
+        match preflight {
+            RebalanceCollisionBucketPreflight::Eof => {
+                out.push(&JsValue::from_f64(0.0));
+            }
+            RebalanceCollisionBucketPreflight::Overflow(overflow) => {
+                out.push(&JsValue::from_f64(2.0));
+                out.push(&JsValue::from_str(overflow.code()));
+            }
+            RebalanceCollisionBucketPreflight::Bucket {
+                hash_number,
+                rows,
+                identifier_bytes,
+                coordinate_values,
+                coordinate_bytes,
+                bytes,
+            } => {
+                let hashes = self
+                    .inner
+                    .entry_hashes_by_hash_number
+                    .get(&hash_number)
+                    .ok_or(SharedLogError::RebalanceCollisionBucketIndexInconsistent)?;
+                if hashes.len() != rows {
+                    return Err(SharedLogError::RebalanceCollisionBucketIndexInconsistent.into());
+                }
+                // Sorting occurs only after the whole bucket passed every cap.
+                let mut ordered_hashes: Vec<&str> = hashes.iter().map(String::as_str).collect();
+                ordered_hashes.sort_unstable();
+                let candidates = Array::new();
+                for hash in ordered_hashes {
+                    let entry = self
+                        .inner
+                        .entry_coordinates
+                        .get(hash)
+                        .ok_or(SharedLogError::RebalanceCollisionBucketIndexInconsistent)?;
+                    let coordinates = Array::new();
+                    for coordinate in &entry.coordinates {
+                        coordinates.push(&number_to_row(
+                            *coordinate,
+                            self.inner.range_planner.resolution,
+                        ));
+                    }
+                    let candidate = Array::new();
+                    candidate.push(&JsValue::from_str(hash));
+                    candidate.push(&coordinates);
+                    candidate.push(&JsValue::from_bool(entry.assigned_to_range_boundary));
+                    candidates.push(&candidate);
+                }
+                out.push(&JsValue::from_f64(1.0));
+                out.push(&number_to_row(
+                    hash_number,
+                    self.inner.range_planner.resolution,
+                ));
+                out.push(&JsValue::from_f64(bytes as f64));
+                out.push(&JsValue::from_f64(identifier_bytes as f64));
+                out.push(&JsValue::from_f64(coordinate_values as f64));
+                out.push(&JsValue::from_f64(coordinate_bytes as f64));
+                out.push(&candidates);
+            }
+        }
+        Ok(out)
     }
 
     fn entry_hashes_for_hash_number_values(&self, hash_numbers: Vec<u64>) -> Array {
@@ -4242,10 +4551,23 @@ fn samples_to_rows(samples: Vec<LeaderSample>) -> Array {
 #[cfg(test)]
 mod tests {
     use super::{
-        find_leaders_with_prepared_options, LeaderSample, NativeSharedLogState, RangePlanner,
-        ReplicationRange, SampleOptions, SharedLogError, MAX_U64,
+        find_leaders_with_prepared_options, EntryCoordinateState, LeaderSample,
+        NativeSharedLogState, RangePlanner, RebalanceCollisionBucketLimits,
+        RebalanceCollisionBucketOverflow, RebalanceCollisionBucketPreflight, ReplicationRange,
+        SampleOptions, SharedLogError, MAX_U32, MAX_U64,
     };
     use indexmap::IndexSet;
+
+    fn rebalance_bucket_limits() -> RebalanceCollisionBucketLimits {
+        RebalanceCollisionBucketLimits {
+            max_rows: 1024,
+            max_identifier_bytes: 512,
+            max_identifier_bytes_total: 4 * 1024 * 1024,
+            max_coordinate_values: 1024 * 100,
+            max_coordinate_bytes: 4 * 1024 * 1024,
+            max_bytes: 4 * 1024 * 1024,
+        }
+    }
 
     #[test]
     fn returns_intersecting_leader() {
@@ -4961,6 +5283,165 @@ mod tests {
         assert_eq!(
             error.to_string(),
             "Mismatched gid leader batch input lengths"
+        );
+    }
+
+    #[test]
+    fn rebalance_bucket_preflight_handles_max_u64_and_exact_byte_cap() {
+        let mut state = NativeSharedLogState::new("u64".to_string());
+        state.inner.put_entry_coordinate_state(
+            "h".to_string(),
+            EntryCoordinateState {
+                gid: "g".to_string(),
+                hash_number: MAX_U64,
+                coordinates: vec![MAX_U64],
+                assigned_to_range_boundary: true,
+                requested_replicas: 1,
+            },
+        );
+        let mut exact = rebalance_bucket_limits();
+        // u64 key + one identifier + one boundary byte + one u64 coordinate.
+        exact.max_bytes = 18;
+        assert_eq!(
+            state
+                .inner
+                .preflight_next_rebalance_collision_bucket(None, exact)
+                .unwrap(),
+            RebalanceCollisionBucketPreflight::Bucket {
+                hash_number: MAX_U64,
+                rows: 1,
+                identifier_bytes: 1,
+                coordinate_values: 1,
+                coordinate_bytes: 8,
+                bytes: 18,
+            }
+        );
+        exact.max_bytes = 17;
+        assert_eq!(
+            state
+                .inner
+                .preflight_next_rebalance_collision_bucket(None, exact)
+                .unwrap(),
+            RebalanceCollisionBucketPreflight::Overflow(RebalanceCollisionBucketOverflow::Bytes)
+        );
+        assert_eq!(
+            state
+                .inner
+                .preflight_next_rebalance_collision_bucket(Some(MAX_U64), rebalance_bucket_limits())
+                .unwrap(),
+            RebalanceCollisionBucketPreflight::Eof
+        );
+    }
+
+    #[test]
+    fn rebalance_bucket_preflight_rejects_corrupt_indexes_and_u32_values() {
+        let mut missing = NativeSharedLogState::new("u32".to_string());
+        missing
+            .inner
+            .entry_hashes_by_hash_number
+            .entry(1)
+            .or_default()
+            .insert("ghost".to_string());
+        assert_eq!(
+            missing
+                .inner
+                .preflight_next_rebalance_collision_bucket(None, rebalance_bucket_limits())
+                .unwrap_err(),
+            SharedLogError::RebalanceCollisionBucketIndexInconsistent
+        );
+
+        let mut mismatched = NativeSharedLogState::new("u32".to_string());
+        mismatched.inner.put_entry_coordinate_state(
+            "head".to_string(),
+            EntryCoordinateState {
+                gid: "g".to_string(),
+                hash_number: 1,
+                coordinates: vec![1],
+                assigned_to_range_boundary: false,
+                requested_replicas: 1,
+            },
+        );
+        mismatched
+            .inner
+            .entry_coordinates
+            .get_mut("head")
+            .unwrap()
+            .hash_number = 2;
+        assert_eq!(
+            mismatched
+                .inner
+                .preflight_next_rebalance_collision_bucket(None, rebalance_bucket_limits())
+                .unwrap_err(),
+            SharedLogError::RebalanceCollisionBucketIndexInconsistent
+        );
+
+        let mut resolution = NativeSharedLogState::new("u32".to_string());
+        resolution.inner.put_entry_coordinate_state(
+            "head".to_string(),
+            EntryCoordinateState {
+                gid: "g".to_string(),
+                hash_number: 1,
+                coordinates: vec![MAX_U32 + 1],
+                assigned_to_range_boundary: false,
+                requested_replicas: 1,
+            },
+        );
+        assert_eq!(
+            resolution
+                .inner
+                .preflight_next_rebalance_collision_bucket(None, rebalance_bucket_limits())
+                .unwrap_err(),
+            SharedLogError::RebalanceCollisionBucketResolutionMismatch
+        );
+
+        let mut oversized_coordinates = NativeSharedLogState::new("u32".to_string());
+        oversized_coordinates.inner.put_entry_coordinate_state(
+            "oversized".to_string(),
+            EntryCoordinateState {
+                gid: "g".to_string(),
+                hash_number: 1,
+                coordinates: vec![MAX_U32 + 1; 1024 * 100 + 1],
+                assigned_to_range_boundary: false,
+                requested_replicas: 1,
+            },
+        );
+        assert_eq!(
+            oversized_coordinates
+                .inner
+                .preflight_next_rebalance_collision_bucket(None, rebalance_bucket_limits())
+                .unwrap(),
+            RebalanceCollisionBucketPreflight::Overflow(
+                RebalanceCollisionBucketOverflow::CoordinateValues
+            )
+        );
+
+        let mut oversized_hash_number = NativeSharedLogState::new("u32".to_string());
+        oversized_hash_number.inner.put_entry_coordinate_state(
+            "head".to_string(),
+            EntryCoordinateState {
+                gid: "g".to_string(),
+                hash_number: MAX_U32 + 1,
+                coordinates: vec![1],
+                assigned_to_range_boundary: false,
+                requested_replicas: 1,
+            },
+        );
+        assert_eq!(
+            oversized_hash_number
+                .inner
+                .preflight_next_rebalance_collision_bucket(None, rebalance_bucket_limits())
+                .unwrap_err(),
+            SharedLogError::RebalanceCollisionBucketResolutionMismatch
+        );
+        assert_eq!(
+            resolution
+                .inner
+                .preflight_next_rebalance_collision_bucket(
+                    Some(MAX_U32 + 1),
+                    rebalance_bucket_limits()
+                )
+                .unwrap_err(),
+            SharedLogError::RebalanceCollisionBucketResolutionMismatch
         );
     }
 

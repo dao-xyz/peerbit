@@ -9,6 +9,75 @@ export * from "./durability/storage.js";
 
 export type RangeResolution = "u32" | "u64";
 
+export type NativeRebalanceCollisionBucketLimits = Readonly<{
+	maxRows: number;
+	maxIdentifierBytes: number;
+	maxIdentifierBytesTotal: number;
+	maxCoordinateValues: number;
+	maxCoordinateBytes: number;
+	maxBytes: number;
+}>;
+
+export const MAX_NATIVE_REBALANCE_COLLISION_BUCKET_LIMITS: NativeRebalanceCollisionBucketLimits =
+	Object.freeze({
+		maxRows: 1024,
+		maxIdentifierBytes: 512,
+		maxIdentifierBytesTotal: 4 * 1024 * 1024,
+		maxCoordinateValues: 1024 * 100,
+		maxCoordinateBytes: 4 * 1024 * 1024,
+		maxBytes: 4 * 1024 * 1024,
+	});
+
+export type NativeRebalanceCollisionBucketOverflowCode =
+	| "rows"
+	| "identifier"
+	| "identifier-bytes"
+	| "coordinate-values"
+	| "coordinate-bytes"
+	| "bytes";
+
+export class NativeRebalanceCollisionBucketOverflowError extends Error {
+	constructor(readonly code: NativeRebalanceCollisionBucketOverflowCode) {
+		super(`Native rebalance collision bucket exceeded ${code}`);
+		this.name = "NativeRebalanceCollisionBucketOverflowError";
+	}
+}
+
+type NativeRebalanceCollisionBucketResultFor<R extends RangeResolution> =
+	| Readonly<{
+			resolution: R;
+			eof: true;
+			visited: 0;
+			results: 0;
+			bytes: 0;
+			identifierBytes: 0;
+			coordinateValues: 0;
+			coordinateBytes: 0;
+			candidates: readonly [];
+	  }>
+	| Readonly<{
+			resolution: R;
+			eof: false;
+			hashNumber: R extends "u64" ? bigint : number;
+			visited: number;
+			results: number;
+			bytes: number;
+			identifierBytes: number;
+			coordinateValues: number;
+			coordinateBytes: number;
+			candidates: ReadonlyArray<
+				Readonly<{
+					hash: string;
+					coordinates: ReadonlyArray<R extends "u64" ? bigint : number>;
+					assignedToRangeBoundary: boolean;
+				}>
+			>;
+	  }>;
+
+export type NativeRebalanceCollisionBucketResult =
+	| NativeRebalanceCollisionBucketResultFor<"u32">
+	| NativeRebalanceCollisionBucketResultFor<"u64">;
+
 type NativePeerbitBackboneHandle = {
 	log_len: () => number;
 	block_len: () => number;
@@ -61,6 +130,15 @@ type NativePeerbitBackboneHandle = {
 		start2: string,
 		end2: string,
 	) => BigUint64Array;
+	read_next_rebalance_collision_bucket: (
+		afterHashNumber: string | undefined,
+		maxRows: number,
+		maxIdentifierBytes: number,
+		maxIdentifierBytesTotal: number,
+		maxCoordinateValues: number,
+		maxCoordinateBytes: number,
+		maxBytes: number,
+	) => unknown[];
 	count_entry_coordinates_in_ranges: (
 		start1: string[],
 		end1: string[],
@@ -3379,6 +3457,70 @@ const rowsToHashNumberMap = (rows: unknown[]): Map<bigint, string[]> => {
 	return out;
 };
 
+const rebalanceCollisionBucketOverflowCodes =
+	new Set<NativeRebalanceCollisionBucketOverflowCode>([
+		"rows",
+		"identifier",
+		"identifier-bytes",
+		"coordinate-values",
+		"coordinate-bytes",
+		"bytes",
+	]);
+
+const rebalanceCollisionBucketFromRow = (
+	resolution: RangeResolution,
+	row: unknown[],
+): NativeRebalanceCollisionBucketResult => {
+	const status = row[0];
+	if (status === 2) {
+		const code = row[1] as NativeRebalanceCollisionBucketOverflowCode;
+		if (!rebalanceCollisionBucketOverflowCodes.has(code)) {
+			throw new Error("Invalid native rebalance collision bucket overflow");
+		}
+		throw new NativeRebalanceCollisionBucketOverflowError(code);
+	}
+	if (status === 0) {
+		return {
+			resolution,
+			eof: true,
+			visited: 0,
+			results: 0,
+			bytes: 0,
+			identifierBytes: 0,
+			coordinateValues: 0,
+			coordinateBytes: 0,
+			candidates: [],
+		} as NativeRebalanceCollisionBucketResult;
+	}
+	if (status !== 1 || !Array.isArray(row[6])) {
+		throw new Error("Invalid native rebalance collision bucket result");
+	}
+	const candidates = row[6].map((value) => {
+		const [hash, coordinateRows, assignedToRangeBoundary] = value as [
+			string,
+			unknown[],
+			boolean,
+		];
+		return {
+			hash,
+			coordinates: rowsToNumbers(resolution, coordinateRows),
+			assignedToRangeBoundary,
+		};
+	});
+	return {
+		resolution,
+		eof: false,
+		hashNumber: rowsToNumbers(resolution, [row[1]])[0]!,
+		visited: candidates.length,
+		results: candidates.length,
+		bytes: row[2] as number,
+		identifierBytes: row[3] as number,
+		coordinateValues: row[4] as number,
+		coordinateBytes: row[5] as number,
+		candidates,
+	} as NativeRebalanceCollisionBucketResult;
+};
+
 const rowsToSamples = (
 	rows: unknown[] | undefined,
 ): Map<string, NativeBackboneLeaderSample> | undefined => {
@@ -5654,6 +5796,67 @@ const integerString = (value: bigint | number | string): string =>
 			? Math.trunc(value).toString()
 			: value.toString();
 
+const MAX_NATIVE_REBALANCE_U32 = 0xffff_ffffn;
+const MAX_NATIVE_REBALANCE_U64 = 0xffff_ffff_ffff_ffffn;
+const canonicalUnsignedInteger = /^(0|[1-9][0-9]*)$/;
+
+const rebalanceCollisionBucketCursor = (
+	resolution: RangeResolution,
+	value: bigint | number | string | undefined,
+): string | undefined => {
+	if (value == null) return undefined;
+	const maximum =
+		resolution === "u32" ? MAX_NATIVE_REBALANCE_U32 : MAX_NATIVE_REBALANCE_U64;
+	let parsed: bigint;
+	if (typeof value === "string") {
+		const maximumDigits = resolution === "u32" ? 10 : 20;
+		if (
+			value.length === 0 ||
+			value.length > maximumDigits ||
+			!canonicalUnsignedInteger.test(value)
+		) {
+			throw new Error("Invalid native rebalance collision bucket cursor");
+		}
+		parsed = BigInt(value);
+	} else if (typeof value === "bigint") {
+		parsed = value;
+	} else {
+		if (!Number.isSafeInteger(value) || value < 0) {
+			throw new Error("Invalid native rebalance collision bucket cursor");
+		}
+		parsed = BigInt(value);
+	}
+	if (parsed < 0n || parsed > maximum) {
+		throw new Error("Invalid native rebalance collision bucket cursor");
+	}
+	return parsed.toString();
+};
+
+const rebalanceCollisionBucketLimits = (
+	limits: NativeRebalanceCollisionBucketLimits,
+): NativeRebalanceCollisionBucketLimits => {
+	if (!limits || typeof limits !== "object") {
+		throw new Error("Invalid native rebalance collision bucket limits");
+	}
+	const out = {} as Record<keyof NativeRebalanceCollisionBucketLimits, number>;
+	for (const name of Object.keys(
+		MAX_NATIVE_REBALANCE_COLLISION_BUCKET_LIMITS,
+	) as Array<keyof NativeRebalanceCollisionBucketLimits>) {
+		const value = limits[name];
+		if (
+			!Number.isSafeInteger(value) ||
+			value <= 0 ||
+			value > MAX_NATIVE_REBALANCE_COLLISION_BUCKET_LIMITS[name]
+		) {
+			throw new Error(
+				`Invalid native rebalance collision bucket limit: ${name}`,
+			);
+		}
+		out[name] = value;
+	}
+	return out as NativeRebalanceCollisionBucketLimits;
+};
+
 const iterableToArray = <T>(values?: Iterable<T>): T[] => {
 	if (!values) {
 		return [];
@@ -6290,6 +6493,30 @@ export class NativePeerbitBackbone {
 		return coordinates
 			? rowsToNumbers(this.resolution, coordinates)
 			: undefined;
+	}
+
+	/**
+	 * Returns one complete physical collision bucket in hash-number keyset
+	 * order. Successful `visited` and `results` are both the exact bucket size;
+	 * oversize buckets throw before exposing a partial prefix.
+	 */
+	readNextRebalanceCollisionBucket(
+		afterHashNumber: bigint | number | string | undefined,
+		limits: NativeRebalanceCollisionBucketLimits,
+	): NativeRebalanceCollisionBucketResult {
+		const bounded = rebalanceCollisionBucketLimits(limits);
+		return rebalanceCollisionBucketFromRow(
+			this.resolution,
+			this.native.read_next_rebalance_collision_bucket(
+				rebalanceCollisionBucketCursor(this.resolution, afterHashNumber),
+				bounded.maxRows,
+				bounded.maxIdentifierBytes,
+				bounded.maxIdentifierBytesTotal,
+				bounded.maxCoordinateValues,
+				bounded.maxCoordinateBytes,
+				bounded.maxBytes,
+			),
+		);
 	}
 
 	getEntryHashesForHashNumbers(
