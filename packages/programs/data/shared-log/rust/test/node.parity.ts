@@ -20,7 +20,9 @@ type AnyRange = {
 	mode: number;
 };
 type SharedLogModules = {
-	bytesToNumber: (resolution: Resolution) => (bytes: Uint8Array) => number | bigint;
+	bytesToNumber: (
+		resolution: Resolution,
+	) => (bytes: Uint8Array) => number | bigint;
 	createNumbers: (resolution: Resolution) => any;
 	denormalizer: (resolution: Resolution) => (value: number) => number | bigint;
 	ReplicationIntent: {
@@ -48,10 +50,8 @@ const loadSharedLog = async (): Promise<SharedLogModules> => {
 	if (!sharedLog) {
 		const integersPath = "../../../dist/src/integers.js";
 		const rangesPath = "../../../dist/src/ranges.js";
-		const [{ bytesToNumber, createNumbers, denormalizer }, ranges] = await Promise.all([
-			import(integersPath),
-			import(rangesPath),
-		]);
+		const [{ bytesToNumber, createNumbers, denormalizer }, ranges] =
+			await Promise.all([import(integersPath), import(rangesPath)]);
 		sharedLog = {
 			bytesToNumber,
 			createNumbers,
@@ -105,6 +105,29 @@ const createRange = (
 	});
 };
 
+const createExactRange = (
+	resolution: Resolution,
+	properties: {
+		id: number;
+		hash: string;
+		offset: number;
+		width: number;
+		timestamp?: bigint;
+		mode?: number;
+	},
+): AnyRange => {
+	const value = (input: number) =>
+		resolution === "u32" ? input : BigInt(input);
+	return new (rangeClass(resolution) as any)({
+		id: deterministicId(properties.id),
+		publicKeyHash: properties.hash,
+		offset: value(properties.offset),
+		width: value(properties.width),
+		timestamp: properties.timestamp,
+		mode: properties.mode,
+	});
+};
+
 const toNativeRange = (range: AnyRange): NativeReplicationRange => ({
 	id: range.idString,
 	hash: range.hash,
@@ -117,8 +140,9 @@ const toNativeRange = (range: AnyRange): NativeReplicationRange => ({
 	mode: range.mode,
 });
 
-const mapEntries = (map: Map<string, { intersecting: boolean }>) =>
-	[...map.entries()];
+const mapEntries = (map: Map<string, { intersecting: boolean }>) => [
+	...map.entries(),
+];
 
 const sortedMapEntries = (map: Map<string, { intersecting: boolean }>) =>
 	mapEntries(map).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
@@ -209,6 +233,7 @@ const expectNativeParity = async (
 			mapEntries(actual),
 			properties.message,
 		);
+		return actual;
 	} finally {
 		await indices.stop();
 	}
@@ -392,6 +417,77 @@ describe("native shared-log range planner parity", () => {
 			});
 		});
 
+		it(`matches exact cross-direction fallback ties for ${resolution}`, async () => {
+			const below = createExactRange(resolution, {
+				id: 1,
+				hash: "peer-z",
+				offset: 40,
+				width: 5,
+				timestamp: 0n,
+			});
+			const above = createExactRange(resolution, {
+				id: 2,
+				hash: "peer-a",
+				offset: 55,
+				width: 5,
+				timestamp: 0n,
+			});
+			const cursor = resolution === "u32" ? 50 : 50n;
+
+			for (const ranges of [
+				[below, above],
+				[above, below],
+			]) {
+				const actual = await expectNativeParity(resolution, {
+					ranges,
+					cursors: [cursor],
+					ignoreOrder: true,
+				});
+				expect(mapEntries(actual)).to.deep.equal([
+					["peer-a", { intersecting: false }],
+				]);
+			}
+		});
+
+		it(`keeps metadata ascending within a descending coordinate tie for ${resolution}`, async () => {
+			const belowA = createExactRange(resolution, {
+				id: 1,
+				hash: "peer-a",
+				offset: 40,
+				width: 5,
+				timestamp: 0n,
+			});
+			const belowZ = createExactRange(resolution, {
+				id: 2,
+				hash: "peer-z",
+				offset: 40,
+				width: 5,
+				timestamp: 0n,
+			});
+			const fartherAbove = createExactRange(resolution, {
+				id: 3,
+				hash: "peer-m",
+				offset: 100,
+				width: 5,
+				timestamp: 0n,
+			});
+			const cursor = resolution === "u32" ? 50 : 50n;
+
+			for (const ranges of [
+				[belowA, belowZ, fartherAbove],
+				[belowZ, belowA, fartherAbove],
+			]) {
+				const actual = await expectNativeParity(resolution, {
+					ranges,
+					cursors: [cursor],
+					ignoreOrder: true,
+				});
+				expect(mapEntries(actual)).to.deep.equal([
+					["peer-a", { intersecting: false }],
+				]);
+			}
+		});
+
 		it(`matches TypeScript only-intersecting behavior for ${resolution}`, async () => {
 			const ranges = [
 				createRange(resolution, {
@@ -452,6 +548,47 @@ describe("native shared-log range planner parity", () => {
 				cursors: [denormalize(0.5)],
 				roleAge,
 			});
+		});
+
+		it(`counts mature evidence for an existing owner in any put order for ${resolution}`, async () => {
+			const now = Date.now();
+			const immature = createExactRange(resolution, {
+				id: 1,
+				hash: "peer-a",
+				offset: 40,
+				width: 20,
+				timestamp: BigInt(now + MATURITY_MARGIN_MS),
+			});
+			const mature = createExactRange(resolution, {
+				id: 2,
+				hash: "peer-a",
+				offset: 40,
+				width: 20,
+				timestamp: 0n,
+			});
+			const fallback = createExactRange(resolution, {
+				id: 3,
+				hash: "peer-b",
+				offset: 70,
+				width: 10,
+				timestamp: 0n,
+			});
+			const cursor = resolution === "u32" ? 50 : 50n;
+
+			for (const ranges of [
+				[immature, mature, fallback],
+				[mature, immature, fallback],
+			]) {
+				const actual = await expectNativeParity(resolution, {
+					ranges,
+					cursors: [cursor],
+					roleAge: 100,
+					ignoreOrder: true,
+				});
+				expect(mapEntries(actual)).to.deep.equal([
+					["peer-a", { intersecting: true }],
+				]);
+			}
 		});
 
 		it(`matches TypeScript boundary maturity classification around the cutoff for ${resolution}`, async () => {
