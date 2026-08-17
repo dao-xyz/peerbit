@@ -2264,6 +2264,7 @@ export class SharedLog<
 	// BEFORE the fresh lifecycle is installed, preserving the legacy
 	// ordering: a synchronous abort listener observes pre-rotation state.
 	private startRepairLifecycle(): AbortController {
+		this._v2Receive?.invalidateCurrentRemoteOwnerProvenance();
 		this._instanceLifecycle?.abortOwnership();
 		this._instanceLifecycle = this.createInstanceLifecycle();
 		this.clearCheckedPruneAuditTimer();
@@ -2271,6 +2272,7 @@ export class SharedLog<
 	}
 
 	private stopRepairLifecycle(): void {
+		this._v2Receive?.invalidateCurrentRemoteOwnerProvenance();
 		this._instanceLifecycle?.abortOwnership();
 	}
 
@@ -3575,6 +3577,13 @@ export class SharedLog<
 	private createReplicationInfoV2ReceiveCoordinator(): ReplicationInfoV2ReceiveCoordinator {
 		return new ReplicationInfoV2ReceiveCoordinator({
 			getSelfKey: () => this.node.identity.publicKey,
+			isOwnershipActive: () => {
+				const lifecycle = this._instanceLifecycle;
+				return (
+					lifecycle !== undefined &&
+					this.isRepairLifecycleActive(lifecycle.ownershipLifecycleController)
+				);
+			},
 			getReceiverTransportSession: () =>
 				BigInt(
 					(this.node.services.pubsub as unknown as { session: number }).session,
@@ -6706,7 +6715,9 @@ export class SharedLog<
 		options?: {
 			onRemoved?: (ranges: ReplicationRangeIndexable<R>[]) => void;
 			shouldRemove?: () => boolean;
+			onMutationStarted?: () => boolean | void;
 			onDurableRemoveCommitted?: () => boolean | void;
+			onMutationFinalized?: () => boolean | void;
 		},
 		replicationOwnershipLifecycleController = this.captureReplicationOwnershipLifecycle(),
 	): Promise<boolean> {
@@ -6725,13 +6736,25 @@ export class SharedLog<
 		options?: {
 			onRemoved?: (ranges: ReplicationRangeIndexable<R>[]) => void;
 			shouldRemove?: () => boolean;
+			onMutationStarted?: () => boolean | void;
 			onDurableRemoveCommitted?: () => boolean | void;
+			onMutationFinalized?: () => boolean | void;
 		},
 	): Promise<boolean> {
-		if (ranges.length === 0) {
+		if (options?.shouldRemove && !options.shouldRemove()) {
 			return false;
 		}
-		if (options?.shouldRemove && !options.shouldRemove()) {
+		if (options?.onMutationStarted?.() === false) {
+			return false;
+		}
+		const finalizeNoop = () => {
+			if (options?.onDurableRemoveCommitted?.() === false) {
+				return false;
+			}
+			return options?.onMutationFinalized?.() !== false;
+		};
+		if (ranges.length === 0) {
+			finalizeNoop();
 			return false;
 		}
 		const expectedRangeById = new Map(
@@ -6771,10 +6794,11 @@ export class SharedLog<
 			}
 		}
 		ranges = refreshedRanges;
-		if (
-			ranges.length === 0 ||
-			(options?.shouldRemove && !options.shouldRemove())
-		) {
+		if (options?.shouldRemove && !options.shouldRemove()) {
+			return false;
+		}
+		if (ranges.length === 0) {
+			finalizeNoop();
 			return false;
 		}
 		const deletion = await this.deleteReplicationRangesCoherently(
@@ -6815,6 +6839,7 @@ export class SharedLog<
 			}
 			throw deletion.error;
 		}
+		options?.onMutationFinalized?.();
 		return ranges.length > 0;
 	}
 
@@ -6874,7 +6899,9 @@ export class SharedLog<
 			timestamp?: number;
 			allowOrderedReplacementPairs?: boolean;
 			onConfirmedDurableStateChanged?: () => void;
+			onMutationStarted?: () => boolean | void;
 			onDurableApplyCommitted?: () => boolean | void;
+			onMutationFinalized?: () => boolean | void;
 			shouldApply?: () => boolean;
 		} = {},
 		replicationOwnershipLifecycleController = this.captureReplicationOwnershipLifecycle(),
@@ -6916,7 +6943,9 @@ export class SharedLog<
 			rebalance,
 			allowOrderedReplacementPairs,
 			onConfirmedDurableStateChanged,
+			onMutationStarted,
 			onDurableApplyCommitted,
+			onMutationFinalized,
 			shouldApply,
 		}: {
 			reset?: boolean;
@@ -6925,7 +6954,9 @@ export class SharedLog<
 			timestamp?: number;
 			allowOrderedReplacementPairs?: boolean;
 			onConfirmedDurableStateChanged?: () => void;
+			onMutationStarted?: () => boolean | void;
 			onDurableApplyCommitted?: () => boolean | void;
+			onMutationFinalized?: () => boolean | void;
 			shouldApply?: () => boolean;
 		} = {},
 		replicationOwnershipLifecycleController = this.captureReplicationOwnershipLifecycle(),
@@ -6938,6 +6969,9 @@ export class SharedLog<
 		// An adaptive update delayed by authorization must not commit after a newer
 		// full unreplication already completed in that lane.
 		if (shouldApply && !shouldApply()) {
+			return [];
+		}
+		if (onMutationStarted?.() === false) {
 			return [];
 		}
 		const applySuperseded = Symbol("replication-range-apply-superseded");
@@ -7498,6 +7532,7 @@ export class SharedLog<
 				}),
 			);
 		}
+		onMutationFinalized?.();
 		return diffs;
 	}
 
@@ -12943,9 +12978,7 @@ export class SharedLog<
 		}
 		// Success seam: `rollbackBatch` has exactly one call site (the catch
 		// above), and everything from here on escapes without any rollback.
-		this._coordinates.settleResidentCoordinateSnapshot(
-			batchCoordinateRollback,
-		);
+		this._coordinates.settleResidentCoordinateSnapshot(batchCoordinateRollback);
 
 		this.throwIfReplicationOwnershipLifecycleInactive(
 			ownershipLifecycleController,
@@ -15710,13 +15743,12 @@ export class SharedLog<
 			this.topic,
 		);
 		// We do this here, because these calls requires this.closed == false
-		void this.pruneOfflineReplicators()
-			.catch((error) => {
-				if (isNotStartedError(error as Error)) {
-					return;
-				}
-				logger.error(error);
-			});
+		void this.pruneOfflineReplicators().catch((error) => {
+			if (isNotStartedError(error as Error)) {
+				return;
+			}
+			logger.error(error);
+		});
 
 		this._liveness.startReplicatorLivenessSweep();
 
@@ -19253,24 +19285,30 @@ export class SharedLog<
 								);
 							}
 							if (syncProfile) {
-								emitSyncProfileDuration(syncProfile, coordinatePersistStartedAt, {
-									name: "sharedLog.receive.coordinatePersist",
-									component: "shared-log",
-									entries: entriesToPersist.length,
-									messages: 1,
-									details: {
-										reusedLeaderPlans: reusableCoordinatePersistItemCount,
-										nativeBackboneOnly:
-											nativeBackboneOnlyPersistedHashes?.size ?? 0,
+								emitSyncProfileDuration(
+									syncProfile,
+									coordinatePersistStartedAt,
+									{
+										name: "sharedLog.receive.coordinatePersist",
+										component: "shared-log",
+										entries: entriesToPersist.length,
+										messages: 1,
+										details: {
+											reusedLeaderPlans: reusableCoordinatePersistItemCount,
+											nativeBackboneOnly:
+												nativeBackboneOnlyPersistedHashes?.size ?? 0,
+										},
 									},
-								});
+								);
 							}
 							for (const hash of admittedHashes) {
 								confirmedHashes.add(hash);
 							}
 							const checkedPruneStartedAt = syncProfileStart(syncProfile);
 							const ownershipChangedDuringReceive =
-								!this.isReceiveOwnershipSnapshotStable(receiveOwnershipRevision);
+								!this.isReceiveOwnershipSnapshotStable(
+									receiveOwnershipRevision,
+								);
 							if (ownershipChangedDuringReceive) {
 								const freshAuditRevision =
 									this._instanceLifecycle?._receiveOwnershipRevision ?? 0;
@@ -19836,6 +19874,34 @@ export class SharedLog<
 				const exactGate = () =>
 					hostGate() && this._v2Receive.isAdmissionCurrent(admission);
 				let durableCommitted = false;
+				let provenanceMutationStarted = false;
+				let provenancePublished = false;
+				const beginProvenanceMutation = () => {
+					if (
+						!exactGate() ||
+						!this._v2Receive.beginRemoteOwnerProvenanceMutation(admission)
+					) {
+						return false;
+					}
+					provenanceMutationStarted = true;
+					return true;
+				};
+				const publishProvenance = () => {
+					if (
+						!durableCommitted ||
+						!exactGate() ||
+						!this._v2Receive.publishRemoteOwnerProvenance(admission)
+					) {
+						return false;
+					}
+					provenancePublished = true;
+					return true;
+				};
+				const failClosedIfPublicationMissing = () => {
+					if (durableCommitted && !provenancePublished) {
+						this._v2Receive.requireFullAfterFailure(admission);
+					}
+				};
 
 				try {
 					if (
@@ -19860,6 +19926,7 @@ export class SharedLog<
 									mutationGateAdmitted = exactGate();
 									return mutationGateAdmitted;
 								},
+								onMutationStarted: beginProvenanceMutation,
 								onDurableApplyCommitted: () => {
 									if (!exactGate() || !this._v2Receive.commit(admission)) {
 										return false;
@@ -19867,14 +19934,24 @@ export class SharedLog<
 									durableCommitted = true;
 									return true;
 								},
+								onMutationFinalized: publishProvenance,
 							},
 							lane.ownershipLifecycleController,
 						);
+						if (result === undefined) {
+							// Authorization is evaluated before the ownership lane. A fresh
+							// rejection must revoke any previously published provenance for
+							// this owner; persisted rows alone are never current authority.
+							this._v2Receive.requireFullAfterFailure(admission);
+							return;
+						}
+						failClosedIfPublicationMissing();
 						if (
-							result === undefined ||
 							!mutationGateChecked ||
 							!mutationGateAdmitted ||
+							!provenanceMutationStarted ||
 							!durableCommitted ||
+							!provenancePublished ||
 							!exactGate()
 						) {
 							return;
@@ -19892,8 +19969,7 @@ export class SharedLog<
 							return;
 						}
 						let mutationGateAdmitted = true;
-						const removedRanges: ReplicationRangeIndexable<R>[] = [];
-						const removed = await this.removeReplicationRanges(
+						await this.removeReplicationRanges(
 							rangesToRemove,
 							from,
 							{
@@ -19901,6 +19977,7 @@ export class SharedLog<
 									mutationGateAdmitted = exactGate();
 									return mutationGateAdmitted;
 								},
+								onMutationStarted: beginProvenanceMutation,
 								onDurableRemoveCommitted: () => {
 									if (!exactGate() || !this._v2Receive.commit(admission)) {
 										return false;
@@ -19908,35 +19985,39 @@ export class SharedLog<
 									durableCommitted = true;
 									return true;
 								},
-								onRemoved: (ranges) => removedRanges.push(...ranges),
+								onRemoved: (ranges) => {
+									if (
+										!this._instanceLifecycle!.isMembershipActiveFor(
+											lane.lifecycleController,
+										) ||
+										!this.isRepairLifecycleActive(
+											lane.ownershipLifecycleController,
+										)
+									) {
+										return;
+									}
+									const timestamp = BigInt(Date.now());
+									for (const range of ranges) {
+										this.replicationChangeDebounceFn.add({
+											range,
+											type: "removed",
+											timestamp,
+										});
+									}
+								},
+								onMutationFinalized: publishProvenance,
 							},
 							lane.ownershipLifecycleController,
 						);
-						if (!durableCommitted) {
-							if (
-								!mutationGateAdmitted ||
-								!exactGate() ||
-								removed ||
-								!this._v2Receive.commit(admission)
-							) {
-								return;
-							}
-							durableCommitted = true;
-						}
+						failClosedIfPublicationMissing();
 						if (
-							this._instanceLifecycle!.isMembershipActiveFor(
-								lane.lifecycleController,
-							) &&
-							this.isRepairLifecycleActive(lane.ownershipLifecycleController)
+							!mutationGateAdmitted ||
+							!provenanceMutationStarted ||
+							!durableCommitted ||
+							!provenancePublished ||
+							!exactGate()
 						) {
-							const timestamp = BigInt(Date.now());
-							for (const range of removedRanges) {
-								this.replicationChangeDebounceFn.add({
-									range,
-									type: "removed",
-									timestamp,
-								});
-							}
+							return;
 						}
 					}
 				} catch (error) {
@@ -19944,10 +20025,12 @@ export class SharedLog<
 					throw error;
 				}
 
-				if (!durableCommitted) {
-					if (!exactGate() || !this._v2Receive.commit(admission)) {
-						return;
-					}
+				if (
+					!provenanceMutationStarted ||
+					!durableCommitted ||
+					!provenancePublished
+				) {
+					return;
 				}
 				if (!hostGate()) {
 					return;
