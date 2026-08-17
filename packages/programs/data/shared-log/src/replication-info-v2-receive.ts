@@ -1,5 +1,11 @@
 import { serialize } from "@dao-xyz/borsh";
-import { type PublicSignKey, randomBytes, sha256Sync } from "@peerbit/crypto";
+import {
+	type PublicSignKey,
+	randomBytes,
+	sha256Base64Sync,
+	sha256Sync,
+	toHexString,
+} from "@peerbit/crypto";
 import {
 	SYNC_CAPABILITY_REPLICATION_INFO_V2_DECODE,
 	SYNC_CAPABILITY_REPLICATION_INFO_V2_SEND,
@@ -25,6 +31,86 @@ const DEFAULT_MAX_REQUEST_RETRY_MS = 30_000;
 const DEFAULT_REQUEST_MAX_ATTEMPTS = 7;
 const MAX_U64 = (1n << 64n) - 1n;
 const MAX_BACKOFF_EXPONENT = 20;
+
+export const MAX_REPLICATION_INFO_V2_CURRENT_OWNER_BATCH = 4096;
+export const MAX_REPLICATION_INFO_V2_CURRENT_OWNER_KEY_BYTES = 512;
+export const MAX_REPLICATION_INFO_V2_CURRENT_OWNER_HASH_BYTES = 512;
+export const DEFAULT_REPLICATION_INFO_V2_CURRENT_OWNER_TTL_MS = 60_000;
+export const MAX_REPLICATION_INFO_V2_CURRENT_OWNER_TTL_MS = 5 * 60_000;
+
+const utf8 = new TextEncoder();
+
+/**
+ * Volatile evidence that one authenticated V2 update was applied under the
+ * current receiver grant. It is not consensus, custody, transfer, or prune
+ * authority. It deliberately does not freeze the host's custom replicator
+ * policy; any later placement capture must re-evaluate current authorization.
+ */
+export type ReplicationInfoV2CurrentRemoteOwnerToken = Readonly<{
+	peerHash: string;
+	/** Canonical bytes of the authenticated sender key, copied and hex encoded. */
+	publicKeyHex: string;
+	senderTransportSession: bigint;
+	receiverTransportSession: bigint;
+	/** The capability-bound receiver binding carried by admitted V2 frames. */
+	receiverBindingHex: string;
+	senderEpochHex: string;
+	sequence: bigint;
+}>;
+
+export type ReplicationInfoV2CurrentRemoteOwner = Readonly<{
+	revision: bigint;
+	/** Conservative wall-clock projection of a monotonic local deadline. */
+	freshUntilMs: bigint;
+	token: ReplicationInfoV2CurrentRemoteOwnerToken;
+}>;
+
+export type ReplicationInfoV2CurrentRemoteOwnerCapture = Readonly<{
+	revision: bigint;
+	/** Minimum conservative wall deadline across every returned token. */
+	freshUntilMs?: bigint;
+	tokens: ReadonlyArray<ReplicationInfoV2CurrentRemoteOwnerToken>;
+}>;
+
+type ReplicationInfoV2RemoteOwnerGrant = {
+	generation: object;
+	openGeneration: object;
+	receiveEpoch: object | null;
+	senderTransportSession: bigint;
+	receiverTransportSession: bigint;
+	receiverRequestChallenge: Uint8Array;
+	receiverBinding: Uint8Array;
+	deadlineMonotonicMs: number;
+	fullFinalized: boolean;
+};
+
+type ReplicationInfoV2CurrentRemoteOwnerEntry = {
+	openGeneration: object;
+	state: ReplicationInfoV2ReceiveState;
+	peerSession: object;
+	receiveEpoch: object | null;
+	grantGeneration: object;
+	senderTransportSession: bigint;
+	receiverTransportSession: bigint;
+	receiverRequestChallenge: Uint8Array;
+	receiverBinding: Uint8Array;
+	senderEpoch: Uint8Array;
+	sequence: bigint;
+	deadlineMonotonicMs: number;
+	token: ReplicationInfoV2CurrentRemoteOwnerToken;
+};
+
+type ReplicationInfoV2CurrentRemoteOwnerCaptureEntry = {
+	openGeneration: object;
+	revision: bigint;
+	deadlineMonotonicMs?: number;
+};
+
+type ReplicationInfoV2RemoteOwnerMutationFence = {
+	openGeneration: object;
+	state: ReplicationInfoV2ReceiveState;
+	grantGeneration: object;
+};
 
 const bytesEqual = (left: Uint8Array, right: Uint8Array): boolean => {
 	if (left.byteLength !== right.byteLength) {
@@ -138,6 +224,8 @@ export type ReplicationInfoV2ReceiveState = {
 	requestParked: boolean;
 	capabilityRefreshRequired: boolean;
 	reservedAdmission?: ReplicationInfoV2ReceiveAdmission;
+	/** Local-only freshness for the exact currently bound receiver grant. */
+	remoteOwnerGrant?: ReplicationInfoV2RemoteOwnerGrant;
 };
 
 export type ReplicationInfoV2ReceiveAdmission = {
@@ -156,6 +244,8 @@ export type ReplicationInfoV2ReceiveDeps = {
 	getSelfKey: () => PublicSignKey;
 	getReceiverTransportSession: () => bigint;
 	isClosed: () => boolean;
+	/** Exact current SharedLog ownership lifecycle, including poison/rotation. */
+	isOwnershipActive: () => boolean;
 	isPeerSessionCurrent: (peerHash: string, peerSession: object) => boolean;
 	isReceiveEpochCurrent: (
 		peerHash: string,
@@ -185,6 +275,11 @@ export type ReplicationInfoV2ReceiveDeps = {
 	onRequestError?: (error: unknown) => void;
 	onLocalCapabilityError?: (error: unknown) => void;
 	now?: () => number;
+	/** Receiver-local monotonic clock; remote/wall timestamps never grant freshness. */
+	monotonicNow?: () => number;
+	/** Wall clock used only to project a diagnostic/capture deadline. */
+	wallNow?: () => number;
+	currentRemoteOwnerTtlMs?: number;
 	requestRetryMs?: number;
 	maxRequestRetryMs?: number;
 	requestMaxAttempts?: number;
@@ -216,14 +311,49 @@ export class ReplicationInfoV2ReceiveCoordinator {
 		ReplicationInfoV2LocalCapabilityAdvertisement
 	>;
 	_reservedAdmissionsByPeer!: Map<string, ReplicationInfoV2ReceiveAdmission>;
+	_currentRemoteOwnerByPeer!: Map<
+		string,
+		ReplicationInfoV2CurrentRemoteOwnerEntry
+	>;
+	_currentRemoteOwnerOpenGeneration!: object;
+	_currentRemoteOwnerRevision!: bigint;
+	_currentRemoteOwnerTokens!: WeakSet<object>;
+	_currentRemoteOwnerCaptures!: WeakMap<
+		object,
+		ReplicationInfoV2CurrentRemoteOwnerCaptureEntry
+	>;
+	_currentRemoteOwnerMutationFences!: WeakMap<
+		object,
+		ReplicationInfoV2RemoteOwnerMutationFence
+	>;
 
 	private readonly now: () => number;
+	private readonly monotonicNow: () => number;
+	private readonly wallNow: () => number;
+	private readonly currentRemoteOwnerTtlMs: number;
+	private lastMonotonicNow = 0;
+	private monotonicNowInitialized = false;
 	private readonly requestRetryMs: number;
 	private readonly maxRequestRetryMs: number;
 	private readonly requestMaxAttempts: number;
 
 	constructor(private readonly deps: ReplicationInfoV2ReceiveDeps) {
 		this.now = deps.now ?? Date.now;
+		this.monotonicNow =
+			deps.monotonicNow ??
+			(() => globalThis.performance?.now?.() ?? Date.now());
+		this.wallNow = deps.wallNow ?? Date.now;
+		const currentRemoteOwnerTtlMs =
+			deps.currentRemoteOwnerTtlMs ??
+			DEFAULT_REPLICATION_INFO_V2_CURRENT_OWNER_TTL_MS;
+		if (
+			!Number.isSafeInteger(currentRemoteOwnerTtlMs) ||
+			currentRemoteOwnerTtlMs <= 0 ||
+			currentRemoteOwnerTtlMs > MAX_REPLICATION_INFO_V2_CURRENT_OWNER_TTL_MS
+		) {
+			throw new Error("Invalid replication-info V2 current-owner TTL");
+		}
+		this.currentRemoteOwnerTtlMs = currentRemoteOwnerTtlMs;
 		this.requestRetryMs = Math.max(
 			1,
 			deps.requestRetryMs ?? DEFAULT_REQUEST_RETRY_MS,
@@ -242,6 +372,7 @@ export class ReplicationInfoV2ReceiveCoordinator {
 		this._localCapabilityContextBySession = new WeakMap();
 		this._localCapabilityAdvertisementsByPeer = new Map();
 		this._reservedAdmissionsByPeer = new Map();
+		this.resetCurrentRemoteOwnerProvenance();
 	}
 
 	resetForOpen(): void {
@@ -252,9 +383,11 @@ export class ReplicationInfoV2ReceiveCoordinator {
 		this._localCapabilityContextBySession = new WeakMap();
 		this._localCapabilityAdvertisementsByPeer = new Map();
 		this._reservedAdmissionsByPeer = new Map();
+		this.resetCurrentRemoteOwnerProvenance();
 	}
 
 	clearForClose(): void {
+		this.clearCurrentRemoteOwnerProvenance();
 		for (const advertisement of [
 			...(this._localCapabilityAdvertisementsByPeer?.values() ?? []),
 		]) {
@@ -291,12 +424,17 @@ export class ReplicationInfoV2ReceiveCoordinator {
 			this._localCapabilityContextBySession.delete(expectedSession);
 			this._cutoverPeerSessions.delete(expectedSession);
 		}
+		const current = this._currentRemoteOwnerByPeer.get(peerHash);
+		if (!expectedSession || current?.peerSession === expectedSession) {
+			this.invalidateCurrentRemoteOwner(peerHash);
+		}
 	}
 
 	/** Revoke an unauthenticated or downgraded capability generation. */
 	revokePeerCapability(peerHash: string): void {
 		const state = this._receiveStates.get(peerHash);
 		if (!state) {
+			this.invalidateCurrentRemoteOwner(peerHash);
 			return;
 		}
 		this.clearState(state);
@@ -308,6 +446,8 @@ export class ReplicationInfoV2ReceiveCoordinator {
 	}
 
 	private clearState(state: ReplicationInfoV2ReceiveState): void {
+		this.invalidateCurrentRemoteOwner(state.peerHash, state);
+		state.remoteOwnerGrant = undefined;
 		if (state.requestTimer) {
 			clearTimeout(state.requestTimer);
 			state.requestTimer = undefined;
@@ -317,6 +457,591 @@ export class ReplicationInfoV2ReceiveCoordinator {
 		if (this._receiveStates.get(state.peerHash) === state) {
 			this._receiveStates.delete(state.peerHash);
 		}
+	}
+
+	private resetCurrentRemoteOwnerProvenance(): void {
+		this._currentRemoteOwnerByPeer = new Map();
+		this._currentRemoteOwnerOpenGeneration = {};
+		this._currentRemoteOwnerRevision = 0n;
+		this._currentRemoteOwnerTokens = new WeakSet();
+		this._currentRemoteOwnerCaptures = new WeakMap();
+		this._currentRemoteOwnerMutationFences = new WeakMap();
+		this.lastMonotonicNow = 0;
+		this.monotonicNowInitialized = false;
+	}
+
+	private clearCurrentRemoteOwnerProvenance(): void {
+		if (this._currentRemoteOwnerByPeer?.size > 0) {
+			this._currentRemoteOwnerRevision++;
+		}
+		this._currentRemoteOwnerByPeer = new Map();
+		// Tokens from a closed open-generation must fail before consulting any
+		// caller-visible diagnostic field.
+		this._currentRemoteOwnerTokens = new WeakSet();
+		this._currentRemoteOwnerCaptures = new WeakMap();
+		this._currentRemoteOwnerMutationFences = new WeakMap();
+		this._currentRemoteOwnerOpenGeneration = {};
+	}
+
+	private currentMonotonicNow(): number | undefined {
+		let sampled: number;
+		try {
+			sampled = this.monotonicNow();
+		} catch {
+			this.clearCurrentRemoteOwnerProvenance();
+			return undefined;
+		}
+		if (
+			!Number.isFinite(sampled) ||
+			sampled < 0 ||
+			(this.monotonicNowInitialized && sampled < this.lastMonotonicNow)
+		) {
+			// An unmeasured interval can never be repaired by a later clock sample.
+			// Rotate the authority generation so every already-bound grant fails
+			// closed until the capability worker binds a fresh challenge.
+			this.clearCurrentRemoteOwnerProvenance();
+			return undefined;
+		}
+		this.monotonicNowInitialized = true;
+		this.lastMonotonicNow = sampled;
+		return this.lastMonotonicNow;
+	}
+
+	/** O(1) host lifecycle fence; protocol ordering state is intentionally kept. */
+	invalidateCurrentRemoteOwnerProvenance(): void {
+		this.clearCurrentRemoteOwnerProvenance();
+	}
+
+	private hasCurrentOwnershipAuthority(): boolean {
+		let active = false;
+		try {
+			active = !this.deps.isClosed() && this.deps.isOwnershipActive();
+		} catch {
+			active = false;
+		}
+		if (!active && this._currentRemoteOwnerByPeer) {
+			// Observing a poisoned/rotated host generation is itself a permanent
+			// fence: old empty captures must not become current if the predicate
+			// later flips back without a coordinator open reset.
+			this.clearCurrentRemoteOwnerProvenance();
+		}
+		return active;
+	}
+
+	private isRemoteOwnerGrantCurrent(
+		state: ReplicationInfoV2ReceiveState,
+		grant: ReplicationInfoV2RemoteOwnerGrant,
+	): boolean {
+		return (
+			grant.openGeneration === this._currentRemoteOwnerOpenGeneration &&
+			grant.receiveEpoch === state.receiveEpoch &&
+			grant.senderTransportSession === state.senderTransportSession &&
+			state.receiverTransportSession !== undefined &&
+			grant.receiverTransportSession === state.receiverTransportSession &&
+			state.receiverBinding !== undefined &&
+			bytesEqual(
+				grant.receiverRequestChallenge,
+				state.receiverRequestChallenge,
+			) &&
+			bytesEqual(grant.receiverBinding, state.receiverBinding)
+		);
+	}
+
+	private boundedCurrentRemoteOwnerPeerHash(
+		value: unknown,
+	): string | undefined {
+		if (
+			typeof value !== "string" ||
+			value.length === 0 ||
+			value.length > MAX_REPLICATION_INFO_V2_CURRENT_OWNER_HASH_BYTES
+		) {
+			return undefined;
+		}
+		return utf8.encode(value).byteLength <=
+			MAX_REPLICATION_INFO_V2_CURRENT_OWNER_HASH_BYTES
+			? value
+			: undefined;
+	}
+
+	private currentRemoteOwnerKeyFacts(
+		state: ReplicationInfoV2ReceiveState,
+	): { peerHash: string; publicKeyHex: string } | undefined {
+		const bytes = state.target.bytes;
+		if (
+			!(bytes instanceof Uint8Array) ||
+			bytes.byteLength === 0 ||
+			bytes.byteLength > MAX_REPLICATION_INFO_V2_CURRENT_OWNER_KEY_BYTES
+		) {
+			return undefined;
+		}
+		const copied = bytes.slice();
+		const peerHash = sha256Base64Sync(copied);
+		if (peerHash !== state.peerHash) {
+			return undefined;
+		}
+		return { peerHash, publicKeyHex: toHexString(copied) };
+	}
+
+	private invalidateCurrentRemoteOwner(
+		peerHash: string,
+		expectedState?: ReplicationInfoV2ReceiveState,
+	): boolean {
+		const current = this._currentRemoteOwnerByPeer?.get(peerHash);
+		if (!current || (expectedState && current.state !== expectedState)) {
+			return false;
+		}
+		this._currentRemoteOwnerByPeer.delete(peerHash);
+		this._currentRemoteOwnerRevision++;
+		return true;
+	}
+
+	private expireCurrentRemoteOwner(
+		entry: ReplicationInfoV2CurrentRemoteOwnerEntry,
+	): void {
+		this.invalidateCurrentRemoteOwner(entry.token.peerHash, entry.state);
+		const { state } = entry;
+		if (
+			this._receiveStates.get(state.peerHash) === state &&
+			state.remoteOwnerGrant?.generation === entry.grantGeneration &&
+			this.isStateCurrent(state)
+		) {
+			this.transitionToResync(state, {
+				force: true,
+				refreshCapability: true,
+			});
+		}
+	}
+
+	private expireCurrentRemoteOwnerGrantIfNeeded(
+		peerHash: string,
+		now: number,
+	): void {
+		const state = this._receiveStates.get(peerHash);
+		const grant = state?.remoteOwnerGrant;
+		if (
+			state &&
+			grant &&
+			now >= grant.deadlineMonotonicMs &&
+			this.isStateCurrent(state)
+		) {
+			this.transitionToResync(state, {
+				force: true,
+				refreshCapability: true,
+			});
+		}
+	}
+
+	private isCurrentRemoteOwnerEntry(
+		entry: ReplicationInfoV2CurrentRemoteOwnerEntry,
+		now: number,
+	): boolean {
+		const { state, token } = entry;
+		const grant = state.remoteOwnerGrant;
+		if (
+			!this.hasCurrentOwnershipAuthority() ||
+			this._currentRemoteOwnerByPeer.get(token.peerHash) !== entry ||
+			entry.openGeneration !== this._currentRemoteOwnerOpenGeneration ||
+			entry.peerSession !== state.peerSession ||
+			entry.receiveEpoch !== state.receiveEpoch ||
+			entry.senderTransportSession !== state.senderTransportSession ||
+			entry.receiverTransportSession !== state.receiverTransportSession ||
+			state.phase !== "active" ||
+			state.senderEpoch === undefined ||
+			state.lastSequence !== entry.sequence ||
+			!bytesEqual(state.senderEpoch, entry.senderEpoch) ||
+			state.receiverBinding === undefined ||
+			!bytesEqual(state.receiverBinding, entry.receiverBinding) ||
+			grant === undefined ||
+			!this.isRemoteOwnerGrantCurrent(state, grant) ||
+			grant.generation !== entry.grantGeneration ||
+			grant.receiveEpoch !== entry.receiveEpoch ||
+			grant.senderTransportSession !== entry.senderTransportSession ||
+			grant.receiverTransportSession !== entry.receiverTransportSession ||
+			!bytesEqual(
+				grant.receiverRequestChallenge,
+				entry.receiverRequestChallenge,
+			) ||
+			!bytesEqual(
+				state.receiverRequestChallenge,
+				entry.receiverRequestChallenge,
+			) ||
+			grant.deadlineMonotonicMs !== entry.deadlineMonotonicMs ||
+			!grant.fullFinalized ||
+			!bytesEqual(grant.receiverBinding, entry.receiverBinding) ||
+			!this.isStateCurrent(state)
+		) {
+			this.invalidateCurrentRemoteOwner(token.peerHash, state);
+			return false;
+		}
+		if (now >= entry.deadlineMonotonicMs) {
+			this.expireCurrentRemoteOwner(entry);
+			return false;
+		}
+		const key = this.currentRemoteOwnerKeyFacts(state);
+		if (
+			!key ||
+			key.peerHash !== token.peerHash ||
+			key.publicKeyHex !== token.publicKeyHex ||
+			toHexString(state.senderEpoch) !== token.senderEpochHex ||
+			toHexString(state.receiverBinding) !== token.receiverBindingHex
+		) {
+			this.invalidateCurrentRemoteOwner(token.peerHash, state);
+			return false;
+		}
+		return true;
+	}
+
+	private currentRemoteOwnerFreshUntil(
+		deadlineMonotonicMs: number,
+		nowMonotonicMs: number,
+	): bigint | undefined {
+		let wallNow: number;
+		try {
+			wallNow = this.wallNow();
+		} catch {
+			return undefined;
+		}
+		if (!Number.isSafeInteger(wallNow) || wallNow < 0) {
+			return undefined;
+		}
+		const projected = Math.floor(
+			wallNow + Math.max(0, deadlineMonotonicMs - nowMonotonicMs),
+		);
+		return Number.isSafeInteger(projected) && projected > wallNow
+			? BigInt(projected)
+			: undefined;
+	}
+
+	/** Read one exact current token. It conveys no transfer or prune authority. */
+	currentRemoteOwnerProvenance(
+		peerHash: string,
+	): ReplicationInfoV2CurrentRemoteOwner | undefined {
+		const bounded = this.boundedCurrentRemoteOwnerPeerHash(peerHash);
+		const now = this.currentMonotonicNow();
+		if (!bounded || now === undefined || !this.hasCurrentOwnershipAuthority()) {
+			return undefined;
+		}
+		const entry = this._currentRemoteOwnerByPeer.get(bounded);
+		if (!entry || !this.isCurrentRemoteOwnerEntry(entry, now)) {
+			if (!entry) {
+				this.expireCurrentRemoteOwnerGrantIfNeeded(bounded, now);
+			}
+			return undefined;
+		}
+		const freshUntilMs = this.currentRemoteOwnerFreshUntil(
+			entry.deadlineMonotonicMs,
+			now,
+		);
+		return freshUntilMs === undefined
+			? undefined
+			: Object.freeze({
+					revision: this._currentRemoteOwnerRevision,
+					freshUntilMs,
+					token: entry.token,
+				});
+	}
+
+	/** Validate exact token identity against the complete current V2 state. */
+	isCurrentRemoteOwnerProvenance(
+		token: ReplicationInfoV2CurrentRemoteOwnerToken,
+	): boolean {
+		if (
+			!token ||
+			typeof token !== "object" ||
+			!this._currentRemoteOwnerTokens.has(token) ||
+			!this.hasCurrentOwnershipAuthority()
+		) {
+			return false;
+		}
+		const now = this.currentMonotonicNow();
+		if (now === undefined) {
+			return false;
+		}
+		const entry = this._currentRemoteOwnerByPeer.get(token.peerHash);
+		if (!entry) {
+			this.expireCurrentRemoteOwnerGrantIfNeeded(token.peerHash, now);
+		}
+		return (
+			entry !== undefined &&
+			entry.token === token &&
+			this.isCurrentRemoteOwnerEntry(entry, now)
+		);
+	}
+
+	/**
+	 * Capture a dense unique peer set at one revision and monotonic instant.
+	 * Missing or expired peers fail the whole capture; no prefix is returned.
+	 */
+	captureCurrentRemoteOwnerProvenance(
+		peerHashes: readonly string[],
+	): ReplicationInfoV2CurrentRemoteOwnerCapture | undefined {
+		if (!Array.isArray(peerHashes)) {
+			throw new Error("Invalid replication-info V2 current-owner batch");
+		}
+		const length = peerHashes.length;
+		if (
+			!Number.isSafeInteger(length) ||
+			length < 0 ||
+			length > MAX_REPLICATION_INFO_V2_CURRENT_OWNER_BATCH
+		) {
+			throw new Error("Invalid replication-info V2 current-owner batch");
+		}
+		const bounded: string[] = [];
+		const unique = new Set<string>();
+		for (let index = 0; index < length; index++) {
+			if (!Object.prototype.hasOwnProperty.call(peerHashes, index)) {
+				throw new Error("Invalid replication-info V2 current-owner batch");
+			}
+			const peerHash = this.boundedCurrentRemoteOwnerPeerHash(
+				peerHashes[index],
+			);
+			if (!peerHash || unique.has(peerHash)) {
+				throw new Error("Invalid replication-info V2 current-owner batch");
+			}
+			unique.add(peerHash);
+			bounded.push(peerHash);
+		}
+
+		const now = this.currentMonotonicNow();
+		if (now === undefined || !this.hasCurrentOwnershipAuthority()) {
+			return undefined;
+		}
+		const entries: ReplicationInfoV2CurrentRemoteOwnerEntry[] = [];
+		let deadline = Number.POSITIVE_INFINITY;
+		for (let index = 0; index < bounded.length; index++) {
+			const entry = this._currentRemoteOwnerByPeer.get(bounded[index]!);
+			if (!entry || !this.isCurrentRemoteOwnerEntry(entry, now)) {
+				if (!entry) {
+					this.expireCurrentRemoteOwnerGrantIfNeeded(bounded[index]!, now);
+				}
+				return undefined;
+			}
+			entries.push(entry);
+			deadline = Math.min(deadline, entry.deadlineMonotonicMs);
+		}
+		const freshUntilMs =
+			entries.length === 0
+				? undefined
+				: this.currentRemoteOwnerFreshUntil(deadline, now);
+		if (entries.length > 0 && freshUntilMs === undefined) {
+			return undefined;
+		}
+		const tokens = Object.freeze(entries.map((entry) => entry.token));
+		const capture = Object.freeze({
+			revision: this._currentRemoteOwnerRevision,
+			freshUntilMs,
+			tokens,
+		});
+		this._currentRemoteOwnerCaptures.set(capture, {
+			openGeneration: this._currentRemoteOwnerOpenGeneration,
+			revision: this._currentRemoteOwnerRevision,
+			deadlineMonotonicMs: entries.length === 0 ? undefined : deadline,
+		});
+		return capture;
+	}
+
+	/**
+	 * Revalidate a complete batch, including an empty self-only capture, against
+	 * the exact open generation and every intervening registry mutation.
+	 */
+	isCurrentRemoteOwnerProvenanceCapture(
+		capture: ReplicationInfoV2CurrentRemoteOwnerCapture,
+	): boolean {
+		if (
+			!capture ||
+			typeof capture !== "object" ||
+			!this.hasCurrentOwnershipAuthority()
+		) {
+			return false;
+		}
+		const retained = this._currentRemoteOwnerCaptures.get(capture);
+		if (
+			!retained ||
+			retained.openGeneration !== this._currentRemoteOwnerOpenGeneration ||
+			retained.revision !== this._currentRemoteOwnerRevision
+		) {
+			return false;
+		}
+		const now = this.currentMonotonicNow();
+		if (now === undefined) {
+			return false;
+		}
+		for (let index = 0; index < capture.tokens.length; index++) {
+			const token = capture.tokens[index]!;
+			if (!this._currentRemoteOwnerTokens.has(token)) {
+				return false;
+			}
+			const entry = this._currentRemoteOwnerByPeer.get(token.peerHash);
+			if (
+				!entry ||
+				entry.token !== token ||
+				!this.isCurrentRemoteOwnerEntry(entry, now)
+			) {
+				return false;
+			}
+		}
+		return (
+			retained.openGeneration === this._currentRemoteOwnerOpenGeneration &&
+			retained.revision === this._currentRemoteOwnerRevision
+		);
+	}
+
+	/** Invalidate at the exact-gated ownership-lane mutation start. */
+	beginRemoteOwnerProvenanceMutation(
+		admission: ReplicationInfoV2ReceiveAdmission,
+	): boolean {
+		const existing = this._currentRemoteOwnerMutationFences.get(admission);
+		if (existing) {
+			return (
+				!admission.committed &&
+				existing.openGeneration === this._currentRemoteOwnerOpenGeneration &&
+				existing.state === admission.state &&
+				existing.grantGeneration ===
+					admission.state.remoteOwnerGrant?.generation &&
+				this.hasCurrentOwnershipAuthority() &&
+				this.isAdmissionCurrent(admission)
+			);
+		}
+		const grant = admission.state.remoteOwnerGrant;
+		const now = this.currentMonotonicNow();
+		if (
+			admission.committed ||
+			!this.hasCurrentOwnershipAuthority() ||
+			!this.isAdmissionCurrent(admission) ||
+			!grant ||
+			!this.isRemoteOwnerGrantCurrent(admission.state, grant) ||
+			now === undefined ||
+			now >= grant.deadlineMonotonicMs
+		) {
+			if (
+				grant &&
+				now !== undefined &&
+				now >= grant.deadlineMonotonicMs &&
+				this.isAdmissionCurrent(admission)
+			) {
+				this.transitionToResync(admission.state, {
+					force: true,
+					refreshCapability: true,
+				});
+			}
+			return false;
+		}
+		const invalidated = this.invalidateCurrentRemoteOwner(
+			admission.state.peerHash,
+			admission.state,
+		);
+		if (!invalidated) {
+			// Even a first Full with no previous token invalidates a previously
+			// captured empty/self-only view while its range mutation is in flight.
+			this._currentRemoteOwnerRevision++;
+		}
+		this._currentRemoteOwnerMutationFences.set(admission, {
+			openGeneration: this._currentRemoteOwnerOpenGeneration,
+			state: admission.state,
+			grantGeneration: grant.generation,
+		});
+		return true;
+	}
+
+	/**
+	 * Publish only after protocol commit and all fallible ownership bookkeeping.
+	 * Full enables the bound grant; deltas can only replace an enabled token.
+	 */
+	publishRemoteOwnerProvenance(
+		admission: ReplicationInfoV2ReceiveAdmission,
+	): boolean {
+		const mutationFence = this._currentRemoteOwnerMutationFences.get(admission);
+		if (
+			!admission.committed ||
+			!this.hasCurrentOwnershipAuthority() ||
+			!this.isAdmissionCurrent(admission) ||
+			!mutationFence ||
+			mutationFence.openGeneration !== this._currentRemoteOwnerOpenGeneration ||
+			mutationFence.state !== admission.state
+		) {
+			return false;
+		}
+		const { state, message } = admission;
+		const grant = state.remoteOwnerGrant;
+		const now = this.currentMonotonicNow();
+		if (
+			now === undefined ||
+			state.phase !== "active" ||
+			state.lastSequence !== message.sequence ||
+			state.senderEpoch === undefined ||
+			!bytesEqual(state.senderEpoch, message.senderEpoch) ||
+			state.receiverBinding === undefined ||
+			grant === undefined ||
+			mutationFence.grantGeneration !== grant.generation ||
+			!this.isRemoteOwnerGrantCurrent(state, grant) ||
+			grant.receiveEpoch !== state.receiveEpoch ||
+			grant.senderTransportSession !== state.senderTransportSession ||
+			grant.receiverTransportSession !== state.receiverTransportSession ||
+			!bytesEqual(grant.receiverBinding, state.receiverBinding)
+		) {
+			return false;
+		}
+		if (now >= grant.deadlineMonotonicMs) {
+			const existing = this._currentRemoteOwnerByPeer.get(state.peerHash);
+			if (existing) {
+				this.expireCurrentRemoteOwner(existing);
+			} else {
+				this.transitionToResync(state, {
+					force: true,
+					refreshCapability: true,
+				});
+			}
+			return false;
+		}
+		if (admission.kind !== "full" && !grant.fullFinalized) {
+			return false;
+		}
+		const key = this.currentRemoteOwnerKeyFacts(state);
+		if (!key) {
+			return false;
+		}
+		const existing = this._currentRemoteOwnerByPeer.get(state.peerHash);
+		if (
+			existing?.state === state &&
+			existing.grantGeneration === grant.generation &&
+			existing.sequence === message.sequence &&
+			this.isCurrentRemoteOwnerEntry(existing, now)
+		) {
+			return true;
+		}
+
+		const token = Object.freeze({
+			peerHash: key.peerHash,
+			publicKeyHex: key.publicKeyHex,
+			senderTransportSession: state.senderTransportSession,
+			receiverTransportSession: state.receiverTransportSession!,
+			receiverBindingHex: toHexString(state.receiverBinding),
+			senderEpochHex: toHexString(state.senderEpoch),
+			sequence: message.sequence,
+		});
+		const entry: ReplicationInfoV2CurrentRemoteOwnerEntry = {
+			openGeneration: this._currentRemoteOwnerOpenGeneration,
+			state,
+			peerSession: state.peerSession,
+			receiveEpoch: state.receiveEpoch,
+			grantGeneration: grant.generation,
+			senderTransportSession: state.senderTransportSession,
+			receiverTransportSession: state.receiverTransportSession!,
+			receiverRequestChallenge: state.receiverRequestChallenge.slice(),
+			receiverBinding: state.receiverBinding.slice(),
+			senderEpoch: state.senderEpoch.slice(),
+			sequence: message.sequence,
+			deadlineMonotonicMs: grant.deadlineMonotonicMs,
+			token,
+		};
+		if (admission.kind === "full") {
+			grant.fullFinalized = true;
+		}
+		this._currentRemoteOwnerByPeer.set(state.peerHash, entry);
+		this._currentRemoteOwnerTokens.add(token);
+		this._currentRemoteOwnerRevision++;
+		this._currentRemoteOwnerMutationFences.delete(admission);
+		return true;
 	}
 
 	private clearLocalCapabilityAdvertisement(
@@ -896,13 +1621,53 @@ export class ReplicationInfoV2ReceiveCoordinator {
 		ready: LocalCapabilityReady,
 	): void {
 		state.receiverTransportSession = ready.receiverTransportSession;
-		state.receiverBinding = deriveReplicationInfoV2ReceiverBinding({
+		const receiverBinding = deriveReplicationInfoV2ReceiverBinding({
 			receiverChallenge: state.receiverRequestChallenge,
 			receiver: this.deps.getSelfKey(),
 			receiverTransportSession: ready.receiverTransportSession,
 			sender: state.target,
 			senderTransportSession: state.senderTransportSession,
 		});
+		state.receiverBinding = receiverBinding;
+		const current = state.remoteOwnerGrant;
+		if (
+			current &&
+			current.receiveEpoch === state.receiveEpoch &&
+			current.senderTransportSession === state.senderTransportSession &&
+			current.receiverTransportSession === ready.receiverTransportSession &&
+			bytesEqual(
+				current.receiverRequestChallenge,
+				state.receiverRequestChallenge,
+			) &&
+			bytesEqual(current.receiverBinding, receiverBinding)
+		) {
+			// Replayed readiness for the same exact binding must not manufacture a
+			// later freshness deadline.
+			return;
+		}
+		this.invalidateCurrentRemoteOwner(state.peerHash, state);
+		const boundAt = this.currentMonotonicNow();
+		const deadline =
+			boundAt === undefined
+				? undefined
+				: boundAt + this.currentRemoteOwnerTtlMs;
+		state.remoteOwnerGrant =
+			boundAt === undefined ||
+			deadline === undefined ||
+			!Number.isFinite(deadline) ||
+			deadline <= boundAt
+				? undefined
+				: {
+						generation: {},
+						openGeneration: this._currentRemoteOwnerOpenGeneration,
+						receiveEpoch: state.receiveEpoch,
+						senderTransportSession: state.senderTransportSession,
+						receiverTransportSession: ready.receiverTransportSession,
+						receiverRequestChallenge: state.receiverRequestChallenge.slice(),
+						receiverBinding: receiverBinding.slice(),
+						deadlineMonotonicMs: deadline,
+						fullFinalized: false,
+					};
 	}
 
 	/** Require a fresh capability-bound grant and authoritative Full. */
@@ -1004,6 +1769,7 @@ export class ReplicationInfoV2ReceiveCoordinator {
 		state: ReplicationInfoV2ReceiveState,
 		options?: { force?: boolean; refreshCapability?: boolean },
 	): void {
+		this.invalidateCurrentRemoteOwner(state.peerHash, state);
 		const shouldRestart =
 			state.phase !== "resync" ||
 			options?.force === true ||
@@ -1014,6 +1780,7 @@ export class ReplicationInfoV2ReceiveCoordinator {
 		}
 		if (options?.refreshCapability) {
 			state.capabilityRefreshRequired = true;
+			state.remoteOwnerGrant = undefined;
 		}
 		if (shouldRestart) {
 			state.requestAttempts = 0;
@@ -1047,6 +1814,23 @@ export class ReplicationInfoV2ReceiveCoordinator {
 		) {
 			return undefined;
 		}
+		if (!this.hasCurrentOwnershipAuthority()) {
+			return undefined;
+		}
+		const grantNow = this.currentMonotonicNow();
+		const grant = state.remoteOwnerGrant;
+		if (
+			grantNow === undefined ||
+			grant === undefined ||
+			!this.isRemoteOwnerGrantCurrent(state, grant) ||
+			grantNow >= grant.deadlineMonotonicMs
+		) {
+			this.transitionToResync(state, {
+				force: true,
+				refreshCapability: true,
+			});
+			return undefined;
+		}
 
 		const kind =
 			message instanceof FullReplicationInfoV2Message
@@ -1059,7 +1843,6 @@ export class ReplicationInfoV2ReceiveCoordinator {
 		if (!kind) {
 			return undefined;
 		}
-
 		if (state.senderEpoch === undefined) {
 			if (kind !== "full") {
 				return undefined;
@@ -1232,6 +2015,23 @@ export class ReplicationInfoV2ReceiveCoordinator {
 			this.release(admission);
 			return false;
 		}
+		const mutationFence = this._currentRemoteOwnerMutationFences.get(admission);
+		if (
+			!mutationFence ||
+			mutationFence.openGeneration !== this._currentRemoteOwnerOpenGeneration ||
+			mutationFence.state !== state ||
+			mutationFence.grantGeneration !== state.remoteOwnerGrant?.generation
+		) {
+			const invalidated = this.invalidateCurrentRemoteOwner(
+				state.peerHash,
+				state,
+			);
+			if (!invalidated) {
+				// Direct protocol users do not participate in the host ownership lane,
+				// but their successful state advance must still stale empty captures.
+				this._currentRemoteOwnerRevision++;
+			}
+		}
 		state.lastSequence = message.sequence;
 		state.phase = "active";
 		state.requestAttempts = 0;
@@ -1253,6 +2053,7 @@ export class ReplicationInfoV2ReceiveCoordinator {
 	requireFullAfterFailure(
 		admission: ReplicationInfoV2ReceiveAdmission,
 	): boolean {
+		this._currentRemoteOwnerMutationFences.delete(admission);
 		if (!this.isAdmissionCurrent(admission)) {
 			this.release(admission);
 			return false;
@@ -1341,6 +2142,8 @@ export class ReplicationInfoV2ReceiveCoordinator {
 		) {
 			return false;
 		}
+		this.invalidateCurrentRemoteOwner(state.peerHash, state);
+		state.remoteOwnerGrant = undefined;
 
 		const ready: LocalCapabilityReady = {
 			peerHash: state.peerHash,

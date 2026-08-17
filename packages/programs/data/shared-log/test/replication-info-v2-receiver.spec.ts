@@ -1,4 +1,4 @@
-import { Ed25519PublicKey } from "@peerbit/crypto";
+import { Ed25519PublicKey, toHexString } from "@peerbit/crypto";
 import { TestSession } from "@peerbit/test-utils";
 import { waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
@@ -11,11 +11,14 @@ import {
 } from "../src/exchange-heads.js";
 import {
 	ReplicationIntent,
-	ReplicationRangeMessageU32,
 	ReplicationRangeMessageU64,
 } from "../src/ranges.js";
 import { deriveReplicationInfoV2ReceiverBinding } from "../src/replication-info-v2-binding.js";
-import { ReplicationInfoV2ReceiveCoordinator } from "../src/replication-info-v2-receive.js";
+import {
+	MAX_REPLICATION_INFO_V2_CURRENT_OWNER_BATCH,
+	MAX_REPLICATION_INFO_V2_CURRENT_OWNER_TTL_MS,
+	ReplicationInfoV2ReceiveCoordinator,
+} from "../src/replication-info-v2-receive.js";
 import { ReplicationInfoV2SendCoordinator } from "../src/replication-info-v2-send.js";
 import {
 	AddedReplicationInfoV2Message,
@@ -53,11 +56,16 @@ describe("receive admission replication-info V2 receiver state", () => {
 		requestRetryMs?: number;
 		maxRequestRetryMs?: number;
 		requestMaxAttempts?: number;
+		monotonicNow?: () => number;
+		wallNow?: () => number;
+		currentRemoteOwnerTtlMs?: number;
+		isOwnershipActive?: () => boolean;
 	}) =>
 		new ReplicationInfoV2ReceiveCoordinator({
 			getSelfKey: () => self,
 			getReceiverTransportSession: () => receiverTransportSession,
 			isClosed: () => closed,
+			isOwnershipActive: options?.isOwnershipActive ?? (() => true),
 			isPeerSessionCurrent: (_peerHash, peerSession) =>
 				peerSession === currentSession,
 			isReceiveEpochCurrent: (_peerHash, receiveEpoch) =>
@@ -70,6 +78,9 @@ describe("receive admission replication-info V2 receiver state", () => {
 				transportSession === currentSenderTransportSession,
 			sendRequest,
 			refreshLocalCapability,
+			monotonicNow: options?.monotonicNow,
+			wallNow: options?.wallNow,
+			currentRemoteOwnerTtlMs: options?.currentRemoteOwnerTtlMs,
 			requestRetryMs: options?.requestRetryMs ?? 5,
 			maxRequestRetryMs: options?.maxRequestRetryMs ?? 20,
 			requestMaxAttempts: options?.requestMaxAttempts ?? 7,
@@ -112,6 +123,21 @@ describe("receive admission replication-info V2 receiver state", () => {
 			senderTransportSession,
 			transportTimestamp,
 		});
+
+	const finalizeCurrentRemoteOwner = (
+		message:
+			| FullReplicationInfoV2Message
+			| AddedReplicationInfoV2Message
+			| StoppedReplicationInfoV2Message,
+	) => {
+		const admission = prepare(message);
+		expect(admission).to.exist;
+		expect(coordinator.beginRemoteOwnerProvenanceMutation(admission!)).to.be
+			.true;
+		expect(coordinator.commit(admission!)).to.be.true;
+		expect(coordinator.publishRemoteOwnerProvenance(admission!)).to.be.true;
+		return admission!;
+	};
 
 	beforeEach(() => {
 		closed = false;
@@ -321,6 +347,7 @@ describe("receive admission replication-info V2 receiver state", () => {
 			getSelfKey: () => self,
 			getReceiverTransportSession: () => receiverTransportSession,
 			isClosed: () => false,
+			isOwnershipActive: () => true,
 			isPeerSessionCurrent: (hash, peerSession) =>
 				sessionByPeer.get(hash) === peerSession,
 			isReceiveEpochCurrent: (hash, receiveEpoch) =>
@@ -582,6 +609,7 @@ describe("receive admission replication-info V2 receiver state", () => {
 			getSelfKey: () => self,
 			getReceiverTransportSession: () => localTransportSession,
 			isClosed: () => closed,
+			isOwnershipActive: () => true,
 			isPeerSessionCurrent: (_peerHash, peerSession) =>
 				peerSession === currentSession,
 			isReceiveEpochCurrent: (_peerHash, receiveEpoch) =>
@@ -628,6 +656,7 @@ describe("receive admission replication-info V2 receiver state", () => {
 			getSelfKey: () => self,
 			getReceiverTransportSession: () => localTransportSession,
 			isClosed: () => closed,
+			isOwnershipActive: () => true,
 			isPeerSessionCurrent: (_peerHash, peerSession) =>
 				peerSession === currentSession,
 			isReceiveEpochCurrent: (_peerHash, receiveEpoch) =>
@@ -878,6 +907,514 @@ describe("receive admission replication-info V2 receiver state", () => {
 		expect(state.lastSequence).to.equal(5n);
 	});
 
+	it("publishes immutable Full and delta provenance without renewing the grant", () => {
+		let monotonicNow = 100;
+		coordinator = createCoordinator({
+			monotonicNow: () => monotonicNow,
+			wallNow: () => 1_000 + monotonicNow,
+			currentRemoteOwnerTtlMs: 50,
+		});
+		expect(markLocalReady()).to.be.true;
+		expect(observeSender()).to.be.true;
+		const state = coordinator._receiveStates.get(peerHash)!;
+		const senderEpoch = bytes(31);
+
+		finalizeCurrentRemoteOwner(
+			new FullReplicationInfoV2Message({
+				receiverChallenge: state.receiverBinding!.slice(),
+				senderEpoch,
+				sequence: 1n,
+				segments: [],
+			}),
+		);
+		const first = coordinator.currentRemoteOwnerProvenance(peerHash)!;
+		expect(first).to.exist;
+		expect(first.freshUntilMs).to.equal(1_150n);
+		expect(first.token.peerHash).to.equal(peerHash);
+		expect(first.token.publicKeyHex).to.equal(toHexString(sender.bytes));
+		expect(first.token.sequence).to.equal(1n);
+		expect(Object.isFrozen(first)).to.be.true;
+		expect(Object.isFrozen(first.token)).to.be.true;
+		expect(coordinator.isCurrentRemoteOwnerProvenance(first.token)).to.be.true;
+
+		monotonicNow = 110;
+		// Neither a readiness/capability replay nor a recovery Full under this
+		// exact binding may move the deadline.
+		expect(markLocalReady()).to.be.true;
+		expect(observeSender(2n)).to.be.true;
+		expect(
+			coordinator.currentRemoteOwnerProvenance(peerHash)?.freshUntilMs,
+		).to.equal(1_150n);
+
+		monotonicNow = 120;
+		finalizeCurrentRemoteOwner(
+			new AddedReplicationInfoV2Message({
+				receiverChallenge: state.receiverBinding!.slice(),
+				senderEpoch,
+				sequence: 2n,
+				segments: [],
+			}),
+		);
+		expect(coordinator.isCurrentRemoteOwnerProvenance(first.token)).to.be.false;
+		const added = coordinator.currentRemoteOwnerProvenance(peerHash)!;
+		expect(added.token.sequence).to.equal(2n);
+		expect(added.freshUntilMs).to.equal(1_150n);
+
+		finalizeCurrentRemoteOwner(
+			new StoppedReplicationInfoV2Message({
+				receiverChallenge: state.receiverBinding!.slice(),
+				senderEpoch,
+				sequence: 3n,
+				segmentIds: [],
+			}),
+		);
+		const stopped = coordinator.currentRemoteOwnerProvenance(peerHash)!;
+		expect(stopped.token.sequence).to.equal(3n);
+		expect(stopped.freshUntilMs).to.equal(1_150n);
+
+		monotonicNow = 150;
+		expect(coordinator.currentRemoteOwnerProvenance(peerHash)).to.be.undefined;
+		expect(coordinator.isCurrentRemoteOwnerProvenance(stopped.token)).to.be
+			.false;
+		expect(state.phase).to.equal("resync");
+		expect(state.capabilityRefreshRequired).to.be.true;
+		expect(state.remoteOwnerGrant).to.be.undefined;
+	});
+
+	it("fences publication at begin and brands empty and nonempty captures", () => {
+		let monotonicNow = 10;
+		coordinator = createCoordinator({
+			monotonicNow: () => monotonicNow,
+			wallNow: () => 1_000,
+			currentRemoteOwnerTtlMs: 100,
+		});
+		expect(markLocalReady()).to.be.true;
+		expect(observeSender()).to.be.true;
+		const state = coordinator._receiveStates.get(peerHash)!;
+		const senderEpoch = bytes(32);
+		finalizeCurrentRemoteOwner(
+			new FullReplicationInfoV2Message({
+				receiverChallenge: state.receiverBinding!.slice(),
+				senderEpoch,
+				sequence: 1n,
+				segments: [],
+			}),
+		);
+
+		const current = coordinator.currentRemoteOwnerProvenance(peerHash)!;
+		const capture = coordinator.captureCurrentRemoteOwnerProvenance([
+			peerHash,
+		])!;
+		const empty = coordinator.captureCurrentRemoteOwnerProvenance([])!;
+		expect(capture.tokens).to.deep.equal([current.token]);
+		expect(Object.isFrozen(capture)).to.be.true;
+		expect(Object.isFrozen(capture.tokens)).to.be.true;
+		expect(empty.tokens).to.deep.equal([]);
+		expect(empty.freshUntilMs).to.be.undefined;
+		expect(coordinator.isCurrentRemoteOwnerProvenanceCapture(capture)).to.be
+			.true;
+		expect(coordinator.isCurrentRemoteOwnerProvenanceCapture(empty)).to.be.true;
+		expect(coordinator.isCurrentRemoteOwnerProvenanceCapture({ ...empty })).to
+			.be.false;
+
+		const added = new AddedReplicationInfoV2Message({
+			receiverChallenge: state.receiverBinding!.slice(),
+			senderEpoch,
+			sequence: 2n,
+			segments: [],
+		});
+		const admission = prepare(added)!;
+		// Decode/reservation alone does not revoke the last durable fact.
+		expect(coordinator.isCurrentRemoteOwnerProvenance(current.token)).to.be
+			.true;
+		expect(coordinator.isCurrentRemoteOwnerProvenanceCapture(empty)).to.be.true;
+		expect(coordinator.beginRemoteOwnerProvenanceMutation(admission)).to.be
+			.true;
+		const revisionAfterBegin = coordinator.captureCurrentRemoteOwnerProvenance(
+			[],
+		)!.revision;
+		expect(coordinator.beginRemoteOwnerProvenanceMutation(admission)).to.be
+			.true;
+		expect(
+			coordinator.captureCurrentRemoteOwnerProvenance([])!.revision,
+		).to.equal(revisionAfterBegin);
+		expect(coordinator.isCurrentRemoteOwnerProvenance(current.token)).to.be
+			.false;
+		expect(coordinator.isCurrentRemoteOwnerProvenanceCapture(capture)).to.be
+			.false;
+		expect(coordinator.isCurrentRemoteOwnerProvenanceCapture(empty)).to.be
+			.false;
+		expect(coordinator.commit(admission)).to.be.true;
+		expect(coordinator.publishRemoteOwnerProvenance(admission)).to.be.true;
+
+		const stopped = new StoppedReplicationInfoV2Message({
+			receiverChallenge: state.receiverBinding!.slice(),
+			senderEpoch,
+			sequence: 3n,
+			segmentIds: [],
+		});
+		const bypassed = prepare(stopped)!;
+		const beforeDirectCommit = coordinator.captureCurrentRemoteOwnerProvenance(
+			[],
+		)!;
+		expect(coordinator.commit(bypassed)).to.be.true;
+		expect(
+			coordinator.isCurrentRemoteOwnerProvenanceCapture(beforeDirectCommit),
+		).to.be.false;
+		expect(coordinator.publishRemoteOwnerProvenance(bypassed)).to.be.false;
+		expect(coordinator.currentRemoteOwnerProvenance(peerHash)).to.be.undefined;
+		expect(coordinator.requireFullAfterFailure(bypassed)).to.be.true;
+		expect(state.phase).to.equal("resync");
+
+		const staleEmpty = coordinator.captureCurrentRemoteOwnerProvenance([])!;
+		coordinator.clearForClose();
+		expect(coordinator.isCurrentRemoteOwnerProvenanceCapture(staleEmpty)).to.be
+			.false;
+		coordinator.resetForOpen();
+		expect(coordinator.isCurrentRemoteOwnerProvenanceCapture(staleEmpty)).to.be
+			.false;
+		monotonicNow++;
+	});
+
+	it("fails owner tokens closed across state, transport and host lifecycle resets", () => {
+		let ownershipActive = true;
+		const mint = () => {
+			coordinator.clearForClose();
+			closed = false;
+			currentSession = {};
+			currentReceiveEpoch = {};
+			currentSenderTransportSession = senderTransportSession;
+			coordinator = createCoordinator({
+				monotonicNow: () => 10,
+				wallNow: () => 1_000,
+				currentRemoteOwnerTtlMs: 100,
+				isOwnershipActive: () => ownershipActive,
+			});
+			expect(markLocalReady()).to.be.true;
+			expect(observeSender()).to.be.true;
+			const state = coordinator._receiveStates.get(peerHash)!;
+			finalizeCurrentRemoteOwner(
+				new FullReplicationInfoV2Message({
+					receiverChallenge: state.receiverBinding!.slice(),
+					senderEpoch: bytes(33),
+					sequence: 1n,
+					segments: [],
+				}),
+			);
+			return coordinator.currentRemoteOwnerProvenance(peerHash)!.token;
+		};
+
+		let token = mint();
+		coordinator.clearPeer(peerHash, currentSession);
+		expect(coordinator.isCurrentRemoteOwnerProvenance(token)).to.be.false;
+
+		token = mint();
+		coordinator.revokePeerCapability(peerHash);
+		expect(coordinator.isCurrentRemoteOwnerProvenance(token)).to.be.false;
+
+		token = mint();
+		currentReceiveEpoch = {};
+		expect(
+			coordinator.advanceRecovery({
+				peerHash,
+				peerSession: currentSession,
+				receiveEpoch: currentReceiveEpoch,
+			}),
+		).to.be.true;
+		expect(coordinator.isCurrentRemoteOwnerProvenance(token)).to.be.false;
+
+		token = mint();
+		currentSession = {};
+		expect(coordinator.isCurrentRemoteOwnerProvenance(token)).to.be.false;
+
+		token = mint();
+		currentSenderTransportSession++;
+		expect(coordinator.isCurrentRemoteOwnerProvenance(token)).to.be.false;
+
+		token = mint();
+		const lifecycleCapture = coordinator.captureCurrentRemoteOwnerProvenance(
+			[],
+		)!;
+		coordinator.invalidateCurrentRemoteOwnerProvenance();
+		expect(coordinator.isCurrentRemoteOwnerProvenance(token)).to.be.false;
+		expect(coordinator.isCurrentRemoteOwnerProvenanceCapture(lifecycleCapture))
+			.to.be.false;
+
+		token = mint();
+		const capture = coordinator.captureCurrentRemoteOwnerProvenance([
+			peerHash,
+		])!;
+		const lifecycleState = coordinator._receiveStates.get(peerHash)!;
+		ownershipActive = false;
+		expect(coordinator.isCurrentRemoteOwnerProvenance(token)).to.be.false;
+		expect(coordinator.isCurrentRemoteOwnerProvenanceCapture(capture)).to.be
+			.false;
+		ownershipActive = true;
+		expect(coordinator.isCurrentRemoteOwnerProvenance(token)).to.be.false;
+		expect(coordinator.isCurrentRemoteOwnerProvenanceCapture(capture)).to.be
+			.false;
+		expect(
+			prepare(
+				new AddedReplicationInfoV2Message({
+					receiverChallenge: lifecycleState.receiverBinding!.slice(),
+					senderEpoch: bytes(33),
+					sequence: 2n,
+					segments: [],
+				}),
+			),
+		).to.be.undefined;
+		expect(lifecycleState.capabilityRefreshRequired).to.be.true;
+
+		token = mint();
+		closed = true;
+		expect(coordinator.isCurrentRemoteOwnerProvenance(token)).to.be.false;
+	});
+
+	it("bounds batch inputs before lookup and returns no partial capture", () => {
+		coordinator = createCoordinator({
+			monotonicNow: () => 10,
+			wallNow: () => 1_000,
+			currentRemoteOwnerTtlMs: 100,
+		});
+		expect(markLocalReady()).to.be.true;
+		expect(observeSender()).to.be.true;
+		const state = coordinator._receiveStates.get(peerHash)!;
+		finalizeCurrentRemoteOwner(
+			new FullReplicationInfoV2Message({
+				receiverChallenge: state.receiverBinding!.slice(),
+				senderEpoch: bytes(34),
+				sequence: 1n,
+				segments: [],
+			}),
+		);
+
+		expect(
+			coordinator.captureCurrentRemoteOwnerProvenance([peerHash, "missing"]),
+		).to.be.undefined;
+		expect(() =>
+			coordinator.captureCurrentRemoteOwnerProvenance([peerHash, peerHash]),
+		).to.throw("Invalid replication-info V2 current-owner batch");
+		const sparse = new Array<string>(1);
+		expect(() =>
+			coordinator.captureCurrentRemoteOwnerProvenance(sparse),
+		).to.throw("Invalid replication-info V2 current-owner batch");
+		expect(() =>
+			coordinator.captureCurrentRemoteOwnerProvenance(
+				new Array(MAX_REPLICATION_INFO_V2_CURRENT_OWNER_BATCH + 1).fill(
+					peerHash,
+				),
+			),
+		).to.throw("Invalid replication-info V2 current-owner batch");
+		expect(() =>
+			coordinator.captureCurrentRemoteOwnerProvenance(["x".repeat(513)]),
+		).to.throw("Invalid replication-info V2 current-owner batch");
+
+		let lengthReads = 0;
+		let indexReads = 0;
+		const proxied = new Proxy([peerHash], {
+			get(target, property, receiver) {
+				if (property === "length") {
+					lengthReads++;
+					return lengthReads === 1 ? 1 : 100_000;
+				}
+				if (property === "0") {
+					indexReads++;
+				}
+				return Reflect.get(target, property, receiver);
+			},
+		});
+		const capture = coordinator.captureCurrentRemoteOwnerProvenance(proxied)!;
+		expect(capture.tokens).to.have.length(1);
+		expect(lengthReads).to.equal(1);
+		expect(indexReads).to.equal(1);
+	});
+
+	it("fails closed on invalid clocks, deadline overflow and TTL overrides", () => {
+		expect(() =>
+			createCoordinator({
+				currentRemoteOwnerTtlMs:
+					MAX_REPLICATION_INFO_V2_CURRENT_OWNER_TTL_MS + 1,
+			}),
+		).to.throw("Invalid replication-info V2 current-owner TTL");
+
+		let monotonicNow = 10;
+		coordinator = createCoordinator({
+			monotonicNow: () => monotonicNow,
+			wallNow: () => 1_000,
+			currentRemoteOwnerTtlMs: 100,
+		});
+		expect(markLocalReady()).to.be.true;
+		expect(observeSender()).to.be.true;
+		let state = coordinator._receiveStates.get(peerHash)!;
+		finalizeCurrentRemoteOwner(
+			new FullReplicationInfoV2Message({
+				receiverChallenge: state.receiverBinding!.slice(),
+				senderEpoch: bytes(35),
+				sequence: 1n,
+				segments: [],
+			}),
+		);
+		const token = coordinator.currentRemoteOwnerProvenance(peerHash)!.token;
+		monotonicNow = Number.NaN;
+		expect(coordinator.isCurrentRemoteOwnerProvenance(token)).to.be.false;
+		monotonicNow = 11;
+		expect(coordinator.isCurrentRemoteOwnerProvenance(token)).to.be.false;
+		expect(
+			prepare(
+				new AddedReplicationInfoV2Message({
+					receiverChallenge: state.receiverBinding!.slice(),
+					senderEpoch: bytes(35),
+					sequence: 2n,
+					segments: [],
+				}),
+			),
+		).to.be.undefined;
+		expect(state.capabilityRefreshRequired).to.be.true;
+		coordinator.clearForClose();
+
+		monotonicNow = 30;
+		coordinator = createCoordinator({
+			monotonicNow: () => monotonicNow,
+			wallNow: () => 1_000,
+			currentRemoteOwnerTtlMs: 100,
+		});
+		expect(markLocalReady()).to.be.true;
+		expect(observeSender()).to.be.true;
+		state = coordinator._receiveStates.get(peerHash)!;
+		finalizeCurrentRemoteOwner(
+			new FullReplicationInfoV2Message({
+				receiverChallenge: state.receiverBinding!.slice(),
+				senderEpoch: bytes(37),
+				sequence: 1n,
+				segments: [],
+			}),
+		);
+		const regressingClockToken =
+			coordinator.currentRemoteOwnerProvenance(peerHash)!.token;
+		monotonicNow = 29;
+		expect(coordinator.isCurrentRemoteOwnerProvenance(regressingClockToken)).to
+			.be.false;
+		monotonicNow = 30;
+		expect(coordinator.isCurrentRemoteOwnerProvenance(regressingClockToken)).to
+			.be.false;
+		expect(
+			prepare(
+				new AddedReplicationInfoV2Message({
+					receiverChallenge: state.receiverBinding!.slice(),
+					senderEpoch: bytes(37),
+					sequence: 2n,
+					segments: [],
+				}),
+			),
+		).to.be.undefined;
+		expect(state.capabilityRefreshRequired).to.be.true;
+		coordinator.clearForClose();
+
+		let clockThrows = false;
+		coordinator = createCoordinator({
+			monotonicNow: () => {
+				if (clockThrows) {
+					throw new Error("clock unavailable");
+				}
+				return 20;
+			},
+			wallNow: () => 1_000,
+			currentRemoteOwnerTtlMs: 100,
+		});
+		expect(markLocalReady()).to.be.true;
+		expect(observeSender()).to.be.true;
+		state = coordinator._receiveStates.get(peerHash)!;
+		finalizeCurrentRemoteOwner(
+			new FullReplicationInfoV2Message({
+				receiverChallenge: state.receiverBinding!.slice(),
+				senderEpoch: bytes(36),
+				sequence: 1n,
+				segments: [],
+			}),
+		);
+		const throwingClockToken =
+			coordinator.currentRemoteOwnerProvenance(peerHash)!.token;
+		clockThrows = true;
+		expect(() =>
+			coordinator.isCurrentRemoteOwnerProvenance(throwingClockToken),
+		).not.to.throw();
+		clockThrows = false;
+		expect(coordinator.isCurrentRemoteOwnerProvenance(throwingClockToken)).to.be
+			.false;
+		expect(
+			prepare(
+				new AddedReplicationInfoV2Message({
+					receiverChallenge: state.receiverBinding!.slice(),
+					senderEpoch: bytes(36),
+					sequence: 2n,
+					segments: [],
+				}),
+			),
+		).to.be.undefined;
+		coordinator.clearForClose();
+
+		let wallClockThrows = false;
+		coordinator = createCoordinator({
+			monotonicNow: () => 40,
+			wallNow: () => {
+				if (wallClockThrows) {
+					throw new Error("wall clock unavailable");
+				}
+				return 1_000;
+			},
+			currentRemoteOwnerTtlMs: 100,
+		});
+		expect(markLocalReady()).to.be.true;
+		expect(observeSender()).to.be.true;
+		state = coordinator._receiveStates.get(peerHash)!;
+		finalizeCurrentRemoteOwner(
+			new FullReplicationInfoV2Message({
+				receiverChallenge: state.receiverBinding!.slice(),
+				senderEpoch: bytes(38),
+				sequence: 1n,
+				segments: [],
+			}),
+		);
+		const wallClockToken =
+			coordinator.currentRemoteOwnerProvenance(peerHash)!.token;
+		wallClockThrows = true;
+		expect(() =>
+			coordinator.currentRemoteOwnerProvenance(peerHash),
+		).not.to.throw();
+		expect(coordinator.currentRemoteOwnerProvenance(peerHash)).to.be.undefined;
+		expect(coordinator.captureCurrentRemoteOwnerProvenance([peerHash])).to.be
+			.undefined;
+		expect(coordinator.isCurrentRemoteOwnerProvenance(wallClockToken)).to.be
+			.true;
+		wallClockThrows = false;
+		expect(coordinator.currentRemoteOwnerProvenance(peerHash)?.token).to.equal(
+			wallClockToken,
+		);
+		coordinator.clearForClose();
+
+		coordinator = createCoordinator({
+			monotonicNow: () => Number.MAX_VALUE,
+			wallNow: () => 1_000,
+			currentRemoteOwnerTtlMs: 10,
+		});
+		expect(markLocalReady()).to.be.true;
+		expect(observeSender()).to.be.true;
+		state = coordinator._receiveStates.get(peerHash)!;
+		expect(state.remoteOwnerGrant).to.be.undefined;
+		expect(
+			prepare(
+				new FullReplicationInfoV2Message({
+					receiverChallenge: state.receiverBinding!.slice(),
+					senderEpoch: bytes(35),
+					sequence: 1n,
+					segments: [],
+				}),
+			),
+		).to.be.undefined;
+		expect(state.phase).to.equal("resync");
+		expect(state.capabilityRefreshRequired).to.be.true;
+	});
+
 	it("fences a parked delta across same-session recovery", () => {
 		expect(markLocalReady()).to.be.true;
 		expect(observeSender()).to.be.true;
@@ -938,8 +1475,11 @@ describe("receive admission replication-info V2 receiver state", () => {
 			senderTransportSession,
 			transportTimestamp: 1n,
 		});
-		expect(admission).to.exist;
-		expect(coordinator.commit(admission!)).to.be.true;
+		// Recovery cleared the old provenance grant. Even a Full using the old
+		// binding must wait for the capability worker to rotate the challenge.
+		expect(admission).to.be.undefined;
+		expect(state.phase).to.equal("resync");
+		expect(state.remoteOwnerGrant).to.be.undefined;
 	});
 
 	it("makes exact capability replays side-effect free", async () => {
@@ -2130,6 +2670,8 @@ describe("receive admission replication-info V2 receiver integration", () => {
 		).to.equal(1);
 		expect(state.lastSequence).to.equal(1n);
 		expect(state.phase).to.equal("resync");
+		expect(log._v2Receive.currentRemoteOwnerProvenance(remoteHash)).to.be
+			.undefined;
 		expect(log._v2Receive._cutoverPeerSessions.has(peerSession)).to.be.true;
 		await waitForResolved(() => expect(send.called).to.be.true);
 
@@ -2144,6 +2686,58 @@ describe("receive admission replication-info V2 receiver integration", () => {
 		);
 		expect(state.lastSequence).to.equal(2n);
 		expect(state.phase).to.equal("active");
+		const recovered = log._v2Receive.currentRemoteOwnerProvenance(remoteHash);
+		expect(recovered?.token.sequence).to.equal(2n);
+		const recoveredCapture = log._v2Receive.captureCurrentRemoteOwnerProvenance(
+			[remoteHash],
+		);
+		expect(
+			log._v2Receive.isCurrentRemoteOwnerProvenanceCapture(recoveredCapture),
+		).to.be.true;
+
+		const originalTrust = log._isTrustedReplicator;
+		log._isTrustedReplicator = async () => false;
+		try {
+			await log.onMessage(
+				new AddedReplicationInfoV2Message({
+					receiverChallenge: state.receiverBinding!.slice(),
+					senderEpoch,
+					sequence: 3n,
+					segments: [range],
+				}),
+				context,
+			);
+		} finally {
+			log._isTrustedReplicator = originalTrust;
+		}
+		expect(state.lastSequence).to.equal(2n);
+		expect(state.phase).to.equal("resync");
+		expect(log._v2Receive.isCurrentRemoteOwnerProvenance(recovered!.token)).to
+			.be.false;
+		expect(
+			log._v2Receive.isCurrentRemoteOwnerProvenanceCapture(recoveredCapture),
+		).to.be.false;
+
+		await log.onMessage(
+			new FullReplicationInfoV2Message({
+				receiverChallenge: state.receiverBinding!.slice(),
+				senderEpoch,
+				sequence: 4n,
+				segments: [range],
+			}),
+			context,
+		);
+		const lifecycleToken =
+			log._v2Receive.currentRemoteOwnerProvenance(remoteHash)!.token;
+		const lifecycleCapture = log._v2Receive.captureCurrentRemoteOwnerProvenance(
+			[remoteHash],
+		);
+		log.startRepairLifecycle();
+		expect(log._v2Receive.isCurrentRemoteOwnerProvenance(lifecycleToken)).to.be
+			.false;
+		expect(
+			log._v2Receive.isCurrentRemoteOwnerProvenanceCapture(lifecycleCapture),
+		).to.be.false;
 	});
 
 	it("rolls back stale Full and Stopped deletions after transport revocation", async () => {
@@ -2367,6 +2961,9 @@ describe("receive admission replication-info V2 receiver integration", () => {
 		expect(state.phase).to.equal("active");
 		expect(state.lastSequence).to.equal(1n);
 		expect(
+			log._v2Receive.currentRemoteOwnerProvenance(remoteHash)?.token.sequence,
+		).to.equal(1n);
+		expect(
 			await log.replicationIndex.count({ query: { hash: remoteHash } }),
 		).to.equal(1);
 		expect(activity.calledOnceWith(remoteHash)).to.be.true;
@@ -2384,6 +2981,9 @@ describe("receive admission replication-info V2 receiver integration", () => {
 		expect(
 			await log.replicationIndex.count({ query: { hash: remoteHash } }),
 		).to.equal(2);
+		expect(
+			log._v2Receive.currentRemoteOwnerProvenance(remoteHash)?.token.sequence,
+		).to.equal(2n);
 		expect(activity.calledOnceWith(remoteHash)).to.be.true;
 
 		activity.resetHistory();
@@ -2398,6 +2998,9 @@ describe("receive admission replication-info V2 receiver integration", () => {
 		);
 		expect(state.phase).to.equal("active");
 		expect(state.lastSequence).to.equal(3n);
+		expect(
+			log._v2Receive.currentRemoteOwnerProvenance(remoteHash)?.token.sequence,
+		).to.equal(3n);
 		expect(
 			await log.replicationIndex.count({ query: { hash: remoteHash } }),
 		).to.equal(2);
@@ -2414,6 +3017,9 @@ describe("receive admission replication-info V2 receiver integration", () => {
 		expect(state.phase).to.equal("active");
 		expect(state.lastSequence).to.equal(4n);
 		expect(
+			log._v2Receive.currentRemoteOwnerProvenance(remoteHash)?.token.sequence,
+		).to.equal(4n);
+		expect(
 			await log.replicationIndex.count({ query: { hash: remoteHash } }),
 		).to.equal(3);
 
@@ -2428,6 +3034,8 @@ describe("receive admission replication-info V2 receiver integration", () => {
 			context(0n),
 		);
 		expect(state.phase).to.equal("resync");
+		expect(log._v2Receive.currentRemoteOwnerProvenance(remoteHash)).to.be
+			.undefined;
 		expect(
 			await log.replicationIndex.count({ query: { hash: remoteHash } }),
 		).to.equal(3);
@@ -2449,6 +3057,9 @@ describe("receive admission replication-info V2 receiver integration", () => {
 		);
 		expect(state.phase).to.equal("active");
 		expect(state.lastSequence).to.equal(7n);
+		expect(
+			log._v2Receive.currentRemoteOwnerProvenance(remoteHash)?.token.sequence,
+		).to.equal(7n);
 		expect(
 			await log.replicationIndex.count({ query: { hash: remoteHash } }),
 		).to.equal(1);
@@ -2501,6 +3112,12 @@ describe("receive admission replication-info V2 receiver integration", () => {
 			await log.replicationIndex.count({ query: { hash: remoteHash } }),
 		).to.equal(1);
 		expect(activity.notCalled).to.be.true;
+		await waitForResolved(() => {
+			expect(state.remoteOwnerGrant).to.exist;
+			expect([...state.receiverRequestChallenge]).to.not.deep.equal([
+				...challengeBeforeRecovery,
+			]);
+		});
 
 		await log.onMessage(
 			new FullReplicationInfoV2Message({
