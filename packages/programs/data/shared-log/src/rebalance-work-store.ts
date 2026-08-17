@@ -1143,6 +1143,10 @@ const decodeFrame = (
 export class RebalanceWorkStore {
 	private frame!: LoadedFrame;
 	private tail: Promise<void> = Promise.resolve();
+	private dropping = false;
+	private dropPromise?: Promise<RebalanceWorkMutationResult>;
+	private dropFailed = false;
+	private dropFailure?: unknown;
 	private closing = false;
 	private closed = false;
 	private closePromise?: Promise<void>;
@@ -1318,6 +1322,67 @@ export class RebalanceWorkStore {
 		});
 	}
 
+	/**
+	 * @internal
+	 * Terminally fence this instance and durably forget any active scan before
+	 * lower shared-log state is destroyed. This is local lifecycle metadata,
+	 * not transfer acknowledgement or prune authority. A recovery path must call
+	 * beginDrop again after reopening before it resumes destructive cleanup.
+	 */
+	beginDrop(): Promise<RebalanceWorkMutationResult> {
+		// Once close releases the persistence lease, a cached result is stale: a
+		// new owner may already have installed newer work in the same namespace.
+		if (this.closed) {
+			return Promise.reject(new Error("Rebalance work store is closing"));
+		}
+		if (this.dropPromise) {
+			return this.dropPromise;
+		}
+		if (this.closing) {
+			return Promise.reject(new Error("Rebalance work store is closing"));
+		}
+		if (this.poisoned) {
+			return Promise.reject(
+				new Error("Rebalance work store is poisoned", {
+					cause: this.poisonCause,
+				}),
+			);
+		}
+
+		// Fence synchronously, before the terminal operation waits for mutations
+		// that were already admitted to the serialized tail.
+		this.dropping = true;
+		const result = this.tail.then(async () => {
+			if (this.poisoned) {
+				throw new Error("Rebalance work store is poisoned", {
+					cause: this.poisonCause,
+				});
+			}
+			// An explicit cleared frame was already physically confirmed on write or
+			// reopen. An implicit frame means the exclusively held namespace has no
+			// persisted work to forget; avoiding its first write also avoids creating
+			// a lone generation with no fallback if that write tears. Only active work
+			// needs a higher cleared generation.
+			if (this.frame.active) {
+				await this.writeNextFrame(undefined);
+			}
+			return this.mutationResult();
+		});
+		this.dropPromise = result.then(
+			(value) => value,
+			(error) => {
+				this.dropFailed = true;
+				this.dropFailure = error;
+				throw error;
+			},
+		);
+		this.tail = this.dropPromise.then(
+			() => undefined,
+			() => undefined,
+		);
+		return this.dropPromise;
+	}
+
 	close(): Promise<void> {
 		if (this.closePromise) {
 			return this.closePromise;
@@ -1336,19 +1401,27 @@ export class RebalanceWorkStore {
 				this.closed = true;
 				this.releasePersistenceLease();
 			}
-			const poisonError = this.poisoned
-				? new Error("Rebalance work store is poisoned", {
-						cause: this.poisonCause,
-					})
-				: undefined;
-			if (closeFailed && poisonError) {
+			let lifecycleFailed = false;
+			let lifecycleError: unknown;
+			if (this.poisoned) {
+				lifecycleFailed = true;
+				lifecycleError = new Error("Rebalance work store is poisoned", {
+					cause: this.poisonCause,
+				});
+			} else if (this.dropFailed) {
+				lifecycleFailed = true;
+				lifecycleError = this.dropFailure;
+			}
+			if (closeFailed && lifecycleFailed) {
 				throw new AggregateError(
-					[poisonError, closeError],
-					"Failed to close poisoned rebalance work store",
+					[lifecycleError, closeError],
+					this.poisoned
+						? "Failed to close poisoned rebalance work store"
+						: "Failed to close rebalance work store after terminal drop",
 				);
 			}
 			if (closeFailed) throw closeError;
-			if (poisonError) throw poisonError;
+			if (lifecycleFailed) throw lifecycleError;
 		})();
 		return this.closePromise;
 	}
@@ -1408,6 +1481,9 @@ export class RebalanceWorkStore {
 	}
 
 	private enqueue<T>(operation: () => Promise<T>): Promise<T> {
+		if (this.dropping) {
+			return Promise.reject(new Error("Rebalance work store is dropping"));
+		}
 		if (this.closing || this.closed) {
 			return Promise.reject(new Error("Rebalance work store is closing"));
 		}
@@ -1555,6 +1631,9 @@ export class RebalanceWorkStore {
 		}
 		if (this.closing || this.closed) {
 			throw new Error("Rebalance work store is closing");
+		}
+		if (this.dropping) {
+			throw new Error("Rebalance work store is dropping");
 		}
 	}
 

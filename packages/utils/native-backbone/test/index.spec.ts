@@ -4,6 +4,7 @@ import {
 	MAX_NATIVE_REBALANCE_COLLISION_BUCKET_LIMITS,
 	NativeBackboneBufferedCoordinatePersistenceStore,
 	NativeBackboneCoordinatePersistence,
+	NativeBackboneCoordinatePersistenceReadLimitError,
 	type NativeBackboneCoordinatePersistenceStore,
 	NativeBackboneMemoryCoordinatePersistenceStore,
 	NativeBackboneNodeCoordinatePersistence,
@@ -189,10 +190,11 @@ class FakeOPFSFileHandle {
 		arrayBuffer(): Promise<ArrayBuffer>;
 		size: number;
 	}> {
-		const bytes = this.directory.fileBytes(this.name);
 		return {
-			size: bytes.byteLength,
+			size: this.directory.fileSize(this.name),
 			arrayBuffer: async () => {
+				this.directory.arrayBufferCount++;
+				const bytes = this.directory.fileBytes(this.name);
 				const copy = bytes.slice();
 				return copy.buffer.slice(
 					copy.byteOffset,
@@ -274,6 +276,7 @@ class FakeOPFSDirectoryHandle implements NativeBackboneOPFSDirectoryHandle {
 	syncWriteCount = 0;
 	syncFlushCount = 0;
 	syncCloseCount = 0;
+	arrayBufferCount = 0;
 
 	constructor(
 		private readonly syncAccess = false,
@@ -286,6 +289,10 @@ class FakeOPFSDirectoryHandle implements NativeBackboneOPFSDirectoryHandle {
 
 	fileBytes(name: string): Uint8Array {
 		return this.files.get(name)?.slice() ?? new Uint8Array();
+	}
+
+	fileSize(name: string): number {
+		return this.files.get(name)?.byteLength ?? 0;
 	}
 
 	async getDirectoryHandle(): Promise<NativeBackboneOPFSDirectoryHandle> {
@@ -4334,6 +4341,345 @@ describe("native peerbit backbone", () => {
 					?.publicKey ?? [],
 			),
 		).to.deep.equal(Array.from(publicKey));
+	});
+
+	it("bounds memory and buffered named-file reads at exact byte limits", async () => {
+		const memory = new NativeBackboneMemoryCoordinatePersistenceStore();
+		await memory.write("bounded.bin", new Uint8Array([1, 2, 3]));
+		const exact = await memory.read("bounded.bin", 3);
+		expect(exact).to.deep.equal(new Uint8Array([1, 2, 3]));
+		exact![0] = 9;
+		expect(await memory.read("bounded.bin", 3)).to.deep.equal(
+			new Uint8Array([1, 2, 3]),
+		);
+		const memoryFailure = await memory.read("bounded.bin", 2).then(
+			() => undefined,
+			(error: unknown) => error,
+		);
+		expect(memoryFailure).to.be.instanceOf(
+			NativeBackboneCoordinatePersistenceReadLimitError,
+		);
+		expect(
+			(memoryFailure as NativeBackboneCoordinatePersistenceReadLimitError)
+				.observedBytes,
+		).to.equal(3n);
+		await memory.write("empty.bin", new Uint8Array());
+		expect(await memory.read("empty.bin", 0)).to.deep.equal(new Uint8Array());
+
+		const forwardedLimits: Array<number | undefined> = [];
+		const inner: NativeBackboneCoordinatePersistenceStore = {
+			read: (name, maxBytes) => {
+				forwardedLimits.push(maxBytes);
+				return memory.read(name, maxBytes);
+			},
+			write: (name, bytes) => memory.write(name, bytes),
+			append: (name, bytes) => memory.append(name, bytes),
+			flush: (name) => memory.flush(name),
+		};
+		const buffered = new NativeBackboneBufferedCoordinatePersistenceStore(
+			inner,
+		);
+		await buffered.append("buffered.bin", new Uint8Array([4, 5, 6]));
+		expect(await buffered.read("buffered.bin", 3)).to.deep.equal(
+			new Uint8Array([4, 5, 6]),
+		);
+		const bufferedFailure = await buffered.read("buffered.bin", 2).then(
+			() => undefined,
+			(error: unknown) => error,
+		);
+		expect(bufferedFailure).to.be.instanceOf(
+			NativeBackboneCoordinatePersistenceReadLimitError,
+		);
+		expect(forwardedLimits).to.deep.equal([0, 3, 2]);
+	});
+
+	it("preflights existing plus pending bytes before buffered read flush", async () => {
+		const memory = new NativeBackboneMemoryCoordinatePersistenceStore();
+		await memory.write("combined.bin", new Uint8Array([1, 2]));
+		const forwardedLimits: Array<number | undefined> = [];
+		let appendCalls = 0;
+		let flushCalls = 0;
+		const inner: NativeBackboneCoordinatePersistenceStore = {
+			read: (name, maxBytes) => {
+				forwardedLimits.push(maxBytes);
+				return memory.read(name, maxBytes);
+			},
+			write: (name, bytes) => memory.write(name, bytes),
+			append: async (name, bytes) => {
+				appendCalls++;
+				await memory.append(name, bytes);
+			},
+			flush: async (name) => {
+				flushCalls++;
+				await memory.flush(name);
+			},
+		};
+		const buffered = new NativeBackboneBufferedCoordinatePersistenceStore(
+			inner,
+		);
+		await buffered.append("combined.bin", new Uint8Array([3]));
+		await buffered.append("combined.bin", new Uint8Array([4]));
+
+		const pendingOverflow = await buffered.read("combined.bin", 1).then(
+			() => undefined,
+			(error: unknown) => error,
+		);
+		expect(pendingOverflow).to.be.instanceOf(
+			NativeBackboneCoordinatePersistenceReadLimitError,
+		);
+		expect(forwardedLimits).to.have.length(0);
+
+		const overflow = await buffered.read("combined.bin", 3).then(
+			() => undefined,
+			(error: unknown) => error,
+		);
+		expect(overflow).to.be.instanceOf(
+			NativeBackboneCoordinatePersistenceReadLimitError,
+		);
+		expect(appendCalls).to.equal(0);
+		expect(flushCalls).to.equal(0);
+		expect(memory.files.get("combined.bin")).to.deep.equal(
+			new Uint8Array([1, 2]),
+		);
+
+		expect(await buffered.read("combined.bin", 4)).to.deep.equal(
+			new Uint8Array([1, 2, 3, 4]),
+		);
+		expect(appendCalls).to.equal(1);
+		expect(flushCalls).to.equal(1);
+		expect(forwardedLimits).to.deep.equal([1, 2, 4]);
+	});
+
+	it("fails closed when pending bytes change during buffered preflight", async () => {
+		const memory = new NativeBackboneMemoryCoordinatePersistenceStore();
+		await memory.write("concurrent.bin", new Uint8Array([1]));
+		let markReadEntered!: () => void;
+		const readEntered = new Promise<void>((resolve) => {
+			markReadEntered = resolve;
+		});
+		let releaseRead!: () => void;
+		const readBlocked = new Promise<void>((resolve) => {
+			releaseRead = resolve;
+		});
+		let readCalls = 0;
+		let appendCalls = 0;
+		let flushCalls = 0;
+		const forwardedLimits: Array<number | undefined> = [];
+		const inner: NativeBackboneCoordinatePersistenceStore = {
+			read: async (name, maxBytes) => {
+				forwardedLimits.push(maxBytes);
+				readCalls++;
+				if (readCalls === 1) {
+					markReadEntered();
+					await readBlocked;
+				}
+				return memory.read(name, maxBytes);
+			},
+			write: (name, bytes) => memory.write(name, bytes),
+			append: async (name, bytes) => {
+				appendCalls++;
+				await memory.append(name, bytes);
+			},
+			flush: async (name) => {
+				flushCalls++;
+				await memory.flush(name);
+			},
+		};
+		const buffered = new NativeBackboneBufferedCoordinatePersistenceStore(
+			inner,
+		);
+		await buffered.append("concurrent.bin", new Uint8Array([2]));
+		const reading = buffered.read("concurrent.bin", 3);
+		await readEntered;
+		await buffered.append("concurrent.bin", new Uint8Array([3]));
+		releaseRead();
+
+		await expect(reading).to.be.rejectedWith(
+			"pending bytes changed during a bounded read",
+		);
+		expect(appendCalls).to.equal(0);
+		expect(flushCalls).to.equal(0);
+		expect(memory.files.get("concurrent.bin")).to.deep.equal(
+			new Uint8Array([1]),
+		);
+		expect(await buffered.read("concurrent.bin", 3)).to.deep.equal(
+			new Uint8Array([1, 2, 3]),
+		);
+		expect(appendCalls).to.equal(1);
+		expect(flushCalls).to.equal(1);
+		expect(forwardedLimits).to.deep.equal([2, 1, 3]);
+	});
+
+	it("uses bigint stat and capped positional reads for Node named files", async () => {
+		const bytes = new Uint8Array([1, 2, 3]);
+		let readFileCalls = 0;
+		let readCalls = 0;
+		let closeCalls = 0;
+		let statCalls = 0;
+		const store = new NativeBackboneNodeCoordinatePersistenceStore("bounded", {
+			mkdir: async () => {},
+			readFile: async () => {
+				readFileCalls++;
+				throw new Error("readFile must not be used");
+			},
+			writeFile: async () => {},
+			appendFile: async () => {},
+			open: async (_path, flags) => {
+				expect(flags).to.equal("r");
+				return {
+					write: async (data) => ({ bytesWritten: data.byteLength }),
+					stat: async () => {
+						statCalls++;
+						return { size: BigInt(bytes.byteLength) };
+					},
+					read: async (target, offset, length, position) => {
+						readCalls++;
+						const available = Math.max(0, bytes.byteLength - position);
+						const count = Math.min(length, available, 2);
+						target.set(bytes.subarray(position, position + count), offset);
+						return { bytesRead: count };
+					},
+					close: async () => {
+						closeCalls++;
+					},
+				};
+			},
+			rm: async () => {},
+		});
+
+		expect(await store.read("file.bin", 3)).to.deep.equal(bytes);
+		expect(readCalls).to.equal(3);
+		expect(statCalls).to.equal(2);
+		expect(closeCalls).to.equal(1);
+		const capFailure = await store.read("file.bin", 2).then(
+			() => undefined,
+			(error: unknown) => error,
+		);
+		expect(capFailure).to.be.instanceOf(
+			NativeBackboneCoordinatePersistenceReadLimitError,
+		);
+		expect(readCalls).to.equal(3);
+		expect(closeCalls).to.equal(2);
+		expect(readFileCalls).to.equal(0);
+	});
+
+	it("preserves unbounded Node reads without bounded handle capabilities", async () => {
+		const bytes = new Uint8Array([1, 2, 3]);
+		let readFileCalls = 0;
+		const store = new NativeBackboneNodeCoordinatePersistenceStore("legacy", {
+			mkdir: async () => {},
+			readFile: async () => {
+				readFileCalls++;
+				return bytes.slice();
+			},
+			writeFile: async () => {},
+			appendFile: async () => {},
+			rm: async () => {},
+		});
+
+		expect(await store.read("file.bin")).to.deep.equal(bytes);
+		expect(readFileCalls).to.equal(1);
+		const boundedFailure = await store.read("file.bin", 3).then(
+			() => undefined,
+			(error: unknown) => error,
+		);
+		expect(String(boundedFailure)).to.contain(
+			"bounded reads require FileHandle.open",
+		);
+		expect(readFileCalls).to.equal(1);
+	});
+
+	it("rejects short and growing Node named-file reads and always closes", async () => {
+		let shortCloseCalls = 0;
+		const shortStore = new NativeBackboneNodeCoordinatePersistenceStore(
+			"short",
+			{
+				mkdir: async () => {},
+				readFile: async () => new Uint8Array(),
+				writeFile: async () => {},
+				appendFile: async () => {},
+				open: async () => {
+					let calls = 0;
+					return {
+						write: async (data) => ({ bytesWritten: data.byteLength }),
+						stat: async () => ({ size: 3n }),
+						read: async (target) => {
+							calls++;
+							if (calls === 1) {
+								target[0] = 1;
+								return { bytesRead: 1 };
+							}
+							return { bytesRead: 0 };
+						},
+						close: async () => {
+							shortCloseCalls++;
+						},
+					};
+				},
+				rm: async () => {},
+			},
+		);
+		const shortFailure = await shortStore.read("file.bin", 3).then(
+			() => undefined,
+			(error: unknown) => error,
+		);
+		expect(String(shortFailure)).to.contain("changed during a bounded read");
+		expect(shortCloseCalls).to.equal(1);
+
+		let growthCloseCalls = 0;
+		let growthStatCalls = 0;
+		const growthStore = new NativeBackboneNodeCoordinatePersistenceStore(
+			"growth",
+			{
+				mkdir: async () => {},
+				readFile: async () => new Uint8Array(),
+				writeFile: async () => {},
+				appendFile: async () => {},
+				open: async () => ({
+					write: async (data) => ({ bytesWritten: data.byteLength }),
+					stat: async () => ({
+						size: growthStatCalls++ === 0 ? 2n : 3n,
+					}),
+					read: async (target, offset, length, position) => {
+						const grown = new Uint8Array([1, 2, 3]);
+						const count = Math.min(length, grown.byteLength - position);
+						target.set(grown.subarray(position, position + count), offset);
+						return { bytesRead: count };
+					},
+					close: async () => {
+						growthCloseCalls++;
+					},
+				}),
+				rm: async () => {},
+			},
+		);
+		const growthFailure = await growthStore.read("file.bin", 2).then(
+			() => undefined,
+			(error: unknown) => error,
+		);
+		expect(growthFailure).to.be.instanceOf(
+			NativeBackboneCoordinatePersistenceReadLimitError,
+		);
+		expect(growthCloseCalls).to.equal(1);
+	});
+
+	it("checks OPFS named-file size before arrayBuffer allocation", async () => {
+		const directory = new FakeOPFSDirectoryHandle();
+		directory.files.set("bounded.bin", new Uint8Array([1, 2, 3]));
+		const store = new NativeBackboneOPFSCoordinatePersistenceStore(directory);
+
+		expect(await store.read("bounded.bin", 3)).to.deep.equal(
+			new Uint8Array([1, 2, 3]),
+		);
+		expect(directory.arrayBufferCount).to.equal(1);
+		const failure = await store.read("bounded.bin", 2).then(
+			() => undefined,
+			(error: unknown) => error,
+		);
+		expect(failure).to.be.instanceOf(
+			NativeBackboneCoordinatePersistenceReadLimitError,
+		);
+		expect(directory.arrayBufferCount).to.equal(1);
 	});
 
 	it("persists native coordinate WAL through the node filesystem store", async () => {
