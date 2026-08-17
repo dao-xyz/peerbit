@@ -1,6 +1,8 @@
 import { fromBase64, sha256Sync, toBase64, toHexString } from "@peerbit/crypto";
 import deterministicStringify from "json-stringify-deterministic";
 import {
+	CUSTODY_HANDOFF_PROFILE_ID,
+	CUSTODY_HANDOFF_PROFILE_MASK,
 	decodeCustodyHandoffManifestV1,
 	decodeCustodyHandoffReceiptV1,
 } from "./custody-handoff-codec.js";
@@ -8,6 +10,21 @@ import { MAX_U64 } from "./integers.js";
 
 export type CustodyStoreDurability = "strict" | "memory";
 export type CustodyRecordSlot = "a" | "b";
+export type CustodyRecordRole = "source" | "destination";
+
+/**
+ * Exact semantic namespace binding for a custody record store.
+ *
+ * The byte strings are the canonical log identifier and serialized Peerbit
+ * public key. A production persistence factory must always provide this
+ * binding; the optional form on `open()` exists only for the disconnected
+ * memory/reducer model.
+ */
+export type CustodyRecordBinding = Readonly<{
+	logId: Uint8Array;
+	localPublicKey: Uint8Array;
+	role: CustodyRecordRole;
+}>;
 
 /**
  * Logical per-record A/B persistence used by the disconnected custody model.
@@ -167,6 +184,12 @@ type CapturedTarget = Readonly<{
 	receiptId?: string;
 }>;
 
+type CapturedCustodyRecordBinding = Readonly<{
+	logId: string;
+	localPublicKey: string;
+	role: CustodyRecordRole;
+}>;
+
 const CUSTODY_RECORD_FORMAT = "peerbit-shared-log-custody-record" as const;
 const MOVE_KEY_PATTERN = /^[0-9a-f]{64}$/;
 const CHECKSUM_PATTERN = /^[0-9a-f]{64}$/;
@@ -181,6 +204,31 @@ const destinationPinEvidenceFacts = new WeakMap<
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
 	value != null && typeof value === "object" && !Array.isArray(value);
+
+const captureRecordBinding = (
+	value: CustodyRecordBinding | undefined,
+): CapturedCustodyRecordBinding | undefined => {
+	if (value === undefined) return undefined;
+	const logId = value.logId;
+	const localPublicKey = value.localPublicKey;
+	const role = value.role;
+	if (
+		!(logId instanceof Uint8Array) ||
+		logId.byteLength === 0 ||
+		logId.byteLength > 512 ||
+		!(localPublicKey instanceof Uint8Array) ||
+		localPublicKey.byteLength === 0 ||
+		localPublicKey.byteLength > 512 ||
+		(role !== "source" && role !== "destination")
+	) {
+		throw new Error("Invalid custody record binding");
+	}
+	return Object.freeze({
+		logId: toHexString(new Uint8Array(logId)),
+		localPublicKey: toHexString(new Uint8Array(localPublicKey)),
+		role,
+	});
+};
 
 const hasExactKeys = (
 	value: Record<string, unknown>,
@@ -431,6 +479,41 @@ const decodeAndValidateArtifacts = async (
 	};
 };
 
+const assertStateMatchesRecordBinding = (
+	state: CustodyRecordState,
+	binding: CapturedCustodyRecordBinding | undefined,
+) => {
+	if (binding === undefined || state === "absent") return;
+	const sourceState =
+		state === "source-prepared" || state === "source-receipt-durable";
+	if (
+		(binding.role === "source" && !sourceState) ||
+		(binding.role === "destination" && sourceState)
+	) {
+		throw new Error("Custody record state does not match its namespace role");
+	}
+};
+
+const assertArtifactsMatchRecordBinding = (
+	decoded: Awaited<ReturnType<typeof decodeAndValidateArtifacts>>,
+	binding: CapturedCustodyRecordBinding | undefined,
+) => {
+	if (binding === undefined) return;
+	const manifest = decoded.manifest as unknown;
+	if (
+		!isRecord(manifest) ||
+		manifest.logId !== binding.logId ||
+		manifest.custodyProfileId !== CUSTODY_HANDOFF_PROFILE_ID ||
+		manifest.custodyProfileMask !== CUSTODY_HANDOFF_PROFILE_MASK
+	) {
+		throw new Error("Custody manifest does not match its namespace log");
+	}
+	const identity = manifest[binding.role];
+	if (!isRecord(identity) || identity.publicKey !== binding.localPublicKey) {
+		throw new Error("Custody manifest does not match its namespace identity");
+	}
+};
+
 const stateHasReceipt = (state: CustodyRecordState) =>
 	state === "source-receipt-durable" || state === "destination-receipted";
 
@@ -517,7 +600,9 @@ const assertReceiptMatchesPin = (
 const validateStoredArtifacts = async (
 	payload: StoredFramePayload,
 	limits: CustodyStoreLimits,
+	binding: CapturedCustodyRecordBinding | undefined,
 ) => {
+	assertStateMatchesRecordBinding(payload.state, binding);
 	if (payload.state === "absent") {
 		if (
 			payload.manifest !== null ||
@@ -544,6 +629,7 @@ const validateStoredArtifacts = async (
 		throw new Error("Nonterminal custody record retains a receipt");
 	}
 	const decoded = await decodeAndValidateArtifacts(manifest, receipt);
+	assertArtifactsMatchRecordBinding(decoded, binding);
 	if (decoded.moveKey !== payload.moveKey) {
 		throw new Error("Custody record key does not match manifest");
 	}
@@ -617,6 +703,7 @@ const decodeFrame = async (
 	expectedMoveKey: string,
 	slot: CustodyRecordSlot,
 	limits: CustodyStoreLimits,
+	binding: CapturedCustodyRecordBinding | undefined,
 ): Promise<LoadedFrame> => {
 	if (bytes.byteLength === 0 || bytes.byteLength > limits.maxFrameBytes) {
 		throw new Error("Invalid custody record frame size");
@@ -689,6 +776,7 @@ const decodeFrame = async (
 	const artifacts = await validateStoredArtifacts(
 		payload as StoredFramePayload,
 		limits,
+		binding,
 	);
 	return {
 		moveKey,
@@ -889,12 +977,14 @@ export class CustodyRecordStore {
 		private readonly persistence: CustodyRecordPersistence,
 		private readonly durability: CustodyStoreDurability,
 		private readonly limits: CustodyStoreLimits,
+		private readonly binding: CapturedCustodyRecordBinding | undefined,
 	) {}
 
 	static async open(properties: {
 		persistence: CustodyRecordPersistence;
 		durability: CustodyStoreDurability;
 		limits?: Partial<CustodyStoreLimits>;
+		binding?: CustodyRecordBinding;
 	}): Promise<CustodyRecordStore> {
 		if (
 			!properties.persistence ||
@@ -918,6 +1008,7 @@ export class CustodyRecordStore {
 			);
 		}
 		const limits = normalizeLimits(properties.limits);
+		const binding = captureRecordBinding(properties.binding);
 		if (openPersistenceAdapters.has(properties.persistence)) {
 			throw new Error("Custody persistence is already open");
 		}
@@ -926,6 +1017,7 @@ export class CustodyRecordStore {
 			properties.persistence,
 			properties.durability,
 			limits,
+			binding,
 		);
 		store.ownsPersistenceLease = true;
 		return store;
@@ -1075,6 +1167,7 @@ export class CustodyRecordStore {
 		let receiptBytes: Uint8Array | undefined;
 		try {
 			capturedRevision = assertExpectedRevision(expectedRevision);
+			assertStateMatchesRecordBinding(state, this.binding);
 			manifestBytes = captureArtifact(
 				manifestValue,
 				"custody manifest artifact",
@@ -1093,6 +1186,7 @@ export class CustodyRecordStore {
 			manifestBytes,
 			receiptBytes,
 		);
+		assertArtifactsMatchRecordBinding(decoded, this.binding);
 		let pin: StoredPinFacts | undefined;
 		if (state === "destination-pinned") {
 			pin = pinEvidence
@@ -1282,6 +1376,7 @@ export class CustodyRecordStore {
 						moveKey,
 						CUSTODY_RECORD_SLOTS[index],
 						this.limits,
+						this.binding,
 					),
 				);
 			} catch (error) {
