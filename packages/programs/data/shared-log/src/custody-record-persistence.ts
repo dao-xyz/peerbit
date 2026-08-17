@@ -2,6 +2,7 @@ import { deserialize, serialize } from "@dao-xyz/borsh";
 import { PublicSignKey, sha256Sync, toHexString } from "@peerbit/crypto";
 import type { createDatabase } from "@peerbit/indexer-sqlite3";
 import type { NativeDurabilityLock } from "@peerbit/native-backbone";
+import { captureBoundedUint8Array } from "./bounded-bytes.js";
 import {
 	CUSTODY_HANDOFF_PROFILE_ID,
 	CUSTODY_HANDOFF_PROFILE_MASK,
@@ -217,14 +218,11 @@ const captureLimits = (
 	});
 
 const captureIdentityBytes = (value: unknown, name: string): Uint8Array => {
-	if (
-		!(value instanceof Uint8Array) ||
-		value.byteLength === 0 ||
-		value.byteLength > MAX_IDENTITY_BYTES
-	) {
+	try {
+		return captureBoundedUint8Array(value, 1, MAX_IDENTITY_BYTES, name);
+	} catch {
 		throw new TypeError(`${name} must contain 1-${MAX_IDENTITY_BYTES} bytes`);
 	}
-	return new Uint8Array(value);
 };
 
 const captureCanonicalPublicKeyBytes = (value: unknown): Uint8Array => {
@@ -362,11 +360,17 @@ const randomNonZeroGeneration = (
 	name: string,
 ): Uint8Array => {
 	for (let attempt = 0; attempt < 8; attempt++) {
-		const value = crypto.randomBytes(32);
-		if (!(value instanceof Uint8Array) || value.byteLength !== 32) {
+		let copy: Uint8Array;
+		try {
+			copy = captureBoundedUint8Array(
+				crypto.randomBytes(32),
+				32,
+				32,
+				`random ${name}`,
+			);
+		} catch {
 			throw new Error(`Invalid random ${name}`);
 		}
-		const copy = new Uint8Array(value);
 		if (copy.some((byte) => byte !== 0)) return copy;
 	}
 	throw new Error(`Failed to create non-zero ${name}`);
@@ -462,13 +466,16 @@ const boundedBytes = (
 	if (
 		typeof reportedLength !== "bigint" ||
 		reportedLength <= 0n ||
-		reportedLength > BigInt(maximum) ||
-		!(value instanceof Uint8Array) ||
-		value.byteLength !== Number(reportedLength)
+		reportedLength > BigInt(maximum)
 	) {
 		throw new Error(`Invalid bounded custody ${name}`);
 	}
-	return new Uint8Array(value);
+	try {
+		const exact = Number(reportedLength);
+		return captureBoundedUint8Array(value, exact, exact, `custody ${name}`);
+	} catch (error) {
+		throw new Error(`Invalid bounded custody ${name}`, { cause: error });
+	}
 };
 
 const boundedText = (
@@ -899,16 +906,19 @@ class NodeCustodyRecordPersistence implements CustodyRecordPersistence {
 		this.assertAccepting();
 		const capturedMoveKey = assertMoveKey(moveKey);
 		const capturedSlot = assertSlot(slot);
-		if (
-			!(bytes instanceof Uint8Array) ||
-			bytes.byteLength === 0 ||
-			bytes.byteLength > this.maxFrameBytes
-		) {
+		let captured: Uint8Array;
+		try {
+			captured = captureBoundedUint8Array(
+				bytes,
+				1,
+				this.maxFrameBytes,
+				"custody persistence write",
+			);
+		} catch (error) {
 			return Promise.reject(
-				new RangeError("Invalid custody persistence write"),
+				new RangeError("Invalid custody persistence write", { cause: error }),
 			);
 		}
-		const captured = new Uint8Array(bytes);
 		return this.enqueue(async () => {
 			await this.statements.write.run([
 				capturedMoveKey,

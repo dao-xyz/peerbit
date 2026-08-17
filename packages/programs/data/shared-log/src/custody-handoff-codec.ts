@@ -9,6 +9,7 @@ import {
 	toHexString,
 	verify,
 } from "@peerbit/crypto";
+import { captureBoundedUint8Array } from "./bounded-bytes.js";
 import { MAX_U32, MAX_U64, type NumberFromType } from "./integers.js";
 
 type Resolution = "u32" | "u64";
@@ -365,16 +366,8 @@ const captureBytes = (
 	minimum: number,
 	maximum: number,
 	name: string,
-): Uint8Array => {
-	if (
-		!(value instanceof Uint8Array) ||
-		value.byteLength < minimum ||
-		value.byteLength > maximum
-	) {
-		throw new Error(`Invalid custody handoff ${name}`);
-	}
-	return new Uint8Array(value);
-};
+): Uint8Array =>
+	captureBoundedUint8Array(value, minimum, maximum, `custody handoff ${name}`);
 
 const nonZeroGeneration = (value: Uint8Array, name: string): Uint8Array => {
 	if (value.every((byte) => byte === 0)) {
@@ -1014,14 +1007,17 @@ const decodeManifestAgain = async (
 	// A getter/Proxy must not swap a small admitted buffer for a second, larger
 	// value between validation and copying.
 	const candidate = (manifest as { bytes?: unknown }).bytes;
-	if (
-		!(candidate instanceof Uint8Array) ||
-		candidate.byteLength === 0 ||
-		candidate.byteLength > limits.maxManifestBytes
-	) {
+	let bytes: Uint8Array;
+	try {
+		bytes = captureBoundedUint8Array(
+			candidate,
+			1,
+			limits.maxManifestBytes,
+			"canonical custody handoff manifest",
+		);
+	} catch {
 		throw new Error("Invalid canonical custody handoff manifest");
 	}
-	const bytes = new Uint8Array(candidate);
 	return decodeCustodyHandoffManifestV1(bytes, { limits });
 };
 

@@ -10,6 +10,10 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import {
+	type CustodyRecordPersistence,
+	CustodyRecordStore,
+} from "../src/custody-store.js";
 import { type RebalanceScanPlan, ReplicationIntent } from "../src/ranges.js";
 import {
 	RebalanceWorkMemoryPersistence,
@@ -310,7 +314,7 @@ describe("rebalance work store persistence", function () {
 		await recovered.close();
 	});
 
-	it("recovers a valid frame when the stale slot exceeds the read cap", async () => {
+	it("fails closed when either physical slot exceeds the read cap", async () => {
 		const directory = await temporaryDirectory("peerbit-rebalance-cap-");
 		const logId = new Uint8Array([4, 5, 6]);
 		const namespace = join(directory, "rebalance-work", toHexString(logId));
@@ -322,17 +326,18 @@ describe("rebalance work store persistence", function () {
 		await first.close();
 
 		// The first install writes the cleared baseline to B and the active frame
-		// to A. Recovery must settle both bounded reads and retain the valid A frame.
+		// to A. An unread B could instead hide newer pending custody work.
 		await writeFile(
 			join(namespace, REBALANCE_WORK_FILES[1]),
 			new Uint8Array(DEFAULT_REBALANCE_WORK_LIMITS.maxFrameBytes + 1),
 		);
-		const reopened = await openNodeRebalanceWorkStore({
-			nodeDirectory: directory,
-			logId,
-		});
-		expect(reopened.snapshot()).to.deep.equal(installed.snapshot);
-		await reopened.close();
+		await expect(
+			openNodeRebalanceWorkStore({
+				nodeDirectory: directory,
+				logId,
+			}),
+		).to.be.rejectedWith("Failed to read every rebalance work generation");
+		expect(installed.snapshot.active).to.not.equal(undefined);
 	});
 
 	it("rejects limit widening before it creates or leases a namespace", async () => {
@@ -354,6 +359,38 @@ describe("rebalance work store persistence", function () {
 			logId,
 		});
 		await opened.close();
+	});
+
+	it("rejects a custody authority for another log before filesystem setup", async () => {
+		const directory = await temporaryDirectory("peerbit-rebalance-wrong-log-");
+		const custodyPersistence: CustodyRecordPersistence = {
+			read: async () => undefined,
+			write: async () => undefined,
+			durableBarrier: async () => undefined,
+		};
+		const custody = await CustodyRecordStore.open({
+			persistence: custodyPersistence,
+			durability: "strict",
+			binding: {
+				logId: new Uint8Array([1]),
+				localPublicKey: new Uint8Array([2]),
+				role: "source",
+			},
+		});
+		const authority = custody.sourceReceiptAuthority();
+		const before = await readdir(directory);
+		await expect(
+			openNodeRebalanceWorkStore({
+				nodeDirectory: directory,
+				logId: new Uint8Array([3]),
+				custody: {
+					sourceReceiptAuthority: authority,
+					logId: new Uint8Array([3]),
+				},
+			}),
+		).to.be.rejectedWith("authority log mismatch");
+		expect(await readdir(directory)).to.deep.equal(before);
+		await custody.close();
 	});
 
 	it("rejects a same-parent namespace symlink instead of crossing log ids", async () => {

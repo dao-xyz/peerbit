@@ -3,9 +3,15 @@ import type {
 	NativeBackboneCoordinatePersistenceStore,
 	NativeDurabilityLease,
 } from "@peerbit/native-backbone";
+import { captureBoundedUint8Array } from "./bounded-bytes.js";
+import {
+	type CustodySourceReceiptAuthority,
+	assertCustodySourceReceiptAuthorityLogId,
+} from "./custody-store.js";
 import {
 	DEFAULT_REBALANCE_WORK_LIMITS,
 	REBALANCE_WORK_FILES,
+	type RebalanceWorkCustodyBinding,
 	type RebalanceWorkLimits,
 	type RebalanceWorkPersistence,
 	RebalanceWorkStore,
@@ -56,6 +62,8 @@ export type RebalanceWorkNodePersistenceDependencies = Readonly<{
 
 export type OpenRebalanceWorkStoreOptions = Readonly<{
 	limits?: Partial<RebalanceWorkLimits>;
+	/** @internal Exact opened source custody-store generation paired here. */
+	custody?: RebalanceWorkCustodyBinding;
 }>;
 
 export type OpenNodeRebalanceWorkStoreOptions = OpenRebalanceWorkStoreOptions &
@@ -88,15 +96,19 @@ const validateReadLimit = (maxBytes: number): number => {
 };
 
 const captureWrite = (bytes: Uint8Array): Uint8Array => {
-	if (!(bytes instanceof Uint8Array)) {
-		throw new TypeError("Rebalance work persistence writes require bytes");
-	}
-	if (bytes.byteLength > DEFAULT_REBALANCE_WORK_LIMITS.maxFrameBytes) {
+	try {
+		return captureBoundedUint8Array(
+			bytes,
+			0,
+			DEFAULT_REBALANCE_WORK_LIMITS.maxFrameBytes,
+			"rebalance work persistence write",
+		);
+	} catch (error) {
 		throw new RangeError(
-			`Rebalance work persistence write exceeds ${DEFAULT_REBALANCE_WORK_LIMITS.maxFrameBytes} bytes`,
+			`Rebalance work persistence write must be bytes no larger than ${DEFAULT_REBALANCE_WORK_LIMITS.maxFrameBytes}`,
+			{ cause: error },
 		);
 	}
-	return new Uint8Array(bytes);
 };
 
 const captureLimits = (
@@ -170,12 +182,20 @@ export class RebalanceWorkMemoryPersistence
 		const validName = validateFileName(name);
 		const limit = validateReadLimit(maxBytes);
 		const bytes = this.files.get(validName);
-		if (bytes && bytes.byteLength > limit) {
+		if (bytes === undefined) return undefined;
+		try {
+			return captureBoundedUint8Array(
+				bytes,
+				0,
+				limit,
+				`rebalance work persistence file ${validName}`,
+			);
+		} catch (error) {
 			throw new RangeError(
 				`Rebalance work persistence file ${validName} exceeds the ${limit} byte read limit`,
+				{ cause: error },
 			);
 		}
-		return bytes ? new Uint8Array(bytes) : undefined;
 	}
 
 	async write(name: string, bytes: Uint8Array): Promise<void> {
@@ -211,6 +231,7 @@ export const openMemoryRebalanceWorkStore = async (
 			persistence,
 			durability: "memory",
 			limits,
+			custody: options.custody,
 		});
 	} catch (error) {
 		return closeAfterOpenFailure(persistence, error);
@@ -313,23 +334,56 @@ const captureNodeOptions = (
 	nodeDirectory: string;
 	logId: Uint8Array;
 	limits: RebalanceWorkLimits;
+	custody?: Readonly<{
+		sourceReceiptAuthority: CustodySourceReceiptAuthority;
+		logId: Uint8Array;
+	}>;
 }> => {
-	if (typeof options?.nodeDirectory !== "string" || !options.nodeDirectory) {
+	const nodeDirectory = options?.nodeDirectory;
+	const logIdInput = options?.logId;
+	const limitsInput = options?.limits;
+	const custodyInput = options?.custody;
+	if (typeof nodeDirectory !== "string" || !nodeDirectory) {
 		throw new TypeError("nodeDirectory must be a non-empty string");
 	}
-	if (
-		!(options.logId instanceof Uint8Array) ||
-		options.logId.byteLength === 0 ||
-		options.logId.byteLength > MAX_REBALANCE_WORK_LOG_ID_BYTES
-	) {
+	let logId: Uint8Array;
+	try {
+		logId = captureBoundedUint8Array(
+			logIdInput,
+			1,
+			MAX_REBALANCE_WORK_LOG_ID_BYTES,
+			"rebalance work log id",
+		);
+	} catch {
 		throw new TypeError(
 			`logId must contain 1-${MAX_REBALANCE_WORK_LOG_ID_BYTES} bytes`,
 		);
 	}
+	let custody:
+		| Readonly<{
+				sourceReceiptAuthority: CustodySourceReceiptAuthority;
+				logId: Uint8Array;
+		  }>
+		| undefined;
+	if (custodyInput !== undefined) {
+		const sourceReceiptAuthority = custodyInput.sourceReceiptAuthority;
+		const custodyLogId = captureBoundedUint8Array(
+			custodyInput.logId,
+			1,
+			MAX_REBALANCE_WORK_LOG_ID_BYTES,
+			"rebalance work custody log id",
+		);
+		if (toHexString(custodyLogId) !== toHexString(logId)) {
+			throw new Error("Rebalance work custody log id mismatch");
+		}
+		assertCustodySourceReceiptAuthorityLogId(sourceReceiptAuthority, logId);
+		custody = Object.freeze({ sourceReceiptAuthority, logId: custodyLogId });
+	}
 	return Object.freeze({
-		nodeDirectory: options.nodeDirectory,
-		logId: new Uint8Array(options.logId),
-		limits: captureLimits(options.limits),
+		nodeDirectory,
+		logId,
+		limits: captureLimits(limitsInput),
+		custody,
 	});
 };
 
@@ -524,6 +578,7 @@ export const openNodeRebalanceWorkStore = async (
 			persistence,
 			durability: "strict",
 			limits: options.limits,
+			custody: options.custody,
 		});
 	} catch (error) {
 		return closeAfterOpenFailure(persistence, error);
