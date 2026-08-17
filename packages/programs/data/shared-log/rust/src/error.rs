@@ -20,6 +20,11 @@ pub enum SharedLogError {
     ExpectedLeaderIntersectingBool,
     MismatchedInputLengths(&'static str),
     MissingCompactAppendFacts,
+    InvalidRangeSnapshotLimit(&'static str),
+    RangeSnapshotIndexInconsistent,
+    RangeSnapshotResolutionMismatch,
+    RangeSnapshotInvalidRange,
+    RangeSnapshotAccountingOverflow,
     InvalidRebalanceCollisionBucketLimit(&'static str),
     RebalanceCollisionBucketIndexInconsistent,
     RebalanceCollisionBucketResolutionMismatch,
@@ -57,6 +62,21 @@ impl std::fmt::Display for SharedLogError {
             }
             SharedLogError::MissingCompactAppendFacts => {
                 f.write_str("Missing compact append facts")
+            }
+            SharedLogError::InvalidRangeSnapshotLimit(label) => {
+                write!(f, "Invalid native range snapshot limit: {label}")
+            }
+            SharedLogError::RangeSnapshotIndexInconsistent => {
+                f.write_str("Native range snapshot index is inconsistent")
+            }
+            SharedLogError::RangeSnapshotResolutionMismatch => {
+                f.write_str("Native range snapshot value exceeds its resolution")
+            }
+            SharedLogError::RangeSnapshotInvalidRange => {
+                f.write_str("Native range snapshot contains an invalid range")
+            }
+            SharedLogError::RangeSnapshotAccountingOverflow => {
+                f.write_str("Native range snapshot accounting overflow")
             }
             SharedLogError::InvalidRebalanceCollisionBucketLimit(label) => {
                 write!(

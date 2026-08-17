@@ -1,6 +1,7 @@
 import { expect } from "chai";
 import { benchmarkPlainCommittedNoNextStorageAppendTransactionLoop } from "../src/benchmark.js";
 import {
+	MAX_NATIVE_RANGE_SNAPSHOT_LIMITS,
 	MAX_NATIVE_REBALANCE_COLLISION_BUCKET_LIMITS,
 	NativeBackboneBufferedCoordinatePersistenceStore,
 	NativeBackboneCoordinatePersistence,
@@ -11,6 +12,8 @@ import {
 	NativeBackboneNodeCoordinatePersistenceStore,
 	NativeBackboneOPFSCoordinatePersistenceStore,
 	type NativeBackboneOPFSDirectoryHandle,
+	type NativeRangeSnapshotLimits,
+	NativeRangeSnapshotOverflowError,
 	type NativeRebalanceCollisionBucketLimits,
 	NativeRebalanceCollisionBucketOverflowError,
 	createBufferedNativeBackboneCoordinatePersistence,
@@ -19,6 +22,27 @@ import {
 	createNativePeerbitBackbone,
 	defaultNativeBackboneCoordinateFlushMaxPendingBytes,
 } from "../src/index.js";
+
+const rangeSnapshotLimits = (
+	overrides?: Partial<NativeRangeSnapshotLimits>,
+): NativeRangeSnapshotLimits => ({
+	...MAX_NATIVE_RANGE_SNAPSHOT_LIMITS,
+	...overrides,
+});
+
+const expectRangeSnapshotOverflow = (
+	read: () => unknown,
+	code: NativeRangeSnapshotOverflowError["code"],
+) => {
+	let failure: unknown;
+	try {
+		read();
+	} catch (error) {
+		failure = error;
+	}
+	expect(failure).to.be.instanceOf(NativeRangeSnapshotOverflowError);
+	expect((failure as NativeRangeSnapshotOverflowError).code).to.equal(code);
+};
 
 const rebalanceBucketLimits = (
 	overrides?: Partial<NativeRebalanceCollisionBucketLimits>,
@@ -324,6 +348,67 @@ class FakeOPFSDirectoryHandle implements NativeBackboneOPFSDirectoryHandle {
 }
 
 describe("native peerbit backbone", () => {
+	it("forwards complete bounded range snapshots without changing precision or order", async () => {
+		const maximum = 0xffff_ffff_ffff_ffffn;
+		const backbone = await createNativePeerbitBackbone({
+			clockId: publicKey,
+			privateKey,
+			publicKey,
+			resolution: "u64",
+		});
+		backbone.putRange({
+			id: "supplementary",
+			hash: "\u{10000}",
+			timestamp: maximum,
+			start1: maximum - 10n,
+			end1: maximum,
+			start2: maximum - 10n,
+			end2: maximum,
+			width: 10n,
+			mode: 1,
+		});
+		backbone.putRange({
+			id: "bmp",
+			hash: "\u{e000}",
+			timestamp: 7,
+			start1: 10,
+			end1: 15,
+			start2: 10,
+			end2: 15,
+			width: 5,
+			mode: 0,
+		});
+
+		const complete = backbone.readRangeSnapshot(rangeSnapshotLimits());
+		expect(complete).to.deep.include({
+			resolution: "u64",
+			complete: true,
+			ownerCount: 2,
+			rangeCount: 2,
+			ownerHashBytes: 7,
+		});
+		expect(complete.ranges.map((row) => row.ownerHash)).to.deep.equal([
+			"\u{e000}",
+			"\u{10000}",
+		]);
+		expect(complete.ranges[1]).to.deep.include({
+			timestamp: maximum,
+			start1: maximum - 10n,
+			end1: maximum,
+			width: 10n,
+		});
+		expect(typeof complete.ranges[1]?.start1).to.equal("bigint");
+		expect(Object.isFrozen(complete.ranges)).to.equal(true);
+
+		expectRangeSnapshotOverflow(
+			() => backbone.readRangeSnapshot(rangeSnapshotLimits({ maxOwners: 1 })),
+			"owners",
+		);
+		expect(backbone.readRangeSnapshot(rangeSnapshotLimits())).to.deep.equal(
+			complete,
+		);
+	});
+
 	it("samples intersecting strict ranges excluded from full replica fallback", async () => {
 		const maxU64 = (1n << 64n) - 1n;
 		const liveRangeEnd = 86_400_000_000_000_000n;

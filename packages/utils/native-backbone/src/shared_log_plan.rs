@@ -326,6 +326,28 @@ impl NativePeerbitBackbone {
         )
     }
 
+    /// Thin forwarding surface for the shared-log core's complete-or-overflow
+    /// range snapshot. The rows contain owner hashes, never authenticated keys.
+    #[allow(clippy::too_many_arguments)]
+    pub fn read_range_snapshot(
+        &self,
+        max_owners: usize,
+        max_ranges: usize,
+        max_ranges_per_owner: usize,
+        max_range_id_bytes: usize,
+        max_owner_hash_bytes: usize,
+        max_bytes: usize,
+    ) -> Result<Array, JsValue> {
+        self.shared_log.read_range_snapshot(
+            max_owners,
+            max_ranges,
+            max_ranges_per_owner,
+            max_range_id_bytes,
+            max_owner_hash_bytes,
+            max_bytes,
+        )
+    }
+
     pub fn entry_hash_numbers_in_range(
         &self,
         start1: String,
