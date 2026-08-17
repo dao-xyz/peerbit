@@ -474,6 +474,30 @@ const assertDigest = (value: unknown, name: string) => {
 };
 
 /**
+ * Admit only canonical views issued by this module in the current JavaScript
+ * realm. Structural lookalikes are deliberately insufficient: the issuer also
+ * binds the mutable byte buffer back to the view digest on every admission.
+ *
+ * @internal
+ */
+export const assertIssuedCanonicalLocalPlacementView = (
+	view: unknown,
+): CanonicalLocalPlacementView => {
+	if (!view || typeof view !== "object" || !issuedCanonicalViews.has(view)) {
+		throw new Error("Invalid issued canonical local placement view");
+	}
+	const candidate = view as CanonicalLocalPlacementView;
+	const viewId = assertDigest(candidate.digest, "issued view id");
+	if (
+		!(candidate.bytes instanceof Uint8Array) ||
+		toHexString(sha256Sync(candidate.bytes)) !== viewId
+	) {
+		throw new Error("Invalid issued canonical local placement view digest");
+	}
+	return candidate;
+};
+
+/**
  * Canonicalize a complete, frozen LOCAL placement snapshot. Authentication and
  * freshness are caller obligations: this codec cannot recover signatures,
  * sender epochs, or V2 sequence provenance from persisted range rows.
@@ -830,17 +854,8 @@ export const createLocalPlacementExecutionFence = (properties: {
 	ownershipRevision: bigint;
 	roleGeneration: number;
 }): LocalPlacementExecutionFence => {
-	const view = properties?.view;
-	if (!view || !issuedCanonicalViews.has(view)) {
-		throw new Error("Invalid local placement view execution fence view");
-	}
-	const viewId = assertDigest(view.digest, "execution fence view id");
-	if (
-		!(view.bytes instanceof Uint8Array) ||
-		toHexString(sha256Sync(view.bytes)) !== viewId
-	) {
-		throw new Error("Invalid local placement view execution fence digest");
-	}
+	const view = assertIssuedCanonicalLocalPlacementView(properties?.view);
+	const viewId = view.digest;
 	const executionEpoch = boundedBytes(
 		properties?.executionEpoch,
 		32,
