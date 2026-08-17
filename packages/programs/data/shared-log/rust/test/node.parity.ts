@@ -110,14 +110,14 @@ const createExactRange = (
 	properties: {
 		id: number;
 		hash: string;
-		offset: number;
-		width: number;
+		offset: number | bigint;
+		width: number | bigint;
 		timestamp?: bigint;
 		mode?: number;
 	},
 ): AnyRange => {
-	const value = (input: number) =>
-		resolution === "u32" ? input : BigInt(input);
+	const value = (input: number | bigint) =>
+		resolution === "u32" ? Number(input) : BigInt(input);
 	return new (rangeClass(resolution) as any)({
 		id: deterministicId(properties.id),
 		publicKeyHash: properties.hash,
@@ -286,6 +286,113 @@ describe("native shared-log range planner parity", () => {
 				ranges,
 				cursors: numbers.getGrid(denormalize(0.5), 2),
 			});
+		});
+
+		it(`matches TypeScript zero/MAX alias fallback membership for ${resolution}`, async () => {
+			const rawEmptyRange = (
+				id: number,
+				hash: string,
+				coordinate: number | bigint,
+			) => {
+				const range = createExactRange(resolution, {
+					id,
+					hash,
+					offset: 0,
+					width: 1,
+				});
+				range.start1 = coordinate;
+				range.end1 = coordinate;
+				range.start2 = coordinate;
+				range.end2 = coordinate;
+				range.width = resolution === "u32" ? 1 : 1n;
+				return range;
+			};
+			const ranges = [
+				rawEmptyRange(240, "peer-z", numbers.zero),
+				rawEmptyRange(241, "peer-a", numbers.maxValue),
+			];
+
+			for (const cursor of [numbers.zero, numbers.maxValue]) {
+				const actual = await expectNativeParity(resolution, {
+					ranges,
+					cursors: [cursor],
+					ignoreOrder: true,
+					message: `${resolution} cursor ${String(cursor)}`,
+				});
+				expect(mapEntries(actual)).to.deep.equal([
+					["peer-a", { intersecting: false }],
+				]);
+			}
+		});
+
+		it(`matches TypeScript exact endpoint fallback membership for ${resolution}`, async () => {
+			const ten = resolution === "u32" ? 10 : 10n;
+			const highOffset =
+				resolution === "u32"
+					? Number(numbers.maxValue) - 10
+					: BigInt(numbers.maxValue) - 10n;
+			const fixtures = [
+				{
+					label: "zero/MAX alias",
+					ranges: [
+						createExactRange(resolution, {
+							id: 242,
+							hash: "z-low",
+							offset: numbers.zero,
+							width: ten,
+						}),
+						createExactRange(resolution, {
+							id: 243,
+							hash: "a-high",
+							offset: highOffset,
+							width: ten,
+						}),
+					],
+					cursor: numbers.maxValue,
+					expected: "a-high",
+				},
+				{
+					label: "ordinary exact endpoint",
+					ranges: [
+						createExactRange(resolution, {
+							id: 244,
+							hash: "a-exact",
+							offset: numbers.zero,
+							width: ten,
+						}),
+						createExactRange(resolution, {
+							id: 245,
+							hash: "z-next",
+							offset: resolution === "u32" ? 20 : 20n,
+							width: ten,
+						}),
+					],
+					cursor: ten,
+					expected: "a-exact",
+				},
+			];
+
+			for (const fixture of fixtures) {
+				expect(
+					fixture.ranges.every(
+						(range) =>
+							!(range as AnyRange & { contains(point: any): boolean }).contains(
+								fixture.cursor,
+							),
+					),
+					`${resolution} ${fixture.label} must exercise fallback`,
+				).to.be.true;
+				const actual = await expectNativeParity(resolution, {
+					ranges: fixture.ranges,
+					cursors: [fixture.cursor],
+					roleAge: 0,
+					ignoreOrder: true,
+					message: `${resolution} ${fixture.label}`,
+				});
+				expect(mapEntries(actual)).to.deep.equal([
+					[fixture.expected, { intersecting: false }],
+				]);
+			}
 		});
 
 		it(`matches TypeScript intersecting and peer filtering for ${resolution}`, async () => {
