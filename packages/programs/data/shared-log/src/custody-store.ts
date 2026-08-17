@@ -13,6 +13,63 @@ export type CustodyStoreDurability = "strict" | "memory";
 export type CustodyRecordSlot = "a" | "b";
 export type CustodyRecordRole = "source" | "destination";
 
+export type CustodyRecordCatalogCursor = Readonly<{
+	mutationSequence: bigint;
+	moveKey: string;
+}>;
+
+declare const custodyRecordCatalogFenceBrand: unique symbol;
+
+/** Opaque adapter-local upper fence for a passive catalog scan. */
+export type CustodyRecordCatalogFence = Readonly<{
+	catalogEpoch: string;
+	upperMutationSequence: bigint;
+	readonly [custodyRecordCatalogFenceBrand]: true;
+}>;
+
+export type CustodyRecordCatalogStatus = Readonly<{
+	catalogEpoch: string;
+	lastMutationSequence: bigint;
+	migrationState: "building" | "ready";
+	migrationAfter?: string;
+}>;
+
+/** Passive discovery hint. It is not custody, pin, receipt, or prune proof. */
+export type CustodyRecordCatalogCandidate = Readonly<{
+	catalogEpoch: string;
+	mutationSequence: bigint;
+	moveKey: string;
+	recordSequence: bigint;
+	slot: CustodyRecordSlot;
+	state: CustodyRecordState;
+	entryHash?: string;
+	handoffId?: string;
+	frameChecksum: string;
+	domainId: string;
+	writerEpoch: bigint;
+	writerOwner: string;
+}>;
+
+export type CustodyRecordCatalogPage = Readonly<{
+	fence: CustodyRecordCatalogFence;
+	candidates: readonly CustodyRecordCatalogCandidate[];
+	next?: CustodyRecordCatalogCursor;
+}>;
+
+export type CustodyRecordCatalogCandidateRead =
+	| Readonly<{
+			status: "current";
+			candidate: CustodyRecordCatalogCandidate;
+			frame: Uint8Array;
+	  }>
+	| Readonly<{ status: "changed" }>;
+
+export type CustodyRecordCatalogMigrationPage = Readonly<{
+	migrationState: "building" | "ready";
+	migrationAfter?: string;
+	processed: number;
+}>;
+
 /**
  * Exact semantic namespace binding for a custody record store.
  *
@@ -33,7 +90,8 @@ export type CustodyRecordBinding = Readonly<{
  * One adapter instance, and the complete namespace behind it, must be owned by
  * one store for the store's lifetime. The Node SQLite adapter supplies the
  * cross-process keyed lease/fence; disconnected tests may use bounded memory
- * adapters. The interface deliberately has no list, delete, drop, or release.
+ * adapters. The optional Node catalog is strictly paged and passive; the
+ * interface deliberately has no unbounded list, delete, drop, or release.
  */
 export interface CustodyRecordPersistence {
 	/** Reject an oversized value before allocating or returning its contents. */
@@ -53,6 +111,33 @@ export interface CustodyRecordPersistence {
 	 * after a crash. Strict stores require this operation.
 	 */
 	durableBarrier?(moveKey: string, slot: CustodyRecordSlot): Promise<void>;
+	/** Passive bounded catalog APIs; only the strict Node adapter implements them. */
+	readCatalogStatus?(): Promise<CustodyRecordCatalogStatus>;
+	captureCatalogFence?(): Promise<CustodyRecordCatalogFence>;
+	scanRecoveryPage?(input: {
+		fence: CustodyRecordCatalogFence;
+		state: CustodyRecordState;
+		after?: CustodyRecordCatalogCursor;
+		maxRows?: number;
+		maxBytes?: number;
+	}): Promise<CustodyRecordCatalogPage>;
+	scanEntryPinsPage?(input: {
+		fence: CustodyRecordCatalogFence;
+		entryHash: string;
+		after?: CustodyRecordCatalogCursor;
+		maxRows?: number;
+		maxBytes?: number;
+	}): Promise<CustodyRecordCatalogPage>;
+	readCatalogCandidate?(
+		candidate: CustodyRecordCatalogCandidate,
+		maxBytes?: number,
+	): Promise<CustodyRecordCatalogCandidateRead>;
+	migrateCatalogPage?(input?: {
+		maxMoveKeys?: number;
+		maxBytes?: number;
+	}): Promise<CustodyRecordCatalogMigrationPage>;
+	/** Internal health signal used to revoke store authority after ambiguity. */
+	isPoisoned?(): boolean;
 	close?(options?: { flush?: false }): Promise<void>;
 }
 
@@ -208,6 +293,7 @@ type LoadedFrame = {
 	receipt?: string;
 	pin?: StoredPinFacts;
 	handoffId?: string;
+	entryHash?: string;
 	receiptId?: string;
 	checksum?: string;
 	durabilityConfirmed?: boolean;
@@ -795,6 +881,7 @@ const validateStoredArtifacts = async (
 		receipt: payload.receipt ?? undefined,
 		pin,
 		handoffId: decoded.handoffId,
+		entryHash: decoded.manifest.entryHash,
 		receiptId: decoded.receiptId,
 	};
 };
@@ -935,6 +1022,7 @@ const decodeFrame = async (
 		receipt: artifacts.receipt,
 		pin: artifacts.pin,
 		handoffId: artifacts.handoffId,
+		entryHash: artifacts.entryHash,
 		receiptId: artifacts.receiptId,
 		checksum: outer.checksum,
 	};
@@ -1014,6 +1102,111 @@ const assertCoherentFramePair = (lower: LoadedFrame, higher: LoadedFrame) => {
 	) {
 		throw new Error("Invalid custody record generation pin carry");
 	}
+};
+
+export type SelectedCustodyRecordCatalogFrame = Readonly<{
+	moveKey: string;
+	recordSequence: bigint;
+	slot: CustodyRecordSlot;
+	state: CustodyRecordState;
+	entryHash?: string;
+	handoffId?: string;
+	frameChecksum: string;
+}>;
+
+/**
+ * @internal Validate at most one complete A/B pair and select the exact logical
+ * head. This is shared with the Node catalog so indexing cannot trust a caller
+ * supplied head or blindly follow the slot most recently written.
+ */
+export const selectCustodyRecordCatalogFrame = async (input: {
+	moveKey: string;
+	frames: readonly Readonly<{
+		slot: CustodyRecordSlot;
+		bytes: Uint8Array;
+	}>[];
+	durability: CustodyStoreDurability;
+	limits?: Partial<CustodyStoreLimits>;
+	binding?: CustodyRecordBinding;
+}): Promise<SelectedCustodyRecordCatalogFrame> => {
+	if (!input || typeof input !== "object") {
+		throw new Error("Invalid custody catalog frame input");
+	}
+	const moveKeyValue = input.moveKey;
+	const framesValue = input.frames;
+	const durability = input.durability;
+	const limitsValue = input.limits;
+	const bindingValue = input.binding;
+	const moveKey = assertMoveKey(moveKeyValue);
+	if (!Array.isArray(framesValue)) {
+		throw new Error("Invalid custody catalog frame pair");
+	}
+	const frameCount = framesValue.length;
+	if (!Number.isSafeInteger(frameCount) || frameCount < 0 || frameCount > 2) {
+		throw new Error("Invalid custody catalog frame pair");
+	}
+	if (durability !== "strict" && durability !== "memory") {
+		throw new Error("Invalid custody catalog durability");
+	}
+	const limits = normalizeLimits(limitsValue);
+	const binding = captureRecordBinding(bindingValue);
+	const slots = new Set<CustodyRecordSlot>();
+	const valid: LoadedFrame[] = [];
+	const errors: unknown[] = [];
+	for (let index = 0; index < frameCount; index++) {
+		const value = framesValue[index];
+		if (!value || typeof value !== "object") {
+			throw new Error("Invalid custody catalog frame pair");
+		}
+		const slot = value.slot;
+		const bytesValue = value.bytes;
+		if ((slot !== "a" && slot !== "b") || slots.has(slot)) {
+			throw new Error("Invalid custody catalog frame pair");
+		}
+		slots.add(slot);
+		const bytes = captureBoundedUint8Array(
+			bytesValue,
+			1,
+			limits.maxFrameBytes,
+			"custody catalog frame",
+		);
+		try {
+			valid.push(await decodeFrame(bytes, moveKey, slot, limits, binding));
+		} catch (error) {
+			errors.push(error);
+		}
+	}
+	if (valid.length === 0) {
+		throw new AggregateError(errors, "No valid custody catalog frame remains");
+	}
+	for (let index = 0; index < valid.length; index++) {
+		if (valid[index]!.durability !== durability) {
+			throw new Error("Custody catalog frame durability mismatch");
+		}
+	}
+	valid.sort((left, right) =>
+		left.sequence < right.sequence
+			? -1
+			: left.sequence > right.sequence
+				? 1
+				: left.slot.localeCompare(right.slot),
+	);
+	if (valid.length === 2) assertCoherentFramePair(valid[0]!, valid[1]!);
+	const selected = valid.at(-1)!;
+	if (!selected.checksum) throw new Error("Missing custody frame checksum");
+	return Object.freeze({
+		moveKey,
+		recordSequence: selected.sequence,
+		slot: selected.slot,
+		state: selected.state,
+		...(selected.entryHash === undefined
+			? {}
+			: { entryHash: selected.entryHash }),
+		...(selected.handoffId === undefined
+			? {}
+			: { handoffId: selected.handoffId }),
+		frameChecksum: selected.checksum,
+	});
 };
 
 const snapshotFromFrame = (
@@ -1113,12 +1306,15 @@ export class MemoryCustodyRecordPersistence
  * rebalance bridge establishes its cross-store ordering by durably staging a
  * pending manifest before it invokes a custody callback; direct calls to
  * prepareSource() do not establish that ordering. A future runtime must use the
- * bridge, replace the test evidence issuer, add an entry-to-pin index, and
- * re-confirm the exact current lower-store epoch and pin after reopen or storage
- * loss before acting on recovered copied facts.
+ * bridge, replace the test evidence issuer, and re-confirm each passive catalog
+ * candidate against the exact current lower-store epoch and pin after reopen or
+ * storage loss before acting on recovered copied facts. Release and prune
+ * authority remain future work.
  *
- * This store deliberately exposes no enumeration, release, drop, network,
- * transfer-finalization, or prune-permit API.
+ * The strict Node adapter may expose the passive bounded catalog pages below;
+ * they are discovery hints revalidated by point read, never authority. This
+ * store deliberately exposes no unbounded enumeration, release, drop,
+ * network, transfer-finalization, or prune-permit API.
  */
 export class CustodyRecordStore {
 	private tail: Promise<void> = Promise.resolve();
@@ -1213,6 +1409,58 @@ export class CustodyRecordStore {
 		}).finally(release);
 	}
 
+	/** Passive bounded catalog status; never custody or prune authority. */
+	readCatalogStatus(): Promise<CustodyRecordCatalogStatus> {
+		return this.catalogOperation("readCatalogStatus", () => []);
+	}
+
+	captureCatalogFence(): Promise<CustodyRecordCatalogFence> {
+		return this.catalogOperation("captureCatalogFence", () => []);
+	}
+
+	scanRecoveryPage(input: {
+		fence: CustodyRecordCatalogFence;
+		state: CustodyRecordState;
+		after?: CustodyRecordCatalogCursor;
+		maxRows?: number;
+		maxBytes?: number;
+	}): Promise<CustodyRecordCatalogPage> {
+		return this.catalogOperation("scanRecoveryPage", () => [
+			this.snapshotRecoveryScan(input),
+		]);
+	}
+
+	scanEntryPinsPage(input: {
+		fence: CustodyRecordCatalogFence;
+		entryHash: string;
+		after?: CustodyRecordCatalogCursor;
+		maxRows?: number;
+		maxBytes?: number;
+	}): Promise<CustodyRecordCatalogPage> {
+		return this.catalogOperation("scanEntryPinsPage", () => [
+			this.snapshotEntryPinScan(input),
+		]);
+	}
+
+	readCatalogCandidate(
+		candidate: CustodyRecordCatalogCandidate,
+		maxBytes?: number,
+	): Promise<CustodyRecordCatalogCandidateRead> {
+		return this.catalogOperation("readCatalogCandidate", () => [
+			this.snapshotCatalogCandidate(candidate),
+			this.snapshotOptionalNumber(maxBytes, "catalog candidate byte bound"),
+		]);
+	}
+
+	migrateCatalogPage(input?: {
+		maxMoveKeys?: number;
+		maxBytes?: number;
+	}): Promise<CustodyRecordCatalogMigrationPage> {
+		return this.catalogOperation("migrateCatalogPage", () => [
+			this.snapshotMigrationOptions(input),
+		]);
+	}
+
 	/** @internal Point-read and reissue the exact strict source receipt proof. */
 	async readSourceReceipt(
 		moveKey: string,
@@ -1233,6 +1481,7 @@ export class CustodyRecordStore {
 
 	/** @internal Pair a work cursor with this exact opened source store. */
 	sourceReceiptAuthority(): CustodySourceReceiptAuthority {
+		this.adoptPersistencePoison();
 		if (this.closing || this.closed) {
 			throw new Error("Custody record store is closing");
 		}
@@ -1521,7 +1770,225 @@ export class CustodyRecordStore {
 		return result;
 	}
 
+	private snapshotOptionalNumber(value: unknown, name: string) {
+		if (value === undefined) return undefined;
+		if (typeof value !== "number") throw new Error(`Invalid custody ${name}`);
+		return value;
+	}
+
+	private snapshotCatalogCursor(value: unknown) {
+		if (value === undefined) return undefined;
+		if (!value || typeof value !== "object") {
+			throw new Error("Invalid custody catalog cursor");
+		}
+		const cursor = value as Record<string, unknown>;
+		const mutationSequence = cursor.mutationSequence;
+		const moveKey = cursor.moveKey;
+		if (typeof mutationSequence !== "bigint" || typeof moveKey !== "string") {
+			throw new Error("Invalid custody catalog cursor");
+		}
+		return Object.freeze({ mutationSequence, moveKey });
+	}
+
+	private snapshotRecoveryScan(value: unknown) {
+		if (!value || typeof value !== "object") {
+			throw new Error("Invalid custody catalog recovery scan");
+		}
+		const input = value as Record<string, unknown>;
+		const fence = input.fence;
+		const state = input.state;
+		const after = input.after;
+		const maxRows = input.maxRows;
+		const maxBytes = input.maxBytes;
+		if (typeof state !== "string") {
+			throw new Error("Invalid custody catalog recovery state");
+		}
+		return Object.freeze({
+			fence: fence as CustodyRecordCatalogFence,
+			state: state as CustodyRecordState,
+			...(after === undefined
+				? {}
+				: { after: this.snapshotCatalogCursor(after)! }),
+			...(maxRows === undefined
+				? {}
+				: {
+						maxRows: this.snapshotOptionalNumber(maxRows, "catalog row bound"),
+					}),
+			...(maxBytes === undefined
+				? {}
+				: {
+						maxBytes: this.snapshotOptionalNumber(
+							maxBytes,
+							"catalog byte bound",
+						),
+					}),
+		});
+	}
+
+	private snapshotEntryPinScan(value: unknown) {
+		if (!value || typeof value !== "object") {
+			throw new Error("Invalid custody catalog entry pin scan");
+		}
+		const input = value as Record<string, unknown>;
+		const fence = input.fence;
+		const entryHash = input.entryHash;
+		const after = input.after;
+		const maxRows = input.maxRows;
+		const maxBytes = input.maxBytes;
+		if (typeof entryHash !== "string") {
+			throw new Error("Invalid custody catalog entry hash");
+		}
+		return Object.freeze({
+			fence: fence as CustodyRecordCatalogFence,
+			entryHash,
+			...(after === undefined
+				? {}
+				: { after: this.snapshotCatalogCursor(after)! }),
+			...(maxRows === undefined
+				? {}
+				: {
+						maxRows: this.snapshotOptionalNumber(maxRows, "catalog row bound"),
+					}),
+			...(maxBytes === undefined
+				? {}
+				: {
+						maxBytes: this.snapshotOptionalNumber(
+							maxBytes,
+							"catalog byte bound",
+						),
+					}),
+		});
+	}
+
+	private snapshotCatalogCandidate(value: unknown) {
+		if (!value || typeof value !== "object") {
+			throw new Error("Invalid custody catalog candidate");
+		}
+		const input = value as Record<string, unknown>;
+		const catalogEpoch = input.catalogEpoch;
+		const mutationSequence = input.mutationSequence;
+		const moveKey = input.moveKey;
+		const recordSequence = input.recordSequence;
+		const slot = input.slot;
+		const state = input.state;
+		const entryHash = input.entryHash;
+		const handoffId = input.handoffId;
+		const frameChecksum = input.frameChecksum;
+		const domainId = input.domainId;
+		const writerEpoch = input.writerEpoch;
+		const writerOwner = input.writerOwner;
+		if (
+			typeof catalogEpoch !== "string" ||
+			typeof mutationSequence !== "bigint" ||
+			typeof moveKey !== "string" ||
+			typeof recordSequence !== "bigint" ||
+			typeof slot !== "string" ||
+			typeof state !== "string" ||
+			(entryHash !== undefined && typeof entryHash !== "string") ||
+			(handoffId !== undefined && typeof handoffId !== "string") ||
+			typeof frameChecksum !== "string" ||
+			typeof domainId !== "string" ||
+			typeof writerEpoch !== "bigint" ||
+			typeof writerOwner !== "string"
+		) {
+			throw new Error("Invalid custody catalog candidate");
+		}
+		return Object.freeze({
+			catalogEpoch,
+			mutationSequence,
+			moveKey,
+			recordSequence,
+			slot: slot as CustodyRecordSlot,
+			state: state as CustodyRecordState,
+			...(entryHash === undefined ? {} : { entryHash }),
+			...(handoffId === undefined ? {} : { handoffId }),
+			frameChecksum,
+			domainId,
+			writerEpoch,
+			writerOwner,
+		});
+	}
+
+	private snapshotMigrationOptions(value: unknown) {
+		if (value === undefined) return Object.freeze({});
+		if (!value || typeof value !== "object") {
+			throw new Error("Invalid custody catalog migration options");
+		}
+		const input = value as Record<string, unknown>;
+		const maxMoveKeys = input.maxMoveKeys;
+		const maxBytes = input.maxBytes;
+		return Object.freeze({
+			...(maxMoveKeys === undefined
+				? {}
+				: {
+						maxMoveKeys: this.snapshotOptionalNumber(
+							maxMoveKeys,
+							"catalog migration key bound",
+						),
+					}),
+			...(maxBytes === undefined
+				? {}
+				: {
+						maxBytes: this.snapshotOptionalNumber(
+							maxBytes,
+							"catalog migration byte bound",
+						),
+					}),
+		});
+	}
+
+	private catalogOperation<
+		K extends
+			| "readCatalogStatus"
+			| "captureCatalogFence"
+			| "scanRecoveryPage"
+			| "scanEntryPinsPage"
+			| "readCatalogCandidate"
+			| "migrateCatalogPage",
+	>(
+		name: K,
+		captureArgs: () => unknown[],
+		poisonOnFailure = false,
+	): Promise<
+		K extends "readCatalogStatus"
+			? CustodyRecordCatalogStatus
+			: K extends "captureCatalogFence"
+				? CustodyRecordCatalogFence
+				: K extends "scanRecoveryPage" | "scanEntryPinsPage"
+					? CustodyRecordCatalogPage
+					: K extends "readCatalogCandidate"
+						? CustodyRecordCatalogCandidateRead
+						: CustodyRecordCatalogMigrationPage
+	> {
+		let release: (() => void) | undefined;
+		try {
+			release = this.acquireAdmission();
+			const method = this.persistence[name];
+			if (typeof method !== "function") {
+				throw new Error(
+					"Custody persistence does not expose a bounded catalog",
+				);
+			}
+			const args = captureArgs();
+			const result = this.enqueueAdmitted(async () =>
+				Reflect.apply(method, this.persistence, args),
+			);
+			return result
+				.catch((error) => {
+					if (poisonOnFailure || this.persistence.isPoisoned?.() === true) {
+						this.poison(error);
+					}
+					throw error;
+				})
+				.finally(release) as never;
+		} catch (error) {
+			release?.();
+			return Promise.reject(error) as never;
+		}
+	}
+
 	private acquireAdmission() {
+		this.adoptPersistencePoison();
 		if (this.closing || this.closed) {
 			throw new Error("Custody record store is closing");
 		}
@@ -1735,6 +2202,12 @@ export class CustodyRecordStore {
 		this.poisoned = true;
 		this.poisonCause = cause;
 		sourceReceiptAuthorities.delete(this.#sourceReceiptAuthorityValue);
+	}
+
+	private adoptPersistencePoison() {
+		if (!this.poisoned && this.persistence.isPoisoned?.() === true) {
+			this.poison(new Error("Custody persistence is poisoned"));
+		}
 	}
 
 	private releasePersistenceLease() {
