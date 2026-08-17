@@ -2,6 +2,8 @@ use indexmap::{IndexMap, IndexSet};
 use js_sys::{Array, BigUint64Array, Uint8Array};
 use sha2::{Digest, Sha256};
 use std::cmp::Ordering;
+use std::collections::btree_map::Range as BTreeMapRange;
+use std::collections::btree_set::Iter as BTreeSetIter;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::ops::Bound::{Excluded, Unbounded};
 use std::ops::ControlFlow;
@@ -154,8 +156,8 @@ pub struct SampleOptions {
 pub struct RangePlanner {
     resolution: Resolution,
     ranges: IndexMap<String, ReplicationRange>,
-    by_start1: BTreeSet<RangeIndexKey>,
-    by_end2: BTreeSet<RangeIndexKey>,
+    by_start1: BTreeMap<u64, BTreeSet<RangeIndexKey>>,
+    by_end2: BTreeMap<u64, BTreeSet<RangeIndexKey>>,
     containment_buckets: Vec<IndexSet<String>>,
     wide_containment_ranges: IndexSet<String>,
     containment_put_order: IndexSet<String>,
@@ -171,56 +173,25 @@ enum ContainmentIndexLocation {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct RangeIndexKey {
-    value: u64,
     timestamp: u64,
     hash: String,
     id: String,
 }
 
 impl RangeIndexKey {
-    fn start(range: &ReplicationRange) -> Self {
+    fn from_range(range: &ReplicationRange) -> Self {
         Self {
-            value: range.start1,
             timestamp: range.timestamp,
             hash: range.hash.clone(),
             id: range.id.clone(),
-        }
-    }
-
-    fn end(range: &ReplicationRange) -> Self {
-        Self {
-            value: range.end2,
-            timestamp: range.timestamp,
-            hash: range.hash.clone(),
-            id: range.id.clone(),
-        }
-    }
-
-    fn min_at(value: u64) -> Self {
-        Self {
-            value,
-            timestamp: 0,
-            hash: String::new(),
-            id: String::new(),
-        }
-    }
-
-    fn max_at(value: u64) -> Self {
-        let max_string = char::MAX.to_string();
-        Self {
-            value,
-            timestamp: u64::MAX,
-            hash: max_string.clone(),
-            id: max_string,
         }
     }
 }
 
 impl Ord for RangeIndexKey {
     fn cmp(&self, other: &Self) -> Ordering {
-        self.value
-            .cmp(&other.value)
-            .then_with(|| self.timestamp.cmp(&other.timestamp))
+        self.timestamp
+            .cmp(&other.timestamp)
             .then_with(|| self.hash.cmp(&other.hash))
             .then_with(|| self.id.cmp(&other.id))
     }
@@ -229,6 +200,198 @@ impl Ord for RangeIndexKey {
 impl PartialOrd for RangeIndexKey {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
+    }
+}
+
+#[derive(Clone, Copy)]
+enum FallbackCoordinateOrder {
+    Ascending,
+    Descending,
+}
+
+struct FallbackKeyStream<'a> {
+    primary: BTreeMapRange<'a, u64, BTreeSet<RangeIndexKey>>,
+    wrap: BTreeMapRange<'a, u64, BTreeSet<RangeIndexKey>>,
+    order: FallbackCoordinateOrder,
+    metadata: Option<BTreeSetIter<'a, RangeIndexKey>>,
+    head: Option<&'a RangeIndexKey>,
+    #[cfg(test)]
+    key_advances: usize,
+}
+
+impl<'a> FallbackKeyStream<'a> {
+    fn ascending(
+        index: &'a BTreeMap<u64, BTreeSet<RangeIndexKey>>,
+        point: u64,
+        max_value: u64,
+    ) -> Self {
+        if point == max_value {
+            // circular_distance aliases 0 and MAX. At MAX, descending exposes
+            // MAX while this stream exposes 0 so metadata can break the tie.
+            Self::new(
+                index.range(..point),
+                index.range(point..),
+                FallbackCoordinateOrder::Ascending,
+            )
+        } else {
+            Self::new(
+                index.range(point..),
+                index.range(..point),
+                FallbackCoordinateOrder::Ascending,
+            )
+        }
+    }
+
+    fn descending(index: &'a BTreeMap<u64, BTreeSet<RangeIndexKey>>, point: u64) -> Self {
+        if point == 0 {
+            // At 0, ascending exposes 0 while this stream exposes MAX.
+            Self::new(
+                index.range((Excluded(point), Unbounded)),
+                index.range(..=point),
+                FallbackCoordinateOrder::Descending,
+            )
+        } else {
+            Self::new(
+                index.range(..=point),
+                index.range((Excluded(point), Unbounded)),
+                FallbackCoordinateOrder::Descending,
+            )
+        }
+    }
+
+    fn new(
+        primary: BTreeMapRange<'a, u64, BTreeSet<RangeIndexKey>>,
+        wrap: BTreeMapRange<'a, u64, BTreeSet<RangeIndexKey>>,
+        order: FallbackCoordinateOrder,
+    ) -> Self {
+        Self {
+            primary,
+            wrap,
+            order,
+            metadata: None,
+            head: None,
+            #[cfg(test)]
+            key_advances: 0,
+        }
+    }
+
+    fn next_coordinate_group(&mut self) -> Option<&'a BTreeSet<RangeIndexKey>> {
+        let row = match self.order {
+            FallbackCoordinateOrder::Ascending => self.primary.next().or_else(|| self.wrap.next()),
+            FallbackCoordinateOrder::Descending => {
+                self.primary.next_back().or_else(|| self.wrap.next_back())
+            }
+        };
+        row.map(|(_, metadata)| metadata)
+    }
+
+    fn next_key(&mut self) -> Option<&'a RangeIndexKey> {
+        loop {
+            if let Some(metadata) = &mut self.metadata {
+                if let Some(key) = metadata.next() {
+                    #[cfg(test)]
+                    {
+                        self.key_advances += 1;
+                    }
+                    return Some(key);
+                }
+            }
+            self.metadata = Some(self.next_coordinate_group()?.iter());
+        }
+    }
+
+    fn peek_candidate(
+        &mut self,
+        planner: &'a RangePlanner,
+        peer_filter: Option<&HashSet<String>>,
+        seen_ids: &HashSet<String>,
+    ) -> Option<&'a ReplicationRange> {
+        loop {
+            if let Some(key) = self.head {
+                if let Some(range) = planner.candidate_from_key(key, peer_filter, seen_ids) {
+                    return Some(range);
+                }
+                self.head = None;
+            }
+            let key = self.next_key()?;
+            self.head = Some(key);
+        }
+    }
+}
+
+struct FallbackCandidateStreams<'a> {
+    streams: [FallbackKeyStream<'a>; 4],
+    seen_ids: HashSet<String>,
+    point: u64,
+    max_value: u64,
+    #[cfg(test)]
+    candidate_head_visits: usize,
+}
+
+impl<'a> FallbackCandidateStreams<'a> {
+    fn new(planner: &'a RangePlanner, point: u64) -> Self {
+        let max_value = planner.resolution.max_value();
+        Self {
+            streams: [
+                FallbackKeyStream::ascending(&planner.by_start1, point, max_value),
+                FallbackKeyStream::descending(&planner.by_start1, point),
+                FallbackKeyStream::ascending(&planner.by_end2, point, max_value),
+                FallbackKeyStream::descending(&planner.by_end2, point),
+            ],
+            seen_ids: HashSet::new(),
+            point,
+            max_value,
+            #[cfg(test)]
+            candidate_head_visits: 0,
+        }
+    }
+
+    fn pop_closest(
+        &mut self,
+        planner: &'a RangePlanner,
+        peer_filter: Option<&HashSet<String>>,
+    ) -> Option<&'a ReplicationRange> {
+        let mut best: Option<&ReplicationRange> = None;
+        #[cfg(test)]
+        let mut candidate_head_visits = 0usize;
+
+        for stream in &mut self.streams {
+            let Some(range) = stream.peek_candidate(planner, peer_filter, &self.seen_ids) else {
+                continue;
+            };
+            #[cfg(test)]
+            {
+                candidate_head_visits += 1;
+            }
+            if best.is_none_or(|previous| {
+                compare_closest(range, previous, self.point, self.max_value) == Ordering::Less
+            }) {
+                best = Some(range);
+            }
+        }
+
+        #[cfg(test)]
+        {
+            self.candidate_head_visits += candidate_head_visits;
+        }
+        let best = best?;
+        self.seen_ids.insert(best.id.clone());
+        Some(best)
+    }
+
+    #[cfg(test)]
+    fn key_advances(&self) -> usize {
+        self.streams.iter().map(|stream| stream.key_advances).sum()
+    }
+
+    #[cfg(test)]
+    fn candidate_head_visits(&self) -> usize {
+        self.candidate_head_visits
+    }
+
+    #[cfg(test)]
+    fn emitted_count(&self) -> usize {
+        self.seen_ids.len()
     }
 }
 
@@ -313,8 +476,8 @@ impl RangePlanner {
         Self {
             resolution: Resolution::from_str(resolution),
             ranges: IndexMap::new(),
-            by_start1: BTreeSet::new(),
-            by_end2: BTreeSet::new(),
+            by_start1: BTreeMap::new(),
+            by_end2: BTreeMap::new(),
             containment_buckets: vec![IndexSet::new(); CONTAINMENT_BUCKETS],
             wide_containment_ranges: IndexSet::new(),
             containment_put_order: IndexSet::new(),
@@ -387,7 +550,10 @@ impl RangePlanner {
     /// matches append in closest-distance order. The TypeScript getSamples
     /// inherits unordered sqlite results behind a timing-driven index picker,
     /// so identical calls can answer in different orders there; downstream
-    /// consumers must only rely on membership.
+    /// consumers must only rely on membership. With P caller-side peer
+    /// preparation work, C cursors, K containment candidates per cursor, and N
+    /// fallback-indexed ranges, selection is O(P + C * (K + 4N)): each cursor's
+    /// four endpoint streams advance every fallback key at most once.
     pub fn get_samples(&self, cursors: &[u64], options: &SampleOptions) -> Vec<LeaderSample> {
         let mut leaders: IndexMap<String, bool> = IndexMap::new();
         let mut mature_owners: HashSet<String> = HashSet::new();
@@ -428,11 +594,8 @@ impl RangePlanner {
                 continue;
             }
 
-            let mut seen_closest_ids = HashSet::new();
-            while let Some(range) =
-                self.closest_non_strict(point, options.peer_filter.as_ref(), &seen_closest_ids)
-            {
-                seen_closest_ids.insert(range.id.clone());
+            let mut fallback = FallbackCandidateStreams::new(self, point);
+            while let Some(range) = fallback.pop_closest(self, options.peer_filter.as_ref()) {
                 unique_visited.insert(range.hash.clone());
                 if !range.is_matured(options.now, options.role_age_ms) {
                     continue;
@@ -499,11 +662,8 @@ impl RangePlanner {
                 continue;
             }
 
-            let mut seen_closest_ids = HashSet::new();
-            while let Some(range) =
-                self.closest_non_strict(point, options.peer_filter.as_ref(), &seen_closest_ids)
-            {
-                seen_closest_ids.insert(range.id.clone());
+            let mut fallback = FallbackCandidateStreams::new(self, point);
+            while let Some(range) = fallback.pop_closest(self, options.peer_filter.as_ref()) {
                 if range.hash == target_hash && range.is_matured(options.now, options.role_age_ms) {
                     return true;
                 }
@@ -704,8 +864,9 @@ impl RangePlanner {
 
     fn index_range(&mut self, range: &ReplicationRange) {
         if Self::is_fallback_indexed(range) {
-            self.by_start1.insert(RangeIndexKey::start(range));
-            self.by_end2.insert(RangeIndexKey::end(range));
+            let key = RangeIndexKey::from_range(range);
+            Self::index_fallback_endpoint(&mut self.by_start1, range.start1, key.clone());
+            Self::index_fallback_endpoint(&mut self.by_end2, range.end2, key);
         }
         if Self::is_containment_indexed(range) {
             self.index_containment_range(range);
@@ -718,8 +879,9 @@ impl RangePlanner {
 
     fn unindex_range(&mut self, range: &ReplicationRange) {
         if Self::is_fallback_indexed(range) {
-            self.by_start1.remove(&RangeIndexKey::start(range));
-            self.by_end2.remove(&RangeIndexKey::end(range));
+            let key = RangeIndexKey::from_range(range);
+            Self::unindex_fallback_endpoint(&mut self.by_start1, range.start1, &key);
+            Self::unindex_fallback_endpoint(&mut self.by_end2, range.end2, &key);
         }
         if Self::is_containment_indexed(range) {
             self.unindex_containment_range(range);
@@ -729,6 +891,28 @@ impl RangePlanner {
             if stats.is_empty() {
                 self.peer_ranges.swap_remove(&range.hash);
             }
+        }
+    }
+
+    fn index_fallback_endpoint(
+        index: &mut BTreeMap<u64, BTreeSet<RangeIndexKey>>,
+        coordinate: u64,
+        key: RangeIndexKey,
+    ) {
+        index.entry(coordinate).or_default().insert(key);
+    }
+
+    fn unindex_fallback_endpoint(
+        index: &mut BTreeMap<u64, BTreeSet<RangeIndexKey>>,
+        coordinate: u64,
+        key: &RangeIndexKey,
+    ) {
+        let remove_coordinate = index.get_mut(&coordinate).is_some_and(|keys| {
+            keys.remove(key);
+            keys.is_empty()
+        });
+        if remove_coordinate {
+            index.remove(&coordinate);
         }
     }
 
@@ -929,139 +1113,6 @@ impl RangePlanner {
             return None;
         }
         Some(range)
-    }
-
-    fn first_candidate_from_keys<'a, I>(
-        &'a self,
-        keys: I,
-        peer_filter: Option<&HashSet<String>>,
-        seen_ids: &HashSet<String>,
-    ) -> Option<&'a ReplicationRange>
-    where
-        I: IntoIterator<Item = &'a RangeIndexKey>,
-    {
-        keys.into_iter()
-            .find_map(|key| self.candidate_from_key(key, peer_filter, seen_ids))
-    }
-
-    fn first_candidate_from_descending_key_groups<'a, I>(
-        &'a self,
-        keys: I,
-        peer_filter: Option<&HashSet<String>>,
-        seen_ids: &HashSet<String>,
-    ) -> Option<&'a ReplicationRange>
-    where
-        I: IntoIterator<Item = &'a RangeIndexKey>,
-    {
-        let mut current_value = None;
-        let mut best = None;
-        for key in keys {
-            if current_value != Some(key.value) {
-                if best.is_some() {
-                    return best;
-                }
-                current_value = Some(key.value);
-            }
-            // The keys arrive in full reverse order: coordinate descending and
-            // metadata descending. Keep replacing within one coordinate group
-            // so the last eligible row is the metadata-lowest candidate.
-            if let Some(candidate) = self.candidate_from_key(key, peer_filter, seen_ids) {
-                best = Some(candidate);
-            }
-        }
-        best
-    }
-
-    fn closest_start_candidate(
-        &self,
-        point: u64,
-        above: bool,
-        peer_filter: Option<&HashSet<String>>,
-        seen_ids: &HashSet<String>,
-    ) -> Option<&ReplicationRange> {
-        if above {
-            self.first_candidate_from_keys(
-                self.by_start1.range(RangeIndexKey::min_at(point)..),
-                peer_filter,
-                seen_ids,
-            )
-            .or_else(|| {
-                self.first_candidate_from_keys(self.by_start1.iter(), peer_filter, seen_ids)
-            })
-        } else {
-            self.first_candidate_from_descending_key_groups(
-                self.by_start1.range(..=RangeIndexKey::max_at(point)).rev(),
-                peer_filter,
-                seen_ids,
-            )
-            .or_else(|| {
-                self.first_candidate_from_descending_key_groups(
-                    self.by_start1.iter().rev(),
-                    peer_filter,
-                    seen_ids,
-                )
-            })
-        }
-    }
-
-    fn closest_end_candidate(
-        &self,
-        point: u64,
-        above: bool,
-        peer_filter: Option<&HashSet<String>>,
-        seen_ids: &HashSet<String>,
-    ) -> Option<&ReplicationRange> {
-        if above {
-            self.first_candidate_from_keys(
-                self.by_end2.range(RangeIndexKey::min_at(point)..),
-                peer_filter,
-                seen_ids,
-            )
-            .or_else(|| self.first_candidate_from_keys(self.by_end2.iter(), peer_filter, seen_ids))
-        } else {
-            self.first_candidate_from_descending_key_groups(
-                self.by_end2.range(..=RangeIndexKey::max_at(point)).rev(),
-                peer_filter,
-                seen_ids,
-            )
-            .or_else(|| {
-                self.first_candidate_from_descending_key_groups(
-                    self.by_end2.iter().rev(),
-                    peer_filter,
-                    seen_ids,
-                )
-            })
-        }
-    }
-
-    fn closest_non_strict(
-        &self,
-        point: u64,
-        peer_filter: Option<&HashSet<String>>,
-        seen_ids: &HashSet<String>,
-    ) -> Option<&ReplicationRange> {
-        let max_value = self.resolution.max_value();
-        let mut best: Option<&ReplicationRange> = None;
-
-        for range in [
-            self.closest_start_candidate(point, true, peer_filter, seen_ids),
-            self.closest_start_candidate(point, false, peer_filter, seen_ids),
-            self.closest_end_candidate(point, true, peer_filter, seen_ids),
-            self.closest_end_candidate(point, false, peer_filter, seen_ids),
-        ]
-        .into_iter()
-        .flatten()
-        {
-            if let Some(previous) = best {
-                if compare_closest(range, previous, point, max_value) == Ordering::Less {
-                    best = Some(range);
-                }
-            } else {
-                best = Some(range);
-            }
-        }
-
-        best
     }
 }
 
@@ -4758,13 +4809,16 @@ fn samples_to_rows(samples: Vec<LeaderSample>) -> Array {
 #[cfg(test)]
 mod tests {
     use super::{
-        find_leaders_with_prepared_options, ContainmentIndexLocation, EntryCoordinateState,
-        LeaderSample, NativeSharedLogState, RangePlanner, RebalanceCollisionBucketLimits,
+        compare_closest, find_leaders_with_prepared_options, ContainmentIndexLocation,
+        EntryCoordinateState, FallbackCandidateStreams, FallbackKeyStream, LeaderSample,
+        NativeSharedLogState, RangePlanner, RebalanceCollisionBucketLimits,
         RebalanceCollisionBucketOverflow, RebalanceCollisionBucketPreflight, ReplicationRange,
         SampleOptions, SharedLogError, CONTAINMENT_BUCKETS, CONTAINMENT_RETAINED_CAPACITY_RATIO,
         CONTAINMENT_RETAINED_CAPACITY_SLACK, MAX_CONTAINMENT_BUCKETS_PER_RANGE, MAX_U32, MAX_U64,
+        MODE_NON_STRICT,
     };
     use indexmap::IndexSet;
+    use std::collections::HashSet;
 
     fn rebalance_bucket_limits() -> RebalanceCollisionBucketLimits {
         RebalanceCollisionBucketLimits {
@@ -4809,6 +4863,51 @@ mod tests {
             planner.containment_live_reference_count(),
             planner.nonempty_containment_set_count(),
         );
+    }
+
+    fn fallback_stream_ids(
+        planner: &RangePlanner,
+        point: u64,
+        peer_filter: Option<&HashSet<String>>,
+    ) -> (Vec<String>, usize, usize) {
+        let mut fallback = FallbackCandidateStreams::new(planner, point);
+        let mut ids = Vec::new();
+        while let Some(range) = fallback.pop_closest(planner, peer_filter) {
+            ids.push(range.id.clone());
+        }
+        assert_eq!(fallback.emitted_count(), ids.len());
+        (
+            ids,
+            fallback.key_advances(),
+            fallback.candidate_head_visits(),
+        )
+    }
+
+    fn reference_fallback_ids(
+        planner: &RangePlanner,
+        point: u64,
+        peer_filter: Option<&HashSet<String>>,
+    ) -> Vec<String> {
+        let mut ranges: Vec<_> = planner
+            .ranges
+            .values()
+            .filter(|range| {
+                range.width > 0
+                    && range.mode == MODE_NON_STRICT
+                    && peer_filter.is_none_or(|filter| filter.contains(&range.hash))
+            })
+            .collect();
+        ranges.sort_by(|left, right| {
+            compare_closest(left, right, point, planner.resolution.max_value())
+        });
+        ranges.into_iter().map(|range| range.id.clone()).collect()
+    }
+
+    fn next_random(state: &mut u64) -> u64 {
+        *state ^= *state << 13;
+        *state ^= *state >> 7;
+        *state ^= *state << 17;
+        *state
     }
 
     #[test]
@@ -5396,6 +5495,252 @@ mod tests {
             );
             assert!(planner.contains_sample_hash(&[cursor], &options, "peer-a"));
             assert!(!planner.contains_sample_hash(&[cursor], &options, "peer-z"));
+        }
+    }
+
+    #[test]
+    fn fallback_streams_match_total_order_reference_for_randomized_u32_u64_ranges() {
+        for resolution in ["u32", "u64"] {
+            let max_value = if resolution == "u32" {
+                MAX_U32
+            } else {
+                MAX_U64
+            };
+            let mut random = if resolution == "u32" {
+                0x1297_0000_0000_0032
+            } else {
+                0x1297_0000_0000_0064
+            };
+
+            for iteration in 0..24 {
+                let mut planner = RangePlanner::new(resolution);
+                for index in 0..256 {
+                    let mut start = next_random(&mut random);
+                    let mut end = next_random(&mut random);
+                    if resolution == "u32" {
+                        start &= MAX_U32;
+                        end &= MAX_U32;
+                    }
+                    if start == end {
+                        end = if end == max_value { 0 } else { end + 1 };
+                    }
+                    let (start1, end1, start2, end2, width) = if start < end {
+                        (start, end, start, end, end - start)
+                    } else {
+                        (
+                            start,
+                            max_value,
+                            0,
+                            end,
+                            max_value.saturating_sub(start).saturating_add(end),
+                        )
+                    };
+                    let selector = next_random(&mut random);
+                    planner.put(ReplicationRange::new(
+                        format!("range-{iteration}-{index}"),
+                        format!("peer-{}", selector % 17),
+                        next_random(&mut random) % 1_000,
+                        start1,
+                        end1,
+                        start2,
+                        end2,
+                        if selector.is_multiple_of(13) {
+                            0
+                        } else {
+                            width.max(1)
+                        },
+                        if selector.is_multiple_of(7) {
+                            1
+                        } else {
+                            MODE_NON_STRICT
+                        },
+                    ));
+                }
+
+                let point = match iteration {
+                    0 => 0,
+                    1 => max_value,
+                    _ => {
+                        let value = next_random(&mut random);
+                        if resolution == "u32" {
+                            value & MAX_U32
+                        } else {
+                            value
+                        }
+                    }
+                };
+                let filter = (iteration % 3 == 0).then(|| {
+                    (0..17)
+                        .filter(|owner| owner % 2 == 0)
+                        .map(|owner| format!("peer-{owner}"))
+                        .collect::<HashSet<_>>()
+                });
+
+                let (actual, key_advances, head_visits) =
+                    fallback_stream_ids(&planner, point, filter.as_ref());
+                let expected = reference_fallback_ids(&planner, point, filter.as_ref());
+                assert_eq!(actual, expected, "{resolution} iteration {iteration}");
+                assert!(key_advances <= 4 * planner.ranges.len());
+                assert!(head_visits <= 4 * actual.len());
+            }
+        }
+    }
+
+    #[test]
+    fn fallback_streams_bound_adversarial_immature_same_owner_work() {
+        const RANGE_COUNT: usize = 16_384;
+
+        let mut planner = RangePlanner::new("u32");
+        for index in 0..RANGE_COUNT {
+            let coordinate = index as u64 + 1;
+            planner.put(ReplicationRange::new(
+                format!("range-{index:05}"),
+                "peer-same",
+                if index + 1 == RANGE_COUNT { 0 } else { 950 },
+                coordinate,
+                coordinate + 1,
+                coordinate,
+                coordinate + 1,
+                1,
+                MODE_NON_STRICT,
+            ));
+        }
+        let options = SampleOptions {
+            now: 1_000,
+            role_age_ms: 100,
+            ..Default::default()
+        };
+
+        assert_eq!(
+            planner.get_samples(&[0], &options),
+            vec![LeaderSample {
+                hash: "peer-same".to_string(),
+                intersecting: false,
+            }]
+        );
+        assert!(planner.contains_sample_hash(&[0], &options, "peer-same"));
+
+        let (ids, key_advances, head_visits) = fallback_stream_ids(&planner, 0, None);
+        assert_eq!(ids.len(), RANGE_COUNT);
+        assert_eq!(key_advances, 4 * RANGE_COUNT);
+        assert!(head_visits <= 4 * RANGE_COUNT);
+    }
+
+    #[test]
+    fn descending_fallback_partition_handles_max_unicode_metadata_and_wrap() {
+        for resolution in ["u32", "u64"] {
+            let max_value = if resolution == "u32" {
+                MAX_U32
+            } else {
+                MAX_U64
+            };
+            let point = 5;
+            let mut planner = RangePlanner::new(resolution);
+            planner.put(ReplicationRange::new(
+                "normal-at-point",
+                "peer-a",
+                0,
+                10,
+                max_value,
+                0,
+                point,
+                10,
+                MODE_NON_STRICT,
+            ));
+            planner.put(ReplicationRange::new(
+                format!("{}-id-suffix", char::MAX),
+                format!("{}-hash-suffix", char::MAX),
+                MAX_U64,
+                10,
+                max_value,
+                0,
+                point,
+                10,
+                MODE_NON_STRICT,
+            ));
+            planner.put(ReplicationRange::new(
+                "wrapped-coordinate",
+                "peer-wrap",
+                0,
+                10,
+                max_value,
+                0,
+                max_value - 1,
+                10,
+                MODE_NON_STRICT,
+            ));
+
+            let mut descending = FallbackKeyStream::descending(&planner.by_end2, point);
+            let ids: Vec<_> = std::iter::from_fn(|| descending.next_key())
+                .map(|key| key.id.clone())
+                .collect();
+            assert_eq!(
+                ids,
+                [
+                    "normal-at-point".to_string(),
+                    format!("{}-id-suffix", char::MAX),
+                    "wrapped-coordinate".to_string(),
+                ],
+                "{resolution}",
+            );
+        }
+    }
+
+    #[test]
+    fn fallback_zero_max_aliases_use_total_metadata_order_for_u32_u64_apis() {
+        for resolution in ["u32", "u64"] {
+            let max_value = if resolution == "u32" {
+                MAX_U32
+            } else {
+                MAX_U64
+            };
+            let mut planner = RangePlanner::new(resolution);
+            planner.put(ReplicationRange::new(
+                "z-zero",
+                "peer-z",
+                0,
+                0,
+                0,
+                0,
+                0,
+                1,
+                MODE_NON_STRICT,
+            ));
+            planner.put(ReplicationRange::new(
+                "a-max",
+                "peer-a",
+                0,
+                max_value,
+                max_value,
+                max_value,
+                max_value,
+                1,
+                MODE_NON_STRICT,
+            ));
+            let options = SampleOptions {
+                now: 1_000,
+                ..Default::default()
+            };
+
+            for point in [0, max_value] {
+                let (ids, key_advances, head_visits) = fallback_stream_ids(&planner, point, None);
+                assert_eq!(ids, ["a-max", "z-zero"], "{resolution} point {point}");
+                assert_eq!(
+                    ids,
+                    reference_fallback_ids(&planner, point, None),
+                    "{resolution} point {point}",
+                );
+                assert_eq!(key_advances, 4 * planner.len());
+                assert!(head_visits <= 4 * planner.len());
+
+                assert_eq!(
+                    sample_hashes(planner.get_samples(&[point, point], &options)),
+                    ["peer-a", "peer-z"],
+                    "{resolution} point {point}",
+                );
+                assert!(planner.contains_sample_hash(&[point], &options, "peer-a"));
+                assert!(!planner.contains_sample_hash(&[point], &options, "peer-z"));
+            }
         }
     }
 

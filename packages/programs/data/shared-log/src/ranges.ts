@@ -1556,6 +1556,7 @@ const getClosest = <S extends Shape | undefined, R extends "u32" | "u64">(
 	options?: {
 		shape?: S;
 		hash?: string;
+		excludeId?: Uint8Array;
 		time?: {
 			roleAgeLimit: number;
 			matured: boolean;
@@ -1563,13 +1564,16 @@ const getClosest = <S extends Shape | undefined, R extends "u32" | "u64">(
 		};
 	},
 ): IndexIterator<ReplicationRangeIndexable<R>, S> => {
-	const createQueries = (p: NumberFromType<R>, equality: boolean) => {
+	const createQueries = (
+		p: NumberFromType<R>,
+		phase: "primary" | "wrapped",
+	) => {
 		let queries: Query[];
 		if (direction === "below") {
 			queries = [
 				new IntegerCompare({
 					key: "end2",
-					compare: equality ? Compare.LessOrEqual : Compare.Less,
+					compare: phase === "primary" ? Compare.LessOrEqual : Compare.Greater,
 					value: p,
 				}),
 			];
@@ -1577,7 +1581,7 @@ const getClosest = <S extends Shape | undefined, R extends "u32" | "u64">(
 			queries = [
 				new IntegerCompare({
 					key: "start1",
-					compare: equality ? Compare.GreaterOrEqual : Compare.Greater,
+					compare: phase === "primary" ? Compare.GreaterOrEqual : Compare.Less,
 					value: p,
 				}),
 			];
@@ -1611,6 +1615,16 @@ const getClosest = <S extends Shape | undefined, R extends "u32" | "u64">(
 		if (options?.hash) {
 			queries.push(new StringMatch({ key: "hash", value: options.hash }));
 		}
+		if (options?.excludeId) {
+			queries.push(
+				new Not(
+					new ByteMatchQuery({
+						key: "id",
+						value: options.excludeId,
+					}),
+				),
+			);
+		}
 		return queries;
 	};
 
@@ -1619,7 +1633,7 @@ const getClosest = <S extends Shape | undefined, R extends "u32" | "u64">(
 
 	const iterator = rects.iterate(
 		{
-			query: createQueries(point, false),
+			query: createQueries(point, "primary"),
 			sort: [
 				direction === "below"
 					? new Sort({ key: ["end2"], direction: "desc" })
@@ -1633,10 +1647,7 @@ const getClosest = <S extends Shape | undefined, R extends "u32" | "u64">(
 
 	const iteratorWrapped = rects.iterate(
 		{
-			query: createQueries(
-				direction === "below" ? numbers.maxValue : numbers.zero,
-				true,
-			),
+			query: createQueries(point, "wrapped"),
 			sort: [
 				direction === "below"
 					? new Sort({ key: ["end2"], direction: "desc" })
@@ -1781,10 +1792,11 @@ export function getDistance(
 		value < 0 ? -value : value;
 	const diff = <T extends number | bigint>(a: T, b: T): T => abs(a - b) as T;
 
+	if (from === to) {
+		return typeof from === "number" ? 0 : 0n;
+	}
+
 	if (direction === "closest") {
-		if (from === to) {
-			return typeof from === "number" ? 0 : 0n; // returns 0 of the correct type
-		}
 		return diff(from, to) < diff(end, diff(from, to))
 			? diff(from, to)
 			: diff(end, diff(from, to));
@@ -1807,7 +1819,11 @@ export function getDistance(
 	throw new Error("Invalid direction");
 }
 
-const joinIterator = <S extends Shape | undefined, R extends "u32" | "u64">(
+/** @internal */
+export const joinIterator = <
+	S extends Shape | undefined,
+	R extends "u32" | "u64",
+>(
 	iterators: IndexIterator<ReplicationRangeIndexable<R>, S>[],
 	point: NumberFromType<R>,
 	direction: "above" | "below" | "closest",
@@ -1853,7 +1869,7 @@ const joinIterator = <S extends Shape | undefined, R extends "u32" | "u64">(
 		elements: QueuedResult[];
 	}[] = [];
 
-	return {
+	const joined: IndexIterator<ReplicationRangeIndexable<R>, S> = {
 		next: async (
 			count: number,
 		): Promise<
@@ -1946,25 +1962,43 @@ const joinIterator = <S extends Shape | undefined, R extends "u32" | "u64">(
 		},
 		pending: async () => {
 			let allPending = await Promise.all(iterators.map((x) => x.pending()));
-			return allPending.reduce((acc, x) => acc + x, 0);
+			// A child can be exhausted while this join still owns prefetched rows.
+			// Counting local queues makes the same contract compose through nested joins.
+			const buffered = queues.reduce(
+				(acc, queue) => acc + queue.elements.length,
+				0,
+			);
+			return buffered + allPending.reduce((acc, x) => acc + x, 0);
 		},
-		done: () => iterators.every((x) => x.done() === true),
+		done: () =>
+			queues.every((queue) => queue.elements.length === 0) &&
+			iterators.every((x) => x.done() === true),
 		close: async () => {
-			for (const iterator of iterators) {
-				await iterator.close();
+			queues.length = 0;
+			const settled = await Promise.allSettled(
+				iterators.map(async (iterator) => iterator.close()),
+			);
+			const errors = settled.flatMap((result) =>
+				result.status === "rejected" ? [result.reason] : [],
+			);
+			if (errors.length === 1) {
+				throw errors[0];
+			}
+			if (errors.length > 1) {
+				throw new AggregateError(errors, "Failed to close joined iterators");
 			}
 		},
 		all: async () => {
 			let results: IndexedResult<
 				ReturnTypeFromShape<ReplicationRangeIndexable<R>, S>
 			>[] = [];
-			for (const iterator of iterators) {
-				let res = await iterator.all();
-				results.push(...res);
+			while (!joined.done()) {
+				results.push(...(await joined.next(100)));
 			}
 			return results;
 		},
 	};
+	return joined;
 };
 
 const getClosestAroundOrContaining = <
@@ -2013,6 +2047,7 @@ const getClosestAroundOrContaining = <
 export const getAdjecentSameOwner = async <R extends "u32" | "u64">(
 	peers: Index<ReplicationRangeIndexable<R>>,
 	range: {
+		id?: Uint8Array;
 		idString?: string;
 		start1: NumberFromType<R>;
 		end2: NumberFromType<R>;
@@ -2031,6 +2066,7 @@ export const getAdjecentSameOwner = async <R extends "u32" | "u64">(
 		numbers,
 		{
 			hash: range.hash,
+			excludeId: range.id,
 		},
 	);
 	const closestBelow = await closestBelowIterator.next(1);
@@ -2043,21 +2079,21 @@ export const getAdjecentSameOwner = async <R extends "u32" | "u64">(
 		numbers,
 		{
 			hash: range.hash,
+			excludeId: range.id,
 		},
 	);
 	const closestAbove = await closestAboveIterator.next(1);
 	closestAboveIterator.close();
-	return {
-		below:
-			range.idString === closestBelow[0]?.value.idString
-				? undefined
-				: closestBelow[0]?.value,
-		above:
-			closestBelow[0]?.id.primitive === closestAbove[0]?.id.primitive ||
-			range.idString === closestBelow[0]?.value.idString
-				? undefined
-				: closestAbove[0]?.value,
-	};
+	const below =
+		range.idString === closestBelow[0]?.value.idString
+			? undefined
+			: closestBelow[0]?.value;
+	const above =
+		range.idString === closestAbove[0]?.value.idString ||
+		below?.idString === closestAbove[0]?.value.idString
+			? undefined
+			: closestAbove[0]?.value;
+	return { below, above };
 };
 
 export const getAllMergeCandiates = async <R extends "u32" | "u64">(
