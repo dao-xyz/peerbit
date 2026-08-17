@@ -1,5 +1,19 @@
-import { sha256Sync, toHexString } from "@peerbit/crypto";
+import { fromBase64, sha256Sync, toBase64, toHexString } from "@peerbit/crypto";
 import deterministicStringify from "json-stringify-deterministic";
+import { captureBoundedUint8Array } from "./bounded-bytes.js";
+import {
+	type CanonicalCustodyHandoffManifest,
+	DEFAULT_CUSTODY_HANDOFF_CODEC_LIMITS,
+	decodeCustodyHandoffManifestV1,
+} from "./custody-handoff-codec.js";
+import {
+	type CustodySourceReceiptAuthority,
+	type DurableCustodySourceReceiptCommit,
+	assertCustodySourceReceiptAuthority,
+	assertCustodySourceReceiptAuthorityLogId,
+	assertCustodySourceReceiptAuthorityManifest,
+	verifyDurableCustodySourceReceipt,
+} from "./custody-store.js";
 import { MAX_U32, MAX_U64, type NumberFromType } from "./integers.js";
 import { type RebalanceScanPlan, ReplicationIntent } from "./ranges.js";
 
@@ -25,6 +39,11 @@ export interface RebalanceWorkPersistence {
 }
 
 export type RebalanceWorkDurability = "strict" | "memory";
+
+export type RebalanceWorkCustodyBinding = Readonly<{
+	sourceReceiptAuthority: CustodySourceReceiptAuthority;
+	logId: Uint8Array;
+}>;
 
 export type RebalanceWorkLimits = Readonly<{
 	maxFrameBytes: number;
@@ -68,10 +87,20 @@ export type RebalanceCollisionBucket<R extends Resolution = Resolution> =
 		nextIndex: number;
 	}>;
 
+export type RebalancePendingVisit = Readonly<{
+	/** Exact index in the frozen collision bucket. */
+	index: number;
+	moveKey: string;
+	handoffId: string;
+	/** Exact canonical signed envelope retained for stale-view recovery. */
+	manifestBase64: string;
+}>;
+
 export type RebalanceWorkCursor<R extends Resolution = Resolution> = Readonly<{
 	taskOrdinal: number;
 	afterHashNumber?: NumberFromType<R>;
 	bucket?: RebalanceCollisionBucket<R>;
+	pendingVisit?: RebalancePendingVisit;
 }>;
 
 export type RebalanceWorkActive<R extends Resolution = Resolution> = Readonly<{
@@ -152,6 +181,12 @@ type StoredCursor = {
 		hashes: string[];
 		nextIndex: number;
 	};
+	pendingVisit?: {
+		index: number;
+		moveKey: string;
+		handoffId: string;
+		manifestBase64: string;
+	};
 };
 
 type StoredActive = {
@@ -182,6 +217,8 @@ const REBALANCE_WORK_FORMAT = "peerbit-shared-log-rebalance-work" as const;
 const REBALANCE_QUERY_RANGES_PER_TASK = 128;
 const DIGEST_PATTERN = /^[0-9a-f]{64}$/;
 const DECIMAL_PATTERN = /^(0|[1-9][0-9]*)$/;
+const MAX_PENDING_MANIFEST_BASE64_BYTES =
+	Math.ceil(DEFAULT_CUSTODY_HANDOFF_CODEC_LIMITS.maxManifestBytes / 3) * 4;
 const encoder = new TextEncoder();
 const decoder = new TextDecoder("utf-8", { fatal: true });
 const openPersistenceAdapters = new WeakSet<RebalanceWorkPersistence>();
@@ -238,6 +275,51 @@ const assertDigest = (value: unknown, name: string) => {
 		throw new Error(`Invalid ${name}`);
 	}
 	return value;
+};
+
+const capturePendingManifest = async (
+	value: unknown,
+): Promise<{
+	manifest: CanonicalCustodyHandoffManifest;
+	manifestBase64: string;
+}> => {
+	const bytes = captureBoundedUint8Array(
+		value,
+		1,
+		DEFAULT_CUSTODY_HANDOFF_CODEC_LIMITS.maxManifestBytes,
+		"pending custody manifest",
+	);
+	const manifest = await decodeCustodyHandoffManifestV1(bytes);
+	return { manifest, manifestBase64: toBase64(bytes) };
+};
+
+const decodeStoredPendingManifest = async (value: unknown) => {
+	if (
+		typeof value !== "string" ||
+		value.length === 0 ||
+		value.length > MAX_PENDING_MANIFEST_BASE64_BYTES
+	) {
+		throw new Error("Invalid stored pending custody manifest");
+	}
+	let bytes: Uint8Array;
+	try {
+		bytes = fromBase64(value);
+	} catch (error) {
+		throw new Error("Invalid stored pending custody manifest", {
+			cause: error,
+		});
+	}
+	if (
+		bytes.byteLength === 0 ||
+		bytes.byteLength > DEFAULT_CUSTODY_HANDOFF_CODEC_LIMITS.maxManifestBytes ||
+		toBase64(bytes) !== value
+	) {
+		throw new Error("Invalid stored pending custody manifest");
+	}
+	return {
+		manifest: await decodeCustodyHandoffManifestV1(bytes),
+		manifestBase64: value,
+	};
 };
 
 const parseDecimal = (
@@ -833,6 +915,9 @@ const assertMonotoneCursorTransition = (
 	previous: StoredCursor,
 	next: StoredCursor,
 ) => {
+	if (previous.pendingVisit || next.pendingVisit) {
+		throw new Error("Generic checkpoint cannot mutate a pending visit");
+	}
 	if (next.taskOrdinal === previous.taskOrdinal) {
 		if (previous.bucket) {
 			if (next.bucket) {
@@ -883,15 +968,75 @@ const assertMonotoneCursorTransition = (
 	}
 };
 
-const validateStoredCursor = (
+const assertPendingMatchesCursor = (
+	pending: StoredCursor["pendingVisit"],
+	manifest: CanonicalCustodyHandoffManifest,
+	plan: StoredPlan,
+	cursor: StoredCursor,
+) => {
+	const bucket = cursor.bucket;
+	if (
+		!pending ||
+		!bucket ||
+		pending.index !== bucket.nextIndex ||
+		pending.index >= bucket.hashes.length ||
+		manifest.moveKey !== pending.moveKey ||
+		manifest.handoffId !== pending.handoffId ||
+		manifest.entryHash !== bucket.hashes[pending.index] ||
+		manifest.visit.viewId !== plan.viewId ||
+		manifest.visit.planDigest !== plan.planDigest ||
+		manifest.visit.installSequence !== BigInt(plan.installSequence) ||
+		manifest.visit.taskOrdinal !== cursor.taskOrdinal ||
+		manifest.visit.resolution !== plan.resolution ||
+		BigInt(manifest.visit.hashNumber) !== BigInt(bucket.hashNumber)
+	) {
+		throw new Error("Pending custody manifest does not match its work cursor");
+	}
+};
+
+const validateStoredPendingVisit = async (
+	value: unknown,
+	plan: StoredPlan,
+	cursor: StoredCursor,
+	authority?: CustodySourceReceiptAuthority,
+) => {
+	if (
+		!isRecord(value) ||
+		!hasExactKeys(value, ["index", "moveKey", "handoffId", "manifestBase64"])
+	) {
+		throw new Error("Invalid stored pending visit");
+	}
+	const pending: NonNullable<StoredCursor["pendingVisit"]> = {
+		index: assertSafeCount(
+			value.index,
+			"stored pending visit index",
+			cursor.bucket?.hashes.length ?? 0,
+		),
+		moveKey: assertDigest(value.moveKey, "stored pending visit move key"),
+		handoffId: assertDigest(value.handoffId, "stored pending visit handoff id"),
+		manifestBase64: "",
+	};
+	const decoded = await decodeStoredPendingManifest(value.manifestBase64);
+	pending.manifestBase64 = decoded.manifestBase64;
+	if (authority) {
+		assertCustodySourceReceiptAuthorityManifest(authority, decoded.manifest);
+	}
+	assertPendingMatchesCursor(pending, decoded.manifest, plan, cursor);
+	return pending;
+};
+
+const validateStoredCursor = async (
 	value: unknown,
 	plan: StoredPlan,
 	limits: RebalanceWorkLimits,
-): StoredCursor => {
+	authority?: CustodySourceReceiptAuthority,
+): Promise<StoredCursor> => {
 	if (
 		!isRecord(value) ||
 		!Object.keys(value).every((key) =>
-			["taskOrdinal", "afterHashNumber", "bucket"].includes(key),
+			["taskOrdinal", "afterHashNumber", "bucket", "pendingVisit"].includes(
+				key,
+			),
 		) ||
 		!("taskOrdinal" in value)
 	) {
@@ -959,22 +1104,35 @@ const validateStoredCursor = (
 	if (taskOrdinal === plan.taskCount && cursor.afterHashNumber != null) {
 		throw new Error("Completed stored cursor retains scan position");
 	}
+	if ("pendingVisit" in value) {
+		cursor.pendingVisit = await validateStoredPendingVisit(
+			value.pendingVisit,
+			plan,
+			cursor,
+			authority,
+		);
+	}
 	return cursor;
 };
 
-const validateStoredActive = (
+const validateStoredActive = async (
 	value: unknown,
 	frameSequence: bigint,
 	limits: RebalanceWorkLimits,
-): StoredActive => {
+	authority?: CustodySourceReceiptAuthority,
+): Promise<StoredActive> => {
 	if (!isRecord(value) || !hasExactKeys(value, ["plan", "cursor"])) {
 		throw new Error("Invalid stored rebalance work state");
 	}
 	const plan = validateStoredPlan(value.plan, frameSequence, limits);
-	return {
+	const active = {
 		plan,
-		cursor: validateStoredCursor(value.cursor, plan, limits),
+		cursor: await validateStoredCursor(value.cursor, plan, limits, authority),
 	};
+	if (active.cursor.pendingVisit && frameSequence === MAX_U64) {
+		throw new Error("Stored pending visit has no completion revision");
+	}
+	return active;
 };
 
 const storedPlanToRuntime = <R extends Resolution>(
@@ -1027,6 +1185,9 @@ const storedActiveToRuntime = (
 						nextIndex: active.cursor.bucket.nextIndex,
 					}
 				: undefined,
+			...(active.cursor.pendingVisit
+				? { pendingVisit: { ...active.cursor.pendingVisit } }
+				: {}),
 		},
 	});
 	return active.plan.resolution === "u32"
@@ -1068,11 +1229,12 @@ const encodeFrame = (
 	return { bytes, checksum };
 };
 
-const decodeFrame = (
+const decodeFrame = async (
 	bytes: Uint8Array,
 	slot: 0 | 1,
 	limits: RebalanceWorkLimits,
-): LoadedFrame => {
+	authority?: CustodySourceReceiptAuthority,
+): Promise<LoadedFrame> => {
 	if (bytes.byteLength === 0 || bytes.byteLength > limits.maxFrameBytes) {
 		throw new Error("Invalid rebalance work frame size");
 	}
@@ -1139,7 +1301,12 @@ const decodeFrame = (
 		slot,
 		checksum,
 		durability: payload.durability,
-		active: validateStoredActive(payload.value, sequence, limits),
+		active: await validateStoredActive(
+			payload.value,
+			sequence,
+			limits,
+			authority,
+		),
 	};
 };
 
@@ -1167,12 +1334,18 @@ export class RebalanceWorkStore {
 		private readonly persistence: RebalanceWorkPersistence,
 		private readonly durability: RebalanceWorkDurability,
 		private readonly limits: RebalanceWorkLimits,
+		private readonly custodySourceReceiptAuthority:
+			| CustodySourceReceiptAuthority
+			| undefined,
+		private readonly custodyLogId: string | undefined,
 	) {}
 
 	static async open(properties: {
 		persistence: RebalanceWorkPersistence;
 		durability: RebalanceWorkDurability;
 		limits?: Partial<RebalanceWorkLimits>;
+		/** @internal Enables the strict one-entry custody cursor reducer. */
+		custody?: RebalanceWorkCustodyBinding;
 	}): Promise<RebalanceWorkStore> {
 		if (
 			!properties.persistence ||
@@ -1196,6 +1369,34 @@ export class RebalanceWorkStore {
 			);
 		}
 		const limits = normalizeLimits(properties.limits);
+		const suppliedCustody = properties.custody;
+		let custodySourceReceiptAuthority:
+			| CustodySourceReceiptAuthority
+			| undefined;
+		let custodyLogId: string | undefined;
+		if (suppliedCustody !== undefined) {
+			if (!suppliedCustody || typeof suppliedCustody !== "object") {
+				throw new Error("Invalid rebalance work custody binding");
+			}
+			const authority = suppliedCustody.sourceReceiptAuthority;
+			const logId = captureBoundedUint8Array(
+				suppliedCustody.logId,
+				1,
+				512,
+				"rebalance work custody log id",
+			);
+			custodySourceReceiptAuthority = assertCustodySourceReceiptAuthorityLogId(
+				authority,
+				logId,
+			);
+			custodyLogId = toHexString(logId);
+		}
+		if (
+			custodySourceReceiptAuthority !== undefined &&
+			properties.durability !== "strict"
+		) {
+			throw new Error("Custody rebalance work requires strict durability");
+		}
 		if (openPersistenceAdapters.has(properties.persistence)) {
 			throw new Error("Rebalance work persistence is already open");
 		}
@@ -1204,11 +1405,31 @@ export class RebalanceWorkStore {
 			properties.persistence,
 			properties.durability,
 			limits,
+			custodySourceReceiptAuthority,
+			custodyLogId,
 		);
 		store.ownsPersistenceLease = true;
 		try {
 			store.frame = await store.load();
+			if (
+				store.durability === "memory" &&
+				store.frame.active?.cursor.pendingVisit
+			) {
+				throw new Error("Memory rebalance work cannot adopt a pending visit");
+			}
+			if (
+				store.frame.active?.cursor.pendingVisit &&
+				!custodySourceReceiptAuthority
+			) {
+				throw new Error(
+					"Pending rebalance work requires its paired source custody store",
+				);
+			}
 			await store.confirmLoadedFrame();
+			await store.ensurePendingMirrored();
+			if (custodySourceReceiptAuthority) {
+				assertCustodySourceReceiptAuthority(custodySourceReceiptAuthority);
+			}
 			return store;
 		} catch (error) {
 			const openError =
@@ -1248,6 +1469,12 @@ export class RebalanceWorkStore {
 		return this.commitUnchecked();
 	}
 
+	/** @internal Exact source custody-store generation paired at open. */
+	custodyAuthority(): CustodySourceReceiptAuthority | undefined {
+		this.throwIfUnavailable();
+		return this.custodySourceReceiptAuthority;
+	}
+
 	install<R extends Resolution>(
 		expectedRevision: bigint,
 		input: RebalanceWorkPlanInput<R>,
@@ -1262,6 +1489,9 @@ export class RebalanceWorkStore {
 		}
 		return this.enqueue(async () => {
 			this.assertExpectedRevision(expectedRevision);
+			if (this.frame.active?.cursor.pendingVisit) {
+				throw new Error("Cannot replace rebalance work with a pending visit");
+			}
 			const sequence = this.frame.sequence + (this.frame.implicit ? 2n : 1n);
 			if (sequence > MAX_U64) {
 				throw new Error("Rebalance work sequence exhausted");
@@ -1292,6 +1522,9 @@ export class RebalanceWorkStore {
 		let capturedCursor: RebalanceWorkCursor<R>;
 		try {
 			capturedFence = captureFence(fence);
+			if (cursor?.pendingVisit !== undefined) {
+				throw new Error("Generic checkpoint cannot supply a pending visit");
+			}
 			capturedCursor = captureCursor(cursor, this.limits.maxCollisionBucket);
 		} catch (error) {
 			return Promise.reject(error);
@@ -1304,8 +1537,234 @@ export class RebalanceWorkStore {
 				active.plan,
 				this.limits,
 			);
+			if (
+				this.custodySourceReceiptAuthority &&
+				active.cursor.bucket &&
+				normalized.bucket &&
+				active.cursor.taskOrdinal === normalized.taskOrdinal &&
+				active.cursor.bucket.hashNumber === normalized.bucket.hashNumber &&
+				normalized.bucket.nextIndex !== active.cursor.bucket.nextIndex
+			) {
+				throw new Error(
+					"Custody cursor indices require a dedicated visit transition",
+				);
+			}
 			assertMonotoneCursorTransition(active.cursor, normalized);
 			await this.writeNextFrame({ plan: active.plan, cursor: normalized });
+			return this.mutationResult();
+		});
+	}
+
+	/**
+	 * @internal
+	 * Mirror one exact signed manifest into both A/B generations before any
+	 * custody or network effect is allowed to begin.
+	 */
+	async preparePendingVisit(
+		fence: RebalanceWorkFence,
+		expectedRevision: bigint,
+		index: number,
+		manifestBytes: Uint8Array,
+	): Promise<RebalanceWorkMutationResult> {
+		let capturedFence: RebalanceWorkFence;
+		let capturedIndex: number;
+		let captured: Awaited<ReturnType<typeof capturePendingManifest>>;
+		try {
+			capturedFence = captureFence(fence);
+			capturedIndex = assertSafeCount(
+				index,
+				"pending visit index",
+				this.limits.maxCollisionBucket,
+			);
+			captured = await capturePendingManifest(manifestBytes);
+		} catch (error) {
+			throw error;
+		}
+		return this.enqueue(async () => {
+			const authority = this.assertCustodyMode();
+			assertCustodySourceReceiptAuthority(authority);
+			assertCustodySourceReceiptAuthorityManifest(authority, captured.manifest);
+			if (captured.manifest.logId !== this.custodyLogId) {
+				throw new Error("Pending custody manifest log mismatch");
+			}
+			const active = this.assertFence(capturedFence);
+			const pending: NonNullable<StoredCursor["pendingVisit"]> = {
+				index: capturedIndex,
+				moveKey: captured.manifest.moveKey,
+				handoffId: captured.manifest.handoffId,
+				manifestBase64: captured.manifestBase64,
+			};
+			assertPendingMatchesCursor(
+				pending,
+				captured.manifest,
+				active.plan,
+				active.cursor,
+			);
+			if (active.cursor.pendingVisit) {
+				if (
+					active.cursor.pendingVisit.index === pending.index &&
+					active.cursor.pendingVisit.moveKey === pending.moveKey &&
+					active.cursor.pendingVisit.handoffId === pending.handoffId &&
+					active.cursor.pendingVisit.manifestBase64 === pending.manifestBase64
+				) {
+					return this.mutationResult();
+				}
+				throw new Error("Rebalance work already has a different pending visit");
+			}
+			this.assertExpectedRevision(expectedRevision);
+			if (this.frame.sequence > MAX_U64 - 2n) {
+				throw new Error(
+					"Rebalance work sequence cannot retain pending recovery",
+				);
+			}
+			const pendingActive: StoredActive = {
+				plan: active.plan,
+				cursor: { ...active.cursor, pendingVisit: pending },
+			};
+			const completedActive: StoredActive = {
+				plan: active.plan,
+				cursor: {
+					...active.cursor,
+					bucket: {
+						...active.cursor.bucket!,
+						nextIndex: pending.index + 1,
+					},
+				},
+			};
+			const sequence = this.frame.sequence + 1n;
+			// Preflight both pending mirrors and the later completion before the
+			// first physical write can make a pending move recoverable.
+			const encodedPending = encodeFrame(
+				sequence,
+				pendingActive,
+				this.durability,
+				this.limits,
+			);
+			encodeFrame(sequence + 1n, completedActive, this.durability, this.limits);
+			const firstSlot = (this.frame.slot === 0 ? 1 : 0) as 0 | 1;
+			const secondSlot = this.frame.slot;
+			await this.persistEncodedFrame(
+				sequence,
+				firstSlot,
+				pendingActive,
+				encodedPending,
+			);
+			const mirrored = await this.persistEncodedFrame(
+				sequence,
+				secondSlot,
+				pendingActive,
+				encodedPending,
+			);
+			// Do not publish an effect-admitting snapshot until both exact mirrors
+			// crossed their named strict barriers.
+			try {
+				assertCustodySourceReceiptAuthority(authority);
+			} catch (error) {
+				this.poisoned = true;
+				this.poisonCause = error;
+				throw new Error(
+					"Source custody authority closed while staging pending work",
+					{ cause: error },
+				);
+			}
+			this.frame = mirrored;
+			return this.mutationResult();
+		});
+	}
+
+	/** @internal Advance one side-effect-free missing/stale candidate. */
+	skipVisit(
+		fence: RebalanceWorkFence,
+		expectedRevision: bigint,
+		index: number,
+	): Promise<RebalanceWorkMutationResult> {
+		let capturedFence: RebalanceWorkFence;
+		let capturedIndex: number;
+		try {
+			capturedFence = captureFence(fence);
+			capturedIndex = assertSafeCount(
+				index,
+				"skipped visit index",
+				this.limits.maxCollisionBucket,
+			);
+		} catch (error) {
+			return Promise.reject(error);
+		}
+		return this.enqueue(async () => {
+			const authority = this.assertCustodyMode();
+			assertCustodySourceReceiptAuthority(authority);
+			this.assertExpectedRevision(expectedRevision);
+			const active = this.assertFence(capturedFence);
+			const bucket = active.cursor.bucket;
+			if (
+				active.cursor.pendingVisit ||
+				!bucket ||
+				capturedIndex !== bucket.nextIndex ||
+				capturedIndex >= bucket.hashes.length
+			) {
+				throw new Error("Skipped visit does not match the current candidate");
+			}
+			await this.writeNextFrame({
+				plan: active.plan,
+				cursor: {
+					...active.cursor,
+					bucket: { ...bucket, nextIndex: capturedIndex + 1 },
+				},
+			});
+			return this.mutationResult();
+		});
+	}
+
+	/** @internal Consume one exact paired strict source-receipt proof. */
+	completePendingVisit(
+		fence: RebalanceWorkFence,
+		expectedRevision: bigint,
+		durableCommit: DurableCustodySourceReceiptCommit,
+	): Promise<RebalanceWorkMutationResult> {
+		let capturedFence: RebalanceWorkFence;
+		let receiptFacts: ReturnType<typeof verifyDurableCustodySourceReceipt>;
+		try {
+			capturedFence = captureFence(fence);
+			const authority = this.custodySourceReceiptAuthority;
+			if (!authority) {
+				throw new Error(
+					"Rebalance work store is not paired with a strict source custody store",
+				);
+			}
+			receiptFacts = verifyDurableCustodySourceReceipt(
+				durableCommit,
+				authority,
+			);
+		} catch (error) {
+			return Promise.reject(error);
+		}
+		return this.enqueue(async () => {
+			this.assertCustodyMode();
+			this.assertExpectedRevision(expectedRevision);
+			const active = this.assertFence(capturedFence);
+			const pending = active.cursor.pendingVisit;
+			const bucket = active.cursor.bucket;
+			if (
+				!pending ||
+				!bucket ||
+				pending.index !== bucket.nextIndex ||
+				pending.moveKey !== receiptFacts.moveKey ||
+				pending.handoffId !== receiptFacts.handoffId
+			) {
+				throw new Error(
+					"Durable custody receipt does not match the pending visit",
+				);
+			}
+			await this.writeNextFrame({
+				plan: active.plan,
+				cursor: {
+					taskOrdinal: active.cursor.taskOrdinal,
+					...(active.cursor.afterHashNumber === undefined
+						? {}
+						: { afterHashNumber: active.cursor.afterHashNumber }),
+					bucket: { ...bucket, nextIndex: pending.index + 1 },
+				},
+			});
 			return this.mutationResult();
 		});
 	}
@@ -1323,6 +1782,9 @@ export class RebalanceWorkStore {
 		return this.enqueue(async () => {
 			this.assertExpectedRevision(expectedRevision);
 			const active = this.assertFence(capturedFence);
+			if (active.cursor.pendingVisit) {
+				throw new Error("Cannot clear rebalance work with a pending visit");
+			}
 			if (active.cursor.taskOrdinal !== active.plan.taskCount) {
 				throw new Error("Cannot clear incomplete rebalance work");
 			}
@@ -1336,7 +1798,9 @@ export class RebalanceWorkStore {
 	 * Terminally fence this instance and durably forget any active scan before
 	 * lower shared-log state is destroyed. This is local lifecycle metadata,
 	 * not transfer acknowledgement or prune authority. A recovery path must call
-	 * beginDrop again after reopening before it resumes destructive cleanup.
+	 * beginDrop again after reopening before it resumes destructive cleanup. A
+	 * pending visit denies the drop without clearing its mirrors; that denial is
+	 * deliberately sticky, so close/reopen is required before recovery resumes.
 	 */
 	beginDrop(): Promise<RebalanceWorkMutationResult> {
 		// Once close releases the persistence lease, a cached result is stale: a
@@ -1372,6 +1836,9 @@ export class RebalanceWorkStore {
 			// persisted work to forget; avoiding its first write also avoids creating
 			// a lone generation with no fallback if that write tears. Only active work
 			// needs a higher cleared generation.
+			if (this.frame.active?.cursor.pendingVisit) {
+				throw new Error("Cannot drop rebalance work with a pending visit");
+			}
 			if (this.frame.active) {
 				await this.writeNextFrame(undefined);
 			}
@@ -1443,15 +1910,37 @@ export class RebalanceWorkStore {
 		);
 		const valid: LoadedFrame[] = [];
 		const errors: unknown[] = [];
+		const readErrors = reads
+			.filter(
+				(read): read is PromiseRejectedResult => read.status === "rejected",
+			)
+			.map((read) => read.reason);
+		if (readErrors.length > 0) {
+			throw new AggregateError(
+				readErrors,
+				"Failed to read every rebalance work generation",
+			);
+		}
 		for (let slot = 0; slot < reads.length; slot++) {
 			const read = reads[slot];
-			if (read.status === "rejected") {
-				errors.push(read.reason);
-				continue;
-			}
-			if (read.value == null) continue;
+			if (read.status === "rejected") continue;
+			if (read.value === undefined) continue;
+			// A fulfilled adapter value must be bounded real bytes. Keep this
+			// contract check outside the corrupt-frame fallback below: a Proxy,
+			// wrong type, or oversized value may hide a newer generation.
+			const bytes = captureBoundedUint8Array(
+				read.value,
+				0,
+				this.limits.maxFrameBytes,
+				"rebalance work persistence frame",
+			);
 			try {
-				const frame = decodeFrame(read.value, slot as 0 | 1, this.limits);
+				const frame = await decodeFrame(
+					bytes,
+					slot as 0 | 1,
+					this.limits,
+					this.custodySourceReceiptAuthority,
+				);
 				valid.push(frame);
 			} catch (error) {
 				errors.push(error);
@@ -1545,6 +2034,22 @@ export class RebalanceWorkStore {
 		this.frame.durabilityConfirmed = true;
 	}
 
+	private async ensurePendingMirrored() {
+		if (
+			this.durability !== "strict" ||
+			!this.frame.active?.cursor.pendingVisit
+		) {
+			return;
+		}
+		const mirrorSlot = (this.frame.slot === 0 ? 1 : 0) as 0 | 1;
+		const mirrored = await this.persistFrame(
+			this.frame.sequence,
+			mirrorSlot,
+			this.frame.active,
+		);
+		this.frame = mirrored;
+	}
+
 	private async writeNextFrame(active: StoredActive | undefined) {
 		if (this.frame.sequence === MAX_U64) {
 			throw new Error("Rebalance work sequence exhausted");
@@ -1559,7 +2064,24 @@ export class RebalanceWorkStore {
 		slot: 0 | 1,
 		active: StoredActive | undefined,
 	) {
+		this.frame = await this.persistFrame(sequence, slot, active);
+	}
+
+	private async persistFrame(
+		sequence: bigint,
+		slot: 0 | 1,
+		active: StoredActive | undefined,
+	): Promise<LoadedFrame> {
 		const encoded = encodeFrame(sequence, active, this.durability, this.limits);
+		return this.persistEncodedFrame(sequence, slot, active, encoded);
+	}
+
+	private async persistEncodedFrame(
+		sequence: bigint,
+		slot: 0 | 1,
+		active: StoredActive | undefined,
+		encoded: ReturnType<typeof encodeFrame>,
+	): Promise<LoadedFrame> {
 		const file = REBALANCE_WORK_FILES[slot];
 		try {
 			await this.persistence.write(file, encoded.bytes);
@@ -1577,7 +2099,7 @@ export class RebalanceWorkStore {
 				cause: error,
 			});
 		}
-		this.frame = {
+		return {
 			sequence,
 			slot,
 			durability: this.durability,
@@ -1599,6 +2121,15 @@ export class RebalanceWorkStore {
 			throw new Error("Stale rebalance work fence");
 		}
 		return active;
+	}
+
+	private assertCustodyMode(): CustodySourceReceiptAuthority {
+		if (this.durability !== "strict" || !this.custodySourceReceiptAuthority) {
+			throw new Error(
+				"Rebalance work store is not paired with a strict source custody store",
+			);
+		}
+		return this.custodySourceReceiptAuthority;
 	}
 
 	private snapshotUnchecked(): RebalanceWorkSnapshot {

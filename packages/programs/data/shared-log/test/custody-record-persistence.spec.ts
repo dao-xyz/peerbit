@@ -62,6 +62,7 @@ class SqliteFaultController {
 	readonly readPrefixBounds: number[] = [];
 	checkpointCalls = 0;
 	private checkpointFault?: CheckpointFault;
+	private readTransform?: (rows: unknown) => unknown;
 	private checkpointGate?: {
 		entered(): void;
 		wait: Promise<void>;
@@ -69,6 +70,17 @@ class SqliteFaultController {
 
 	failNextCheckpoint(fault: CheckpointFault) {
 		this.checkpointFault = fault;
+	}
+
+	transformNextRead(transform: (rows: unknown) => unknown) {
+		this.readTransform = transform;
+	}
+
+	async read<T>(fallback: () => Promise<T>): Promise<T> {
+		const rows = await fallback();
+		const transform = this.readTransform;
+		this.readTransform = undefined;
+		return (transform ? transform(rows) : rows) as T;
 	}
 
 	blockNextCheckpoint(): Gate {
@@ -139,7 +151,7 @@ const instrumentedDependencies = (
 														statementTarget.all(values as never);
 													return id === "custody-record-checkpoint"
 														? controller.checkpoint(fallback)
-														: fallback();
+														: controller.read(fallback);
 												};
 											}
 											const value = Reflect.get(
@@ -325,6 +337,53 @@ describe("custody record persistence", function () {
 		expect(second.facts.writerEpoch).to.equal(firstFacts.writerEpoch + 1n);
 		expect(second.facts.writerOwner).to.not.equal(firstFacts.writerOwner);
 		await close(second);
+	});
+
+	it("uses intrinsic byte bounds for SQLite reads and public writes", async () => {
+		const directory = await temporaryDirectory("intrinsic-bytes");
+		const controller = new SqliteFaultController();
+		const opened = await open(directory, {
+			dependencies: instrumentedDependencies(controller),
+		});
+		const key = digest(32);
+		await opened.persistence.write(key, "a", new Uint8Array([1, 2, 3]));
+		await opened.persistence.durableBarrier!(key, "a");
+
+		let shadowReads = 0;
+		controller.transformNextRead((value) => {
+			const rows = value as Record<string, unknown>[];
+			const oversized = new Uint8Array(128);
+			Object.defineProperty(oversized, "byteLength", {
+				get() {
+					shadowReads++;
+					return 1;
+				},
+			});
+			return [
+				{
+					...rows[0],
+					frame_prefix: oversized,
+					frame_bytes: 1n,
+				},
+			];
+		});
+		await expect(opened.persistence.read(key, "a", 128)).to.be.rejectedWith(
+			"Invalid bounded custody record frame",
+		);
+		expect(shadowReads).to.equal(0);
+
+		let prototypeReads = 0;
+		const proxied = new Proxy(new Uint8Array([4]), {
+			getPrototypeOf() {
+				prototypeReads++;
+				throw new Error("unexpected prototype hook");
+			},
+		});
+		await expect(
+			opened.persistence.write(key, "b", proxied),
+		).to.be.rejectedWith("Invalid custody persistence write");
+		expect(prototypeReads).to.equal(0);
+		await close(opened);
 	});
 
 	it("uses exact log, local-key, and role namespaces without aliasing them", async () => {

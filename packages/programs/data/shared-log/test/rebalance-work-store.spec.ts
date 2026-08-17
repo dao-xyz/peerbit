@@ -453,7 +453,7 @@ describe("rebalance work store", () => {
 		}
 		expect(failure).to.be.instanceOf(AggregateError);
 		expect((failure as AggregateError).message).to.equal(
-			"No valid rebalance work generation remains",
+			"Failed to read every rebalance work generation",
 		);
 		expect(
 			(failure as AggregateError).errors.some(
@@ -465,7 +465,7 @@ describe("rebalance work store", () => {
 		expect(persistence.closeCalls).to.equal(1);
 	});
 
-	it("recovers a valid slot when the other bounded read rejects", async () => {
+	it("fails closed when either bounded slot read rejects", async () => {
 		const persistence = new MemoryPersistence();
 		const store = await openStrict(persistence, { maxFrameBytes: 8192 });
 		const installed = await store.install(0n, {
@@ -476,9 +476,28 @@ describe("rebalance work store", () => {
 		await store.close();
 		persistence.files.set(REBALANCE_WORK_FILES[1], new Uint8Array(8193));
 
-		const recovered = await openStrict(persistence, { maxFrameBytes: 8192 });
-		expect(recovered.snapshot()).to.deep.equal(installed.snapshot);
-		await recovered.close();
+		await expect(
+			openStrict(persistence, { maxFrameBytes: 8192 }),
+		).to.be.rejectedWith("Failed to read every rebalance work generation");
+		// An unread slot may hide a newer pending or completed custody generation;
+		// adopting the readable frame could therefore orphan or skip a move.
+		expect(installed.snapshot.active).to.not.equal(undefined);
+	});
+
+	it("rejects fulfilled null adapter values instead of treating them as missing", async () => {
+		let closeCalls = 0;
+		const persistence: RebalanceWorkPersistence = {
+			read: async () => null as unknown as Uint8Array,
+			write: async () => undefined,
+			durableBarrier: async () => undefined,
+			close: async () => {
+				closeCalls++;
+			},
+		};
+		await expect(
+			RebalanceWorkStore.open({ persistence, durability: "strict" }),
+		).to.be.rejectedWith("Invalid rebalance work persistence frame");
+		expect(closeCalls).to.equal(1);
 	});
 
 	it("waits for both slot reads before failed-open cleanup", async () => {
@@ -494,7 +513,7 @@ describe("rebalance work store", () => {
 		expect(persistence.closeCalls).to.equal(0);
 		delayed.release();
 		await expect(opening).to.be.rejectedWith(
-			"No valid rebalance work generation remains",
+			"Failed to read every rebalance work generation",
 		);
 		expect(persistence.closeCalls).to.equal(1);
 	});
