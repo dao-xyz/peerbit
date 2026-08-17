@@ -821,6 +821,33 @@ describe("custody record store", () => {
 		).to.be.rejectedWith("Invalid custody pending-operation bound");
 	});
 
+	it("captures namespace binding properties exactly once", async () => {
+		const reads = { logId: 0, localPublicKey: 0, role: 0 };
+		const binding = {
+			get logId() {
+				if (++reads.logId > 1) throw new Error("logId read twice");
+				return new Uint8Array([4, 5, 6]);
+			},
+			get localPublicKey() {
+				if (++reads.localPublicKey > 1) {
+					throw new Error("localPublicKey read twice");
+				}
+				return new Uint8Array([7, 8, 9]);
+			},
+			get role() {
+				if (++reads.role > 1) throw new Error("role read twice");
+				return "source" as const;
+			},
+		};
+		const store = await CustodyRecordStore.open({
+			persistence: new MemoryCustodyRecordPersistence(),
+			durability: "memory",
+			binding,
+		});
+		expect(reads).to.deep.equal({ logId: 1, localPublicKey: 1, role: 1 });
+		await store.close();
+	});
+
 	it("aggregates close failure with an existing poison cause", async () => {
 		const persistence = new StrictMemoryPersistence();
 		const store = await CustodyRecordStore.open({
