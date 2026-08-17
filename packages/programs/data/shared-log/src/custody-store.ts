@@ -1,5 +1,6 @@
 import { fromBase64, sha256Sync, toBase64, toHexString } from "@peerbit/crypto";
 import deterministicStringify from "json-stringify-deterministic";
+import { captureBoundedUint8Array } from "./bounded-bytes.js";
 import {
 	CUSTODY_HANDOFF_PROFILE_ID,
 	CUSTODY_HANDOFF_PROFILE_MASK,
@@ -30,9 +31,9 @@ export type CustodyRecordBinding = Readonly<{
  * Logical per-record A/B persistence used by the disconnected custody model.
  *
  * One adapter instance, and the complete namespace behind it, must be owned by
- * one store for the store's lifetime. A future production adapter must add a
- * real cross-process keyed lease/CAS. The interface deliberately has no list,
- * delete, drop, or release operation.
+ * one store for the store's lifetime. The Node SQLite adapter supplies the
+ * cross-process keyed lease/fence; disconnected tests may use bounded memory
+ * adapters. The interface deliberately has no list, delete, drop, or release.
  */
 export interface CustodyRecordPersistence {
 	/** Reject an oversized value before allocating or returning its contents. */
@@ -130,10 +131,49 @@ export type DurableCustodyRecordCommit = Readonly<{
 	readonly [durableCustodyRecordCommitBrand]: true;
 }>;
 
+declare const durableCustodySourceReceiptCommitBrand: unique symbol;
+declare const custodySourceReceiptAuthorityBrand: unique symbol;
+
+/**
+ * Opaque opened-store pairing generation. Closing revokes new pairings, while
+ * an already-paired work store may consume its immutable terminal proof.
+ */
+export type CustodySourceReceiptAuthority = Readonly<{
+	readonly [custodySourceReceiptAuthorityBrand]: true;
+}>;
+
+/**
+ * Opaque proof issued only for an exact strict source-receipt-durable frame.
+ * The work cursor consumes its registered facts; callers cannot manufacture a
+ * structurally similar object to advance a pending handoff.
+ */
+export type DurableCustodySourceReceiptCommit = DurableCustodyRecordCommit &
+	Readonly<{
+		state: "source-receipt-durable";
+		handoffId: string;
+		receiptId: string;
+		readonly [durableCustodySourceReceiptCommitBrand]: true;
+	}>;
+
+export type DurableCustodySourceReceiptFacts = Readonly<{
+	moveKey: string;
+	handoffId: string;
+	receiptId: string;
+}>;
+
+type RegisteredCustodySourceReceiptFacts = DurableCustodySourceReceiptFacts &
+	Readonly<{ authority: CustodySourceReceiptAuthority }>;
+
 export type CustodyRecordReadResult = Readonly<{
 	snapshot: CustodyRecordSnapshot;
 	/** Present only for an explicit strict frame confirmed by its barrier. */
 	durableCommit?: DurableCustodyRecordCommit;
+}>;
+
+export type CustodySourceReceiptReadResult = Readonly<{
+	snapshot: CustodyRecordSnapshot;
+	/** Present only for the exact strict source-receipt-durable frame. */
+	durableCommit?: DurableCustodySourceReceiptCommit;
 }>;
 
 type StoredFramePayload = {
@@ -201,6 +241,106 @@ const destinationPinEvidenceFacts = new WeakMap<
 	CustodyDestinationPinEvidence,
 	StoredPinFacts
 >();
+const sourceReceiptCommitFacts = new WeakMap<
+	DurableCustodySourceReceiptCommit,
+	RegisteredCustodySourceReceiptFacts
+>();
+const sourceReceiptAuthorities = new WeakMap<
+	CustodySourceReceiptAuthority,
+	Readonly<{ logId: string; localPublicKey: string }>
+>();
+
+/** @internal Reject a structurally forged custody-store authority. */
+export const assertCustodySourceReceiptAuthority = (
+	authority: CustodySourceReceiptAuthority,
+) => {
+	if (
+		!authority ||
+		typeof authority !== "object" ||
+		!sourceReceiptAuthorities.has(authority)
+	) {
+		throw new Error("Invalid custody source receipt authority");
+	}
+	return authority;
+};
+
+/** @internal Fail before opening a work namespace for a different log. */
+export const assertCustodySourceReceiptAuthorityLogId = (
+	authority: CustodySourceReceiptAuthority,
+	logIdValue: Uint8Array,
+) => {
+	const facts = sourceReceiptAuthorities.get(
+		assertCustodySourceReceiptAuthority(authority),
+	);
+	const logId = captureBoundedUint8Array(
+		logIdValue,
+		1,
+		512,
+		"custody authority log id",
+	);
+	if (!facts || facts.logId !== toHexString(logId)) {
+		throw new Error("Custody source receipt authority log mismatch");
+	}
+	return authority;
+};
+
+/** @internal Bind a staged manifest to the authority's exact log and key. */
+export const assertCustodySourceReceiptAuthorityManifest = (
+	authority: CustodySourceReceiptAuthority,
+	manifest: Readonly<{
+		logId: string;
+		source: Readonly<{ publicKey: string }>;
+	}>,
+) => {
+	const facts = sourceReceiptAuthorities.get(
+		assertCustodySourceReceiptAuthority(authority),
+	);
+	if (
+		!facts ||
+		manifest?.logId !== facts.logId ||
+		manifest?.source?.publicKey !== facts.localPublicKey
+	) {
+		throw new Error("Custody manifest does not match its source authority");
+	}
+	return authority;
+};
+
+/** @internal Validate and copy facts from a commit issued by this module. */
+export const getDurableCustodySourceReceiptFacts = (
+	commit: DurableCustodySourceReceiptCommit,
+): DurableCustodySourceReceiptFacts => {
+	if (!commit || typeof commit !== "object") {
+		throw new Error("Invalid durable custody source receipt commit");
+	}
+	const facts = sourceReceiptCommitFacts.get(commit);
+	if (!facts) {
+		throw new Error("Invalid durable custody source receipt commit");
+	}
+	return Object.freeze({
+		moveKey: facts.moveKey,
+		handoffId: facts.handoffId,
+		receiptId: facts.receiptId,
+	});
+};
+
+/** @internal Verify an issued proof belongs to one exact paired generation. */
+export const verifyDurableCustodySourceReceipt = (
+	commit: DurableCustodySourceReceiptCommit,
+	authority: CustodySourceReceiptAuthority,
+): DurableCustodySourceReceiptFacts => {
+	if (!commit || typeof commit !== "object") {
+		throw new Error("Invalid durable custody source receipt commit");
+	}
+	const facts = sourceReceiptCommitFacts.get(commit);
+	if (!facts || facts.authority !== authority) {
+		throw new Error("Invalid durable custody source receipt commit authority");
+	}
+	return Object.freeze({
+		moveKey: facts.moveKey,
+		handoffId: facts.handoffId,
+		receiptId: facts.receiptId,
+	});
+};
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
 	value != null && typeof value === "object" && !Array.isArray(value);
@@ -212,20 +352,30 @@ const captureRecordBinding = (
 	const logId = value.logId;
 	const localPublicKey = value.localPublicKey;
 	const role = value.role;
-	if (
-		!(logId instanceof Uint8Array) ||
-		logId.byteLength === 0 ||
-		logId.byteLength > 512 ||
-		!(localPublicKey instanceof Uint8Array) ||
-		localPublicKey.byteLength === 0 ||
-		localPublicKey.byteLength > 512 ||
-		(role !== "source" && role !== "destination")
-	) {
+	if (role !== "source" && role !== "destination") {
 		throw new Error("Invalid custody record binding");
 	}
+	let capturedLogId: Uint8Array;
+	let capturedLocalPublicKey: Uint8Array;
+	try {
+		capturedLogId = captureBoundedUint8Array(
+			logId,
+			1,
+			512,
+			"custody record binding log id",
+		);
+		capturedLocalPublicKey = captureBoundedUint8Array(
+			localPublicKey,
+			1,
+			512,
+			"custody record binding public key",
+		);
+	} catch (error) {
+		throw new Error("Invalid custody record binding", { cause: error });
+	}
 	return Object.freeze({
-		logId: toHexString(new Uint8Array(logId)),
-		localPublicKey: toHexString(new Uint8Array(localPublicKey)),
+		logId: toHexString(capturedLogId),
+		localPublicKey: toHexString(capturedLocalPublicKey),
 		role,
 	});
 };
@@ -389,16 +539,13 @@ const captureArtifact = (
 	value: Uint8Array,
 	name: string,
 	limits: CustodyStoreLimits,
-) => {
-	if (!(value instanceof Uint8Array)) {
-		throw new Error(`Invalid ${name}`);
-	}
-	const length = value.byteLength;
-	if (length === 0 || length > limits.maxArtifactBytes) {
-		throw new Error(`${name} exceeds configured byte bound`);
-	}
-	return new Uint8Array(value);
-};
+) =>
+	captureBoundedUint8Array(
+		value,
+		1,
+		limits.maxArtifactBytes,
+		`${name} within configured byte bound`,
+	);
 
 const encodeArtifact = (bytes: Uint8Array) => toBase64(bytes);
 
@@ -910,22 +1057,34 @@ export class MemoryCustodyRecordPersistence
 			throw new Error("Invalid custody persistence read bound");
 		}
 		const value = this.frames.get(this.key(moveKey, slot));
-		if (value && value.byteLength > maxBytes) {
-			throw new Error("Custody persistence read exceeds byte bound");
+		if (value === undefined) return undefined;
+		try {
+			return captureBoundedUint8Array(
+				value,
+				0,
+				maxBytes,
+				"custody persistence read",
+			);
+		} catch (error) {
+			throw new Error("Custody persistence read exceeds byte bound", {
+				cause: error,
+			});
 		}
-		return value ? new Uint8Array(value) : undefined;
 	}
 
 	async write(moveKey: string, slot: CustodyRecordSlot, bytes: Uint8Array) {
-		if (
-			!(bytes instanceof Uint8Array) ||
-			bytes.byteLength === 0 ||
-			bytes.byteLength > DEFAULT_CUSTODY_STORE_LIMITS.maxFrameBytes
-		) {
+		let copy: Uint8Array;
+		try {
+			copy = captureBoundedUint8Array(
+				bytes,
+				1,
+				DEFAULT_CUSTODY_STORE_LIMITS.maxFrameBytes,
+				"custody persistence write value",
+			);
+		} catch {
 			throw new Error("Invalid custody persistence write value");
 		}
 		const key = this.key(moveKey, slot);
-		const copy = new Uint8Array(bytes);
 		this.frames.set(key, copy);
 	}
 
@@ -949,14 +1108,14 @@ export class MemoryCustodyRecordPersistence
  * Disconnected, bounded-work model for one-entry custody handoff records.
  *
  * Records are loaded by exact move key for each operation and are never kept in
- * a resident map. Per-record logical A/B provides a recovery model, but two
- * physical files per transfer is not a production-scalable design. Runtime use
- * remains blocked on a keyed atomic backend with namespace lease/CAS; exact
- * namespace binding to log, local key, and role; stable custody epoch/profile
- * binding; removal of the test evidence issuer; and an entry-to-pin index.
- * Recovered pinned or receipted frames contain historical copied facts only;
- * a future runtime must re-confirm the exact current lower-store epoch and pin
- * after reopen or storage loss before acting on them.
+ * a resident map. The Node adapter supplies a leased keyed backend, while the
+ * raw transitions here remain a disconnected reducer/test seam. The unwired
+ * rebalance bridge establishes its cross-store ordering by durably staging a
+ * pending manifest before it invokes a custody callback; direct calls to
+ * prepareSource() do not establish that ordering. A future runtime must use the
+ * bridge, replace the test evidence issuer, add an entry-to-pin index, and
+ * re-confirm the exact current lower-store epoch and pin after reopen or storage
+ * loss before acting on recovered copied facts.
  *
  * This store deliberately exposes no enumeration, release, drop, network,
  * transfer-finalization, or prune-permit API.
@@ -972,13 +1131,27 @@ export class CustodyRecordStore {
 	private pendingOperations = 0;
 	private pendingOperationsDrained?: Promise<void>;
 	private resolvePendingOperationsDrained?: () => void;
+	readonly #sourceReceiptAuthorityValue: CustodySourceReceiptAuthority;
 
 	private constructor(
 		private readonly persistence: CustodyRecordPersistence,
 		private readonly durability: CustodyStoreDurability,
 		private readonly limits: CustodyStoreLimits,
 		private readonly binding: CapturedCustodyRecordBinding | undefined,
-	) {}
+	) {
+		this.#sourceReceiptAuthorityValue = Object.freeze(
+			{},
+		) as CustodySourceReceiptAuthority;
+		if (durability === "strict" && binding?.role === "source") {
+			sourceReceiptAuthorities.set(
+				this.#sourceReceiptAuthorityValue,
+				Object.freeze({
+					logId: binding.logId,
+					localPublicKey: binding.localPublicKey,
+				}),
+			);
+		}
+	}
 
 	static async open(properties: {
 		persistence: CustodyRecordPersistence;
@@ -1040,6 +1213,49 @@ export class CustodyRecordStore {
 		}).finally(release);
 	}
 
+	/** @internal Point-read and reissue the exact strict source receipt proof. */
+	async readSourceReceipt(
+		moveKey: string,
+	): Promise<CustodySourceReceiptReadResult> {
+		const result = await this.read(moveKey);
+		if (
+			result.snapshot.state !== "source-receipt-durable" ||
+			!result.durableCommit ||
+			result.durableCommit.state !== "source-receipt-durable"
+		) {
+			throw new Error("Custody record is not source-receipt-durable");
+		}
+		getDurableCustodySourceReceiptFacts(
+			result.durableCommit as DurableCustodySourceReceiptCommit,
+		);
+		return result as CustodySourceReceiptReadResult;
+	}
+
+	/** @internal Pair a work cursor with this exact opened source store. */
+	sourceReceiptAuthority(): CustodySourceReceiptAuthority {
+		if (this.closing || this.closed) {
+			throw new Error("Custody record store is closing");
+		}
+		if (this.binding?.role !== "source") {
+			throw new Error(
+				"Custody source receipt authority requires a source binding",
+			);
+		}
+		if (this.durability !== "strict") {
+			throw new Error(
+				"Custody source receipt authority requires strict durability",
+			);
+		}
+		if (this.poisoned) {
+			throw new Error("Custody record store is poisoned", {
+				cause: this.poisonCause,
+			});
+		}
+		return assertCustodySourceReceiptAuthority(
+			this.#sourceReceiptAuthorityValue,
+		);
+	}
+
 	prepareSource(
 		expectedRevision: bigint,
 		manifest: Uint8Array,
@@ -1055,13 +1271,13 @@ export class CustodyRecordStore {
 		expectedRevision: bigint,
 		manifest: Uint8Array,
 		receipt: Uint8Array,
-	): Promise<CustodyRecordReadResult> {
+	): Promise<CustodySourceReceiptReadResult> {
 		return this.captureTransition(
 			expectedRevision,
 			"source-receipt-durable",
 			manifest,
 			receipt,
-		);
+		) as Promise<CustodySourceReceiptReadResult>;
 	}
 
 	beginDestination(
@@ -1105,6 +1321,7 @@ export class CustodyRecordStore {
 	close(): Promise<void> {
 		if (this.closePromise) return this.closePromise;
 		this.closing = true;
+		sourceReceiptAuthorities.delete(this.#sourceReceiptAuthorityValue);
 		this.closePromise = (async () => {
 			await this.waitForPendingOperations();
 			await this.tail;
@@ -1274,6 +1491,8 @@ export class CustodyRecordStore {
 				manifest: target.manifest,
 				receipt: target.receipt,
 				pin: target.pin,
+				handoffId: target.handoffId,
+				receiptId: target.receiptId,
 			});
 			return this.result(written);
 		});
@@ -1361,18 +1580,19 @@ export class CustodyRecordStore {
 			const read = reads[index];
 			if (read.status === "rejected") continue;
 			if (read.value === undefined) continue;
-			if (
-				!(read.value instanceof Uint8Array) ||
-				read.value.byteLength === 0 ||
-				read.value.byteLength > this.limits.maxFrameBytes
-			) {
-				errors.push(new Error("Invalid custody persistence read value"));
-				continue;
-			}
+			// A fulfilled adapter value must be bounded real bytes. Keep this
+			// contract check outside the corrupt-frame fallback below: a Proxy,
+			// wrong type, or oversized value may hide a newer generation.
+			const bytes = captureBoundedUint8Array(
+				read.value,
+				0,
+				this.limits.maxFrameBytes,
+				"custody persistence read value",
+			);
 			try {
 				valid.push(
 					await decodeFrame(
-						new Uint8Array(read.value),
+						bytes,
 						moveKey,
 						CUSTODY_RECORD_SLOTS[index],
 						this.limits,
@@ -1438,6 +1658,8 @@ export class CustodyRecordStore {
 		manifest?: string;
 		receipt?: string;
 		pin?: StoredPinFacts;
+		handoffId?: string;
+		receiptId?: string;
 	}) {
 		const encoded = encodeFrame(
 			input.moveKey,
@@ -1483,6 +1705,28 @@ export class CustodyRecordStore {
 			state: frame.state,
 			frameChecksum: frame.checksum,
 		}) as DurableCustodyRecordCommit;
+		if (
+			frame.state === "source-receipt-durable" &&
+			frame.sequence === 3n &&
+			frame.handoffId !== undefined &&
+			frame.receiptId !== undefined
+		) {
+			const sourceCommit = Object.freeze({
+				...durableCommit,
+				handoffId: frame.handoffId,
+				receiptId: frame.receiptId,
+			}) as DurableCustodySourceReceiptCommit;
+			sourceReceiptCommitFacts.set(
+				sourceCommit,
+				Object.freeze({
+					moveKey: frame.moveKey,
+					handoffId: frame.handoffId,
+					receiptId: frame.receiptId,
+					authority: this.#sourceReceiptAuthorityValue,
+				}),
+			);
+			return Object.freeze({ snapshot, durableCommit: sourceCommit });
+		}
 		return Object.freeze({ snapshot, durableCommit });
 	}
 
@@ -1490,6 +1734,7 @@ export class CustodyRecordStore {
 		if (this.poisoned) return;
 		this.poisoned = true;
 		this.poisonCause = cause;
+		sourceReceiptAuthorities.delete(this.#sourceReceiptAuthorityValue);
 	}
 
 	private releasePersistenceLease() {

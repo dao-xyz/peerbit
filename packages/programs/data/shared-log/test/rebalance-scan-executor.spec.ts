@@ -554,6 +554,29 @@ describe("rebalance scan executor", () => {
 		await store.close();
 	});
 
+	it("requires an exact boolean placement guard before any callback", async () => {
+		const store = await openStore(new MemoryPersistence());
+		const installed = await install(store);
+		const source = new QueuedSource([bucket(1, [candidate("never-read")])]);
+		let visits = 0;
+		const executor = new RebalanceScanExecutor({
+			store,
+			source,
+			viewGuard: () => ({ current: true }) as unknown as boolean,
+			visit: () => {
+				visits++;
+				return { bytes: 0 };
+			},
+		});
+		await expect(executor.tick()).to.be.rejectedWith(
+			"Invalid rebalance scan view guard result",
+		);
+		expect(source.calls).to.have.length(0);
+		expect(visits).to.equal(0);
+		expect(store.snapshot()).to.deep.equal(installed.snapshot);
+		await store.close();
+	});
+
 	it("rejects stale work when a source await supersedes its plan", async () => {
 		const store = await openStore(new MemoryPersistence());
 		const installed = await install(store);

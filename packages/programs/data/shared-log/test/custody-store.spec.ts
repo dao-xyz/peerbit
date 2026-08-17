@@ -721,7 +721,7 @@ describe("custody record store", () => {
 		await store.close();
 	});
 
-	it("fails closed on null and oversized adapter returns before copying or writing", async () => {
+	it("fails closed on invalid adapter values before copying or writing", async () => {
 		for (const invalid of [null, new Uint8Array(16 * 1024 + 1)]) {
 			let writes = 0;
 			const persistence: CustodyRecordPersistence = {
@@ -738,7 +738,7 @@ describe("custody record store", () => {
 				durability: "strict",
 			});
 			await expect(store.read(digest(55))).to.be.rejectedWith(
-				"No valid custody record generation remains",
+				"Invalid custody persistence read value",
 			);
 			expect(writes).to.equal(0);
 			await store.close();
