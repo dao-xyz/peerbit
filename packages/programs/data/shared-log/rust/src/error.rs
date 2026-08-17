@@ -20,6 +20,10 @@ pub enum SharedLogError {
     ExpectedLeaderIntersectingBool,
     MismatchedInputLengths(&'static str),
     MissingCompactAppendFacts,
+    InvalidRebalanceCollisionBucketLimit(&'static str),
+    RebalanceCollisionBucketIndexInconsistent,
+    RebalanceCollisionBucketResolutionMismatch,
+    RebalanceCollisionBucketAccountingOverflow,
 }
 
 impl std::fmt::Display for SharedLogError {
@@ -53,6 +57,21 @@ impl std::fmt::Display for SharedLogError {
             }
             SharedLogError::MissingCompactAppendFacts => {
                 f.write_str("Missing compact append facts")
+            }
+            SharedLogError::InvalidRebalanceCollisionBucketLimit(label) => {
+                write!(
+                    f,
+                    "Invalid native rebalance collision bucket limit: {label}"
+                )
+            }
+            SharedLogError::RebalanceCollisionBucketIndexInconsistent => {
+                f.write_str("Native rebalance collision bucket index is inconsistent")
+            }
+            SharedLogError::RebalanceCollisionBucketResolutionMismatch => {
+                f.write_str("Native rebalance collision bucket value exceeds its resolution")
+            }
+            SharedLogError::RebalanceCollisionBucketAccountingOverflow => {
+                f.write_str("Native rebalance collision bucket accounting overflow")
             }
         }
     }

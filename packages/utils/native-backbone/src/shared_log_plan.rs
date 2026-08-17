@@ -304,6 +304,28 @@ impl NativePeerbitBackbone {
             .entry_hashes_for_hash_numbers_flat_u64(hash_numbers)
     }
 
+    #[allow(clippy::too_many_arguments)]
+    pub fn read_next_rebalance_collision_bucket(
+        &self,
+        after_hash_number: Option<String>,
+        max_rows: usize,
+        max_identifier_bytes: usize,
+        max_identifier_bytes_total: usize,
+        max_coordinate_values: usize,
+        max_coordinate_bytes: usize,
+        max_bytes: usize,
+    ) -> Result<Array, JsValue> {
+        self.shared_log.read_next_rebalance_collision_bucket(
+            after_hash_number,
+            max_rows,
+            max_identifier_bytes,
+            max_identifier_bytes_total,
+            max_coordinate_values,
+            max_coordinate_bytes,
+            max_bytes,
+        )
+    }
+
     pub fn entry_hash_numbers_in_range(
         &self,
         start1: String,

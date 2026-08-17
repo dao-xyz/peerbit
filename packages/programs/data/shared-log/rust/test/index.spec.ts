@@ -1,5 +1,34 @@
 import { expect } from "chai";
-import { createRangePlanner, createSharedLogState } from "../src/index.js";
+import {
+	MAX_NATIVE_REBALANCE_COLLISION_BUCKET_LIMITS,
+	type NativeRebalanceCollisionBucketLimits,
+	NativeRebalanceCollisionBucketOverflowError,
+	createRangePlanner,
+	createSharedLogState,
+} from "../src/index.js";
+
+const rebalanceBucketLimits = (
+	overrides?: Partial<NativeRebalanceCollisionBucketLimits>,
+): NativeRebalanceCollisionBucketLimits => ({
+	...MAX_NATIVE_REBALANCE_COLLISION_BUCKET_LIMITS,
+	...overrides,
+});
+
+const expectRebalanceBucketOverflow = (
+	read: () => unknown,
+	code: NativeRebalanceCollisionBucketOverflowError["code"],
+) => {
+	let failure: unknown;
+	try {
+		read();
+	} catch (error) {
+		failure = error;
+	}
+	expect(failure).to.be.instanceOf(NativeRebalanceCollisionBucketOverflowError);
+	expect(
+		(failure as NativeRebalanceCollisionBucketOverflowError).code,
+	).to.equal(code);
+};
 
 const range = (properties: {
 	id: string;
@@ -551,6 +580,242 @@ describe("native shared-log range planner", () => {
 			[42n, ["head-b"]],
 			[7n, ["head-d"]],
 		]);
+	});
+
+	it("reads complete collision buckets in strict keyset order", async () => {
+		const state = await createSharedLogState("u32");
+		state.putEntryCoordinates("z-head", "gid-z", [20, 21], true, 2, 20);
+		state.putEntryCoordinates("a-head", "gid-a", [22], false, 1, 20);
+		state.putEntryCoordinates("first", "gid-first", [5], false, 1, 5);
+
+		const first = state.readNextRebalanceCollisionBucket(
+			undefined,
+			rebalanceBucketLimits(),
+		);
+		expect(first).to.deep.include({
+			resolution: "u32",
+			eof: false,
+			hashNumber: 5,
+			visited: 1,
+			results: 1,
+		});
+		if (first.eof) throw new Error("expected first bucket");
+		expect(first.candidates).to.deep.equal([
+			{
+				hash: "first",
+				coordinates: [5],
+				assignedToRangeBoundary: false,
+			},
+		]);
+
+		const collision = state.readNextRebalanceCollisionBucket(
+			5,
+			rebalanceBucketLimits(),
+		);
+		if (collision.eof) throw new Error("expected collision bucket");
+		expect(collision.hashNumber).to.equal(20);
+		expect(collision.visited).to.equal(2);
+		expect(collision.results).to.equal(2);
+		expect(collision.candidates).to.deep.equal([
+			{
+				hash: "a-head",
+				coordinates: [22],
+				assignedToRangeBoundary: false,
+			},
+			{
+				hash: "z-head",
+				coordinates: [20, 21],
+				assignedToRangeBoundary: true,
+			},
+		]);
+		const afterMissingCursor = state.readNextRebalanceCollisionBucket(
+			19,
+			rebalanceBucketLimits(),
+		);
+		if (afterMissingCursor.eof) throw new Error("expected strict successor");
+		expect(afterMissingCursor.hashNumber).to.equal(20);
+		expect(
+			state.readNextRebalanceCollisionBucket(20, rebalanceBucketLimits()),
+		).to.deep.equal({
+			resolution: "u32",
+			eof: true,
+			visited: 0,
+			results: 0,
+			bytes: 0,
+			identifierBytes: 0,
+			coordinateValues: 0,
+			coordinateBytes: 0,
+			candidates: [],
+		});
+
+		state.putEntryCoordinates("z-head", "gid-z-moved", [30], true, 1, 30);
+		const afterMoveOld = state.readNextRebalanceCollisionBucket(
+			5,
+			rebalanceBucketLimits(),
+		);
+		if (afterMoveOld.eof) throw new Error("expected old collision bucket");
+		expect(afterMoveOld.hashNumber).to.equal(20);
+		expect(afterMoveOld.candidates.map((row) => row.hash)).to.deep.equal([
+			"a-head",
+		]);
+		const afterMoveNew = state.readNextRebalanceCollisionBucket(
+			20,
+			rebalanceBucketLimits(),
+		);
+		if (afterMoveNew.eof) throw new Error("expected moved collision row");
+		expect(afterMoveNew.hashNumber).to.equal(30);
+		expect(afterMoveNew.candidates.map((row) => row.hash)).to.deep.equal([
+			"z-head",
+		]);
+
+		state.deleteEntryCoordinates("a-head");
+		const afterDelete = state.readNextRebalanceCollisionBucket(
+			5,
+			rebalanceBucketLimits(),
+		);
+		if (afterDelete.eof) throw new Error("expected moved row after deletion");
+		expect(afterDelete.hashNumber).to.equal(30);
+		state.deleteEntryCoordinates("z-head");
+		expect(
+			state.readNextRebalanceCollisionBucket(5, rebalanceBucketLimits()).eof,
+		).to.equal(true);
+	});
+
+	it("preserves u64 bucket keys and coordinates without Number coercion", async () => {
+		const state = await createSharedLogState("u64");
+		const hashNumber = 0xffff_ffff_ffff_ffffn;
+		state.putEntryCoordinates(
+			"u64-head",
+			"gid-u64",
+			[9_007_199_254_740_993n, 0xffff_ffff_ffff_ffffn],
+			true,
+			2,
+			hashNumber,
+		);
+
+		const bucket = state.readNextRebalanceCollisionBucket(
+			undefined,
+			rebalanceBucketLimits(),
+		);
+		if (bucket.eof) throw new Error("expected u64 bucket");
+		expect(bucket.resolution).to.equal("u64");
+		expect(bucket.hashNumber).to.equal(hashNumber);
+		expect(bucket.candidates[0]?.coordinates).to.deep.equal([
+			9_007_199_254_740_993n,
+			0xffff_ffff_ffff_ffffn,
+		]);
+		expect(
+			state.readNextRebalanceCollisionBucket(
+				0xffff_ffff_ffff_ffffn,
+				rebalanceBucketLimits(),
+			).eof,
+		).to.equal(true);
+	});
+
+	it("accepts exact bucket caps and rejects every cap without truncation", async () => {
+		const state = await createSharedLogState("u32");
+		state.putEntryCoordinates("bb", "gid-b", [2, 3], true, 2, 7);
+		state.putEntryCoordinates("a", "gid-a", [1], false, 1, 7);
+		const exact = rebalanceBucketLimits({
+			maxRows: 2,
+			maxIdentifierBytes: 2,
+			maxIdentifierBytesTotal: 3,
+			maxCoordinateValues: 3,
+			maxCoordinateBytes: 12,
+			maxBytes: 21,
+		});
+
+		const bucket = state.readNextRebalanceCollisionBucket(undefined, exact);
+		if (bucket.eof) throw new Error("expected exact-cap bucket");
+		expect(bucket).to.deep.include({
+			visited: 2,
+			results: 2,
+			bytes: 21,
+			identifierBytes: 3,
+			coordinateValues: 3,
+			coordinateBytes: 12,
+		});
+		expect(bucket.candidates.map((row) => row.hash)).to.deep.equal(["a", "bb"]);
+
+		expectRebalanceBucketOverflow(
+			() =>
+				state.readNextRebalanceCollisionBucket(undefined, {
+					...exact,
+					maxRows: 1,
+				}),
+			"rows",
+		);
+		expectRebalanceBucketOverflow(
+			() =>
+				state.readNextRebalanceCollisionBucket(undefined, {
+					...exact,
+					maxIdentifierBytes: 1,
+				}),
+			"identifier",
+		);
+		expectRebalanceBucketOverflow(
+			() =>
+				state.readNextRebalanceCollisionBucket(undefined, {
+					...exact,
+					maxIdentifierBytesTotal: 2,
+				}),
+			"identifier-bytes",
+		);
+		expectRebalanceBucketOverflow(
+			() =>
+				state.readNextRebalanceCollisionBucket(undefined, {
+					...exact,
+					maxCoordinateValues: 2,
+				}),
+			"coordinate-values",
+		);
+		expectRebalanceBucketOverflow(
+			() =>
+				state.readNextRebalanceCollisionBucket(undefined, {
+					...exact,
+					maxCoordinateBytes: 11,
+				}),
+			"coordinate-bytes",
+		);
+		expectRebalanceBucketOverflow(
+			() =>
+				state.readNextRebalanceCollisionBucket(undefined, {
+					...exact,
+					maxBytes: 20,
+				}),
+			"bytes",
+		);
+
+		const retry = state.readNextRebalanceCollisionBucket(undefined, exact);
+		if (retry.eof) throw new Error("expected retry bucket");
+		expect(retry.candidates.map((row) => row.hash)).to.deep.equal(["a", "bb"]);
+	});
+
+	it("rejects lossy cursors and invalid public wrapper limits", async () => {
+		const state = await createSharedLogState("u32");
+		for (const cursor of [
+			-1,
+			1.5,
+			Number.MAX_SAFE_INTEGER + 1,
+			-1n,
+			0x1_0000_0000n,
+			"01",
+			"-1",
+			"4294967296",
+			"9".repeat(1000),
+		]) {
+			expect(() =>
+				state.readNextRebalanceCollisionBucket(cursor, rebalanceBucketLimits()),
+			).to.throw("Invalid native rebalance collision bucket cursor");
+		}
+		for (const maxRows of [0, 1.5, Number.MAX_SAFE_INTEGER]) {
+			expect(() =>
+				state.readNextRebalanceCollisionBucket(undefined, {
+					...rebalanceBucketLimits(),
+					maxRows,
+				}),
+			).to.throw("Invalid native rebalance collision bucket limit: maxRows");
+		}
 	});
 
 	it("lists resident entry hash numbers in a requested range", async () => {
