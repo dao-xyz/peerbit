@@ -4,6 +4,7 @@ use sha2::{Digest, Sha256};
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::ops::Bound::{Excluded, Unbounded};
+use std::ops::ControlFlow;
 use wasm_bindgen::prelude::*;
 
 mod error;
@@ -14,6 +15,13 @@ const MODE_NON_STRICT: u8 = 0;
 const MAX_U32: u64 = u32::MAX as u64;
 const MAX_U64: u64 = u64::MAX;
 const CONTAINMENT_BUCKETS: usize = 4096;
+const MAX_CONTAINMENT_BUCKETS_PER_RANGE: usize = 8;
+// Releasing capacity after every removal would turn ordinary churn into repeated
+// reallocations. Compact only after a set retains more than twice its live rows
+// plus a small burst allowance; after shrinking, proportionate churn is needed
+// before another compaction.
+const CONTAINMENT_RETAINED_CAPACITY_RATIO: usize = 2;
+const CONTAINMENT_RETAINED_CAPACITY_SLACK: usize = 8;
 const MAX_REBALANCE_COLLISION_BUCKET_ROWS: usize = 1024;
 const MAX_REBALANCE_COLLISION_BUCKET_IDENTIFIER_BYTES: usize = 512;
 const MAX_REBALANCE_COLLISION_BUCKET_COORDINATE_VALUES: usize = 1024 * 100;
@@ -149,7 +157,16 @@ pub struct RangePlanner {
     by_start1: BTreeSet<RangeIndexKey>,
     by_end2: BTreeSet<RangeIndexKey>,
     containment_buckets: Vec<IndexSet<String>>,
+    wide_containment_ranges: IndexSet<String>,
+    containment_put_order: IndexSet<String>,
     peer_ranges: IndexMap<String, PeerRangeStats>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum ContainmentIndexLocation {
+    None,
+    Narrow(Vec<usize>),
+    Wide,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -299,6 +316,8 @@ impl RangePlanner {
             by_start1: BTreeSet::new(),
             by_end2: BTreeSet::new(),
             containment_buckets: vec![IndexSet::new(); CONTAINMENT_BUCKETS],
+            wide_containment_ranges: IndexSet::new(),
+            containment_put_order: IndexSet::new(),
             peer_ranges: IndexMap::new(),
         }
     }
@@ -316,8 +335,10 @@ impl RangePlanner {
         self.by_start1.clear();
         self.by_end2.clear();
         for bucket in &mut self.containment_buckets {
-            bucket.clear();
+            *bucket = IndexSet::new();
         }
+        self.wide_containment_ranges = IndexSet::new();
+        self.containment_put_order = IndexSet::new();
         self.peer_ranges.clear();
     }
 
@@ -373,14 +394,11 @@ impl RangePlanner {
         let mut unique_visited: IndexSet<String> = IndexSet::new();
 
         for (i, point) in cursors.iter().copied().enumerate() {
-            for id in self.containment_buckets[self.resolution.containment_bucket(point)].iter() {
-                let Some(range) = self.ranges.get(id) else {
-                    continue;
-                };
+            let _: Option<()> = self.visit_containment_candidates(point, |range| {
                 if !self.include_range(range, options.peer_filter.as_ref())
                     || !range.contains(point)
                 {
-                    continue;
+                    return ControlFlow::Continue(());
                 }
                 unique_visited.insert(range.hash.clone());
                 if range.is_matured(options.now, options.role_age_ms) {
@@ -394,7 +412,8 @@ impl RangePlanner {
                         leaders.insert(range.hash.clone(), true);
                     }
                 }
-            }
+                ControlFlow::Continue(())
+            });
 
             if let Some(unique_replicators) = &options.unique_replicators {
                 if !unique_replicators.is_empty()
@@ -445,23 +464,26 @@ impl RangePlanner {
         let mut unique_visited: HashSet<String> = HashSet::new();
 
         for (i, point) in cursors.iter().copied().enumerate() {
-            for id in self.containment_buckets[self.resolution.containment_bucket(point)].iter() {
-                let Some(range) = self.ranges.get(id) else {
-                    continue;
-                };
-                if !self.include_range(range, options.peer_filter.as_ref())
-                    || !range.contains(point)
-                {
-                    continue;
-                }
-                if range.hash == target_hash {
-                    return true;
-                }
-                unique_visited.insert(range.hash.clone());
-                if range.is_matured(options.now, options.role_age_ms) {
-                    mature_owners.insert(range.hash.clone());
-                }
-                leaders.insert(range.hash.clone());
+            let found_target = self
+                .visit_containment_candidates(point, |range| {
+                    if !self.include_range(range, options.peer_filter.as_ref())
+                        || !range.contains(point)
+                    {
+                        return ControlFlow::Continue(());
+                    }
+                    if range.hash == target_hash {
+                        return ControlFlow::Break(());
+                    }
+                    unique_visited.insert(range.hash.clone());
+                    if range.is_matured(options.now, options.role_age_ms) {
+                        mature_owners.insert(range.hash.clone());
+                    }
+                    leaders.insert(range.hash.clone());
+                    ControlFlow::Continue(())
+                })
+                .is_some();
+            if found_target {
+                return true;
             }
 
             if let Some(unique_replicators) = &options.unique_replicators {
@@ -711,35 +733,186 @@ impl RangePlanner {
     }
 
     fn index_containment_range(&mut self, range: &ReplicationRange) {
-        self.index_containment_interval(&range.id, range.start1, range.end1);
-        self.index_containment_interval(&range.id, range.start2, range.end2);
+        match self.containment_index_location(range) {
+            ContainmentIndexLocation::None => return,
+            ContainmentIndexLocation::Narrow(buckets) => {
+                for bucket in buckets {
+                    let ranges = &mut self.containment_buckets[bucket];
+                    ranges.insert(range.id.clone());
+                    Self::compact_containment_set(ranges);
+                }
+            }
+            ContainmentIndexLocation::Wide => {
+                self.wide_containment_ranges.insert(range.id.clone());
+                Self::compact_containment_set(&mut self.wide_containment_ranges);
+            }
+        }
+        self.containment_put_order.insert(range.id.clone());
+        Self::compact_containment_set(&mut self.containment_put_order);
     }
 
     fn unindex_containment_range(&mut self, range: &ReplicationRange) {
-        self.unindex_containment_interval(&range.id, range.start1, range.end1);
-        self.unindex_containment_interval(&range.id, range.start2, range.end2);
+        match self.containment_index_location(range) {
+            ContainmentIndexLocation::None => return,
+            ContainmentIndexLocation::Narrow(buckets) => {
+                for bucket in buckets {
+                    let ranges = &mut self.containment_buckets[bucket];
+                    ranges.shift_remove(&range.id);
+                    Self::compact_containment_set(ranges);
+                }
+            }
+            ContainmentIndexLocation::Wide => {
+                self.wide_containment_ranges.shift_remove(&range.id);
+                Self::compact_containment_set(&mut self.wide_containment_ranges);
+            }
+        }
+        self.containment_put_order.shift_remove(&range.id);
+        Self::compact_containment_set(&mut self.containment_put_order);
     }
 
-    fn index_containment_interval(&mut self, id: &str, start: u64, end: u64) {
-        if start >= end {
+    fn compact_containment_set(set: &mut IndexSet<String>) {
+        if set.is_empty() {
+            // IndexSet::clear retains its allocation, which lets bucket migration
+            // retain the peak population independently in every emptied bucket.
+            *set = IndexSet::new();
             return;
+        }
+
+        let max_retained_capacity = set
+            .len()
+            .saturating_mul(CONTAINMENT_RETAINED_CAPACITY_RATIO)
+            .saturating_add(CONTAINMENT_RETAINED_CAPACITY_SLACK);
+        if set.capacity() > max_retained_capacity {
+            set.shrink_to(set.len());
+        }
+        debug_assert!(set.capacity() <= max_retained_capacity);
+    }
+
+    fn containment_bucket_interval(&self, start: u64, end: u64) -> Option<(usize, usize)> {
+        if start >= end {
+            return None;
         }
         let first = self.resolution.containment_bucket(start);
         let last = self.resolution.containment_bucket(end - 1);
-        for bucket in first..=last {
-            self.containment_buckets[bucket].insert(id.to_string());
-        }
+        Some((first, last))
     }
 
-    fn unindex_containment_interval(&mut self, id: &str, start: u64, end: u64) {
-        if start >= end {
-            return;
+    fn containment_index_location(&self, range: &ReplicationRange) -> ContainmentIndexLocation {
+        let first = self.containment_bucket_interval(range.start1, range.end1);
+        let second = self.containment_bucket_interval(range.start2, range.end2);
+        let unique_bucket_count = match (first, second) {
+            (None, None) => return ContainmentIndexLocation::None,
+            (Some((start, end)), None) | (None, Some((start, end))) => end - start + 1,
+            (Some((first_start, first_end)), Some((second_start, second_end))) => {
+                let first_count = first_end - first_start + 1;
+                let second_count = second_end - second_start + 1;
+                let overlap_start = first_start.max(second_start);
+                let overlap_end = first_end.min(second_end);
+                let overlap = if overlap_start <= overlap_end {
+                    overlap_end - overlap_start + 1
+                } else {
+                    0
+                };
+                first_count + second_count - overlap
+            }
+        };
+
+        if unique_bucket_count > MAX_CONTAINMENT_BUCKETS_PER_RANGE {
+            return ContainmentIndexLocation::Wide;
         }
-        let first = self.resolution.containment_bucket(start);
-        let last = self.resolution.containment_bucket(end - 1);
-        for bucket in first..=last {
-            self.containment_buckets[bucket].shift_remove(id);
+
+        let mut buckets = Vec::with_capacity(unique_bucket_count);
+        for (start, end) in [first, second].into_iter().flatten() {
+            for bucket in start..=end {
+                if !buckets.contains(&bucket) {
+                    buckets.push(bucket);
+                }
+            }
         }
+        buckets.sort_unstable();
+        debug_assert_eq!(buckets.len(), unique_bucket_count);
+        ContainmentIndexLocation::Narrow(buckets)
+    }
+
+    fn visit_containment_candidates<B>(
+        &self,
+        point: u64,
+        mut visit: impl FnMut(&ReplicationRange) -> ControlFlow<B>,
+    ) -> Option<B> {
+        let narrow = &self.containment_buckets[self.resolution.containment_bucket(point)];
+        let wide = &self.wide_containment_ranges;
+        let mut narrow_index = 0usize;
+        let mut wide_index = 0usize;
+
+        while narrow_index < narrow.len() || wide_index < wide.len() {
+            let take_narrow = match (narrow.get_index(narrow_index), wide.get_index(wide_index)) {
+                (Some(narrow_id), Some(wide_id)) => {
+                    let narrow_order = self
+                        .containment_put_order
+                        .get_index_of(narrow_id)
+                        .expect("narrow containment range has put order");
+                    let wide_order = self
+                        .containment_put_order
+                        .get_index_of(wide_id)
+                        .expect("wide containment range has put order");
+                    narrow_order < wide_order
+                }
+                (Some(_), None) => true,
+                (None, Some(_)) => false,
+                (None, None) => break,
+            };
+            let id = if take_narrow {
+                let id = narrow
+                    .get_index(narrow_index)
+                    .expect("narrow containment cursor");
+                narrow_index += 1;
+                id
+            } else {
+                let id = wide.get_index(wide_index).expect("wide containment cursor");
+                wide_index += 1;
+                id
+            };
+            let Some(range) = self.ranges.get(id) else {
+                continue;
+            };
+            if let ControlFlow::Break(value) = visit(range) {
+                return Some(value);
+            }
+        }
+        None
+    }
+
+    #[cfg(test)]
+    fn containment_live_reference_count(&self) -> usize {
+        self.containment_put_order.len()
+            + self.wide_containment_ranges.len()
+            + self
+                .containment_buckets
+                .iter()
+                .map(IndexSet::len)
+                .sum::<usize>()
+    }
+
+    #[cfg(test)]
+    fn containment_retained_capacity(&self) -> usize {
+        self.containment_put_order.capacity()
+            + self.wide_containment_ranges.capacity()
+            + self
+                .containment_buckets
+                .iter()
+                .map(IndexSet::capacity)
+                .sum::<usize>()
+    }
+
+    #[cfg(test)]
+    fn nonempty_containment_set_count(&self) -> usize {
+        usize::from(!self.containment_put_order.is_empty())
+            + usize::from(!self.wide_containment_ranges.is_empty())
+            + self
+                .containment_buckets
+                .iter()
+                .filter(|bucket| !bucket.is_empty())
+                .count()
     }
 
     fn candidate_from_key(
@@ -4585,10 +4758,11 @@ fn samples_to_rows(samples: Vec<LeaderSample>) -> Array {
 #[cfg(test)]
 mod tests {
     use super::{
-        find_leaders_with_prepared_options, EntryCoordinateState, LeaderSample,
-        NativeSharedLogState, RangePlanner, RebalanceCollisionBucketLimits,
+        find_leaders_with_prepared_options, ContainmentIndexLocation, EntryCoordinateState,
+        LeaderSample, NativeSharedLogState, RangePlanner, RebalanceCollisionBucketLimits,
         RebalanceCollisionBucketOverflow, RebalanceCollisionBucketPreflight, ReplicationRange,
-        SampleOptions, SharedLogError, MAX_U32, MAX_U64,
+        SampleOptions, SharedLogError, CONTAINMENT_BUCKETS, CONTAINMENT_RETAINED_CAPACITY_RATIO,
+        CONTAINMENT_RETAINED_CAPACITY_SLACK, MAX_CONTAINMENT_BUCKETS_PER_RANGE, MAX_U32, MAX_U64,
     };
     use indexmap::IndexSet;
 
@@ -4601,6 +4775,40 @@ mod tests {
             max_coordinate_bytes: 4 * 1024 * 1024,
             max_bytes: 4 * 1024 * 1024,
         }
+    }
+
+    fn intersecting_options() -> SampleOptions {
+        SampleOptions {
+            now: 1_000,
+            only_intersecting: true,
+            ..Default::default()
+        }
+    }
+
+    fn sample_hashes(samples: Vec<LeaderSample>) -> Vec<String> {
+        samples.into_iter().map(|sample| sample.hash).collect()
+    }
+
+    fn u32_containment_bucket_width() -> u64 {
+        (MAX_U32 as u128 + 1) as u64 / CONTAINMENT_BUCKETS as u64
+    }
+
+    fn assert_containment_retained_capacity_bound(planner: &RangePlanner) {
+        let maximum = planner
+            .containment_live_reference_count()
+            .saturating_mul(CONTAINMENT_RETAINED_CAPACITY_RATIO)
+            .saturating_add(
+                planner
+                    .nonempty_containment_set_count()
+                    .saturating_mul(CONTAINMENT_RETAINED_CAPACITY_SLACK),
+            );
+        assert!(
+            planner.containment_retained_capacity() <= maximum,
+            "retained containment capacity {} exceeds {maximum} for {} live references in {} sets",
+            planner.containment_retained_capacity(),
+            planner.containment_live_reference_count(),
+            planner.nonempty_containment_set_count(),
+        );
     }
 
     #[test]
@@ -4621,6 +4829,424 @@ mod tests {
         assert_eq!(samples.len(), 1);
         assert_eq!(samples[0].hash, "peer-a");
         assert!(samples[0].intersecting);
+    }
+
+    #[test]
+    fn bounds_full_width_containment_references_at_snapshot_range_cap() {
+        const SNAPSHOT_MAX_RANGES: usize = 16_384;
+        const SNAPSHOT_MAX_OWNERS: usize = 4_096;
+
+        let mut planner = RangePlanner::new("u32");
+        for index in 0..SNAPSHOT_MAX_RANGES {
+            planner.put(ReplicationRange::new(
+                format!("range-{index}"),
+                format!("peer-{}", index % SNAPSHOT_MAX_OWNERS),
+                0,
+                0,
+                MAX_U32,
+                0,
+                MAX_U32,
+                MAX_U32,
+                1,
+            ));
+        }
+
+        assert_eq!(planner.len(), SNAPSHOT_MAX_RANGES);
+        assert_eq!(planner.wide_containment_ranges.len(), SNAPSHOT_MAX_RANGES);
+        assert_eq!(planner.containment_put_order.len(), SNAPSHOT_MAX_RANGES);
+        assert!(planner.containment_buckets.iter().all(IndexSet::is_empty));
+        // Wide ranges retain one spill id and one global-order id. Narrow ranges
+        // can retain up to eight fine-bucket ids plus one global-order id.
+        assert_eq!(
+            planner.containment_live_reference_count(),
+            2 * SNAPSHOT_MAX_RANGES
+        );
+        assert!(
+            planner.containment_live_reference_count()
+                <= (MAX_CONTAINMENT_BUCKETS_PER_RANGE + 1) * SNAPSHOT_MAX_RANGES
+        );
+        assert_containment_retained_capacity_bound(&planner);
+    }
+
+    #[test]
+    fn classifies_nonwrapped_wrapped_and_threshold_containment_without_fanout_scan() {
+        let mut planner = RangePlanner::new("u32");
+        let bucket_width = u32_containment_bucket_width();
+        let high_bucket_start = bucket_width * (CONTAINMENT_BUCKETS as u64 - 1);
+
+        let nonwrapped = ReplicationRange::new(
+            "nonwrapped",
+            "peer-a",
+            0,
+            2 * bucket_width,
+            4 * bucket_width,
+            2 * bucket_width,
+            4 * bucket_width,
+            2 * bucket_width,
+            1,
+        );
+        assert_eq!(
+            planner.containment_index_location(&nonwrapped),
+            ContainmentIndexLocation::Narrow(vec![2, 3])
+        );
+
+        let wrapped = ReplicationRange::new(
+            "wrapped",
+            "peer-b",
+            0,
+            high_bucket_start,
+            MAX_U32,
+            0,
+            bucket_width,
+            2 * bucket_width,
+            1,
+        );
+        assert_eq!(
+            planner.containment_index_location(&wrapped),
+            ContainmentIndexLocation::Narrow(vec![0, CONTAINMENT_BUCKETS - 1])
+        );
+
+        let threshold = ReplicationRange::new(
+            "threshold",
+            "peer-c",
+            0,
+            0,
+            MAX_CONTAINMENT_BUCKETS_PER_RANGE as u64 * bucket_width,
+            0,
+            MAX_CONTAINMENT_BUCKETS_PER_RANGE as u64 * bucket_width,
+            MAX_CONTAINMENT_BUCKETS_PER_RANGE as u64 * bucket_width,
+            1,
+        );
+        assert_eq!(
+            planner.containment_index_location(&threshold),
+            ContainmentIndexLocation::Narrow((0..MAX_CONTAINMENT_BUCKETS_PER_RANGE).collect())
+        );
+        planner.put(threshold);
+        assert_eq!(
+            planner.containment_live_reference_count(),
+            MAX_CONTAINMENT_BUCKETS_PER_RANGE + 1
+        );
+        assert_containment_retained_capacity_bound(&planner);
+
+        let wide = ReplicationRange::new(
+            "wide",
+            "peer-d",
+            0,
+            0,
+            (MAX_CONTAINMENT_BUCKETS_PER_RANGE as u64 + 1) * bucket_width,
+            0,
+            (MAX_CONTAINMENT_BUCKETS_PER_RANGE as u64 + 1) * bucket_width,
+            (MAX_CONTAINMENT_BUCKETS_PER_RANGE as u64 + 1) * bucket_width,
+            1,
+        );
+        assert_eq!(
+            planner.containment_index_location(&wide),
+            ContainmentIndexLocation::Wide
+        );
+    }
+
+    #[test]
+    fn classifies_u64_containment_near_max_without_overflow() {
+        let planner = RangePlanner::new("u64");
+        let bucket_width = 1u64 << 52;
+        let last_eight_bucket_start = MAX_U64 - 8 * bucket_width + 1;
+
+        let last_eight_buckets = ReplicationRange::new(
+            "last-eight",
+            "peer-a",
+            0,
+            last_eight_bucket_start,
+            MAX_U64,
+            last_eight_bucket_start,
+            MAX_U64,
+            8 * bucket_width,
+            1,
+        );
+        assert_eq!(
+            planner.containment_index_location(&last_eight_buckets),
+            ContainmentIndexLocation::Narrow(
+                (CONTAINMENT_BUCKETS - 8..CONTAINMENT_BUCKETS).collect()
+            )
+        );
+
+        let full_width = ReplicationRange::new(
+            "full-width",
+            "peer-b",
+            0,
+            0,
+            MAX_U64,
+            0,
+            MAX_U64,
+            MAX_U64,
+            1,
+        );
+        assert_eq!(
+            planner.containment_index_location(&full_width),
+            ContainmentIndexLocation::Wide
+        );
+    }
+
+    #[test]
+    fn merges_interleaved_narrow_and_wide_ranges_in_global_put_order() {
+        let mut planner = RangePlanner::new("u32");
+        let point = 3 * u32_containment_bucket_width() + 100;
+        let narrow = |id: &str, hash: &str| {
+            ReplicationRange::new(
+                id,
+                hash,
+                0,
+                point - 10,
+                point + 10,
+                point - 10,
+                point + 10,
+                20,
+                1,
+            )
+        };
+        let wide = |id: &str, hash: &str| {
+            ReplicationRange::new(id, hash, 0, 0, MAX_U32, 0, MAX_U32, MAX_U32, 1)
+        };
+
+        planner.put(wide("wide-a", "peer-a"));
+        planner.put(narrow("narrow-b", "peer-b"));
+        planner.put(wide("wide-c", "peer-c"));
+        planner.put(narrow("narrow-d", "peer-d"));
+
+        assert_eq!(
+            sample_hashes(planner.get_samples(&[point], &intersecting_options())),
+            ["peer-a", "peer-b", "peer-c", "peer-d"]
+        );
+        for hash in ["peer-a", "peer-b", "peer-c", "peer-d"] {
+            assert!(planner.contains_sample_hash(&[point], &intersecting_options(), hash));
+        }
+        assert!(!planner.contains_sample_hash(&[point], &intersecting_options(), "peer-missing"));
+    }
+
+    #[test]
+    fn preserves_containment_membership_for_narrow_wide_and_wrapped_ranges() {
+        let mut planner = RangePlanner::new("u32");
+        let bucket_width = u32_containment_bucket_width();
+        let high_bucket_start = bucket_width * (CONTAINMENT_BUCKETS as u64 - 1);
+        planner.put(ReplicationRange::new(
+            "narrow",
+            "peer-narrow",
+            0,
+            2 * bucket_width + 100,
+            2 * bucket_width + 200,
+            2 * bucket_width + 100,
+            2 * bucket_width + 200,
+            100,
+            1,
+        ));
+        planner.put(ReplicationRange::new(
+            "wide",
+            "peer-wide",
+            0,
+            10 * bucket_width,
+            20 * bucket_width,
+            10 * bucket_width,
+            20 * bucket_width,
+            10 * bucket_width,
+            1,
+        ));
+        planner.put(ReplicationRange::new(
+            "wrapped",
+            "peer-wrapped",
+            0,
+            high_bucket_start,
+            MAX_U32,
+            0,
+            bucket_width,
+            2 * bucket_width,
+            1,
+        ));
+
+        assert!(planner
+            .get_samples(&[2 * bucket_width + 50], &intersecting_options())
+            .is_empty());
+        assert_eq!(
+            sample_hashes(planner.get_samples(&[2 * bucket_width + 150], &intersecting_options())),
+            ["peer-narrow"]
+        );
+        assert!(planner
+            .get_samples(&[9 * bucket_width], &intersecting_options())
+            .is_empty());
+        assert_eq!(
+            sample_hashes(planner.get_samples(&[15 * bucket_width], &intersecting_options())),
+            ["peer-wide"]
+        );
+        assert_eq!(
+            sample_hashes(planner.get_samples(&[1], &intersecting_options())),
+            ["peer-wrapped"]
+        );
+        assert_eq!(
+            sample_hashes(planner.get_samples(&[high_bucket_start + 1], &intersecting_options())),
+            ["peer-wrapped"]
+        );
+    }
+
+    #[test]
+    fn containment_reput_delete_replace_and_clear_preserve_order_and_indexes() {
+        let mut planner = RangePlanner::new("u32");
+        let point = 3 * u32_containment_bucket_width() + 100;
+        let narrow = |id: &str, hash: &str| {
+            ReplicationRange::new(
+                id,
+                hash,
+                0,
+                point - 10,
+                point + 10,
+                point - 10,
+                point + 10,
+                20,
+                1,
+            )
+        };
+        let wide = |id: &str, hash: &str| {
+            ReplicationRange::new(id, hash, 0, 0, MAX_U32, 0, MAX_U32, MAX_U32, 1)
+        };
+        let hashes = |planner: &RangePlanner| {
+            sample_hashes(planner.get_samples(&[point], &intersecting_options()))
+        };
+
+        planner.put(narrow("a", "peer-a"));
+        planner.put(wide("b", "peer-b"));
+        planner.put(narrow("c", "peer-c"));
+        assert_eq!(hashes(&planner), ["peer-a", "peer-b", "peer-c"]);
+
+        planner.put(narrow("a", "peer-a-reput"));
+        assert_eq!(hashes(&planner), ["peer-b", "peer-c", "peer-a-reput"]);
+
+        assert!(planner.delete("c"));
+        assert_eq!(hashes(&planner), ["peer-b", "peer-a-reput"]);
+
+        planner.put(narrow("b", "peer-b-narrow"));
+        assert_eq!(hashes(&planner), ["peer-a-reput", "peer-b-narrow"]);
+        planner.put(wide("a", "peer-a-wide"));
+        assert_eq!(hashes(&planner), ["peer-b-narrow", "peer-a-wide"]);
+        assert_eq!(planner.wide_containment_ranges.len(), 1);
+        assert_eq!(planner.containment_put_order.len(), 2);
+        assert_eq!(planner.containment_live_reference_count(), 4);
+        assert_containment_retained_capacity_bound(&planner);
+
+        planner.put(ReplicationRange::new(
+            "b",
+            "peer-b-zero",
+            0,
+            point,
+            point,
+            point,
+            point,
+            0,
+            1,
+        ));
+        assert_eq!(hashes(&planner), ["peer-a-wide"]);
+        assert_eq!(planner.wide_containment_ranges.len(), 1);
+        assert_eq!(planner.containment_put_order.len(), 1);
+        assert_eq!(planner.containment_live_reference_count(), 2);
+        assert_containment_retained_capacity_bound(&planner);
+
+        planner.put(narrow("b", "peer-b-restored"));
+        assert_eq!(hashes(&planner), ["peer-a-wide", "peer-b-restored"]);
+        assert_eq!(planner.containment_put_order.len(), 2);
+        assert_eq!(planner.containment_live_reference_count(), 4);
+        assert_containment_retained_capacity_bound(&planner);
+
+        planner.clear();
+        assert!(planner.is_empty());
+        assert!(planner.wide_containment_ranges.is_empty());
+        assert!(planner.containment_put_order.is_empty());
+        assert!(planner.containment_buckets.iter().all(IndexSet::is_empty));
+        assert_eq!(planner.containment_live_reference_count(), 0);
+        assert_eq!(planner.containment_retained_capacity(), 0);
+        assert_containment_retained_capacity_bound(&planner);
+        assert!(planner
+            .get_samples(&[point], &intersecting_options())
+            .is_empty());
+
+        planner.put(wide("after-clear", "peer-after-clear"));
+        assert_eq!(hashes(&planner), ["peer-after-clear"]);
+    }
+
+    #[test]
+    fn containment_bucket_migration_and_churn_release_retained_capacity() {
+        const RANGE_COUNT: usize = 1_024;
+        const SURVIVORS: usize = 4;
+
+        let mut planner = RangePlanner::new("u32");
+        let bucket_width = u32_containment_bucket_width();
+        let source_bucket = 40usize;
+        let target_bucket = 400usize;
+        let narrow = |id: String, bucket: usize| {
+            let start = bucket as u64 * bucket_width + 100;
+            ReplicationRange::new(
+                id,
+                format!("peer-{bucket}"),
+                0,
+                start,
+                start + 1,
+                start,
+                start + 1,
+                1,
+                1,
+            )
+        };
+        let wide = |id: String| {
+            ReplicationRange::new(id, "peer-wide", 0, 0, MAX_U32, 0, MAX_U32, MAX_U32, 1)
+        };
+
+        for index in 0..RANGE_COUNT {
+            planner.put(narrow(format!("range-{index}"), source_bucket));
+        }
+        assert_eq!(
+            planner.containment_buckets[source_bucket].len(),
+            RANGE_COUNT
+        );
+        assert_eq!(planner.containment_live_reference_count(), 2 * RANGE_COUNT);
+        assert_containment_retained_capacity_bound(&planner);
+
+        for index in 0..RANGE_COUNT {
+            planner.put(narrow(format!("range-{index}"), target_bucket));
+        }
+        assert!(planner.containment_buckets[source_bucket].is_empty());
+        assert_eq!(planner.containment_buckets[source_bucket].capacity(), 0);
+        assert_eq!(
+            planner.containment_buckets[target_bucket].len(),
+            RANGE_COUNT
+        );
+        assert_containment_retained_capacity_bound(&planner);
+
+        for index in 0..RANGE_COUNT {
+            planner.put(wide(format!("range-{index}")));
+        }
+        assert!(planner.containment_buckets[target_bucket].is_empty());
+        assert_eq!(planner.containment_buckets[target_bucket].capacity(), 0);
+        assert_eq!(planner.wide_containment_ranges.len(), RANGE_COUNT);
+        assert_containment_retained_capacity_bound(&planner);
+        let peak_capacity = planner.containment_retained_capacity();
+
+        for index in 0..RANGE_COUNT - SURVIVORS {
+            assert!(planner.delete(&format!("range-{index}")));
+        }
+        assert_eq!(planner.wide_containment_ranges.len(), SURVIVORS);
+        assert_eq!(planner.containment_put_order.len(), SURVIVORS);
+        assert_eq!(planner.containment_live_reference_count(), 2 * SURVIVORS);
+        assert!(planner.containment_retained_capacity() < peak_capacity);
+        assert_containment_retained_capacity_bound(&planner);
+
+        for index in RANGE_COUNT - SURVIVORS..RANGE_COUNT {
+            assert!(planner.delete(&format!("range-{index}")));
+        }
+        assert_eq!(planner.containment_live_reference_count(), 0);
+        assert_eq!(planner.containment_retained_capacity(), 0);
+
+        for index in 0..RANGE_COUNT {
+            planner.put(wide(format!("clear-range-{index}")));
+        }
+        assert!(planner.containment_retained_capacity() > 0);
+        planner.clear();
+        assert_eq!(planner.containment_live_reference_count(), 0);
+        assert_eq!(planner.containment_retained_capacity(), 0);
     }
 
     #[test]
