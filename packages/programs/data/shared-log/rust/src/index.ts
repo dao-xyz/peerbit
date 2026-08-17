@@ -1,5 +1,76 @@
 export type RangeResolution = "u32" | "u64";
 
+export type NativeRangeSnapshotLimits = Readonly<{
+	maxOwners: number;
+	maxRanges: number;
+	maxRangesPerOwner: number;
+	/** UTF-8 bytes of the native runtime id string (normally padded base64). */
+	maxRangeIdBytes: number;
+	/** UTF-8 bytes of the owner hash. This is not a public-key byte limit. */
+	maxOwnerHashBytes: number;
+	/**
+	 * Logical binary accounting: two u32 counts, then per range two u32 UTF-8
+	 * lengths and strings, one u64 timestamp, five resolution-width coordinates,
+	 * and one u8 mode. This is not the decimal-string/array allocation used by
+	 * the WASM bridge; row and string caps bound that allocation.
+	 */
+	maxBytes: number;
+}>;
+
+export const MAX_NATIVE_RANGE_SNAPSHOT_LIMITS: NativeRangeSnapshotLimits =
+	Object.freeze({
+		maxOwners: 4096,
+		maxRanges: 16_384,
+		maxRangesPerOwner: 4096,
+		maxRangeIdBytes: 684,
+		maxOwnerHashBytes: 512,
+		maxBytes: 4 * 1024 * 1024,
+	});
+
+export type NativeRangeSnapshotOverflowCode =
+	| "owners"
+	| "ranges"
+	| "ranges-per-owner"
+	| "range-id"
+	| "owner-hash"
+	| "bytes";
+
+export class NativeRangeSnapshotOverflowError extends Error {
+	constructor(readonly code: NativeRangeSnapshotOverflowCode) {
+		super(`Native range snapshot exceeded ${code}`);
+		this.name = "NativeRangeSnapshotOverflowError";
+	}
+}
+
+export type NativeRangeSnapshotRangeFor<R extends RangeResolution> = Readonly<{
+	idString: string;
+	/** Unauthenticated owner hash copied from the local native range mirror. */
+	ownerHash: string;
+	timestamp: bigint;
+	start1: R extends "u64" ? bigint : number;
+	end1: R extends "u64" ? bigint : number;
+	start2: R extends "u64" ? bigint : number;
+	end2: R extends "u64" ? bigint : number;
+	width: R extends "u64" ? bigint : number;
+	mode: 0 | 1;
+}>;
+
+export type NativeRangeSnapshotResultFor<R extends RangeResolution> = Readonly<{
+	resolution: R;
+	complete: true;
+	ownerCount: number;
+	rangeCount: number;
+	/** Logical binary bytes represented by this complete snapshot (see limits). */
+	bytes: number;
+	rangeIdBytes: number;
+	ownerHashBytes: number;
+	ranges: ReadonlyArray<NativeRangeSnapshotRangeFor<R>>;
+}>;
+
+export type NativeRangeSnapshotResult =
+	| NativeRangeSnapshotResultFor<"u32">
+	| NativeRangeSnapshotResultFor<"u64">;
+
 export type NativeRebalanceCollisionBucketLimits = Readonly<{
 	maxRows: number;
 	maxIdentifierBytes: number;
@@ -230,6 +301,14 @@ type NativeRangePlannerHandle = {
 	free: () => void;
 	len: () => number;
 	clear: () => void;
+	read_range_snapshot: (
+		maxOwners: number,
+		maxRanges: number,
+		maxRangesPerOwner: number,
+		maxRangeIdBytes: number,
+		maxOwnerHashBytes: number,
+		maxBytes: number,
+	) => unknown[];
 	put: (
 		id: string,
 		hash: string,
@@ -380,6 +459,7 @@ type NativeRangePlannerHandle = {
 type NativeSharedLogStateHandle = {
 	len: () => number;
 	clear: () => void;
+	read_range_snapshot: NativeRangePlannerHandle["read_range_snapshot"];
 	/** @internal */
 	full_replica_candidates_for: (
 		minReplicas: number,
@@ -709,6 +789,318 @@ const asIntegerString = (value: bigint | number | string) =>
 const MAX_NATIVE_REBALANCE_U32 = 0xffff_ffffn;
 const MAX_NATIVE_REBALANCE_U64 = 0xffff_ffff_ffff_ffffn;
 const canonicalUnsignedInteger = /^(0|[1-9][0-9]*)$/;
+const nativeRangeSnapshotEncoder = new TextEncoder();
+
+const rangeSnapshotLimits = (
+	limits: NativeRangeSnapshotLimits,
+): NativeRangeSnapshotLimits => {
+	if (!limits || typeof limits !== "object") {
+		throw new Error("Invalid native range snapshot limits");
+	}
+	const out = {} as Record<keyof NativeRangeSnapshotLimits, number>;
+	for (const name of Object.keys(MAX_NATIVE_RANGE_SNAPSHOT_LIMITS) as Array<
+		keyof NativeRangeSnapshotLimits
+	>) {
+		const value = limits[name];
+		if (
+			!Number.isSafeInteger(value) ||
+			value <= 0 ||
+			value > MAX_NATIVE_RANGE_SNAPSHOT_LIMITS[name]
+		) {
+			throw new Error(`Invalid native range snapshot limit: ${name}`);
+		}
+		out[name] = value;
+	}
+	return Object.freeze(out) as NativeRangeSnapshotLimits;
+};
+
+const rangeSnapshotOverflowCodes = new Set<NativeRangeSnapshotOverflowCode>([
+	"owners",
+	"ranges",
+	"ranges-per-owner",
+	"range-id",
+	"owner-hash",
+	"bytes",
+]);
+
+const rangeSnapshotCount = (value: unknown): number => {
+	if (!Number.isSafeInteger(value) || (value as number) < 0) {
+		throw new Error("Invalid native range snapshot result");
+	}
+	return value as number;
+};
+
+const rangeSnapshotString = (
+	value: unknown,
+	maximumBytes: number,
+): { value: string; encoded: Uint8Array } => {
+	if (
+		typeof value !== "string" ||
+		value.length === 0 ||
+		value.length > maximumBytes
+	) {
+		throw new Error("Invalid native range snapshot result");
+	}
+	const encoded = nativeRangeSnapshotEncoder.encode(value);
+	if (encoded.byteLength > maximumBytes) {
+		throw new Error("Invalid native range snapshot result");
+	}
+	return { value, encoded };
+};
+
+const rangeSnapshotUnsigned = (value: unknown): bigint => {
+	if (
+		typeof value !== "string" ||
+		value.length === 0 ||
+		value.length > 20 ||
+		!canonicalUnsignedInteger.test(value)
+	) {
+		throw new Error("Invalid native range snapshot result");
+	}
+	const parsed = BigInt(value);
+	if (parsed > MAX_NATIVE_REBALANCE_U64) {
+		throw new Error("Invalid native range snapshot result");
+	}
+	return parsed;
+};
+
+type ParsedNativeRangeSnapshotRow = {
+	idString: string;
+	ownerHash: string;
+	timestamp: bigint;
+	start1: bigint;
+	end1: bigint;
+	start2: bigint;
+	end2: bigint;
+	width: bigint;
+	mode: 0 | 1;
+	idBytes: number;
+	ownerHashBytes: number;
+	idOrderBytes: Uint8Array;
+	ownerHashOrderBytes: Uint8Array;
+};
+
+const compareNativeRangeSnapshotBytes = (
+	left: Uint8Array,
+	right: Uint8Array,
+): number => {
+	const length = Math.min(left.byteLength, right.byteLength);
+	for (let index = 0; index < length; index++) {
+		if (left[index]! < right[index]!) return -1;
+		if (left[index]! > right[index]!) return 1;
+	}
+	return left.byteLength - right.byteLength;
+};
+
+const compareNativeRangeSnapshotRows = (
+	left: ParsedNativeRangeSnapshotRow,
+	right: ParsedNativeRangeSnapshotRow,
+): number => {
+	const ownerOrder = compareNativeRangeSnapshotBytes(
+		left.ownerHashOrderBytes,
+		right.ownerHashOrderBytes,
+	);
+	if (ownerOrder !== 0) return ownerOrder;
+	const idOrder = compareNativeRangeSnapshotBytes(
+		left.idOrderBytes,
+		right.idOrderBytes,
+	);
+	if (idOrder !== 0) return idOrder;
+	for (const [a, b] of [
+		[left.timestamp, right.timestamp],
+		[left.start1, right.start1],
+		[left.end1, right.end1],
+		[left.start2, right.start2],
+		[left.end2, right.end2],
+		[left.width, right.width],
+	] as const) {
+		if (a < b) return -1;
+		if (a > b) return 1;
+	}
+	return left.mode - right.mode;
+};
+
+const nativeRangeSnapshotGeometryIsValid = (
+	resolution: RangeResolution,
+	range: ParsedNativeRangeSnapshotRow,
+): boolean => {
+	const maximum =
+		resolution === "u32" ? MAX_NATIVE_REBALANCE_U32 : MAX_NATIVE_REBALANCE_U64;
+	if (
+		[range.start1, range.end1, range.start2, range.end2, range.width].some(
+			(value) => value > maximum,
+		)
+	) {
+		return false;
+	}
+	const unscaledEnd = range.start1 + range.width;
+	const expectedEnd1 = unscaledEnd < maximum ? unscaledEnd : maximum;
+	const [expectedStart2, expectedEnd2] =
+		unscaledEnd > maximum
+			? [
+					0n,
+					range.width === maximum
+						? range.start1 % maximum
+						: unscaledEnd % maximum,
+				]
+			: [range.start1, expectedEnd1];
+	if (
+		range.end1 !== expectedEnd1 ||
+		range.start2 !== expectedStart2 ||
+		range.end2 !== expectedEnd2
+	) {
+		return false;
+	}
+	const reconstructedWidth =
+		range.end1 -
+		range.start1 +
+		(range.end2 < range.end1 ? range.end2 - range.start2 : 0n);
+	return reconstructedWidth === range.width;
+};
+
+const rangeSnapshotFromRow = (
+	resolution: RangeResolution,
+	rowValue: unknown,
+	limits: NativeRangeSnapshotLimits,
+): NativeRangeSnapshotResult => {
+	if (!Array.isArray(rowValue)) {
+		throw new Error("Invalid native range snapshot result");
+	}
+	if (rowValue[0] === 2) {
+		if (rowValue.length !== 2) {
+			throw new Error("Invalid native range snapshot overflow");
+		}
+		const code = rowValue[1] as NativeRangeSnapshotOverflowCode;
+		if (!rangeSnapshotOverflowCodes.has(code)) {
+			throw new Error("Invalid native range snapshot overflow");
+		}
+		throw new NativeRangeSnapshotOverflowError(code);
+	}
+	if (rowValue.length !== 7 || rowValue[0] !== 1) {
+		throw new Error("Invalid native range snapshot result");
+	}
+	const ownerCount = rangeSnapshotCount(rowValue[1]);
+	const rangeCount = rangeSnapshotCount(rowValue[2]);
+	const bytes = rangeSnapshotCount(rowValue[3]);
+	const expectedRangeIdBytes = rangeSnapshotCount(rowValue[4]);
+	const expectedOwnerHashBytes = rangeSnapshotCount(rowValue[5]);
+	const rows = rowValue[6];
+	if (
+		!Array.isArray(rows) ||
+		rows.length !== rangeCount ||
+		ownerCount > limits.maxOwners ||
+		rangeCount > limits.maxRanges ||
+		bytes > limits.maxBytes
+	) {
+		throw new Error("Invalid native range snapshot result");
+	}
+
+	const parsed: ParsedNativeRangeSnapshotRow[] = [];
+	const ids = new Set<string>();
+	const ownerCounts = new Map<string, number>();
+	let rangeIdBytes = 0;
+	let ownerHashBytes = 0;
+	let logicalBytes = 8;
+	const coordinateWidth = resolution === "u32" ? 4 : 8;
+	const fixedRangeBytes = 4 + 4 + 8 + 5 * coordinateWidth + 1;
+	for (let index = 0; index < rangeCount; index++) {
+		if (!Object.prototype.hasOwnProperty.call(rows, index)) {
+			throw new Error("Invalid native range snapshot result");
+		}
+		const row = rows[index];
+		if (!Array.isArray(row) || row.length !== 9) {
+			throw new Error("Invalid native range snapshot result");
+		}
+		const id = rangeSnapshotString(row[0], limits.maxRangeIdBytes);
+		const owner = rangeSnapshotString(row[1], limits.maxOwnerHashBytes);
+		if (ids.has(id.value)) {
+			throw new Error("Invalid native range snapshot result");
+		}
+		ids.add(id.value);
+		const mode = row[8];
+		if (mode !== 0 && mode !== 1) {
+			throw new Error("Invalid native range snapshot result");
+		}
+		const item: ParsedNativeRangeSnapshotRow = {
+			idString: id.value,
+			ownerHash: owner.value,
+			timestamp: rangeSnapshotUnsigned(row[2]),
+			start1: rangeSnapshotUnsigned(row[3]),
+			end1: rangeSnapshotUnsigned(row[4]),
+			start2: rangeSnapshotUnsigned(row[5]),
+			end2: rangeSnapshotUnsigned(row[6]),
+			width: rangeSnapshotUnsigned(row[7]),
+			mode,
+			idBytes: id.encoded.byteLength,
+			ownerHashBytes: owner.encoded.byteLength,
+			idOrderBytes: id.encoded,
+			ownerHashOrderBytes: owner.encoded,
+		};
+		if (!nativeRangeSnapshotGeometryIsValid(resolution, item)) {
+			throw new Error("Invalid native range snapshot result");
+		}
+		const ownerRangeCount = (ownerCounts.get(item.ownerHash) ?? 0) + 1;
+		if (ownerRangeCount > limits.maxRangesPerOwner) {
+			throw new Error("Invalid native range snapshot result");
+		}
+		ownerCounts.set(item.ownerHash, ownerRangeCount);
+		if (ownerCounts.size > limits.maxOwners) {
+			throw new Error("Invalid native range snapshot result");
+		}
+		rangeIdBytes += item.idBytes;
+		ownerHashBytes += item.ownerHashBytes;
+		logicalBytes += fixedRangeBytes + item.idBytes + item.ownerHashBytes;
+		if (
+			!Number.isSafeInteger(rangeIdBytes) ||
+			!Number.isSafeInteger(ownerHashBytes) ||
+			!Number.isSafeInteger(logicalBytes) ||
+			logicalBytes > limits.maxBytes
+		) {
+			throw new Error("Invalid native range snapshot result");
+		}
+		if (
+			parsed.length > 0 &&
+			compareNativeRangeSnapshotRows(parsed[parsed.length - 1]!, item) >= 0
+		) {
+			throw new Error("Invalid native range snapshot result");
+		}
+		parsed.push(item);
+	}
+	if (
+		ownerCounts.size !== ownerCount ||
+		rangeIdBytes !== expectedRangeIdBytes ||
+		ownerHashBytes !== expectedOwnerHashBytes ||
+		logicalBytes !== bytes
+	) {
+		throw new Error("Invalid native range snapshot result");
+	}
+
+	const ranges = Object.freeze(
+		parsed.map((range) =>
+			Object.freeze({
+				idString: range.idString,
+				ownerHash: range.ownerHash,
+				timestamp: range.timestamp,
+				start1: resolution === "u32" ? Number(range.start1) : range.start1,
+				end1: resolution === "u32" ? Number(range.end1) : range.end1,
+				start2: resolution === "u32" ? Number(range.start2) : range.start2,
+				end2: resolution === "u32" ? Number(range.end2) : range.end2,
+				width: resolution === "u32" ? Number(range.width) : range.width,
+				mode: range.mode,
+			}),
+		),
+	);
+	return Object.freeze({
+		resolution,
+		complete: true,
+		ownerCount,
+		rangeCount,
+		bytes,
+		rangeIdBytes,
+		ownerHashBytes,
+		ranges,
+	}) as NativeRangeSnapshotResult;
+};
 
 const rebalanceCollisionBucketCursor = (
 	resolution: RangeResolution,
@@ -990,6 +1382,29 @@ export class SharedLogRangePlanner {
 
 	clear(): void {
 		this.handle().clear();
+	}
+
+	/**
+	 * Copies every resident range only after the complete set passes native and
+	 * wrapper caps. Owner hashes are local facts, not authenticated identities.
+	 */
+	readRangeSnapshot(
+		limits: NativeRangeSnapshotLimits,
+	): NativeRangeSnapshotResult {
+		const native = this.handle();
+		const bounded = rangeSnapshotLimits(limits);
+		return rangeSnapshotFromRow(
+			this.resolution,
+			native.read_range_snapshot(
+				bounded.maxOwners,
+				bounded.maxRanges,
+				bounded.maxRangesPerOwner,
+				bounded.maxRangeIdBytes,
+				bounded.maxOwnerHashBytes,
+				bounded.maxBytes,
+			),
+			bounded,
+		);
 	}
 
 	put(range: NativeReplicationRange): void {
@@ -1295,6 +1710,25 @@ export class SharedLogNativeState {
 
 	clear(): void {
 		this.native.clear();
+	}
+
+	/** Complete-or-overflow copy of unauthenticated native range facts. */
+	readRangeSnapshot(
+		limits: NativeRangeSnapshotLimits,
+	): NativeRangeSnapshotResult {
+		const bounded = rangeSnapshotLimits(limits);
+		return rangeSnapshotFromRow(
+			this.resolution,
+			this.native.read_range_snapshot(
+				bounded.maxOwners,
+				bounded.maxRanges,
+				bounded.maxRangesPerOwner,
+				bounded.maxRangeIdBytes,
+				bounded.maxOwnerHashBytes,
+				bounded.maxBytes,
+			),
+			bounded,
+		);
 	}
 
 	/** @internal */

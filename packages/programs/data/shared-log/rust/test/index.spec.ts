@@ -1,11 +1,35 @@
 import { expect } from "chai";
 import {
+	MAX_NATIVE_RANGE_SNAPSHOT_LIMITS,
 	MAX_NATIVE_REBALANCE_COLLISION_BUCKET_LIMITS,
+	type NativeRangeSnapshotLimits,
+	NativeRangeSnapshotOverflowError,
 	type NativeRebalanceCollisionBucketLimits,
 	NativeRebalanceCollisionBucketOverflowError,
 	createRangePlanner,
 	createSharedLogState,
 } from "../src/index.js";
+
+const rangeSnapshotLimits = (
+	overrides?: Partial<NativeRangeSnapshotLimits>,
+): NativeRangeSnapshotLimits => ({
+	...MAX_NATIVE_RANGE_SNAPSHOT_LIMITS,
+	...overrides,
+});
+
+const expectRangeSnapshotOverflow = (
+	read: () => unknown,
+	code: NativeRangeSnapshotOverflowError["code"],
+) => {
+	let failure: unknown;
+	try {
+		read();
+	} catch (error) {
+		failure = error;
+	}
+	expect(failure).to.be.instanceOf(NativeRangeSnapshotOverflowError);
+	expect((failure as NativeRangeSnapshotOverflowError).code).to.equal(code);
+};
 
 const rebalanceBucketLimits = (
 	overrides?: Partial<NativeRebalanceCollisionBucketLimits>,
@@ -75,6 +99,237 @@ describe("native shared-log range planner", () => {
 			"SharedLogRangePlanner is closed",
 		);
 		expect(consumed).to.equal(false);
+	});
+
+	it("reads one complete deterministic snapshot from the planner and shared state", async () => {
+		const planner = await createRangePlanner("u32");
+		const state = await createSharedLogState("u32");
+		// Rust strings sort by UTF-8 bytes. JavaScript UTF-16 ordering puts the
+		// supplementary character first, so this pair guards the ABI comparator.
+		const rows = [
+			range({
+				id: "supplementary",
+				hash: "\u{10000}",
+				start1: 20,
+				end1: 25,
+				timestamp: 9n,
+				mode: 1,
+			}),
+			range({
+				id: "bmp",
+				hash: "\u{e000}",
+				start1: 10,
+				end1: 15,
+				timestamp: 7n,
+			}),
+		];
+		for (const row of rows) {
+			planner.put(row);
+			state.put(row);
+		}
+
+		const plannerSnapshot = planner.readRangeSnapshot(rangeSnapshotLimits());
+		const stateSnapshot = state.readRangeSnapshot(rangeSnapshotLimits());
+		expect(stateSnapshot).to.deep.equal(plannerSnapshot);
+		expect(plannerSnapshot).to.deep.include({
+			resolution: "u32",
+			complete: true,
+			ownerCount: 2,
+			rangeCount: 2,
+		});
+		expect(plannerSnapshot.ranges.map((row) => row.ownerHash)).to.deep.equal([
+			"\u{e000}",
+			"\u{10000}",
+		]);
+		expect(plannerSnapshot.rangeIdBytes).to.equal(
+			new TextEncoder().encode("supplementarybmp").byteLength,
+		);
+		expect(plannerSnapshot.ownerHashBytes).to.equal(7);
+		expect(Object.isFrozen(plannerSnapshot)).to.equal(true);
+		expect(Object.isFrozen(plannerSnapshot.ranges)).to.equal(true);
+		expect(Object.isFrozen(plannerSnapshot.ranges[0])).to.equal(true);
+	});
+
+	it("preserves u64 snapshot values without Number coercion", async () => {
+		const state = await createSharedLogState("u64");
+		const maximum = 0xffff_ffff_ffff_ffffn;
+		for (const row of [
+			{
+				id: "edge",
+				hash: "owner-u64",
+				timestamp: maximum,
+				start1: maximum - 10n,
+				end1: maximum,
+				start2: maximum - 10n,
+				end2: maximum,
+				width: 10n,
+				mode: 1,
+			},
+			{
+				id: "wrapped",
+				hash: "owner-u64",
+				timestamp: 1n,
+				start1: maximum - 2n,
+				end1: maximum,
+				start2: 0n,
+				end2: 3n,
+				width: 5n,
+				mode: 0,
+			},
+			{
+				id: "full-width",
+				hash: "owner-u64",
+				timestamp: 2n,
+				start1: 10n,
+				end1: maximum,
+				start2: 0n,
+				end2: 10n,
+				width: maximum,
+				mode: 0,
+			},
+		]) {
+			state.put(row);
+		}
+
+		const snapshot = state.readRangeSnapshot(rangeSnapshotLimits());
+		expect(snapshot.resolution).to.equal("u64");
+		expect(snapshot.rangeCount).to.equal(3);
+		const edge = snapshot.ranges.find((row) => row.idString === "edge");
+		expect(edge).to.deep.include({
+			timestamp: maximum,
+			start1: maximum - 10n,
+			end1: maximum,
+			width: 10n,
+		});
+		expect(
+			snapshot.ranges.find((row) => row.idString === "wrapped"),
+		).to.deep.include({
+			start1: maximum - 2n,
+			end1: maximum,
+			start2: 0n,
+			end2: 3n,
+			width: 5n,
+		});
+		expect(
+			snapshot.ranges.find((row) => row.idString === "full-width"),
+		).to.deep.include({
+			start1: 10n,
+			end1: maximum,
+			start2: 0n,
+			end2: 10n,
+			width: maximum,
+		});
+		for (const value of [edge?.start1, edge?.end1, edge?.width]) {
+			expect(typeof value).to.equal("bigint");
+		}
+	});
+
+	it("accepts exact logical byte caps including the empty header", async () => {
+		const empty = await createRangePlanner("u32");
+		expectRangeSnapshotOverflow(
+			() => empty.readRangeSnapshot(rangeSnapshotLimits({ maxBytes: 7 })),
+			"bytes",
+		);
+		expect(
+			empty.readRangeSnapshot(rangeSnapshotLimits({ maxBytes: 8 })),
+		).to.deep.include({ bytes: 8, ownerCount: 0, rangeCount: 0 });
+
+		const one = await createRangePlanner("u32");
+		one.put(range({ id: "a", hash: "b", start1: 1, end1: 2 }));
+		expectRangeSnapshotOverflow(
+			() => one.readRangeSnapshot(rangeSnapshotLimits({ maxBytes: 46 })),
+			"bytes",
+		);
+		expect(
+			one.readRangeSnapshot(rangeSnapshotLimits({ maxBytes: 47 })),
+		).to.deep.include({
+			bytes: 47,
+			ownerCount: 1,
+			rangeCount: 1,
+			rangeIdBytes: 1,
+			ownerHashBytes: 1,
+		});
+	});
+
+	it("rejects every snapshot cap without exposing a partial prefix", async () => {
+		const planner = await createRangePlanner("u32");
+		for (const row of [
+			range({ id: "aa", hash: "owner-a", start1: 0, end1: 5 }),
+			range({ id: "b", hash: "owner-a", start1: 10, end1: 15 }),
+			range({ id: "c", hash: "owner-b", start1: 20, end1: 25 }),
+		]) {
+			planner.put(row);
+		}
+		const complete = planner.readRangeSnapshot(rangeSnapshotLimits());
+		const cases: Array<
+			readonly [
+				Partial<NativeRangeSnapshotLimits>,
+				NativeRangeSnapshotOverflowError["code"],
+			]
+		> = [
+			[{ maxOwners: 1 }, "owners"],
+			[{ maxRanges: 2 }, "ranges"],
+			[{ maxRangesPerOwner: 1 }, "ranges-per-owner"],
+			[{ maxRangeIdBytes: 1 }, "range-id"],
+			[{ maxOwnerHashBytes: 6 }, "owner-hash"],
+			[{ maxBytes: complete.bytes - 1 }, "bytes"],
+		];
+		for (const [overrides, code] of cases) {
+			expectRangeSnapshotOverflow(
+				() => planner.readRangeSnapshot(rangeSnapshotLimits(overrides)),
+				code,
+			);
+		}
+		expect(planner.readRangeSnapshot(rangeSnapshotLimits())).to.deep.equal(
+			complete,
+		);
+	});
+
+	it("rejects invalid snapshot limits and closes before reading them", async () => {
+		const planner = await createRangePlanner("u32");
+		for (const name of Object.keys(MAX_NATIVE_RANGE_SNAPSHOT_LIMITS) as Array<
+			keyof NativeRangeSnapshotLimits
+		>) {
+			for (const value of [
+				0,
+				1.5,
+				MAX_NATIVE_RANGE_SNAPSHOT_LIMITS[name] + 1,
+			]) {
+				expect(() =>
+					planner.readRangeSnapshot(rangeSnapshotLimits({ [name]: value })),
+				).to.throw(`Invalid native range snapshot limit: ${name}`);
+			}
+		}
+
+		planner.close();
+		let limitsRead = false;
+		const unreadLimits = Object.defineProperty({}, "maxOwners", {
+			get() {
+				limitsRead = true;
+				return 1;
+			},
+		}) as NativeRangeSnapshotLimits;
+		expect(() => planner.readRangeSnapshot(unreadLimits)).to.throw(
+			"SharedLogRangePlanner is closed",
+		);
+		expect(limitsRead).to.equal(false);
+	});
+
+	it("fails closed when locally mirrored range geometry is corrupt", async () => {
+		const planner = await createRangePlanner("u32");
+		planner.put({
+			...range({ id: "bad", hash: "owner", start1: 0, end1: 2 }),
+			width: 1,
+		});
+		let failure: unknown;
+		try {
+			planner.readRangeSnapshot(rangeSnapshotLimits());
+		} catch (error) {
+			failure = error;
+		}
+		expect(String(failure)).to.contain(
+			"Native range snapshot contains an invalid range",
+		);
 	});
 
 	it("returns intersecting leaders", async () => {
