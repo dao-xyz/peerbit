@@ -30,6 +30,7 @@ class StrictMemoryPersistence implements CustodyRecordPersistence {
 	private writeFailure: unknown;
 	private barrierFailure: unknown;
 	private barrierFailureAfter = 0;
+	private closeShouldFail = false;
 	private closeFailure: unknown;
 	private readonly readFailures = new Map<string, unknown>();
 	private readGate?: {
@@ -100,7 +101,8 @@ class StrictMemoryPersistence implements CustodyRecordPersistence {
 
 	async close() {
 		this.closeCalls++;
-		if (this.closeFailure !== undefined) {
+		if (this.closeShouldFail) {
+			this.closeShouldFail = false;
 			const failure = this.closeFailure;
 			this.closeFailure = undefined;
 			throw failure;
@@ -121,6 +123,7 @@ class StrictMemoryPersistence implements CustodyRecordPersistence {
 	}
 
 	failClose(error: unknown) {
+		this.closeShouldFail = true;
 		this.closeFailure = error;
 	}
 
@@ -864,6 +867,48 @@ describe("custody record store", () => {
 		} catch (error) {
 			expect(error).to.be.instanceOf(AggregateError);
 			expect((error as AggregateError).errors).to.have.length(2);
+		}
+	});
+
+	it("fails closed when persistence close rejects undefined", async () => {
+		const persistence = new StrictMemoryPersistence();
+		const store = await CustodyRecordStore.open({
+			persistence,
+			durability: "strict",
+		});
+		persistence.failClose(undefined);
+		const [outcome] = await Promise.allSettled([store.close()]);
+		expect(outcome!.status).to.equal("rejected");
+		if (outcome!.status === "rejected") {
+			expect(outcome.reason).to.equal(undefined);
+		}
+		expect(persistence.closeCalls).to.equal(1);
+
+		const reopened = await CustodyRecordStore.open({
+			persistence: persistence.fork(),
+			durability: "strict",
+		});
+		await reopened.close();
+	});
+
+	it("aggregates an undefined close rejection with a poison cause", async () => {
+		const persistence = new StrictMemoryPersistence();
+		const store = await CustodyRecordStore.open({
+			persistence,
+			durability: "strict",
+		});
+		const value = await manifest();
+		persistence.failNextWrite(new Error("write failed"));
+		await expect(store.prepareSource(0n, value.bytes)).to.be.rejected;
+		persistence.failClose(undefined);
+		const [outcome] = await Promise.allSettled([store.close()]);
+		expect(outcome!.status).to.equal("rejected");
+		if (outcome!.status === "rejected") {
+			expect(outcome.reason).to.be.instanceOf(AggregateError);
+			const errors = (outcome.reason as AggregateError).errors;
+			expect(errors).to.have.length(2);
+			expect(errors[0]).to.be.instanceOf(Error);
+			expect(errors[1]).to.equal(undefined);
 		}
 	});
 });

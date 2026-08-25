@@ -466,27 +466,31 @@ const syncDirectoryStrict = async (
 	directory: string,
 ): Promise<void> => {
 	let handle: CustodyRecordNodeDirectoryHandle | undefined;
+	let operationFailed = false;
 	let operationError: unknown;
 	try {
 		handle = await fs.open(directory, "r");
 		await handle.sync();
 	} catch (error) {
+		operationFailed = true;
 		operationError = error;
 	}
+	let closeFailed = false;
 	let closeError: unknown;
 	try {
 		await handle?.close();
 	} catch (error) {
+		closeFailed = true;
 		closeError = error;
 	}
-	if (operationError !== undefined && closeError !== undefined) {
+	if (operationFailed && closeFailed) {
 		throw new AggregateError(
 			[operationError, closeError],
 			`Failed to sync and close custody directory ${directory}`,
 		);
 	}
-	if (operationError !== undefined) throw operationError;
-	if (closeError !== undefined) throw closeError;
+	if (operationFailed) throw operationError;
+	if (closeFailed) throw closeError;
 };
 
 const ensureCanonicalChildDirectory = async (
@@ -939,13 +943,15 @@ const runTransaction = async <T>(
 		await database.exec("COMMIT");
 		return result;
 	} catch (error) {
+		let rollbackFailed = false;
 		let rollbackError: unknown;
 		try {
 			await database.exec("ROLLBACK");
 		} catch (candidate) {
+			rollbackFailed = true;
 			rollbackError = candidate;
 		}
-		if (rollbackError !== undefined) {
+		if (rollbackFailed) {
 			throw new CustodyTransactionRollbackError(
 				[error, rollbackError],
 				"Failed to initialize and roll back custody SQLite metadata",
@@ -1791,30 +1797,34 @@ class NodeCustodyRecordPersistence implements CustodyRecordPersistence {
 		this.closing = true;
 		this.closePromise = (async () => {
 			await this.tail;
+			let databaseFailed = false;
 			let databaseError: unknown;
 			try {
 				await this.lock.runWhileHeld(async () => {
 					await this.database.close();
 				});
 			} catch (error) {
+				databaseFailed = true;
 				databaseError = error;
 			}
+			let lockFailed = false;
 			let lockError: unknown;
 			try {
 				await this.lock.close();
 			} catch (error) {
+				lockFailed = true;
 				lockError = error;
 			} finally {
 				this.closed = true;
 			}
-			if (databaseError !== undefined && lockError !== undefined) {
+			if (databaseFailed && lockFailed) {
 				throw new AggregateError(
 					[databaseError, lockError],
 					"Failed to close custody SQLite database and directory lock",
 				);
 			}
-			if (databaseError !== undefined) throw databaseError;
-			if (lockError !== undefined) throw lockError;
+			if (databaseFailed) throw databaseError;
+			if (lockFailed) throw lockError;
 		})();
 		return this.closePromise;
 	}
@@ -2722,13 +2732,15 @@ const closeAfterOpenFailure = async (
 	persistence: CustodyRecordPersistence,
 	primary: unknown,
 ): Promise<never> => {
+	let closeFailed = false;
 	let closeError: unknown;
 	try {
 		await persistence.close?.({ flush: false });
 	} catch (error) {
+		closeFailed = true;
 		closeError = error;
 	}
-	if (closeError !== undefined) {
+	if (closeFailed) {
 		throw new AggregateError(
 			[primary, closeError],
 			"Failed to open and close custody record persistence",

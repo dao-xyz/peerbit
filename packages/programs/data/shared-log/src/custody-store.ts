@@ -1574,10 +1574,12 @@ export class CustodyRecordStore {
 		this.closePromise = (async () => {
 			await this.waitForPendingOperations();
 			await this.tail;
+			let closeFailed = false;
 			let closeError: unknown;
 			try {
 				await this.persistence.close?.({ flush: false });
 			} catch (error) {
+				closeFailed = true;
 				closeError = error;
 			} finally {
 				this.closed = true;
@@ -1588,13 +1590,13 @@ export class CustodyRecordStore {
 						cause: this.poisonCause,
 					})
 				: undefined;
-			if (poisonError && closeError !== undefined) {
+			if (poisonError && closeFailed) {
 				throw new AggregateError(
 					[poisonError, closeError],
 					"Failed to close poisoned custody record store",
 				);
 			}
-			if (closeError !== undefined) throw closeError;
+			if (closeFailed) throw closeError;
 			if (poisonError) throw poisonError;
 		})();
 		return this.closePromise;

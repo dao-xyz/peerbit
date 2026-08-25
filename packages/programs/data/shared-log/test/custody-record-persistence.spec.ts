@@ -42,6 +42,7 @@ import {
 
 const digest = (byte: number) => byte.toString(16).padStart(2, "0").repeat(32);
 const databaseFile = (namespace: string) => join(namespace, "db.sqlite");
+type SqliteDatabase = Awaited<ReturnType<typeof createDatabase>>;
 
 type Opened = Readonly<{
 	store: CustodyRecordStore;
@@ -174,6 +175,46 @@ const instrumentedDependencies = (
 		} as unknown as CustodyRecordNodeModules;
 	},
 });
+
+const faultInjectedDependencies = (options: {
+	fs?: CustodyRecordNodeModules["fs"];
+	wrapDatabase?: (database: SqliteDatabase) => SqliteDatabase;
+	wrapLock?: (lock: NativeDurabilityLock) => NativeDurabilityLock;
+}): CustodyRecordNodePersistenceDependencies => ({
+	async loadNodeModules() {
+		const native = await import("@peerbit/native-backbone");
+		return {
+			fs: options.fs ?? nodeFs,
+			path: nodePath,
+			crypto: nodeCrypto,
+			native: {
+				async acquireNativeDurabilityNodeLock(namespace: string) {
+					const lock = await native.acquireNativeDurabilityNodeLock(namespace);
+					return options.wrapLock?.(lock) ?? lock;
+				},
+			},
+			sqlite: {
+				async createDatabase(...args: Parameters<typeof createDatabase>) {
+					const database = await createDatabase(...args);
+					return options.wrapDatabase?.(database) ?? database;
+				},
+			},
+		} as unknown as CustodyRecordNodeModules;
+	},
+});
+
+const proxyDatabase = (
+	database: SqliteDatabase,
+	overrides: Partial<Pick<SqliteDatabase, "exec" | "close">>,
+): SqliteDatabase =>
+	new Proxy(database, {
+		get(target, property) {
+			const override = overrides[property as "exec" | "close"];
+			if (override) return override;
+			const value = Reflect.get(target, property);
+			return typeof value === "function" ? value.bind(target) : value;
+		},
+	});
 
 const withDatabase = async <T>(
 	namespace: string,
@@ -435,6 +476,160 @@ describe("custody record persistence", function () {
 		await expect(
 			nodeFs.stat(join(directory, "custody-records-v1")),
 		).to.be.rejectedWith("ENOENT");
+	});
+
+	it("retains undefined directory sync and close rejections", async () => {
+		const directory = await temporaryDirectory("directory-undefined");
+		let injected = false;
+		const fs = {
+			realpath: nodeFs.realpath,
+			stat: nodeFs.stat,
+			lstat: nodeFs.lstat,
+			mkdir: nodeFs.mkdir,
+			async open(path: string, flags: "r") {
+				const handle = await nodeFs.open(path, flags);
+				if (injected) return handle;
+				injected = true;
+				return {
+					sync: () => Promise.reject(undefined),
+					async close() {
+						await handle.close();
+						return Promise.reject(undefined);
+					},
+				};
+			},
+		} as unknown as CustodyRecordNodeModules["fs"];
+		const [outcome] = await Promise.allSettled([
+			openNodeCustodyRecordStore(
+				{
+					nodeDirectory: directory,
+					logId: new Uint8Array([1, 2, 3]),
+					localPublicKey: sourceBytes,
+					role: "source",
+				},
+				faultInjectedDependencies({ fs }),
+			),
+		]);
+		expect(injected).to.equal(true);
+		expect(outcome!.status).to.equal("rejected");
+		if (outcome!.status === "rejected") {
+			expect(outcome.reason).to.be.instanceOf(AggregateError);
+			expect((outcome.reason as AggregateError).errors).to.deep.equal([
+				undefined,
+				undefined,
+			]);
+		}
+	});
+
+	it("retains an undefined rollback rejection after commit failure", async () => {
+		const directory = await temporaryDirectory("rollback-undefined");
+		const commitError = new Error("injected commit failure");
+		const dependencies = faultInjectedDependencies({
+			wrapDatabase(database) {
+				let commitFailed = false;
+				return proxyDatabase(database, {
+					async exec(sql: string) {
+						if (sql === "COMMIT") {
+							commitFailed = true;
+							return Promise.reject(commitError);
+						}
+						if (sql === "ROLLBACK" && commitFailed) {
+							return Promise.reject(undefined);
+						}
+						return database.exec(sql);
+					},
+				});
+			},
+		});
+		const [outcome] = await Promise.allSettled([
+			openNodeCustodyRecordStore(
+				{
+					nodeDirectory: directory,
+					logId: new Uint8Array([1, 2, 3]),
+					localPublicKey: sourceBytes,
+					role: "source",
+				},
+				dependencies,
+			),
+		]);
+		expect(outcome!.status).to.equal("rejected");
+		if (outcome!.status === "rejected") {
+			expect(outcome.reason).to.be.instanceOf(AggregateError);
+			expect((outcome.reason as AggregateError).errors).to.deep.equal([
+				commitError,
+				undefined,
+			]);
+		}
+	});
+
+	it("aggregates undefined database and lock close rejections", async () => {
+		const directory = await temporaryDirectory("close-undefined");
+		const dependencies = faultInjectedDependencies({
+			wrapDatabase: (database) =>
+				proxyDatabase(database, {
+					async close() {
+						await database.close();
+						return Promise.reject(undefined);
+					},
+				}),
+			wrapLock: (lock) => ({
+				assertHeld: () => lock.assertHeld(),
+				runWhileHeld: (operation) => lock.runWhileHeld(operation),
+				async close() {
+					await lock.close();
+					return Promise.reject(undefined);
+				},
+			}),
+		});
+		const opened = await open(directory, { dependencies });
+		const [outcome] = await Promise.allSettled([opened.store.close()]);
+		stores.delete(opened.store);
+		expect(outcome!.status).to.equal("rejected");
+		if (outcome!.status === "rejected") {
+			expect(outcome.reason).to.be.instanceOf(AggregateError);
+			expect((outcome.reason as AggregateError).errors).to.deep.equal([
+				undefined,
+				undefined,
+			]);
+		}
+	});
+
+	it("aggregates an undefined close rejection after open fails", async () => {
+		const directory = await temporaryDirectory("open-close-undefined");
+		const primary = new Error("injected open failure");
+		const dependencies = faultInjectedDependencies({
+			wrapDatabase: (database) =>
+				proxyDatabase(database, {
+					async close() {
+						await database.close();
+						return Promise.reject(undefined);
+					},
+				}),
+		});
+		const [outcome] = await Promise.allSettled([
+			openNodeCustodyRecordStore(
+				{
+					nodeDirectory: directory,
+					logId: new Uint8Array([1, 2, 3]),
+					localPublicKey: sourceBytes,
+					role: "source",
+				},
+				{
+					...dependencies,
+					onPersistenceCreated() {
+						throw primary;
+					},
+				},
+			),
+		]);
+		expect(outcome!.status).to.equal("rejected");
+		if (outcome!.status === "rejected") {
+			expect(outcome.reason).to.be.instanceOf(AggregateError);
+			expect((outcome.reason as AggregateError).errors).to.deep.equal([
+				primary,
+				undefined,
+			]);
+		}
 	});
 
 	it("excludes the same canonical namespace and its node-directory alias until close", async () => {
