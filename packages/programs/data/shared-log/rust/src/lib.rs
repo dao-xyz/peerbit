@@ -1206,26 +1206,29 @@ impl RangePlanner {
         let mut narrow_head = narrow_ranges.next();
         let mut wide_head = wide_ranges.next();
 
-        loop {
-            let (range, take_narrow) = match (narrow_head, wide_head) {
-                (Some(narrow_range), Some(wide_range)) => {
-                    if narrow_range.containment_put_order < wide_range.containment_put_order {
-                        (&narrow_range.range, true)
-                    } else {
-                        (&wide_range.range, false)
-                    }
+        macro_rules! visit_and_advance {
+            ($range:expr, $head:ident, $ranges:ident) => {
+                if let ControlFlow::Break(value) = visit(&$range.range) {
+                    return Some(value);
                 }
-                (Some(narrow_range), None) => (&narrow_range.range, true),
-                (None, Some(wide_range)) => (&wide_range.range, false),
-                (None, None) => break,
+                $head = $ranges.next();
             };
-            if let ControlFlow::Break(value) = visit(range) {
-                return Some(value);
-            }
-            if take_narrow {
-                narrow_head = narrow_ranges.next();
-            } else {
-                wide_head = wide_ranges.next();
+        }
+
+        loop {
+            match (narrow_head, wide_head) {
+                (Some(narrow_range), Some(wide_range))
+                    if narrow_range.containment_put_order < wide_range.containment_put_order =>
+                {
+                    visit_and_advance!(narrow_range, narrow_head, narrow_ranges);
+                }
+                (Some(_), Some(wide_range)) | (None, Some(wide_range)) => {
+                    visit_and_advance!(wide_range, wide_head, wide_ranges);
+                }
+                (Some(narrow_range), None) => {
+                    visit_and_advance!(narrow_range, narrow_head, narrow_ranges);
+                }
+                (None, None) => break,
             }
         }
         None
