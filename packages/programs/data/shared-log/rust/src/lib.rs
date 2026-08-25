@@ -1193,48 +1193,39 @@ impl RangePlanner {
     ) -> Option<B> {
         let narrow = &self.containment_buckets[self.resolution.containment_bucket(point)];
         let wide = &self.wide_containment_ranges;
-        let mut narrow_index = 0usize;
-        let mut wide_index = 0usize;
+        let mut narrow_ranges = narrow.iter().map(|id| {
+            self.ranges
+                .get(id)
+                .expect("narrow containment range is indexed")
+        });
+        let mut wide_ranges = wide.iter().map(|id| {
+            self.ranges
+                .get(id)
+                .expect("wide containment range is indexed")
+        });
+        let mut narrow_head = narrow_ranges.next();
+        let mut wide_head = wide_ranges.next();
 
-        while narrow_index < narrow.len() || wide_index < wide.len() {
-            let range = match (narrow.get_index(narrow_index), wide.get_index(wide_index)) {
-                (Some(narrow_id), Some(wide_id)) => {
-                    let narrow_range = self
-                        .ranges
-                        .get(narrow_id)
-                        .expect("narrow containment range is indexed");
-                    let wide_range = self
-                        .ranges
-                        .get(wide_id)
-                        .expect("wide containment range is indexed");
+        loop {
+            let (range, take_narrow) = match (narrow_head, wide_head) {
+                (Some(narrow_range), Some(wide_range)) => {
                     if narrow_range.containment_put_order < wide_range.containment_put_order {
-                        narrow_index += 1;
-                        &narrow_range.range
+                        (&narrow_range.range, true)
                     } else {
-                        wide_index += 1;
-                        &wide_range.range
+                        (&wide_range.range, false)
                     }
                 }
-                (Some(narrow_id), None) => {
-                    narrow_index += 1;
-                    &self
-                        .ranges
-                        .get(narrow_id)
-                        .expect("narrow containment range is indexed")
-                        .range
-                }
-                (None, Some(wide_id)) => {
-                    wide_index += 1;
-                    &self
-                        .ranges
-                        .get(wide_id)
-                        .expect("wide containment range is indexed")
-                        .range
-                }
+                (Some(narrow_range), None) => (&narrow_range.range, true),
+                (None, Some(wide_range)) => (&wide_range.range, false),
                 (None, None) => break,
             };
             if let ControlFlow::Break(value) = visit(range) {
                 return Some(value);
+            }
+            if take_narrow {
+                narrow_head = narrow_ranges.next();
+            } else {
+                wide_head = wide_ranges.next();
             }
         }
         None
