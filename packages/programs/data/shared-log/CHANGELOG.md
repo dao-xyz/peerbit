@@ -1,5 +1,34 @@
 # Changelog
 
+## 16.0.7
+
+### Patch Changes
+
+- [#1307](https://github.com/dao-xyz/peerbit/pull/1307) [`5ab6073`](https://github.com/dao-xyz/peerbit/commit/5ab607322d438a432a0724020dab93aa7cbab9a1) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Bound native shared-log containment indexing for wide replication ranges while
+  preserving exact owner-sampling membership and ordering.
+
+- [#1307](https://github.com/dao-xyz/peerbit/pull/1307) [`3f065ee`](https://github.com/dao-xyz/peerbit/commit/3f065ee82fb1449f77a20995dd8da2f2443a535f) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Extract canonical rebalance query geometry into fixed-size task pages while preserving existing execution and history commit semantics.
+
+- [#1307](https://github.com/dao-xyz/peerbit/pull/1307) [`b776562`](https://github.com/dao-xyz/peerbit/commit/b7765624ab661dc826eafeb163495e8ae426b542) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Bound native shared-log fallback sampling to linear endpoint-index work per
+  cursor while preserving deterministic owner selection. Replace the synthetic
+  maximum metadata sentinel with coordinate-only partitions so maximum-timestamp,
+  high-Unicode identifiers remain in their correct fallback segment, and apply
+  metadata tie-breaking across circularly aliased zero/MAX endpoints. Split the
+  TypeScript directional fallback into disjoint monotone phases, treat exact
+  directional equality as zero distance, and exclude the current range from
+  same-owner adjacency queries. Keep prefetched join rows visible to iterator
+  completion and pending counts so batched fallback scans cannot truncate them,
+  drain `all()` through the ordered merge, and release buffered rows on close.
+
+- [#1284](https://github.com/dao-xyz/peerbit/pull/1284) [`b8eb614`](https://github.com/dao-xyz/peerbit/commit/b8eb614e8715d2e179304c910beec235a385f197) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Avoid scanning every replication range during native append when the exact
+  resident owner count proves full-replica delivery cannot apply.
+
+- [#1307](https://github.com/dao-xyz/peerbit/pull/1307) [`a0b992e`](https://github.com/dao-xyz/peerbit/commit/a0b992eafaf84b789f76c4e1893fe68f5314b920) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Make shared-log owner sampling independent of mixed-maturity range order and
+  align TypeScript fallback tie-breaking with the native deterministic order.
+- Updated dependencies []:
+  - @peerbit/log@6.2.19
+  - @peerbit/rpc@6.1.19
+
 ## 16.0.6
 
 ### Patch Changes
