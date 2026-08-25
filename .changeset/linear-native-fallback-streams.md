@@ -1,7 +1,6 @@
 ---
 "@peerbit/shared-log": patch
 "@peerbit/shared-log-rust": patch
-"@peerbit/native-backbone": patch
 ---
 
 Bound native shared-log fallback sampling to linear endpoint-index work per
