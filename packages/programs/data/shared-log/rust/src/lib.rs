@@ -158,8 +158,8 @@ struct IndexedReplicationRange {
 pub struct RangePlanner {
     resolution: Resolution,
     ranges: IndexMap<String, IndexedReplicationRange>,
-    by_start1: BTreeMap<u64, BTreeSet<RangeIndexKey>>,
-    by_end2: BTreeMap<u64, BTreeSet<RangeIndexKey>>,
+    by_start1: BTreeMap<u64, EndpointGroup>,
+    by_end2: BTreeMap<u64, EndpointGroup>,
     containment_buckets: Vec<IndexSet<String>>,
     wide_containment_ranges: IndexSet<String>,
     next_containment_put_order: u64,
@@ -251,6 +251,89 @@ impl PartialOrd for RangeIndexKey {
     }
 }
 
+#[derive(Debug, Eq, PartialEq)]
+enum EndpointGroup {
+    One(RangeIndexKey),
+    Many(BTreeSet<RangeIndexKey>),
+}
+
+impl EndpointGroup {
+    fn new(key: RangeIndexKey) -> Self {
+        Self::One(key)
+    }
+
+    fn insert(&mut self, key: RangeIndexKey) {
+        match self {
+            Self::One(existing) if existing == &key => {}
+            Self::One(existing) => {
+                let mut keys = BTreeSet::new();
+                keys.insert(existing.clone());
+                let inserted = keys.insert(key);
+                debug_assert!(inserted);
+                *self = Self::Many(keys);
+            }
+            Self::Many(keys) => {
+                keys.insert(key);
+            }
+        }
+    }
+
+    /// Remove `key`, returning whether the outer coordinate entry is empty and
+    /// should be deleted. A stored group is always either one key or many keys.
+    fn remove(&mut self, key: &RangeIndexKey) -> bool {
+        match self {
+            Self::One(existing) => existing == key,
+            Self::Many(keys) => {
+                if !keys.remove(key) {
+                    return false;
+                }
+                match keys.len() {
+                    0 => return true,
+                    1 => {
+                        let remaining = keys
+                            .pop_first()
+                            .expect("one endpoint key remains after removal");
+                        *self = Self::One(remaining);
+                    }
+                    _ => {}
+                }
+                false
+            }
+        }
+    }
+
+    #[cfg(test)]
+    fn len(&self) -> usize {
+        match self {
+            Self::One(_) => 1,
+            Self::Many(keys) => keys.len(),
+        }
+    }
+
+    fn iter(&self) -> EndpointGroupIter<'_> {
+        match self {
+            Self::One(key) => EndpointGroupIter::One(Some(key)),
+            Self::Many(keys) => EndpointGroupIter::Many(keys.iter()),
+        }
+    }
+}
+
+enum EndpointGroupIter<'a> {
+    One(Option<&'a RangeIndexKey>),
+    Many(BTreeSetIter<'a, RangeIndexKey>),
+}
+
+impl<'a> Iterator for EndpointGroupIter<'a> {
+    type Item = &'a RangeIndexKey;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match self {
+            Self::One(key) => key.take(),
+            Self::Many(keys) => keys.next(),
+        }
+    }
+}
+
 #[derive(Clone, Copy)]
 enum FallbackCoordinateOrder {
     Ascending,
@@ -258,21 +341,17 @@ enum FallbackCoordinateOrder {
 }
 
 struct FallbackKeyStream<'a> {
-    primary: BTreeMapRange<'a, u64, BTreeSet<RangeIndexKey>>,
-    wrap: BTreeMapRange<'a, u64, BTreeSet<RangeIndexKey>>,
+    primary: BTreeMapRange<'a, u64, EndpointGroup>,
+    wrap: BTreeMapRange<'a, u64, EndpointGroup>,
     order: FallbackCoordinateOrder,
-    metadata: Option<BTreeSetIter<'a, RangeIndexKey>>,
+    metadata: Option<EndpointGroupIter<'a>>,
     head: Option<&'a RangeIndexKey>,
     #[cfg(test)]
     key_advances: usize,
 }
 
 impl<'a> FallbackKeyStream<'a> {
-    fn ascending(
-        index: &'a BTreeMap<u64, BTreeSet<RangeIndexKey>>,
-        point: u64,
-        max_value: u64,
-    ) -> Self {
+    fn ascending(index: &'a BTreeMap<u64, EndpointGroup>, point: u64, max_value: u64) -> Self {
         if point == max_value {
             // circular_distance aliases 0 and MAX. At MAX, descending exposes
             // MAX while this stream exposes 0 so metadata can break the tie.
@@ -290,7 +369,7 @@ impl<'a> FallbackKeyStream<'a> {
         }
     }
 
-    fn descending(index: &'a BTreeMap<u64, BTreeSet<RangeIndexKey>>, point: u64) -> Self {
+    fn descending(index: &'a BTreeMap<u64, EndpointGroup>, point: u64) -> Self {
         if point == 0 {
             // At 0, ascending exposes 0 while this stream exposes MAX.
             Self::new(
@@ -308,8 +387,8 @@ impl<'a> FallbackKeyStream<'a> {
     }
 
     fn new(
-        primary: BTreeMapRange<'a, u64, BTreeSet<RangeIndexKey>>,
-        wrap: BTreeMapRange<'a, u64, BTreeSet<RangeIndexKey>>,
+        primary: BTreeMapRange<'a, u64, EndpointGroup>,
+        wrap: BTreeMapRange<'a, u64, EndpointGroup>,
         order: FallbackCoordinateOrder,
     ) -> Self {
         Self {
@@ -323,7 +402,7 @@ impl<'a> FallbackKeyStream<'a> {
         }
     }
 
-    fn next_coordinate_group(&mut self) -> Option<&'a BTreeSet<RangeIndexKey>> {
+    fn next_coordinate_group(&mut self) -> Option<&'a EndpointGroup> {
         let row = match self.order {
             FallbackCoordinateOrder::Ascending => self.primary.next().or_else(|| self.wrap.next()),
             FallbackCoordinateOrder::Descending => {
@@ -352,7 +431,7 @@ impl<'a> FallbackKeyStream<'a> {
         &mut self,
         planner: &'a RangePlanner,
         peer_filter: Option<&HashSet<String>>,
-        seen_ids: &HashSet<String>,
+        seen_ids: &HashSet<&str>,
     ) -> Option<&'a ReplicationRange> {
         loop {
             if let Some(key) = self.head {
@@ -369,7 +448,7 @@ impl<'a> FallbackKeyStream<'a> {
 
 struct FallbackCandidateStreams<'a> {
     streams: [FallbackKeyStream<'a>; 4],
-    seen_ids: HashSet<String>,
+    seen_ids: HashSet<&'a str>,
     point: u64,
     max_value: u64,
     #[cfg(test)]
@@ -423,7 +502,7 @@ impl<'a> FallbackCandidateStreams<'a> {
             self.candidate_head_visits += candidate_head_visits;
         }
         let best = best?;
-        self.seen_ids.insert(best.id.clone());
+        self.seen_ids.insert(best.id.as_str());
         Some(best)
     }
 
@@ -986,22 +1065,28 @@ impl RangePlanner {
     }
 
     fn index_fallback_endpoint(
-        index: &mut BTreeMap<u64, BTreeSet<RangeIndexKey>>,
+        index: &mut BTreeMap<u64, EndpointGroup>,
         coordinate: u64,
         key: RangeIndexKey,
     ) {
-        index.entry(coordinate).or_default().insert(key);
+        match index.entry(coordinate) {
+            std::collections::btree_map::Entry::Vacant(entry) => {
+                entry.insert(EndpointGroup::new(key));
+            }
+            std::collections::btree_map::Entry::Occupied(mut entry) => {
+                entry.get_mut().insert(key);
+            }
+        }
     }
 
     fn unindex_fallback_endpoint(
-        index: &mut BTreeMap<u64, BTreeSet<RangeIndexKey>>,
+        index: &mut BTreeMap<u64, EndpointGroup>,
         coordinate: u64,
         key: &RangeIndexKey,
     ) {
-        let remove_coordinate = index.get_mut(&coordinate).is_some_and(|keys| {
-            keys.remove(key);
-            keys.is_empty()
-        });
+        let remove_coordinate = index
+            .get_mut(&coordinate)
+            .is_some_and(|group| group.remove(key));
         if remove_coordinate {
             index.remove(&coordinate);
         }
@@ -1189,16 +1274,28 @@ impl RangePlanner {
         &self,
         key: &RangeIndexKey,
         peer_filter: Option<&HashSet<String>>,
-        seen_ids: &HashSet<String>,
+        seen_ids: &HashSet<&str>,
     ) -> Option<&ReplicationRange> {
-        if seen_ids.contains(&key.id) {
+        if seen_ids.contains(key.id.as_str())
+            || peer_filter.is_some_and(|filter| !filter.contains(&key.hash))
+        {
             return None;
         }
         let range = &self.ranges.get(&key.id)?.range;
         if !self.include_range(range, peer_filter) || range.mode != MODE_NON_STRICT {
             return None;
         }
+        debug_assert_eq!(range.hash, key.hash);
         Some(range)
+    }
+
+    #[cfg(test)]
+    fn fallback_endpoint_entry_count(&self) -> usize {
+        self.by_start1
+            .values()
+            .map(EndpointGroup::len)
+            .sum::<usize>()
+            + self.by_end2.values().map(EndpointGroup::len).sum::<usize>()
     }
 }
 
@@ -4592,10 +4689,11 @@ fn samples_to_rows(samples: Vec<LeaderSample>) -> Array {
 mod tests {
     use super::{
         compare_closest, find_leaders_with_prepared_options, ContainmentIndexLocation,
-        FallbackCandidateStreams, FallbackKeyStream, LeaderSample, NativeSharedLogState,
-        RangePlanner, ReplicationRange, SampleOptions, SharedLogError, CONTAINMENT_BUCKETS,
-        CONTAINMENT_RETAINED_CAPACITY_RATIO, CONTAINMENT_RETAINED_CAPACITY_SLACK,
-        MAX_CONTAINMENT_BUCKETS_PER_RANGE, MAX_U32, MAX_U64, MODE_NON_STRICT,
+        EndpointGroup, FallbackCandidateStreams, FallbackKeyStream, LeaderSample,
+        NativeSharedLogState, RangeIndexKey, RangePlanner, ReplicationRange, SampleOptions,
+        SharedLogError, CONTAINMENT_BUCKETS, CONTAINMENT_RETAINED_CAPACITY_RATIO,
+        CONTAINMENT_RETAINED_CAPACITY_SLACK, MAX_CONTAINMENT_BUCKETS_PER_RANGE, MAX_U32, MAX_U64,
+        MODE_NON_STRICT,
     };
     use indexmap::IndexSet;
     use std::collections::HashSet;
@@ -5408,6 +5506,137 @@ mod tests {
     }
 
     #[test]
+    fn preserves_split_endpoint_ties_and_the_four_stream_bound() {
+        for (resolution, max_value) in [("u32", MAX_U32), ("u64", MAX_U64)] {
+            let mut planner = RangePlanner::new(resolution);
+            planner.put(ReplicationRange::new(
+                "a-zero",
+                "peer",
+                0,
+                0,
+                0,
+                0,
+                0,
+                1,
+                MODE_NON_STRICT,
+            ));
+            planner.put(ReplicationRange::new(
+                "b-split",
+                "peer",
+                0,
+                1,
+                1,
+                max_value,
+                max_value,
+                1,
+                MODE_NON_STRICT,
+            ));
+
+            // Both ranges are four units away. Keeping start1/end2 as separate
+            // stream pairs is required for the legacy total-order tie break.
+            let point = max_value - 4;
+            let (ids, key_advances, head_visits) = fallback_stream_ids(&planner, point, None);
+            assert_eq!(ids, ["a-zero", "b-split"]);
+            assert_eq!(ids, reference_fallback_ids(&planner, point, None));
+            assert_eq!(planner.fallback_endpoint_entry_count(), 4);
+            assert_eq!(key_advances, 8);
+            assert_eq!(head_visits, 8);
+        }
+    }
+
+    #[test]
+    fn fallback_endpoint_groups_promote_demote_move_delete_and_clear() {
+        let key = |id: &str| RangeIndexKey {
+            timestamp: 0,
+            hash: "peer".to_string(),
+            id: id.to_string(),
+        };
+        let mut group = EndpointGroup::new(key("a"));
+        group.insert(key("b"));
+        assert!(matches!(&group, EndpointGroup::Many(keys) if keys.len() == 2));
+        assert!(!group.remove(&key("a")));
+        assert!(matches!(&group, EndpointGroup::One(key) if key.id == "b"));
+        assert!(group.remove(&key("b")));
+
+        let mut planner = RangePlanner::new("u32");
+        planner.put(ReplicationRange::new(
+            "a",
+            "peer-a",
+            0,
+            10,
+            20,
+            10,
+            20,
+            10,
+            MODE_NON_STRICT,
+        ));
+        planner.put(ReplicationRange::new(
+            "a",
+            "peer-a",
+            1,
+            40,
+            50,
+            40,
+            50,
+            10,
+            MODE_NON_STRICT,
+        ));
+        assert!(!planner.by_start1.contains_key(&10));
+        assert!(!planner.by_end2.contains_key(&20));
+        assert_eq!(planner.fallback_endpoint_entry_count(), 2);
+        assert!(planner.delete("a"));
+        assert!(planner.by_start1.is_empty());
+        assert!(planner.by_end2.is_empty());
+        planner.put(ReplicationRange::new(
+            "clear",
+            "peer",
+            0,
+            1,
+            2,
+            1,
+            2,
+            1,
+            MODE_NON_STRICT,
+        ));
+        planner.clear();
+        assert!(planner.by_start1.is_empty());
+        assert!(planner.by_end2.is_empty());
+    }
+
+    #[test]
+    fn late_peer_filter_hit_checks_four_endpoint_heads() {
+        const RANGE_COUNT: usize = 512;
+        let mut planner = RangePlanner::new("u32");
+        for index in 0..RANGE_COUNT {
+            planner.put(ReplicationRange::new(
+                format!("range-{index:04}"),
+                if index + 1 == RANGE_COUNT {
+                    "peer-z".to_string()
+                } else {
+                    format!("peer-a-{index:04}")
+                },
+                0,
+                1_000,
+                1_001,
+                1_000,
+                1_001,
+                1,
+                MODE_NON_STRICT,
+            ));
+        }
+        let filter = HashSet::from(["peer-z".to_string()]);
+        let mut fallback = FallbackCandidateStreams::new(&planner, 2_000_000_000);
+        assert_eq!(
+            fallback
+                .pop_closest(&planner, Some(&filter))
+                .map(|range| range.hash.as_str()),
+            Some("peer-z")
+        );
+        assert_eq!(fallback.key_advances(), 4 * RANGE_COUNT);
+        assert_eq!(fallback.candidate_head_visits(), 4);
+    }
+
+    #[test]
     fn fallback_streams_bound_adversarial_immature_same_owner_work() {
         const RANGE_COUNT: usize = 16_384;
 
@@ -5443,7 +5672,8 @@ mod tests {
 
         let (ids, key_advances, head_visits) = fallback_stream_ids(&planner, 0, None);
         assert_eq!(ids.len(), RANGE_COUNT);
-        assert_eq!(key_advances, 4 * RANGE_COUNT);
+        assert_eq!(key_advances, 2 * planner.fallback_endpoint_entry_count());
+        assert!(key_advances <= 4 * RANGE_COUNT);
         assert!(head_visits <= 4 * RANGE_COUNT);
     }
 
@@ -5551,7 +5781,8 @@ mod tests {
                     reference_fallback_ids(&planner, point, None),
                     "{resolution} point {point}",
                 );
-                assert_eq!(key_advances, 4 * planner.len());
+                assert_eq!(key_advances, 2 * planner.fallback_endpoint_entry_count());
+                assert!(key_advances <= 4 * planner.len());
                 assert!(head_visits <= 4 * planner.len());
 
                 assert_eq!(
