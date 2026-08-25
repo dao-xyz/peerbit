@@ -8,6 +8,7 @@ import {
 import { expect } from "chai";
 import { MAX_U32, MAX_U64 } from "../src/integers.js";
 import {
+	MAX_LOCAL_PLACEMENT_VIEW_LIMITS,
 	type LocalPlacementSnapshotInput,
 	canonicalizeLocalPlacementSnapshotV1,
 	createLocalPlacementExecutionFence,
@@ -228,6 +229,36 @@ describe("local placement view", () => {
 		});
 		expect(fence.fenceId).to.equal(
 			"e9fdfd50456f9b3dec54ba7643539643986b3a094ddb8621a47171653817901f",
+		);
+	});
+
+	it("grows a small encoding without reserving the full byte ceiling", () => {
+		const base = inputU32(keys, { ranges: [] });
+		const OriginalUint8Array = globalThis.Uint8Array;
+		const numericAllocations: number[] = [];
+		const InstrumentedUint8Array = new Proxy(OriginalUint8Array, {
+			construct(target, argumentsList, newTarget) {
+				if (typeof argumentsList[0] === "number") {
+					numericAllocations.push(argumentsList[0]);
+				}
+				return Reflect.construct(target, argumentsList, newTarget);
+			},
+		});
+		globalThis.Uint8Array = InstrumentedUint8Array;
+		try {
+			const view = canonicalizeLocalPlacementSnapshotV1(base);
+			expect(view.bytes.byteLength).to.be.lessThan(
+				MAX_LOCAL_PLACEMENT_VIEW_LIMITS.maxEncodedBytes,
+			);
+		} finally {
+			globalThis.Uint8Array = OriginalUint8Array;
+		}
+
+		expect(numericAllocations).to.not.include(
+			MAX_LOCAL_PLACEMENT_VIEW_LIMITS.maxEncodedBytes,
+		);
+		expect(Math.max(...numericAllocations)).to.be.lessThan(
+			MAX_LOCAL_PLACEMENT_VIEW_LIMITS.maxEncodedBytes,
 		);
 	});
 

@@ -203,6 +203,23 @@ const openStrict = (persistence: MemoryPersistence, limits?: object) =>
 	});
 
 describe("rebalance work store", () => {
+	it("rejects every limit widening before it leases the persistence", async () => {
+		for (const name of Object.keys(
+			DEFAULT_REBALANCE_WORK_LIMITS,
+		) as (keyof typeof DEFAULT_REBALANCE_WORK_LIMITS)[]) {
+			const persistence = new MemoryPersistence();
+			await expect(
+				openStrict(persistence, {
+					[name]: DEFAULT_REBALANCE_WORK_LIMITS[name] + 1,
+				}),
+			).to.be.rejectedWith(name);
+			expect(persistence.closeCalls).to.equal(0);
+
+			const store = await openStrict(persistence);
+			await store.close();
+		}
+	});
+
 	it("materializes a cleared baseline before the first active generation", async () => {
 		const persistence = new MemoryPersistence();
 		const store = await openStrict(persistence);

@@ -16,28 +16,38 @@ const encoder = new TextEncoder();
 const issuedCanonicalViews = new WeakSet<object>();
 
 class BoundedBinaryWriter {
-	private readonly value: Uint8Array;
+	private value: Uint8Array;
 	private offset = 0;
 
-	constructor(maximumBytes: number) {
-		this.value = new Uint8Array(maximumBytes);
+	constructor(private readonly maximumBytes: number) {
+		this.value = new Uint8Array(Math.min(256, maximumBytes));
 	}
 
 	private reserve(length: number): number {
-		if (
-			!Number.isSafeInteger(length) ||
-			length < 0 ||
-			this.offset + length > this.value.byteLength
-		) {
+		if (!Number.isSafeInteger(length) || length < 0) {
 			throw new Error("Local placement view exceeds the encoded byte limit");
 		}
+		const required = this.offset + length;
+		if (required > this.maximumBytes) {
+			throw new Error("Local placement view exceeds the encoded byte limit");
+		}
+		if (required > this.value.byteLength) {
+			let capacity = this.value.byteLength;
+			while (capacity < required) {
+				capacity = Math.min(this.maximumBytes, capacity * 2);
+			}
+			const next = new Uint8Array(capacity);
+			next.set(this.value.subarray(0, this.offset));
+			this.value = next;
+		}
 		const start = this.offset;
-		this.offset += length;
+		this.offset = required;
 		return start;
 	}
 
 	u8(value: number): void {
-		this.value[this.reserve(1)] = value;
+		const start = this.reserve(1);
+		this.value[start] = value;
 	}
 
 	bool(value: boolean): void {
@@ -55,7 +65,8 @@ class BoundedBinaryWriter {
 	}
 
 	raw(bytes: Uint8Array): void {
-		this.value.set(bytes, this.reserve(bytes.byteLength));
+		const start = this.reserve(bytes.byteLength);
+		this.value.set(bytes, start);
 	}
 
 	bytes(bytes: Uint8Array): void {

@@ -303,12 +303,21 @@ const normalizeLimits = (
 	limits?: Partial<RebalanceWorkLimits>,
 ): RebalanceWorkLimits => {
 	const normalized = { ...DEFAULT_REBALANCE_WORK_LIMITS, ...limits };
-	for (const [name, value] of Object.entries(normalized)) {
-		if (!Number.isSafeInteger(value) || value <= 0) {
-			throw new Error(`Invalid rebalance work limit: ${name}`);
+	for (const name of Object.keys(
+		DEFAULT_REBALANCE_WORK_LIMITS,
+	) as (keyof RebalanceWorkLimits)[]) {
+		const value = normalized[name];
+		if (
+			!Number.isSafeInteger(value) ||
+			value <= 0 ||
+			value > DEFAULT_REBALANCE_WORK_LIMITS[name]
+		) {
+			throw new RangeError(
+				`Rebalance work limit ${name} must be a positive safe integer no larger than ${DEFAULT_REBALANCE_WORK_LIMITS[name]}`,
+			);
 		}
 	}
-	return normalized;
+	return Object.freeze(normalized);
 };
 
 const planDigestBody = (plan: StoredPlan) => ({
