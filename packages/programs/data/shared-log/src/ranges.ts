@@ -476,7 +476,10 @@ export type NumericType = "u32" | "u64";
  * We always do the conversion to bigints internally.
  */
 export function toSegmentsBigInt<N extends NumericType>(
-	range: ReplicationRangeIndexable<N>,
+	range: Pick<
+		ReplicationRangeIndexable<N>,
+		"start1" | "end1" | "start2" | "end2"
+	>,
 ): Array<[bigint, bigint]> {
 	// Safely convert the numeric fields to bigint
 	const s1: bigint =
@@ -1553,6 +1556,7 @@ const getClosest = <S extends Shape | undefined, R extends "u32" | "u64">(
 	options?: {
 		shape?: S;
 		hash?: string;
+		excludeId?: Uint8Array;
 		time?: {
 			roleAgeLimit: number;
 			matured: boolean;
@@ -1560,13 +1564,16 @@ const getClosest = <S extends Shape | undefined, R extends "u32" | "u64">(
 		};
 	},
 ): IndexIterator<ReplicationRangeIndexable<R>, S> => {
-	const createQueries = (p: NumberFromType<R>, equality: boolean) => {
+	const createQueries = (
+		p: NumberFromType<R>,
+		phase: "primary" | "wrapped",
+	) => {
 		let queries: Query[];
 		if (direction === "below") {
 			queries = [
 				new IntegerCompare({
 					key: "end2",
-					compare: equality ? Compare.LessOrEqual : Compare.Less,
+					compare: phase === "primary" ? Compare.LessOrEqual : Compare.Greater,
 					value: p,
 				}),
 			];
@@ -1574,7 +1581,7 @@ const getClosest = <S extends Shape | undefined, R extends "u32" | "u64">(
 			queries = [
 				new IntegerCompare({
 					key: "start1",
-					compare: equality ? Compare.GreaterOrEqual : Compare.Greater,
+					compare: phase === "primary" ? Compare.GreaterOrEqual : Compare.Less,
 					value: p,
 				}),
 			];
@@ -1608,6 +1615,16 @@ const getClosest = <S extends Shape | undefined, R extends "u32" | "u64">(
 		if (options?.hash) {
 			queries.push(new StringMatch({ key: "hash", value: options.hash }));
 		}
+		if (options?.excludeId) {
+			queries.push(
+				new Not(
+					new ByteMatchQuery({
+						key: "id",
+						value: options.excludeId,
+					}),
+				),
+			);
+		}
 		return queries;
 	};
 
@@ -1616,7 +1633,7 @@ const getClosest = <S extends Shape | undefined, R extends "u32" | "u64">(
 
 	const iterator = rects.iterate(
 		{
-			query: createQueries(point, false),
+			query: createQueries(point, "primary"),
 			sort: [
 				direction === "below"
 					? new Sort({ key: ["end2"], direction: "desc" })
@@ -1630,10 +1647,7 @@ const getClosest = <S extends Shape | undefined, R extends "u32" | "u64">(
 
 	const iteratorWrapped = rects.iterate(
 		{
-			query: createQueries(
-				direction === "below" ? numbers.maxValue : numbers.zero,
-				true,
-			),
+			query: createQueries(point, "wrapped"),
 			sort: [
 				direction === "below"
 					? new Sort({ key: ["end2"], direction: "desc" })
@@ -1778,10 +1792,11 @@ export function getDistance(
 		value < 0 ? -value : value;
 	const diff = <T extends number | bigint>(a: T, b: T): T => abs(a - b) as T;
 
+	if (from === to) {
+		return typeof from === "number" ? 0 : 0n;
+	}
+
 	if (direction === "closest") {
-		if (from === to) {
-			return typeof from === "number" ? 0 : 0n; // returns 0 of the correct type
-		}
 		return diff(from, to) < diff(end, diff(from, to))
 			? diff(from, to)
 			: diff(end, diff(from, to));
@@ -1804,22 +1819,57 @@ export function getDistance(
 	throw new Error("Invalid direction");
 }
 
-const joinIterator = <S extends Shape | undefined, R extends "u32" | "u64">(
+/** @internal */
+export const joinIterator = <
+	S extends Shape | undefined,
+	R extends "u32" | "u64",
+>(
 	iterators: IndexIterator<ReplicationRangeIndexable<R>, S>[],
 	point: NumberFromType<R>,
 	direction: "above" | "below" | "closest",
 	numbers: Numbers<R>,
 ): IndexIterator<ReplicationRangeIndexable<R>, S> => {
+	type QueuedResult = {
+		result: IndexedResult<ReturnTypeFromShape<ReplicationRangeIndexable<R>, S>>;
+		dist: NumberFromType<R>;
+	};
+
+	const compareQueuedResults = (left: QueuedResult, right: QueuedResult) => {
+		if (left.dist < right.dist) return -1;
+		if (left.dist > right.dist) return 1;
+
+		// Match the native closest-range total order. The shaped iterator users do
+		// not always project every tie field, so only compare a field when both
+		// results carry it; getSamples uses complete ranges and therefore always
+		// follows distance, timestamp, owner hash, then range id.
+		const leftValue = left.result.value as Partial<
+			ReplicationRangeIndexable<R>
+		>;
+		const rightValue = right.result.value as Partial<
+			ReplicationRangeIndexable<R>
+		>;
+		if (leftValue.timestamp != null && rightValue.timestamp != null) {
+			if (leftValue.timestamp < rightValue.timestamp) return -1;
+			if (leftValue.timestamp > rightValue.timestamp) return 1;
+		}
+		if (leftValue.hash != null && rightValue.hash != null) {
+			if (leftValue.hash < rightValue.hash) return -1;
+			if (leftValue.hash > rightValue.hash) return 1;
+		}
+		const leftId = leftValue.id == null ? undefined : toBase64(leftValue.id);
+		const rightId = rightValue.id == null ? undefined : toBase64(rightValue.id);
+		if (leftId != null && rightId != null) {
+			if (leftId < rightId) return -1;
+			if (leftId > rightId) return 1;
+		}
+		return 0;
+	};
+
 	let queues: {
-		elements: {
-			result: IndexedResult<
-				ReturnTypeFromShape<ReplicationRangeIndexable<R>, S>
-			>;
-			dist: NumberFromType<R>;
-		}[];
+		elements: QueuedResult[];
 	}[] = [];
 
-	return {
+	const joined: IndexIterator<ReplicationRangeIndexable<R>, S> = {
 		next: async (
 			count: number,
 		): Promise<
@@ -1884,13 +1934,16 @@ const joinIterator = <S extends Shape | undefined, R extends "u32" | "u64">(
 
 			for (let i = 0; i < count; i++) {
 				let closestQueue = -1;
-				let closestDist: bigint | number = Number.MAX_VALUE;
+				let selected: QueuedResult | undefined;
 				for (let j = 0; j < queues.length; j++) {
 					let queue = queues[j];
 					if (queue && queue.elements.length > 0) {
-						let closest = queue.elements[0];
-						if (closest.dist < closestDist) {
-							closestDist = closest.dist;
+						const candidate = queue.elements[0];
+						if (
+							candidate &&
+							(!selected || compareQueuedResults(candidate, selected) < 0)
+						) {
+							selected = candidate;
 							closestQueue = j;
 						}
 					}
@@ -1900,7 +1953,7 @@ const joinIterator = <S extends Shape | undefined, R extends "u32" | "u64">(
 					break;
 				}
 
-				let closest = queues[closestQueue]?.elements.shift();
+				const closest = queues[closestQueue]?.elements.shift();
 				if (closest) {
 					results.push(closest.result);
 				}
@@ -1909,25 +1962,43 @@ const joinIterator = <S extends Shape | undefined, R extends "u32" | "u64">(
 		},
 		pending: async () => {
 			let allPending = await Promise.all(iterators.map((x) => x.pending()));
-			return allPending.reduce((acc, x) => acc + x, 0);
+			// A child can be exhausted while this join still owns prefetched rows.
+			// Counting local queues makes the same contract compose through nested joins.
+			const buffered = queues.reduce(
+				(acc, queue) => acc + queue.elements.length,
+				0,
+			);
+			return buffered + allPending.reduce((acc, x) => acc + x, 0);
 		},
-		done: () => iterators.every((x) => x.done() === true),
+		done: () =>
+			queues.every((queue) => queue.elements.length === 0) &&
+			iterators.every((x) => x.done() === true),
 		close: async () => {
-			for (const iterator of iterators) {
-				await iterator.close();
+			queues.length = 0;
+			const settled = await Promise.allSettled(
+				iterators.map(async (iterator) => iterator.close()),
+			);
+			const errors = settled.flatMap((result) =>
+				result.status === "rejected" ? [result.reason] : [],
+			);
+			if (errors.length === 1) {
+				throw errors[0];
+			}
+			if (errors.length > 1) {
+				throw new AggregateError(errors, "Failed to close joined iterators");
 			}
 		},
 		all: async () => {
 			let results: IndexedResult<
 				ReturnTypeFromShape<ReplicationRangeIndexable<R>, S>
 			>[] = [];
-			for (const iterator of iterators) {
-				let res = await iterator.all();
-				results.push(...res);
+			while (!joined.done()) {
+				results.push(...(await joined.next(100)));
 			}
 			return results;
 		},
 	};
+	return joined;
 };
 
 const getClosestAroundOrContaining = <
@@ -1976,6 +2047,7 @@ const getClosestAroundOrContaining = <
 export const getAdjecentSameOwner = async <R extends "u32" | "u64">(
 	peers: Index<ReplicationRangeIndexable<R>>,
 	range: {
+		id?: Uint8Array;
 		idString?: string;
 		start1: NumberFromType<R>;
 		end2: NumberFromType<R>;
@@ -1994,6 +2066,7 @@ export const getAdjecentSameOwner = async <R extends "u32" | "u64">(
 		numbers,
 		{
 			hash: range.hash,
+			excludeId: range.id,
 		},
 	);
 	const closestBelow = await closestBelowIterator.next(1);
@@ -2006,21 +2079,21 @@ export const getAdjecentSameOwner = async <R extends "u32" | "u64">(
 		numbers,
 		{
 			hash: range.hash,
+			excludeId: range.id,
 		},
 	);
 	const closestAbove = await closestAboveIterator.next(1);
 	closestAboveIterator.close();
-	return {
-		below:
-			range.idString === closestBelow[0]?.value.idString
-				? undefined
-				: closestBelow[0]?.value,
-		above:
-			closestBelow[0]?.id.primitive === closestAbove[0]?.id.primitive ||
-			range.idString === closestBelow[0]?.value.idString
-				? undefined
-				: closestAbove[0]?.value,
-	};
+	const below =
+		range.idString === closestBelow[0]?.value.idString
+			? undefined
+			: closestBelow[0]?.value;
+	const above =
+		range.idString === closestAbove[0]?.value.idString ||
+		below?.idString === closestAbove[0]?.value.idString
+			? undefined
+			: closestAbove[0]?.value;
+	return { below, above };
 };
 
 export const getAllMergeCandiates = async <R extends "u32" | "u64">(
@@ -2128,7 +2201,7 @@ export const getSamples = async <R extends "u32" | "u64">(
 	}
 
 	const now = +new Date();
-	let matured = 0;
+	const matureOwners = new Set<string>();
 
 	let uniqueVisited = new Set<string>();
 	const peerFilter = options?.peerFilter;
@@ -2146,10 +2219,10 @@ export const getSamples = async <R extends "u32" | "u64">(
 			}
 			uniqueVisited.add(rect.value.hash);
 			let prev = leaders.get(rect.value.hash);
+			if (isMatured(rect.value, now, roleAge)) {
+				matureOwners.add(rect.value.hash);
+			}
 			if (!prev) {
-				if (isMatured(rect.value, now, roleAge)) {
-					matured++;
-				}
 				leaders.set(rect.value.hash, { intersecting: true });
 			} else {
 				prev.intersecting = true;
@@ -2165,7 +2238,7 @@ export const getSamples = async <R extends "u32" | "u64">(
 			}
 		}
 
-		if (options?.onlyIntersecting || matured > i) {
+		if (options?.onlyIntersecting || matureOwners.size > i) {
 			continue;
 		}
 
@@ -2180,11 +2253,11 @@ export const getSamples = async <R extends "u32" | "u64">(
 				uniqueVisited.add(rect.hash);
 				const prev = leaders.get(rect.hash);
 				if (m) {
+					matureOwners.add(rect.hash);
 					if (!prev) {
-						matured++;
 						leaders.set(rect.hash, { intersecting: false });
 					}
-					if (matured > i) {
+					if (matureOwners.size > i) {
 						foundOneUniqueMatured = true;
 					}
 				}
@@ -2864,39 +2937,142 @@ const replicationRangeGeometryKey = <R extends NumericType>(
 // margin below SQLite's default expression-depth limit (1000), including the
 // nested comparisons needed for wrapped ranges.
 const MAX_REBALANCE_QUERY_RANGES = 128;
+const MAX_REBALANCE_TASKS_PER_PAGE = 8;
 
-type RebalanceOwnedInterval = {
+export type RebalanceQueryRange<R extends NumericType> = Readonly<{
+	start1: NumberFromType<R>;
+	end1: NumberFromType<R>;
+	start2: NumberFromType<R>;
+	end2: NumberFromType<R>;
+	mode: ReplicationIntent.Strict;
+}>;
+
+export type RebalanceOwnedInterval = Readonly<{
 	start: bigint;
 	end: bigint;
-	batch: number;
-};
+	geometryTask: number;
+}>;
 
-type RebalanceQueryPlan<R extends NumericType> = {
-	boundaryChanges?: ReplicationChange<ReplicationRangeIndexable<R>>[];
-	geometryBatches: ReplicationChange<ReplicationRangeIndexable<R>>[][];
-	ownedIntervals: RebalanceOwnedInterval[];
-};
+export type RebalanceHistoryMutation = Readonly<{
+	rangeHash: string;
+	present: boolean;
+}>;
 
-const createRebalanceQueryPlan = <R extends NumericType>(
-	changes: ReplicationChange<ReplicationRangeIndexable<R>>[],
-	includeBoundaryWhenEmpty: boolean,
-): RebalanceQueryPlan<R> => {
-	const boundarySource = changes.find(
-		(change) =>
-			change.rebalanceBoundaryOnly ||
-			change.range.mode === ReplicationIntent.NonStrict,
+/**
+ * Complete control-plane query geometry. Its size is proportional to the input
+ * range metadata; use task pages to bound query construction, not plan memory.
+ * @internal
+ */
+export type RebalanceScanPlan<R extends NumericType> = Readonly<{
+	boundary: boolean;
+	geometryRanges: readonly RebalanceQueryRange<R>[];
+	ownedIntervals: readonly RebalanceOwnedInterval[];
+	taskCount: number;
+	historyMutations: readonly RebalanceHistoryMutation[];
+}>;
+
+export type RebalanceScanTask<R extends NumericType> =
+	| Readonly<{
+			kind: "boundary";
+			ordinal: number;
+	  }>
+	| Readonly<{
+			kind: "geometry";
+			ordinal: number;
+			geometryTask: number;
+			ranges: readonly RebalanceQueryRange<R>[];
+	  }>;
+
+/**
+ * Ephemeral offset within one immutable plan. It is not a restart cursor: any
+ * durable executor must bind progress to an exact plan and placement view.
+ */
+export type RebalanceTaskCursor = Readonly<{ nextTask: number }>;
+
+export type RebalanceTaskPage<R extends NumericType> = Readonly<{
+	tasks: readonly RebalanceScanTask<R>[];
+	next?: RebalanceTaskCursor;
+}>;
+
+type RebalanceQueryGeometryPlan<R extends NumericType> = Pick<
+	RebalanceScanPlan<R>,
+	"boundary" | "geometryRanges" | "ownedIntervals" | "taskCount"
+>;
+
+const buildStrictQueryRangeDTOs = <R extends NumericType>(
+	segments: Array<[bigint, bigint]>,
+	template: ReplicationRangeIndexable<R>,
+): RebalanceQueryRange<R>[] => {
+	const merged = mergeBigIntSegments(
+		segments
+			.filter(([start, end]) => start < end)
+			.map(([start, end]) => [start, end]),
 	);
-	const boundaryChanges =
-		boundarySource || includeBoundaryWhenEmpty
-			? boundarySource
-				? [{ ...boundarySource, rebalanceBoundaryOnly: true }]
-				: []
-			: undefined;
+	if (merged.length === 0) {
+		return [];
+	}
+
+	const max = isU32Range(template) ? BigInt(MAX_U32) : MAX_U64;
+	const arcs: Array<{
+		first: [bigint, bigint];
+		second?: [bigint, bigint];
+	}> = [];
+	if (
+		merged.length > 1 &&
+		merged[0][0] === 0n &&
+		merged[merged.length - 1][1] === max
+	) {
+		// Preserve the historical seam-first order. Apart from compatibility, this
+		// keeps the two linear pieces of a wrapped query range in one task.
+		arcs.push({
+			first: merged[merged.length - 1],
+			second: merged[0],
+		});
+		for (let i = 1; i + 1 < merged.length; i++) {
+			arcs.push({ first: merged[i] });
+		}
+	} else {
+		for (const segment of merged) {
+			arcs.push({ first: segment });
+		}
+	}
+
+	return arcs.map(({ first, second }) => {
+		const [start1, end1] = toOriginalType(first, template);
+		const [start2, end2] = second
+			? toOriginalType(second, template)
+			: ([start1, end1] as [NumberFromType<R>, NumberFromType<R>]);
+		return {
+			start1,
+			end1,
+			start2,
+			end2,
+			mode: ReplicationIntent.Strict,
+		};
+	});
+};
+
+const createRebalanceQueryGeometryPlan = <R extends NumericType>(
+	changes: readonly ReplicationChange<ReplicationRangeIndexable<R>>[],
+	includeBoundaryWhenEmpty: boolean,
+): RebalanceQueryGeometryPlan<R> => {
+	const boundary =
+		includeBoundaryWhenEmpty ||
+		changes.some(
+			(change) =>
+				change.rebalanceBoundaryOnly ||
+				change.range.mode === ReplicationIntent.NonStrict,
+		);
 	const geometryChanges = changes.filter(
 		(change) => !change.rebalanceBoundaryOnly,
 	);
 	if (geometryChanges.length === 0) {
-		return { boundaryChanges, geometryBatches: [], ownedIntervals: [] };
+		return {
+			boundary,
+			geometryRanges: [],
+			ownedIntervals: [],
+			taskCount: boundary ? 1 : 0,
+		};
 	}
 
 	const template = geometryChanges[geometryChanges.length - 1];
@@ -2906,37 +3082,23 @@ const createRebalanceQueryPlan = <R extends NumericType>(
 			.filter(([start, end]) => start < end)
 			.map(([start, end]) => [start, end]),
 	);
-	const exactRanges = buildStrictQueryRanges(exactSegments, template.range);
-	const exactChanges: ReplicationChange<ReplicationRangeIndexable<R>>[] =
-		exactRanges.map((range) => ({
-			range,
-			type: "replaced",
-			timestamp: template.timestamp,
-		}));
-	const geometryBatches: ReplicationChange<ReplicationRangeIndexable<R>>[][] =
-		[];
-	for (
-		let offset = 0;
-		offset < exactChanges.length;
-		offset += MAX_REBALANCE_QUERY_RANGES
-	) {
-		geometryBatches.push(
-			exactChanges.slice(offset, offset + MAX_REBALANCE_QUERY_RANGES),
-		);
-	}
+	const geometryRanges = buildStrictQueryRangeDTOs(
+		exactSegments,
+		template.range,
+	);
 
 	// A row can contain coordinates in several query batches. Assign every exact
 	// linear interval to its batch up front so candidates can be de-duplicated with
 	// O(component-count) plan memory instead of an unbounded set of emitted hashes.
 	// The two linear pieces of a wrapped seam range inherit the same batch tag.
-	const ownedIntervals = exactRanges
+	const ownedIntervals = geometryRanges
 		.flatMap((range, rangeIndex) =>
 			toSegmentsBigInt(range)
 				.filter(([start, end]) => start < end)
 				.map(([start, end]) => ({
 					start,
 					end,
-					batch: Math.floor(rangeIndex / MAX_REBALANCE_QUERY_RANGES),
+					geometryTask: Math.floor(rangeIndex / MAX_REBALANCE_QUERY_RANGES),
 				})),
 		)
 		.sort((a, b) =>
@@ -2956,12 +3118,60 @@ const createRebalanceQueryPlan = <R extends NumericType>(
 		}
 	}
 
-	return { boundaryChanges, geometryBatches, ownedIntervals };
+	return {
+		boundary,
+		geometryRanges,
+		ownedIntervals,
+		taskCount:
+			(boundary ? 1 : 0) +
+			Math.ceil(geometryRanges.length / MAX_REBALANCE_QUERY_RANGES),
+	};
 };
 
-const findOwningRebalanceBatch = (
-	coordinates: Array<number | bigint>,
-	intervals: RebalanceOwnedInterval[],
+/**
+ * Bounds control-plane query construction only. A task can still match an
+ * arbitrary number of local rows, so executors must apply their own durable
+ * row/byte/time budgets while scanning it.
+ */
+export const getRebalanceScanTaskPage = <R extends NumericType>(
+	plan: RebalanceScanPlan<R>,
+	cursor?: RebalanceTaskCursor,
+): RebalanceTaskPage<R> => {
+	const start = cursor?.nextTask ?? 0;
+	if (!Number.isSafeInteger(start) || start < 0 || start > plan.taskCount) {
+		throw new Error("Invalid rebalance task cursor");
+	}
+
+	const end = Math.min(start + MAX_REBALANCE_TASKS_PER_PAGE, plan.taskCount);
+	const boundaryOffset = plan.boundary ? 1 : 0;
+	const tasks: RebalanceScanTask<R>[] = [];
+	for (let ordinal = start; ordinal < end; ordinal++) {
+		if (plan.boundary && ordinal === 0) {
+			tasks.push({ kind: "boundary", ordinal });
+			continue;
+		}
+		const geometryTask = ordinal - boundaryOffset;
+		const rangeOffset = geometryTask * MAX_REBALANCE_QUERY_RANGES;
+		tasks.push({
+			kind: "geometry",
+			ordinal,
+			geometryTask,
+			ranges: plan.geometryRanges.slice(
+				rangeOffset,
+				rangeOffset + MAX_REBALANCE_QUERY_RANGES,
+			),
+		});
+	}
+
+	return {
+		tasks,
+		next: end < plan.taskCount ? { nextTask: end } : undefined,
+	};
+};
+
+export const findOwningRebalanceTask = (
+	coordinates: readonly (number | bigint)[],
+	intervals: readonly RebalanceOwnedInterval[],
 ): number | undefined => {
 	let minimum: number | undefined;
 	for (const value of coordinates) {
@@ -2977,7 +3187,9 @@ const findOwningRebalanceBatch = (
 				low = middle + 1;
 			} else {
 				minimum =
-					minimum == null ? interval.batch : Math.min(minimum, interval.batch);
+					minimum == null
+						? interval.geometryTask
+						: Math.min(minimum, interval.geometryTask);
 				break;
 			}
 		}
@@ -2989,7 +3201,7 @@ const findOwningRebalanceBatch = (
 };
 
 const rotateRebalanceHistory = <R extends NumericType>(
-	changes: ReplicationChange<ReplicationRangeIndexable<R>>[],
+	changes: readonly ReplicationChange<ReplicationRangeIndexable<R>>[],
 	rebalanceHistory: Cache<string>,
 ) => {
 	// Only original source changes may enter history, and observed order defines
@@ -3003,12 +3215,24 @@ const rotateRebalanceHistory = <R extends NumericType>(
 	}
 };
 
-export const mergeReplicationChanges = <R extends NumericType>(
+const snapshotRebalanceHistory = (
+	rebalanceHistory: Cache<string>,
+): ReadonlySet<string> => {
+	// Expiration is a cache concern, not a planner concern. Resolve it once and
+	// give the pure planner a stable view for the complete plan.
+	rebalanceHistory.trim();
+	return new Set(
+		[...rebalanceHistory.map.keys()].filter(
+			(key): key is string => typeof key === "string",
+		),
+	);
+};
+
+const mergeReplicationChangesFromHistory = <R extends NumericType>(
 	changesOrChangesArr:
 		| ReplicationChanges<ReplicationRangeIndexable<R>>
 		| ReplicationChanges<ReplicationRangeIndexable<R>>[],
-	rebalanceHistory: Cache<string>,
-	options?: { updateHistory?: boolean },
+	rebalanceHistory: ReadonlySet<string>,
 ): ReplicationChange<ReplicationRangeIndexable<R>>[] => {
 	// Work from an immutable snapshot. In particular, synthetic difference ranges
 	// must never become input events or rebalance-history entries.
@@ -3214,10 +3438,62 @@ export const mergeReplicationChanges = <R extends NumericType>(
 			rebalanceBoundaryOnly: true,
 		});
 	}
+	return deduplicated;
+};
+
+export const mergeReplicationChanges = <R extends NumericType>(
+	changesOrChangesArr:
+		| ReplicationChanges<ReplicationRangeIndexable<R>>
+		| ReplicationChanges<ReplicationRangeIndexable<R>>[],
+	rebalanceHistory: Cache<string>,
+	options?: { updateHistory?: boolean },
+): ReplicationChange<ReplicationRangeIndexable<R>>[] => {
+	const changes = flattenReplicationChanges(changesOrChangesArr);
+	const merged = mergeReplicationChangesFromHistory(
+		changes,
+		snapshotRebalanceHistory(rebalanceHistory),
+	);
 	if (options?.updateHistory !== false) {
 		rotateRebalanceHistory(changes, rebalanceHistory);
 	}
-	return deduplicated;
+	return merged;
+};
+
+export const createRebalanceScanPlan = <R extends NumericType>(input: {
+	changes: readonly ReplicationChange<ReplicationRangeIndexable<R>>[];
+	history: ReadonlySet<string>;
+	forceFresh?: boolean;
+}): RebalanceScanPlan<R> => {
+	const sourceChanges = [...input.changes];
+	const queryChanges = input.forceFresh
+		? sourceChanges
+		: mergeReplicationChangesFromHistory(sourceChanges, input.history);
+	const geometry = createRebalanceQueryGeometryPlan(
+		queryChanges,
+		sourceChanges.length === 0,
+	);
+	return {
+		...geometry,
+		historyMutations: input.forceFresh
+			? []
+			: sourceChanges.map((change) => ({
+					rangeHash: change.range.rangeHash,
+					present: change.type === "added",
+				})),
+	};
+};
+
+const applyRebalanceHistoryMutations = (
+	mutations: readonly RebalanceHistoryMutation[],
+	rebalanceHistory: Cache<string>,
+) => {
+	for (const mutation of mutations) {
+		if (mutation.present) {
+			rebalanceHistory.add(mutation.rangeHash);
+		} else {
+			rebalanceHistory.del(mutation.rangeHash);
+		}
+	}
 };
 
 const REBALANCE_ITERATOR_BATCH_SIZE = 1048;
@@ -3231,85 +3507,80 @@ export const toRebalance = <R extends "u32" | "u64">(
 	options?: { forceFresh?: boolean },
 ): AsyncIterable<EntryReplicated<R>> => {
 	const sourceChanges = flattenReplicationChanges(changeOrChanges);
-	const queryChanges = options?.forceFresh
-		? sourceChanges
-		: mergeReplicationChanges(sourceChanges, rebalanceHistory, {
-				updateHistory: false,
-			});
-	const plan = createRebalanceQueryPlan(
-		queryChanges,
-		sourceChanges.length === 0,
-	);
+	const plan = createRebalanceScanPlan({
+		changes: sourceChanges,
+		history: options?.forceFresh
+			? new Set<string>()
+			: snapshotRebalanceHistory(rebalanceHistory),
+		forceFresh: options?.forceFresh,
+	});
 	return {
 		[Symbol.asyncIterator]: async function* () {
 			let completed = false;
 			try {
-				const passes: Array<{
-					changes: ReplicationChange<ReplicationRangeIndexable<R>>[];
-					geometryBatch?: number;
-				}> = [];
-				if (plan.boundaryChanges) {
-					passes.push({ changes: plan.boundaryChanges });
-				}
-				for (let batch = 0; batch < plan.geometryBatches.length; batch++) {
-					passes.push({
-						changes: plan.geometryBatches[batch],
-						geometryBatch: batch,
-					});
-				}
-
-				for (const pass of passes) {
-					const isGeometry = pass.geometryBatch != null;
-					const iterator = index.iterate({
-						query: createAssignedRangesQuery(pass.changes, {
-							strict: isGeometry,
-							includeBoundaryWhenEmpty: !isGeometry,
-						}),
-					});
-					let passCompleted = false;
-					try {
-						while (iterator.done() !== true) {
-							const entries = await iterator.next(
-								REBALANCE_ITERATOR_BATCH_SIZE,
-							);
-							if (entries.length === 0) {
-								break;
-							}
-							for (const entry of entries) {
-								if (isGeometry) {
-									if (
-										plan.boundaryChanges &&
-										entry.value.assignedToRangeBoundary
-									) {
-										continue;
-									}
-									if (
-										findOwningRebalanceBatch(
-											entry.value.coordinates,
-											plan.ownedIntervals,
-										) !== pass.geometryBatch
-									) {
-										continue;
-									}
+				let cursor: RebalanceTaskCursor | undefined;
+				for (;;) {
+					const page = getRebalanceScanTaskPage(plan, cursor);
+					for (const task of page.tasks) {
+						const isGeometry = task.kind === "geometry";
+						const iterator = index.iterate({
+							query: createAssignedRangesQuery(
+								isGeometry ? task.ranges.map((range) => ({ range })) : [],
+								{
+									strict: isGeometry,
+									includeBoundaryWhenEmpty: !isGeometry,
+								},
+							),
+						});
+						let taskCompleted = false;
+						try {
+							while (iterator.done() !== true) {
+								const entries = await iterator.next(
+									REBALANCE_ITERATOR_BATCH_SIZE,
+								);
+								if (entries.length === 0) {
+									break;
 								}
-								yield entry.value;
+								for (const entry of entries) {
+									if (isGeometry) {
+										if (plan.boundary && entry.value.assignedToRangeBoundary) {
+											continue;
+										}
+										if (
+											findOwningRebalanceTask(
+												entry.value.coordinates,
+												plan.ownedIntervals,
+											) !== task.geometryTask
+										) {
+											continue;
+										}
+									}
+									yield entry.value;
+								}
 							}
+							taskCompleted = iterator.done() === true;
+						} finally {
+							await iterator.close();
 						}
-						passCompleted = iterator.done() === true;
-					} finally {
-						await iterator.close();
+						if (!taskCompleted) {
+							return;
+						}
 					}
-					if (!passCompleted) {
-						return;
+					if (!page.next) {
+						break;
 					}
+					cursor = page.next;
 				}
 				completed = true;
 			} finally {
 				// An early consumer return, iterator error, incomplete empty batch, or
 				// close failure in any sequential pass must leave history untouched so the
 				// next event retries the complete query. forceFresh preserves its bypass.
-				if (completed && !options?.forceFresh) {
-					rotateRebalanceHistory(sourceChanges, rebalanceHistory);
+				if (completed) {
+					applyRebalanceHistoryMutations(
+						plan.historyMutations,
+						rebalanceHistory,
+					);
 				}
 			}
 		},

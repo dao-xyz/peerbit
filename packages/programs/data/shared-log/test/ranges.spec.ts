@@ -6,7 +6,7 @@ import {
 	type PublicSignKey,
 	randomBytes,
 } from "@peerbit/crypto";
-import type { Index } from "@peerbit/indexer-interface";
+import { type Index, Sort, StringMatch } from "@peerbit/indexer-interface";
 import { create as createIndices } from "@peerbit/indexer-sqlite3";
 import { LamportClock, Meta, ShallowMeta } from "@peerbit/log";
 import { expect } from "chai";
@@ -32,6 +32,7 @@ import {
 	getCoverSet as getCoverSetGeneric,
 	getDistance,
 	getSamples as getSamplesMap,
+	joinIterator,
 	mergeRanges,
 	mergeReplicationChanges,
 	toRebalance,
@@ -1028,6 +1029,28 @@ resolutions.forEach((resolution) => {
 							expect(adjecent.below?.idString).to.eq(below.idString);
 							expect(adjecent.above?.idString).to.eq(above.idString);
 						});
+
+						it("excludes a full-width range from its own adjacency", async () => {
+							const from = createReplicationRangeFromNormalized({
+								publicKey: a,
+								width: 1,
+								offset: (0.25 + rotation) % 1,
+								timestamp: 0n,
+							});
+							const neighbor = createReplicationRangeFromNormalized({
+								publicKey: a,
+								width: 0.1,
+								offset: (0.6 + rotation) % 1,
+								timestamp: 0n,
+							});
+							await create(from, neighbor);
+
+							const adjecent = await getAdjecentSameOwner(peers, from, numbers);
+							const ids = [adjecent.below, adjecent.above]
+								.filter((candidate) => candidate != null)
+								.map((candidate) => candidate.idString);
+							expect(ids).to.deep.equal([neighbor.idString]);
+						});
 					});
 				});
 			});
@@ -1446,6 +1469,43 @@ resolutions.forEach((resolution) => {
 					});
 				});
 
+				it("uses the native total order for an exact below-above tie", async () => {
+					const [lowerHashOwner, higherHashOwner] = [a, c].sort(
+						(left, right) => (left.hashcode() < right.hashcode() ? -1 : 1),
+					);
+					const below = createReplicationRange({
+						id: new Uint8Array([1]),
+						publicKey: higherHashOwner,
+						offset: 40,
+						width: 5,
+						timestamp: 0n,
+					});
+					const above = createReplicationRange({
+						id: new Uint8Array([2]),
+						publicKey: lowerHashOwner,
+						offset: 55,
+						width: 5,
+						timestamp: 0n,
+					});
+
+					for (const ranges of [
+						[below, above],
+						[above, below],
+					]) {
+						await create(...ranges);
+						const leaders = await getSamplesMap(
+							[coerceNumber(50)],
+							peers,
+							0,
+							numbers,
+						);
+
+						expect([...leaders.entries()]).to.deep.equal([
+							[lowerHashOwner.hashcode(), { intersecting: false }],
+						]);
+					}
+				});
+
 				it("factor 0 ", async () => {
 					await create(
 						createReplicationRangeFromNormalized({
@@ -1577,6 +1637,81 @@ resolutions.forEach((resolution) => {
 				});
 
 				describe("maturity", () => {
+					it("drains prefetched fallback rows before reporting done", async () => {
+						const point = 1000;
+						const ranges: ReplicationRangeIndexable<R>[] = [];
+						for (let distance = 1; distance <= 75; distance++) {
+							const timestamp =
+								distance === 75 ? 0n : BigInt(Date.now() + 60_000);
+							for (const [side, offset] of [
+								[0, point - distance - 1],
+								[1, point + distance],
+							] as const) {
+								ranges.push(
+									createReplicationRange({
+										id: new Uint8Array([side, distance]),
+										publicKey: distance === 75 ? a : b,
+										offset,
+										width: 1,
+										timestamp,
+									}),
+								);
+							}
+						}
+						await create(...ranges);
+
+						const leaders = await getSamplesMap(
+							[coerceNumber(point)],
+							peers,
+							1000,
+							numbers,
+						);
+						expect([...leaders.entries()]).to.deep.equal([
+							[a.hashcode(), { intersecting: false }],
+						]);
+					});
+
+					it("counts mature evidence for an existing owner in any input order", async () => {
+						for (const immatureFirst of [true, false]) {
+							const immature = createReplicationRange({
+								id: new Uint8Array([1]),
+								publicKey: a,
+								offset: 40,
+								width: 20,
+								timestamp: BigInt(Date.now() + 60_000),
+							});
+							const mature = createReplicationRange({
+								id: new Uint8Array([2]),
+								publicKey: a,
+								offset: 40,
+								width: 20,
+								timestamp: 0n,
+							});
+							const fallback = createReplicationRange({
+								id: new Uint8Array([3]),
+								publicKey: b,
+								offset: 70,
+								width: 10,
+								timestamp: 0n,
+							});
+							await create(
+								...(immatureFirst
+									? [immature, mature, fallback]
+									: [mature, immature, fallback]),
+							);
+
+							const leaders = await getSamplesMap(
+								[coerceNumber(50)],
+								peers,
+								100,
+								numbers,
+							);
+							expect([...leaders.entries()]).to.deep.equal([
+								[a.hashcode(), { intersecting: true }],
+							]);
+						}
+					});
+
 					it("starting at unmatured", async () => {
 						await create(
 							createReplicationRangeFromNormalized({
@@ -1713,6 +1848,13 @@ resolutions.forEach((resolution) => {
 			});
 
 			describe("getDistance", () => {
+				it("returns a typed zero for equality in every direction", () => {
+					for (const direction of ["above", "below", "closest"] as const) {
+						expect(getDistance(5, 5, direction, 10)).to.equal(0);
+						expect(getDistance(5n, 5n, direction, 10n)).to.equal(0n);
+					}
+				});
+
 				describe("above", () => {
 					it("immediate", () => {
 						expect(getDistance(0.5, 0.4, "above", 1)).to.be.closeTo(
@@ -1766,6 +1908,65 @@ resolutions.forEach((resolution) => {
 							0.0001,
 						);
 					});
+				});
+			});
+
+			describe("joinIterator", () => {
+				it("preserves buffered merge order across next then all", async () => {
+					const aNear = createReplicationRange({
+						id: new Uint8Array([10]),
+						publicKey: a,
+						offset: 10,
+						width: 1,
+						timestamp: 0n,
+					});
+					const aFar = createReplicationRange({
+						id: new Uint8Array([40]),
+						publicKey: a,
+						offset: 40,
+						width: 1,
+						timestamp: 0n,
+					});
+					const bNear = createReplicationRange({
+						id: new Uint8Array([20]),
+						publicKey: b,
+						offset: 20,
+						width: 1,
+						timestamp: 0n,
+					});
+					const bMiddle = createReplicationRange({
+						id: new Uint8Array([30]),
+						publicKey: b,
+						offset: 30,
+						width: 1,
+						timestamp: 0n,
+					});
+					await create(aNear, aFar, bNear, bMiddle);
+
+					const byOwner = (hash: string) =>
+						peers.iterate({
+							query: [new StringMatch({ key: "hash", value: hash })],
+							sort: [new Sort({ key: "start1", direction: "asc" })],
+						});
+					const iterator = joinIterator(
+						[byOwner(a.hashcode()), byOwner(b.hashcode())],
+						numbers.zero,
+						"above",
+						numbers,
+					);
+					try {
+						const first = await iterator.next(1);
+						const remaining = await iterator.all();
+						expect(
+							[...first, ...remaining].map((result) => result.value.idString),
+						).to.deep.equal(
+							[aNear, bNear, bMiddle, aFar].map((range) => range.idString),
+						);
+						expect(iterator.done()).to.be.true;
+						expect(await iterator.pending()).to.equal(0);
+					} finally {
+						await iterator.close();
+					}
 				});
 			});
 

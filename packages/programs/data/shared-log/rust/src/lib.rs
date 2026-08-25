@@ -2,7 +2,11 @@ use indexmap::{IndexMap, IndexSet};
 use js_sys::{Array, BigUint64Array, Uint8Array};
 use sha2::{Digest, Sha256};
 use std::cmp::Ordering;
+use std::collections::btree_map::Range as BTreeMapRange;
+use std::collections::btree_set::Iter as BTreeSetIter;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::ops::Bound::{Excluded, Unbounded};
+use std::ops::ControlFlow;
 use wasm_bindgen::prelude::*;
 
 mod error;
@@ -13,6 +17,13 @@ const MODE_NON_STRICT: u8 = 0;
 const MAX_U32: u64 = u32::MAX as u64;
 const MAX_U64: u64 = u64::MAX;
 const CONTAINMENT_BUCKETS: usize = 4096;
+const MAX_CONTAINMENT_BUCKETS_PER_RANGE: usize = 8;
+// Releasing capacity after every removal would turn ordinary churn into repeated
+// reallocations. Compact only after a set retains more than twice its live rows
+// plus a small burst allowance; after shrinking, proportionate churn is needed
+// before another compaction.
+const CONTAINMENT_RETAINED_CAPACITY_RATIO: usize = 2;
+const CONTAINMENT_RETAINED_CAPACITY_SLACK: usize = 8;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Resolution {
@@ -138,67 +149,97 @@ pub struct SampleOptions {
     pub peer_filter: Option<HashSet<String>>,
 }
 
+#[derive(Clone, Debug)]
+struct IndexedReplicationRange {
+    range: ReplicationRange,
+    containment_put_order: u64,
+}
+
 pub struct RangePlanner {
     resolution: Resolution,
-    ranges: IndexMap<String, ReplicationRange>,
-    by_start1: BTreeSet<RangeIndexKey>,
-    by_end2: BTreeSet<RangeIndexKey>,
+    ranges: IndexMap<String, IndexedReplicationRange>,
+    by_start1: BTreeMap<u64, EndpointGroup>,
+    by_end2: BTreeMap<u64, EndpointGroup>,
     containment_buckets: Vec<IndexSet<String>>,
+    wide_containment_ranges: IndexSet<String>,
+    next_containment_put_order: u64,
     peer_ranges: IndexMap<String, PeerRangeStats>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct NarrowContainmentBuckets {
+    values: [usize; MAX_CONTAINMENT_BUCKETS_PER_RANGE],
+    len: usize,
+}
+
+impl NarrowContainmentBuckets {
+    fn new() -> Self {
+        Self {
+            values: [0; MAX_CONTAINMENT_BUCKETS_PER_RANGE],
+            len: 0,
+        }
+    }
+
+    fn insert(&mut self, bucket: usize) {
+        if self.as_slice().contains(&bucket) {
+            return;
+        }
+        assert!(
+            self.len < MAX_CONTAINMENT_BUCKETS_PER_RANGE,
+            "narrow containment bucket count exceeds its fixed capacity"
+        );
+        self.values[self.len] = bucket;
+        self.len += 1;
+    }
+
+    fn as_slice(&self) -> &[usize] {
+        &self.values[..self.len]
+    }
+
+    fn iter(&self) -> impl Iterator<Item = usize> + '_ {
+        self.as_slice().iter().copied()
+    }
+}
+
+impl FromIterator<usize> for NarrowContainmentBuckets {
+    fn from_iter<T: IntoIterator<Item = usize>>(iter: T) -> Self {
+        let mut buckets = Self::new();
+        for bucket in iter {
+            buckets.insert(bucket);
+        }
+        buckets.values[..buckets.len].sort_unstable();
+        buckets
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum ContainmentIndexLocation {
+    None,
+    Narrow(NarrowContainmentBuckets),
+    Wide,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct RangeIndexKey {
-    value: u64,
     timestamp: u64,
     hash: String,
     id: String,
 }
 
 impl RangeIndexKey {
-    fn start(range: &ReplicationRange) -> Self {
+    fn from_range(range: &ReplicationRange) -> Self {
         Self {
-            value: range.start1,
             timestamp: range.timestamp,
             hash: range.hash.clone(),
             id: range.id.clone(),
-        }
-    }
-
-    fn end(range: &ReplicationRange) -> Self {
-        Self {
-            value: range.end2,
-            timestamp: range.timestamp,
-            hash: range.hash.clone(),
-            id: range.id.clone(),
-        }
-    }
-
-    fn min_at(value: u64) -> Self {
-        Self {
-            value,
-            timestamp: 0,
-            hash: String::new(),
-            id: String::new(),
-        }
-    }
-
-    fn max_at(value: u64) -> Self {
-        let max_string = char::MAX.to_string();
-        Self {
-            value,
-            timestamp: u64::MAX,
-            hash: max_string.clone(),
-            id: max_string,
         }
     }
 }
 
 impl Ord for RangeIndexKey {
     fn cmp(&self, other: &Self) -> Ordering {
-        self.value
-            .cmp(&other.value)
-            .then_with(|| self.timestamp.cmp(&other.timestamp))
+        self.timestamp
+            .cmp(&other.timestamp)
             .then_with(|| self.hash.cmp(&other.hash))
             .then_with(|| self.id.cmp(&other.id))
     }
@@ -207,6 +248,277 @@ impl Ord for RangeIndexKey {
 impl PartialOrd for RangeIndexKey {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
+    }
+}
+
+#[derive(Debug, Eq, PartialEq)]
+enum EndpointGroup {
+    One(RangeIndexKey),
+    Many(BTreeSet<RangeIndexKey>),
+}
+
+impl EndpointGroup {
+    fn new(key: RangeIndexKey) -> Self {
+        Self::One(key)
+    }
+
+    fn insert(&mut self, key: RangeIndexKey) {
+        match self {
+            Self::One(existing) if existing == &key => {}
+            Self::One(existing) => {
+                let mut keys = BTreeSet::new();
+                keys.insert(existing.clone());
+                let inserted = keys.insert(key);
+                debug_assert!(inserted);
+                *self = Self::Many(keys);
+            }
+            Self::Many(keys) => {
+                keys.insert(key);
+            }
+        }
+    }
+
+    /// Remove `key`, returning whether the outer coordinate entry is empty and
+    /// should be deleted. A stored group is always either one key or many keys.
+    fn remove(&mut self, key: &RangeIndexKey) -> bool {
+        match self {
+            Self::One(existing) => existing == key,
+            Self::Many(keys) => {
+                if !keys.remove(key) {
+                    return false;
+                }
+                match keys.len() {
+                    0 => return true,
+                    1 => {
+                        let remaining = keys
+                            .pop_first()
+                            .expect("one endpoint key remains after removal");
+                        *self = Self::One(remaining);
+                    }
+                    _ => {}
+                }
+                false
+            }
+        }
+    }
+
+    #[cfg(test)]
+    fn len(&self) -> usize {
+        match self {
+            Self::One(_) => 1,
+            Self::Many(keys) => keys.len(),
+        }
+    }
+
+    fn iter(&self) -> EndpointGroupIter<'_> {
+        match self {
+            Self::One(key) => EndpointGroupIter::One(Some(key)),
+            Self::Many(keys) => EndpointGroupIter::Many(keys.iter()),
+        }
+    }
+}
+
+enum EndpointGroupIter<'a> {
+    One(Option<&'a RangeIndexKey>),
+    Many(BTreeSetIter<'a, RangeIndexKey>),
+}
+
+impl<'a> Iterator for EndpointGroupIter<'a> {
+    type Item = &'a RangeIndexKey;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match self {
+            Self::One(key) => key.take(),
+            Self::Many(keys) => keys.next(),
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+enum FallbackCoordinateOrder {
+    Ascending,
+    Descending,
+}
+
+struct FallbackKeyStream<'a> {
+    primary: BTreeMapRange<'a, u64, EndpointGroup>,
+    wrap: BTreeMapRange<'a, u64, EndpointGroup>,
+    order: FallbackCoordinateOrder,
+    metadata: Option<EndpointGroupIter<'a>>,
+    head: Option<&'a RangeIndexKey>,
+    #[cfg(test)]
+    key_advances: usize,
+}
+
+impl<'a> FallbackKeyStream<'a> {
+    fn ascending(index: &'a BTreeMap<u64, EndpointGroup>, point: u64, max_value: u64) -> Self {
+        if point == max_value {
+            // circular_distance aliases 0 and MAX. At MAX, descending exposes
+            // MAX while this stream exposes 0 so metadata can break the tie.
+            Self::new(
+                index.range(..point),
+                index.range(point..),
+                FallbackCoordinateOrder::Ascending,
+            )
+        } else {
+            Self::new(
+                index.range(point..),
+                index.range(..point),
+                FallbackCoordinateOrder::Ascending,
+            )
+        }
+    }
+
+    fn descending(index: &'a BTreeMap<u64, EndpointGroup>, point: u64) -> Self {
+        if point == 0 {
+            // At 0, ascending exposes 0 while this stream exposes MAX.
+            Self::new(
+                index.range((Excluded(point), Unbounded)),
+                index.range(..=point),
+                FallbackCoordinateOrder::Descending,
+            )
+        } else {
+            Self::new(
+                index.range(..=point),
+                index.range((Excluded(point), Unbounded)),
+                FallbackCoordinateOrder::Descending,
+            )
+        }
+    }
+
+    fn new(
+        primary: BTreeMapRange<'a, u64, EndpointGroup>,
+        wrap: BTreeMapRange<'a, u64, EndpointGroup>,
+        order: FallbackCoordinateOrder,
+    ) -> Self {
+        Self {
+            primary,
+            wrap,
+            order,
+            metadata: None,
+            head: None,
+            #[cfg(test)]
+            key_advances: 0,
+        }
+    }
+
+    fn next_coordinate_group(&mut self) -> Option<&'a EndpointGroup> {
+        let row = match self.order {
+            FallbackCoordinateOrder::Ascending => self.primary.next().or_else(|| self.wrap.next()),
+            FallbackCoordinateOrder::Descending => {
+                self.primary.next_back().or_else(|| self.wrap.next_back())
+            }
+        };
+        row.map(|(_, metadata)| metadata)
+    }
+
+    fn next_key(&mut self) -> Option<&'a RangeIndexKey> {
+        loop {
+            if let Some(metadata) = &mut self.metadata {
+                if let Some(key) = metadata.next() {
+                    #[cfg(test)]
+                    {
+                        self.key_advances += 1;
+                    }
+                    return Some(key);
+                }
+            }
+            self.metadata = Some(self.next_coordinate_group()?.iter());
+        }
+    }
+
+    fn peek_candidate(
+        &mut self,
+        planner: &'a RangePlanner,
+        peer_filter: Option<&HashSet<String>>,
+        seen_ids: &HashSet<&str>,
+    ) -> Option<&'a ReplicationRange> {
+        loop {
+            if let Some(key) = self.head {
+                if let Some(range) = planner.candidate_from_key(key, peer_filter, seen_ids) {
+                    return Some(range);
+                }
+                self.head = None;
+            }
+            let key = self.next_key()?;
+            self.head = Some(key);
+        }
+    }
+}
+
+struct FallbackCandidateStreams<'a> {
+    streams: [FallbackKeyStream<'a>; 4],
+    seen_ids: HashSet<&'a str>,
+    point: u64,
+    max_value: u64,
+    #[cfg(test)]
+    candidate_head_visits: usize,
+}
+
+impl<'a> FallbackCandidateStreams<'a> {
+    fn new(planner: &'a RangePlanner, point: u64) -> Self {
+        let max_value = planner.resolution.max_value();
+        Self {
+            streams: [
+                FallbackKeyStream::ascending(&planner.by_start1, point, max_value),
+                FallbackKeyStream::descending(&planner.by_start1, point),
+                FallbackKeyStream::ascending(&planner.by_end2, point, max_value),
+                FallbackKeyStream::descending(&planner.by_end2, point),
+            ],
+            seen_ids: HashSet::new(),
+            point,
+            max_value,
+            #[cfg(test)]
+            candidate_head_visits: 0,
+        }
+    }
+
+    fn pop_closest(
+        &mut self,
+        planner: &'a RangePlanner,
+        peer_filter: Option<&HashSet<String>>,
+    ) -> Option<&'a ReplicationRange> {
+        let mut best: Option<&ReplicationRange> = None;
+        #[cfg(test)]
+        let mut candidate_head_visits = 0usize;
+
+        for stream in &mut self.streams {
+            let Some(range) = stream.peek_candidate(planner, peer_filter, &self.seen_ids) else {
+                continue;
+            };
+            #[cfg(test)]
+            {
+                candidate_head_visits += 1;
+            }
+            if best.is_none_or(|previous| {
+                compare_closest(range, previous, self.point, self.max_value) == Ordering::Less
+            }) {
+                best = Some(range);
+            }
+        }
+
+        #[cfg(test)]
+        {
+            self.candidate_head_visits += candidate_head_visits;
+        }
+        let best = best?;
+        self.seen_ids.insert(best.id.as_str());
+        Some(best)
+    }
+
+    #[cfg(test)]
+    fn key_advances(&self) -> usize {
+        self.streams.iter().map(|stream| stream.key_advances).sum()
+    }
+
+    #[cfg(test)]
+    fn candidate_head_visits(&self) -> usize {
+        self.candidate_head_visits
+    }
+
+    #[cfg(test)]
+    fn emitted_count(&self) -> usize {
+        self.seen_ids.len()
     }
 }
 
@@ -291,9 +603,11 @@ impl RangePlanner {
         Self {
             resolution: Resolution::from_str(resolution),
             ranges: IndexMap::new(),
-            by_start1: BTreeSet::new(),
-            by_end2: BTreeSet::new(),
+            by_start1: BTreeMap::new(),
+            by_end2: BTreeMap::new(),
             containment_buckets: vec![IndexSet::new(); CONTAINMENT_BUCKETS],
+            wide_containment_ranges: IndexSet::new(),
+            next_containment_put_order: 0,
             peer_ranges: IndexMap::new(),
         }
     }
@@ -311,27 +625,72 @@ impl RangePlanner {
         self.by_start1.clear();
         self.by_end2.clear();
         for bucket in &mut self.containment_buckets {
-            bucket.clear();
+            *bucket = IndexSet::new();
         }
+        self.wide_containment_ranges = IndexSet::new();
+        self.next_containment_put_order = 0;
         self.peer_ranges.clear();
     }
 
     pub fn put(&mut self, range: ReplicationRange) {
-        if let Some(previous) = self.ranges.get(&range.id).cloned() {
+        if let Some(previous) = self
+            .ranges
+            .get(&range.id)
+            .map(|indexed| indexed.range.clone())
+        {
             self.unindex_range(&previous);
         }
+        let containment_put_order = self.allocate_containment_put_order();
         self.index_range(&range);
-        self.ranges.insert(range.id.clone(), range);
+        self.ranges.insert(
+            range.id.clone(),
+            IndexedReplicationRange {
+                range,
+                containment_put_order,
+            },
+        );
     }
 
     pub fn delete(&mut self, id: &str) -> bool {
         match self.ranges.swap_remove(id) {
-            Some(range) => {
-                self.unindex_range(&range);
+            Some(indexed) => {
+                self.unindex_range(&indexed.range);
                 true
             }
             None => false,
         }
+    }
+
+    fn allocate_containment_put_order(&mut self) -> u64 {
+        if self.next_containment_put_order == u64::MAX {
+            self.rebase_containment_put_order();
+        }
+        let order = self.next_containment_put_order;
+        self.next_containment_put_order = order
+            .checked_add(1)
+            .expect("rebased containment put order must have spare capacity");
+        order
+    }
+
+    fn rebase_containment_put_order(&mut self) {
+        let mut indexes: Vec<usize> = (0..self.ranges.len()).collect();
+        indexes.sort_unstable_by_key(|index| {
+            self.ranges
+                .get_index(*index)
+                .expect("containment put-order index")
+                .1
+                .containment_put_order
+        });
+        for (order, index) in indexes.into_iter().enumerate() {
+            self.ranges
+                .get_index_mut(index)
+                .expect("containment put-order index")
+                .1
+                .containment_put_order =
+                u64::try_from(order).expect("range count must fit containment put order");
+        }
+        self.next_containment_put_order =
+            u64::try_from(self.ranges.len()).expect("range count must fit containment put order");
     }
 
     /// Materialize owners only when full-replica expansion can actually apply;
@@ -361,35 +720,36 @@ impl RangePlanner {
     /// matches append in closest-distance order. The TypeScript getSamples
     /// inherits unordered sqlite results behind a timing-driven index picker,
     /// so identical calls can answer in different orders there; downstream
-    /// consumers must only rely on membership.
+    /// consumers must only rely on membership. With P caller-side peer
+    /// preparation work, C cursors, K containment candidates per cursor, and N
+    /// fallback-indexed ranges, selection is O(P + C * (K + 4N)): each cursor's
+    /// four endpoint streams advance every fallback key at most once.
     pub fn get_samples(&self, cursors: &[u64], options: &SampleOptions) -> Vec<LeaderSample> {
         let mut leaders: IndexMap<String, bool> = IndexMap::new();
-        let mut matured = 0usize;
+        let mut mature_owners: HashSet<String> = HashSet::new();
         let mut unique_visited: IndexSet<String> = IndexSet::new();
 
         for (i, point) in cursors.iter().copied().enumerate() {
-            for id in self.containment_buckets[self.resolution.containment_bucket(point)].iter() {
-                let Some(range) = self.ranges.get(id) else {
-                    continue;
-                };
+            let _: Option<()> = self.visit_containment_candidates(point, |range| {
                 if !self.include_range(range, options.peer_filter.as_ref())
                     || !range.contains(point)
                 {
-                    continue;
+                    return ControlFlow::Continue(());
                 }
                 unique_visited.insert(range.hash.clone());
+                if range.is_matured(options.now, options.role_age_ms) {
+                    mature_owners.insert(range.hash.clone());
+                }
                 match leaders.get_mut(&range.hash) {
                     Some(intersecting) => {
                         *intersecting = true;
                     }
                     None => {
-                        if range.is_matured(options.now, options.role_age_ms) {
-                            matured += 1;
-                        }
                         leaders.insert(range.hash.clone(), true);
                     }
                 }
-            }
+                ControlFlow::Continue(())
+            });
 
             if let Some(unique_replicators) = &options.unique_replicators {
                 if !unique_replicators.is_empty()
@@ -400,24 +760,21 @@ impl RangePlanner {
                 }
             }
 
-            if options.only_intersecting || matured > i {
+            if options.only_intersecting || mature_owners.len() > i {
                 continue;
             }
 
-            let mut seen_closest_ids = HashSet::new();
-            while let Some(range) =
-                self.closest_non_strict(point, options.peer_filter.as_ref(), &seen_closest_ids)
-            {
-                seen_closest_ids.insert(range.id.clone());
+            let mut fallback = FallbackCandidateStreams::new(self, point);
+            while let Some(range) = fallback.pop_closest(self, options.peer_filter.as_ref()) {
                 unique_visited.insert(range.hash.clone());
                 if !range.is_matured(options.now, options.role_age_ms) {
                     continue;
                 }
+                mature_owners.insert(range.hash.clone());
                 if !leaders.contains_key(&range.hash) {
-                    matured += 1;
                     leaders.insert(range.hash.clone(), false);
                 }
-                if matured > i {
+                if mature_owners.len() > i {
                     break;
                 }
             }
@@ -436,28 +793,30 @@ impl RangePlanner {
         target_hash: &str,
     ) -> bool {
         let mut leaders: HashSet<String> = HashSet::new();
-        let mut matured = 0usize;
+        let mut mature_owners: HashSet<String> = HashSet::new();
         let mut unique_visited: HashSet<String> = HashSet::new();
 
         for (i, point) in cursors.iter().copied().enumerate() {
-            for id in self.containment_buckets[self.resolution.containment_bucket(point)].iter() {
-                let Some(range) = self.ranges.get(id) else {
-                    continue;
-                };
-                if !self.include_range(range, options.peer_filter.as_ref())
-                    || !range.contains(point)
-                {
-                    continue;
-                }
-                if range.hash == target_hash {
-                    return true;
-                }
-                unique_visited.insert(range.hash.clone());
-                if leaders.insert(range.hash.clone())
-                    && range.is_matured(options.now, options.role_age_ms)
-                {
-                    matured += 1;
-                }
+            let found_target = self
+                .visit_containment_candidates(point, |range| {
+                    if !self.include_range(range, options.peer_filter.as_ref())
+                        || !range.contains(point)
+                    {
+                        return ControlFlow::Continue(());
+                    }
+                    if range.hash == target_hash {
+                        return ControlFlow::Break(());
+                    }
+                    unique_visited.insert(range.hash.clone());
+                    if range.is_matured(options.now, options.role_age_ms) {
+                        mature_owners.insert(range.hash.clone());
+                    }
+                    leaders.insert(range.hash.clone());
+                    ControlFlow::Continue(())
+                })
+                .is_some();
+            if found_target {
+                return true;
             }
 
             if let Some(unique_replicators) = &options.unique_replicators {
@@ -469,15 +828,12 @@ impl RangePlanner {
                 }
             }
 
-            if options.only_intersecting || matured > i {
+            if options.only_intersecting || mature_owners.len() > i {
                 continue;
             }
 
-            let mut seen_closest_ids = HashSet::new();
-            while let Some(range) =
-                self.closest_non_strict(point, options.peer_filter.as_ref(), &seen_closest_ids)
-            {
-                seen_closest_ids.insert(range.id.clone());
+            let mut fallback = FallbackCandidateStreams::new(self, point);
+            while let Some(range) = fallback.pop_closest(self, options.peer_filter.as_ref()) {
                 if range.hash == target_hash && range.is_matured(options.now, options.role_age_ms) {
                     return true;
                 }
@@ -485,10 +841,9 @@ impl RangePlanner {
                 if !range.is_matured(options.now, options.role_age_ms) {
                     continue;
                 }
-                if leaders.insert(range.hash.clone()) {
-                    matured += 1;
-                }
-                if matured > i {
+                mature_owners.insert(range.hash.clone());
+                leaders.insert(range.hash.clone());
+                if mature_owners.len() > i {
                     break;
                 }
             }
@@ -679,8 +1034,9 @@ impl RangePlanner {
 
     fn index_range(&mut self, range: &ReplicationRange) {
         if Self::is_fallback_indexed(range) {
-            self.by_start1.insert(RangeIndexKey::start(range));
-            self.by_end2.insert(RangeIndexKey::end(range));
+            let key = RangeIndexKey::from_range(range);
+            Self::index_fallback_endpoint(&mut self.by_start1, range.start1, key.clone());
+            Self::index_fallback_endpoint(&mut self.by_end2, range.end2, key);
         }
         if Self::is_containment_indexed(range) {
             self.index_containment_range(range);
@@ -693,8 +1049,9 @@ impl RangePlanner {
 
     fn unindex_range(&mut self, range: &ReplicationRange) {
         if Self::is_fallback_indexed(range) {
-            self.by_start1.remove(&RangeIndexKey::start(range));
-            self.by_end2.remove(&RangeIndexKey::end(range));
+            let key = RangeIndexKey::from_range(range);
+            Self::unindex_fallback_endpoint(&mut self.by_start1, range.start1, &key);
+            Self::unindex_fallback_endpoint(&mut self.by_end2, range.end2, &key);
         }
         if Self::is_containment_indexed(range) {
             self.unindex_containment_range(range);
@@ -707,149 +1064,232 @@ impl RangePlanner {
         }
     }
 
+    fn index_fallback_endpoint(
+        index: &mut BTreeMap<u64, EndpointGroup>,
+        coordinate: u64,
+        key: RangeIndexKey,
+    ) {
+        match index.entry(coordinate) {
+            std::collections::btree_map::Entry::Vacant(entry) => {
+                entry.insert(EndpointGroup::new(key));
+            }
+            std::collections::btree_map::Entry::Occupied(mut entry) => {
+                entry.get_mut().insert(key);
+            }
+        }
+    }
+
+    fn unindex_fallback_endpoint(
+        index: &mut BTreeMap<u64, EndpointGroup>,
+        coordinate: u64,
+        key: &RangeIndexKey,
+    ) {
+        let remove_coordinate = index
+            .get_mut(&coordinate)
+            .is_some_and(|group| group.remove(key));
+        if remove_coordinate {
+            index.remove(&coordinate);
+        }
+    }
+
     fn index_containment_range(&mut self, range: &ReplicationRange) {
-        self.index_containment_interval(&range.id, range.start1, range.end1);
-        self.index_containment_interval(&range.id, range.start2, range.end2);
+        match self.containment_index_location(range) {
+            ContainmentIndexLocation::None => {}
+            ContainmentIndexLocation::Narrow(buckets) => {
+                for bucket in buckets.iter() {
+                    let ranges = &mut self.containment_buckets[bucket];
+                    ranges.insert(range.id.clone());
+                    Self::compact_containment_set(ranges);
+                }
+            }
+            ContainmentIndexLocation::Wide => {
+                self.wide_containment_ranges.insert(range.id.clone());
+                Self::compact_containment_set(&mut self.wide_containment_ranges);
+            }
+        }
     }
 
     fn unindex_containment_range(&mut self, range: &ReplicationRange) {
-        self.unindex_containment_interval(&range.id, range.start1, range.end1);
-        self.unindex_containment_interval(&range.id, range.start2, range.end2);
+        match self.containment_index_location(range) {
+            ContainmentIndexLocation::None => {}
+            ContainmentIndexLocation::Narrow(buckets) => {
+                for bucket in buckets.iter() {
+                    let ranges = &mut self.containment_buckets[bucket];
+                    ranges.shift_remove(&range.id);
+                    Self::compact_containment_set(ranges);
+                }
+            }
+            ContainmentIndexLocation::Wide => {
+                self.wide_containment_ranges.shift_remove(&range.id);
+                Self::compact_containment_set(&mut self.wide_containment_ranges);
+            }
+        }
     }
 
-    fn index_containment_interval(&mut self, id: &str, start: u64, end: u64) {
-        if start >= end {
+    fn compact_containment_set(set: &mut IndexSet<String>) {
+        if set.is_empty() {
+            // IndexSet::clear retains its allocation, which lets bucket migration
+            // retain the peak population independently in every emptied bucket.
+            *set = IndexSet::new();
             return;
+        }
+
+        let max_retained_capacity = set
+            .len()
+            .saturating_mul(CONTAINMENT_RETAINED_CAPACITY_RATIO)
+            .saturating_add(CONTAINMENT_RETAINED_CAPACITY_SLACK);
+        if set.capacity() > max_retained_capacity {
+            set.shrink_to(set.len());
+        }
+        debug_assert!(set.capacity() <= max_retained_capacity);
+    }
+
+    fn containment_bucket_interval(&self, start: u64, end: u64) -> Option<(usize, usize)> {
+        if start >= end {
+            return None;
         }
         let first = self.resolution.containment_bucket(start);
         let last = self.resolution.containment_bucket(end - 1);
-        for bucket in first..=last {
-            self.containment_buckets[bucket].insert(id.to_string());
-        }
+        Some((first, last))
     }
 
-    fn unindex_containment_interval(&mut self, id: &str, start: u64, end: u64) {
-        if start >= end {
-            return;
+    fn containment_index_location(&self, range: &ReplicationRange) -> ContainmentIndexLocation {
+        let first = self.containment_bucket_interval(range.start1, range.end1);
+        let second = self.containment_bucket_interval(range.start2, range.end2);
+        let unique_bucket_count = match (first, second) {
+            (None, None) => return ContainmentIndexLocation::None,
+            (Some((start, end)), None) | (None, Some((start, end))) => end - start + 1,
+            (Some((first_start, first_end)), Some((second_start, second_end))) => {
+                let first_count = first_end - first_start + 1;
+                let second_count = second_end - second_start + 1;
+                let overlap_start = first_start.max(second_start);
+                let overlap_end = first_end.min(second_end);
+                let overlap = if overlap_start <= overlap_end {
+                    overlap_end - overlap_start + 1
+                } else {
+                    0
+                };
+                first_count + second_count - overlap
+            }
+        };
+
+        if unique_bucket_count > MAX_CONTAINMENT_BUCKETS_PER_RANGE {
+            return ContainmentIndexLocation::Wide;
         }
-        let first = self.resolution.containment_bucket(start);
-        let last = self.resolution.containment_bucket(end - 1);
-        for bucket in first..=last {
-            self.containment_buckets[bucket].shift_remove(id);
+
+        let buckets: NarrowContainmentBuckets = [first, second]
+            .into_iter()
+            .flatten()
+            .flat_map(|(start, end)| start..=end)
+            .collect();
+        debug_assert_eq!(buckets.as_slice().len(), unique_bucket_count);
+        ContainmentIndexLocation::Narrow(buckets)
+    }
+
+    fn visit_containment_candidates<B>(
+        &self,
+        point: u64,
+        mut visit: impl FnMut(&ReplicationRange) -> ControlFlow<B>,
+    ) -> Option<B> {
+        let narrow = &self.containment_buckets[self.resolution.containment_bucket(point)];
+        let wide = &self.wide_containment_ranges;
+        let mut narrow_ranges = narrow.iter().map(|id| {
+            self.ranges
+                .get(id)
+                .expect("narrow containment range is indexed")
+        });
+        let mut wide_ranges = wide.iter().map(|id| {
+            self.ranges
+                .get(id)
+                .expect("wide containment range is indexed")
+        });
+        let mut narrow_head = narrow_ranges.next();
+        let mut wide_head = wide_ranges.next();
+
+        macro_rules! visit_and_advance {
+            ($range:expr, $head:ident, $ranges:ident) => {
+                if let ControlFlow::Break(value) = visit(&$range.range) {
+                    return Some(value);
+                }
+                $head = $ranges.next();
+            };
         }
+
+        loop {
+            match (narrow_head, wide_head) {
+                (Some(narrow_range), Some(wide_range))
+                    if narrow_range.containment_put_order < wide_range.containment_put_order =>
+                {
+                    visit_and_advance!(narrow_range, narrow_head, narrow_ranges);
+                }
+                (Some(_), Some(wide_range)) | (None, Some(wide_range)) => {
+                    visit_and_advance!(wide_range, wide_head, wide_ranges);
+                }
+                (Some(narrow_range), None) => {
+                    visit_and_advance!(narrow_range, narrow_head, narrow_ranges);
+                }
+                (None, None) => break,
+            }
+        }
+        None
+    }
+
+    #[cfg(test)]
+    fn containment_live_reference_count(&self) -> usize {
+        self.wide_containment_ranges.len()
+            + self
+                .containment_buckets
+                .iter()
+                .map(IndexSet::len)
+                .sum::<usize>()
+    }
+
+    #[cfg(test)]
+    fn containment_retained_capacity(&self) -> usize {
+        self.wide_containment_ranges.capacity()
+            + self
+                .containment_buckets
+                .iter()
+                .map(IndexSet::capacity)
+                .sum::<usize>()
+    }
+
+    #[cfg(test)]
+    fn nonempty_containment_set_count(&self) -> usize {
+        usize::from(!self.wide_containment_ranges.is_empty())
+            + self
+                .containment_buckets
+                .iter()
+                .filter(|bucket| !bucket.is_empty())
+                .count()
     }
 
     fn candidate_from_key(
         &self,
         key: &RangeIndexKey,
         peer_filter: Option<&HashSet<String>>,
-        seen_ids: &HashSet<String>,
+        seen_ids: &HashSet<&str>,
     ) -> Option<&ReplicationRange> {
-        if seen_ids.contains(&key.id) {
+        if seen_ids.contains(key.id.as_str())
+            || peer_filter.is_some_and(|filter| !filter.contains(&key.hash))
+        {
             return None;
         }
-        let range = self.ranges.get(&key.id)?;
+        let range = &self.ranges.get(&key.id)?.range;
         if !self.include_range(range, peer_filter) || range.mode != MODE_NON_STRICT {
             return None;
         }
+        debug_assert_eq!(range.hash, key.hash);
         Some(range)
     }
 
-    fn first_candidate_from_keys<'a, I>(
-        &'a self,
-        keys: I,
-        peer_filter: Option<&HashSet<String>>,
-        seen_ids: &HashSet<String>,
-    ) -> Option<&'a ReplicationRange>
-    where
-        I: IntoIterator<Item = &'a RangeIndexKey>,
-    {
-        keys.into_iter()
-            .find_map(|key| self.candidate_from_key(key, peer_filter, seen_ids))
-    }
-
-    fn closest_start_candidate(
-        &self,
-        point: u64,
-        above: bool,
-        peer_filter: Option<&HashSet<String>>,
-        seen_ids: &HashSet<String>,
-    ) -> Option<&ReplicationRange> {
-        if above {
-            self.first_candidate_from_keys(
-                self.by_start1.range(RangeIndexKey::min_at(point)..),
-                peer_filter,
-                seen_ids,
-            )
-            .or_else(|| {
-                self.first_candidate_from_keys(self.by_start1.iter(), peer_filter, seen_ids)
-            })
-        } else {
-            self.first_candidate_from_keys(
-                self.by_start1.range(..=RangeIndexKey::max_at(point)).rev(),
-                peer_filter,
-                seen_ids,
-            )
-            .or_else(|| {
-                self.first_candidate_from_keys(self.by_start1.iter().rev(), peer_filter, seen_ids)
-            })
-        }
-    }
-
-    fn closest_end_candidate(
-        &self,
-        point: u64,
-        above: bool,
-        peer_filter: Option<&HashSet<String>>,
-        seen_ids: &HashSet<String>,
-    ) -> Option<&ReplicationRange> {
-        if above {
-            self.first_candidate_from_keys(
-                self.by_end2.range(RangeIndexKey::min_at(point)..),
-                peer_filter,
-                seen_ids,
-            )
-            .or_else(|| self.first_candidate_from_keys(self.by_end2.iter(), peer_filter, seen_ids))
-        } else {
-            self.first_candidate_from_keys(
-                self.by_end2.range(..=RangeIndexKey::max_at(point)).rev(),
-                peer_filter,
-                seen_ids,
-            )
-            .or_else(|| {
-                self.first_candidate_from_keys(self.by_end2.iter().rev(), peer_filter, seen_ids)
-            })
-        }
-    }
-
-    fn closest_non_strict(
-        &self,
-        point: u64,
-        peer_filter: Option<&HashSet<String>>,
-        seen_ids: &HashSet<String>,
-    ) -> Option<&ReplicationRange> {
-        let max_value = self.resolution.max_value();
-        let mut best: Option<&ReplicationRange> = None;
-
-        for range in [
-            self.closest_start_candidate(point, true, peer_filter, seen_ids),
-            self.closest_start_candidate(point, false, peer_filter, seen_ids),
-            self.closest_end_candidate(point, true, peer_filter, seen_ids),
-            self.closest_end_candidate(point, false, peer_filter, seen_ids),
-        ]
-        .into_iter()
-        .flatten()
-        {
-            if let Some(previous) = best {
-                if compare_closest(range, previous, point, max_value) == Ordering::Less {
-                    best = Some(range);
-                }
-            } else {
-                best = Some(range);
-            }
-        }
-
-        best
+    #[cfg(test)]
+    fn fallback_endpoint_entry_count(&self) -> usize {
+        self.by_start1
+            .values()
+            .map(EndpointGroup::len)
+            .sum::<usize>()
+            + self.by_end2.values().map(EndpointGroup::len).sum::<usize>()
     }
 }
 
@@ -4242,10 +4682,95 @@ fn samples_to_rows(samples: Vec<LeaderSample>) -> Array {
 #[cfg(test)]
 mod tests {
     use super::{
-        find_leaders_with_prepared_options, LeaderSample, NativeSharedLogState, RangePlanner,
-        ReplicationRange, SampleOptions, SharedLogError, MAX_U64,
+        compare_closest, find_leaders_with_prepared_options, ContainmentIndexLocation,
+        EndpointGroup, FallbackCandidateStreams, FallbackKeyStream, LeaderSample,
+        NativeSharedLogState, RangeIndexKey, RangePlanner, ReplicationRange, SampleOptions,
+        SharedLogError, CONTAINMENT_BUCKETS, CONTAINMENT_RETAINED_CAPACITY_RATIO,
+        CONTAINMENT_RETAINED_CAPACITY_SLACK, MAX_CONTAINMENT_BUCKETS_PER_RANGE, MAX_U32, MAX_U64,
+        MODE_NON_STRICT,
     };
     use indexmap::IndexSet;
+    use std::collections::HashSet;
+
+    fn intersecting_options() -> SampleOptions {
+        SampleOptions {
+            now: 1_000,
+            only_intersecting: true,
+            ..Default::default()
+        }
+    }
+
+    fn sample_hashes(samples: Vec<LeaderSample>) -> Vec<String> {
+        samples.into_iter().map(|sample| sample.hash).collect()
+    }
+
+    fn u32_containment_bucket_width() -> u64 {
+        (MAX_U32 as u128 + 1) as u64 / CONTAINMENT_BUCKETS as u64
+    }
+
+    fn assert_containment_retained_capacity_bound(planner: &RangePlanner) {
+        let maximum = planner
+            .containment_live_reference_count()
+            .saturating_mul(CONTAINMENT_RETAINED_CAPACITY_RATIO)
+            .saturating_add(
+                planner
+                    .nonempty_containment_set_count()
+                    .saturating_mul(CONTAINMENT_RETAINED_CAPACITY_SLACK),
+            );
+        assert!(
+            planner.containment_retained_capacity() <= maximum,
+            "retained containment capacity {} exceeds {maximum} for {} live references in {} sets",
+            planner.containment_retained_capacity(),
+            planner.containment_live_reference_count(),
+            planner.nonempty_containment_set_count(),
+        );
+    }
+
+    fn fallback_stream_ids(
+        planner: &RangePlanner,
+        point: u64,
+        peer_filter: Option<&HashSet<String>>,
+    ) -> (Vec<String>, usize, usize) {
+        let mut fallback = FallbackCandidateStreams::new(planner, point);
+        let mut ids = Vec::new();
+        while let Some(range) = fallback.pop_closest(planner, peer_filter) {
+            ids.push(range.id.clone());
+        }
+        assert_eq!(fallback.emitted_count(), ids.len());
+        (
+            ids,
+            fallback.key_advances(),
+            fallback.candidate_head_visits(),
+        )
+    }
+
+    fn reference_fallback_ids(
+        planner: &RangePlanner,
+        point: u64,
+        peer_filter: Option<&HashSet<String>>,
+    ) -> Vec<String> {
+        let mut ranges: Vec<_> = planner
+            .ranges
+            .values()
+            .map(|indexed| &indexed.range)
+            .filter(|range| {
+                range.width > 0
+                    && range.mode == MODE_NON_STRICT
+                    && peer_filter.is_none_or(|filter| filter.contains(&range.hash))
+            })
+            .collect();
+        ranges.sort_by(|left, right| {
+            compare_closest(left, right, point, planner.resolution.max_value())
+        });
+        ranges.into_iter().map(|range| range.id.clone()).collect()
+    }
+
+    fn next_random(state: &mut u64) -> u64 {
+        *state ^= *state << 13;
+        *state ^= *state >> 7;
+        *state ^= *state << 17;
+        *state
+    }
 
     #[test]
     fn returns_intersecting_leader() {
@@ -4265,6 +4790,475 @@ mod tests {
         assert_eq!(samples.len(), 1);
         assert_eq!(samples[0].hash, "peer-a");
         assert!(samples[0].intersecting);
+    }
+
+    #[test]
+    fn bounds_full_width_containment_references_at_snapshot_range_cap() {
+        const SNAPSHOT_MAX_RANGES: usize = 16_384;
+        const SNAPSHOT_MAX_OWNERS: usize = 4_096;
+
+        let mut planner = RangePlanner::new("u32");
+        for index in 0..SNAPSHOT_MAX_RANGES {
+            planner.put(ReplicationRange::new(
+                format!("range-{index}"),
+                format!("peer-{}", index % SNAPSHOT_MAX_OWNERS),
+                0,
+                0,
+                MAX_U32,
+                0,
+                MAX_U32,
+                MAX_U32,
+                1,
+            ));
+        }
+
+        assert_eq!(planner.len(), SNAPSHOT_MAX_RANGES);
+        assert_eq!(planner.wide_containment_ranges.len(), SNAPSHOT_MAX_RANGES);
+        assert!(planner.containment_buckets.iter().all(IndexSet::is_empty));
+        // Wide ranges retain one spill id. Narrow ranges can retain at most
+        // eight fine-bucket ids; global put order lives inline with each range.
+        assert_eq!(
+            planner.containment_live_reference_count(),
+            SNAPSHOT_MAX_RANGES
+        );
+        assert!(
+            planner.containment_live_reference_count()
+                <= MAX_CONTAINMENT_BUCKETS_PER_RANGE * SNAPSHOT_MAX_RANGES
+        );
+        assert_containment_retained_capacity_bound(&planner);
+    }
+
+    #[test]
+    fn classifies_nonwrapped_wrapped_and_threshold_containment_without_fanout_scan() {
+        let mut planner = RangePlanner::new("u32");
+        let bucket_width = u32_containment_bucket_width();
+        let high_bucket_start = bucket_width * (CONTAINMENT_BUCKETS as u64 - 1);
+
+        let nonwrapped = ReplicationRange::new(
+            "nonwrapped",
+            "peer-a",
+            0,
+            2 * bucket_width,
+            4 * bucket_width,
+            2 * bucket_width,
+            4 * bucket_width,
+            2 * bucket_width,
+            1,
+        );
+        assert_eq!(
+            planner.containment_index_location(&nonwrapped),
+            ContainmentIndexLocation::Narrow([2, 3].into_iter().collect())
+        );
+
+        let wrapped = ReplicationRange::new(
+            "wrapped",
+            "peer-b",
+            0,
+            high_bucket_start,
+            MAX_U32,
+            0,
+            bucket_width,
+            2 * bucket_width,
+            1,
+        );
+        assert_eq!(
+            planner.containment_index_location(&wrapped),
+            ContainmentIndexLocation::Narrow([0, CONTAINMENT_BUCKETS - 1].into_iter().collect())
+        );
+
+        let threshold = ReplicationRange::new(
+            "threshold",
+            "peer-c",
+            0,
+            0,
+            MAX_CONTAINMENT_BUCKETS_PER_RANGE as u64 * bucket_width,
+            0,
+            MAX_CONTAINMENT_BUCKETS_PER_RANGE as u64 * bucket_width,
+            MAX_CONTAINMENT_BUCKETS_PER_RANGE as u64 * bucket_width,
+            1,
+        );
+        assert_eq!(
+            planner.containment_index_location(&threshold),
+            ContainmentIndexLocation::Narrow((0..MAX_CONTAINMENT_BUCKETS_PER_RANGE).collect())
+        );
+        planner.put(threshold);
+        assert_eq!(
+            planner.containment_live_reference_count(),
+            MAX_CONTAINMENT_BUCKETS_PER_RANGE
+        );
+        assert_containment_retained_capacity_bound(&planner);
+
+        let wide = ReplicationRange::new(
+            "wide",
+            "peer-d",
+            0,
+            0,
+            (MAX_CONTAINMENT_BUCKETS_PER_RANGE as u64 + 1) * bucket_width,
+            0,
+            (MAX_CONTAINMENT_BUCKETS_PER_RANGE as u64 + 1) * bucket_width,
+            (MAX_CONTAINMENT_BUCKETS_PER_RANGE as u64 + 1) * bucket_width,
+            1,
+        );
+        assert_eq!(
+            planner.containment_index_location(&wide),
+            ContainmentIndexLocation::Wide
+        );
+    }
+
+    #[test]
+    fn classifies_u64_containment_near_max_without_overflow() {
+        let planner = RangePlanner::new("u64");
+        let bucket_width = 1u64 << 52;
+        let last_eight_bucket_start = MAX_U64 - 8 * bucket_width + 1;
+
+        let last_eight_buckets = ReplicationRange::new(
+            "last-eight",
+            "peer-a",
+            0,
+            last_eight_bucket_start,
+            MAX_U64,
+            last_eight_bucket_start,
+            MAX_U64,
+            8 * bucket_width,
+            1,
+        );
+        assert_eq!(
+            planner.containment_index_location(&last_eight_buckets),
+            ContainmentIndexLocation::Narrow(
+                (CONTAINMENT_BUCKETS - 8..CONTAINMENT_BUCKETS).collect()
+            )
+        );
+
+        let full_width = ReplicationRange::new(
+            "full-width",
+            "peer-b",
+            0,
+            0,
+            MAX_U64,
+            0,
+            MAX_U64,
+            MAX_U64,
+            1,
+        );
+        assert_eq!(
+            planner.containment_index_location(&full_width),
+            ContainmentIndexLocation::Wide
+        );
+    }
+
+    #[test]
+    fn merges_interleaved_narrow_and_wide_ranges_in_global_put_order() {
+        let mut planner = RangePlanner::new("u32");
+        let point = 3 * u32_containment_bucket_width() + 100;
+        let narrow = |id: &str, hash: &str| {
+            ReplicationRange::new(
+                id,
+                hash,
+                0,
+                point - 10,
+                point + 10,
+                point - 10,
+                point + 10,
+                20,
+                1,
+            )
+        };
+        let wide = |id: &str, hash: &str| {
+            ReplicationRange::new(id, hash, 0, 0, MAX_U32, 0, MAX_U32, MAX_U32, 1)
+        };
+
+        planner.put(wide("wide-a", "peer-a"));
+        planner.put(narrow("narrow-b", "peer-b"));
+        planner.put(wide("wide-c", "peer-c"));
+        planner.put(narrow("narrow-d", "peer-d"));
+
+        assert_eq!(
+            sample_hashes(planner.get_samples(&[point], &intersecting_options())),
+            ["peer-a", "peer-b", "peer-c", "peer-d"]
+        );
+        for hash in ["peer-a", "peer-b", "peer-c", "peer-d"] {
+            assert!(planner.contains_sample_hash(&[point], &intersecting_options(), hash));
+        }
+        assert!(!planner.contains_sample_hash(&[point], &intersecting_options(), "peer-missing"));
+    }
+
+    #[test]
+    fn preserves_containment_membership_for_narrow_wide_and_wrapped_ranges() {
+        let mut planner = RangePlanner::new("u32");
+        let bucket_width = u32_containment_bucket_width();
+        let high_bucket_start = bucket_width * (CONTAINMENT_BUCKETS as u64 - 1);
+        planner.put(ReplicationRange::new(
+            "narrow",
+            "peer-narrow",
+            0,
+            2 * bucket_width + 100,
+            2 * bucket_width + 200,
+            2 * bucket_width + 100,
+            2 * bucket_width + 200,
+            100,
+            1,
+        ));
+        planner.put(ReplicationRange::new(
+            "wide",
+            "peer-wide",
+            0,
+            10 * bucket_width,
+            20 * bucket_width,
+            10 * bucket_width,
+            20 * bucket_width,
+            10 * bucket_width,
+            1,
+        ));
+        planner.put(ReplicationRange::new(
+            "wrapped",
+            "peer-wrapped",
+            0,
+            high_bucket_start,
+            MAX_U32,
+            0,
+            bucket_width,
+            2 * bucket_width,
+            1,
+        ));
+
+        assert!(planner
+            .get_samples(&[2 * bucket_width + 50], &intersecting_options())
+            .is_empty());
+        assert_eq!(
+            sample_hashes(planner.get_samples(&[2 * bucket_width + 150], &intersecting_options())),
+            ["peer-narrow"]
+        );
+        assert!(planner
+            .get_samples(&[9 * bucket_width], &intersecting_options())
+            .is_empty());
+        assert_eq!(
+            sample_hashes(planner.get_samples(&[15 * bucket_width], &intersecting_options())),
+            ["peer-wide"]
+        );
+        assert_eq!(
+            sample_hashes(planner.get_samples(&[1], &intersecting_options())),
+            ["peer-wrapped"]
+        );
+        assert_eq!(
+            sample_hashes(planner.get_samples(&[high_bucket_start + 1], &intersecting_options())),
+            ["peer-wrapped"]
+        );
+    }
+
+    #[test]
+    fn containment_reput_delete_replace_and_clear_preserve_order_and_indexes() {
+        let mut planner = RangePlanner::new("u32");
+        let point = 3 * u32_containment_bucket_width() + 100;
+        let narrow = |id: &str, hash: &str| {
+            ReplicationRange::new(
+                id,
+                hash,
+                0,
+                point - 10,
+                point + 10,
+                point - 10,
+                point + 10,
+                20,
+                1,
+            )
+        };
+        let wide = |id: &str, hash: &str| {
+            ReplicationRange::new(id, hash, 0, 0, MAX_U32, 0, MAX_U32, MAX_U32, 1)
+        };
+        let hashes = |planner: &RangePlanner| {
+            sample_hashes(planner.get_samples(&[point], &intersecting_options()))
+        };
+
+        planner.put(narrow("a", "peer-a"));
+        planner.put(wide("b", "peer-b"));
+        planner.put(narrow("c", "peer-c"));
+        assert_eq!(hashes(&planner), ["peer-a", "peer-b", "peer-c"]);
+
+        planner.put(narrow("a", "peer-a-reput"));
+        assert_eq!(hashes(&planner), ["peer-b", "peer-c", "peer-a-reput"]);
+
+        assert!(planner.delete("c"));
+        assert_eq!(hashes(&planner), ["peer-b", "peer-a-reput"]);
+
+        planner.put(narrow("b", "peer-b-narrow"));
+        assert_eq!(hashes(&planner), ["peer-a-reput", "peer-b-narrow"]);
+        planner.put(wide("a", "peer-a-wide"));
+        assert_eq!(hashes(&planner), ["peer-b-narrow", "peer-a-wide"]);
+        assert_eq!(planner.wide_containment_ranges.len(), 1);
+        assert_eq!(planner.containment_live_reference_count(), 2);
+        assert_containment_retained_capacity_bound(&planner);
+
+        planner.put(ReplicationRange::new(
+            "b",
+            "peer-b-zero",
+            0,
+            point,
+            point,
+            point,
+            point,
+            0,
+            1,
+        ));
+        assert_eq!(hashes(&planner), ["peer-a-wide"]);
+        assert_eq!(planner.wide_containment_ranges.len(), 1);
+        assert_eq!(planner.containment_live_reference_count(), 1);
+        assert_containment_retained_capacity_bound(&planner);
+
+        planner.put(narrow("b", "peer-b-restored"));
+        assert_eq!(hashes(&planner), ["peer-a-wide", "peer-b-restored"]);
+        assert_eq!(planner.containment_live_reference_count(), 2);
+        assert_containment_retained_capacity_bound(&planner);
+
+        planner.clear();
+        assert!(planner.is_empty());
+        assert!(planner.wide_containment_ranges.is_empty());
+        assert!(planner.containment_buckets.iter().all(IndexSet::is_empty));
+        assert_eq!(planner.next_containment_put_order, 0);
+        assert_eq!(planner.containment_live_reference_count(), 0);
+        assert_eq!(planner.containment_retained_capacity(), 0);
+        assert_containment_retained_capacity_bound(&planner);
+        assert!(planner
+            .get_samples(&[point], &intersecting_options())
+            .is_empty());
+
+        planner.put(wide("after-clear", "peer-after-clear"));
+        assert_eq!(hashes(&planner), ["peer-after-clear"]);
+    }
+
+    #[test]
+    fn containment_put_order_rebases_without_changing_mixed_order() {
+        let mut planner = RangePlanner::new("u32");
+        let point = 3 * u32_containment_bucket_width() + 100;
+        let narrow = |id: &str, hash: &str| {
+            ReplicationRange::new(
+                id,
+                hash,
+                0,
+                point - 10,
+                point + 10,
+                point - 10,
+                point + 10,
+                20,
+                1,
+            )
+        };
+        let wide = |id: &str, hash: &str| {
+            ReplicationRange::new(id, hash, 0, 0, MAX_U32, 0, MAX_U32, MAX_U32, 1)
+        };
+        let hashes = |planner: &RangePlanner| {
+            sample_hashes(planner.get_samples(&[point], &intersecting_options()))
+        };
+
+        planner.put(wide("a", "peer-a"));
+        planner.put(narrow("b", "peer-b"));
+        planner.put(wide("c", "peer-c"));
+        planner.next_containment_put_order = u64::MAX;
+        planner.put(narrow("d", "peer-d"));
+
+        assert_eq!(hashes(&planner), ["peer-a", "peer-b", "peer-c", "peer-d"]);
+        assert_eq!(planner.next_containment_put_order, 4);
+        assert_eq!(
+            ["a", "b", "c", "d"].map(|id| {
+                planner
+                    .ranges
+                    .get(id)
+                    .expect("indexed range")
+                    .containment_put_order
+            }),
+            [0, 1, 2, 3]
+        );
+
+        planner.put(wide("b", "peer-b-reput"));
+        assert_eq!(
+            hashes(&planner),
+            ["peer-a", "peer-c", "peer-d", "peer-b-reput"]
+        );
+        assert!(planner.delete("c"));
+        planner.put(narrow("c", "peer-c-restored"));
+        assert_eq!(
+            hashes(&planner),
+            ["peer-a", "peer-d", "peer-b-reput", "peer-c-restored"]
+        );
+    }
+
+    #[test]
+    fn containment_bucket_migration_and_churn_release_retained_capacity() {
+        const RANGE_COUNT: usize = 1_024;
+        const SURVIVORS: usize = 4;
+
+        let mut planner = RangePlanner::new("u32");
+        let bucket_width = u32_containment_bucket_width();
+        let source_bucket = 40usize;
+        let target_bucket = 400usize;
+        let narrow = |id: String, bucket: usize| {
+            let start = bucket as u64 * bucket_width + 100;
+            ReplicationRange::new(
+                id,
+                format!("peer-{bucket}"),
+                0,
+                start,
+                start + 1,
+                start,
+                start + 1,
+                1,
+                1,
+            )
+        };
+        let wide = |id: String| {
+            ReplicationRange::new(id, "peer-wide", 0, 0, MAX_U32, 0, MAX_U32, MAX_U32, 1)
+        };
+
+        for index in 0..RANGE_COUNT {
+            planner.put(narrow(format!("range-{index}"), source_bucket));
+        }
+        assert_eq!(
+            planner.containment_buckets[source_bucket].len(),
+            RANGE_COUNT
+        );
+        assert_eq!(planner.containment_live_reference_count(), RANGE_COUNT);
+        assert_containment_retained_capacity_bound(&planner);
+
+        for index in 0..RANGE_COUNT {
+            planner.put(narrow(format!("range-{index}"), target_bucket));
+        }
+        assert!(planner.containment_buckets[source_bucket].is_empty());
+        assert_eq!(planner.containment_buckets[source_bucket].capacity(), 0);
+        assert_eq!(
+            planner.containment_buckets[target_bucket].len(),
+            RANGE_COUNT
+        );
+        assert_containment_retained_capacity_bound(&planner);
+
+        for index in 0..RANGE_COUNT {
+            planner.put(wide(format!("range-{index}")));
+        }
+        assert!(planner.containment_buckets[target_bucket].is_empty());
+        assert_eq!(planner.containment_buckets[target_bucket].capacity(), 0);
+        assert_eq!(planner.wide_containment_ranges.len(), RANGE_COUNT);
+        assert_containment_retained_capacity_bound(&planner);
+        let peak_capacity = planner.containment_retained_capacity();
+
+        for index in 0..RANGE_COUNT - SURVIVORS {
+            assert!(planner.delete(&format!("range-{index}")));
+        }
+        assert_eq!(planner.wide_containment_ranges.len(), SURVIVORS);
+        assert_eq!(planner.containment_live_reference_count(), SURVIVORS);
+        assert!(planner.containment_retained_capacity() < peak_capacity);
+        assert_containment_retained_capacity_bound(&planner);
+
+        for index in RANGE_COUNT - SURVIVORS..RANGE_COUNT {
+            assert!(planner.delete(&format!("range-{index}")));
+        }
+        assert_eq!(planner.containment_live_reference_count(), 0);
+        assert_eq!(planner.containment_retained_capacity(), 0);
+
+        for index in 0..RANGE_COUNT {
+            planner.put(wide(format!("clear-range-{index}")));
+        }
+        assert!(planner.containment_retained_capacity() > 0);
+        planner.clear();
+        assert_eq!(planner.containment_live_reference_count(), 0);
+        assert_eq!(planner.containment_retained_capacity(), 0);
     }
 
     #[test]
@@ -4288,6 +5282,512 @@ mod tests {
         assert!(!samples[0].intersecting);
         assert_eq!(samples[1].hash, "peer-b");
         assert!(!samples[1].intersecting);
+    }
+
+    #[test]
+    fn counts_mature_evidence_for_an_existing_owner_in_any_put_order() {
+        for immature_first in [true, false] {
+            let mut planner = RangePlanner::new("u32");
+            let immature =
+                ReplicationRange::new("a-immature", "peer-a", 950, 40, 60, 40, 60, 20, 0);
+            let mature = ReplicationRange::new("a-mature", "peer-a", 0, 40, 60, 40, 60, 20, 0);
+            if immature_first {
+                planner.put(immature);
+                planner.put(mature);
+            } else {
+                planner.put(mature);
+                planner.put(immature);
+            }
+            planner.put(ReplicationRange::new(
+                "b-fallback",
+                "peer-b",
+                0,
+                70,
+                80,
+                70,
+                80,
+                10,
+                0,
+            ));
+            let options = SampleOptions {
+                role_age_ms: 100,
+                now: 1_000,
+                ..Default::default()
+            };
+
+            assert_eq!(
+                planner.get_samples(&[50], &options),
+                vec![LeaderSample {
+                    hash: "peer-a".to_string(),
+                    intersecting: true,
+                }],
+            );
+            assert!(planner.contains_sample_hash(&[50], &options, "peer-a"));
+            assert!(!planner.contains_sample_hash(&[50], &options, "peer-b"));
+        }
+    }
+
+    #[test]
+    fn breaks_exact_cross_direction_fallback_ties_by_total_order() {
+        let mut planner = RangePlanner::new("u32");
+        planner.put(ReplicationRange::new(
+            "z-below", "peer-z", 0, 40, 45, 40, 45, 5, 0,
+        ));
+        planner.put(ReplicationRange::new(
+            "a-above", "peer-a", 0, 55, 60, 55, 60, 5, 0,
+        ));
+        let options = SampleOptions {
+            now: 1_000,
+            ..Default::default()
+        };
+
+        assert_eq!(
+            planner.get_samples(&[50], &options),
+            vec![LeaderSample {
+                hash: "peer-a".to_string(),
+                intersecting: false,
+            }],
+        );
+        assert!(planner.contains_sample_hash(&[50], &options, "peer-a"));
+        assert!(!planner.contains_sample_hash(&[50], &options, "peer-z"));
+    }
+
+    #[test]
+    fn keeps_metadata_ascending_within_descending_coordinate_groups() {
+        for (cursor, below_start, below_end) in [
+            (50, 40, 45),
+            // Exercise the wrapped descending fallback when no endpoint is
+            // directly below the cursor.
+            (5, MAX_U32 - 10, MAX_U32 - 5),
+        ] {
+            let mut planner = RangePlanner::new("u32");
+            planner.put(ReplicationRange::new(
+                "z-below",
+                "peer-z",
+                0,
+                below_start,
+                below_end,
+                below_start,
+                below_end,
+                5,
+                0,
+            ));
+            planner.put(ReplicationRange::new(
+                "a-below",
+                "peer-a",
+                0,
+                below_start,
+                below_end,
+                below_start,
+                below_end,
+                5,
+                0,
+            ));
+            planner.put(ReplicationRange::new(
+                "far-above",
+                "peer-m",
+                0,
+                100,
+                105,
+                100,
+                105,
+                5,
+                0,
+            ));
+            let options = SampleOptions {
+                now: 1_000,
+                ..Default::default()
+            };
+
+            assert_eq!(
+                planner.get_samples(&[cursor], &options),
+                vec![LeaderSample {
+                    hash: "peer-a".to_string(),
+                    intersecting: false,
+                }],
+            );
+            assert!(planner.contains_sample_hash(&[cursor], &options, "peer-a"));
+            assert!(!planner.contains_sample_hash(&[cursor], &options, "peer-z"));
+        }
+    }
+
+    #[test]
+    fn fallback_streams_match_total_order_reference_for_randomized_u32_u64_ranges() {
+        for resolution in ["u32", "u64"] {
+            let max_value = if resolution == "u32" {
+                MAX_U32
+            } else {
+                MAX_U64
+            };
+            let mut random = if resolution == "u32" {
+                0x1297_0000_0000_0032
+            } else {
+                0x1297_0000_0000_0064
+            };
+
+            for iteration in 0..24 {
+                let mut planner = RangePlanner::new(resolution);
+                for index in 0..256 {
+                    let mut start = next_random(&mut random);
+                    let mut end = next_random(&mut random);
+                    if resolution == "u32" {
+                        start &= MAX_U32;
+                        end &= MAX_U32;
+                    }
+                    if start == end {
+                        end = if end == max_value { 0 } else { end + 1 };
+                    }
+                    let (start1, end1, start2, end2, width) = if start < end {
+                        (start, end, start, end, end - start)
+                    } else {
+                        (
+                            start,
+                            max_value,
+                            0,
+                            end,
+                            max_value.saturating_sub(start).saturating_add(end),
+                        )
+                    };
+                    let selector = next_random(&mut random);
+                    planner.put(ReplicationRange::new(
+                        format!("range-{iteration}-{index}"),
+                        format!("peer-{}", selector % 17),
+                        next_random(&mut random) % 1_000,
+                        start1,
+                        end1,
+                        start2,
+                        end2,
+                        if selector.is_multiple_of(13) {
+                            0
+                        } else {
+                            width.max(1)
+                        },
+                        if selector.is_multiple_of(7) {
+                            1
+                        } else {
+                            MODE_NON_STRICT
+                        },
+                    ));
+                }
+
+                let point = match iteration {
+                    0 => 0,
+                    1 => max_value,
+                    _ => {
+                        let value = next_random(&mut random);
+                        if resolution == "u32" {
+                            value & MAX_U32
+                        } else {
+                            value
+                        }
+                    }
+                };
+                let filter = (iteration % 3 == 0).then(|| {
+                    (0..17)
+                        .filter(|owner| owner % 2 == 0)
+                        .map(|owner| format!("peer-{owner}"))
+                        .collect::<HashSet<_>>()
+                });
+
+                let (actual, key_advances, head_visits) =
+                    fallback_stream_ids(&planner, point, filter.as_ref());
+                let expected = reference_fallback_ids(&planner, point, filter.as_ref());
+                assert_eq!(actual, expected, "{resolution} iteration {iteration}");
+                assert!(key_advances <= 4 * planner.ranges.len());
+                assert!(head_visits <= 4 * actual.len());
+            }
+        }
+    }
+
+    #[test]
+    fn preserves_split_endpoint_ties_and_the_four_stream_bound() {
+        for (resolution, max_value) in [("u32", MAX_U32), ("u64", MAX_U64)] {
+            let mut planner = RangePlanner::new(resolution);
+            planner.put(ReplicationRange::new(
+                "a-zero",
+                "peer",
+                0,
+                0,
+                0,
+                0,
+                0,
+                1,
+                MODE_NON_STRICT,
+            ));
+            planner.put(ReplicationRange::new(
+                "b-split",
+                "peer",
+                0,
+                1,
+                1,
+                max_value,
+                max_value,
+                1,
+                MODE_NON_STRICT,
+            ));
+
+            // Both ranges are four units away. Keeping start1/end2 as separate
+            // stream pairs is required for the legacy total-order tie break.
+            let point = max_value - 4;
+            let (ids, key_advances, head_visits) = fallback_stream_ids(&planner, point, None);
+            assert_eq!(ids, ["a-zero", "b-split"]);
+            assert_eq!(ids, reference_fallback_ids(&planner, point, None));
+            assert_eq!(planner.fallback_endpoint_entry_count(), 4);
+            assert_eq!(key_advances, 8);
+            assert_eq!(head_visits, 8);
+        }
+    }
+
+    #[test]
+    fn fallback_endpoint_groups_promote_demote_move_delete_and_clear() {
+        let key = |id: &str| RangeIndexKey {
+            timestamp: 0,
+            hash: "peer".to_string(),
+            id: id.to_string(),
+        };
+        let mut group = EndpointGroup::new(key("a"));
+        group.insert(key("b"));
+        assert!(matches!(&group, EndpointGroup::Many(keys) if keys.len() == 2));
+        assert!(!group.remove(&key("a")));
+        assert!(matches!(&group, EndpointGroup::One(key) if key.id == "b"));
+        assert!(group.remove(&key("b")));
+
+        let mut planner = RangePlanner::new("u32");
+        planner.put(ReplicationRange::new(
+            "a",
+            "peer-a",
+            0,
+            10,
+            20,
+            10,
+            20,
+            10,
+            MODE_NON_STRICT,
+        ));
+        planner.put(ReplicationRange::new(
+            "a",
+            "peer-a",
+            1,
+            40,
+            50,
+            40,
+            50,
+            10,
+            MODE_NON_STRICT,
+        ));
+        assert!(!planner.by_start1.contains_key(&10));
+        assert!(!planner.by_end2.contains_key(&20));
+        assert_eq!(planner.fallback_endpoint_entry_count(), 2);
+        assert!(planner.delete("a"));
+        assert!(planner.by_start1.is_empty());
+        assert!(planner.by_end2.is_empty());
+        planner.put(ReplicationRange::new(
+            "clear",
+            "peer",
+            0,
+            1,
+            2,
+            1,
+            2,
+            1,
+            MODE_NON_STRICT,
+        ));
+        planner.clear();
+        assert!(planner.by_start1.is_empty());
+        assert!(planner.by_end2.is_empty());
+    }
+
+    #[test]
+    fn late_peer_filter_hit_checks_four_endpoint_heads() {
+        const RANGE_COUNT: usize = 512;
+        let mut planner = RangePlanner::new("u32");
+        for index in 0..RANGE_COUNT {
+            planner.put(ReplicationRange::new(
+                format!("range-{index:04}"),
+                if index + 1 == RANGE_COUNT {
+                    "peer-z".to_string()
+                } else {
+                    format!("peer-a-{index:04}")
+                },
+                0,
+                1_000,
+                1_001,
+                1_000,
+                1_001,
+                1,
+                MODE_NON_STRICT,
+            ));
+        }
+        let filter = HashSet::from(["peer-z".to_string()]);
+        let mut fallback = FallbackCandidateStreams::new(&planner, 2_000_000_000);
+        assert_eq!(
+            fallback
+                .pop_closest(&planner, Some(&filter))
+                .map(|range| range.hash.as_str()),
+            Some("peer-z")
+        );
+        assert_eq!(fallback.key_advances(), 4 * RANGE_COUNT);
+        assert_eq!(fallback.candidate_head_visits(), 4);
+    }
+
+    #[test]
+    fn fallback_streams_bound_adversarial_immature_same_owner_work() {
+        const RANGE_COUNT: usize = 16_384;
+
+        let mut planner = RangePlanner::new("u32");
+        for index in 0..RANGE_COUNT {
+            let coordinate = index as u64 + 1;
+            planner.put(ReplicationRange::new(
+                format!("range-{index:05}"),
+                "peer-same",
+                if index + 1 == RANGE_COUNT { 0 } else { 950 },
+                coordinate,
+                coordinate + 1,
+                coordinate,
+                coordinate + 1,
+                1,
+                MODE_NON_STRICT,
+            ));
+        }
+        let options = SampleOptions {
+            now: 1_000,
+            role_age_ms: 100,
+            ..Default::default()
+        };
+
+        assert_eq!(
+            planner.get_samples(&[0], &options),
+            vec![LeaderSample {
+                hash: "peer-same".to_string(),
+                intersecting: false,
+            }]
+        );
+        assert!(planner.contains_sample_hash(&[0], &options, "peer-same"));
+
+        let (ids, key_advances, head_visits) = fallback_stream_ids(&planner, 0, None);
+        assert_eq!(ids.len(), RANGE_COUNT);
+        assert_eq!(key_advances, 2 * planner.fallback_endpoint_entry_count());
+        assert!(key_advances <= 4 * RANGE_COUNT);
+        assert!(head_visits <= 4 * RANGE_COUNT);
+    }
+
+    #[test]
+    fn descending_fallback_partition_handles_max_unicode_metadata_and_wrap() {
+        for resolution in ["u32", "u64"] {
+            let max_value = if resolution == "u32" {
+                MAX_U32
+            } else {
+                MAX_U64
+            };
+            let point = 5;
+            let mut planner = RangePlanner::new(resolution);
+            planner.put(ReplicationRange::new(
+                "normal-at-point",
+                "peer-a",
+                0,
+                10,
+                max_value,
+                0,
+                point,
+                10,
+                MODE_NON_STRICT,
+            ));
+            planner.put(ReplicationRange::new(
+                format!("{}-id-suffix", char::MAX),
+                format!("{}-hash-suffix", char::MAX),
+                MAX_U64,
+                10,
+                max_value,
+                0,
+                point,
+                10,
+                MODE_NON_STRICT,
+            ));
+            planner.put(ReplicationRange::new(
+                "wrapped-coordinate",
+                "peer-wrap",
+                0,
+                10,
+                max_value,
+                0,
+                max_value - 1,
+                10,
+                MODE_NON_STRICT,
+            ));
+
+            let mut descending = FallbackKeyStream::descending(&planner.by_end2, point);
+            let ids: Vec<_> = std::iter::from_fn(|| descending.next_key())
+                .map(|key| key.id.clone())
+                .collect();
+            assert_eq!(
+                ids,
+                [
+                    "normal-at-point".to_string(),
+                    format!("{}-id-suffix", char::MAX),
+                    "wrapped-coordinate".to_string(),
+                ],
+                "{resolution}",
+            );
+        }
+    }
+
+    #[test]
+    fn fallback_zero_max_aliases_use_total_metadata_order_for_u32_u64_apis() {
+        for resolution in ["u32", "u64"] {
+            let max_value = if resolution == "u32" {
+                MAX_U32
+            } else {
+                MAX_U64
+            };
+            let mut planner = RangePlanner::new(resolution);
+            planner.put(ReplicationRange::new(
+                "z-zero",
+                "peer-z",
+                0,
+                0,
+                0,
+                0,
+                0,
+                1,
+                MODE_NON_STRICT,
+            ));
+            planner.put(ReplicationRange::new(
+                "a-max",
+                "peer-a",
+                0,
+                max_value,
+                max_value,
+                max_value,
+                max_value,
+                1,
+                MODE_NON_STRICT,
+            ));
+            let options = SampleOptions {
+                now: 1_000,
+                ..Default::default()
+            };
+
+            for point in [0, max_value] {
+                let (ids, key_advances, head_visits) = fallback_stream_ids(&planner, point, None);
+                assert_eq!(ids, ["a-max", "z-zero"], "{resolution} point {point}");
+                assert_eq!(
+                    ids,
+                    reference_fallback_ids(&planner, point, None),
+                    "{resolution} point {point}",
+                );
+                assert_eq!(key_advances, 2 * planner.fallback_endpoint_entry_count());
+                assert!(key_advances <= 4 * planner.len());
+                assert!(head_visits <= 4 * planner.len());
+
+                assert_eq!(
+                    sample_hashes(planner.get_samples(&[point, point], &options)),
+                    ["peer-a", "peer-z"],
+                    "{resolution} point {point}",
+                );
+                assert!(planner.contains_sample_hash(&[point], &options, "peer-a"));
+                assert!(!planner.contains_sample_hash(&[point], &options, "peer-z"));
+            }
+        }
     }
 
     #[test]
