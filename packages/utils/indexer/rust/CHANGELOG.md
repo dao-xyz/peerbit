@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.10
+
+### Patch Changes
+
+- [#1314](https://github.com/dao-xyz/peerbit/pull/1314) [`274b8b0`](https://github.com/dao-xyz/peerbit/commit/274b8b013fca2ed0b3736c46e196791297b77ad8) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Preserve encoded native runtime failures instead of masking them with a fallback mutation, while retaining the field-encoder fallback for ordinary bridge extraction rejections. Failed durable restores now reject concurrent initializers, evict the partial index, and allow a clean retry.
+
 ## 1.0.9
 
 ### Patch Changes
