@@ -10,6 +10,18 @@ import {
 const rootDir = process.cwd();
 const pnpmCmd = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
 const npmCmd = process.platform === "win32" ? "npm.cmd" : "npm";
+// npm can accept a publish and keep returning 404 while the package version is
+// still being processed. Keep this bounded, but allow the documented
+// "few minutes" path enough time before treating a successful publish as lost.
+const REGISTRY_VERIFICATION_DELAYS_MS = Object.freeze([
+	0,
+	2_000,
+	4_000,
+	8_000,
+	15_000,
+	30_000,
+	60_000,
+]);
 
 const args = process.argv.slice(2);
 const dryRun = args.includes("--dry-run");
@@ -92,10 +104,9 @@ async function verifyPublished(pkg) {
 	// registry — most notably the FIRST publish of a brand-new scoped package
 	// when the npm token / org lacks permission to create it. A silent
 	// non-publish must fail the release loudly, not leave a green run that
-	// shipped nothing. Re-query with a short backoff to tolerate registry
-	// propagation delay.
-	const delaysMs = [0, 2000, 4000, 8000, 15000];
-	for (const delay of delaysMs) {
+	// shipped nothing. Re-query with a bounded backoff to tolerate registry
+	// processing and propagation delay.
+	for (const delay of REGISTRY_VERIFICATION_DELAYS_MS) {
 		if (delay) {
 			await new Promise((r) => setTimeout(r, delay));
 		}

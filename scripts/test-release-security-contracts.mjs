@@ -772,6 +772,11 @@ assert.match(
 	publicPackagePublisher,
 	/await discoverPublishableWorkspacePackages\(/,
 );
+assert.match(
+	publicPackagePublisher,
+	/const REGISTRY_VERIFICATION_DELAYS_MS = Object\.freeze\(\[\s*0,\s*2_000,\s*4_000,\s*8_000,\s*15_000,\s*30_000,\s*60_000,\s*\]\)/,
+	"the publisher must tolerate npm's multi-minute processing path before failing closed",
+);
 assert.doesNotMatch(
 	publicPackagePublisher,
 	/function findPackageJsonFiles|function loadWorkspacePackages/,
