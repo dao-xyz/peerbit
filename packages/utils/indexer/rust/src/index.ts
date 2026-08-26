@@ -5352,7 +5352,11 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 
 export class RustIndices implements types.Indices {
 	private scopes: Map<string, types.Indices>;
-	private indices: { schema: any; index: RustIndex<any, any> }[] = [];
+	private indices: {
+		schema: any;
+		index: RustIndex<any, any>;
+		initialization: Promise<void>;
+	}[] = [];
 	private closed: boolean;
 
 	constructor(
@@ -5371,6 +5375,7 @@ export class RustIndices implements types.Indices {
 			(i) => i.schema === properties.schema,
 		);
 		if (existingIndex) {
+			await existingIndex.initialization;
 			// This scope is node-cached and outlives a program close, so a prior
 			// close may have stopped the cached index. Restart it before handing
 			// it back so the next read does not hit assertOpen -> NotStartedError.
@@ -5385,8 +5390,20 @@ export class RustIndices implements types.Indices {
 			this.path,
 			this.options,
 		);
-		this.indices.push({ schema: properties.schema, index });
-		await index.init(properties);
+		const initialization = index.init(properties).then(() => undefined);
+		const entry = { schema: properties.schema, index, initialization };
+		this.indices.push(entry);
+		try {
+			await initialization;
+		} catch (error) {
+			// A failed restore must reject every same-schema waiter and must not
+			// leave its partially initialized index cached for a later retry.
+			const position = this.indices.indexOf(entry);
+			if (position !== -1) {
+				this.indices.splice(position, 1);
+			}
+			throw error;
+		}
 
 		if (!this.closed) {
 			await index.start();
