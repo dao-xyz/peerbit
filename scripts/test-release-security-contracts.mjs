@@ -184,8 +184,8 @@ assert.match(
 );
 assert.match(
 	releaseWorkflow,
-	/name: Build, gate, and publish stable packages[\s\S]*?run: pnpm run release(?:\n|$)/,
-	"the manual stable escape hatch must use the guarded release script",
+	/name: Build, gate, publish, and tag stable packages[\s\S]*?run: pnpm run release:publish(?:\n|$)/,
+	"the manual stable escape hatch must use the guarded publish-and-tag script",
 );
 assert.match(
 	releaseWorkflow,
