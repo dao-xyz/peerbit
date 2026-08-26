@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.2.15
+
+### Patch Changes
+
+- [#1309](https://github.com/dao-xyz/peerbit/pull/1309) [`81ca42b`](https://github.com/dao-xyz/peerbit/commit/81ca42b707c34114979f7d87c42045ea0af00d1c) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Add an explicit iterator consistency option. In-memory index iteration keeps
+  snapshot consistency by default, while unsorted callers can opt into lazy,
+  bounded paging with `consistency: "weak"`. Weak cursors remain finite while
+  allowing unvisited deletes and replacements to be observed.
+- Updated dependencies [[`81ca42b`](https://github.com/dao-xyz/peerbit/commit/81ca42b707c34114979f7d87c42045ea0af00d1c)]:
+  - @peerbit/indexer-interface@3.0.11
+
 ## 1.2.14
 
 ### Patch Changes

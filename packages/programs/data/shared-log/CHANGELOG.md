@@ -1,5 +1,21 @@
 # Changelog
 
+## 16.0.8
+
+### Patch Changes
+
+- [#1309](https://github.com/dao-xyz/peerbit/pull/1309) [`81ca42b`](https://github.com/dao-xyz/peerbit/commit/81ca42b707c34114979f7d87c42045ea0af00d1c) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Bound receive-side rateless range materialization in JavaScript and both native
+  backends through an explicit limited-range capability, fall back to paged index
+  iteration when an older native package lacks that capability, fall back to
+  simple sync on overflow, and page simple coordinate lookups without using
+  `iterator.all()`.
+- Updated dependencies [[`81ca42b`](https://github.com/dao-xyz/peerbit/commit/81ca42b707c34114979f7d87c42045ea0af00d1c)]:
+  - @peerbit/indexer-interface@3.0.11
+  - @peerbit/log@6.2.20
+  - @peerbit/program@6.0.52
+  - @peerbit/indexer-sqlite3@3.0.16
+  - @peerbit/rpc@6.1.20
+
 ## 16.0.7
 
 ### Patch Changes

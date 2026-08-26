@@ -1,5 +1,20 @@
 # Changelog
 
+## 15.0.8
+
+### Patch Changes
+
+- Updated dependencies [[`81ca42b`](https://github.com/dao-xyz/peerbit/commit/81ca42b707c34114979f7d87c42045ea0af00d1c), [`81ca42b`](https://github.com/dao-xyz/peerbit/commit/81ca42b707c34114979f7d87c42045ea0af00d1c)]:
+  - @peerbit/shared-log@16.0.8
+  - @peerbit/indexer-interface@3.0.11
+  - @peerbit/indexer-simple@1.2.15
+  - @peerbit/log@6.2.20
+  - @peerbit/document-interface@3.2.63
+  - @peerbit/program@6.0.52
+  - @peerbit/indexer-cache@0.2.14
+  - @peerbit/indexer-sqlite3@3.0.16
+  - @peerbit/rpc@6.1.20
+
 ## 15.0.7
 
 ### Patch Changes
