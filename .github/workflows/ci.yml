@@ -205,6 +205,9 @@ jobs:
         if: steps.workspace_dist_cache.outputs.cache-hit != 'true'
         run: |
           pnpm run build
+      - name: Validate scale-census persistence round trip
+        if: steps.workspace_dist_cache.outputs.cache-hit != 'true'
+        run: node --test scripts/bench/shared-log-scale-census.integration.mjs
       - name: Verify retired server artifacts cannot be packaged
         if: steps.workspace_dist_cache.outputs.cache-hit != 'true'
         run: |
