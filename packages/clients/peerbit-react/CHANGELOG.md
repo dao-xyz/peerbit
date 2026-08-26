@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.1.52
+
+### Patch Changes
+
+- Updated dependencies [[`81ca42b`](https://github.com/dao-xyz/peerbit/commit/81ca42b707c34114979f7d87c42045ea0af00d1c)]:
+  - @peerbit/indexer-interface@3.0.11
+  - peerbit@5.3.27
+  - @peerbit/program@6.0.52
+  - @peerbit/canonical-client@1.1.55
+  - @peerbit/program-react@0.4.56
+
 ## 1.1.51
 
 ### Patch Changes

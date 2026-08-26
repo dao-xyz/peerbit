@@ -1,5 +1,15 @@
 # @peerbit/shared-log-rust
 
+## 0.1.6
+
+### Patch Changes
+
+- [#1309](https://github.com/dao-xyz/peerbit/pull/1309) [`81ca42b`](https://github.com/dao-xyz/peerbit/commit/81ca42b707c34114979f7d87c42045ea0af00d1c) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Bound receive-side rateless range materialization in JavaScript and both native
+  backends through an explicit limited-range capability, fall back to paged index
+  iteration when an older native package lacks that capability, fall back to
+  simple sync on overflow, and page simple coordinate lookups without using
+  `iterator.all()`.
+
 ## 0.1.5
 
 ### Patch Changes
