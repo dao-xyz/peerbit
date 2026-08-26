@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.0.93
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @peerbit/shared-log@16.0.10
+  - @peerbit/canonical-host@1.0.69
+  - @peerbit/log@6.2.20
+
 ## 2.0.92
 
 ### Patch Changes

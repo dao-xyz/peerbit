@@ -1,5 +1,13 @@
 # Changelog
 
+## 16.0.10
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @peerbit/log@6.2.20
+  - @peerbit/rpc@6.1.20
+
 ## 16.0.9
 
 ### Patch Changes

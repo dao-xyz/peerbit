@@ -1,5 +1,14 @@
 # Changelog
 
+## 15.0.10
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @peerbit/shared-log@16.0.10
+  - @peerbit/log@6.2.20
+  - @peerbit/rpc@6.1.20
+
 ## 15.0.9
 
 ### Patch Changes

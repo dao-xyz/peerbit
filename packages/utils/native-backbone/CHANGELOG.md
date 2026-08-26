@@ -1,5 +1,11 @@
 # @peerbit/native-backbone
 
+## 0.2.9
+
+### Patch Changes
+
+- [#1313](https://github.com/dao-xyz/peerbit/pull/1313) [`223a2d0`](https://github.com/dao-xyz/peerbit/commit/223a2d097fac79652ca89b699f0c16951988e074) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Add an explicit bounded named-file read capability to native persistence stores while preserving the existing unlimited read API.
+
 ## 0.2.8
 
 ### Patch Changes
