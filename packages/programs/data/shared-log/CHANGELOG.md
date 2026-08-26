@@ -1,5 +1,11 @@
 # Changelog
 
+## 16.0.9
+
+### Patch Changes
+
+- [#1312](https://github.com/dao-xyz/peerbit/pull/1312) [`f193261`](https://github.com/dao-xyz/peerbit/commit/f1932614febe65346c88c5e9357e7ce27e4fc247) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Add local advisory replication status snapshots and transition-only status events for soft storage objectives and under-replication. Preserve exact u64 endpoint ordering when measuring minimum range coverage.
+
 ## 16.0.8
 
 ### Patch Changes
