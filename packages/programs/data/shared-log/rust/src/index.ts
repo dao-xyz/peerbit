@@ -347,6 +347,20 @@ type NativeSharedLogStateHandle = {
 		start2: string,
 		end2: string,
 	) => BigUint64Array;
+	entry_hash_numbers_in_range_limited?: (
+		start1: string,
+		end1: string,
+		start2: string,
+		end2: string,
+		limit: number,
+	) => unknown[];
+	entry_hash_numbers_in_range_u64_limited?: (
+		start1: string,
+		end1: string,
+		start2: string,
+		end2: string,
+		limit: number,
+	) => BigUint64Array;
 	commit_entry_coordinates: (
 		hash: string,
 		gid: string,
@@ -1191,6 +1205,52 @@ export class SharedLogNativeState {
 			asIntegerString(range.end1),
 			asIntegerString(range.start2),
 			asIntegerString(range.end2),
+		);
+	}
+
+	getEntryHashNumbersInRangeLimited(range: {
+		start1: bigint | number | string;
+		end1: bigint | number | string;
+		start2: bigint | number | string;
+		end2: bigint | number | string;
+		limit: number;
+	}): bigint[] | undefined {
+		if (
+			typeof this.native.entry_hash_numbers_in_range_limited !== "function"
+		) {
+			return undefined;
+		}
+		return rowsToNumbers(
+			"u64",
+			this.native.entry_hash_numbers_in_range_limited(
+				asIntegerString(range.start1),
+				asIntegerString(range.end1),
+				asIntegerString(range.start2),
+				asIntegerString(range.end2),
+				range.limit,
+			),
+		) as bigint[];
+	}
+
+	getEntryHashNumbersInRangeU64Limited(range: {
+		start1: bigint | number | string;
+		end1: bigint | number | string;
+		start2: bigint | number | string;
+		end2: bigint | number | string;
+		limit: number;
+	}): BigUint64Array | undefined {
+		if (
+			typeof BigUint64Array === "undefined" ||
+			typeof this.native.entry_hash_numbers_in_range_u64_limited !== "function"
+		) {
+			return undefined;
+		}
+		return this.native.entry_hash_numbers_in_range_u64_limited(
+			asIntegerString(range.start1),
+			asIntegerString(range.end1),
+			asIntegerString(range.start2),
+			asIntegerString(range.end2),
+			range.limit,
 		);
 	}
 

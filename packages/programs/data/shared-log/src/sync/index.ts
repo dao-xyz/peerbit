@@ -35,6 +35,14 @@ export type SyncOptions<R extends "u32" | "u64"> = {
 	maxSimpleEntries?: number;
 
 	/**
+	 * Maximum number of local entries materialized into the range encoder for
+	 * one incoming rateless sync. Ranges above this limit fall back to bounded
+	 * simple sync. Defaults to 16,384. This is a per-process entry cap, not an
+	 * aggregate byte budget across concurrent syncs.
+	 */
+	maxRatelessReceiveRangeEntries?: number;
+
+	/**
 	 * Maximum number of hash strings in one simple sync message.
 	 */
 	maxSimpleHashesPerMessage?: number;
@@ -141,16 +149,18 @@ export type HashSymbolResolver = (
 
 export type HashSymbolHashListResolver = (
 	symbols: HashSymbolInput,
-) =>
-	| Iterable<string>
-	| undefined
-	| Promise<Iterable<string> | undefined>;
+) => Iterable<string> | undefined | Promise<Iterable<string> | undefined>;
 
 export type HashSymbolRangeResolver = (range: {
 	start1: bigint | number;
 	end1: bigint | number;
 	start2: bigint | number;
 	end2: bigint | number;
+	/**
+	 * Maximum values to return, including any overflow sentinel. Omitted only by
+	 * legacy custom synchronizers; built-in receive paths always provide it.
+	 */
+	limit?: number;
 }) =>
 	| Iterable<bigint | number>
 	| undefined

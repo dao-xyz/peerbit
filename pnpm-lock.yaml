@@ -1754,6 +1754,9 @@ importers:
       '@peerbit/indexer-rust':
         specifier: workspace:*
         version: link:../../../utils/indexer/rust
+      '@peerbit/indexer-simple':
+        specifier: workspace:*
+        version: link:../../../utils/indexer/simple
       '@peerbit/test-utils':
         specifier: workspace:*
         version: link:../../../clients/test-utils
