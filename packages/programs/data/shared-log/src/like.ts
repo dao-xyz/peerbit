@@ -7,6 +7,7 @@ import type {
 import type { Entry } from "@peerbit/log";
 import type { ShallowEntry } from "@peerbit/log";
 import type { ReplicationOptions, ReplicationRangeIndexable } from "./index.js";
+import type { ReplicationStatus } from "./replication-status.js";
 
 export type LogBlocksLike = {
 	has: (hash: string) => Promise<boolean> | boolean;
@@ -80,5 +81,7 @@ export type SharedLogLike<T = any, R extends "u32" | "u64" = any> = {
 	}) => Promise<number>;
 	getMyReplicationSegments: () => Promise<ReplicationRangeIndexable<R>[]>;
 	getAllReplicationSegments: () => Promise<ReplicationRangeIndexable<R>[]>;
+	/** Optional for proxy/legacy implementations that predate local telemetry. */
+	getReplicationStatus?: () => Promise<ReplicationStatus>;
 	close: () => Promise<void | boolean>;
 };

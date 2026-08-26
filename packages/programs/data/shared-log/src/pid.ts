@@ -46,13 +46,13 @@ export class PIDReplicationController {
 		let errorMemory = 0;
 
 		if (this.maxMemoryLimit != null) {
-			// Treat the configured storage limit as a ceiling, not the exact control
-			// target. A small reserve prevents discrete entry sizes and delayed checked
-			// prunes from repeatedly settling just above the hard budget.
+			// Treat the configured storage limit as a soft operating objective, not
+			// an exact set point. A small reserve helps discrete entry sizes and delayed
+			// checked prunes settle near that objective without repeated overshoot.
 			const effectiveMemoryLimit =
 				this.maxMemoryLimit > 0 ? this.maxMemoryLimit * 0.95 : 0;
 			if (effectiveMemoryLimit <= 0) {
-				// A zero storage budget can never hold data; drive the factor to zero
+				// A zero storage objective can never hold data; drive the factor to zero
 				// instead of leaving the memory term neutral.
 				errorMemory = -currentFactor;
 			} else if (currentFactor > 0 && memoryUsage > 0) {
