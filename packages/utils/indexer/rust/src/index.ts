@@ -1110,6 +1110,14 @@ type NativeEncodedPutOptions = {
 	encodedValue?: Uint8Array;
 	encodedValueParts?: NativeEncodedValueParts;
 };
+
+// wasm-bindgen exposes ordinary bridge extraction rejections from Rust
+// `Result<_, JsValue>` as primitive strings. Runtime failures such as allocator
+// traps and a poisoned WASM instance surface as Error objects and must not be
+// retried through a second native mutation.
+const isNativeEncodedExtractionFallback = (error: unknown): error is string =>
+	typeof error === "string";
+
 type NativeFieldValueWriterFn = (
 	value: any,
 	writer: NativeFieldWriter,
@@ -4380,7 +4388,10 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 			);
 			this.markMutationVisible();
 			return true;
-		} catch {
+		} catch (error) {
+			if (!isNativeEncodedExtractionFallback(error)) {
+				throw error;
+			}
 			// Fall back to the per-entry native call, which already falls back again
 			// to TypeScript field encoding for schemas outside the native extractor.
 			return false;
@@ -4408,7 +4419,10 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 			);
 			this.markMutationVisible();
 			return true;
-		} catch {
+		} catch (error) {
+			if (!isNativeEncodedExtractionFallback(error)) {
+				throw error;
+			}
 			return false;
 		}
 	}
@@ -4554,7 +4568,10 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 			);
 			this.markMutationVisible();
 			return true;
-		} catch {
+		} catch (error) {
+			if (!isNativeEncodedExtractionFallback(error)) {
+				throw error;
+			}
 			return false;
 		}
 	}
@@ -4851,7 +4868,10 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 				this.nativeByteElementIndexLimit,
 			);
 			return true;
-		} catch {
+		} catch (error) {
+			if (!isNativeEncodedExtractionFallback(error)) {
+				throw error;
+			}
 			return false;
 		}
 	}
@@ -4875,7 +4895,10 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 				this.nativeByteElementIndexLimit,
 			);
 			return true;
-		} catch {
+		} catch (error) {
+			if (!isNativeEncodedExtractionFallback(error)) {
+				throw error;
+			}
 			return false;
 		}
 	}
@@ -5079,7 +5102,10 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 				);
 				this.markMutationVisible();
 				return true;
-			} catch {
+			} catch (error) {
+				if (!isNativeEncodedExtractionFallback(error)) {
+					throw error;
+				}
 				// Fall back to the proven TypeScript fact encoder for schemas whose
 				// Borsh bytes are not covered by the native extractor yet.
 			}
@@ -5095,9 +5121,12 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 				);
 				this.markMutationVisible();
 				return true;
-			} catch {
-				// Fall back to the proven TypeScript fact encoder for schemas whose
-				// Borsh bytes are not covered by the native extractor yet.
+			} catch (error) {
+				if (!isNativeEncodedExtractionFallback(error)) {
+					throw error;
+				}
+				// The native extractor rejected a supported bridge shape before mutation;
+				// preserve the proven TypeScript fact-encoder fallback for that case.
 			}
 		}
 		if (fields) {

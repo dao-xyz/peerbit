@@ -309,6 +309,174 @@ describe("native planner bridge", () => {
 		await indices.drop();
 	});
 
+	it("preserves encoded runtime failures without a fallback mutation", async () => {
+		for (const encodedFailure of [
+			new Error("forced native encoded put failure"),
+			new WebAssembly.RuntimeError("forced native encoded runtime failure"),
+		]) {
+			const indices = create();
+			await indices.start();
+			const index = await indices.init({ schema: BridgeDocument });
+			const internal = index as unknown as {
+				native: {
+					put_encoded: (...args: unknown[]) => void;
+					put: (...args: unknown[]) => void;
+				};
+			};
+			const native = internal.native;
+			let encodedCalls = 0;
+			let fallbackCalls = 0;
+
+			try {
+				internal.native = new Proxy(native, {
+					get(target, property, receiver) {
+						if (property === "put_encoded") {
+							return () => {
+								encodedCalls++;
+								throw encodedFailure;
+							};
+						}
+						if (property === "put") {
+							return () => {
+								fallbackCalls++;
+							};
+						}
+						return Reflect.get(target, property, receiver);
+					},
+				});
+
+				let rejection: unknown;
+				try {
+					await index.put(
+						new BridgeDocument("a", "peerbit", "native error"),
+					);
+				} catch (error) {
+					rejection = error;
+				}
+
+				expect(rejection).to.equal(encodedFailure);
+				expect(encodedCalls).to.equal(1);
+				expect(fallbackCalls).to.equal(0);
+			} finally {
+				internal.native = native;
+				await indices.drop();
+			}
+		}
+	});
+
+	it("retains the field-encoder fallback for bridge extraction rejections", async () => {
+		const indices = create();
+		await indices.start();
+		const index = await indices.init({ schema: BridgeDocument });
+		const internal = index as unknown as {
+			native: {
+				put_encoded: (...args: unknown[]) => void;
+				put: (...args: unknown[]) => void;
+			};
+		};
+		const native = internal.native;
+		const nativePut = native.put.bind(native);
+		let encodedCalls = 0;
+		let fallbackCalls = 0;
+
+		try {
+			internal.native = new Proxy(native, {
+				get(target, property, receiver) {
+					if (property === "put_encoded") {
+						return () => {
+							encodedCalls++;
+							// wasm-bindgen throws Rust bridge rejections as strings.
+							// eslint-disable-next-line @typescript-eslint/only-throw-error
+							throw "forced bridge extraction rejection";
+						};
+					}
+					if (property === "put") {
+						return (...args: unknown[]) => {
+							fallbackCalls++;
+							nativePut(...args);
+						};
+					}
+					return Reflect.get(target, property, receiver);
+				},
+			});
+
+			await index.put(new BridgeDocument("a", "peerbit", "fallback"));
+			expect(encodedCalls).to.equal(1);
+			expect(fallbackCalls).to.equal(1);
+			expect((await index.get(toId("a")))?.value.title).to.equal("fallback");
+		} finally {
+			internal.native = native;
+			await indices.drop();
+		}
+	});
+
+	it("preserves encoded-parts runtime failures without fallback", async () => {
+		const indices = create();
+		await indices.start();
+		const index = await indices.init({ schema: BridgeDocumentWithContext });
+		const contextualIndex = index as unknown as {
+			putWithEncodedValueParts: (
+				value: BridgeDocumentWithContext,
+				id: ReturnType<typeof toId>,
+				encodedValueParts: { prefix: Uint8Array; suffix: Uint8Array },
+			) => Promise<void>;
+		};
+		const internal = index as unknown as {
+			native: {
+				put_encoded_parts: (...args: unknown[]) => void;
+				put: (...args: unknown[]) => void;
+			};
+		};
+		const native = internal.native;
+		const encodedFailure = new WebAssembly.RuntimeError(
+			"forced native encoded-parts runtime failure",
+		);
+		let encodedCalls = 0;
+		let fallbackCalls = 0;
+
+		try {
+			internal.native = new Proxy(native, {
+				get(target, property, receiver) {
+					if (property === "put_encoded_parts") {
+						return () => {
+							encodedCalls++;
+							throw encodedFailure;
+						};
+					}
+					if (property === "put") {
+						return () => {
+							fallbackCalls++;
+						};
+					}
+					return Reflect.get(target, property, receiver);
+				},
+			});
+
+			const document = new BridgeDocument("a", "peerbit", "native parts");
+			const context = new BridgeContext("head-a");
+			let rejection: unknown;
+			try {
+				await contextualIndex.putWithEncodedValueParts(
+					new BridgeDocumentWithContext(document, context),
+					toId("a"),
+					{
+						prefix: serialize(document),
+						suffix: serialize(context),
+					},
+				);
+			} catch (error) {
+				rejection = error;
+			}
+
+			expect(rejection).to.equal(encodedFailure);
+			expect(encodedCalls).to.equal(1);
+			expect(fallbackCalls).to.equal(0);
+		} finally {
+			internal.native = native;
+			await indices.drop();
+		}
+	});
+
 	it("indexes borsh variant-prefixed document bytes in native rust", async () => {
 		const indices = create();
 		await indices.start();
