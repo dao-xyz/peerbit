@@ -253,6 +253,10 @@ import type {
 import { ReplicationInfoV2ReceiveCoordinator } from "./replication-info-v2-receive.js";
 import { ReplicationInfoV2SendCoordinator } from "./replication-info-v2-send.js";
 import {
+	type ReplicationStatus,
+	classifyReplicationStatus,
+} from "./replication-status.js";
+import {
 	AbsoluteReplicas,
 	AddedReplicationInfoV2Message,
 	AddedReplicationSegmentMessage,
@@ -416,6 +420,7 @@ export {
 };
 export { type CPUUsage, CPUUsageIntervalLag };
 export * from "./replication.js";
+export * from "./replication-status.js";
 export type {
 	LogLike,
 	LogResultsIterator,
@@ -1022,6 +1027,11 @@ export type ReplicationLimitsOptions =
 export type DynamicReplicationOptions<R extends "u32" | "u64"> = {
 	limits?: {
 		interval?: number;
+		/**
+		 * Soft byte objective for the adaptive PID controller. This is not a hard
+		 * quota: coverage pressure, discrete entries, and delayed pruning can make
+		 * actual local storage exceed this value.
+		 */
 		storage?: number;
 		cpu?: number | { max: number; monitor?: CPUUsage };
 	};
@@ -1913,6 +1923,14 @@ export type ReplicatorJoinEvent = { publicKey: PublicSignKey };
 export type ReplicatorLeaveEvent = { publicKey: PublicSignKey };
 export type ReplicationChangeEvent = { publicKey: PublicSignKey };
 export type ReplicatorMatureEvent = { publicKey: PublicSignKey };
+export type ReplicationStatusEvent = ReplicationStatus;
+
+class ReplicationStatusSnapshotChangedError extends Error {
+	constructor() {
+		super("Replication status changed while it was being measured");
+		this.name = "ReplicationStatusSnapshotChangedError";
+	}
+}
 
 type LeaderSelectionContext = {
 	roleAge: number;
@@ -1927,6 +1945,7 @@ export interface SharedLogEvents extends ProgramEvents {
 	"replicator:leave": CustomEvent<ReplicatorLeaveEvent>;
 	"replication:change": CustomEvent<ReplicationChangeEvent>;
 	"replicator:mature": CustomEvent<ReplicatorMatureEvent>;
+	"replication:status": CustomEvent<ReplicationStatusEvent>;
 }
 
 export type SharedLogRuntimeSnapshot = Readonly<{
@@ -1953,6 +1972,10 @@ export class SharedLog<
 	// options
 	private _isReplicating!: boolean;
 	private _isAdaptiveReplicating!: boolean;
+	private _replicationStatus?: ReplicationStatus;
+	private _replicationStatusReadTail!: Promise<void>;
+	private _replicationStatusRefreshScheduled!: boolean;
+	private _replicationStatusRefreshDirty!: boolean;
 
 	private _replicationRangeIndex!: Index<ReplicationRangeIndexable<R>>;
 	private _entryCoordinatesIndex!: Index<EntryReplicated<R>>;
@@ -6050,6 +6073,37 @@ export class SharedLog<
 			) => void;
 		},
 	) {
+		const wasAdaptiveReplicating = this._isAdaptiveReplicating;
+		const previousStorageObjective = wasAdaptiveReplicating
+			? this.replicationController?.maxMemoryLimit
+			: undefined;
+		try {
+			return await this.applyReplicationRole(rangeOrEntry, options);
+		} finally {
+			const storageObjective = this._isAdaptiveReplicating
+				? this.replicationController?.maxMemoryLimit
+				: undefined;
+			if (
+				this._isAdaptiveReplicating !== wasAdaptiveReplicating ||
+				storageObjective !== previousStorageObjective
+			) {
+				this.scheduleReplicationStatusRefresh();
+			}
+		}
+	}
+
+	private async applyReplicationRole(
+		rangeOrEntry?: ReplicationOptions<R> | Entry<T> | Entry<T>[],
+		options?: {
+			reset?: boolean;
+			checkDuplicates?: boolean;
+			rebalance?: boolean;
+			mergeSegments?: boolean;
+			announce?: (
+				msg: FullReplicationInfoMutation | AddedReplicationInfoMutation,
+			) => void;
+		},
+	) {
 		this.throwIfCheckedPruneRemoveBlocksLocalOperation(
 			"replication range mutation",
 		);
@@ -6157,15 +6211,31 @@ export class SharedLog<
 	}
 
 	async unreplicate(rangeOrEntry?: Entry<T> | { id: Uint8Array }[]) {
+		const wasAdaptiveReplicating = this._isAdaptiveReplicating;
+		const previousStorageObjective = wasAdaptiveReplicating
+			? this.replicationController?.maxMemoryLimit
+			: undefined;
 		this.throwIfCheckedPruneRemoveBlocksLocalOperation(
 			"replication range mutation",
 		);
 		const replicationOwnershipLifecycleController =
 			this.captureReplicationOwnershipLifecycle();
-		return this._unreplicate(
-			rangeOrEntry,
-			replicationOwnershipLifecycleController,
-		);
+		try {
+			return await this._unreplicate(
+				rangeOrEntry,
+				replicationOwnershipLifecycleController,
+			);
+		} finally {
+			const storageObjective = this._isAdaptiveReplicating
+				? this.replicationController?.maxMemoryLimit
+				: undefined;
+			if (
+				this._isAdaptiveReplicating !== wasAdaptiveReplicating ||
+				storageObjective !== previousStorageObjective
+			) {
+				this.scheduleReplicationStatusRefresh();
+			}
+		}
 	}
 
 	private async _unreplicate(
@@ -6534,6 +6604,13 @@ export class SharedLog<
 						await cleanupDisconnectedPeer();
 					}
 					return;
+				}
+				if (deleted.length > 0 || (wasReplicator && !ownerHasRanges)) {
+					// Some committed removals intentionally suppress replication:change,
+					// and liveness cleanup can retire membership without a leave event.
+					// Refresh from the committed post-state instead of relying on either
+					// optional notification path.
+					this.scheduleReplicationStatusRefresh();
 				}
 				if (options?.noEvent !== true && deleted.length > 0) {
 					const publicKey = toLocalPublicSignKey(key);
@@ -14326,6 +14403,7 @@ export class SharedLog<
 		// _receiveOwnershipRevision and _receiveOwnershipMutationAdmissions
 		// all start at 0 on the incoming lifecycle.
 		this.startRepairLifecycle();
+		this.resetReplicationStatusLifecycle();
 		// Guard: between startRepairLifecycle() and
 		// resetSubscriptionChangeCallbackTracking() the fresh lifecycle's
 		// membership controller is undefined (legacy exposed the previous
@@ -14509,9 +14587,23 @@ export class SharedLog<
 		});
 		const invalidateLeaderSelectionContext = () =>
 			this.invalidateLeaderSelectionContextCache();
+		const onReplicationStatusInputChange = () =>
+			this.scheduleReplicationStatusRefresh();
 		this.events.addEventListener(
 			"replication:change",
 			invalidateLeaderSelectionContext,
+		);
+		this.events.addEventListener(
+			"replication:change",
+			onReplicationStatusInputChange,
+		);
+		this.events.addEventListener(
+			"replicator:join",
+			onReplicationStatusInputChange,
+		);
+		this.events.addEventListener(
+			"replicator:leave",
+			onReplicationStatusInputChange,
 		);
 		this.events.addEventListener(
 			"replicator:mature",
@@ -14521,6 +14613,18 @@ export class SharedLog<
 			this.events.removeEventListener(
 				"replication:change",
 				invalidateLeaderSelectionContext,
+			);
+			this.events.removeEventListener(
+				"replication:change",
+				onReplicationStatusInputChange,
+			);
+			this.events.removeEventListener(
+				"replicator:join",
+				onReplicationStatusInputChange,
+			);
+			this.events.removeEventListener(
+				"replicator:leave",
+				onReplicationStatusInputChange,
 			);
 			this.events.removeEventListener(
 				"replicator:mature",
@@ -15036,6 +15140,7 @@ export class SharedLog<
 		}, RECALCULATE_PARTICIPATION_DEBOUNCE_INTERVAL);
 
 		this._instanceLifecycle!.markOpenComplete();
+		this.scheduleReplicationStatusRefresh();
 	}
 
 	private toNativeReplicationRange(
@@ -15764,6 +15869,7 @@ export class SharedLog<
 			const promises: Promise<any>[] = [];
 			const iterator = this.replicationIndex.iterate();
 			const checkedIsAlive = new Set<string>();
+			const selfHash = this.node.identity.publicKey.hashcode();
 
 			while (!iterator.done()) {
 				const segments = await iterator.next(1000);
@@ -15775,9 +15881,13 @@ export class SharedLog<
 				for (const segment of segments) {
 					if (
 						checkedIsAlive.has(segment.value.hash) ||
-						this.node.identity.publicKey.hashcode() === segment.value.hash
+						selfHash === segment.value.hash
 					) {
-						this.uniqueReplicators.add(this.node.identity.publicKey.hashcode());
+						if (!this.uniqueReplicators.has(selfHash)) {
+							this.uniqueReplicators.add(selfHash);
+							this.invalidateLeaderSelectionContextCache();
+							this.scheduleReplicationStatusRefresh();
+						}
 						continue;
 					}
 
@@ -16074,6 +16184,208 @@ export class SharedLog<
 	async getMemoryUsage() {
 		return this.log.blocks.size();
 		/* ((await this.log.entryIndex?.getMemoryUsage()) || 0) */ // + (await this.log.blocks.size())
+	}
+
+	private resetReplicationStatusLifecycle(): void {
+		this._replicationStatus = undefined;
+		this._replicationStatusReadTail = Promise.resolve();
+		this._replicationStatusRefreshScheduled = false;
+		this._replicationStatusRefreshDirty = false;
+	}
+
+	private isReplicationStatusLifecycleCurrent(
+		lifecycle: InstanceLifecycle | undefined,
+	): lifecycle is InstanceLifecycle {
+		return (
+			lifecycle != null &&
+			lifecycle === this._instanceLifecycle &&
+			lifecycle.phase() === "active"
+		);
+	}
+
+	private async measureReplicationStatus(
+		lifecycle: InstanceLifecycle,
+	): Promise<ReplicationStatus> {
+		if (!this.isReplicationStatusLifecycleCurrent(lifecycle)) {
+			throw new ClosedError();
+		}
+
+		const capturedRoleGeneration = lifecycle.roleGeneration;
+		const capturedOwnershipRevision = lifecycle._receiveOwnershipRevision;
+		if (lifecycle._receiveOwnershipMutationAdmissions !== 0) {
+			throw new ReplicationStatusSnapshotChangedError();
+		}
+
+		// Capture every synchronous policy/membership input before yielding. The
+		// generation and ownership checks below reject the whole measurement if a
+		// same-open role or range mutation races either asynchronous metric read.
+		const defaultReplicaTarget = this.replicas.min.getValue(this);
+		const isAdaptiveReplicating = this._isAdaptiveReplicating;
+		const storageObjectiveBytes = isAdaptiveReplicating
+			? this.replicationController?.maxMemoryLimit
+			: undefined;
+		const activeReplicators = this.uniqueReplicators.size;
+		const [storageUsedBytes, rangeCoverage] = await Promise.all([
+			this.getMemoryUsage(),
+			this.calculateCoverage(),
+		]);
+		if (!this.isReplicationStatusLifecycleCurrent(lifecycle)) {
+			throw new ClosedError();
+		}
+		const currentStorageObjectiveBytes = this._isAdaptiveReplicating
+			? this.replicationController?.maxMemoryLimit
+			: undefined;
+		if (
+			!lifecycle.isRoleCurrent(capturedRoleGeneration) ||
+			!this.isReceiveOwnershipSnapshotStable(capturedOwnershipRevision) ||
+			this.replicas.min.getValue(this) !== defaultReplicaTarget ||
+			this._isAdaptiveReplicating !== isAdaptiveReplicating ||
+			currentStorageObjectiveBytes !== storageObjectiveBytes ||
+			this.uniqueReplicators.size !== activeReplicators
+		) {
+			throw new ReplicationStatusSnapshotChangedError();
+		}
+		const status = classifyReplicationStatus({
+			storageUsedBytes,
+			storageObjectiveBytes,
+			rangeCoverage,
+			defaultReplicaTarget,
+			activeReplicators,
+		});
+		const previous = this._replicationStatus;
+		this._replicationStatus = status;
+		const transitioned =
+			previous == null ||
+			previous.reasons.length !== status.reasons.length ||
+			previous.reasons.some(
+				(reason, index) => reason !== status.reasons[index],
+			);
+		if (transitioned) {
+			this.events.dispatchEvent(
+				new CustomEvent<ReplicationStatusEvent>("replication:status", {
+					detail: status,
+				}),
+			);
+		}
+		return status;
+	}
+
+	/**
+	 * Measure local replication health. The snapshot and event are advisory:
+	 * they are not persisted, sent to peers, or consumed by replication logic.
+	 * Event emission is deduplicated by the ordered reason set, so metric drift
+	 * within the same state does not create event traffic. Explicit measurements
+	 * work without listeners; automatic refreshes run only while the status event
+	 * has at least one listener.
+	 */
+	getReplicationStatus(): Promise<ReplicationStatus> {
+		const lifecycle = this._instanceLifecycle;
+		if (!this.isReplicationStatusLifecycleCurrent(lifecycle)) {
+			return Promise.reject(new ClosedError());
+		}
+		const previous = this._replicationStatusReadTail ?? Promise.resolve();
+		const operation = previous
+			.catch(() => {})
+			.then(async () => {
+				let staleError: ReplicationStatusSnapshotChangedError | undefined;
+				for (let attempt = 0; attempt < 2; attempt++) {
+					try {
+						return await this.measureReplicationStatus(lifecycle);
+					} catch (error) {
+						if (!(error instanceof ReplicationStatusSnapshotChangedError)) {
+							throw error;
+						}
+						staleError = error;
+						if (attempt === 0) {
+							const mutationTail = this._replicationRangeMutationTail;
+							await mutationTail.catch(() => {});
+						}
+					}
+				}
+				throw staleError!;
+			});
+		this._replicationStatusReadTail = operation.then(
+			() => {},
+			() => {},
+		);
+		return operation;
+	}
+
+	private scheduleReplicationStatusRefresh(): void {
+		if (this.events.listenerCount("replication:status") === 0) {
+			return;
+		}
+		const lifecycle = this._instanceLifecycle;
+		if (!this.isReplicationStatusLifecycleCurrent(lifecycle)) {
+			return;
+		}
+		if (this._replicationStatusRefreshScheduled) {
+			this._replicationStatusRefreshDirty = true;
+			return;
+		}
+		this._replicationStatusRefreshScheduled = true;
+		queueMicrotask(() => {
+			if (lifecycle !== this._instanceLifecycle) {
+				return;
+			}
+			if (this.events.listenerCount("replication:status") === 0) {
+				this._replicationStatusRefreshScheduled = false;
+				this._replicationStatusRefreshDirty = false;
+				return;
+			}
+			// Calls coalesced before the microtask starts are reflected by this scan.
+			// Calls arriving while it is in flight set the bit again and receive one
+			// follow-up scan for the latest state.
+			this._replicationStatusRefreshDirty = false;
+			if (!this.isReplicationStatusLifecycleCurrent(lifecycle)) {
+				this._replicationStatusRefreshScheduled = false;
+				return;
+			}
+			void this.getReplicationStatus()
+				.catch((error) => {
+					if (error instanceof ReplicationStatusSnapshotChangedError) {
+						this._replicationStatusRefreshDirty = true;
+						return;
+					}
+					if (
+						this.isReplicationStatusLifecycleCurrent(lifecycle) &&
+						!(error instanceof ClosedError) &&
+						!isNotStartedError(error as Error)
+					) {
+						logger.error(error);
+					}
+				})
+				.then(() => {
+					if (lifecycle !== this._instanceLifecycle) {
+						return;
+					}
+					this._replicationStatusRefreshScheduled = false;
+					if (!this.isReplicationStatusLifecycleCurrent(lifecycle)) {
+						this._replicationStatusRefreshDirty = false;
+						return;
+					}
+					if (this._replicationStatusRefreshDirty) {
+						this._replicationStatusRefreshDirty = false;
+						this.scheduleReplicationStatusRefresh();
+					}
+				});
+		});
+	}
+
+	private scheduleReplicationStatusRefreshForStorage(
+		storageUsedBytes: number,
+	): void {
+		const objective = this.replicationController?.maxMemoryLimit;
+		if (!this._isAdaptiveReplicating || objective == null) {
+			return;
+		}
+		const exceeded = storageUsedBytes > objective;
+		const wasExceeded = this._replicationStatus?.reasons.includes(
+			"storage-objective-exceeded",
+		);
+		if (wasExceeded == null || wasExceeded !== exceeded) {
+			this.scheduleReplicationStatusRefresh();
+		}
 	}
 
 	/** Return a detached snapshot of effective shared-log runtime settings. */
@@ -16856,6 +17168,7 @@ export class SharedLog<
 	private async _close(options?: { preserveDropRetryResources?: boolean }) {
 		this.stopRepairLifecycle();
 		this._instanceLifecycle?.beginTerminal("internal-close");
+		this.resetReplicationStatusLifecycle();
 		const preserveDropRetryResources =
 			options?.preserveDropRetryResources === true;
 		let firstError: unknown;
@@ -17049,6 +17362,7 @@ export class SharedLog<
 		this.preventParentAttachments();
 		this.stopRepairLifecycle();
 		this._instanceLifecycle?.beginTerminal("close");
+		this.resetReplicationStatusLifecycle();
 		this._v2Receive?.clearForClose();
 		const replicationRangeTerminalFence =
 			this.acquireReplicationRangeMutationTerminalFence();
@@ -17186,6 +17500,7 @@ export class SharedLog<
 		this.preventParentAttachments();
 		this.stopRepairLifecycle();
 		this._instanceLifecycle?.beginTerminal("drop");
+		this.resetReplicationStatusLifecycle();
 		this._v2Receive?.clearForClose();
 		const replicationRangeTerminalFence =
 			this.acquireReplicationRangeMutationTerminalFence();
@@ -25012,6 +25327,7 @@ export class SharedLog<
 				const peers = this.replicationIndex;
 				const usedMemory = await this.getMemoryUsage();
 				if (!isCurrent()) return false;
+				this.scheduleReplicationStatusRefreshForStorage(usedMemory);
 				let dynamicRange = await this.getDynamicRange();
 				if (!isCurrent()) return false;
 

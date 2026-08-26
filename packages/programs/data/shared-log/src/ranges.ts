@@ -1490,7 +1490,7 @@ export const calculateCoverage = async <R extends "u32" | "u64">(properties: {
 	// When points are equal, process a start (delta +1) before an end (delta -1)
 	endpoints.sort((a, b) => {
 		if (a.point === b.point) return b.delta - a.delta;
-		return Number(a.point) - Number(b.point);
+		return a.point < b.point ? -1 : 1;
 	});
 
 	// If there are no endpoints at all, nothing covers the content range.
