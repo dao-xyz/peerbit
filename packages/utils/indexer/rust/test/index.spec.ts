@@ -237,6 +237,55 @@ const removeNodeDirectoryIfNeeded = async (directory: string): Promise<void> => 
 	await rm(directory, { recursive: true, force: true });
 };
 
+type BridgeEncodedParts = {
+	prefix: Uint8Array;
+	suffix: Uint8Array;
+};
+
+type BridgeContextHooks = {
+	putWithContext(
+		value: BridgeDocument,
+		id: ReturnType<typeof toId>,
+		context: BridgeContext,
+		options: { encodedValueParts: BridgeEncodedParts },
+	): Promise<void> | void;
+	putWithContextBatch(
+		values: Array<{
+			value: BridgeDocument;
+			id: ReturnType<typeof toId>;
+			context: BridgeContext;
+			options: { encodedValueParts: BridgeEncodedParts };
+		}>,
+	): Promise<void>;
+	putStoredContextualEncodedValue(
+		id: ReturnType<typeof toId>,
+		encodedValueParts: BridgeEncodedParts,
+	): Promise<void> | void | false;
+	putStoredContextualEncodedValueBatch(
+		values: Array<{
+			id: ReturnType<typeof toId>;
+			encodedValueParts: BridgeEncodedParts;
+		}>,
+	): Promise<boolean>;
+};
+
+const bridgeEncodedParts = (
+	value: BridgeDocument,
+	context: BridgeContext,
+): BridgeEncodedParts => ({
+	prefix: serialize(value),
+	suffix: serialize(context),
+});
+
+const captureRejection = async (operation: () => unknown): Promise<unknown> => {
+	try {
+		await operation();
+	} catch (error) {
+		return error;
+	}
+	throw new Error("Expected operation to reject");
+};
+
 describe("all", () => {
 	tests(create, "persist", {
 		shapingSupported: false,
@@ -307,6 +356,491 @@ describe("native planner bridge", () => {
 
 		expect(results.map((result) => result.value.id)).to.deep.equal(["b"]);
 		await indices.drop();
+	});
+
+	it("preserves encoded runtime failures without a fallback mutation", async () => {
+		for (const encodedFailure of [
+			new Error("forced native encoded put failure"),
+			new WebAssembly.RuntimeError("forced native encoded runtime failure"),
+		]) {
+			const indices = create();
+			await indices.start();
+			const index = await indices.init({ schema: BridgeDocument });
+			const internal = index as unknown as {
+				native: {
+					put_encoded: (...args: unknown[]) => void;
+					put: (...args: unknown[]) => void;
+				};
+			};
+			const native = internal.native;
+			let encodedCalls = 0;
+			let fallbackCalls = 0;
+
+			try {
+				internal.native = new Proxy(native, {
+					get(target, property, receiver) {
+						if (property === "put_encoded") {
+							return () => {
+								encodedCalls++;
+								throw encodedFailure;
+							};
+						}
+						if (property === "put") {
+							return () => {
+								fallbackCalls++;
+							};
+						}
+						return Reflect.get(target, property, receiver);
+					},
+				});
+
+				let rejection: unknown;
+				try {
+					await index.put(
+						new BridgeDocument("a", "peerbit", "native error"),
+					);
+				} catch (error) {
+					rejection = error;
+				}
+
+				expect(rejection).to.equal(encodedFailure);
+				expect(encodedCalls).to.equal(1);
+				expect(fallbackCalls).to.equal(0);
+			} finally {
+				internal.native = native;
+				await indices.drop();
+			}
+		}
+	});
+
+	it("retains the field-encoder fallback for bridge extraction rejections", async () => {
+		const indices = create();
+		await indices.start();
+		const index = await indices.init({ schema: BridgeDocument });
+		const internal = index as unknown as {
+			native: {
+				put_encoded: (...args: unknown[]) => void;
+				put: (...args: unknown[]) => void;
+			};
+		};
+		const native = internal.native;
+		const nativePut = native.put.bind(native);
+		let encodedCalls = 0;
+		let fallbackCalls = 0;
+
+		try {
+			internal.native = new Proxy(native, {
+				get(target, property, receiver) {
+					if (property === "put_encoded") {
+						return () => {
+							encodedCalls++;
+							// wasm-bindgen throws Rust bridge rejections as strings.
+							// eslint-disable-next-line @typescript-eslint/only-throw-error
+							throw "forced bridge extraction rejection";
+						};
+					}
+					if (property === "put") {
+						return (...args: unknown[]) => {
+							fallbackCalls++;
+							nativePut(...args);
+						};
+					}
+					return Reflect.get(target, property, receiver);
+				},
+			});
+
+			await index.put(new BridgeDocument("a", "peerbit", "fallback"));
+			expect(encodedCalls).to.equal(1);
+			expect(fallbackCalls).to.equal(1);
+			expect((await index.get(toId("a")))?.value.title).to.equal("fallback");
+		} finally {
+			internal.native = native;
+			await indices.drop();
+		}
+	});
+
+	it("preserves encoded-parts runtime failures without fallback", async () => {
+		const indices = create();
+		await indices.start();
+		const index = await indices.init({ schema: BridgeDocumentWithContext });
+		const contextualIndex = index as unknown as {
+			putWithEncodedValueParts: (
+				value: BridgeDocumentWithContext,
+				id: ReturnType<typeof toId>,
+				encodedValueParts: { prefix: Uint8Array; suffix: Uint8Array },
+			) => Promise<void>;
+		};
+		const internal = index as unknown as {
+			native: {
+				put_encoded_parts: (...args: unknown[]) => void;
+				put: (...args: unknown[]) => void;
+			};
+		};
+		const native = internal.native;
+		const encodedFailure = new WebAssembly.RuntimeError(
+			"forced native encoded-parts runtime failure",
+		);
+		let encodedCalls = 0;
+		let fallbackCalls = 0;
+
+		try {
+			internal.native = new Proxy(native, {
+				get(target, property, receiver) {
+					if (property === "put_encoded_parts") {
+						return () => {
+							encodedCalls++;
+							throw encodedFailure;
+						};
+					}
+					if (property === "put") {
+						return () => {
+							fallbackCalls++;
+						};
+					}
+					return Reflect.get(target, property, receiver);
+				},
+			});
+
+			const document = new BridgeDocument("a", "peerbit", "native parts");
+			const context = new BridgeContext("head-a");
+			let rejection: unknown;
+			try {
+				await contextualIndex.putWithEncodedValueParts(
+					new BridgeDocumentWithContext(document, context),
+					toId("a"),
+					{
+						prefix: serialize(document),
+						suffix: serialize(context),
+					},
+				);
+			} catch (error) {
+				rejection = error;
+			}
+
+			expect(rejection).to.equal(encodedFailure);
+			expect(encodedCalls).to.equal(1);
+			expect(fallbackCalls).to.equal(0);
+		} finally {
+			internal.native = native;
+			await indices.drop();
+		}
+	});
+
+	it("preserves stored encoded runtime failures without fallback mutations", async () => {
+		const indices = create();
+		await indices.start();
+		const index = await indices.init({ schema: BridgeDocumentWithContext });
+		const contextual = index as unknown as BridgeContextHooks;
+		const internal = index as unknown as { native: object };
+		const native = internal.native;
+		const singleFailure = new WebAssembly.RuntimeError(
+			"forced stored single runtime failure",
+		);
+		const batchFailure = new Error("forced stored batch runtime failure");
+		const calls = { single: 0, batch: 0, fallback: 0 };
+		let mode: "single" | "batch" = "single";
+		let singleRejection: unknown;
+		let batchRejection: unknown;
+
+		try {
+			try {
+				internal.native = new Proxy(native, {
+					get(target, property, receiver) {
+						if (property === "put_encoded_parts_stored" && mode === "single") {
+							return () => {
+								calls.single++;
+								throw singleFailure;
+							};
+						}
+						if (
+							property === "put_encoded_parts_stored_batch" &&
+							mode === "batch"
+						) {
+							return () => {
+								calls.batch++;
+								throw batchFailure;
+							};
+						}
+						if (
+							property === "put_encoded_parts" ||
+							property === "put_encoded_parts_batch" ||
+							property === "put"
+						) {
+							return () => {
+								calls.fallback++;
+							};
+						}
+						return Reflect.get(target, property, receiver);
+					},
+				});
+
+				const single = new BridgeDocument("single", "peerbit", "single");
+				const singleContext = new BridgeContext("head-single");
+				singleRejection = await captureRejection(() =>
+					contextual.putWithContext(single, toId(single.id), singleContext, {
+						encodedValueParts: bridgeEncodedParts(single, singleContext),
+					}),
+				);
+
+				mode = "batch";
+				const first = new BridgeDocument("a", "peerbit", "first");
+				const second = new BridgeDocument("b", "peerbit", "second");
+				const firstContext = new BridgeContext("head-a");
+				const secondContext = new BridgeContext("head-b");
+				batchRejection = await captureRejection(() =>
+					contextual.putWithContextBatch([
+						{
+							value: first,
+							id: toId(first.id),
+							context: firstContext,
+							options: {
+								encodedValueParts: bridgeEncodedParts(first, firstContext),
+							},
+						},
+						{
+							value: second,
+							id: toId(second.id),
+							context: secondContext,
+							options: {
+								encodedValueParts: bridgeEncodedParts(second, secondContext),
+							},
+						},
+					]),
+				);
+			} finally {
+				internal.native = native;
+			}
+
+			expect(singleRejection).to.equal(singleFailure);
+			expect((singleRejection as Error).message).to.equal(singleFailure.message);
+			expect(batchRejection).to.equal(batchFailure);
+			expect((batchRejection as Error).message).to.equal(batchFailure.message);
+			expect(calls).to.deep.equal({ single: 1, batch: 1, fallback: 0 });
+			expect(await index.get(toId("single"))).to.equal(undefined);
+			expect(await index.get(toId("a"))).to.equal(undefined);
+			expect(await index.get(toId("b"))).to.equal(undefined);
+		} finally {
+			internal.native = native;
+			await indices.drop();
+		}
+	});
+
+	it("preserves encoded-parts batch runtime failures without per-entry retry", async () => {
+		const indices = create();
+		await indices.start();
+		const index = await indices.init({ schema: BridgeDocumentWithContext });
+		const contextual = index as unknown as BridgeContextHooks;
+		const internal = index as unknown as { native: object };
+		const native = internal.native;
+		const batchFailure = new WebAssembly.RuntimeError(
+			"forced encoded-parts batch runtime failure",
+		);
+		const calls = { storedBatch: 0, encodedBatch: 0, perEntry: 0 };
+		let rejection: unknown;
+
+		try {
+			try {
+				internal.native = new Proxy(native, {
+					get(target, property, receiver) {
+						if (property === "put_encoded_parts_stored_batch") {
+							return () => {
+								calls.storedBatch++;
+								// eslint-disable-next-line @typescript-eslint/only-throw-error
+								throw "forced stored batch bridge rejection";
+							};
+						}
+						if (property === "put_encoded_parts_batch") {
+							return () => {
+								calls.encodedBatch++;
+								throw batchFailure;
+							};
+						}
+						if (property === "put_encoded_parts" || property === "put") {
+							return () => {
+								calls.perEntry++;
+							};
+						}
+						return Reflect.get(target, property, receiver);
+					},
+				});
+
+				const first = new BridgeDocument("a", "peerbit", "first");
+				const second = new BridgeDocument("b", "peerbit", "second");
+				const firstContext = new BridgeContext("head-a");
+				const secondContext = new BridgeContext("head-b");
+				rejection = await captureRejection(() =>
+					contextual.putWithContextBatch([
+						{
+							value: first,
+							id: toId(first.id),
+							context: firstContext,
+							options: {
+								encodedValueParts: bridgeEncodedParts(first, firstContext),
+							},
+						},
+						{
+							value: second,
+							id: toId(second.id),
+							context: secondContext,
+							options: {
+								encodedValueParts: bridgeEncodedParts(second, secondContext),
+							},
+						},
+					]),
+				);
+			} finally {
+				internal.native = native;
+			}
+
+			expect(rejection).to.equal(batchFailure);
+			expect((rejection as Error).message).to.equal(batchFailure.message);
+			expect(calls).to.deep.equal({
+				storedBatch: 1,
+				encodedBatch: 1,
+				perEntry: 0,
+			});
+			expect(await index.get(toId("a"))).to.equal(undefined);
+			expect(await index.get(toId("b"))).to.equal(undefined);
+		} finally {
+			internal.native = native;
+			await indices.drop();
+		}
+	});
+
+	it("preserves validation runtime failures before persistence", async () => {
+		const directory = createPersistenceDirectory();
+		const indices = create(directory);
+		await indices.start();
+		const index = await indices.init({ schema: BridgeDocumentWithContext });
+		const contextual = index as unknown as BridgeContextHooks;
+		const internal = index as unknown as {
+			native: object;
+			appendPut: (...args: unknown[]) => Promise<void>;
+			snapshotFile: {
+				appendPutBatch: (...args: unknown[]) => Promise<void>;
+			};
+		};
+		const native = internal.native;
+		const originalAppendPut = internal.appendPut;
+		const originalAppendPutBatch = internal.snapshotFile.appendPutBatch;
+		const singleFailure = new Error("forced validation single runtime failure");
+		const batchFailure = new WebAssembly.RuntimeError(
+			"forced validation batch runtime failure",
+		);
+		const calls = {
+			validateSingle: 0,
+			validateBatch: 0,
+			appendSingle: 0,
+			appendBatch: 0,
+			stored: 0,
+		};
+		let runtimeFailure = true;
+		let singleRejection: unknown;
+		let batchRejection: unknown;
+		let singleFallback: unknown;
+		let batchFallback: unknown;
+
+		try {
+			try {
+				internal.appendPut = async () => {
+					calls.appendSingle++;
+				};
+				internal.snapshotFile.appendPutBatch = async () => {
+					calls.appendBatch++;
+				};
+				internal.native = new Proxy(native, {
+					get(target, property, receiver) {
+						if (property === "validate_encoded_parts") {
+							return () => {
+								calls.validateSingle++;
+								if (runtimeFailure) {
+									throw singleFailure;
+								}
+								// eslint-disable-next-line @typescript-eslint/only-throw-error
+								throw "forced validation single bridge rejection";
+							};
+						}
+						if (property === "validate_encoded_parts_batch") {
+							return () => {
+								calls.validateBatch++;
+								if (runtimeFailure) {
+									throw batchFailure;
+								}
+								// eslint-disable-next-line @typescript-eslint/only-throw-error
+								throw "forced validation batch bridge rejection";
+							};
+						}
+						if (
+							property === "put_encoded_parts_stored" ||
+							property === "put_encoded_parts_stored_batch"
+						) {
+							return () => {
+								calls.stored++;
+							};
+						}
+						return Reflect.get(target, property, receiver);
+					},
+				});
+
+				const first = new BridgeDocument("a", "peerbit", "first");
+				const second = new BridgeDocument("b", "peerbit", "second");
+				const firstParts = bridgeEncodedParts(first, new BridgeContext("head-a"));
+				const secondParts = bridgeEncodedParts(
+					second,
+					new BridgeContext("head-b"),
+				);
+
+				singleRejection = await captureRejection(() =>
+					contextual.putStoredContextualEncodedValue(
+						toId(first.id),
+						firstParts,
+					),
+				);
+				batchRejection = await captureRejection(() =>
+					contextual.putStoredContextualEncodedValueBatch([
+						{ id: toId(first.id), encodedValueParts: firstParts },
+						{ id: toId(second.id), encodedValueParts: secondParts },
+					]),
+				);
+
+				runtimeFailure = false;
+				singleFallback = await contextual.putStoredContextualEncodedValue(
+					toId(first.id),
+					firstParts,
+				);
+				batchFallback =
+					await contextual.putStoredContextualEncodedValueBatch([
+						{ id: toId(first.id), encodedValueParts: firstParts },
+						{ id: toId(second.id), encodedValueParts: secondParts },
+					]);
+			} finally {
+				internal.native = native;
+				internal.appendPut = originalAppendPut;
+				internal.snapshotFile.appendPutBatch = originalAppendPutBatch;
+			}
+
+			expect(singleRejection).to.equal(singleFailure);
+			expect((singleRejection as Error).message).to.equal(singleFailure.message);
+			expect(batchRejection).to.equal(batchFailure);
+			expect((batchRejection as Error).message).to.equal(batchFailure.message);
+			expect(singleFallback).to.equal(false);
+			expect(batchFallback).to.equal(false);
+			expect(calls).to.deep.equal({
+				validateSingle: 2,
+				validateBatch: 2,
+				appendSingle: 0,
+				appendBatch: 0,
+				stored: 0,
+			});
+			expect(await index.get(toId("a"))).to.equal(undefined);
+			expect(await index.get(toId("b"))).to.equal(undefined);
+		} finally {
+			internal.native = native;
+			internal.appendPut = originalAppendPut;
+			internal.snapshotFile.appendPutBatch = originalAppendPutBatch;
+			await indices.drop();
+			await removeNodeDirectoryIfNeeded(directory);
+		}
 	});
 
 	it("indexes borsh variant-prefixed document bytes in native rust", async () => {
@@ -2373,6 +2907,85 @@ describe("native planner bridge", () => {
 			await reopened.drop();
 		} finally {
 			await indices.drop();
+			await rm(directory, { recursive: true, force: true });
+		}
+	});
+
+	it("shares and evicts a failed restore so the same indices can retry", async function () {
+		if (!isNodeRuntime()) {
+			this.skip();
+		}
+		const { directory, rm } = await loadNodePersistenceHelpers();
+		const writer = create(directory);
+		const reader = create(directory);
+		type NativePrototype = {
+			put_encoded: (...args: unknown[]) => unknown;
+			put: (...args: unknown[]) => unknown;
+		};
+		let prototype: NativePrototype | undefined;
+		let originalPutEncoded: NativePrototype["put_encoded"] | undefined;
+		let originalPut: NativePrototype["put"] | undefined;
+		try {
+			await writer.start();
+			const writerIndex = await writer.init({ schema: BridgeDocument });
+			await writerIndex.put(
+				new BridgeDocument("a", "peerbit", "retryable restore"),
+			);
+			const writerNative = (writerIndex as unknown as { native: object }).native;
+			prototype = Object.getPrototypeOf(writerNative) as NativePrototype;
+			originalPutEncoded = prototype.put_encoded;
+			originalPut = prototype.put;
+			await writer.stop();
+
+			const restoreFailure = new WebAssembly.RuntimeError(
+				"forced native restore runtime failure",
+			);
+			let encodedCalls = 0;
+			let fallbackCalls = 0;
+			prototype.put_encoded = () => {
+				encodedCalls++;
+				throw restoreFailure;
+			};
+			prototype.put = () => {
+				fallbackCalls++;
+			};
+
+			await reader.start();
+			let rejections: unknown[] = [];
+			try {
+				const firstAttempt = reader.init({ schema: BridgeDocument });
+				const concurrentAttempt = reader.init({ schema: BridgeDocument });
+				rejections = await Promise.all([
+					captureRejection(() => firstAttempt),
+					captureRejection(() => concurrentAttempt),
+				]);
+			} finally {
+				prototype.put_encoded = originalPutEncoded;
+				prototype.put = originalPut;
+			}
+
+			expect(rejections[0]).to.equal(restoreFailure);
+			expect(rejections[1]).to.equal(restoreFailure);
+			expect(
+				rejections.map((rejection) => (rejection as Error).message),
+			).to.deep.equal([
+				"forced native restore runtime failure",
+				"forced native restore runtime failure",
+			]);
+			expect(encodedCalls).to.equal(1);
+			expect(fallbackCalls).to.equal(0);
+
+			const retried = await reader.init({ schema: BridgeDocument });
+			expect((await retried.get(toId("a")))?.value.title).to.equal(
+				"retryable restore",
+			);
+		} finally {
+			if (prototype && originalPutEncoded && originalPut) {
+				prototype.put_encoded = originalPutEncoded;
+				prototype.put = originalPut;
+			}
+			await writer.drop();
+			await reader.drop();
 			await rm(directory, { recursive: true, force: true });
 		}
 	});

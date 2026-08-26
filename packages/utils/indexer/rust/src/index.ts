@@ -1110,6 +1110,14 @@ type NativeEncodedPutOptions = {
 	encodedValue?: Uint8Array;
 	encodedValueParts?: NativeEncodedValueParts;
 };
+
+// wasm-bindgen exposes ordinary bridge extraction rejections from Rust
+// `Result<_, JsValue>` as primitive strings. Runtime failures such as allocator
+// traps and a poisoned WASM instance surface as Error objects and must not be
+// retried through a second native mutation.
+const isNativeEncodedExtractionFallback = (error: unknown): error is string =>
+	typeof error === "string";
+
 type NativeFieldValueWriterFn = (
 	value: any,
 	writer: NativeFieldWriter,
@@ -4380,7 +4388,10 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 			);
 			this.markMutationVisible();
 			return true;
-		} catch {
+		} catch (error) {
+			if (!isNativeEncodedExtractionFallback(error)) {
+				throw error;
+			}
 			// Fall back to the per-entry native call, which already falls back again
 			// to TypeScript field encoding for schemas outside the native extractor.
 			return false;
@@ -4408,7 +4419,10 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 			);
 			this.markMutationVisible();
 			return true;
-		} catch {
+		} catch (error) {
+			if (!isNativeEncodedExtractionFallback(error)) {
+				throw error;
+			}
 			return false;
 		}
 	}
@@ -4554,7 +4568,10 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 			);
 			this.markMutationVisible();
 			return true;
-		} catch {
+		} catch (error) {
+			if (!isNativeEncodedExtractionFallback(error)) {
+				throw error;
+			}
 			return false;
 		}
 	}
@@ -4851,7 +4868,10 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 				this.nativeByteElementIndexLimit,
 			);
 			return true;
-		} catch {
+		} catch (error) {
+			if (!isNativeEncodedExtractionFallback(error)) {
+				throw error;
+			}
 			return false;
 		}
 	}
@@ -4875,7 +4895,10 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 				this.nativeByteElementIndexLimit,
 			);
 			return true;
-		} catch {
+		} catch (error) {
+			if (!isNativeEncodedExtractionFallback(error)) {
+				throw error;
+			}
 			return false;
 		}
 	}
@@ -5079,7 +5102,10 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 				);
 				this.markMutationVisible();
 				return true;
-			} catch {
+			} catch (error) {
+				if (!isNativeEncodedExtractionFallback(error)) {
+					throw error;
+				}
 				// Fall back to the proven TypeScript fact encoder for schemas whose
 				// Borsh bytes are not covered by the native extractor yet.
 			}
@@ -5095,9 +5121,12 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 				);
 				this.markMutationVisible();
 				return true;
-			} catch {
-				// Fall back to the proven TypeScript fact encoder for schemas whose
-				// Borsh bytes are not covered by the native extractor yet.
+			} catch (error) {
+				if (!isNativeEncodedExtractionFallback(error)) {
+					throw error;
+				}
+				// The native extractor rejected a supported bridge shape before mutation;
+				// preserve the proven TypeScript fact-encoder fallback for that case.
 			}
 		}
 		if (fields) {
@@ -5323,7 +5352,11 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 
 export class RustIndices implements types.Indices {
 	private scopes: Map<string, types.Indices>;
-	private indices: { schema: any; index: RustIndex<any, any> }[] = [];
+	private indices: {
+		schema: any;
+		index: RustIndex<any, any>;
+		initialization: Promise<void>;
+	}[] = [];
 	private closed: boolean;
 
 	constructor(
@@ -5342,6 +5375,7 @@ export class RustIndices implements types.Indices {
 			(i) => i.schema === properties.schema,
 		);
 		if (existingIndex) {
+			await existingIndex.initialization;
 			// This scope is node-cached and outlives a program close, so a prior
 			// close may have stopped the cached index. Restart it before handing
 			// it back so the next read does not hit assertOpen -> NotStartedError.
@@ -5356,8 +5390,20 @@ export class RustIndices implements types.Indices {
 			this.path,
 			this.options,
 		);
-		this.indices.push({ schema: properties.schema, index });
-		await index.init(properties);
+		const initialization = index.init(properties).then(() => undefined);
+		const entry = { schema: properties.schema, index, initialization };
+		this.indices.push(entry);
+		try {
+			await initialization;
+		} catch (error) {
+			// A failed restore must reject every same-schema waiter and must not
+			// leave its partially initialized index cached for a later retry.
+			const position = this.indices.indexOf(entry);
+			if (position !== -1) {
+				this.indices.splice(position, 1);
+			}
+			throw error;
+		}
 
 		if (!this.closed) {
 			await index.start();
