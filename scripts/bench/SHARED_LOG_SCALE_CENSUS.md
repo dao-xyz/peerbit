@@ -129,6 +129,16 @@ limit; the persistent coordinate row was never reached. These are wall-clock
 boundaries from progress logs, not complete metric rows. They motivated the
 independent workflow jobs and checkpointed report format above.
 
+Follow-up independent-job
+[run 31970105063](https://github.com/dao-xyz/peerbit/actions/runs/31970105063)
+allowed the 1M chain and roots workloads to complete separately. The 1M
+persistent-coordinate reopen instead failed after roughly 2 hours 10 minutes
+when `RustIndex.init()` triggered wasm-bindgen's recursive-borrow/unsafe-aliasing
+guard. [#1308](https://github.com/dao-xyz/peerbit/issues/1308) tracks that
+indexer defect and the required bounded-memory reopen regression coverage. The
+failure is evidence produced by this harness, not evidence that the harness
+introduced the defect.
+
 ## Interpretation
 
 Compare results only on the same Node major version, architecture, and machine
