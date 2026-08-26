@@ -326,6 +326,30 @@ impl NativePeerbitBackbone {
             .entry_hash_numbers_in_range_u64(start1, end1, start2, end2)
     }
 
+    pub fn entry_hash_numbers_in_range_limited(
+        &self,
+        start1: String,
+        end1: String,
+        start2: String,
+        end2: String,
+        limit: u32,
+    ) -> Result<Array, JsValue> {
+        self.shared_log
+            .entry_hash_numbers_in_range_limited(start1, end1, start2, end2, limit)
+    }
+
+    pub fn entry_hash_numbers_in_range_u64_limited(
+        &self,
+        start1: String,
+        end1: String,
+        start2: String,
+        end2: String,
+        limit: u32,
+    ) -> Result<BigUint64Array, JsValue> {
+        self.shared_log
+            .entry_hash_numbers_in_range_u64_limited(start1, end1, start2, end2, limit)
+    }
+
     pub fn count_entry_coordinates_in_ranges(
         &self,
         start1: Array,

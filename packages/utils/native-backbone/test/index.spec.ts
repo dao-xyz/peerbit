@@ -2436,6 +2436,44 @@ describe("native peerbit backbone", () => {
 		expect(backbone.hasCoordinateIndexHash("hash-e")).equal(true);
 	});
 
+	it("bounds wrapped native hash-number range materialization", async () => {
+		const backbone = await createNativePeerbitBackbone({
+			clockId: publicKey,
+			privateKey,
+			publicKey,
+		});
+		backbone.putEntryCoordinates("low-a", "gid-low-a", [1n], false, 1, 5n);
+		backbone.putEntryCoordinates("low-b", "gid-low-b", [2n], false, 1, 8n);
+		backbone.putEntryCoordinates("high-a", "gid-high-a", [3n], false, 1, 90n);
+		backbone.putEntryCoordinates("high-b", "gid-high-b", [4n], false, 1, 90n);
+
+		const range = {
+			start1: 80n,
+			end1: 100n,
+			start2: 0n,
+			end2: 10n,
+		};
+		expect(backbone.getEntryHashNumbersInRange(range)).to.deep.equal([
+			90n,
+			90n,
+			5n,
+			8n,
+		]);
+		// Two accepted rows plus one overflow sentinel.
+		expect(
+			backbone.getEntryHashNumbersInRangeLimited({ ...range, limit: 3 }),
+		).to.deep.equal([90n, 90n, 5n]);
+		// An exact fit is not truncated.
+		expect(
+			Array.from(
+				backbone.getEntryHashNumbersInRangeU64Limited({
+					...range,
+					limit: 4,
+				})!,
+			),
+		).to.deep.equal([90n, 90n, 5n, 8n]);
+	});
+
 	it("coalesces storage-backed no-next append with shared-log coordinate state", async () => {
 		const backbone = await createNativePeerbitBackbone({
 			clockId: publicKey,

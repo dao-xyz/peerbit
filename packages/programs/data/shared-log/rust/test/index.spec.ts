@@ -560,6 +560,7 @@ describe("native shared-log range planner", () => {
 		state.putEntryCoordinates("head-c", "gid-c", [3n], false, 1, 90n);
 		state.putEntryCoordinates("head-d", "gid-d", [4n], false, 1, 90n);
 
+		// Two accepted rows plus one overflow sentinel.
 		expect(
 			state
 				.getEntryHashNumbersInRange({
@@ -584,6 +585,30 @@ describe("native shared-log range planner", () => {
 			"90",
 			"90",
 		]);
+		expect(
+			state
+				.getEntryHashNumbersInRangeLimited({
+					start1: 0n,
+					end1: 10n,
+					start2: 80n,
+					end2: 100n,
+					limit: 3,
+				})!
+				.map((value) => value.toString()),
+		).to.deep.equal(["5", "8", "90"]);
+		// An exact fit is not truncated.
+		expect(
+			Array.from(
+				state.getEntryHashNumbersInRangeU64Limited({
+					start1: 0n,
+					end1: 10n,
+					start2: 80n,
+					end2: 100n,
+					limit: 4,
+				})!,
+				(value) => value.toString(),
+			),
+		).to.deep.equal(["5", "8", "90", "90"]);
 
 		state.deleteEntryCoordinates("head-c");
 		expect(

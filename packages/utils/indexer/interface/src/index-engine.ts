@@ -23,6 +23,18 @@ export interface IndexedValue<T = Record<string, any>> {
 export interface IterateOptions {
 	query?: QueryLike;
 	sort?: Sort | Sort[];
+	/**
+	 * Controls which mutations may be visible after iteration starts.
+	 *
+	 * `snapshot` is the default and keeps the result set stable across pages.
+	 * `weak` permits an implementation to page from a live cursor, so unvisited
+	 * deletes and replacements may be observed. A weak iteration must still be
+	 * finite: rows appended after its first read are not required to be visited.
+	 * Implementations may use snapshot consistency when sorting is requested.
+	 *
+	 * @default "snapshot"
+	 */
+	consistency?: "snapshot" | "weak";
 }
 
 export interface DeleteOptions {

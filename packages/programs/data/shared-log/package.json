@@ -106,6 +106,7 @@
 	"devDependencies": {
 		"@peerbit/any-store-rust": "workspace:*",
 		"@peerbit/indexer-rust": "workspace:*",
+		"@peerbit/indexer-simple": "workspace:*",
 		"@peerbit/test-utils": "workspace:*",
 		"@types/libsodium-wrappers": "^0.7.14",
 		"@types/pidusage": "^2.0.5",
