@@ -55,7 +55,7 @@ jobs:
   # Merging that PR consumes the changesets, bumps versions + CHANGELOGs, and
   # this same job then builds, publishes the unpublished versions to npm, and
   # creates the git tags. A manual workflow_dispatch with publish_mode=stable
-  # re-runs the build + from-package publish as an escape hatch.
+  # re-runs the same build + from-package publish + tag flow as an escape hatch.
   release:
     if: ${{ vars.ACTIONS_SECRETS_MIGRATED == 'true' && github.ref == 'refs/heads/master' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.event.inputs.publish_mode == 'stable')) }}
     runs-on: ubuntu-latest
@@ -169,15 +169,16 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       # Manual stable escape hatch: build, run the shared fail-closed security
-      # gate, and publish anything whose package.json version is not yet on npm,
-      # without going through the Version Packages PR.
-      - name: Build, gate, and publish stable packages
+      # gate, publish anything whose package.json version is not yet on npm, and
+      # create any missing package tags without going through the Version
+      # Packages PR.
+      - name: Build, gate, publish, and tag stable packages
         if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.publish_mode == 'stable' }}
         env:
           GH_TOKEN: ${{ secrets.RELEASE_PR_TOKEN }}
           GITHUB_TOKEN: ${{ secrets.RELEASE_PR_TOKEN }}
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: pnpm run release
+        run: pnpm run release:publish
 
   # Release candidate flow: manual dispatch only, builds and runs
   # `aegir release-rc` to publish prerelease versions to npm.
