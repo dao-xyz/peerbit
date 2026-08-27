@@ -946,10 +946,13 @@ describe("native peerbit backbone", () => {
 		expect(first.entry.bytes).equal(undefined);
 		expect(first.entry.next).to.deep.equal([]);
 		expect(first.entry.hashDigestBytes).equal(undefined);
+		expect(first.trimmedGids).equal(undefined);
+		expect(first.documentTrimmedHeadsProcessed).equal(undefined);
 		expect(second.entry.bytes).equal(undefined);
 		expect(second.entry.next).to.deep.equal([]);
 		expect(second.trimmed).to.deep.equal([]);
 		expect(second.trimmedHashes).to.deep.equal([first.entry.hash]);
+		expect(second.trimmedGids).to.deep.equal(["gid-doc-index-compact"]);
 		expect(second.documentTrimmedHeadsProcessed).equal(true);
 		expect(backbone.hasLogEntry(first.entry.hash)).equal(false);
 		expect(backbone.hasBlock(first.entry.hash)).equal(false);
@@ -1009,6 +1012,13 @@ describe("native peerbit backbone", () => {
 			undefined,
 		]);
 		expect(results?.map((result) => result.entry.next)).to.deep.equal([[], []]);
+		expect(results?.map((result) => result.trimmedGids)).to.deep.equal([
+			undefined,
+			undefined,
+		]);
+		expect(
+			results?.map((result) => result.documentTrimmedHeadsProcessed),
+		).to.deep.equal([undefined, undefined]);
 		expect(backbone.documentValueLength).to.equal(2);
 		expect(backbone.getEntryCoordinateHashes()).to.deep.equal(
 			results?.map((result) => result.entry.hash),
@@ -2556,6 +2566,7 @@ describe("native peerbit backbone", () => {
 		expect(second.trimmed.map((entry) => entry.hash)).to.deep.equal([
 			first.entry.hash,
 		]);
+		expect(second.trimmedGids).to.deep.equal(["gid-storage-committed"]);
 		expect(second.trimmed[0]?.gid).equal("gid-storage-committed");
 		expect(second.trimmed[0]?.next).to.deep.equal([]);
 		expect(second.trimmed[0]?.type).equal(0);
@@ -2601,6 +2612,9 @@ describe("native peerbit backbone", () => {
 		expect(second.entry.next).to.deep.equal([]);
 		expect(second.trimmed.map((entry) => entry.hash)).to.deep.equal([
 			first.entry.hash,
+		]);
+		expect(second.trimmedGids).to.deep.equal([
+			"gid-storage-committed-no-next",
 		]);
 		expect(second.trimmed[0]?.gid).equal("gid-storage-committed-no-next");
 		expect(second.trimmed[0]?.next).to.deep.equal([]);
@@ -2800,7 +2814,7 @@ describe("native peerbit backbone", () => {
 
 		const first = backbone.preparePlainCommittedNoNextStorageAppendTransaction({
 			wallTime: 1n,
-			gid: "gid-storage-compact-trim",
+			gid: "gid-storage-compact-trim-old",
 			payloadData: new Uint8Array([1]),
 			replicas: 1,
 			selfHash: "peer-a",
@@ -2808,7 +2822,7 @@ describe("native peerbit backbone", () => {
 		const second = backbone.preparePlainCommittedNoNextStorageAppendTransaction(
 			{
 				wallTime: 2n,
-				gid: "gid-storage-compact-trim",
+				gid: "gid-storage-compact-trim-new",
 				payloadData: new Uint8Array([2]),
 				replicas: 1,
 				selfHash: "peer-a",
@@ -2818,6 +2832,7 @@ describe("native peerbit backbone", () => {
 		);
 
 		expect(second.trimmedHashes).to.deep.equal([first.entry.hash]);
+		expect(second.trimmedGids).to.deep.equal(["gid-storage-compact-trim-old"]);
 		expect(second.trimmed).to.deep.equal([]);
 		expect(backbone.hasLogEntry(first.entry.hash)).equal(false);
 		expect(backbone.hasBlock(first.entry.hash)).equal(false);

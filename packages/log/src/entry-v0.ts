@@ -119,6 +119,7 @@ type NativePreparedPlainEntry = {
 	hashDigestBytes?: Uint8Array;
 	trimmedEntries?: PreparedNativeLogEntry[];
 	trimmedEntryHashes?: string[];
+	trimmedEntryGids?: string[];
 };
 
 export type PreparedRawEntryV0Facts = {
@@ -1416,6 +1417,7 @@ export class EntryV0<T>
 				appendFacts: [appendFacts],
 				trimmedNativeEntries: preparedEntry.trimmedEntries,
 				trimmedNativeEntryHashes: preparedEntry.trimmedEntryHashes,
+				trimmedNativeEntryGids: preparedEntry.trimmedEntryGids,
 				trimmedNativeBlocksDeleted: nativeBlocksCommitted,
 				nativeGraphUpdated,
 				nativeBlocksCommitted,

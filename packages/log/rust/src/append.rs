@@ -426,6 +426,69 @@ impl NativeLogIndex {
     }
 
     #[allow(clippy::too_many_arguments)]
+    pub fn prepare_entry_v0_plain_entry_commit_facts_core_profiled_and_put_with_builder_trim_refs(
+        &mut self,
+        builder: &NativeEntryV0PlainBuilder,
+        block_store: &mut NativeLogBlockStore,
+        wall_time: u64,
+        logical: u32,
+        gid: String,
+        next: Vec<String>,
+        entry_type: u8,
+        meta_data: Option<Vec<u8>>,
+        payload_data: Vec<u8>,
+        trim_length_to: Option<usize>,
+        mut profile: Option<&mut NativeLogAppendProfile>,
+    ) -> Result<(NativeCommittedEntryFacts, Vec<(String, String)>), LogError> {
+        self.prepare_entry_v0_plain_entry_commit_facts_core_profiled_and_put_with_builder_trim_refs_borrowed(
+            builder,
+            block_store,
+            wall_time,
+            logical,
+            gid,
+            next,
+            entry_type,
+            meta_data,
+            &payload_data,
+            trim_length_to,
+            profile.as_deref_mut(),
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn prepare_entry_v0_plain_entry_commit_facts_core_profiled_and_put_with_builder_trim_refs_borrowed(
+        &mut self,
+        builder: &NativeEntryV0PlainBuilder,
+        block_store: &mut NativeLogBlockStore,
+        wall_time: u64,
+        logical: u32,
+        gid: String,
+        next: Vec<String>,
+        entry_type: u8,
+        meta_data: Option<Vec<u8>>,
+        payload_data: &[u8],
+        trim_length_to: Option<usize>,
+        profile: Option<&mut NativeLogAppendProfile>,
+    ) -> Result<(NativeCommittedEntryFacts, Vec<(String, String)>), LogError> {
+        let (facts, trimmed) = self
+            .prepare_entry_v0_plain_entry_commit_facts_core_profiled_and_put_with_builder_inner(
+                builder,
+                block_store,
+                wall_time,
+                logical,
+                gid,
+                next,
+                entry_type,
+                meta_data,
+                payload_data,
+                trim_length_to,
+                NativeTrimMode::Refs,
+                profile,
+            )?;
+        Ok((facts, trimmed.into_refs()))
+    }
+
+    #[allow(clippy::too_many_arguments)]
     pub fn prepare_entry_v0_plain_entry_commit_no_next_facts_core_profiled_and_put_with_builder(
         &mut self,
         builder: &NativeEntryV0PlainBuilder,
@@ -650,6 +713,11 @@ impl NativeLogIndex {
                 NativeTrimMode::Hashes => NativeTrimResult::Hashes(
                     trim_oldest_log_entry_hashes_core(&mut self.inner, block_store, trim_length_to),
                 ),
+                NativeTrimMode::Refs => NativeTrimResult::Refs(trim_oldest_log_entry_refs_core(
+                    &mut self.inner,
+                    block_store,
+                    trim_length_to,
+                )),
             };
         if let Some(started) = trim_started {
             if let Some(profile) = profile.as_deref_mut() {
@@ -719,6 +787,65 @@ impl NativeLogIndex {
                 profile,
             )?;
         Ok((facts, trimmed.into_hashes()))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn prepare_entry_v0_plain_entry_commit_no_next_facts_core_profiled_and_put_with_builder_trim_refs(
+        &mut self,
+        builder: &NativeEntryV0PlainBuilder,
+        block_store: &mut NativeLogBlockStore,
+        wall_time: u64,
+        logical: u32,
+        gid: String,
+        entry_type: u8,
+        meta_data: Option<Vec<u8>>,
+        payload_data: Vec<u8>,
+        trim_length_to: usize,
+        mut profile: Option<&mut NativeLogAppendProfile>,
+    ) -> Result<(NativeCommittedEntryFacts, Vec<(String, String)>), LogError> {
+        self.prepare_entry_v0_plain_entry_commit_no_next_facts_core_profiled_and_put_with_builder_trim_refs_borrowed(
+            builder,
+            block_store,
+            wall_time,
+            logical,
+            gid,
+            entry_type,
+            meta_data,
+            &payload_data,
+            trim_length_to,
+            profile.as_deref_mut(),
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn prepare_entry_v0_plain_entry_commit_no_next_facts_core_profiled_and_put_with_builder_trim_refs_borrowed(
+        &mut self,
+        builder: &NativeEntryV0PlainBuilder,
+        block_store: &mut NativeLogBlockStore,
+        wall_time: u64,
+        logical: u32,
+        gid: String,
+        entry_type: u8,
+        meta_data: Option<Vec<u8>>,
+        payload_data: &[u8],
+        trim_length_to: usize,
+        profile: Option<&mut NativeLogAppendProfile>,
+    ) -> Result<(NativeCommittedEntryFacts, Vec<(String, String)>), LogError> {
+        let (facts, trimmed) = self
+            .prepare_entry_v0_plain_entry_commit_no_next_facts_core_profiled_and_put_with_builder_trim_inner_borrowed(
+                builder,
+                block_store,
+                wall_time,
+                logical,
+                gid,
+                entry_type,
+                meta_data,
+                payload_data,
+                trim_length_to,
+                NativeTrimMode::Refs,
+                profile,
+            )?;
+        Ok((facts, trimmed.into_refs()))
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -800,6 +927,11 @@ impl NativeLogIndex {
                 NativeTrimMode::Hashes => NativeTrimResult::Hashes(
                     trim_oldest_log_entry_hashes_core(&mut self.inner, block_store, trim_length_to),
                 ),
+                NativeTrimMode::Refs => NativeTrimResult::Refs(trim_oldest_log_entry_refs_core(
+                    &mut self.inner,
+                    block_store,
+                    trim_length_to,
+                )),
             })
             .unwrap_or_else(|| trim_mode.empty_result());
         if let Some(started) = trim_started {
@@ -815,6 +947,7 @@ impl NativeLogIndex {
 enum NativeTrimMode {
     Entries,
     Hashes,
+    Refs,
 }
 
 impl NativeTrimMode {
@@ -822,6 +955,7 @@ impl NativeTrimMode {
         match self {
             NativeTrimMode::Entries => NativeTrimResult::Entries(Vec::new()),
             NativeTrimMode::Hashes => NativeTrimResult::Hashes(Vec::new()),
+            NativeTrimMode::Refs => NativeTrimResult::Refs(Vec::new()),
         }
     }
 }
@@ -829,6 +963,7 @@ impl NativeTrimMode {
 enum NativeTrimResult {
     Entries(Vec<LogIndexEntry>),
     Hashes(Vec<String>),
+    Refs(Vec<(String, String)>),
 }
 
 impl NativeTrimResult {
@@ -837,6 +972,9 @@ impl NativeTrimResult {
             NativeTrimResult::Entries(entries) => entries,
             NativeTrimResult::Hashes(_) => {
                 unreachable!("hash-only trim result cannot be converted to entries")
+            }
+            NativeTrimResult::Refs(_) => {
+                unreachable!("ref trim result cannot be converted to entries")
             }
         }
     }
@@ -847,6 +985,20 @@ impl NativeTrimResult {
                 entries.into_iter().map(|entry| entry.hash).collect()
             }
             NativeTrimResult::Hashes(hashes) => hashes,
+            NativeTrimResult::Refs(entries) => entries.into_iter().map(|(hash, _)| hash).collect(),
+        }
+    }
+
+    fn into_refs(self) -> Vec<(String, String)> {
+        match self {
+            NativeTrimResult::Entries(entries) => entries
+                .into_iter()
+                .map(|entry| (entry.hash, entry.gid))
+                .collect(),
+            NativeTrimResult::Hashes(_) => {
+                unreachable!("hash-only trim result cannot be converted to refs")
+            }
+            NativeTrimResult::Refs(entries) => entries,
         }
     }
 }
@@ -904,6 +1056,37 @@ pub(crate) fn trim_oldest_log_entry_hashes_core(
     }
     index.delete_many(&hashes);
     hashes
+}
+
+pub(crate) fn trim_oldest_log_entry_refs_core(
+    index: &mut LogGraphIndex,
+    block_store: &mut NativeLogBlockStore,
+    trim_length_to: usize,
+) -> Vec<(String, String)> {
+    let overage = index.len().saturating_sub(trim_length_to);
+    if overage == 0 {
+        return Vec::new();
+    }
+    let refs = index.oldest_refs(overage);
+    if overage == 1 {
+        let Some((hash, _)) = refs.first() else {
+            return Vec::new();
+        };
+        if index.delete(hash).is_none() {
+            return Vec::new();
+        }
+        block_store.delete(hash);
+        return refs;
+    }
+    let hashes = refs
+        .iter()
+        .map(|(hash, _)| hash.clone())
+        .collect::<Vec<_>>();
+    for hash in &hashes {
+        block_store.delete(hash);
+    }
+    index.delete_many(&hashes);
+    refs
 }
 
 pub(crate) fn trim_oldest_log_index_entries_core(

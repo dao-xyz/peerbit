@@ -2,7 +2,7 @@ use js_sys::{Array, Uint8Array};
 use peerbit_shared_log_rust::commit_local_append_for_gid_compact_core;
 use wasm_bindgen::prelude::*;
 
-use crate::append_tx::coordinate_plan_to_row;
+use crate::append_tx::{coordinate_plan_to_row, push_trim_gid_extension};
 use crate::documents::{
     document_context_facts_to_row, document_index_append_commit, DocumentIndexAppendCommit,
 };
@@ -473,10 +473,11 @@ impl NativePeerbitBackbone {
         let previous_document_context = document_index_commit
             .as_ref()
             .and_then(|commit| commit.previous_context.clone());
+        let mut committed_trim_gids = None;
         let (entry_row, trim_rows, trim_hashes, hash, digest, meta_bytes) = if commit_blocks {
             let (meta_data, payload_data) =
                 self.copy_append_inputs_profiled(meta_data, &payload_data)?;
-            let (entry_facts, trim_hashes, entry_row, trim_rows) = self
+            let (entry_facts, trim_hashes, trim_gids, entry_row, trim_rows) = self
                 .prepare_committed_log_append_rows_profiled(
                     wall_time,
                     logical,
@@ -488,6 +489,7 @@ impl NativePeerbitBackbone {
                     trim_length_to,
                     resolve_trimmed_entries,
                 )?;
+            committed_trim_gids = Some(trim_gids);
             (
                 entry_row,
                 trim_rows,
@@ -548,6 +550,13 @@ impl NativePeerbitBackbone {
             let digest = bytes_field(&row, 5, "storage entry hash digest")?;
             let meta_bytes = bytes_field(&row, 4, "storage entry meta bytes")?;
             (row, Array::new(), Vec::new(), hash, digest, meta_bytes)
+        };
+        let trim_gids = match committed_trim_gids {
+            Some(trim_gids) => trim_gids,
+            None => trim_rows
+                .iter()
+                .map(|row| string_field(&array_from_value(row, "trim row")?, 1, "trim gid"))
+                .collect::<Result<Vec<_>, _>>()?,
         };
 
         let hash_number = self.hash_number_profiled(&digest)?;
@@ -612,6 +621,7 @@ impl NativePeerbitBackbone {
                 .map(|context| document_context_facts_to_row(context).into())
                 .unwrap_or(JsValue::UNDEFINED),
         );
+        push_trim_gid_extension(&out, trim_gids);
         if let Some(started) = result_row_started {
             self.append_profile.result_row_ms += crate::time::now_ms() - started;
         }

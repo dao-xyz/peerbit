@@ -942,6 +942,16 @@ type NativePeerbitBackboneHandle = {
 		payloadData: Uint8Array,
 		trimLengthTo: number | undefined,
 	) => unknown[];
+	prepare_plain_entry_commit_facts_trim_refs?: (
+		wallTime: bigint,
+		logical: number,
+		gid: string,
+		next: string[],
+		type: number,
+		metaData: Uint8Array | undefined,
+		payloadData: Uint8Array,
+		trimLengthTo: number,
+	) => unknown[];
 	prepare_plain_entry_commit_facts_document_index: (
 		wallTime: bigint,
 		logical: number,
@@ -2727,6 +2737,7 @@ export type NativeBackboneAppendResult = {
 	assignedToRangeBoundary: boolean;
 	trimmed: NativeBackboneTrimmedEntry[];
 	trimmedHashes?: string[];
+	trimmedGids?: string[];
 	documentTrimmedHeadsProcessed?: boolean;
 	documentPreviousContext?: NativeBackboneDocumentContextFacts;
 };
@@ -2739,6 +2750,7 @@ type NativeBackboneStorageAppendResult = {
 	assignedToRangeBoundary: boolean;
 	trimmed: NativeBackboneTrimmedEntry[];
 	trimmedHashes?: string[];
+	trimmedGids?: string[];
 	documentTrimmedHeadsProcessed?: boolean;
 	documentPreviousContext?: NativeBackboneDocumentContextFacts;
 };
@@ -3947,6 +3959,8 @@ const storageAppendResultFromRow = (
 		trimHashRows,
 		documentTrimmedHeadsProcessed,
 		documentPreviousContextRow,
+		_trimGidExtension,
+		trimGidRows,
 	] = row as [
 		unknown[],
 		unknown[] | undefined,
@@ -3957,6 +3971,8 @@ const storageAppendResultFromRow = (
 		unknown[] | undefined,
 		boolean | undefined,
 		unknown[] | undefined,
+		undefined,
+		string[] | undefined,
 	];
 	return {
 		entry: storageFactsEntryFromRow(entryRow),
@@ -3965,6 +3981,7 @@ const storageAppendResultFromRow = (
 		assignedToRangeBoundary,
 		coordinate: appendCoordinatePlanFromRow(resolution, coordinateRow),
 		...trimmedRowsAndHashesResult(trimRows, trimHashRows),
+		trimmedGids: trimGidRows ?? (trimRows as unknown[][]).map((trim) => trim[1] as string),
 		documentTrimmedHeadsProcessed,
 		documentPreviousContext: documentContextFactsFromRow(
 			documentPreviousContextRow,
@@ -3986,6 +4003,8 @@ const committedStorageAppendResultFromRow = (
 		trimHashRows,
 		documentTrimmedHeadsProcessed,
 		documentPreviousContextRow,
+		_trimGidExtension,
+		trimGidRows,
 	] = row as [
 		unknown[],
 		unknown[] | undefined,
@@ -3996,6 +4015,8 @@ const committedStorageAppendResultFromRow = (
 		unknown[] | undefined,
 		boolean | undefined,
 		unknown[] | undefined,
+		undefined,
+		string[] | undefined,
 	];
 	return {
 		entry: committedStorageFactsEntryFromRow(entryRow),
@@ -4004,6 +4025,7 @@ const committedStorageAppendResultFromRow = (
 		assignedToRangeBoundary,
 		coordinate: appendCoordinatePlanFromRow(resolution, coordinateRow),
 		...trimmedRowsAndHashesResult(trimRows, trimHashRows),
+		trimmedGids: trimGidRows ?? (trimRows as unknown[][]).map((trim) => trim[1] as string),
 		documentTrimmedHeadsProcessed,
 		documentPreviousContext: documentContextFactsFromRow(
 			documentPreviousContextRow,
@@ -4015,7 +4037,14 @@ const compactCommittedNoNextStorageAppendResultFromRow = (
 	resolution: RangeResolution,
 	row: unknown[],
 ): NativeBackboneAppendResult => {
-	const [hash, byteLength, metaBytes, fourth] = row as [
+	const appendedTrimGids =
+		row.length >= 12 &&
+		row[row.length - 2] === undefined &&
+		Array.isArray(row[row.length - 1])
+			? (row[row.length - 1] as string[])
+			: undefined;
+	const baseRow = appendedTrimGids ? row.slice(0, -2) : row;
+	const [hash, byteLength, metaBytes, fourth] = baseRow as [
 		string,
 		number,
 		Uint8Array | undefined,
@@ -4023,7 +4052,7 @@ const compactCommittedNoNextStorageAppendResultFromRow = (
 	];
 	const hasDigestRow = fourth instanceof Uint8Array;
 	const hashDigestBytes = hasDigestRow ? (fourth as Uint8Array) : undefined;
-	const rest = row.slice(hasDigestRow ? 4 : 3);
+	const rest = baseRow.slice(hasDigestRow ? 4 : 3);
 	const usesNestedCoordinateRow = Array.isArray(rest[0]);
 	let coordinate: NativeBackboneCoordinatePlan;
 	let leaderRows: unknown[] | undefined;
@@ -4106,6 +4135,7 @@ const compactCommittedNoNextStorageAppendResultFromRow = (
 		coordinate,
 		trimmed: [],
 		trimmedHashes: trimHashRows ?? [],
+		trimmedGids: appendedTrimGids,
 		documentTrimmedHeadsProcessed,
 	};
 };
@@ -4114,6 +4144,13 @@ const compactCommittedLatestStorageAppendResultFromRow = (
 	resolution: RangeResolution,
 	row: unknown[],
 ): NativeBackboneAppendResult => {
+	const appendedTrimGids =
+		row.length >= 13 &&
+		row[row.length - 2] === undefined &&
+		Array.isArray(row[row.length - 1])
+			? (row[row.length - 1] as string[])
+			: undefined;
+	const baseRow = appendedTrimGids ? row.slice(0, -2) : row;
 	const [
 		hash,
 		byteLength,
@@ -4127,7 +4164,7 @@ const compactCommittedLatestStorageAppendResultFromRow = (
 		tenth,
 		eleventh,
 		twelfth,
-	] = row as [
+	] = baseRow as [
 		string,
 		number,
 		Uint8Array | undefined,
@@ -4172,6 +4209,7 @@ const compactCommittedLatestStorageAppendResultFromRow = (
 		coordinate,
 		trimmed: [],
 		trimmedHashes: trimHashRows ?? [],
+		trimmedGids: appendedTrimGids,
 		documentTrimmedHeadsProcessed,
 		documentPreviousContext: documentContextFactsFromRow(
 			documentPreviousContextRow,
@@ -4198,6 +4236,20 @@ const preparedCommitFactsFromRow = (
 		};
 	}
 	return prepared;
+};
+
+const preparedCommitFactsWithTrimRefsFromRow = (
+	row: unknown[],
+): NativeBackboneCommittedEntry & {
+	trimmedEntryHashes: string[];
+	trimmedEntryGids: string[];
+} => {
+	const prepared = committedStorageFactsEntryFromRow(row[0] as unknown[]);
+	return {
+		...prepared,
+		trimmedEntryHashes: row[1] as string[],
+		trimmedEntryGids: row[2] as string[],
+	};
 };
 
 const preparedCommitFactsWithLatestDocumentContextFromRow = (
@@ -5080,6 +5132,7 @@ class NativeBackboneLogGraph {
 		| (NativeBackboneCommittedEntry & {
 				trimmedEntries?: NativeBackboneLogEntry[];
 				trimmedEntryHashes?: string[];
+				trimmedEntryGids?: string[];
 				documentTrimmedHeadsProcessed?: boolean;
 		  })
 		| undefined {
@@ -5099,6 +5152,25 @@ class NativeBackboneLogGraph {
 		const documentIndex = input.documentIndex;
 		const documentIndexArgs = nativeDocumentIndexArgs(documentIndex);
 		const projection = documentIndex?.projection;
+		if (
+			!documentIndexArgs &&
+			input.resolveTrimmedEntries === false &&
+			input.trimLengthTo != null &&
+			this.native.prepare_plain_entry_commit_facts_trim_refs
+		) {
+			return preparedCommitFactsWithTrimRefsFromRow(
+				this.native.prepare_plain_entry_commit_facts_trim_refs(
+					wallTime,
+					logical,
+					input.gid,
+					input.next ?? [],
+					entryType,
+					input.metaData,
+					input.payloadData,
+					input.trimLengthTo,
+				),
+			);
+		}
 		if (
 			documentIndex?.useLatestContext &&
 			documentIndexArgs &&

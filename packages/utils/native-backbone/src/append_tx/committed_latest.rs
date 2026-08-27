@@ -7,8 +7,8 @@ use wasm_bindgen::prelude::*;
 
 use crate::append_tx::{
     coordinate_plan_to_row, ensure_batch_append_lens, ensure_batch_projection_lens,
-    latest_compact_entry_row, required_projection_encoded_document, LatestBatchPendingAppend,
-    LatestCompactBatchPendingAppend,
+    latest_compact_entry_row, push_trim_gid_extension, required_projection_encoded_document,
+    LatestBatchPendingAppend, LatestCompactBatchPendingAppend,
 };
 use crate::documents::{
     document_context_facts_to_row, document_index_append_commit,
@@ -1672,6 +1672,7 @@ impl NativePeerbitBackbone {
                     .map(|context| document_context_facts_to_row(context).into())
                     .unwrap_or(JsValue::UNDEFINED),
             );
+            push_trim_gid_extension(&row, pending.trim_gids);
             out.push(&row);
             if let Some(started) = result_row_started {
                 self.append_profile.result_row_ms += crate::time::now_ms() - started;
@@ -1728,7 +1729,7 @@ impl NativePeerbitBackbone {
             self.copy_append_inputs_profiled(meta_datas.get(index), &payload_data)?;
 
         let wall_time = wall_times.get_index(index);
-        let (entry_facts, trimmed_entries, trim_hashes) = self
+        let (entry_facts, trimmed_entries, trim_hashes, trim_gids) = self
             .prepare_committed_log_append_owned_profiled(
                 wall_time,
                 logicals.get_index(index),
@@ -1775,6 +1776,7 @@ impl NativePeerbitBackbone {
             next_hashes,
             meta_bytes: entry_facts.meta_bytes.clone(),
             trim_hashes,
+            trim_gids,
             entry_facts,
             trimmed_entries,
             resolve_trimmed_entries,
@@ -1887,7 +1889,7 @@ impl NativePeerbitBackbone {
             let (meta_data, payload_data) =
                 self.copy_append_inputs_profiled(meta_datas.get(index_u32), &payload_bytes)?;
 
-            let (entry_facts, trim_hashes) = self.prepare_latest_log_append_profiled(
+            let (entry_facts, trim_hashes, trim_gids) = self.prepare_latest_log_append_profiled(
                 wall_times.get_index(index_u32),
                 logicals.get_index(index_u32),
                 gid.clone(),
@@ -1923,6 +1925,7 @@ impl NativePeerbitBackbone {
                 gid,
                 entry_facts,
                 trim_hashes,
+                trim_gids,
                 document_index_commit,
                 previous_document_context,
                 delete_trimmed_document_heads,
@@ -1982,6 +1985,7 @@ impl NativePeerbitBackbone {
                     .map(JsValue::from)
                     .unwrap_or(JsValue::UNDEFINED),
             );
+            push_trim_gid_extension(&row, pending.trim_gids);
             out.push(&row);
             if let Some(started) = result_row_started {
                 self.append_profile.result_row_ms += crate::time::now_ms() - started;
@@ -2022,7 +2026,7 @@ impl NativePeerbitBackbone {
         let (meta_data, payload_data) =
             self.copy_append_inputs_profiled(meta_data, &payload_data)?;
 
-        let (entry_facts, trim_hashes) = self.prepare_latest_log_append_profiled(
+        let (entry_facts, trim_hashes, trim_gids) = self.prepare_latest_log_append_profiled(
             wall_time,
             logical,
             gid.clone(),
@@ -2087,6 +2091,7 @@ impl NativePeerbitBackbone {
             document_trimmed_heads_processed,
             previous_document_context.as_ref(),
         );
+        push_trim_gid_extension(&out, trim_gids);
         if let Some(started) = result_row_started {
             self.append_profile.result_row_ms += crate::time::now_ms() - started;
         }

@@ -41,6 +41,7 @@ import os from "os";
 import path from "path";
 import { Peerbit } from "peerbit";
 import { createRustPeerbitOptions } from "peerbit/rust";
+import sinon from "sinon";
 import { SharedLog } from "../src/index.js";
 import { EventStore } from "./utils/stores/event-store.js";
 
@@ -392,6 +393,10 @@ describe("coordinate persistence mutation-generation bounds", function () {
 	const owedRollbackLeg = async (replicate: any, label: string) => {
 		const log = await openStore({ replicate });
 		const probe = instrumentSnapshots(log);
+		const gidHistoryCleanup = sinon.spy(
+			log as any,
+			"scheduleDeadGidPeerHistoryReclaim",
+		);
 
 		// Fault injection: reject the durable lower-marker write, which runs
 		// INSIDE `nativeCommittedAppendFinalizer.acknowledge` — i.e. after the
@@ -426,12 +431,17 @@ describe("coordinate persistence mutation-generation bounds", function () {
 		} finally {
 			log.markNativeStrictDurableTransactionLowerMarker = originalMarker;
 			probe.restore();
+			gidHistoryCleanup.restore();
 		}
 
 		// The injection must actually have fired, and it must have fired while
 		// the native coordinates were committed; a dead injection would make
 		// every assertion below pass for the wrong reason.
 		expect(injectionsFired, "fault injection fired").to.equal(1);
+		expect(
+			gidHistoryCleanup.callCount,
+			"gid history cleanup must stay behind the strict success seam",
+		).to.equal(0);
 		expect(error, "the append must fail").to.exist;
 		expect(
 			committedAtFailure.length,

@@ -445,6 +445,7 @@ export type NativeLogGraph = {
 				hashDigestBytes?: Uint8Array;
 				trimmedEntries?: PreparedNativeLogEntry[];
 				trimmedEntryHashes?: string[];
+				trimmedEntryGids?: string[];
 		  }
 		| undefined
 	>;

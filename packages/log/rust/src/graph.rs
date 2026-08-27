@@ -155,6 +155,18 @@ impl LogGraphIndex {
             .collect()
     }
 
+    pub fn oldest_refs(&self, limit: usize) -> Vec<(String, String)> {
+        self.ordered_entries
+            .iter()
+            .take(limit)
+            .filter_map(|(_, _, hash)| {
+                self.entries
+                    .get(hash)
+                    .map(|entry| (hash.clone(), entry.gid.clone()))
+            })
+            .collect()
+    }
+
     pub fn get(&self, hash: &str) -> Option<&LogIndexEntry> {
         self.entries.get(hash)
     }
@@ -408,9 +420,20 @@ impl LogGraphIndex {
     }
 
     pub fn has_any_head_batch(&self, gid_sets: &[Vec<String>]) -> Vec<bool> {
+        if gid_sets.len() <= 1 {
+            return gid_sets
+                .iter()
+                .map(|gids| self.has_any_head(gids))
+                .collect();
+        }
+        let head_gids = self
+            .heads
+            .iter()
+            .filter_map(|hash| self.entries.get(hash).map(|entry| entry.gid.as_str()))
+            .collect::<HashSet<_>>();
         gid_sets
             .iter()
-            .map(|gids| self.has_any_head(gids))
+            .map(|gids| gids.iter().any(|gid| head_gids.contains(gid.as_str())))
             .collect()
     }
 
