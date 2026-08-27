@@ -2047,12 +2047,20 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 			this.options.persistence,
 		);
 		if (this.snapshotFile) {
-			const restored = (await this.snapshotFile.read(properties.schema)) as T[];
-			this.getNative().reserve_documents?.(restored.length);
-			for (const value of restored) {
+			const restored = await this.snapshotFile.read<T>(
+				properties.schema,
+				this.nativeEncodedValueEncoder !== undefined,
+			);
+			this.getNative().reserve_documents?.(restored.values.length);
+			for (let i = 0; i < restored.values.length; i++) {
+				const value = restored.values[i];
+				const encodedValue = restored.encodedValues?.[i];
+				if (restored.encodedValues) {
+					restored.encodedValues[i] = undefined;
+				}
 				const id = types.toId(types.extractFieldValue(value, this.indexByArr));
 				const storeKey = keyToStoreKey(id);
-				this.putNativeDocument(storeKey, id, value);
+				this.putNativeDocument(storeKey, id, value, encodedValue);
 			}
 		}
 		return this;
@@ -4328,8 +4336,15 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 		return writer.finish();
 	}
 
-	private putNativeDocument(storeKey: string, id: types.IdKey, value: T): void {
-		const encodedValue = this.tryNativeEncodedValue(value);
+	private putNativeDocument(
+		storeKey: string,
+		id: types.IdKey,
+		value: T,
+		preparedEncodedValue?: Uint8Array,
+	): void {
+		const encodedValue = this.nativeEncodedValueEncoder
+			? (preparedEncodedValue ?? this.tryNativeEncodedValue(value))
+			: undefined;
 		if (
 			this.putNativeDocumentWithPreparedFields(
 				storeKey,
