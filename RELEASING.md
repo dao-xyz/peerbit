@@ -182,6 +182,13 @@ workflow then:
    "Git tags and the format change" below — this is a new tag namespace, not the
    old `<component>-v<version>` one.
 
+After each successful publish command, the publisher verifies that the exact
+package version is visible on npm. A missing version is retried with three to
+five minutes of bounded scheduled backoff, excluding registry query time, to
+accommodate npm processing and propagation. Authentication, network, and other
+unexpected registry errors are not retried. If the version remains absent, the
+release fails before publishing the next package.
+
 The downstream `Post Release Automation` workflow then restores the
 `workspace:*` protocol (a no-op with changesets, which preserves it) and, when
 `@peerbit/server` changed, opens the bootstrap rollout PR.
