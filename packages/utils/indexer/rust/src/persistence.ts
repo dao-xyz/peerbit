@@ -16,7 +16,10 @@ type SyncFileHandle = FileSystemFileHandle & {
 };
 
 export type SnapshotFile = {
-	read<T extends Record<string, any>>(schema: AbstractType<T>): Promise<T[]>;
+	read<T extends Record<string, any>>(
+		schema: AbstractType<T>,
+		reuseV1Bytes?: boolean,
+	): Promise<RestoredValues<T>>;
 	appendPut<T extends Record<string, any>>(
 		key: string,
 		value: T | undefined,
@@ -49,6 +52,12 @@ export type SnapshotFile = {
 	pendingOperations(): number;
 	remove(): Promise<void>;
 	persisted: true;
+};
+
+export type RestoredValues<T> = {
+	values: T[];
+	/** Positionally aligned with `values`; `undefined` entries must be reserialized. */
+	encodedValues?: Array<Uint8Array | undefined>;
 };
 
 export type EncodedValue =
@@ -232,9 +241,10 @@ const encodeSnapshot = <T extends Record<string, any>>(
 const decodeSnapshotPayload = <T extends Record<string, any>>(
 	bytes: Uint8Array,
 	schema: AbstractType<T>,
-): T[] => {
+	reuseV1Bytes: boolean,
+): RestoredValues<T> => {
 	if (bytes.byteLength === 0) {
-		return [];
+		return { values: [] };
 	}
 	let offset = 0;
 	if (offset + 4 > bytes.byteLength) {
@@ -242,25 +252,32 @@ const decodeSnapshotPayload = <T extends Record<string, any>>(
 	}
 	const count = getUint32(bytes, offset);
 	offset += 4;
-	const values: T[] = [];
+	const values = new Array<T>(count);
+	const encodedValues: Uint8Array[] | undefined = reuseV1Bytes
+		? new Array<Uint8Array>(count)
+		: undefined;
 	for (let i = 0; i < count; i++) {
 		const next = readBytes(bytes, offset);
 		offset = next.offset;
 		const valueBytes = next.bytes;
-		values.push(deserialize(valueBytes, schema));
+		values[i] = deserialize(valueBytes, schema);
+		if (encodedValues) {
+			encodedValues[i] = valueBytes;
+		}
 	}
-	return values;
+	return { values, encodedValues };
 };
 
 const decodeSnapshot = <T extends Record<string, any>>(
 	bytes: Uint8Array,
 	schema: AbstractType<T>,
-): T[] => {
+	reuseV1Bytes: boolean,
+): RestoredValues<T> => {
 	if (bytes.byteLength === 0) {
-		return [];
+		return { values: [] };
 	}
 	if (!hasMagic(bytes, SNAPSHOT_MAGIC)) {
-		return decodeSnapshotPayload(bytes, schema);
+		return decodeSnapshotPayload(bytes, schema, false);
 	}
 	let offset = SNAPSHOT_MAGIC.byteLength;
 	if (offset + 8 > bytes.byteLength) {
@@ -274,11 +291,11 @@ const decodeSnapshot = <T extends Record<string, any>>(
 	if (end > bytes.byteLength || end !== bytes.byteLength) {
 		throw new Error("Truncated rust index snapshot payload");
 	}
-	const payload = bytes.slice(offset, end);
+	const payload = bytes.subarray(offset, end);
 	if (fnv1a(payload) !== checksum) {
 		throw new Error("Rust index snapshot checksum mismatch");
 	}
-	return decodeSnapshotPayload(payload, schema);
+	return decodeSnapshotPayload(payload, schema, reuseV1Bytes);
 };
 
 const encodeJournalPayload = <T extends Record<string, any>>(
@@ -349,7 +366,13 @@ const encodeJournalRecord = (payload: Uint8Array): Uint8Array => {
 const decodeJournalPayload = <T extends Record<string, any>>(
 	payload: Uint8Array,
 	schema: AbstractType<T>,
-): { operation: JournalOperation; key: string; value?: T } => {
+	reuseV1Bytes: boolean,
+): {
+	operation: JournalOperation;
+	key: string;
+	value?: T;
+	encodedValue?: Uint8Array;
+} => {
 	let offset = 0;
 	const operation = payload[offset++] as JournalOperation;
 	const keyResult = readBytes(payload, offset);
@@ -362,26 +385,39 @@ const decodeJournalPayload = <T extends Record<string, any>>(
 		throw new Error(`Unknown rust index journal operation: ${operation}`);
 	}
 	const valueResult = readBytes(payload, offset);
+	const value = deserialize(valueResult.bytes, schema);
 	return {
 		operation,
 		key,
-		value: deserialize(valueResult.bytes, schema),
+		value,
+		encodedValue: reuseV1Bytes ? valueResult.bytes : undefined,
 	};
 };
 
 const decodeJournal = <T extends Record<string, any>>(
 	bytes: Uint8Array,
 	schema: AbstractType<T>,
-): Array<{ operation: JournalOperation; key: string; value?: T }> => {
+	reuseV1Bytes: boolean,
+): Array<{
+	operation: JournalOperation;
+	key: string;
+	value?: T;
+	encodedValue?: Uint8Array;
+}> => {
 	if (bytes.byteLength === 0) {
 		return [];
 	}
 	let offset = 0;
-	if (hasMagic(bytes, JOURNAL_MAGIC)) {
+	const isV1 = hasMagic(bytes, JOURNAL_MAGIC);
+	if (isV1) {
 		offset = JOURNAL_MAGIC.byteLength;
 	}
-	const operations: Array<{ operation: JournalOperation; key: string; value?: T }> =
-		[];
+	const operations: Array<{
+		operation: JournalOperation;
+		key: string;
+		value?: T;
+		encodedValue?: Uint8Array;
+	}> = [];
 	while (offset < bytes.byteLength) {
 		if (offset + 8 > bytes.byteLength) {
 			break;
@@ -394,12 +430,14 @@ const decodeJournal = <T extends Record<string, any>>(
 		if (end > bytes.byteLength) {
 			break;
 		}
-		const payload = bytes.slice(offset, end);
+		const payload = bytes.subarray(offset, end);
 		offset = end;
 		if (fnv1a(payload) !== checksum) {
 			break;
 		}
-		operations.push(decodeJournalPayload(payload, schema));
+		operations.push(
+			decodeJournalPayload(payload, schema, reuseV1Bytes && isV1),
+		);
 	}
 	return operations;
 };
@@ -416,24 +454,72 @@ const concatBytes = (chunks: Uint8Array[]): Uint8Array => {
 };
 
 const replaySnapshotAndJournal = <T extends Record<string, any>>(
-	snapshotValues: T[],
+	snapshot: RestoredValues<T>,
 	journalBytes: Uint8Array,
 	schema: AbstractType<T>,
 	indexBy: string[],
-): { values: T[]; operations: number } => {
-	const entries = new Map<string, T>();
-	for (const value of snapshotValues) {
-		entries.set(storeKeyFromValue(value, indexBy), value);
+	reuseV1Bytes: boolean,
+): RestoredValues<T> & { operations: number } => {
+	const operations = decodeJournal(journalBytes, schema, reuseV1Bytes);
+	const hasReusableBytes =
+		snapshot.encodedValues !== undefined ||
+		operations.some((operation) => operation.encodedValue !== undefined);
+	if (!hasReusableBytes) {
+		const entries = new Map<string, T>();
+		for (const value of snapshot.values) {
+			entries.set(storeKeyFromValue(value, indexBy), value);
+		}
+		for (const operation of operations) {
+			if (operation.operation === JournalOperation.Delete) {
+				entries.delete(operation.key);
+			} else if (operation.value) {
+				entries.set(operation.key, operation.value);
+			}
+		}
+		return {
+			values: [...entries.values()],
+			operations: operations.length,
+		};
 	}
-	const operations = decodeJournal(journalBytes, schema);
+
+	const values = snapshot.values;
+	const encodedValues =
+		snapshot.encodedValues ??
+		new Array<Uint8Array | undefined>(snapshot.values.length);
+	const entries = new Map<string, number>();
+	for (let i = 0; i < values.length; i++) {
+		entries.set(storeKeyFromValue(values[i], indexBy), i);
+	}
 	for (const operation of operations) {
 		if (operation.operation === JournalOperation.Delete) {
 			entries.delete(operation.key);
 		} else if (operation.value) {
-			entries.set(operation.key, operation.value);
+			const existing = entries.get(operation.key);
+			if (existing !== undefined) {
+				values[existing] = operation.value;
+				encodedValues[existing] = operation.encodedValue;
+			} else {
+				entries.set(operation.key, values.length);
+				values.push(operation.value);
+				encodedValues.push(operation.encodedValue);
+			}
 		}
 	}
-	return { values: [...entries.values()], operations: operations.length };
+	let writeIndex = 0;
+	for (const entryIndex of entries.values()) {
+		if (writeIndex !== entryIndex) {
+			values[writeIndex] = values[entryIndex];
+			encodedValues[writeIndex] = encodedValues[entryIndex];
+		}
+		writeIndex++;
+	}
+	values.length = writeIndex;
+	encodedValues.length = writeIndex;
+	return {
+		values,
+		encodedValues,
+		operations: operations.length,
+	};
 };
 
 class NativeSnapshotFile implements SnapshotFile {
@@ -453,17 +539,22 @@ class NativeSnapshotFile implements SnapshotFile {
 
 	async read<T extends Record<string, any>>(
 		schema: AbstractType<T>,
-	): Promise<T[]> {
-		const snapshotValues = await this.readSnapshot(schema);
+		reuseV1Bytes = false,
+	): Promise<RestoredValues<T>> {
+		const snapshot = await this.readSnapshot(schema, reuseV1Bytes);
 		const journalBytes = await this.readOptional(this.journalPath);
 		const replayed = replaySnapshotAndJournal(
-			snapshotValues,
+			snapshot,
 			journalBytes,
 			schema,
 			this.indexBy,
+			reuseV1Bytes,
 		);
 		this.operations = replayed.operations;
-		return replayed.values;
+		return {
+			values: replayed.values,
+			encodedValues: replayed.encodedValues,
+		};
 	}
 
 	async appendPut<T extends Record<string, any>>(
@@ -561,17 +652,26 @@ class NativeSnapshotFile implements SnapshotFile {
 
 	private async readSnapshot<T extends Record<string, any>>(
 		schema: AbstractType<T>,
-	): Promise<T[]> {
-		const snapshot = await this.tryReadSnapshot(this.snapshotPath, schema);
+		reuseV1Bytes: boolean,
+	): Promise<RestoredValues<T>> {
+		const snapshot = await this.tryReadSnapshot(
+			this.snapshotPath,
+			schema,
+			reuseV1Bytes,
+		);
 		if (snapshot.ok) {
-			return snapshot.values;
+			return snapshot.restored;
 		}
-		const tempSnapshot = await this.tryReadSnapshot(this.tempSnapshotPath, schema);
+		const tempSnapshot = await this.tryReadSnapshot(
+			this.tempSnapshotPath,
+			schema,
+			reuseV1Bytes,
+		);
 		if (tempSnapshot.ok) {
-			return tempSnapshot.values;
+			return tempSnapshot.restored;
 		}
 		if (snapshot.missing) {
-			return [];
+			return { values: [] };
 		}
 		throw snapshot.error;
 	}
@@ -579,13 +679,21 @@ class NativeSnapshotFile implements SnapshotFile {
 	private async tryReadSnapshot<T extends Record<string, any>>(
 		path: string,
 		schema: AbstractType<T>,
+		reuseV1Bytes: boolean,
 	): Promise<
-		| { ok: true; values: T[] }
+		| { ok: true; restored: RestoredValues<T> }
 		| { ok: false; missing: boolean; error: unknown }
 	> {
 		try {
 			const bytes = this.fs.readFileSync(path);
-			return { ok: true, values: decodeSnapshot(new Uint8Array(bytes), schema) };
+			return {
+				ok: true,
+				restored: decodeSnapshot(
+				new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength),
+					schema,
+					reuseV1Bytes,
+				),
+			};
 		} catch (error: any) {
 			if (error?.code === "ENOENT") {
 				return { ok: false, missing: true, error };
@@ -610,7 +718,12 @@ class NativeSnapshotFile implements SnapshotFile {
 
 	private async readOptional(path: string): Promise<Uint8Array> {
 		try {
-			return new Uint8Array(this.fs.readFileSync(path));
+			const bytes = this.fs.readFileSync(path);
+			return new Uint8Array(
+				bytes.buffer,
+				bytes.byteOffset,
+				bytes.byteLength,
+			);
 		} catch (error: any) {
 			if (error?.code === "ENOENT") {
 				return new Uint8Array();
@@ -715,17 +828,22 @@ class OpfsSnapshotFile implements SnapshotFile {
 
 	async read<T extends Record<string, any>>(
 		schema: AbstractType<T>,
-	): Promise<T[]> {
-		const snapshotValues = await this.readSnapshot(schema);
+		reuseV1Bytes = false,
+	): Promise<RestoredValues<T>> {
+		const snapshot = await this.readSnapshot(schema, reuseV1Bytes);
 		const journalBytes = await this.readOptional(this.journalFileName);
 		const replayed = replaySnapshotAndJournal(
-			snapshotValues,
+			snapshot,
 			journalBytes,
 			schema,
 			this.indexBy,
+			reuseV1Bytes,
 		);
 		this.operations = replayed.operations;
-		return replayed.values;
+		return {
+			values: replayed.values,
+			encodedValues: replayed.encodedValues,
+		};
 	}
 
 	async appendPut<T extends Record<string, any>>(
@@ -812,20 +930,26 @@ class OpfsSnapshotFile implements SnapshotFile {
 
 	private async readSnapshot<T extends Record<string, any>>(
 		schema: AbstractType<T>,
-	): Promise<T[]> {
-		const snapshot = await this.tryReadSnapshot(this.snapshotFileName, schema);
+		reuseV1Bytes: boolean,
+	): Promise<RestoredValues<T>> {
+		const snapshot = await this.tryReadSnapshot(
+			this.snapshotFileName,
+			schema,
+			reuseV1Bytes,
+		);
 		if (snapshot.ok) {
-			return snapshot.values;
+			return snapshot.restored;
 		}
 		const tempSnapshot = await this.tryReadSnapshot(
 			this.tempSnapshotFileName,
 			schema,
+			reuseV1Bytes,
 		);
 		if (tempSnapshot.ok) {
-			return tempSnapshot.values;
+			return tempSnapshot.restored;
 		}
 		if (snapshot.missing) {
-			return [];
+			return { values: [] };
 		}
 		throw snapshot.error;
 	}
@@ -833,8 +957,9 @@ class OpfsSnapshotFile implements SnapshotFile {
 	private async tryReadSnapshot<T extends Record<string, any>>(
 		fileName: string,
 		schema: AbstractType<T>,
+		reuseV1Bytes: boolean,
 	): Promise<
-		| { ok: true; values: T[] }
+		| { ok: true; restored: RestoredValues<T> }
 		| { ok: false; missing: boolean; error: unknown }
 	> {
 		try {
@@ -843,7 +968,11 @@ class OpfsSnapshotFile implements SnapshotFile {
 			const file = await fileHandle.getFile();
 			return {
 				ok: true,
-				values: decodeSnapshot(new Uint8Array(await file.arrayBuffer()), schema),
+				restored: decodeSnapshot(
+					new Uint8Array(await file.arrayBuffer()),
+					schema,
+					reuseV1Bytes,
+				),
 			};
 		} catch (error: any) {
 			if (error?.name === "NotFoundError") {

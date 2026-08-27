@@ -1,4 +1,11 @@
-import { field, serialize, variant, vec } from "@dao-xyz/borsh";
+import {
+	BinaryWriter,
+	field,
+	serialize,
+	serializer,
+	variant,
+	vec,
+} from "@dao-xyz/borsh";
 import {
 	And,
 	BoolQuery,
@@ -35,6 +42,33 @@ class BridgeDocument {
 	}
 }
 
+class CountingBridgeDocument {
+	static serializeCalls = 0;
+
+	@id({ type: "string" })
+	id: string;
+
+	@field({ type: "string" })
+	tag: string;
+
+	@field({ type: "string" })
+	title: string;
+
+	constructor(id: string, tag: string, title: string) {
+		this.id = id;
+		this.tag = tag;
+		this.title = title;
+	}
+
+	@serializer()
+	serializeValue(writer: BinaryWriter): void {
+		CountingBridgeDocument.serializeCalls++;
+		writer.string(this.id);
+		writer.string(this.tag);
+		writer.string(this.title);
+	}
+}
+
 class BridgeArrayDocument {
 	@id({ type: "string" })
 	id: string;
@@ -62,6 +96,19 @@ class BridgeMetricDocument {
 		this.id = id;
 		this.tag = tag;
 		this.value = value;
+	}
+}
+
+class BridgeFloatDocument {
+	@id({ type: "string" })
+	id: string;
+
+	@field({ type: "f64" })
+	score: number;
+
+	constructor(id: string, score: number) {
+		this.id = id;
+		this.score = score;
 	}
 }
 
@@ -2907,6 +2954,375 @@ describe("native planner bridge", () => {
 			await reopened.drop();
 		} finally {
 			await indices.drop();
+			await rm(directory, { recursive: true, force: true });
+		}
+	});
+
+	it("reuses owned V1 bytes for snapshot and journal winners", async () => {
+		const directory = createPersistenceDirectory();
+		const snapshotWriter = create(directory, {
+			persistence: { compactAfterOperations: 1000 },
+		});
+		const journalWriter = create(directory, {
+			persistence: { compactAfterOperations: 1000 },
+		});
+		const reader = create(directory, {
+			persistence: { compactAfterOperations: 1000 },
+		});
+		type NativePrototype = {
+			put_encoded: (
+				this: NativePrototype,
+				storeKey: string,
+				id: ReturnType<typeof toId>,
+				value: CountingBridgeDocument,
+				valueBytes: Uint8Array,
+				byteElementIndexLimit: number,
+			) => void;
+			put: (this: NativePrototype, ...args: unknown[]) => void;
+		};
+		let nativePrototype: NativePrototype | undefined;
+		let originalPutEncoded: NativePrototype["put_encoded"] | undefined;
+		let originalPut: NativePrototype["put"] | undefined;
+
+		const updatedA = new CountingBridgeDocument("a", "peerbit", "updated a");
+		const retainedE = new CountingBridgeDocument("e", "peerbit", "retained e");
+		const addedD = new CountingBridgeDocument("d", "peerbit", "added d");
+		const reinsertedC = new CountingBridgeDocument(
+			"c",
+			"peerbit",
+			"reinserted c",
+		);
+		const expected = [updatedA, retainedE, addedD, reinsertedC];
+		const expectedBytes = new Map(
+			expected.map((value) => [value.id, serialize(value)]),
+		);
+		const captured: Array<{
+			value: CountingBridgeDocument;
+			valueBytes: Uint8Array;
+		}> = [];
+		let fallbackCalls = 0;
+
+		try {
+			await snapshotWriter.start();
+			const snapshotIndex = await snapshotWriter.init({
+				schema: CountingBridgeDocument,
+			});
+			for (const value of [
+				new CountingBridgeDocument("a", "peerbit", "snapshot a"),
+				new CountingBridgeDocument("b", "peerbit", "snapshot b"),
+				new CountingBridgeDocument("c", "peerbit", "snapshot c"),
+				retainedE,
+			]) {
+				await snapshotIndex.put(value);
+			}
+			await snapshotWriter.stop();
+
+			await journalWriter.start();
+			const journalIndex = await journalWriter.init({
+				schema: CountingBridgeDocument,
+			});
+			expect(
+				(
+					journalIndex as unknown as {
+						nativeSchemaIrStats: { genericNodes: number };
+					}
+				).nativeSchemaIrStats.genericNodes,
+			).to.equal(0);
+			await journalIndex.put(updatedA);
+			await journalIndex.del({
+				query: new StringMatch({ key: "id", value: "b" }),
+			});
+			await journalIndex.put(addedD);
+			await journalIndex.del({
+				query: new StringMatch({ key: "id", value: "c" }),
+			});
+			await journalIndex.put(reinsertedC);
+
+			const native = (journalIndex as unknown as { native: object }).native;
+			nativePrototype = Object.getPrototypeOf(native) as NativePrototype;
+			originalPutEncoded = nativePrototype.put_encoded;
+			originalPut = nativePrototype.put;
+			nativePrototype.put_encoded = function (
+				storeKey,
+				id,
+				value,
+				valueBytes,
+				byteElementIndexLimit,
+			) {
+				captured.push({ value, valueBytes });
+				return originalPutEncoded!.call(
+					this,
+					storeKey,
+					id,
+					value,
+					valueBytes,
+					byteElementIndexLimit,
+				);
+			};
+			nativePrototype.put = function (...args) {
+				fallbackCalls++;
+				return originalPut!.apply(this, args);
+			};
+			CountingBridgeDocument.serializeCalls = 0;
+
+			await reader.start();
+			const readerIndex = await reader.init({ schema: CountingBridgeDocument });
+			expect(CountingBridgeDocument.serializeCalls).to.equal(0);
+			const restored = (await readerIndex.iterate().all()).map(
+				(entry) => entry.value,
+			);
+
+			expect(fallbackCalls).to.equal(0);
+			expect(restored.map((value) => value.id)).to.deep.equal([
+				"a",
+				"e",
+				"d",
+				"c",
+			]);
+			expect(restored.map((value) => value.title)).to.deep.equal([
+				"updated a",
+				"retained e",
+				"added d",
+				"reinserted c",
+			]);
+			expect(captured.map((entry) => entry.value.id)).to.deep.equal([
+				"a",
+				"e",
+				"d",
+				"c",
+			]);
+			for (const { value, valueBytes } of captured) {
+				expect(valueBytes.byteOffset).to.equal(0);
+				expect(valueBytes.buffer.byteLength).to.equal(valueBytes.byteLength);
+				expect([...valueBytes]).to.deep.equal([
+					...expectedBytes.get(value.id)!,
+				]);
+			}
+
+			const queried = await readerIndex
+				.iterate({
+					query: new StringMatch({
+						key: "title",
+						value: "reinserted c",
+					}),
+				})
+				.all();
+			expect(queried.map((entry) => entry.value.id)).to.deep.equal(["c"]);
+		} finally {
+			if (nativePrototype && originalPutEncoded && originalPut) {
+				nativePrototype.put_encoded = originalPutEncoded;
+				nativePrototype.put = originalPut;
+			}
+			await snapshotWriter.drop();
+			await journalWriter.drop();
+			await reader.drop();
+			await removeNodeDirectoryIfNeeded(directory);
+		}
+	});
+
+	it("keeps generic persisted schemas on the field-encoder restore path", async () => {
+		const directory = createPersistenceDirectory();
+		const writer = create(directory);
+		const reader = create(directory);
+		type RustPrototype = {
+			putNativeDocument: (
+				this: RustPrototype,
+				storeKey: string,
+				id: ReturnType<typeof toId>,
+				value: BridgeFloatDocument,
+				preparedEncodedValue?: Uint8Array,
+			) => void;
+		};
+		let rustPrototype: RustPrototype | undefined;
+		let originalPutNativeDocument:
+			| RustPrototype["putNativeDocument"]
+			| undefined;
+		const preparedValues: Array<Uint8Array | undefined> = [];
+
+		try {
+			await writer.start();
+			const writerIndex = await writer.init({ schema: BridgeFloatDocument });
+			await writerIndex.put(new BridgeFloatDocument("a", 1.25));
+			await writer.stop();
+
+			rustPrototype = Object.getPrototypeOf(writerIndex) as RustPrototype;
+			originalPutNativeDocument = rustPrototype.putNativeDocument;
+			rustPrototype.putNativeDocument = function (
+				storeKey,
+				id,
+				value,
+				preparedEncodedValue,
+			) {
+				preparedValues.push(preparedEncodedValue);
+				return originalPutNativeDocument!.call(
+					this,
+					storeKey,
+					id,
+					value,
+					preparedEncodedValue,
+				);
+			};
+
+			await reader.start();
+			const readerIndex = await reader.init({ schema: BridgeFloatDocument });
+			const internal = readerIndex as unknown as {
+				nativeSchemaIrStats: { genericNodes: number };
+			};
+
+			expect(internal.nativeSchemaIrStats.genericNodes).to.be.greaterThan(0);
+			expect(preparedValues).to.deep.equal([undefined]);
+			expect((await readerIndex.get(toId("a")))?.value.score).to.equal(1.25);
+		} finally {
+			if (rustPrototype && originalPutNativeDocument) {
+				rustPrototype.putNativeDocument = originalPutNativeDocument;
+			}
+			await writer.drop();
+			await reader.drop();
+			await removeNodeDirectoryIfNeeded(directory);
+		}
+	});
+
+	it("reserializes magicless legacy snapshots on restore", async function () {
+		if (!isNodeRuntime()) {
+			this.skip();
+		}
+		const { directory, join, readFile, rm, writeFile } =
+			await loadNodePersistenceHelpers();
+		const writer = create(directory);
+		const reader = create(directory);
+		try {
+			await writer.start();
+			const writerIndex = await writer.init({ schema: CountingBridgeDocument });
+			await writerIndex.put(
+				new CountingBridgeDocument("a", "peerbit", "legacy snapshot"),
+			);
+			await writer.stop();
+
+			const snapshotPath = join(directory, "id", "index.bin");
+			const snapshotBytes = await readFile(snapshotPath);
+			await writeFile(snapshotPath, snapshotBytes.subarray(16));
+			CountingBridgeDocument.serializeCalls = 0;
+
+			await reader.start();
+			const readerIndex = await reader.init({ schema: CountingBridgeDocument });
+			expect(CountingBridgeDocument.serializeCalls).to.equal(1);
+			expect((await readerIndex.get(toId("a")))?.value.title).to.equal(
+				"legacy snapshot",
+			);
+		} finally {
+			await writer.drop();
+			await reader.drop();
+			await rm(directory, { recursive: true, force: true });
+		}
+	});
+
+	it("aligns V1 journal bytes after a magicless legacy snapshot", async function () {
+		if (!isNodeRuntime()) {
+			this.skip();
+		}
+		const { directory, join, readFile, rm, writeFile } =
+			await loadNodePersistenceHelpers();
+		const snapshotWriter = create(directory, {
+			persistence: { compactAfterOperations: 1000 },
+		});
+		const journalWriter = create(directory, {
+			persistence: { compactAfterOperations: 1000 },
+		});
+		const reader = create(directory, {
+			persistence: { compactAfterOperations: 1000 },
+		});
+		type RustPrototype = {
+			putNativeDocument: (
+				this: RustPrototype,
+				storeKey: string,
+				id: ReturnType<typeof toId>,
+				value: CountingBridgeDocument,
+				preparedEncodedValue?: Uint8Array,
+			) => void;
+		};
+		let rustPrototype: RustPrototype | undefined;
+		let originalPutNativeDocument:
+			| RustPrototype["putNativeDocument"]
+			| undefined;
+		const preparedValues: Array<{
+			id: string;
+			bytes?: Uint8Array;
+		}> = [];
+
+		try {
+			await snapshotWriter.start();
+			const snapshotIndex = await snapshotWriter.init({
+				schema: CountingBridgeDocument,
+			});
+			await snapshotIndex.put(
+				new CountingBridgeDocument("a", "peerbit", "legacy a"),
+			);
+			await snapshotIndex.put(
+				new CountingBridgeDocument("b", "peerbit", "legacy b"),
+			);
+			await snapshotWriter.stop();
+
+			const snapshotPath = join(directory, "id", "index.bin");
+			const snapshotBytes = await readFile(snapshotPath);
+			await writeFile(snapshotPath, snapshotBytes.subarray(16));
+
+			await journalWriter.start();
+			const journalIndex = await journalWriter.init({
+				schema: CountingBridgeDocument,
+			});
+			const journalValue = new CountingBridgeDocument(
+				"c",
+				"peerbit",
+				"journal c",
+			);
+			await journalIndex.put(journalValue);
+			const expectedJournalBytes = serialize(journalValue);
+
+			rustPrototype = Object.getPrototypeOf(journalIndex) as RustPrototype;
+			originalPutNativeDocument = rustPrototype.putNativeDocument;
+			rustPrototype.putNativeDocument = function (
+				storeKey,
+				id,
+				value,
+				preparedEncodedValue,
+			) {
+				preparedValues.push({
+					id: value.id,
+					bytes: preparedEncodedValue,
+				});
+				return originalPutNativeDocument!.call(
+					this,
+					storeKey,
+					id,
+					value,
+					preparedEncodedValue,
+				);
+			};
+			CountingBridgeDocument.serializeCalls = 0;
+
+			await reader.start();
+			const readerIndex = await reader.init({ schema: CountingBridgeDocument });
+			expect(CountingBridgeDocument.serializeCalls).to.equal(2);
+			expect(preparedValues.map(({ id }) => id)).to.deep.equal(["a", "b", "c"]);
+			expect(preparedValues[0].bytes).to.equal(undefined);
+			expect(preparedValues[1].bytes).to.equal(undefined);
+			expect([...(preparedValues[2].bytes ?? [])]).to.deep.equal([
+				...expectedJournalBytes,
+			]);
+
+			const queried = await readerIndex
+				.iterate({
+					query: new StringMatch({ key: "title", value: "journal c" }),
+				})
+				.all();
+			expect(queried.map((entry) => entry.value.id)).to.deep.equal(["c"]);
+		} finally {
+			if (rustPrototype && originalPutNativeDocument) {
+				rustPrototype.putNativeDocument = originalPutNativeDocument;
+			}
+			await snapshotWriter.drop();
+			await journalWriter.drop();
+			await reader.drop();
 			await rm(directory, { recursive: true, force: true });
 		}
 	});
