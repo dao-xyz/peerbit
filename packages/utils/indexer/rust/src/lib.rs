@@ -229,6 +229,11 @@ impl NativeRustIndex {
         self.planner.clear();
     }
 
+    pub fn reserve_documents(&mut self, additional: usize) {
+        self.store.entries.reserve(additional);
+        self.planner.index.reserve_documents(additional);
+    }
+
     pub fn configure_schema_ir(&mut self, schema_ir_bytes: Vec<u8>) -> Result<Array, JsValue> {
         let schema_ir = decode_core_native_schema_ir(&schema_ir_bytes).map_err(js_error)?;
         let stats = schema_ir.stats();

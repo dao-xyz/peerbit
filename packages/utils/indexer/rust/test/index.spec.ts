@@ -2911,6 +2911,55 @@ describe("native planner bridge", () => {
 		}
 	});
 
+	it("reserves native capacity before restoring durable state", async function () {
+		if (!isNodeRuntime()) {
+			this.skip();
+		}
+		const { directory, rm } = await loadNodePersistenceHelpers();
+		const writer = create(directory);
+		const reader = create(directory);
+		type NativePrototype = {
+			reserve_documents: (
+				this: NativePrototype,
+				additional: number,
+			) => void;
+			len: () => number;
+		};
+		let prototype: NativePrototype | undefined;
+		let originalReserve: NativePrototype["reserve_documents"] | undefined;
+		const reservations: number[] = [];
+		try {
+			await writer.start();
+			const writerIndex = await writer.init({ schema: BridgeDocument });
+			await writerIndex.put(new BridgeDocument("a", "peerbit", "first"));
+			await writerIndex.put(new BridgeDocument("b", "peerbit", "second"));
+			const writerNative = (writerIndex as unknown as { native: object }).native;
+			prototype = Object.getPrototypeOf(writerNative) as NativePrototype;
+			originalReserve = prototype.reserve_documents;
+			await writer.stop();
+
+			prototype.reserve_documents = function (additional) {
+				expect(this.len()).to.equal(0);
+				reservations.push(additional);
+				return originalReserve!.call(this, additional);
+			};
+
+			await reader.start();
+			const reopened = await reader.init({ schema: BridgeDocument });
+			expect(reopened.getSize()).to.equal(2);
+			expect((await reopened.get(toId("a")))?.value.title).to.equal("first");
+			expect((await reopened.get(toId("b")))?.value.title).to.equal("second");
+			expect(reservations).to.deep.equal([2]);
+		} finally {
+			if (prototype && originalReserve) {
+				prototype.reserve_documents = originalReserve;
+			}
+			await writer.drop();
+			await reader.drop();
+			await rm(directory, { recursive: true, force: true });
+		}
+	});
+
 	it("shares and evicts a failed restore so the same indices can retry", async function () {
 		if (!isNodeRuntime()) {
 			this.skip();
