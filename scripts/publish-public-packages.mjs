@@ -14,13 +14,7 @@ const npmCmd = process.platform === "win32" ? "npm.cmd" : "npm";
 // still being processed. Keep this bounded, but allow the documented
 // "few minutes" path enough time before treating a successful publish as lost.
 const REGISTRY_VERIFICATION_DELAYS_MS = Object.freeze([
-	0,
-	2_000,
-	4_000,
-	8_000,
-	15_000,
-	30_000,
-	60_000,
+	0, 2_000, 4_000, 8_000, 15_000, 30_000, 60_000, 60_000, 60_000,
 ]);
 
 const args = process.argv.slice(2);

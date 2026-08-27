@@ -772,10 +772,37 @@ assert.match(
 	publicPackagePublisher,
 	/await discoverPublishableWorkspacePackages\(/,
 );
-assert.match(
-	publicPackagePublisher,
-	/const REGISTRY_VERIFICATION_DELAYS_MS = Object\.freeze\(\[\s*0,\s*2_000,\s*4_000,\s*8_000,\s*15_000,\s*30_000,\s*60_000,\s*\]\)/,
-	"the publisher must tolerate npm's multi-minute processing path before failing closed",
+const registryVerificationSchedules = [
+	...publicPackagePublisher.matchAll(
+		/^const REGISTRY_VERIFICATION_DELAYS_MS = Object\.freeze\(\[\s*((?:\d[\d_]*\s*,\s*)+)\]\);$/gm,
+	),
+];
+assert.equal(
+	registryVerificationSchedules.length,
+	1,
+	"the publisher must retain one explicit, immutable registry verification schedule",
+);
+const registryVerificationDelays = registryVerificationSchedules[0][1]
+	.split(",")
+	.map((delay) => delay.trim())
+	.filter(Boolean)
+	.map((delay) => Number(delay.replaceAll("_", "")));
+assert.equal(
+	registryVerificationDelays[0],
+	0,
+	"the publisher must verify immediately after a successful publish",
+);
+const registryVerificationWindowMs = registryVerificationDelays.reduce(
+	(total, delay) => total + delay,
+	0,
+);
+assert(
+	registryVerificationWindowMs >= 180_000,
+	"the publisher must tolerate at least three minutes of npm processing and propagation delay",
+);
+assert(
+	registryVerificationWindowMs <= 300_000,
+	"registry verification must remain bounded to at most five minutes",
 );
 assert.doesNotMatch(
 	publicPackagePublisher,
