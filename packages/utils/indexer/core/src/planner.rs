@@ -249,6 +249,103 @@ enum QueryMatch {
     Undefined,
 }
 
+/// A compact posting set that keeps the overwhelmingly common singleton case
+/// inline. It promotes to a roaring bitmap only when a second document is
+/// inserted. Once promoted it retains that allocation until empty, avoiding
+/// allocation churn when a posting oscillates between one and two documents.
+#[derive(Clone, Debug, Default)]
+enum PostingList {
+    #[default]
+    Empty,
+    One(DocId),
+    Many(RoaringBitmap),
+}
+
+impl PostingList {
+    fn insert(&mut self, doc_id: DocId) -> bool {
+        match self {
+            Self::Empty => {
+                *self = Self::One(doc_id);
+                true
+            }
+            Self::One(existing) if *existing == doc_id => false,
+            Self::One(existing) => {
+                let mut bitmap = RoaringBitmap::new();
+                bitmap.insert(*existing);
+                bitmap.insert(doc_id);
+                *self = Self::Many(bitmap);
+                true
+            }
+            Self::Many(bitmap) => bitmap.insert(doc_id),
+        }
+    }
+
+    fn remove(&mut self, doc_id: DocId) -> bool {
+        match self {
+            Self::Empty => false,
+            Self::One(existing) if *existing == doc_id => {
+                *self = Self::Empty;
+                true
+            }
+            Self::One(_) => false,
+            Self::Many(bitmap) => {
+                if !bitmap.remove(doc_id) {
+                    return false;
+                }
+                if bitmap.is_empty() {
+                    *self = Self::Empty;
+                }
+                true
+            }
+        }
+    }
+
+    fn len(&self) -> u64 {
+        match self {
+            Self::Empty => 0,
+            Self::One(_) => 1,
+            Self::Many(bitmap) => bitmap.len(),
+        }
+    }
+
+    fn is_empty(&self) -> bool {
+        matches!(self, Self::Empty)
+    }
+
+    fn to_bitmap(&self) -> RoaringBitmap {
+        match self {
+            Self::Empty => RoaringBitmap::new(),
+            Self::One(doc_id) => RoaringBitmap::from_iter([*doc_id]),
+            Self::Many(bitmap) => bitmap.clone(),
+        }
+    }
+
+    fn union_into(&self, result: &mut RoaringBitmap) {
+        match self {
+            Self::Empty => {}
+            Self::One(doc_id) => {
+                result.insert(*doc_id);
+            }
+            Self::Many(bitmap) => *result |= bitmap,
+        }
+    }
+
+    /// Iterate in ascending DocId order, matching `RoaringBitmap::iter`.
+    fn iter(&self) -> impl Iterator<Item = DocId> + '_ {
+        let singleton = match self {
+            Self::One(doc_id) => Some(*doc_id),
+            Self::Empty | Self::Many(_) => None,
+        };
+        let bitmap = match self {
+            Self::Many(bitmap) => Some(bitmap),
+            Self::Empty | Self::One(_) => None,
+        };
+        singleton
+            .into_iter()
+            .chain(bitmap.into_iter().flat_map(RoaringBitmap::iter))
+    }
+}
+
 impl DocumentFields {
     pub fn new() -> Self {
         Self::default()
@@ -425,14 +522,14 @@ pub struct NativeQueryIndex {
     // stored string) purely so tie-breaks order by the id's natural typed order.
     internal_to_sort_key: HashMap<DocId, IdSortKey>,
     documents: HashMap<DocId, DocumentFields>,
-    exact: HashMap<FieldPath, HashMap<FieldValue, RoaringBitmap>>,
-    range_i64: HashMap<FieldPath, BTreeMap<i64, RoaringBitmap>>,
-    range_u64: HashMap<FieldPath, BTreeMap<u64, RoaringBitmap>>,
-    sort_bool: HashMap<FieldPath, BTreeMap<bool, RoaringBitmap>>,
-    sort_i64: HashMap<FieldPath, BTreeMap<i64, RoaringBitmap>>,
-    sort_u64: HashMap<FieldPath, BTreeMap<u64, RoaringBitmap>>,
-    sort_string: HashMap<FieldPath, BTreeMap<Arc<str>, RoaringBitmap>>,
-    sort_bytes: HashMap<FieldPath, BTreeMap<Arc<[u8]>, RoaringBitmap>>,
+    exact: HashMap<FieldPath, HashMap<FieldValue, PostingList>>,
+    range_i64: HashMap<FieldPath, BTreeMap<i64, PostingList>>,
+    range_u64: HashMap<FieldPath, BTreeMap<u64, PostingList>>,
+    sort_bool: HashMap<FieldPath, BTreeMap<bool, PostingList>>,
+    sort_i64: HashMap<FieldPath, BTreeMap<i64, PostingList>>,
+    sort_u64: HashMap<FieldPath, BTreeMap<u64, PostingList>>,
+    sort_string: HashMap<FieldPath, BTreeMap<Arc<str>, PostingList>>,
+    sort_bytes: HashMap<FieldPath, BTreeMap<Arc<[u8]>, PostingList>>,
     large_exact_bytes: HashMap<FieldPath, RoaringBitmap>,
     vectors: HashMap<FieldPath, HashMap<DocId, Vec<f32>>>,
 }
@@ -555,7 +652,7 @@ impl NativeQueryIndex {
                 .exact
                 .get(field)
                 .and_then(|values| values.get(&FieldValue::from(value.clone())))
-                .cloned()
+                .map(PostingList::to_bitmap)
                 .unwrap_or_default(),
             Query::StringMatch { .. } | Query::IsNull { .. } => self.all_docs.clone(),
             Query::And(queries) => self.and_candidates(queries),
@@ -602,8 +699,8 @@ impl NativeQueryIndex {
         self.exact
             .get(field)
             .and_then(|values| values.get(value))
-            .and_then(|matches| {
-                matches
+            .and_then(|posting| {
+                posting
                     .iter()
                     .find_map(|doc_id| self.internal_to_external.get(&doc_id).cloned())
             })
@@ -960,19 +1057,9 @@ impl NativeQueryIndex {
                     .insert(doc_id);
             }
             if let Some(value) = value.as_i64() {
-                self.range_i64
-                    .entry(path.clone())
-                    .or_default()
-                    .entry(value)
-                    .or_default()
-                    .insert(doc_id);
+                insert_into_ordered_index(&mut self.range_i64, path, value, doc_id);
             } else if let Some(value) = value.as_u64() {
-                self.range_u64
-                    .entry(path.clone())
-                    .or_default()
-                    .entry(value)
-                    .or_default()
-                    .insert(doc_id);
+                insert_into_ordered_index(&mut self.range_u64, path, value, doc_id);
             }
         }
     }
@@ -988,9 +1075,9 @@ impl NativeQueryIndex {
                 remove_from_exact(&mut self.exact, path, &value, doc_id);
             }
             if let Some(value) = value.as_i64() {
-                remove_from_range_i64(&mut self.range_i64, path, value, doc_id);
+                remove_from_ordered_index(&mut self.range_i64, path, &value, doc_id);
             } else if let Some(value) = value.as_u64() {
-                remove_from_range_u64(&mut self.range_u64, path, value, doc_id);
+                remove_from_ordered_index(&mut self.range_u64, path, &value, doc_id);
             }
         }
     }
@@ -1047,7 +1134,7 @@ impl NativeQueryIndex {
                 .exact
                 .get(field)
                 .and_then(|values| values.get(&FieldValue::from(value.clone())))
-                .map(RoaringBitmap::len)
+                .map(PostingList::len)
                 .unwrap_or(0),
             Query::And(queries) => queries
                 .iter()
@@ -1087,7 +1174,7 @@ impl NativeQueryIndex {
             .exact
             .get(field)
             .and_then(|values| values.get(value))
-            .cloned()
+            .map(PostingList::to_bitmap)
             .unwrap_or_default();
         if is_large_byte_value(value) {
             if let Some(large_byte_docs) = self.large_exact_bytes.get(field) {
@@ -1102,7 +1189,7 @@ impl NativeQueryIndex {
             .exact
             .get(field)
             .and_then(|values| values.get(value))
-            .map(RoaringBitmap::len)
+            .map(PostingList::len)
             .unwrap_or(0);
         if is_large_byte_value(value) {
             len = len.saturating_add(
@@ -1349,7 +1436,7 @@ impl NativeQueryIndex {
 
     fn collect_sort_index_docs<T: Ord>(
         &self,
-        index: Option<&BTreeMap<T, RoaringBitmap>>,
+        index: Option<&BTreeMap<T, PostingList>>,
         reverse: bool,
         query: &Query,
         offset: usize,
@@ -1389,7 +1476,7 @@ impl NativeQueryIndex {
 
     fn collect_index_sorted_docs<'a>(
         &self,
-        bitmaps: impl Iterator<Item = &'a RoaringBitmap>,
+        postings: impl Iterator<Item = &'a PostingList>,
         reverse: bool,
         query: &Query,
         offset: usize,
@@ -1398,13 +1485,19 @@ impl NativeQueryIndex {
         seen: &mut RoaringBitmap,
         result: &mut Vec<String>,
     ) -> bool {
-        for bitmap in bitmaps {
-            // Docs sharing the same sort value are a tie group. `bitmap.iter()`
+        for posting in postings {
+            if let PostingList::One(doc_id) = posting {
+                if !self.collect_sorted_doc(*doc_id, query, offset, limit, skipped, seen, result) {
+                    return false;
+                }
+                continue;
+            }
+            // Docs sharing the same sort value are a tie group. Posting iteration
             // yields them in DocId (local insertion) order, which is not
             // content-deterministic across peers. Re-order each tie group by
             // primary-key id (in its natural typed order) in the scan direction to
             // match the default backend.
-            for doc_id in self.tie_ordered_doc_ids(bitmap, reverse) {
+            for doc_id in self.tie_ordered_doc_ids(posting, reverse) {
                 if !self.collect_sorted_doc(doc_id, query, offset, limit, skipped, seen, result) {
                     return false;
                 }
@@ -1416,9 +1509,9 @@ impl NativeQueryIndex {
     /// Return the doc ids of a tie group ordered by primary-key id in its natural
     /// typed order (ascending for a forward scan, descending when `reverse`), so
     /// equal-sort-key results match the default backend's primary-key ordering for
-    /// every id kind. Single-element groups skip the allocation/sort entirely.
-    fn tie_ordered_doc_ids(&self, bitmap: &RoaringBitmap, reverse: bool) -> Vec<DocId> {
-        let mut doc_ids: Vec<DocId> = bitmap.iter().collect();
+    /// every id kind. Single-element groups are handled directly by the caller.
+    fn tie_ordered_doc_ids(&self, posting: &PostingList, reverse: bool) -> Vec<DocId> {
+        let mut doc_ids: Vec<DocId> = posting.iter().collect();
         if doc_ids.len() > 1 {
             let direction = if reverse {
                 SortDirection::Desc
@@ -1663,7 +1756,7 @@ fn matches_string(value: &str, query: &str, method: StringMatchMethod) -> bool {
 }
 
 fn range_i64_candidates(
-    index: Option<&BTreeMap<i64, RoaringBitmap>>,
+    index: Option<&BTreeMap<i64, PostingList>>,
     compare: Compare,
     value: i64,
 ) -> RoaringBitmap {
@@ -1671,20 +1764,23 @@ fn range_i64_candidates(
         return RoaringBitmap::new();
     };
     match compare {
-        Compare::Equal => index.get(&value).cloned().unwrap_or_default(),
-        Compare::Less => union_bitmaps(index.range(..value).map(|(_, bitmap)| bitmap)),
-        Compare::LessOrEqual => union_bitmaps(index.range(..=value).map(|(_, bitmap)| bitmap)),
-        Compare::Greater => union_bitmaps(
+        Compare::Equal => index
+            .get(&value)
+            .map(PostingList::to_bitmap)
+            .unwrap_or_default(),
+        Compare::Less => union_postings(index.range(..value).map(|(_, posting)| posting)),
+        Compare::LessOrEqual => union_postings(index.range(..=value).map(|(_, posting)| posting)),
+        Compare::Greater => union_postings(
             index
                 .range((Excluded(value), Unbounded))
-                .map(|(_, bitmap)| bitmap),
+                .map(|(_, posting)| posting),
         ),
-        Compare::GreaterOrEqual => union_bitmaps(index.range(value..).map(|(_, bitmap)| bitmap)),
+        Compare::GreaterOrEqual => union_postings(index.range(value..).map(|(_, posting)| posting)),
     }
 }
 
 fn estimate_i64_range_len(
-    index: Option<&BTreeMap<i64, RoaringBitmap>>,
+    index: Option<&BTreeMap<i64, PostingList>>,
     compare: Compare,
     value: i64,
 ) -> u64 {
@@ -1692,7 +1788,7 @@ fn estimate_i64_range_len(
         return 0;
     };
     if compare == Compare::Equal {
-        return index.get(&value).map(RoaringBitmap::len).unwrap_or(0);
+        return index.get(&value).map(PostingList::len).unwrap_or(0);
     }
     let Some((&min, _)) = index.iter().next() else {
         return 0;
@@ -1710,7 +1806,7 @@ fn estimate_i64_range_len(
 }
 
 fn range_u64_candidates(
-    index: Option<&BTreeMap<u64, RoaringBitmap>>,
+    index: Option<&BTreeMap<u64, PostingList>>,
     compare: Compare,
     value: u64,
 ) -> RoaringBitmap {
@@ -1718,20 +1814,23 @@ fn range_u64_candidates(
         return RoaringBitmap::new();
     };
     match compare {
-        Compare::Equal => index.get(&value).cloned().unwrap_or_default(),
-        Compare::Less => union_bitmaps(index.range(..value).map(|(_, bitmap)| bitmap)),
-        Compare::LessOrEqual => union_bitmaps(index.range(..=value).map(|(_, bitmap)| bitmap)),
-        Compare::Greater => union_bitmaps(
+        Compare::Equal => index
+            .get(&value)
+            .map(PostingList::to_bitmap)
+            .unwrap_or_default(),
+        Compare::Less => union_postings(index.range(..value).map(|(_, posting)| posting)),
+        Compare::LessOrEqual => union_postings(index.range(..=value).map(|(_, posting)| posting)),
+        Compare::Greater => union_postings(
             index
                 .range((Excluded(value), Unbounded))
-                .map(|(_, bitmap)| bitmap),
+                .map(|(_, posting)| posting),
         ),
-        Compare::GreaterOrEqual => union_bitmaps(index.range(value..).map(|(_, bitmap)| bitmap)),
+        Compare::GreaterOrEqual => union_postings(index.range(value..).map(|(_, posting)| posting)),
     }
 }
 
 fn estimate_u64_range_len(
-    index: Option<&BTreeMap<u64, RoaringBitmap>>,
+    index: Option<&BTreeMap<u64, PostingList>>,
     compare: Compare,
     value: u64,
 ) -> u64 {
@@ -1739,7 +1838,7 @@ fn estimate_u64_range_len(
         return 0;
     };
     if compare == Compare::Equal {
-        return index.get(&value).map(RoaringBitmap::len).unwrap_or(0);
+        return index.get(&value).map(PostingList::len).unwrap_or(0);
     }
     let Some((&min, _)) = index.iter().next() else {
         return 0;
@@ -1818,10 +1917,10 @@ fn estimate_ordered_range_len(
     estimate.min(u64::MAX as u128) as u64
 }
 
-fn union_bitmaps<'a>(bitmaps: impl Iterator<Item = &'a RoaringBitmap>) -> RoaringBitmap {
+fn union_postings<'a>(postings: impl Iterator<Item = &'a PostingList>) -> RoaringBitmap {
     let mut result = RoaringBitmap::new();
-    for bitmap in bitmaps {
-        result |= bitmap;
+    for posting in postings {
+        posting.union_into(&mut result);
     }
     result
 }
@@ -1834,15 +1933,27 @@ fn is_large_byte_value(value: &FieldValue) -> bool {
 }
 
 fn remove_from_exact(
-    index: &mut HashMap<FieldPath, HashMap<FieldValue, RoaringBitmap>>,
+    index: &mut HashMap<FieldPath, HashMap<FieldValue, PostingList>>,
     path: &FieldPath,
     value: &FieldValue,
     doc_id: DocId,
 ) {
-    if let Some(values) = index.get_mut(path) {
-        if let Some(bitmap) = values.get_mut(value) {
-            bitmap.remove(doc_id);
+    let remove_path = if let Some(values) = index.get_mut(path) {
+        let remove_value = if let Some(posting) = values.get_mut(value) {
+            posting.remove(doc_id);
+            posting.is_empty()
+        } else {
+            false
+        };
+        if remove_value {
+            values.remove(value);
         }
+        values.is_empty()
+    } else {
+        false
+    };
+    if remove_path {
+        index.remove(path);
     }
 }
 
@@ -1851,39 +1962,19 @@ fn remove_from_bitmap_map(
     path: &FieldPath,
     doc_id: DocId,
 ) {
-    if let Some(bitmap) = index.get_mut(path) {
+    let remove_path = if let Some(bitmap) = index.get_mut(path) {
         bitmap.remove(doc_id);
-    }
-}
-
-fn remove_from_range_i64(
-    index: &mut HashMap<FieldPath, BTreeMap<i64, RoaringBitmap>>,
-    path: &FieldPath,
-    value: i64,
-    doc_id: DocId,
-) {
-    if let Some(values) = index.get_mut(path) {
-        if let Some(bitmap) = values.get_mut(&value) {
-            bitmap.remove(doc_id);
-        }
-    }
-}
-
-fn remove_from_range_u64(
-    index: &mut HashMap<FieldPath, BTreeMap<u64, RoaringBitmap>>,
-    path: &FieldPath,
-    value: u64,
-    doc_id: DocId,
-) {
-    if let Some(values) = index.get_mut(path) {
-        if let Some(bitmap) = values.get_mut(&value) {
-            bitmap.remove(doc_id);
-        }
+        bitmap.is_empty()
+    } else {
+        false
+    };
+    if remove_path {
+        index.remove(path);
     }
 }
 
 fn insert_into_ordered_index<T: Ord>(
-    index: &mut HashMap<FieldPath, BTreeMap<T, RoaringBitmap>>,
+    index: &mut HashMap<FieldPath, BTreeMap<T, PostingList>>,
     path: &FieldPath,
     value: T,
     doc_id: DocId,
@@ -1897,15 +1988,27 @@ fn insert_into_ordered_index<T: Ord>(
 }
 
 fn remove_from_ordered_index<T: Ord>(
-    index: &mut HashMap<FieldPath, BTreeMap<T, RoaringBitmap>>,
+    index: &mut HashMap<FieldPath, BTreeMap<T, PostingList>>,
     path: &FieldPath,
     value: &T,
     doc_id: DocId,
 ) {
-    if let Some(values) = index.get_mut(path) {
-        if let Some(bitmap) = values.get_mut(value) {
-            bitmap.remove(doc_id);
+    let remove_path = if let Some(values) = index.get_mut(path) {
+        let remove_value = if let Some(posting) = values.get_mut(value) {
+            posting.remove(doc_id);
+            posting.is_empty()
+        } else {
+            false
+        };
+        if remove_value {
+            values.remove(value);
         }
+        values.is_empty()
+    } else {
+        false
+    };
+    if remove_path {
+        index.remove(path);
     }
 }
 
@@ -1983,10 +2086,244 @@ fn vector_distance(left: &[f32], right: &[f32], metric: VectorMetric) -> f32 {
 
 #[cfg(test)]
 mod tests {
+    use roaring::RoaringBitmap;
+
     use super::{
-        Compare, DocumentFields, FieldValue, IndexBatch, NativeQueryIndex, Query, SortDirection,
-        SortField, SumResult, VectorMetric, VectorSort, MAX_EXACT_INDEXED_BYTE_FIELD_LENGTH,
+        Compare, DocumentFields, FieldPath, FieldValue, IndexBatch, NativeQueryIndex, PostingList,
+        Query, SortDirection, SortField, SumResult, VectorMetric, VectorSort,
+        MAX_EXACT_INDEXED_BYTE_FIELD_LENGTH,
     };
+
+    #[test]
+    fn posting_list_promotes_retains_capacity_and_clones_candidates() {
+        let mut posting = PostingList::default();
+        assert!(posting.is_empty());
+        assert_eq!(posting.len(), 0);
+
+        assert!(posting.insert(9));
+        assert!(!posting.insert(9), "duplicate facts retain set semantics");
+        assert!(matches!(posting, PostingList::One(9)));
+
+        assert!(posting.insert(3));
+        assert!(matches!(posting, PostingList::Many(_)));
+        assert_eq!(posting.iter().collect::<Vec<_>>(), vec![3, 9]);
+
+        let candidate = posting.to_bitmap();
+        assert!(posting.insert(12));
+        assert_eq!(candidate.iter().collect::<Vec<_>>(), vec![3, 9]);
+
+        let mut union = RoaringBitmap::from_iter([1]);
+        posting.union_into(&mut union);
+        assert_eq!(union.iter().collect::<Vec<_>>(), vec![1, 3, 9, 12]);
+
+        assert!(posting.remove(12));
+        assert!(posting.remove(3));
+        assert!(matches!(posting, PostingList::Many(_)));
+        assert_eq!(posting.iter().collect::<Vec<_>>(), vec![9]);
+        assert!(!posting.remove(3));
+        assert!(posting.remove(9));
+        assert!(matches!(posting, PostingList::Empty));
+    }
+
+    #[test]
+    fn posting_indexes_transition_cleanly_through_delete_replace_and_reinsert() {
+        let mut index = NativeQueryIndex::new();
+        let label = FieldPath::from("label");
+        let score = FieldPath::from("score");
+
+        let shared_fields = || {
+            let mut fields = DocumentFields::new();
+            // Repeating a fact in separate scopes must still create one posting
+            // for this document and remain safe when both facts are removed.
+            fields.insert_scoped_scalar(1, label.clone(), "shared");
+            fields.insert_scoped_scalar(2, label.clone(), "shared");
+            fields.insert_scoped_scalar(1, score.clone(), 10_u64);
+            fields.insert_scoped_scalar(2, score.clone(), 10_u64);
+            fields.insert_scoped_scalar(1, "left", true);
+            fields.insert_scoped_scalar(2, "right", true);
+            fields
+        };
+
+        index.put("a", shared_fields());
+        let label_value = FieldValue::from("shared");
+        assert!(matches!(
+            index.exact[&label][&label_value],
+            PostingList::One(0)
+        ));
+        assert!(matches!(index.range_u64[&score][&10], PostingList::One(0)));
+        assert!(matches!(index.sort_u64[&score][&10], PostingList::One(0)));
+        assert!(matches!(
+            index.exact[&score][&FieldValue::U64(10)],
+            PostingList::One(0)
+        ));
+
+        index.put("b", shared_fields());
+        assert!(matches!(
+            index.exact[&label][&label_value],
+            PostingList::Many(_)
+        ));
+        assert!(matches!(index.range_u64[&score][&10], PostingList::Many(_)));
+        assert!(matches!(index.sort_u64[&score][&10], PostingList::Many(_)));
+        let cross_scope = Query::And(vec![
+            Query::Exact {
+                field: "left".into(),
+                value: FieldValue::Bool(true),
+            },
+            Query::Exact {
+                field: "right".into(),
+                value: FieldValue::Bool(true),
+            },
+        ]);
+        assert_eq!(index.candidates(&cross_scope).len(), 2);
+        assert_eq!(index.search(&cross_scope, &[], None), Vec::<String>::new());
+
+        index.delete_id("a");
+        assert_eq!(index.exact[&label][&label_value].len(), 1);
+        assert_eq!(index.range_u64[&score][&10].len(), 1);
+        assert_eq!(index.sort_u64[&score][&10].len(), 1);
+
+        index.delete_id("b");
+        assert!(!index.exact.contains_key(&label));
+        assert!(!index.range_u64.contains_key(&score));
+        assert!(!index.sort_u64.contains_key(&score));
+
+        // Reinsert into a recycled DocId, then replace every indexed value. Old
+        // postings must disappear before the recycled id is indexed again.
+        index.put("c", shared_fields());
+        assert_eq!(
+            index.search(
+                &Query::Exact {
+                    field: score.clone(),
+                    value: FieldValue::U64(10),
+                },
+                &[],
+                None,
+            ),
+            vec!["c"]
+        );
+        index.put(
+            "c",
+            DocumentFields::new()
+                .with_scalar(label.clone(), "replacement")
+                .with_scalar(score.clone(), 20_u64),
+        );
+        assert!(!index.range_u64[&score].contains_key(&10));
+        assert!(!index.sort_u64[&score].contains_key(&10));
+        assert_eq!(
+            index.search(
+                &Query::Exact {
+                    field: label,
+                    value: label_value,
+                },
+                &[],
+                None,
+            ),
+            Vec::<String>::new()
+        );
+        assert_eq!(
+            index.exact_first(&score, &FieldValue::U64(20)),
+            Some("c".to_string())
+        );
+    }
+
+    #[test]
+    fn numeric_exact_range_and_first_value_sort_keep_equivalent_postings() {
+        let mut index = NativeQueryIndex::new();
+        index.put(
+            "a",
+            DocumentFields::new()
+                .with_scalar("score", 20_u64)
+                .with_scalar("score", 0_u64),
+        );
+        index.put(
+            "b",
+            DocumentFields::new()
+                .with_scalar("score", 10_u64)
+                .with_scalar("score", 99_u64),
+        );
+        index.put(
+            "c",
+            DocumentFields::new()
+                .with_scalar("score", 10_u64)
+                .with_scalar("score", 50_u64),
+        );
+        index.put("missing", DocumentFields::new().with_scalar("other", true));
+
+        let score = FieldPath::from("score");
+        let ascending = [SortField {
+            field: score.clone(),
+            direction: SortDirection::Asc,
+        }];
+        assert_eq!(
+            index.search(&Query::All, &ascending, None),
+            vec!["b", "c", "a", "missing"]
+        );
+        assert_eq!(
+            index.search_page(&Query::All, &ascending, 1, Some(2)),
+            vec!["c", "a"]
+        );
+        let descending = [SortField {
+            field: score.clone(),
+            direction: SortDirection::Desc,
+        }];
+        assert_eq!(
+            index.search_page(&Query::All, &descending, 1, Some(2)),
+            vec!["a", "c"]
+        );
+        let exact_99 = Query::Exact {
+            field: score.clone(),
+            value: FieldValue::U64(99),
+        };
+        let range_equal_99 = Query::Range {
+            field: score.clone(),
+            compare: Compare::Equal,
+            value: FieldValue::U64(99),
+        };
+        assert_eq!(
+            index.candidates(&exact_99),
+            index.candidates(&range_equal_99)
+        );
+        assert_eq!(index.search(&exact_99, &ascending, None), vec!["b"]);
+        assert_eq!(
+            index.search(
+                &Query::Range {
+                    field: score.clone(),
+                    compare: Compare::GreaterOrEqual,
+                    value: FieldValue::U64(50),
+                },
+                &ascending,
+                None,
+            ),
+            vec!["b", "c"]
+        );
+
+        // Signed and unsigned facts with the same magnitude remain distinct.
+        index.put("signed", DocumentFields::new().with_scalar("mixed", 5_i64));
+        index.put(
+            "unsigned",
+            DocumentFields::new().with_scalar("mixed", 5_u64),
+        );
+        let mixed = FieldPath::from("mixed");
+        for (value, expected) in [
+            (FieldValue::I64(5), "signed"),
+            (FieldValue::U64(5), "unsigned"),
+        ] {
+            assert_eq!(
+                index.search(
+                    &Query::Exact {
+                        field: mixed.clone(),
+                        value: value.clone(),
+                    },
+                    &[],
+                    None,
+                ),
+                vec![expected]
+            );
+            assert_eq!(index.estimated_exact_candidate_len(&mixed, &value), 1);
+            assert_eq!(index.exact_first(&mixed, &value).as_deref(), Some(expected));
+        }
+        assert!(index.exact.contains_key(&mixed));
+    }
 
     #[test]
     fn plans_multi_field_range_query_with_bitmaps() {
