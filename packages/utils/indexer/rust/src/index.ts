@@ -31,6 +31,7 @@ export type RustIndexerOptions = {
 
 type NativeRustIndex<T extends Record<string, any>> = {
 	configure_schema_ir: (schemaIr: Uint8Array) => [number, number, number];
+	reserve_documents?: (additional: number) => void;
 	put: (key: string, id: types.IdKey, value: T, fields: Uint8Array) => void;
 	put_encoded: (
 		key: string,
@@ -2046,9 +2047,9 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 			this.options.persistence,
 		);
 		if (this.snapshotFile) {
-			for (const value of (await this.snapshotFile.read(
-				properties.schema,
-			)) as T[]) {
+			const restored = (await this.snapshotFile.read(properties.schema)) as T[];
+			this.getNative().reserve_documents?.(restored.length);
+			for (const value of restored) {
 				const id = types.toId(types.extractFieldValue(value, this.indexByArr));
 				const storeKey = keyToStoreKey(id);
 				this.putNativeDocument(storeKey, id, value);
