@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.11
+
+### Patch Changes
+
+- [#1321](https://github.com/dao-xyz/peerbit/pull/1321) [`02d8054`](https://github.com/dao-xyz/peerbit/commit/02d8054f6551beac1a9c3c225d82a289d23d4dd3) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Reserve native index capacity before hydrating durable restores.
+
 ## 1.0.10
 
 ### Patch Changes
