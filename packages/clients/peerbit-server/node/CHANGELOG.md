@@ -1,5 +1,12 @@
 # Changelog
 
+## 8.0.20
+
+### Patch Changes
+
+- Updated dependencies []:
+  - peerbit@5.3.30
+
 ## 8.0.19
 
 ### Patch Changes
