@@ -9,6 +9,94 @@ export * from "./durability/storage.js";
 
 export type RangeResolution = "u32" | "u64";
 
+type NativePrepareNoNextDocumentIndexCompactTrimFacts = (
+	wallTime: bigint,
+	logical: number,
+	gid: string,
+	type: number,
+	metaData: Uint8Array | undefined,
+	payloadData: Uint8Array,
+	trimLengthTo: number,
+	documentKey: string,
+	documentValuePrefixBytes: Uint8Array,
+	documentExistingCreated: string,
+	documentByteElementIndexLimit: number,
+	documentDeleteTrimmedHeads: boolean,
+	documentProjectionPlan:
+		| NativeBackboneSimpleDocumentProjectionPlan
+		| undefined,
+	documentProjectionEncodedDocument: Uint8Array | undefined,
+	documentProjectionSigner: Uint8Array | undefined,
+) => unknown[];
+
+type NativePrepareNoNextCachedDocumentIndexCompactTrimFacts = (
+	wallTime: bigint,
+	logical: number,
+	gid: string,
+	type: number,
+	metaData: Uint8Array | undefined,
+	payloadData: Uint8Array,
+	trimLengthTo: number,
+	documentKey: string,
+	documentExistingCreated: string,
+	documentByteElementIndexLimit: number,
+	documentDeleteTrimmedHeads: boolean,
+	documentProjectionPlanId: number,
+	documentProjectionEncodedDocument: Uint8Array,
+	documentProjectionSigner: Uint8Array | undefined,
+) => unknown[];
+
+type NativePrepareNoNextCachedPlainPutPayloadDocumentIndexCompactTrimFacts = (
+	wallTime: bigint,
+	logical: number,
+	gid: string,
+	type: number,
+	metaData: Uint8Array | undefined,
+	payloadData: Uint8Array,
+	trimLengthTo: number,
+	documentKey: string,
+	documentExistingCreated: string,
+	documentByteElementIndexLimit: number,
+	documentDeleteTrimmedHeads: boolean,
+	documentProjectionPlanId: number,
+	documentProjectionSigner: Uint8Array | undefined,
+) => unknown[];
+
+type NativePrepareLatestDocumentIndexTrimFacts = (
+	wallTime: bigint,
+	logical: number,
+	gid: string,
+	type: number,
+	metaData: Uint8Array | undefined,
+	payloadData: Uint8Array,
+	trimLengthTo: number | undefined,
+	documentKey: string,
+	documentValuePrefixBytes: Uint8Array,
+	documentByteElementIndexLimit: number,
+	documentDeleteTrimmedHeads: boolean,
+	documentProjectionPlan:
+		| NativeBackboneSimpleDocumentProjectionPlan
+		| undefined,
+	documentProjectionEncodedDocument: Uint8Array | undefined,
+	documentProjectionSigner: Uint8Array | undefined,
+) => unknown[];
+
+type NativePrepareLatestCachedDocumentIndexTrimFacts = (
+	wallTime: bigint,
+	logical: number,
+	gid: string,
+	type: number,
+	metaData: Uint8Array | undefined,
+	payloadData: Uint8Array,
+	trimLengthTo: number | undefined,
+	documentKey: string,
+	documentByteElementIndexLimit: number,
+	documentDeleteTrimmedHeads: boolean,
+	documentProjectionPlanId: number,
+	documentProjectionEncodedDocument: Uint8Array,
+	documentProjectionSigner: Uint8Array | undefined,
+) => unknown[];
+
 type NativePeerbitBackboneHandle = {
 	log_len: () => number;
 	block_len: () => number;
@@ -1055,25 +1143,8 @@ type NativePeerbitBackboneHandle = {
 		documentProjectionEncodedDocument: Uint8Array | undefined,
 		documentProjectionSigner: Uint8Array | undefined,
 	) => unknown[];
-	prepare_plain_entry_commit_no_next_facts_document_index_compact_trim_hashes: (
-		wallTime: bigint,
-		logical: number,
-		gid: string,
-		type: number,
-		metaData: Uint8Array | undefined,
-		payloadData: Uint8Array,
-		trimLengthTo: number,
-		documentKey: string,
-		documentValuePrefixBytes: Uint8Array,
-		documentExistingCreated: string,
-		documentByteElementIndexLimit: number,
-		documentDeleteTrimmedHeads: boolean,
-		documentProjectionPlan:
-			| NativeBackboneSimpleDocumentProjectionPlan
-			| undefined,
-		documentProjectionEncodedDocument: Uint8Array | undefined,
-		documentProjectionSigner: Uint8Array | undefined,
-	) => unknown[];
+	prepare_plain_entry_commit_no_next_facts_document_index_compact_trim_hashes: NativePrepareNoNextDocumentIndexCompactTrimFacts;
+	prepare_plain_entry_commit_no_next_facts_document_index_compact_trim_refs?: NativePrepareNoNextDocumentIndexCompactTrimFacts;
 	prepare_plain_entry_commit_no_next_facts_document_index_cached_plan_trim_hashes: (
 		wallTime: bigint,
 		logical: number,
@@ -1090,70 +1161,14 @@ type NativePeerbitBackboneHandle = {
 		documentProjectionEncodedDocument: Uint8Array,
 		documentProjectionSigner: Uint8Array | undefined,
 	) => unknown[];
-	prepare_plain_entry_commit_no_next_facts_document_index_cached_plan_compact_trim_hashes: (
-		wallTime: bigint,
-		logical: number,
-		gid: string,
-		type: number,
-		metaData: Uint8Array | undefined,
-		payloadData: Uint8Array,
-		trimLengthTo: number,
-		documentKey: string,
-		documentExistingCreated: string,
-		documentByteElementIndexLimit: number,
-		documentDeleteTrimmedHeads: boolean,
-		documentProjectionPlanId: number,
-		documentProjectionEncodedDocument: Uint8Array,
-		documentProjectionSigner: Uint8Array | undefined,
-	) => unknown[];
-	prepare_plain_entry_commit_no_next_facts_document_index_cached_plan_compact_trim_hashes_plain_put_payload?: (
-		wallTime: bigint,
-		logical: number,
-		gid: string,
-		type: number,
-		metaData: Uint8Array | undefined,
-		payloadData: Uint8Array,
-		trimLengthTo: number,
-		documentKey: string,
-		documentExistingCreated: string,
-		documentByteElementIndexLimit: number,
-		documentDeleteTrimmedHeads: boolean,
-		documentProjectionPlanId: number,
-		documentProjectionSigner: Uint8Array | undefined,
-	) => unknown[];
-	prepare_plain_entry_commit_latest_facts_document_index_trim_hashes: (
-		wallTime: bigint,
-		logical: number,
-		gid: string,
-		type: number,
-		metaData: Uint8Array | undefined,
-		payloadData: Uint8Array,
-		trimLengthTo: number | undefined,
-		documentKey: string,
-		documentValuePrefixBytes: Uint8Array,
-		documentByteElementIndexLimit: number,
-		documentDeleteTrimmedHeads: boolean,
-		documentProjectionPlan:
-			| NativeBackboneSimpleDocumentProjectionPlan
-			| undefined,
-		documentProjectionEncodedDocument: Uint8Array | undefined,
-		documentProjectionSigner: Uint8Array | undefined,
-	) => unknown[];
-	prepare_plain_entry_commit_latest_facts_document_index_cached_plan_trim_hashes: (
-		wallTime: bigint,
-		logical: number,
-		gid: string,
-		type: number,
-		metaData: Uint8Array | undefined,
-		payloadData: Uint8Array,
-		trimLengthTo: number | undefined,
-		documentKey: string,
-		documentByteElementIndexLimit: number,
-		documentDeleteTrimmedHeads: boolean,
-		documentProjectionPlanId: number,
-		documentProjectionEncodedDocument: Uint8Array,
-		documentProjectionSigner: Uint8Array | undefined,
-	) => unknown[];
+	prepare_plain_entry_commit_no_next_facts_document_index_cached_plan_compact_trim_hashes: NativePrepareNoNextCachedDocumentIndexCompactTrimFacts;
+	prepare_plain_entry_commit_no_next_facts_document_index_cached_plan_compact_trim_refs?: NativePrepareNoNextCachedDocumentIndexCompactTrimFacts;
+	prepare_plain_entry_commit_no_next_facts_document_index_cached_plan_compact_trim_hashes_plain_put_payload?: NativePrepareNoNextCachedPlainPutPayloadDocumentIndexCompactTrimFacts;
+	prepare_plain_entry_commit_no_next_facts_document_index_cached_plan_compact_trim_refs_plain_put_payload?: NativePrepareNoNextCachedPlainPutPayloadDocumentIndexCompactTrimFacts;
+	prepare_plain_entry_commit_latest_facts_document_index_trim_hashes: NativePrepareLatestDocumentIndexTrimFacts;
+	prepare_plain_entry_commit_latest_facts_document_index_trim_refs?: NativePrepareLatestDocumentIndexTrimFacts;
+	prepare_plain_entry_commit_latest_facts_document_index_cached_plan_trim_hashes: NativePrepareLatestCachedDocumentIndexTrimFacts;
+	prepare_plain_entry_commit_latest_facts_document_index_cached_plan_trim_refs?: NativePrepareLatestCachedDocumentIndexTrimFacts;
 	prepare_plain_entry_storage_facts_and_put: (
 		wallTime: bigint,
 		logical: number,
@@ -3981,7 +3996,8 @@ const storageAppendResultFromRow = (
 		assignedToRangeBoundary,
 		coordinate: appendCoordinatePlanFromRow(resolution, coordinateRow),
 		...trimmedRowsAndHashesResult(trimRows, trimHashRows),
-		trimmedGids: trimGidRows ?? (trimRows as unknown[][]).map((trim) => trim[1] as string),
+		trimmedGids:
+			trimGidRows ?? (trimRows as unknown[][]).map((trim) => trim[1] as string),
 		documentTrimmedHeadsProcessed,
 		documentPreviousContext: documentContextFactsFromRow(
 			documentPreviousContextRow,
@@ -4025,7 +4041,8 @@ const committedStorageAppendResultFromRow = (
 		assignedToRangeBoundary,
 		coordinate: appendCoordinatePlanFromRow(resolution, coordinateRow),
 		...trimmedRowsAndHashesResult(trimRows, trimHashRows),
-		trimmedGids: trimGidRows ?? (trimRows as unknown[][]).map((trim) => trim[1] as string),
+		trimmedGids:
+			trimGidRows ?? (trimRows as unknown[][]).map((trim) => trim[1] as string),
 		documentTrimmedHeadsProcessed,
 		documentPreviousContext: documentContextFactsFromRow(
 			documentPreviousContextRow,
@@ -4274,12 +4291,39 @@ const preparedCommitFactsWithLatestDocumentContextFromRow = (
 	};
 };
 
-const compactPreparedCommitFactsWithTrimHashesFromRow = (
+const preparedCommitFactsWithLatestDocumentContextAndTrimRefsFromRow = (
 	row: unknown[],
 ): NativeBackboneCommittedEntry & {
-	trimmedEntryHashes?: string[];
+	trimmedEntryHashes: string[];
+	trimmedEntryGids: string[];
 	documentTrimmedHeadsProcessed?: boolean;
+	documentPreviousContext?: NativeBackboneDocumentContextFacts;
 } => {
+	const [
+		entryRow,
+		trimHashRows,
+		trimGidRows,
+		documentTrimmedHeadsProcessed,
+		contextRow,
+	] = row as [
+		unknown[],
+		string[],
+		string[],
+		boolean | undefined,
+		unknown[] | undefined,
+	];
+	return {
+		...committedStorageFactsEntryFromRow(entryRow),
+		trimmedEntryHashes: trimHashRows,
+		trimmedEntryGids: trimGidRows,
+		documentTrimmedHeadsProcessed,
+		documentPreviousContext: documentContextFactsFromRow(contextRow),
+	};
+};
+
+const compactPreparedCommitFactsBaseFromRow = (
+	row: unknown[],
+): { entry: NativeBackboneCommittedEntry; trimRowOffset: number } => {
 	const [hash, byteLength, metaBytes, fourth] = row as [
 		string,
 		number,
@@ -4287,20 +4331,54 @@ const compactPreparedCommitFactsWithTrimHashesFromRow = (
 		Uint8Array | string[] | undefined,
 	];
 	const hasDigestRow = fourth instanceof Uint8Array;
-	const hashDigestBytes = hasDigestRow ? fourth : undefined;
-	const trimHashOffset = hasDigestRow ? 4 : 3;
-	const trimHashRows = row[trimHashOffset] as string[] | undefined;
-	const documentTrimmedHeadsProcessed = row[trimHashOffset + 1] as
+	return {
+		entry: {
+			cid: hash,
+			hash,
+			next: [],
+			metaBytes,
+			byteLength,
+			hashDigestBytes: hasDigestRow ? fourth : undefined,
+		},
+		trimRowOffset: hasDigestRow ? 4 : 3,
+	};
+};
+
+const compactPreparedCommitFactsWithTrimHashesFromRow = (
+	row: unknown[],
+): NativeBackboneCommittedEntry & {
+	trimmedEntryHashes?: string[];
+	documentTrimmedHeadsProcessed?: boolean;
+} => {
+	const { entry, trimRowOffset } = compactPreparedCommitFactsBaseFromRow(row);
+	const trimHashRows = row[trimRowOffset] as string[] | undefined;
+	const documentTrimmedHeadsProcessed = row[trimRowOffset + 1] as
 		| boolean
 		| undefined;
 	return {
-		cid: hash,
-		hash,
-		next: [],
-		metaBytes,
-		byteLength,
-		hashDigestBytes,
+		...entry,
 		trimmedEntryHashes: trimHashRows ?? [],
+		documentTrimmedHeadsProcessed,
+	};
+};
+
+const compactPreparedCommitFactsWithTrimRefsFromRow = (
+	row: unknown[],
+): NativeBackboneCommittedEntry & {
+	trimmedEntryHashes: string[];
+	trimmedEntryGids: string[];
+	documentTrimmedHeadsProcessed?: boolean;
+} => {
+	const { entry, trimRowOffset } = compactPreparedCommitFactsBaseFromRow(row);
+	const trimHashRows = row[trimRowOffset] as string[];
+	const trimGidRows = row[trimRowOffset + 1] as string[];
+	const documentTrimmedHeadsProcessed = row[trimRowOffset + 2] as
+		| boolean
+		| undefined;
+	return {
+		...entry,
+		trimmedEntryHashes: trimHashRows,
+		trimmedEntryGids: trimGidRows,
 		documentTrimmedHeadsProcessed,
 	};
 };
@@ -5134,6 +5212,7 @@ class NativeBackboneLogGraph {
 				trimmedEntryHashes?: string[];
 				trimmedEntryGids?: string[];
 				documentTrimmedHeadsProcessed?: boolean;
+				documentPreviousContext?: NativeBackboneDocumentContextFacts;
 		  })
 		| undefined {
 		if (this.options?.commitBlocks === false) {
@@ -5177,26 +5256,7 @@ class NativeBackboneLogGraph {
 			input.resolveTrimmedEntries === false
 		) {
 			if (projection && this.options?.documentProjectionPlanId) {
-				return preparedCommitFactsWithLatestDocumentContextFromRow(
-					this.native.prepare_plain_entry_commit_latest_facts_document_index_cached_plan_trim_hashes(
-						wallTime,
-						logical,
-						input.gid,
-						entryType,
-						input.metaData,
-						input.payloadData,
-						input.trimLengthTo,
-						documentIndex.key,
-						documentIndex.byteElementIndexLimit ?? 0,
-						documentIndex.deleteTrimmedHeads === true,
-						this.options.documentProjectionPlanId(projection.plan),
-						projection.encodedDocument,
-						projection.signer,
-					),
-				);
-			}
-			return preparedCommitFactsWithLatestDocumentContextFromRow(
-				this.native.prepare_plain_entry_commit_latest_facts_document_index_trim_hashes(
+				const args = [
 					wallTime,
 					logical,
 					input.gid,
@@ -5205,12 +5265,53 @@ class NativeBackboneLogGraph {
 					input.payloadData,
 					input.trimLengthTo,
 					documentIndex.key,
-					documentIndex.valuePrefixBytes ?? EMPTY_UINT8_ARRAY,
 					documentIndex.byteElementIndexLimit ?? 0,
 					documentIndex.deleteTrimmedHeads === true,
-					projection?.plan,
-					projection?.encodedDocument,
-					projection?.signer,
+					this.options.documentProjectionPlanId(projection.plan),
+					projection.encodedDocument,
+					projection.signer,
+				] as const;
+				const prepareTrimRefs =
+					this.native
+						.prepare_plain_entry_commit_latest_facts_document_index_cached_plan_trim_refs;
+				if (prepareTrimRefs) {
+					return preparedCommitFactsWithLatestDocumentContextAndTrimRefsFromRow(
+						prepareTrimRefs.call(this.native, ...args),
+					);
+				}
+				return preparedCommitFactsWithLatestDocumentContextFromRow(
+					this.native.prepare_plain_entry_commit_latest_facts_document_index_cached_plan_trim_hashes(
+						...args,
+					),
+				);
+			}
+			const args = [
+				wallTime,
+				logical,
+				input.gid,
+				entryType,
+				input.metaData,
+				input.payloadData,
+				input.trimLengthTo,
+				documentIndex.key,
+				documentIndex.valuePrefixBytes ?? EMPTY_UINT8_ARRAY,
+				documentIndex.byteElementIndexLimit ?? 0,
+				documentIndex.deleteTrimmedHeads === true,
+				projection?.plan,
+				projection?.encodedDocument,
+				projection?.signer,
+			] as const;
+			const prepareTrimRefs =
+				this.native
+					.prepare_plain_entry_commit_latest_facts_document_index_trim_refs;
+			if (prepareTrimRefs) {
+				return preparedCommitFactsWithLatestDocumentContextAndTrimRefsFromRow(
+					prepareTrimRefs.call(this.native, ...args),
+				);
+			}
+			return preparedCommitFactsWithLatestDocumentContextFromRow(
+				this.native.prepare_plain_entry_commit_latest_facts_document_index_trim_hashes(
+					...args,
 				),
 			);
 		}
@@ -5225,49 +5326,71 @@ class NativeBackboneLogGraph {
 			const projectionPlanId = this.options.documentProjectionPlanId(
 				projection.plan,
 			);
+			const plainPutPayloadArgs = [
+				wallTime,
+				logical,
+				input.gid,
+				entryType,
+				input.metaData,
+				input.payloadData,
+				input.trimLengthTo,
+				documentIndex.key,
+				documentIndex.existingCreated == null
+					? ""
+					: integerString(documentIndex.existingCreated),
+				documentIndex.byteElementIndexLimit ?? 0,
+				documentIndex.deleteTrimmedHeads === true,
+				projectionPlanId,
+				projection.signer,
+			] as const;
+			const plainPutPayloadCommitWithTrimRefs =
+				this.native
+					.prepare_plain_entry_commit_no_next_facts_document_index_cached_plan_compact_trim_refs_plain_put_payload;
+			if (plainPutPayloadCommitWithTrimRefs) {
+				return compactPreparedCommitFactsWithTrimRefsFromRow(
+					plainPutPayloadCommitWithTrimRefs.call(
+						this.native,
+						...plainPutPayloadArgs,
+					),
+				);
+			}
 			const plainPutPayloadCommit =
 				this.native
 					.prepare_plain_entry_commit_no_next_facts_document_index_cached_plan_compact_trim_hashes_plain_put_payload;
 			if (plainPutPayloadCommit) {
 				return compactPreparedCommitFactsWithTrimHashesFromRow(
-					plainPutPayloadCommit.call(
-						this.native,
-						wallTime,
-						logical,
-						input.gid,
-						entryType,
-						input.metaData,
-						input.payloadData,
-						input.trimLengthTo,
-						documentIndex.key,
-						documentIndex.existingCreated == null
-							? ""
-							: integerString(documentIndex.existingCreated),
-						documentIndex.byteElementIndexLimit ?? 0,
-						documentIndex.deleteTrimmedHeads === true,
-						projectionPlanId,
-						projection.signer,
-					),
+					plainPutPayloadCommit.call(this.native, ...plainPutPayloadArgs),
+				);
+			}
+			const args = [
+				wallTime,
+				logical,
+				input.gid,
+				entryType,
+				input.metaData,
+				input.payloadData,
+				input.trimLengthTo,
+				documentIndex.key,
+				documentIndex.existingCreated == null
+					? ""
+					: integerString(documentIndex.existingCreated),
+				documentIndex.byteElementIndexLimit ?? 0,
+				documentIndex.deleteTrimmedHeads === true,
+				projectionPlanId,
+				projection.encodedDocument,
+				projection.signer,
+			] as const;
+			const prepareTrimRefs =
+				this.native
+					.prepare_plain_entry_commit_no_next_facts_document_index_cached_plan_compact_trim_refs;
+			if (prepareTrimRefs) {
+				return compactPreparedCommitFactsWithTrimRefsFromRow(
+					prepareTrimRefs.call(this.native, ...args),
 				);
 			}
 			return compactPreparedCommitFactsWithTrimHashesFromRow(
 				this.native.prepare_plain_entry_commit_no_next_facts_document_index_cached_plan_compact_trim_hashes(
-					wallTime,
-					logical,
-					input.gid,
-					entryType,
-					input.metaData,
-					input.payloadData,
-					input.trimLengthTo,
-					documentIndex.key,
-					documentIndex.existingCreated == null
-						? ""
-						: integerString(documentIndex.existingCreated),
-					documentIndex.byteElementIndexLimit ?? 0,
-					documentIndex.deleteTrimmedHeads === true,
-					projectionPlanId,
-					projection.encodedDocument,
-					projection.signer,
+					...args,
 				),
 			);
 		}
@@ -5374,6 +5497,24 @@ class NativeBackboneLogGraph {
 			input.trimLengthTo != null &&
 			hasNoNext
 		) {
+			const prepareTrimRefs =
+				this.native
+					.prepare_plain_entry_commit_no_next_facts_document_index_compact_trim_refs;
+			if (prepareTrimRefs) {
+				return compactPreparedCommitFactsWithTrimRefsFromRow(
+					prepareTrimRefs.call(
+						this.native,
+						wallTime,
+						logical,
+						input.gid,
+						entryType,
+						input.metaData,
+						input.payloadData,
+						input.trimLengthTo,
+						...documentIndexArgs,
+					),
+				);
+			}
 			return compactPreparedCommitFactsWithTrimHashesFromRow(
 				this.native.prepare_plain_entry_commit_no_next_facts_document_index_compact_trim_hashes(
 					wallTime,
@@ -6527,9 +6668,7 @@ export class NativePeerbitBackbone {
 		end2: bigint | number | string;
 		limit: number;
 	}): bigint[] | undefined {
-		if (
-			typeof this.native.entry_hash_numbers_in_range_limited !== "function"
-		) {
+		if (typeof this.native.entry_hash_numbers_in_range_limited !== "function") {
 			return undefined;
 		}
 		return rowsToNumbers(
