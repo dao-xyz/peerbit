@@ -29,6 +29,51 @@ const publicKey = fromHex(
 	"d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a",
 );
 
+type NativeBackboneTestInstance = Awaited<
+	ReturnType<typeof createNativePeerbitBackbone>
+>;
+type NativeGraphCommitInput = Parameters<
+	NativeBackboneTestInstance["graph"]["prepareEntryV0PlainEntryCommit"]
+>[0];
+
+const prepareGraphCommit = (
+	backbone: NativeBackboneTestInstance,
+	input: Omit<
+		NativeGraphCommitInput,
+		| "clockId"
+		| "privateKey"
+		| "publicKey"
+		| "includeMaterializationBytes"
+		| "includeAppendFactsBytes"
+	>,
+) => {
+	const prepared = backbone.graph.prepareEntryV0PlainEntryCommit(
+		{
+			clockId: publicKey,
+			privateKey,
+			publicKey,
+			includeMaterializationBytes: false,
+			includeAppendFactsBytes: true,
+			...input,
+		},
+		backbone.blocks,
+	);
+	if (!prepared) {
+		throw new Error("Native graph commit was unavailable");
+	}
+	return prepared;
+};
+
+const hideGraphCapability = (
+	backbone: NativeBackboneTestInstance,
+	name: string,
+): void => {
+	const native = (
+		backbone.graph as unknown as { native: Record<string, unknown> }
+	).native;
+	Object.defineProperty(native, name, { value: undefined });
+};
+
 const concatBytes = (chunks: Uint8Array[]) => {
 	const total = chunks.reduce((sum, chunk) => sum + chunk.byteLength, 0);
 	const out = new Uint8Array(total);
@@ -143,6 +188,28 @@ const contextOnlySchema = () => {
 	writeU32(out, 105);
 	out.push(3);
 	return Uint8Array.from(out);
+};
+
+const configureContextDocumentIndex = (
+	backbone: NativeBackboneTestInstance,
+): void => {
+	backbone.configureDocumentSchemaIr(contextOnlySchema());
+	backbone.setDocumentContextHeadField(3);
+	backbone.setDocumentContextFields({
+		created: 1,
+		modified: 2,
+		head: 3,
+		gid: 4,
+		size: 5,
+	});
+};
+
+const contextOnlyProjectionPlan = {
+	documentFieldNames: ["id", "score", "bytes"],
+	documentFieldTypes: ["string", "u32", "bytes"],
+	outputFieldTypes: [],
+	sourceKinds: [],
+	sourceValues: [],
 };
 
 class FakeOPFSWritable {
@@ -965,6 +1032,405 @@ describe("native peerbit backbone", () => {
 		expect(
 			backbone.documentExactStringFirstKey(4, "gid-doc-index-compact"),
 		).to.equal("doc-compact-2");
+	});
+
+	it("keeps multi-victim inline trim hashes and gids in parallel order", async () => {
+		const backbone = await createNativePeerbitBackbone({
+			clockId: publicKey,
+			privateKey,
+			publicKey,
+		});
+		configureContextDocumentIndex(backbone);
+
+		const firstVictim = prepareGraphCommit(backbone, {
+			wallTime: 10n,
+			gid: "gid-inline-victim-a",
+			payloadData: new Uint8Array([1]),
+			documentIndex: {
+				key: "doc-inline-victim-a",
+				valuePrefixBytes: new Uint8Array(0),
+			},
+		});
+		const secondVictim = prepareGraphCommit(backbone, {
+			wallTime: 11n,
+			gid: "gid-inline-victim-b",
+			payloadData: new Uint8Array([2]),
+			documentIndex: {
+				key: "doc-inline-victim-b",
+				valuePrefixBytes: new Uint8Array(0),
+			},
+		});
+		const updated = prepareGraphCommit(backbone, {
+			wallTime: 12n,
+			gid: "gid-inline-appended",
+			payloadData: new Uint8Array([3]),
+			trimLengthTo: 1,
+			resolveTrimmedEntries: false,
+			documentIndex: {
+				key: "doc-inline-appended",
+				valuePrefixBytes: new Uint8Array(0),
+				deleteTrimmedHeads: true,
+			},
+		});
+
+		expect(updated.trimmedEntryHashes).to.deep.equal([
+			firstVictim.hash,
+			secondVictim.hash,
+		]);
+		expect(updated.trimmedEntryGids).to.deep.equal([
+			"gid-inline-victim-a",
+			"gid-inline-victim-b",
+		]);
+		expect(updated.documentTrimmedHeadsProcessed).to.equal(true);
+		expect(backbone.documentValueBytes("doc-inline-victim-a")).to.equal(
+			undefined,
+		);
+		expect(backbone.documentValueBytes("doc-inline-victim-b")).to.equal(
+			undefined,
+		);
+		expect(backbone.documentValueBytes("doc-inline-appended")).to.exist;
+	});
+
+	it("returns the victim gid from cached plain-payload document trim refs", async () => {
+		const backbone = await createNativePeerbitBackbone({
+			clockId: publicKey,
+			privateKey,
+			publicKey,
+		});
+		configureContextDocumentIndex(backbone);
+
+		const victim = prepareGraphCommit(backbone, {
+			wallTime: 20n,
+			gid: "gid-cached-victim",
+			payloadData: new Uint8Array([1]),
+			documentIndex: {
+				key: "doc-cached-victim",
+				valuePrefixBytes: new Uint8Array(0),
+			},
+		});
+		const updated = prepareGraphCommit(backbone, {
+			wallTime: 21n,
+			gid: "gid-cached-appended",
+			payloadData: plainPutPayload(
+				encodedDocumentWithIdScoreAndBytes("cached", 21),
+			),
+			trimLengthTo: 1,
+			resolveTrimmedEntries: false,
+			documentIndex: {
+				key: "doc-cached-appended",
+				deleteTrimmedHeads: true,
+				projection: {
+					encodedDocument: new Uint8Array(0),
+					plan: contextOnlyProjectionPlan,
+				},
+			},
+		});
+
+		expect(updated.trimmedEntryHashes).to.deep.equal([victim.hash]);
+		expect(updated.trimmedEntryGids).to.deep.equal(["gid-cached-victim"]);
+		expect(updated.documentTrimmedHeadsProcessed).to.equal(true);
+		expect(backbone.documentValueBytes("doc-cached-victim")).to.equal(
+			undefined,
+		);
+		expect(backbone.documentValueBytes("doc-cached-appended")).to.exist;
+	});
+
+	it("returns the victim gid from cached document trim refs without plain-payload support", async () => {
+		const backbone = await createNativePeerbitBackbone({
+			clockId: publicKey,
+			privateKey,
+			publicKey,
+		});
+		configureContextDocumentIndex(backbone);
+		hideGraphCapability(
+			backbone,
+			"prepare_plain_entry_commit_no_next_facts_document_index_cached_plan_compact_trim_refs_plain_put_payload",
+		);
+		hideGraphCapability(
+			backbone,
+			"prepare_plain_entry_commit_no_next_facts_document_index_cached_plan_compact_trim_hashes_plain_put_payload",
+		);
+
+		const victim = prepareGraphCommit(backbone, {
+			wallTime: 25n,
+			gid: "gid-cached-standard-victim",
+			payloadData: new Uint8Array([1]),
+			documentIndex: {
+				key: "doc-cached-standard-victim",
+				valuePrefixBytes: new Uint8Array(0),
+			},
+		});
+		const updated = prepareGraphCommit(backbone, {
+			wallTime: 26n,
+			gid: "gid-cached-standard-appended",
+			payloadData: new Uint8Array([2]),
+			trimLengthTo: 1,
+			resolveTrimmedEntries: false,
+			documentIndex: {
+				key: "doc-cached-standard-appended",
+				deleteTrimmedHeads: true,
+				projection: {
+					encodedDocument: encodedDocumentWithIdScoreAndBytes(
+						"cached-standard",
+						26,
+					),
+					plan: contextOnlyProjectionPlan,
+				},
+			},
+		});
+
+		expect(updated.trimmedEntryHashes).to.deep.equal([victim.hash]);
+		expect(updated.trimmedEntryGids).to.deep.equal([
+			"gid-cached-standard-victim",
+		]);
+		expect(updated.documentTrimmedHeadsProcessed).to.equal(true);
+		expect(backbone.documentValueBytes("doc-cached-standard-victim")).to.equal(
+			undefined,
+		);
+		expect(backbone.documentValueBytes("doc-cached-standard-appended")).to
+			.exist;
+	});
+
+	it("returns an unrelated victim gid while preserving latest document context", async () => {
+		const backbone = await createNativePeerbitBackbone({
+			clockId: publicKey,
+			privateKey,
+			publicKey,
+		});
+		configureContextDocumentIndex(backbone);
+
+		const victim = prepareGraphCommit(backbone, {
+			wallTime: 30n,
+			gid: "gid-latest-victim",
+			payloadData: new Uint8Array([1]),
+			documentIndex: {
+				key: "doc-latest-victim",
+				valuePrefixBytes: new Uint8Array(0),
+			},
+		});
+		const previous = prepareGraphCommit(backbone, {
+			wallTime: 31n,
+			gid: "gid-latest-target",
+			payloadData: new Uint8Array([2]),
+			documentIndex: {
+				key: "doc-latest-target",
+				valuePrefixBytes: new Uint8Array(0),
+			},
+		});
+		const updated = prepareGraphCommit(backbone, {
+			wallTime: 32n,
+			gid: "gid-latest-fallback",
+			payloadData: new Uint8Array([3]),
+			trimLengthTo: 2,
+			resolveTrimmedEntries: false,
+			documentIndex: {
+				key: "doc-latest-target",
+				valuePrefixBytes: new Uint8Array(0),
+				deleteTrimmedHeads: true,
+				useLatestContext: true,
+			},
+		});
+
+		expect(updated.next).to.deep.equal([previous.hash]);
+		expect(updated.trimmedEntryHashes).to.deep.equal([victim.hash]);
+		expect(updated.trimmedEntryGids).to.deep.equal(["gid-latest-victim"]);
+		expect(updated.documentPreviousContext?.head).to.equal(previous.hash);
+		expect(updated.documentTrimmedHeadsProcessed).to.equal(true);
+		expect(backbone.documentValueBytes("doc-latest-victim")).to.equal(
+			undefined,
+		);
+		expect(backbone.documentValueBytes("doc-latest-target")).to.exist;
+	});
+
+	it("returns an unrelated victim gid from cached latest-context trim refs", async () => {
+		const backbone = await createNativePeerbitBackbone({
+			clockId: publicKey,
+			privateKey,
+			publicKey,
+		});
+		configureContextDocumentIndex(backbone);
+
+		const victim = prepareGraphCommit(backbone, {
+			wallTime: 35n,
+			gid: "gid-latest-cached-victim",
+			payloadData: new Uint8Array([1]),
+			documentIndex: {
+				key: "doc-latest-cached-victim",
+				valuePrefixBytes: new Uint8Array(0),
+			},
+		});
+		const previous = prepareGraphCommit(backbone, {
+			wallTime: 36n,
+			gid: "gid-latest-cached-target",
+			payloadData: new Uint8Array([2]),
+			documentIndex: {
+				key: "doc-latest-cached-target",
+				valuePrefixBytes: new Uint8Array(0),
+			},
+		});
+		const updated = prepareGraphCommit(backbone, {
+			wallTime: 37n,
+			gid: "gid-latest-cached-fallback",
+			payloadData: new Uint8Array([3]),
+			trimLengthTo: 2,
+			resolveTrimmedEntries: false,
+			documentIndex: {
+				key: "doc-latest-cached-target",
+				deleteTrimmedHeads: true,
+				useLatestContext: true,
+				projection: {
+					encodedDocument: encodedDocumentWithIdScoreAndBytes(
+						"latest-cached",
+						37,
+					),
+					plan: contextOnlyProjectionPlan,
+				},
+			},
+		});
+
+		expect(updated.next).to.deep.equal([previous.hash]);
+		expect(updated.trimmedEntryHashes).to.deep.equal([victim.hash]);
+		expect(updated.trimmedEntryGids).to.deep.equal([
+			"gid-latest-cached-victim",
+		]);
+		expect(updated.documentPreviousContext?.head).to.equal(previous.hash);
+		expect(updated.documentTrimmedHeadsProcessed).to.equal(true);
+		expect(backbone.documentValueBytes("doc-latest-cached-victim")).to.equal(
+			undefined,
+		);
+		expect(backbone.documentValueBytes("doc-latest-cached-target")).to.exist;
+	});
+
+	it("preserves all five legacy hash-only document trim fallbacks", async () => {
+		const cases = [
+			{
+				name: "inline",
+				cached: false,
+				latest: false,
+				plainPutPayload: false,
+				hide: [
+					"prepare_plain_entry_commit_no_next_facts_document_index_compact_trim_refs",
+				],
+			},
+			{
+				name: "cached-plain-payload",
+				cached: true,
+				latest: false,
+				plainPutPayload: true,
+				hide: [
+					"prepare_plain_entry_commit_no_next_facts_document_index_cached_plan_compact_trim_refs_plain_put_payload",
+				],
+			},
+			{
+				name: "cached-standard",
+				cached: true,
+				latest: false,
+				plainPutPayload: false,
+				hide: [
+					"prepare_plain_entry_commit_no_next_facts_document_index_cached_plan_compact_trim_refs_plain_put_payload",
+					"prepare_plain_entry_commit_no_next_facts_document_index_cached_plan_compact_trim_hashes_plain_put_payload",
+					"prepare_plain_entry_commit_no_next_facts_document_index_cached_plan_compact_trim_refs",
+				],
+			},
+			{
+				name: "latest-inline",
+				cached: false,
+				latest: true,
+				plainPutPayload: false,
+				hide: [
+					"prepare_plain_entry_commit_latest_facts_document_index_trim_refs",
+				],
+			},
+			{
+				name: "latest-cached",
+				cached: true,
+				latest: true,
+				plainPutPayload: false,
+				hide: [
+					"prepare_plain_entry_commit_latest_facts_document_index_cached_plan_trim_refs",
+				],
+			},
+		] as const;
+
+		for (const [index, testCase] of cases.entries()) {
+			const backbone = await createNativePeerbitBackbone({
+				clockId: publicKey,
+				privateKey,
+				publicKey,
+			});
+			configureContextDocumentIndex(backbone);
+			for (const capability of testCase.hide) {
+				hideGraphCapability(backbone, capability);
+			}
+
+			const prefix = `legacy-${testCase.name}`;
+			const wallTime = BigInt(100 + index * 10);
+			const victim = prepareGraphCommit(backbone, {
+				wallTime,
+				gid: `gid-${prefix}-victim`,
+				payloadData: new Uint8Array([1]),
+				documentIndex: {
+					key: `doc-${prefix}-victim`,
+					valuePrefixBytes: new Uint8Array(0),
+				},
+			});
+			const targetKey = `doc-${prefix}-${
+				testCase.latest ? "target" : "appended"
+			}`;
+			const previous = testCase.latest
+				? prepareGraphCommit(backbone, {
+						wallTime: wallTime + 1n,
+						gid: `gid-${prefix}-target`,
+						payloadData: new Uint8Array([2]),
+						documentIndex: {
+							key: targetKey,
+							valuePrefixBytes: new Uint8Array(0),
+						},
+					})
+				: undefined;
+			const updated = prepareGraphCommit(backbone, {
+				wallTime: wallTime + (testCase.latest ? 2n : 1n),
+				gid: `gid-${prefix}-fallback`,
+				payloadData: testCase.plainPutPayload
+					? plainPutPayload(encodedDocumentWithIdScoreAndBytes(prefix, index))
+					: new Uint8Array([3]),
+				trimLengthTo: testCase.latest ? 2 : 1,
+				resolveTrimmedEntries: false,
+				documentIndex: {
+					key: targetKey,
+					valuePrefixBytes: testCase.cached ? undefined : new Uint8Array(0),
+					deleteTrimmedHeads: true,
+					useLatestContext: testCase.latest,
+					projection: testCase.cached
+						? {
+								encodedDocument: testCase.plainPutPayload
+									? new Uint8Array(0)
+									: encodedDocumentWithIdScoreAndBytes(prefix, index),
+								plan: contextOnlyProjectionPlan,
+							}
+						: undefined,
+				},
+			});
+
+			expect(updated.trimmedEntryHashes, testCase.name).to.deep.equal([
+				victim.hash,
+			]);
+			expect(updated.trimmedEntryGids, testCase.name).to.equal(undefined);
+			expect(updated.documentTrimmedHeadsProcessed, testCase.name).to.equal(
+				true,
+			);
+			expect(
+				backbone.documentValueBytes(`doc-${prefix}-victim`),
+				testCase.name,
+			).to.equal(undefined);
+			expect(backbone.documentValueBytes(targetKey), testCase.name).to.exist;
+			if (previous) {
+				expect(updated.next, testCase.name).to.deep.equal([previous.hash]);
+				expect(updated.documentPreviousContext?.head, testCase.name).to.equal(
+					previous.hash,
+				);
+			}
+		}
 	});
 
 	it("batches compact committed no-next document index transactions", async () => {
@@ -2613,9 +3079,7 @@ describe("native peerbit backbone", () => {
 		expect(second.trimmed.map((entry) => entry.hash)).to.deep.equal([
 			first.entry.hash,
 		]);
-		expect(second.trimmedGids).to.deep.equal([
-			"gid-storage-committed-no-next",
-		]);
+		expect(second.trimmedGids).to.deep.equal(["gid-storage-committed-no-next"]);
 		expect(second.trimmed[0]?.gid).equal("gid-storage-committed-no-next");
 		expect(second.trimmed[0]?.next).to.deep.equal([]);
 		expect(second.trimmed[0]?.type).equal(0);

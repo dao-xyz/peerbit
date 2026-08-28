@@ -1,8 +1,43 @@
-import { TestSession } from "@peerbit/test-utils";
 import { create as createRustIndexer } from "@peerbit/indexer-rust";
+import { TestSession } from "@peerbit/test-utils";
 import { expect } from "chai";
 import sinon from "sinon";
 import { EventStore } from "./utils/stores/index.js";
+
+const writeNativeDocumentSchemaU32 = (out: number[], value: number) => {
+	out.push(
+		value & 0xff,
+		(value >> 8) & 0xff,
+		(value >> 16) & 0xff,
+		value >>> 24,
+	);
+};
+
+const writeNativeDocumentSchemaString = (out: number[], value: string) => {
+	const bytes = new TextEncoder().encode(value);
+	writeNativeDocumentSchemaU32(out, bytes.byteLength);
+	out.push(...bytes);
+};
+
+const contextOnlyNativeDocumentSchema = (): Uint8Array => {
+	const out: number[] = [1, 14];
+	writeNativeDocumentSchemaU32(out, 1);
+	out.push(0);
+	writeNativeDocumentSchemaU32(out, 5);
+	for (const [name, index, id, type] of [
+		["created", 1, 101, 4],
+		["modified", 2, 102, 4],
+		["head", 3, 103, 12],
+		["gid", 4, 104, 12],
+		["size", 5, 105, 3],
+	] as const) {
+		writeNativeDocumentSchemaString(out, name);
+		writeNativeDocumentSchemaU32(out, index);
+		writeNativeDocumentSchemaU32(out, id);
+		out.push(type);
+	}
+	return Uint8Array.from(out);
+};
 
 describe("append", () => {
 	let session: TestSession;
@@ -62,13 +97,13 @@ describe("append", () => {
 		expect(result.entries).to.have.length(3);
 		expect(result.entries[1].meta.next).to.deep.equal([result.entries[0].hash]);
 		expect(result.entries[2].meta.next).to.deep.equal([result.entries[1].hash]);
-		expect((await store.log.log.getHeads().all()).map((head) => head.hash)).to.deep.equal([
-			result.entries[2].hash,
-		]);
+		expect(
+			(await store.log.log.getHeads().all()).map((head) => head.hash),
+		).to.deep.equal([result.entries[2].hash]);
 		expect(changes).to.have.length(1);
-		expect(changes[0].added.map((added: any) => added.entry.hash)).to.deep.equal(
-			result.entries.map((entry) => entry.hash),
-		);
+		expect(
+			changes[0].added.map((added: any) => added.entry.hash),
+		).to.deep.equal(result.entries.map((entry) => entry.hash));
 		expect(changes[0].added.map((added: any) => added.head)).to.deep.equal([
 			false,
 			false,
@@ -169,7 +204,10 @@ describe("append", () => {
 			},
 		});
 		expect((store.log as any)._nativeSharedLogState).to.exist;
-		const entryHashNumberSpy = sinon.spy(store.log as any, "getEntryHashNumber");
+		const entryHashNumberSpy = sinon.spy(
+			store.log as any,
+			"getEntryHashNumber",
+		);
 		const factsHashNumberSpy = sinon.spy(
 			store.log as any,
 			"getAppendFactsHashNumber",
@@ -369,7 +407,9 @@ describe("append", () => {
 			expect(returningPutDeleteSpy.callCount).equal(0);
 			expect(genericPutDeleteSpy.callCount).equal(0);
 			expect(nativeDeleteSpy.callCount).equal(0);
-			expect(nativeState.getEntryCoordinates(first.entry.hash)).equal(undefined);
+			expect(nativeState.getEntryCoordinates(first.entry.hash)).equal(
+				undefined,
+			);
 		} finally {
 			nativeDeleteSpy.restore();
 			delIdsSpy.restore();
@@ -428,6 +468,124 @@ describe("append", () => {
 		} finally {
 			compactConsume.restore();
 			nativePrepare.restore();
+		}
+	});
+
+	it("reclaims gid peer history from compact document facts without materializing trims", async () => {
+		session = await TestSession.disconnected(1, {
+			indexer: (directory) => createRustIndexer(directory),
+		});
+		const store = await session.peers[0].open(new EventStore<string, any>(), {
+			args: {
+				replicate: false,
+				timeUntilRoleMaturity: 0,
+				trim: { type: "length", to: 1 },
+				nativeGraph: true,
+				nativeBackbone: { optional: false, documentIndex: true },
+			},
+		});
+		const internals = store.log as any;
+		const backbone = internals._nativeBackbone;
+		const coordinates = internals._coordinates;
+		const entryIndex = internals.log.entryIndex;
+		backbone.configureDocumentSchemaIr(contextOnlyNativeDocumentSchema());
+		backbone.setDocumentContextFields({
+			created: 1,
+			modified: 2,
+			head: 3,
+			gid: 4,
+			size: 5,
+		});
+		backbone.setDocumentContextHeadField(3);
+
+		const residentCoordinates = sinon
+			.stub(coordinates, "canUseNativeBackboneResidentCoordinateState")
+			.returns(false);
+		const backboneOnlyCoordinates = sinon
+			.stub(coordinates, "canUseBackboneOnlyCoordinatePersistence")
+			.returns(false);
+		const prepareFacts = sinon.spy(
+			backbone.graph,
+			"prepareEntryV0PlainEntryCommit",
+		);
+		const compactConsume = sinon.spy(
+			entryIndex,
+			"consumeNativeTrimmedEntryHashesNoReturnMaybe",
+		);
+		const resolvingHashConsume = sinon.spy(
+			entryIndex,
+			"consumeNativeTrimmedEntryHashesMaybe",
+		);
+		const materializeNativeTrims = sinon.spy(
+			entryIndex,
+			"nativeLogEntriesToShallowEntries",
+		);
+		try {
+			const appendDocumentFacts = (label: string) =>
+				internals.appendLocallyPreparedPayloadCommitOnly(
+					new TextEncoder().encode(JSON.stringify({ op: "PUT", value: label })),
+					{
+						replicate: false,
+						target: "none",
+						meta: { next: [] },
+					},
+					{
+						resolveTrimmedEntries: false,
+						nativeBackboneDocumentIndex: {
+							key: `compact-document-${label}`,
+							valuePrefixBytes: new Uint8Array(0),
+							byteElementIndexLimit: 0,
+							deleteTrimmedHeads: true,
+						},
+					},
+				);
+
+			const first = await appendDocumentFacts("first");
+			expect(first, "first document facts append").to.exist;
+			const victimHash = first.appendCommit.hash;
+			const victimGid = first.appendCommit.gid;
+			internals._gidPeersHistory.set(victimGid, new Set(["synthetic-peer"]));
+			prepareFacts.resetHistory();
+			compactConsume.resetHistory();
+			resolvingHashConsume.resetHistory();
+			materializeNativeTrims.resetHistory();
+
+			const second = await appendDocumentFacts("second");
+			expect(second, "second document facts append").to.exist;
+			await internals._gidPeerHistoryCleanupState.tail;
+
+			expect(prepareFacts.callCount, "document facts branch").to.equal(1);
+			const prepared = prepareFacts.firstCall.returnValue as {
+				trimmedEntryHashes?: string[];
+				trimmedEntryGids?: string[];
+			};
+			expect(prepared.trimmedEntryHashes).to.deep.equal([victimHash]);
+			expect(prepared.trimmedEntryGids).to.deep.equal([victimGid]);
+			expect(second.removed, "resolved trim materialization").to.have.length(0);
+			expect(second.removedHashes).to.deep.equal([victimHash]);
+			expect(second.removedGids).to.deep.equal([victimGid]);
+			expect(compactConsume.callCount, "compact trim consumption").to.equal(1);
+			expect(
+				resolvingHashConsume.callCount,
+				"hash trim materialization",
+			).to.equal(0);
+			expect(
+				materializeNativeTrims.callCount,
+				"entry trim materialization",
+			).to.equal(0);
+			expect(internals._gidPeerHistoryCleanupState.pending.size).to.equal(0);
+			expect(internals._gidPeersHistory.has(victimGid)).to.be.false;
+			expect(
+				internals._gidPeersHistory.size,
+				"stale gid history rows",
+			).to.equal(0);
+		} finally {
+			materializeNativeTrims.restore();
+			resolvingHashConsume.restore();
+			compactConsume.restore();
+			prepareFacts.restore();
+			backboneOnlyCoordinates.restore();
+			residentCoordinates.restore();
 		}
 	});
 
@@ -631,31 +789,30 @@ describe("append", () => {
 			store.log as any,
 			"processNativePreparedTargetNoneAppend",
 		);
-			const nativePersistSpy = sinon.spy(
-				(store.log as any)._coordinates,
-				"persistPreparedCoordinateNativeTransaction",
-			);
-			const coordinateIndex = store.log.entryCoordinatesIndex as any;
-			const encodedCoordinatePersistSpy = sinon.spy(
-				coordinateIndex,
-				"putSharedLogCoordinateFieldsEncodedAndDeleteHashesNoReturn",
-			);
-			const genericPersistSpy = sinon.spy(
-				(store.log as any)._coordinates,
-				"persistPreparedCoordinate",
-			);
+		const nativePersistSpy = sinon.spy(
+			(store.log as any)._coordinates,
+			"persistPreparedCoordinateNativeTransaction",
+		);
+		const coordinateIndex = store.log.entryCoordinatesIndex as any;
+		const encodedCoordinatePersistSpy = sinon.spy(
+			coordinateIndex,
+			"putSharedLogCoordinateFieldsEncodedAndDeleteHashesNoReturn",
+		);
+		const genericPersistSpy = sinon.spy(
+			(store.log as any)._coordinates,
+			"persistPreparedCoordinate",
+		);
 		const materializeSpy = sinon.spy(
 			store.log as any,
 			"materializePreparedAppendResultEntry",
 		);
 		try {
-			const result = await (store.log as any).appendLocallyPreparedPayloadCommitOnly(
-				new Uint8Array([1, 2, 3]),
-				{
-					replicate: false,
-					target: "none",
-				},
-			);
+			const result = await (
+				store.log as any
+			).appendLocallyPreparedPayloadCommitOnly(new Uint8Array([1, 2, 3]), {
+				replicate: false,
+				target: "none",
+			});
 
 			if (!result) {
 				throw new Error("Expected native transaction result");
