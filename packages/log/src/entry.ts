@@ -62,6 +62,7 @@ export type PreparedAppendCommitOnlyChain<T> = {
 	nativeEntries?: PreparedNativeLogEntry[];
 	trimmedNativeEntries?: PreparedNativeLogEntry[];
 	trimmedNativeEntryHashes?: string[];
+	trimmedNativeEntryGids?: string[];
 	trimmedNativeBlocksDeleted?: boolean;
 	nativeGraphUpdated?: boolean;
 	nativeBlocksCommitted?: boolean;

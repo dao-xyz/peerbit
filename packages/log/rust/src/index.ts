@@ -286,6 +286,18 @@ type NativeLogIndexHandle = {
 		payloadData: Uint8Array,
 		trimLengthTo: number,
 	) => EntryV0CommittedPlainEntryFactsTrimHashesRow;
+	prepare_entry_v0_plain_entry_commit_facts_trim_refs_and_put_with_builder?: (
+		builder: NativeEntryV0PlainBuilderHandle,
+		blockStore: NativeLogBlockStoreHandle,
+		wallTime: bigint,
+		logical: number,
+		gid: string,
+		next: string[],
+		type: number,
+		metaData: Uint8Array | undefined,
+		payloadData: Uint8Array,
+		trimLengthTo: number,
+	) => EntryV0CommittedPlainEntryFactsTrimHashesRow;
 	prepare_entry_v0_plain_entry_commit_no_next_facts_trim_and_put_with_builder?: (
 		builder: NativeEntryV0PlainBuilderHandle,
 		blockStore: NativeLogBlockStoreHandle,
@@ -298,6 +310,17 @@ type NativeLogIndexHandle = {
 		trimLengthTo: number,
 	) => EntryV0CommittedPlainEntryNoNextFactsTrimRow;
 	prepare_entry_v0_plain_entry_commit_no_next_facts_trim_hashes_and_put_with_builder?: (
+		builder: NativeEntryV0PlainBuilderHandle,
+		blockStore: NativeLogBlockStoreHandle,
+		wallTime: bigint,
+		logical: number,
+		gid: string,
+		type: number,
+		metaData: Uint8Array | undefined,
+		payloadData: Uint8Array,
+		trimLengthTo: number,
+	) => EntryV0CommittedPlainEntryNoNextFactsTrimHashesRow;
+	prepare_entry_v0_plain_entry_commit_no_next_facts_trim_refs_and_put_with_builder?: (
 		builder: NativeEntryV0PlainBuilderHandle,
 		blockStore: NativeLogBlockStoreHandle,
 		wallTime: bigint,
@@ -877,15 +900,19 @@ class LogGraphIndex {
 			input.trimLengthTo != null &&
 			input.resolveTrimmedEntries === false &&
 			factsOnly
-				? this.native
-						.prepare_entry_v0_plain_entry_commit_facts_trim_hashes_and_put_with_builder
+				? (this.native
+						.prepare_entry_v0_plain_entry_commit_facts_trim_refs_and_put_with_builder ??
+					this.native
+						.prepare_entry_v0_plain_entry_commit_facts_trim_hashes_and_put_with_builder)
 				: undefined;
 		const factsOnlyNoNextTrimHashes =
 			input.trimLengthTo != null &&
 			input.resolveTrimmedEntries === false &&
 			factsOnlyNoNext
-				? this.native
-						.prepare_entry_v0_plain_entry_commit_no_next_facts_trim_hashes_and_put_with_builder
+				? (this.native
+						.prepare_entry_v0_plain_entry_commit_no_next_facts_trim_refs_and_put_with_builder ??
+					this.native
+						.prepare_entry_v0_plain_entry_commit_no_next_facts_trim_hashes_and_put_with_builder)
 				: undefined;
 		if (factsOnlyNoNextTrimHashes) {
 			return committedPlainEntryNoNextFactsTrimHashesRow(
@@ -1674,6 +1701,7 @@ type EntryV0CommittedPlainEntry = Omit<
 	bytes?: Uint8Array;
 	trimmedEntries?: NativeLogEntry[];
 	trimmedEntryHashes?: string[];
+	trimmedEntryGids?: string[];
 };
 
 type RawEntryV0PreparedFacts = {
@@ -1787,11 +1815,13 @@ type EntryV0CommittedPlainEntryNoNextFactsTrimRow = [
 type EntryV0CommittedPlainEntryFactsTrimHashesRow = [
 	EntryV0CommittedPlainEntryFactsRow,
 	string[],
+	string[]?,
 ];
 
 type EntryV0CommittedPlainEntryNoNextFactsTrimHashesRow = [
 	EntryV0CommittedPlainEntryNoNextFactsRow,
 	string[],
+	string[]?,
 ];
 
 const plainChainInputColumns = (input: EntryV0PlainChainInput) => {
@@ -2038,17 +2068,21 @@ const committedPlainEntryNoNextFactsTrimRow = ([
 const committedPlainEntryFactsTrimHashesRow = ([
 	entryRow,
 	trimmedEntryHashes,
+	trimmedEntryGids,
 ]: EntryV0CommittedPlainEntryFactsTrimHashesRow): EntryV0CommittedPlainEntry => ({
 	...committedPlainEntryFactsRow(entryRow),
 	trimmedEntryHashes,
+	trimmedEntryGids,
 });
 
 const committedPlainEntryNoNextFactsTrimHashesRow = ([
 	entryRow,
 	trimmedEntryHashes,
+	trimmedEntryGids,
 ]: EntryV0CommittedPlainEntryNoNextFactsTrimHashesRow): EntryV0CommittedPlainEntry => ({
 	...committedPlainEntryNoNextFactsRow(entryRow),
 	trimmedEntryHashes,
+	trimmedEntryGids,
 });
 
 const committedPlainEntryRows = (

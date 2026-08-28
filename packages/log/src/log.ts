@@ -237,6 +237,7 @@ type PreparedCommitOnlyAppendResult<T> = {
 	materializeEntry: () => Entry<T>;
 	removed: ShallowOrFullEntry<T>[];
 	removedHashes?: string[];
+	removedGids?: string[];
 	appendFacts: PreparedAppendFacts;
 	shallowEntry: ShallowEntry;
 	documentTrimmedHeadsProcessed?: boolean;
@@ -255,6 +256,7 @@ type PreparedCommitOnlyAppendBatchResult<T> = {
 	materializeEntries: Array<() => Entry<T>>;
 	removed: ShallowOrFullEntry<T>[];
 	removedHashes?: string[];
+	removedGids?: string[];
 	appendFacts: PreparedAppendFacts[];
 	documentTrimmedHeadsProcessed?: boolean[];
 	nativeCommittedAppendFinalizer?: NativeCommittedAppendFinalizer;
@@ -302,6 +304,7 @@ type NativePreparedNoNextCommit = {
 	hashDigestBytes?: Uint8Array;
 	trimmedEntries?: PreparedNativeLogEntry[];
 	trimmedEntryHashes?: string[];
+	trimmedEntryGids?: string[];
 	nativeBlocksDeleted?: boolean;
 	nativeDeleteCleanupToken?: unknown;
 	nativeCommitOwnershipToken?: unknown;
@@ -1744,6 +1747,7 @@ export class Log<T> {
 								materializeEntry,
 								removed: [],
 								removedHashes: trimmedEntryHashes,
+								removedGids: prepared.trimmedEntryGids,
 								appendFacts,
 								get shallowEntry() {
 									return getShallowEntry();
@@ -1772,6 +1776,7 @@ export class Log<T> {
 						materializeEntry,
 						removed,
 						removedHashes: prepared.trimmedEntryHashes,
+						removedGids: prepared.trimmedEntryGids,
 						appendFacts,
 						get shallowEntry() {
 							return getShallowEntry();
@@ -2160,6 +2165,7 @@ export class Log<T> {
 										materializeEntry,
 										removed: [],
 										removedHashes: trimmedEntryHashes,
+										removedGids: prepared.trimmedEntryGids,
 										appendFacts,
 										shallowEntry,
 										documentTrimmedHeadsProcessed:
@@ -2414,6 +2420,7 @@ export class Log<T> {
 							materializeEntry,
 							removed: [],
 							removedHashes: trimmedEntryHashes,
+							removedGids: nativeAppendChain.trimmedNativeEntryGids,
 							appendFacts,
 							shallowEntry,
 						}));
@@ -2437,6 +2444,7 @@ export class Log<T> {
 					materializeEntry,
 					removed,
 					removedHashes: trimmedEntryHashes,
+					removedGids: nativeAppendChain.trimmedNativeEntryGids,
 					appendFacts,
 					shallowEntry,
 				}));
@@ -2756,6 +2764,7 @@ export class Log<T> {
 				EntryIndex<T>["putNativeCommittedAppendFactsBatch"]
 			>[0] = [];
 			const trimmedEntryHashes: string[] = [];
+			const trimmedEntryGids: string[] = [];
 			let trimmedNativeBlocksDeleted = true;
 			let nativeDeleteCleanupToken: unknown;
 			let nativeCommitOwnershipToken: unknown;
@@ -2874,6 +2883,9 @@ export class Log<T> {
 				nativeIndexMutationLockOwner ??= prepared.nativeIndexMutationLockOwner;
 				if (prepared.trimmedEntryHashes?.length) {
 					trimmedEntryHashes.push(...prepared.trimmedEntryHashes);
+					if (prepared.trimmedEntryGids) {
+						trimmedEntryGids.push(...prepared.trimmedEntryGids);
+					}
 					trimmedNativeBlocksDeleted &&= prepared.nativeBlocksDeleted === true;
 					nativeDeleteCleanupToken ??= prepared.nativeDeleteCleanupToken;
 				}
@@ -2921,6 +2933,10 @@ export class Log<T> {
 					removedHashes:
 						trimmedEntryHashes.length > 0
 							? normalizedUniqueStrings(trimmedEntryHashes)
+							: undefined,
+					removedGids:
+						trimmedEntryGids.length > 0
+							? normalizedUniqueStrings(trimmedEntryGids)
 							: undefined,
 					appendFacts,
 					documentTrimmedHeadsProcessed,

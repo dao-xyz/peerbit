@@ -32,6 +32,7 @@ struct LatestCompactBatchPendingAppend {
     gid: String,
     entry_facts: NativeCommittedEntryFacts,
     trim_hashes: Vec<String>,
+    trim_gids: Vec<String>,
     document_index_commit: DocumentIndexAppendCommit,
     previous_document_context: Option<DocumentContextFacts>,
     delete_trimmed_document_heads: bool,
@@ -44,6 +45,7 @@ struct LatestBatchPendingAppend {
     next_hashes: Vec<String>,
     meta_bytes: Vec<u8>,
     trim_hashes: Vec<String>,
+    trim_gids: Vec<String>,
     // Owned committed-append facts and resolved trimmed entries; the frozen JS
     // `entry_row`/`trim_rows` layouts are rebuilt at the consume boundary so
     // this pending state stays JS-free (no `js_sys::Array` captured in core
@@ -186,6 +188,14 @@ fn push_optional_trim_result(row: &Array, trim_hashes: Vec<String>, document_tri
     }
 }
 
+fn push_trim_gid_extension(row: &Array, trim_gids: Vec<String>) {
+    if trim_gids.is_empty() {
+        return;
+    }
+    row.push(&JsValue::UNDEFINED);
+    row.push(&strings_to_array(trim_gids));
+}
+
 fn ensure_batch_append_lens(
     len: usize,
     wall_times: &BigUint64Array,
@@ -276,13 +286,13 @@ impl NativePeerbitBackbone {
         meta_data: Option<Vec<u8>>,
         payload_data: &[u8],
         trim_length_to: Option<usize>,
-    ) -> Result<(NativeCommittedEntryFacts, Vec<String>), BackboneError> {
+    ) -> Result<(NativeCommittedEntryFacts, Vec<String>, Vec<String>), BackboneError> {
         let profile_enabled = self.append_profile_enabled;
         let log_started = profile_enabled.then(crate::time::now_ms);
         let mut log_profile = NativeLogAppendProfile::default();
-        let result = if let Some(trim_length_to) = trim_length_to {
+        let (entry, refs) = if let Some(trim_length_to) = trim_length_to {
             self.log
-                .prepare_entry_v0_plain_entry_commit_no_next_facts_core_profiled_and_put_with_builder_trim_hashes_borrowed(
+                .prepare_entry_v0_plain_entry_commit_no_next_facts_core_profiled_and_put_with_builder_trim_refs_borrowed(
                     &self.builder,
                     &mut self.blocks,
                     wall_time,
@@ -311,11 +321,12 @@ impl NativePeerbitBackbone {
                 Vec::new(),
             )
         };
+        let (hashes, gids) = refs.into_iter().unzip();
         if let Some(started) = log_started {
             self.append_profile.log_total_ms += crate::time::now_ms() - started;
             self.append_profile.add_log_profile(&log_profile);
         }
-        Ok(result)
+        Ok((entry, hashes, gids))
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -329,13 +340,13 @@ impl NativePeerbitBackbone {
         meta_data: Option<Vec<u8>>,
         payload_data: &[u8],
         trim_length_to: Option<usize>,
-    ) -> Result<(NativeCommittedEntryFacts, Vec<String>), BackboneError> {
+    ) -> Result<(NativeCommittedEntryFacts, Vec<String>, Vec<String>), BackboneError> {
         let profile_enabled = self.append_profile_enabled;
         let log_started = profile_enabled.then(crate::time::now_ms);
         let mut log_profile = NativeLogAppendProfile::default();
-        let result = self
+        let (entry, refs) = self
             .log
-            .prepare_entry_v0_plain_entry_commit_facts_core_profiled_and_put_with_builder_trim_hashes_borrowed(
+            .prepare_entry_v0_plain_entry_commit_facts_core_profiled_and_put_with_builder_trim_refs_borrowed(
                 &self.builder,
                 &mut self.blocks,
                 wall_time,
@@ -352,7 +363,8 @@ impl NativePeerbitBackbone {
             self.append_profile.log_total_ms += crate::time::now_ms() - started;
             self.append_profile.add_log_profile(&log_profile);
         }
-        Ok(result)
+        let (hashes, gids) = refs.into_iter().unzip();
+        Ok((entry, hashes, gids))
     }
 
     /// JS-free committed-log append: performs the log append and (optionally)
@@ -373,11 +385,19 @@ impl NativePeerbitBackbone {
         payload_data: Vec<u8>,
         trim_length_to: Option<usize>,
         resolve_trimmed_entries: bool,
-    ) -> Result<(NativeCommittedEntryFacts, Vec<LogIndexEntry>, Vec<String>), BackboneError> {
+    ) -> Result<
+        (
+            NativeCommittedEntryFacts,
+            Vec<LogIndexEntry>,
+            Vec<String>,
+            Vec<String>,
+        ),
+        BackboneError,
+    > {
         let profile_enabled = self.append_profile_enabled;
         let log_started = profile_enabled.then(crate::time::now_ms);
         let mut log_profile = NativeLogAppendProfile::default();
-        let (entry_facts, trimmed_entries, trim_hashes) = if resolve_trimmed_entries {
+        let (entry_facts, trimmed_entries, trim_hashes, trim_gids) = if resolve_trimmed_entries {
             let (entry_facts, trimmed_entries) = self
                 .log
                 .prepare_entry_v0_plain_entry_commit_facts_core_profiled_and_put_with_builder(
@@ -397,11 +417,14 @@ impl NativePeerbitBackbone {
                 .iter()
                 .map(|entry| entry.hash.clone())
                 .collect::<Vec<_>>();
-            (entry_facts, trimmed_entries, trim_hashes)
+            // Resolved trim rows already carry their gids. Keep the additive
+            // gid suffix for hashes-only mode, where the rows cannot provide
+            // them, and avoid cloning the strings on materialized paths.
+            (entry_facts, trimmed_entries, trim_hashes, Vec::new())
         } else {
-            let (entry_facts, trim_hashes) = self
+            let (entry_facts, trim_refs) = self
                 .log
-                .prepare_entry_v0_plain_entry_commit_facts_core_profiled_and_put_with_builder_trim_hashes(
+                .prepare_entry_v0_plain_entry_commit_facts_core_profiled_and_put_with_builder_trim_refs(
                     &self.builder,
                     &mut self.blocks,
                     wall_time,
@@ -414,13 +437,14 @@ impl NativePeerbitBackbone {
                     trim_length_to,
                     profile_enabled.then_some(&mut log_profile),
                 )?;
-            (entry_facts, Vec::new(), trim_hashes)
+            let (trim_hashes, trim_gids) = trim_refs.into_iter().unzip();
+            (entry_facts, Vec::new(), trim_hashes, trim_gids)
         };
         if let Some(started) = log_started {
             self.append_profile.log_total_ms += crate::time::now_ms() - started;
             self.append_profile.add_log_profile(&log_profile);
         }
-        Ok((entry_facts, trimmed_entries, trim_hashes))
+        Ok((entry_facts, trimmed_entries, trim_hashes, trim_gids))
     }
 
     /// Build the frozen committed-append entry row from owned facts, timing the
@@ -471,8 +495,17 @@ impl NativePeerbitBackbone {
         payload_data: Vec<u8>,
         trim_length_to: Option<usize>,
         resolve_trimmed_entries: bool,
-    ) -> Result<(NativeCommittedEntryFacts, Vec<String>, Array, Array), BackboneError> {
-        let (entry_facts, trimmed_entries, trim_hashes) = self
+    ) -> Result<
+        (
+            NativeCommittedEntryFacts,
+            Vec<String>,
+            Vec<String>,
+            Array,
+            Array,
+        ),
+        BackboneError,
+    > {
+        let (entry_facts, trimmed_entries, trim_hashes, trim_gids) = self
             .prepare_committed_log_append_owned_profiled(
                 wall_time,
                 logical,
@@ -489,7 +522,7 @@ impl NativePeerbitBackbone {
             trimmed_entries,
             resolve_trimmed_entries,
         );
-        Ok((entry_facts, trim_hashes, entry_row, trim_rows))
+        Ok((entry_facts, trim_hashes, trim_gids, entry_row, trim_rows))
     }
 
     #[allow(clippy::too_many_arguments)]

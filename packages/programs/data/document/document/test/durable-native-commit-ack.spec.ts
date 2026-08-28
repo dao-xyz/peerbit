@@ -3477,16 +3477,19 @@ describe("durable native commit acknowledgement", function () {
 	});
 
 	it("mirrors and then removes rows trimmed inside one native batch", async () => {
-		const { store, durable, backbone } = await openStore(true);
+		const { store, sharedLog, durable, backbone } = await openStore(true);
 		const docs = [
 			new Document({ id: "trim-batch-1", name: "trim-batch-1" }),
 			new Document({ id: "trim-batch-2", name: "trim-batch-2" }),
 			new Document({ id: "trim-batch-3", name: "trim-batch-3" }),
 		];
-		const appended = await store.docs.putMany(docs, {
-			unique: true,
-			target: "none",
-		});
+		const cleanup = sinon.spy(sharedLog, "scheduleDeadGidPeerHistoryReclaim");
+		const appended = await store.docs
+			.putMany(docs, {
+				unique: true,
+				target: "none",
+			})
+			.finally(() => cleanup.restore());
 
 		expect(appended.entries).to.have.length(docs.length);
 		expect(store.docs.log.log.length).equal(1);
@@ -3495,6 +3498,11 @@ describe("durable native commit acknowledgement", function () {
 			expect(await durable.has(entry.hash)).equal(false);
 		}
 		const kept = appended.entries.at(-1)!;
+		expect(
+			cleanup.args.flatMap(([gids]) => [...(gids as Iterable<string>)]),
+		).to.have.members(
+			appended.entries.slice(0, -1).map((entry) => entry.meta.gid),
+		);
 		expect(backbone.blocks.has(kept.hash)).equal(true);
 		expect(await durable.has(kept.hash)).equal(true);
 	});

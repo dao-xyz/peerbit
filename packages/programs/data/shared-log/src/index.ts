@@ -904,6 +904,7 @@ type PreparedPayloadCommitOnlyResult<T, R extends "u32" | "u64"> = {
 	entry: Entry<T>;
 	removed: ShallowOrFullEntry<T>[];
 	removedHashes?: string[];
+	removedGids?: string[];
 	appendCommit: PreparedLocalAppendCommit<R>;
 };
 
@@ -1430,6 +1431,8 @@ const ADAPTIVE_REBALANCE_MIN_IDLE_AFTER_LOCAL_APPEND_MS = 10_000;
 // raw exchange message size the receive path is tuned for.
 const LIVE_RAW_GOSSIP_MAX_ENTRIES = 256;
 const LIVE_RAW_GOSSIP_MAX_BYTES = 128 * 1024;
+const GID_PEER_HISTORY_CLEANUP_BATCH_SIZE = 256;
+const GID_PEER_HISTORY_CLEANUP_PENDING_CAPACITY = 4096;
 
 type LiveRawGossipBatch = {
 	to: string[];
@@ -1763,6 +1766,7 @@ type TrustedLowerLogNativePreparedCommit = {
 	hashDigestBytes?: Uint8Array;
 	trimmedEntries?: unknown[];
 	trimmedEntryHashes?: string[];
+	trimmedEntryGids?: string[];
 	nativeBlocksDeleted?: boolean;
 	nativeDeleteCleanupToken?: unknown;
 	nativeCommitOwnershipToken?: unknown;
@@ -1774,6 +1778,8 @@ type TrustedLowerLogNativePreparedCommit = {
 type TrustedLowerLogPreparedAppendResult<T> = {
 	entry: Entry<T>;
 	removed: ShallowOrFullEntry<T>[];
+	removedHashes?: string[];
+	removedGids?: string[];
 	change: Change<T>;
 	appendFacts: PreparedAppendFacts;
 };
@@ -1784,6 +1790,7 @@ type TrustedLowerLogCommitOnlyAppendResult<T> = {
 	shallowEntry: ShallowEntry;
 	removed: ShallowOrFullEntry<T>[];
 	removedHashes?: string[];
+	removedGids?: string[];
 	appendFacts: PreparedAppendFacts;
 	documentTrimmedHeadsProcessed?: boolean;
 	documentPreviousContext?: PreparedLocalAppendCommit<"u32">["documentPreviousContext"];
@@ -1795,6 +1802,7 @@ type TrustedLowerLogCommitOnlyAppendBatchResult<T> = {
 	materializeEntries: Array<() => Entry<T>>;
 	removed: ShallowOrFullEntry<T>[];
 	removedHashes?: string[];
+	removedGids?: string[];
 	appendFacts: PreparedAppendFacts[];
 	documentTrimmedHeadsProcessed?: boolean[];
 	nativeCommittedAppendFinalizer?: TrustedLowerLogNativeCommitFinalizer;
@@ -2082,17 +2090,19 @@ export class SharedLog<
 	// GROWTH SHAPE. Rows are released by `deleteGidPeerHistory` on the two prune
 	// paths, by `removePeerFromGidPeerHistory` once a gid's last peer drops (the
 	// routine disconnect outcome), by `rebalanceAll({ clearCache: true })`, and
-	// wholesale on close/reset. Nothing on the TRIM path releases a row, so a
-	// node that bounds its log with trim rather than prune accumulates one row
-	// per distinct gid it has ever held. A gid names a graph, not an entry: an
+	// wholesale on close/reset. Trim now carries compact distinct removed-gid
+	// facts beside its hash-only result. After the lower mutation commits, a
+	// coalesced cleanup checks authoritative local-head liveness and drops a row
+	// only when no sibling remains. A gid names a graph, not an entry: an
 	// entry with `meta.next` inherits `min(next.meta.gid)` (see
 	// packages/log/src/entry-v0.ts), so document updates fold into the gid of
 	// the first put and the row count tracks distinct chain roots -- distinct
 	// document ids -- rather than entry count. Insert-only workloads mint a
-	// fresh gid per append and so do grow one row per entry. Merges are a
-	// smaller second source: when a join links two graphs the losing entries
-	// keep their own `meta.gid` on disk, and shared-log does not subscribe to
-	// the log's `onGidRemoved`, so the shadowed gid's row lingers too.
+	// fresh gid per append and so do grow one row per entry. Merge-shadowed gids
+	// are a separate, smaller source that still needs a fast-path-compatible
+	// post-commit metadata seam. Registering the lower log's `onGidRemoved` hook
+	// here would disable native prepared, commit-only, and batch append paths, so
+	// this bounded slice deliberately addresses trim only.
 	//
 	// WHY TRIM DOES NOT SIMPLY CALL `deleteGidPeerHistory` AS WELL. Both prune
 	// callers delete a whole row from a single entry's gid, and under the
@@ -2110,10 +2120,11 @@ export class SharedLog<
 	// on the common path, paying for the freed memory in repeated re-delivery of
 	// entries that are still here. That trade is not worth it.
 	//
-	// Bounding this correctly requires a per-gid count of locally held entries,
-	// dropping the row only when it reaches zero -- a real reverse index, not a
-	// one-line delete. Deliberately not built: the growth is bounded by distinct
-	// gids, and the cheap version is a bandwidth regression.
+	// Cleanup work is coalesced, checked in bounded batches, and capped at 4096
+	// pending gids. Saturation forgets the overflowing suppression row
+	// immediately. That bounded fallback can cause redundant delivery for a live
+	// sibling, but missing history is deliberately correctness-safe as described
+	// above; it cannot affect ownership, quorum, or retained data.
 	//
 	// Existing, deliberate imprecision: under the time domain the coordinate is
 	// `meta.clock.timestamp.wallTime` (replication-domain-time.ts) and is
@@ -2121,6 +2132,14 @@ export class SharedLog<
 	// and prune's whole-row delete is already over-eager there. The cost is the
 	// same bounded extra traffic, never a wrong prune.
 	_gidPeersHistory!: Map<string, Set<string>>;
+	private _gidPeerHistoryCleanupState!: {
+		history: Map<string, Set<string>>;
+		tail: Promise<void>;
+		pending: Set<string>;
+		draining: boolean;
+		highWater: number;
+		wake?: () => void;
+	};
 
 	private _onSubscriptionFn!: (arg: any) => any;
 	private _onUnsubscriptionFn!: (arg: any) => any;
@@ -3744,6 +3763,7 @@ export class SharedLog<
 		this._receiveHandlerDrainByPeer = new Map();
 		this._openingSyncCapabilitiesByPeer = new Map();
 		this._gidPeersHistory = new Map();
+		this.resetGidPeerHistoryCleanupState();
 		this._repairRetryTimers = new Set();
 		this._recentRepairDispatch = new Map();
 		this._repairSweepRunning = false;
@@ -10293,6 +10313,8 @@ export class SharedLog<
 	): Promise<{
 		entry: Entry<T>;
 		removed: ShallowOrFullEntry<T>[];
+		removedHashes?: string[];
+		removedGids?: string[];
 		appendCommit: PreparedLocalAppendCommit<R>;
 	}> {
 		this.throwIfNativeDurableCommitFailed();
@@ -10334,6 +10356,8 @@ export class SharedLog<
 			return {
 				entry: result.entry,
 				removed: result.removed,
+				removedHashes: result.removedHashes,
+				removedGids: result.removedGids,
 				appendCommit: nativePreparedCommit,
 			};
 		}
@@ -10400,6 +10424,8 @@ export class SharedLog<
 		return {
 			entry: result.entry,
 			removed: result.removed,
+			removedHashes: result.removedHashes,
+			removedGids: result.removedGids,
 			appendCommit: this.createPreparedLocalAppendCommitFromFacts(
 				result.appendFacts,
 				nativeAppendPlan,
@@ -10412,6 +10438,8 @@ export class SharedLog<
 			entry?: Entry<T>;
 			materializeEntry?: () => Entry<T>;
 			removed: ShallowOrFullEntry<T>[];
+			removedHashes?: string[];
+			removedGids?: string[];
 			change?: Change<T>;
 			appendFacts: PreparedAppendFacts;
 		},
@@ -10439,6 +10467,7 @@ export class SharedLog<
 
 		const plannedCoordinateDeleteHashes =
 			result.change?.removed.map((entry) => entry.hash) ??
+			result.removedHashes ??
 			result.removed.map((entry) => entry.hash);
 		const nativeAppendPlan = await this.planNativeLocalAppendFacts(
 			result.appendFacts,
@@ -10473,6 +10502,8 @@ export class SharedLog<
 						{
 							forgetNativeCoordinates:
 								!nativeAppendPlan.committedNativeCoordinateDeletes,
+							removedHashes: result.removedHashes,
+							removedGids: result.removedGids,
 							ownershipLifecycleController,
 						},
 					);
@@ -11257,6 +11288,7 @@ export class SharedLog<
 						},
 						removed: prepared.removed,
 						removedHashes: prepared.removedHashes,
+						removedGids: prepared.removedGids,
 						appendCommit,
 					};
 				};
@@ -11288,7 +11320,10 @@ export class SharedLog<
 				prepared.appendFacts,
 				prepared.removed,
 				prepared.materializeEntry,
-				{ removedHashes: prepared.removedHashes },
+				{
+					removedHashes: prepared.removedHashes,
+					removedGids: prepared.removedGids,
+				},
 			);
 			try {
 				await this.completeNativeStrictDurableTransaction(
@@ -11518,6 +11553,11 @@ export class SharedLog<
 					const nativeTrimmedHashes =
 						backboneAppend.trimmedHashes ??
 						backboneAppend.trimmed.map((entry) => entry.hash);
+					const nativeTrimmedGids =
+						backboneAppend.trimmedGids ??
+						(backboneAppend.trimmed.length > 0
+							? backboneAppend.trimmed.map((entry) => entry.gid)
+							: undefined);
 					const committedHash =
 						backboneAppend.entry.cid ?? backboneAppend.entry.hash;
 					const committedNext = backboneAppend.entry.next ?? next;
@@ -11599,6 +11639,9 @@ export class SharedLog<
 							: backboneAppend.trimmed,
 						trimmedEntryHashes: useTrimmedHashesOnly
 							? backboneAppend.trimmedHashes
+							: undefined,
+						trimmedEntryGids: useTrimmedHashesOnly
+							? nativeTrimmedGids
 							: undefined,
 						nativeBlocksDeleted: commitBlocksInBackbone,
 						nativeDeleteCleanupToken,
@@ -11804,6 +11847,7 @@ export class SharedLog<
 							},
 							removed: prepared.removed,
 							removedHashes: prepared.removedHashes,
+							removedGids: prepared.removedGids,
 							appendCommit,
 						};
 					};
@@ -11930,6 +11974,7 @@ export class SharedLog<
 						{
 							forgetNativeCoordinates: false,
 							removedHashes: prepared.removedHashes,
+							removedGids: prepared.removedGids,
 						},
 					);
 					try {
@@ -11976,6 +12021,7 @@ export class SharedLog<
 					materializeEntry: () => Entry<T>;
 					removed: ShallowOrFullEntry<T>[];
 					removedHashes?: string[];
+					removedGids?: string[];
 					appendFacts: PreparedAppendFacts;
 			  }
 			| undefined,
@@ -11998,6 +12044,7 @@ export class SharedLog<
 					result.materializeEntry,
 					{
 						removedHashes: result.removedHashes,
+						removedGids: result.removedGids,
 						ownershipLifecycleController,
 					},
 				);
@@ -12027,6 +12074,7 @@ export class SharedLog<
 							},
 							removed: result.removed,
 							removedHashes: result.removedHashes,
+							removedGids: result.removedGids,
 							appendCommit: this.createPreparedLocalAppendCommitFromFacts(
 								result.appendFacts,
 							),
@@ -12040,6 +12088,7 @@ export class SharedLog<
 				},
 				removed: result.removed,
 				removedHashes: result.removedHashes,
+				removedGids: result.removedGids,
 				appendCommit: this.createPreparedLocalAppendCommitFromFacts(
 					result.appendFacts,
 				),
@@ -12070,6 +12119,7 @@ export class SharedLog<
 			materializeEntry: () => Entry<T>;
 			removed: ShallowOrFullEntry<T>[];
 			removedHashes?: string[];
+			removedGids?: string[];
 			appendFacts: PreparedAppendFacts;
 		},
 		options: SharedAppendOptions<T> | undefined,
@@ -12122,6 +12172,7 @@ export class SharedLog<
 			materializeEntry: () => Entry<T>;
 			removed: ShallowOrFullEntry<T>[];
 			removedHashes?: string[];
+			removedGids?: string[];
 			appendFacts: PreparedAppendFacts;
 		},
 		minReplicasValue: number,
@@ -12147,6 +12198,7 @@ export class SharedLog<
 			},
 			removed: result.removed,
 			removedHashes: result.removedHashes,
+			removedGids: result.removedGids,
 			appendCommit: nativePreparedCommit,
 		};
 	}
@@ -12157,6 +12209,7 @@ export class SharedLog<
 			materializeEntry?: () => Entry<T>;
 			removed: ShallowOrFullEntry<T>[];
 			removedHashes?: string[];
+			removedGids?: string[];
 			change?: Change<T>;
 			appendFacts: PreparedAppendFacts;
 		},
@@ -12208,6 +12261,7 @@ export class SharedLog<
 							forgetNativeCoordinates:
 								!nativeAppendPlan.committedNativeCoordinateDeletes,
 							removedHashes: result.removedHashes,
+							removedGids: result.removedGids,
 							ownershipLifecycleController,
 						},
 					);
@@ -12290,6 +12344,7 @@ export class SharedLog<
 			materializeEntry: () => Entry<T>;
 			removed: ShallowOrFullEntry<T>[];
 			removedHashes?: string[];
+			removedGids?: string[];
 			appendFacts: PreparedAppendFacts;
 		},
 		options: SharedAppendOptions<T> | undefined,
@@ -12310,6 +12365,8 @@ export class SharedLog<
 					return result.entry;
 				},
 				removed: result.removed,
+				removedHashes: result.removedHashes,
+				removedGids: result.removedGids,
 				appendCommit: nativePreparedCommit,
 			};
 		}
@@ -12324,6 +12381,7 @@ export class SharedLog<
 					result.materializeEntry,
 					{
 						removedHashes: result.removedHashes,
+						removedGids: result.removedGids,
 						ownershipLifecycleController,
 					},
 				);
@@ -12385,6 +12443,7 @@ export class SharedLog<
 			},
 			removed: result.removed,
 			removedHashes: result.removedHashes,
+			removedGids: result.removedGids,
 			appendCommit: this.createPreparedLocalAppendCommitFromFacts(
 				result.appendFacts,
 				nativeAppendPlan,
@@ -12711,6 +12770,11 @@ export class SharedLog<
 						nativeIndexMutationLockOwner:
 							nativeStrictTransaction?.lowerHashMutationLockOwner,
 						trimmedEntryHashes: append.trimmedHashes,
+						trimmedEntryGids:
+							append.trimmedGids ??
+							(append.trimmed.length > 0
+								? append.trimmed.map((entry) => entry.gid)
+								: undefined),
 						nativeBlocksDeleted: true,
 						nativeDeleteCleanupToken,
 						documentTrimmedHeadsProcessed: append.documentTrimmedHeadsProcessed,
@@ -13042,6 +13106,11 @@ export class SharedLog<
 				{
 					forgetNativeCoordinates: false,
 					removedHashes: plannedCoordinateDeleteHashes,
+					removedGids:
+						backboneAppend.trimmedGids ??
+						(backboneAppend.trimmed.length > 0
+							? backboneAppend.trimmed.map((entry) => entry.gid)
+							: undefined),
 				},
 			);
 			if (!runtimeOnlyCoordinates && this.remoteBlocks.hasNotifyStoredHook()) {
@@ -14783,6 +14852,7 @@ export class SharedLog<
 			})) > 0;
 
 		this._gidPeersHistory = new Map();
+		this.resetGidPeerHistoryCleanupState();
 		const replicationChangeOwnershipLifecycleController =
 			this.captureReplicationOwnershipLifecycle();
 		let replicationChangeDebounceFn!: typeof this.replicationChangeDebounceFn;
@@ -16580,6 +16650,9 @@ export class SharedLog<
 			(removed) => removed.hash,
 		);
 		this.onEntryRemovedHashes(deferredCoordinateDeleteHashes);
+		this.scheduleDeadGidPeerHistoryReclaim(
+			change.removed.map((removed) => removed.meta.gid),
+		);
 		if (options?.forgetNativeCoordinates === false) {
 			this._coordinates.forgetResidentCoordinateStateForHashes(
 				deferredCoordinateDeleteHashes,
@@ -16610,6 +16683,7 @@ export class SharedLog<
 		options?: {
 			forgetNativeCoordinates?: boolean;
 			removedHashes?: string[];
+			removedGids?: string[];
 			ownershipLifecycleController?: AbortController;
 		},
 	): string[] | undefined {
@@ -16630,6 +16704,11 @@ export class SharedLog<
 			? normalizedHashValues(removedHashes)
 			: removed.map((entry) => entry.hash);
 		this.onEntryRemovedHashes(deferredCoordinateDeleteHashes);
+		this.scheduleDeadGidPeerHistoryReclaim(
+			removed.length > 0
+				? removed.map((entry) => entry.meta.gid)
+				: options?.removedGids,
+		);
 		if (options?.forgetNativeCoordinates === false) {
 			this._coordinates.forgetResidentCoordinateStateForHashes(
 				deferredCoordinateDeleteHashes,
@@ -16663,7 +16742,133 @@ export class SharedLog<
 			}
 			this.onEntryRemoved(removed.hash);
 		}
+		this.scheduleDeadGidPeerHistoryReclaim(
+			removedEntries.map((removed) => removed.meta.gid),
+		);
 		return undefined;
+	}
+
+	private async reclaimDeadGidPeerHistory(
+		gids: Iterable<string> | undefined,
+		history = this._gidPeersHistory,
+	): Promise<void> {
+		if (!gids) return;
+		const candidates = [...new Set(gids)].filter(
+			(gid) =>
+				history === this._gidPeersHistory && !!gid && history.has(gid),
+		);
+		if (candidates.length === 0) return;
+		const hasHeads = await this.hasAnyHeadForGidSets(
+			candidates.map((gid) => [gid]),
+		);
+		if (history !== this._gidPeersHistory) return;
+		for (let index = 0; index < candidates.length; index++) {
+			const gid = candidates[index]!;
+			if (!hasHeads[index] && history.has(gid)) {
+				this.deleteGidPeerHistory(gid);
+			}
+		}
+	}
+
+	private resetGidPeerHistoryCleanupState(): void {
+		this._gidPeerHistoryCleanupState = {
+			history: this._gidPeersHistory,
+			tail: Promise.resolve(),
+			pending: new Set(),
+			draining: false,
+			highWater: 0,
+		};
+	}
+
+	private scheduleDeadGidPeerHistoryReclaim(
+		gids: Iterable<string> | undefined,
+	): void {
+		if (!gids) return;
+		const state = this._gidPeerHistoryCleanupState;
+		const history = state.history;
+		for (const gid of gids) {
+			if (!gid || !history.has(gid)) continue;
+			if (state.pending.has(gid)) continue;
+			if (
+				state.pending.size >= GID_PEER_HISTORY_CLEANUP_PENDING_CAPACITY
+			) {
+				// History is only a suppression memo. Under sustained synchronous
+				// production, forgetting an overflow row is the bounded, safe fallback:
+				// it can cause redundant delivery but cannot affect ownership or data.
+				this.deleteGidPeerHistory(gid);
+				continue;
+			}
+			state.pending.add(gid);
+		}
+		state.highWater = Math.max(state.highWater, state.pending.size);
+		if (state.pending.size === 0) return;
+		// A macrotask gate lets sequential awaited appends coalesce; a Promise
+		// microtask runs before the caller can enqueue the next trimmed gid. The
+		// fixed early-wake threshold also amortizes latest-only (retain=1) logs,
+		// while the separate pending cap remains the absolute memory bound.
+		const wakeThreshold = GID_PEER_HISTORY_CLEANUP_BATCH_SIZE;
+		if (state.draining) {
+			if (state.pending.size >= wakeThreshold) state.wake?.();
+			return;
+		}
+		state.draining = true;
+		let wake!: () => void;
+		const batchReady = new Promise<void>((resolve) => {
+			let settled = false;
+			let cancel = () => {};
+			wake = () => {
+				if (settled) return;
+				settled = true;
+				cancel();
+				if (state.wake === wake) state.wake = undefined;
+				resolve();
+			};
+			state.wake = wake;
+			if (typeof setImmediate === "function") {
+				const handle = setImmediate(wake);
+				cancel = () => clearImmediate(handle);
+			} else {
+				const handle = setTimeout(wake, 0);
+				cancel = () => clearTimeout(handle);
+			}
+		});
+		if (state.pending.size >= wakeThreshold) wake();
+		const drain = state.tail
+			.then(async () => {
+				await batchReady;
+				while (history === this._gidPeersHistory) {
+					const batch = [...state.pending].slice(
+						0,
+						GID_PEER_HISTORY_CLEANUP_BATCH_SIZE,
+					);
+					if (batch.length === 0) break;
+					for (const gid of batch) state.pending.delete(gid);
+					try {
+						await this.reclaimDeadGidPeerHistory(batch, history);
+					} catch (error) {
+						warn(`Failed to reclaim gid peer history: ${String(error)}`);
+						if (history === this._gidPeersHistory) {
+							for (const gid of batch) this.deleteGidPeerHistory(gid);
+						}
+					}
+				}
+			})
+			.catch((error) => {
+				warn(`Failed to reclaim gid peer history: ${String(error)}`);
+			});
+		state.tail = drain.finally(() => {
+			state.draining = false;
+			if (history !== this._gidPeersHistory) {
+				state.pending.clear();
+			}
+			if (
+				history === this._gidPeersHistory &&
+				state.pending.size > 0 &&
+				state === this._gidPeerHistoryCleanupState
+			) {
+				this.scheduleDeadGidPeerHistoryReclaim([]);
+			}
+		});
 	}
 
 	async canAppend(entry: Entry<T>) {
@@ -24678,7 +24883,8 @@ export class SharedLog<
 
 	async rebalanceAll(options?: { clearCache?: boolean }) {
 		if (options?.clearCache) {
-			this._gidPeersHistory.clear();
+			this._gidPeersHistory = new Map();
+			this.resetGidPeerHistoryCleanupState();
 			this._nativeSharedLogState?.clearGidPeers();
 			this._nativeBackbone?.clearGidPeers();
 		}

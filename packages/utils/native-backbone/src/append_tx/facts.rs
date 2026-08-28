@@ -43,6 +43,61 @@ fn log_trim_entries_to_rows(values: Vec<LogIndexEntry>) -> Array {
 
 #[wasm_bindgen]
 impl NativePeerbitBackbone {
+    /// Compact counterpart to `prepare_plain_entry_commit_facts`. This is an
+    /// additive export so older native bundles retain their frozen row shape.
+    #[allow(clippy::too_many_arguments)]
+    pub fn prepare_plain_entry_commit_facts_trim_refs(
+        &mut self,
+        wall_time: u64,
+        logical: u32,
+        gid: String,
+        next: Array,
+        entry_type: u8,
+        meta_data: JsValue,
+        payload_data: Uint8Array,
+        trim_length_to: usize,
+    ) -> Result<Array, JsValue> {
+        let (entry_facts, trim_refs) = if next.length() == 0 {
+            self.log
+                .prepare_entry_v0_plain_entry_commit_no_next_facts_core_profiled_and_put_with_builder_trim_refs(
+                    &self.builder,
+                    &mut self.blocks,
+                    wall_time,
+                    logical,
+                    gid,
+                    entry_type,
+                    optional_bytes_from_js(meta_data, "meta data")?,
+                    payload_data.to_vec(),
+                    trim_length_to,
+                    None,
+                )?
+        } else {
+            self.log
+                .prepare_entry_v0_plain_entry_commit_facts_core_profiled_and_put_with_builder_trim_refs(
+                    &self.builder,
+                    &mut self.blocks,
+                    wall_time,
+                    logical,
+                    gid,
+                    strings_from_array(next)?,
+                    entry_type,
+                    optional_bytes_from_js(meta_data, "meta data")?,
+                    payload_data.to_vec(),
+                    Some(trim_length_to),
+                    None,
+                )?
+        };
+        let out = Array::new();
+        out.push(&committed_entry_facts_to_row(
+            &entry_facts,
+            !entry_facts.next.is_empty(),
+        ));
+        let (trim_hashes, trim_gids) = trim_refs.into_iter().unzip();
+        out.push(&strings_to_array(trim_hashes));
+        out.push(&strings_to_array(trim_gids));
+        Ok(out)
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub fn prepare_plain_entry_commit_facts(
         &mut self,

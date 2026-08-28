@@ -7,7 +7,7 @@ use wasm_bindgen::prelude::*;
 
 use crate::append_tx::{
     ensure_batch_append_lens, ensure_batch_projection_lens, no_next_compact_entry_row,
-    push_optional_trim_result, required_projection_encoded_document,
+    push_optional_trim_result, push_trim_gid_extension, required_projection_encoded_document,
     LatestCompactBatchPendingAppend,
 };
 use crate::documents::{
@@ -965,7 +965,7 @@ impl NativePeerbitBackbone {
             let (meta_data, payload_data) =
                 self.copy_append_inputs_profiled(meta_datas.get(index_u32), &payload_bytes)?;
 
-            let (entry_facts, trim_hashes) = self.prepare_no_next_log_append_profiled(
+            let (entry_facts, trim_hashes, trim_gids) = self.prepare_no_next_log_append_profiled(
                 wall_times.get_index(index_u32),
                 logicals.get_index(index_u32),
                 gid.clone(),
@@ -1000,6 +1000,7 @@ impl NativePeerbitBackbone {
                 gid,
                 entry_facts,
                 trim_hashes,
+                trim_gids,
                 document_index_commit,
                 previous_document_context: None,
                 delete_trimmed_document_heads,
@@ -1061,6 +1062,7 @@ impl NativePeerbitBackbone {
                     document_trimmed_heads_processed,
                 );
             }
+            push_trim_gid_extension(&row, pending.trim_gids);
             out.push(&row);
             if let Some(started) = result_row_started {
                 self.append_profile.result_row_ms += crate::time::now_ms() - started;
@@ -1098,7 +1100,7 @@ impl NativePeerbitBackbone {
         let (meta_data, payload_data) =
             self.copy_append_inputs_profiled(meta_data, &payload_data)?;
 
-        let (entry_facts, trim_hashes) = self.prepare_no_next_log_append_profiled(
+        let (entry_facts, trim_hashes, trim_gids) = self.prepare_no_next_log_append_profiled(
             wall_time,
             logical,
             gid.clone(),
@@ -1156,6 +1158,7 @@ impl NativePeerbitBackbone {
         let result_row_started = profile_enabled.then(crate::time::now_ms);
         let out = no_next_compact_entry_row(&self.resolution, &entry_facts, &coordinate_facts);
         push_optional_trim_result(&out, trim_hashes, document_trimmed_heads_processed);
+        push_trim_gid_extension(&out, trim_gids);
         if let Some(started) = result_row_started {
             self.append_profile.result_row_ms += crate::time::now_ms() - started;
         }

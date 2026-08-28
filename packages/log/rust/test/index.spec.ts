@@ -1008,7 +1008,7 @@ describe("native EntryV0 encoding", () => {
 			},
 			blockStore,
 		);
-		await index.prepareEntryV0PlainEntryCommit(
+		const second = await index.prepareEntryV0PlainEntryCommit(
 			{
 				...common,
 				wallTime: 12n,
@@ -1031,10 +1031,25 @@ describe("native EntryV0 encoding", () => {
 
 		expect(third?.trimmedEntries).equal(undefined);
 		expect(third?.trimmedEntryHashes).to.deep.equal([first!.cid]);
+		expect(third?.trimmedEntryGids).to.deep.equal(["gid-a"]);
 		expect(index.has(first!.cid)).equal(false);
 		expect(blockStore.has(first!.cid)).equal(false);
 		expect(index.length).equal(2);
 		expect(blockStore.has(third!.cid)).equal(true);
+
+		const fourth = await index.prepareEntryV0PlainEntryCommit(
+			{
+				...common,
+				wallTime: 14n,
+				gid: "gid-d",
+				next: [third!.cid],
+				payloadData: new Uint8Array([4]),
+				trimLengthTo: 2,
+			},
+			blockStore,
+		);
+		expect(fourth?.trimmedEntryHashes).to.deep.equal([second!.cid]);
+		expect(fourth?.trimmedEntryGids).to.deep.equal(["gid-b"]);
 	});
 
 	it("commits storage-only prepared plain entries and trim facts natively", async () => {

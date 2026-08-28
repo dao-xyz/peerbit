@@ -379,6 +379,236 @@ describe("append", () => {
 		}
 	});
 
+	it("reclaims gid peer history after the last local sibling is trimmed", async () => {
+		session = await TestSession.disconnected(1, {
+			indexer: (directory) => createRustIndexer(directory),
+		});
+		const store = await session.peers[0].open(new EventStore<string, any>(), {
+			args: {
+				replicate: false,
+				timeUntilRoleMaturity: 0,
+				trim: { type: "length", to: 1 },
+				nativeGraph: true,
+				nativeBackbone: { optional: false },
+			},
+		});
+		const first = await store.add("first", {
+			replicate: false,
+			target: "none",
+		});
+		const internals = store.log as any;
+		const nativePrepare = sinon.spy(
+			internals._nativeBackbone.graph,
+			"prepareEntryV0PlainEntryCommit",
+		);
+		const compactConsume = sinon.spy(
+			internals.log.entryIndex,
+			"consumeNativeTrimmedEntryHashesNoReturnMaybe",
+		);
+		try {
+			internals._gidPeersHistory.set(first.entry.meta.gid, new Set(["peer"]));
+			const trimmed = await internals.appendLocallyPreparedPayloadCommitOnly(
+				new Uint8Array([1, 2, 3]),
+				{
+					replicate: false,
+					target: "none",
+					meta: { next: [] },
+				},
+				{ resolveTrimmedEntries: false },
+			);
+			await internals._gidPeerHistoryCleanupState.tail;
+
+			expect(trimmed).to.not.equal(undefined);
+			expect(nativePrepare.callCount).to.equal(1);
+			expect(compactConsume.callCount).to.equal(1);
+			expect(trimmed.removed).to.have.length(0);
+			expect(trimmed.removedHashes).to.deep.equal([first.entry.hash]);
+			expect(trimmed.removedGids).to.deep.equal([first.entry.meta.gid]);
+			expect(internals._gidPeersHistory.has(first.entry.meta.gid)).to.be.false;
+		} finally {
+			compactConsume.restore();
+			nativePrepare.restore();
+		}
+	});
+
+	it("preserves gid peer history while a newer same-gid sibling remains", async () => {
+		session = await TestSession.disconnected(1, {
+			indexer: (directory) => createRustIndexer(directory),
+		});
+		const store = await session.peers[0].open(new EventStore<string, any>(), {
+			args: {
+				replicate: { factor: 1 },
+				timeUntilRoleMaturity: 0,
+				trim: { type: "length", to: 1 },
+			},
+		});
+		const first = await store.add("first", {
+			replicate: false,
+			target: "none",
+		});
+		const internals = store.log as any;
+		internals._gidPeersHistory.set(first.entry.meta.gid, new Set(["peer"]));
+
+		const second = await store.add("second", {
+			replicate: false,
+			target: "none",
+			meta: { next: [first.entry] },
+		});
+		await internals._gidPeerHistoryCleanupState.tail;
+
+		expect(second.entry.meta.gid).to.equal(first.entry.meta.gid);
+		expect(internals._gidPeersHistory.has(first.entry.meta.gid)).to.be.true;
+	});
+
+	it("bounds saturated gid-history cleanup without leaving stale rows", async () => {
+		session = await TestSession.disconnected(1, {
+			indexer: (directory) => createRustIndexer(directory),
+		});
+		const store = await session.peers[0].open(new EventStore<string, any>(), {
+			args: { replicate: false },
+		});
+		const internals = store.log as any;
+		const gids = Array.from({ length: 5000 }, (_, index) => `dead-${index}`);
+		for (const gid of gids) {
+			internals._gidPeersHistory.set(gid, new Set(["peer"]));
+		}
+
+		internals.scheduleDeadGidPeerHistoryReclaim(gids);
+		await internals._gidPeerHistoryCleanupState.tail;
+
+		expect(internals._gidPeerHistoryCleanupState.pending.size).to.equal(0);
+		expect(internals._gidPeerHistoryCleanupState.highWater).to.equal(4096);
+		expect(internals._gidPeersHistory.size).to.equal(0);
+	});
+
+	it("batches gid-history cleanup across sequential awaited work", async () => {
+		session = await TestSession.disconnected(1, {
+			indexer: (directory) => createRustIndexer(directory),
+		});
+		const store = await session.peers[0].open(new EventStore<string, any>(), {
+			args: { replicate: false },
+		});
+		const internals = store.log as any;
+		const batchSizes: number[] = [];
+		const hasHead = sinon
+			.stub(internals, "hasAnyHeadForGidSets")
+			.callsFake(async (...args: unknown[]) => {
+				const gidSets = args[0] as string[][];
+				batchSizes.push(gidSets.length);
+				return gidSets.map(() => false);
+			});
+		try {
+			for (let index = 0; index < 257; index++) {
+				const gid = `dead-${index}`;
+				internals._gidPeersHistory.set(gid, new Set(["peer"]));
+				internals.scheduleDeadGidPeerHistoryReclaim([gid]);
+				await Promise.resolve();
+			}
+			await internals._gidPeerHistoryCleanupState.tail;
+
+			expect(batchSizes).to.deep.equal([256, 1]);
+			expect(internals._gidPeerHistoryCleanupState.highWater).to.equal(256);
+			expect(internals._gidPeerHistoryCleanupState.pending.size).to.equal(0);
+			expect(internals._gidPeersHistory.size).to.equal(0);
+		} finally {
+			hasHead.restore();
+		}
+	});
+
+	it("isolates gid-history cleanup state across history replacement", async () => {
+		session = await TestSession.disconnected(1, {
+			indexer: (directory) => createRustIndexer(directory),
+		});
+		const store = await session.peers[0].open(new EventStore<string, any>(), {
+			args: {
+				replicate: false,
+				nativeGraph: true,
+				nativeBackbone: { optional: false },
+			},
+		});
+		const internals = store.log as any;
+		let releaseOld!: () => void;
+		const oldBlocked = new Promise<void>((resolve) => {
+			releaseOld = resolve;
+		});
+		let oldStarted!: () => void;
+		const oldStartedPromise = new Promise<void>((resolve) => {
+			oldStarted = resolve;
+		});
+		const gid = "same-gid";
+		const oldHistory = internals._gidPeersHistory;
+		const hasHead = sinon
+			.stub(internals, "hasAnyHeadForGidSets")
+			.callsFake(async () => {
+				oldStarted();
+				await oldBlocked;
+				return [false];
+			});
+		const nativeDelete = sinon.spy(internals._nativeBackbone, "deleteGidPeers");
+		const getAllReplicationSegments = sinon
+			.stub(internals, "getAllReplicationSegments")
+			.resolves([]);
+		const onReplicationChange = sinon
+			.stub(internals, "onReplicationChange")
+			.resolves();
+		let oldTail: Promise<void> | undefined;
+		try {
+			oldHistory.set(gid, new Set(["old-peer"]));
+			internals.scheduleDeadGidPeerHistoryReclaim([gid]);
+			oldTail = internals._gidPeerHistoryCleanupState.tail;
+			await oldStartedPromise;
+
+			await internals.rebalanceAll({ clearCache: true });
+			internals.addPeersToGidPeerHistory(gid, ["new-peer"]);
+			releaseOld();
+			await oldTail;
+
+			expect([...internals._gidPeersHistory.get(gid)]).to.deep.equal([
+				"new-peer",
+			]);
+			expect(nativeDelete.calledWith(gid)).to.be.false;
+			expect(internals._gidPeerHistoryCleanupState.pending.size).to.equal(0);
+		} finally {
+			releaseOld();
+			await oldTail?.catch(() => undefined);
+			nativeDelete.restore();
+			hasHead.restore();
+			onReplicationChange.restore();
+			getAllReplicationSegments.restore();
+		}
+	});
+
+	it("falls back safely when gid-history liveness lookup fails", async () => {
+		session = await TestSession.disconnected(1, {
+			indexer: (directory) => createRustIndexer(directory),
+		});
+		const store = await session.peers[0].open(new EventStore<string, any>(), {
+			args: {
+				replicate: false,
+				nativeGraph: true,
+				nativeBackbone: { optional: false },
+			},
+		});
+		const internals = store.log as any;
+		const gid = "failed-liveness";
+		internals.addPeersToGidPeerHistory(gid, ["peer"]);
+		const hasHead = sinon
+			.stub(internals, "hasAnyHeadForGidSets")
+			.rejects(new Error("injected liveness failure"));
+		const nativeDelete = sinon.spy(internals._nativeBackbone, "deleteGidPeers");
+		try {
+			internals.scheduleDeadGidPeerHistoryReclaim([gid]);
+			await internals._gidPeerHistoryCleanupState.tail;
+
+			expect(internals._gidPeersHistory.has(gid)).to.be.false;
+			expect(nativeDelete.calledWith(gid)).to.be.true;
+			expect(internals._gidPeerHistoryCleanupState.pending.size).to.equal(0);
+		} finally {
+			nativeDelete.restore();
+			hasHead.restore();
+		}
+	});
+
 	it("uses the prepared payload native transaction without eager entry materialization", async () => {
 		session = await TestSession.disconnected(1, {
 			indexer: (directory) => createRustIndexer(directory),
