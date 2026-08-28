@@ -107,8 +107,13 @@ Before claiming the 100-million-entry target:
 
 ## Work order
 
-1. Land the reproducible resident and persistent census and establish local
-   entry/RSS/reopen budgets.
+There are now two measured tracks. Lifecycle work for #1286 proceeds in small,
+crash-safe WAL checkpointing/compaction slices. Broader custody and ownership
+work still begins with the state-ledger invariant below before changing planner
+or executor behavior.
+
+1. Land the reproducible resident, persistent, and matched lifecycle censuses
+   and establish local entry/RSS/reopen/disk budgets.
 2. Add a state-ledger invariant test that proves prune releases every local
    representation and survives restart between stages.
 3. Extract a pure, bounded ownership planner behind the contract above while
@@ -119,9 +124,10 @@ Before claiming the 100-million-entry target:
    buckets if the workload cannot bound one component.
 6. Progress through distributed 10M and 100M global-entry soaks.
 
-The rebalancing implementation handoff can begin after step 1 records complete
-100k results and a measured or censored 1M boundary. A timeout with preserved
-progress is valid boundary evidence; complete 1M metric rows remain measurement
-work, not a prerequisite for bounded planner design. At that point the planner
-has local-state budgets and this lifecycle contract, rather than an
-unconstrained global-entry goal.
+The hardened 100k lifecycle result and a complete diagnostic 1M boundary are now
+recorded. The 1M artifact predates the final full-membership checks, but it is
+sufficient scaling-boundary evidence: unchanged persistence grows near-linearly
+despite bounded live cardinality. Rebalancing work can therefore proceed to the
+state-ledger invariant rather than another scale run; the planner has measured
+local-state evidence and this lifecycle contract instead of an unconstrained
+global-entry goal.
