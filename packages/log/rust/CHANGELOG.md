@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.1.4
+
+### Patch Changes
+
+- [#1326](https://github.com/dao-xyz/peerbit/pull/1326) [`17b0eaf`](https://github.com/dao-xyz/peerbit/commit/17b0eafdd6b8c2bdd1a6451cce7ab588498303cc) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Bound shared-log gid peer history after trimming by carrying compact removed-gid facts through general native append transactions and reclaiming dead rows in bounded batches. Specialized document-index facts fallbacks remain unchanged for a follow-up slice.
+
 ## 1.1.3
 
 ### Patch Changes

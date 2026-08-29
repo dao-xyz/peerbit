@@ -1,5 +1,12 @@
 # Changelog
 
+## 6.1.21
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @peerbit/program@6.0.53
+
 ## 6.1.20
 
 ### Patch Changes

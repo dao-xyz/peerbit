@@ -1,5 +1,11 @@
 # Changelog
 
+## 4.2.12
+
+### Patch Changes
+
+- [#1330](https://github.com/dao-xyz/peerbit/pull/1330) [`bedff76`](https://github.com/dao-xyz/peerbit/commit/bedff76f5d9943c07bc3a02a8d7a42841439b98a) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Prioritize freshly resolved and currently reachable block providers ahead of stale cached or historical replication candidates.
+
 ## 4.2.11
 
 ### Patch Changes

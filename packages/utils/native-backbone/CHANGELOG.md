@@ -1,5 +1,18 @@
 # @peerbit/native-backbone
 
+## 0.2.10
+
+### Patch Changes
+
+- [#1327](https://github.com/dao-xyz/peerbit/pull/1327) [`dfc9bcd`](https://github.com/dao-xyz/peerbit/commit/dfc9bcd7e8269c5f618442ec88c355c62dbbac2a) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Carry compact trimmed-entry GIDs through specialized native document-index append facts so shared-log can reclaim bounded peer history without materializing removed entries.
+
+- [#1329](https://github.com/dao-xyz/peerbit/pull/1329) [`a33357a`](https://github.com/dao-xyz/peerbit/commit/a33357a01d2c9b5500ad24be1ce9cb3556837d10) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Add opt-in crash-safe checkpoint compaction for the Node coordinate,
+  document-value, and document-signer WALs. Legacy directories migrate when their
+  first checkpoint is published, and migrated directories fail closed on older
+  package versions to prevent stale replay.
+
+- [#1326](https://github.com/dao-xyz/peerbit/pull/1326) [`17b0eaf`](https://github.com/dao-xyz/peerbit/commit/17b0eafdd6b8c2bdd1a6451cce7ab588498303cc) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Bound shared-log gid peer history after trimming by carrying compact removed-gid facts through general native append transactions and reclaiming dead rows in bounded batches. Specialized document-index facts fallbacks remain unchanged for a follow-up slice.
+
 ## 0.2.9
 
 ### Patch Changes

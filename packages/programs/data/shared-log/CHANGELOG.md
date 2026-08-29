@@ -1,5 +1,19 @@
 # Changelog
 
+## 16.0.11
+
+### Patch Changes
+
+- [#1330](https://github.com/dao-xyz/peerbit/pull/1330) [`bedff76`](https://github.com/dao-xyz/peerbit/commit/bedff76f5d9943c07bc3a02a8d7a42841439b98a) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Prioritize freshly resolved and currently reachable block providers ahead of stale cached or historical replication candidates.
+
+- [#1326](https://github.com/dao-xyz/peerbit/pull/1326) [`17b0eaf`](https://github.com/dao-xyz/peerbit/commit/17b0eafdd6b8c2bdd1a6451cce7ab588498303cc) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Bound shared-log gid peer history after trimming by carrying compact removed-gid facts through general native append transactions and reclaiming dead rows in bounded batches. Specialized document-index facts fallbacks remain unchanged for a follow-up slice.
+
+- Updated dependencies [[`bedff76`](https://github.com/dao-xyz/peerbit/commit/bedff76f5d9943c07bc3a02a8d7a42841439b98a), [`17b0eaf`](https://github.com/dao-xyz/peerbit/commit/17b0eafdd6b8c2bdd1a6451cce7ab588498303cc)]:
+  - @peerbit/blocks@4.2.12
+  - @peerbit/log@6.2.21
+  - @peerbit/program@6.0.53
+  - @peerbit/rpc@6.1.21
+
 ## 16.0.10
 
 ### Patch Changes
