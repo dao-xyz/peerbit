@@ -231,6 +231,11 @@ import {
 	shouldAssigneToRangeBoundary as shouldAssignToRangeBoundary,
 	toRebalance,
 } from "./ranges.js";
+import {
+	type ReceiveSignatureVerificationFact,
+	receiveSignatureVerificationResult as getReceiveSignatureVerificationResult,
+	withReceiveSignatureVerificationFacts as withSignatureVerificationFacts,
+} from "./receive-signature-verification.js";
 import { ReplicationAnnouncementCoordinator } from "./replication-announcement.js";
 import {
 	type ReplicationDomainHash,
@@ -2179,6 +2184,16 @@ export class SharedLog<
 	private _logProperties?: LogProperties<T> &
 		LogEvents<T> &
 		SharedLogOptions<T, D, R>;
+	// A successful native signature batch is only an authorization input for the
+	// receive operation that requested it. Facts retain the exact verified bytes
+	// and are leased around the lower-log join; byte comparison prevents an
+	// earlier application callback from mutating a later entry underneath the
+	// batch result. The array form also makes overlapping leases for the same
+	// object safe without making verification sticky across retries.
+	private _receiveSignatureVerificationFacts = new WeakMap<
+		Entry<T>,
+		ReceiveSignatureVerificationFact<T>[]
+	>();
 	private _closeController!: AbortController;
 	private _respondToIHaveTimeout!: any;
 	private _checkedPrune!: CheckedPruneCoordinator<T, R>;
@@ -14600,6 +14615,7 @@ export class SharedLog<
 				: undefined,
 		};
 		this._logProperties = options;
+		this._receiveSignatureVerificationFacts = new WeakMap();
 
 		this.domain = options?.domain
 			? (options.domain(this) as unknown as D)
@@ -17039,6 +17055,93 @@ export class SharedLog<
 		});
 	}
 
+	private receiveSignatureVerificationResult(
+		entry: Entry<T>,
+	): boolean | undefined {
+		return getReceiveSignatureVerificationResult(
+			this._receiveSignatureVerificationFacts,
+			entry,
+		);
+	}
+
+	private async preverifyReceiveSignaturesBatch(
+		entries: Entry<T>[],
+		profile?: SyncProfileFn,
+	): Promise<ReceiveSignatureVerificationFact<T>[] | undefined> {
+		const candidates = entries.filter(
+			(entry) => !entry.createdLocally && !hasPreverifiedSignature(entry),
+		);
+		if (candidates.length < NATIVE_ED25519_VERIFY_BATCH_MIN_ENTRIES) {
+			return undefined;
+		}
+
+		let storageBytes: Uint8Array[];
+		let signableInputs: Ed25519VerifyBatchInput[] | undefined;
+		try {
+			// Capture the callback-visible storage state and native signable inputs
+			// before the first await so the result is bound to one entry state.
+			storageBytes = candidates.map((entry) => entry.getStorageBytes().slice());
+			signableInputs =
+				this.prepareReceiveNativeEd25519VerificationBatch(candidates);
+		} catch {
+			return undefined;
+		}
+		if (!signableInputs) {
+			return undefined;
+		}
+
+		const verifyStartedAt = syncProfileStart(profile);
+		let verified: boolean[] | undefined;
+		try {
+			verified = await verifyEd25519Batch(signableInputs);
+		} catch {
+			verified = undefined;
+		}
+		if (!verified || verified.length !== candidates.length) {
+			return undefined;
+		}
+		if (profile) {
+			emitSyncProfileDuration(profile, verifyStartedAt, {
+				name: "sharedLog.canAppendBatch.verifySignatures",
+				component: "shared-log",
+				entries: candidates.length,
+				messages: 1,
+				details: {
+					native: true,
+					mode: "signable",
+					programCanAppendDeferred: true,
+				},
+			});
+		}
+		return candidates.map((entry, index) => ({
+			entry,
+			storageBytes: storageBytes[index]!,
+			verified: verified[index]!,
+		}));
+	}
+
+	private prepareReceiveNativeEd25519VerificationBatch(
+		entries: Entry<T>[],
+	): Ed25519VerifyBatchInput[] | undefined {
+		const inputs = this.prepareNativeEd25519VerificationBatch(entries);
+		return inputs?.map((input) => ({
+			signature: input.signature.slice(),
+			publicKey: input.publicKey.slice(),
+			message: input.message.slice(),
+		}));
+	}
+
+	private async withReceiveSignatureVerificationFacts<R>(
+		facts: ReceiveSignatureVerificationFact<T>[] | undefined,
+		operation: () => Promise<R>,
+	): Promise<R> {
+		return withSignatureVerificationFacts(
+			this._receiveSignatureVerificationFacts,
+			facts,
+			operation,
+		);
+	}
+
 	async canAppend(entry: Entry<T>) {
 		try {
 			if (!entry.meta.data) {
@@ -17052,10 +17155,19 @@ export class SharedLog<
 
 			checkMinReplicasLimit(replicas);
 
-			// Locally-created entries were signed before append.
+			const receiveSignatureVerification =
+				this.receiveSignatureVerificationResult(entry);
+			if (receiveSignatureVerification === false) {
+				return false;
+			}
+
+			// Locally-created entries were signed before append. Raw prepared entries
+			// can carry a durable verifier fact from their decoder; plain receive facts
+			// are scoped to this lower-log join and checked against the exact bytes.
 			if (
 				!entry.createdLocally &&
 				!hasPreverifiedSignature(entry) &&
+				receiveSignatureVerification !== true &&
 				!(await entry.verifySignatures())
 			) {
 				return false;
@@ -19608,6 +19720,12 @@ export class SharedLog<
 						// entry views.
 						const programCanAppend = !!this._logProperties?.canAppend;
 						const programOnChange = !!this._logProperties?.onChange;
+						const receiveSignatureVerificationFacts = programCanAppend
+							? await this.preverifyReceiveSignaturesBatch(
+									materializeAllToMergeEntries(),
+									syncProfile,
+								)
+							: undefined;
 						const nativeBackboneCommitValidation = programCanAppend
 							? undefined
 							: this.validatePreparedRawReceiveHeadsMetadataWithNativeBackbone(
@@ -19811,35 +19929,43 @@ export class SharedLog<
 							const joinOnAppendHashes = programOnChange
 								? undefined
 								: onAppendHashes;
-							const joinedPreparedFacts =
-								canUsePreparedAppendFacts &&
-								(await trustedLowerLog.joinPreparedAppendFactsBatch(
-									preparedAppendFacts,
-									{
+							let joinedPreparedFacts = false;
+							const joinLowerLog = async () => {
+								joinedPreparedFacts =
+									canUsePreparedAppendFacts &&
+									(await trustedLowerLog.joinPreparedAppendFactsBatch(
+										preparedAppendFacts,
+										{
+											__peerbitEntriesAlreadyMissing: true,
+											__peerbitCanAppendAlreadyValidated: true,
+											__peerbitDeferIndexWrite: true,
+											__peerbitOnAppendHashes: joinOnAppendHashes,
+											__peerbitProfile: syncProfile,
+											__peerbitNativePreparedJoinCommit:
+												nativePreparedJoinCommit,
+											__peerbitNativePreparedJoinCommitValidatesPlan:
+												nativePreparedJoinCommitValidatesPlan,
+											__peerbitOnPreparedJoinCommitted: nativePreparedJoinCommit
+												? finishNativePreparedCoordinates
+												: undefined,
+										},
+									));
+								if (!joinedPreparedFacts) {
+									await trustedLowerLog.join(materializeAllToMergeEntries(), {
+										__peerbitBatchIndependent: true,
 										__peerbitEntriesAlreadyMissing: true,
-										__peerbitCanAppendAlreadyValidated: true,
+										__peerbitCanAppendAlreadyValidated:
+											fallbackCanAppendAlreadyValidated,
 										__peerbitDeferIndexWrite: true,
 										__peerbitOnAppendHashes: joinOnAppendHashes,
 										__peerbitProfile: syncProfile,
-										__peerbitNativePreparedJoinCommit: nativePreparedJoinCommit,
-										__peerbitNativePreparedJoinCommitValidatesPlan:
-											nativePreparedJoinCommitValidatesPlan,
-										__peerbitOnPreparedJoinCommitted: nativePreparedJoinCommit
-											? finishNativePreparedCoordinates
-											: undefined,
-									},
-								));
-							if (!joinedPreparedFacts) {
-								await trustedLowerLog.join(materializeAllToMergeEntries(), {
-									__peerbitBatchIndependent: true,
-									__peerbitEntriesAlreadyMissing: true,
-									__peerbitCanAppendAlreadyValidated:
-										fallbackCanAppendAlreadyValidated,
-									__peerbitDeferIndexWrite: true,
-									__peerbitOnAppendHashes: joinOnAppendHashes,
-									__peerbitProfile: syncProfile,
-								});
-							}
+									});
+								}
+							};
+							await this.withReceiveSignatureVerificationFacts(
+								receiveSignatureVerificationFacts,
+								joinLowerLog,
+							);
 							// A recursive lower-log join can resolve successfully while declining
 							// an individual top-level entry (for example, when one of its parents
 							// is temporarily unavailable). The public Log.join() API intentionally
