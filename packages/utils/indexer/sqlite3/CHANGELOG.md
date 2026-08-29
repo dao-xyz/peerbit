@@ -1,5 +1,11 @@
 # Changelog
 
+## 3.0.17
+
+### Patch Changes
+
+- [#1332](https://github.com/dao-xyz/peerbit/pull/1332) [`b53f77c`](https://github.com/dao-xyz/peerbit/commit/b53f77cca577b17d19f3e67cc1610c7fa6c69a9f) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Add bounded transactional `putBatch` writes shared safely across SQLite scopes.
+
 ## 3.0.16
 
 ### Patch Changes
