@@ -1,5 +1,11 @@
 # Changelog
 
+## 3.0.12
+
+### Patch Changes
+
+- [#1340](https://github.com/dao-xyz/peerbit/pull/1340) [`e3df1cc`](https://github.com/dao-xyz/peerbit/commit/e3df1ccbb708da56e90e954965d13719b2614bfc) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Add bounded ordered index write sessions with successful-prefix and cross-scope isolation guarantees.
+
 ## 3.0.11
 
 ### Patch Changes

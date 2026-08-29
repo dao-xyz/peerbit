@@ -1,5 +1,17 @@
 # Changelog
 
+## 2.0.98
+
+### Patch Changes
+
+- Updated dependencies [[`305e779`](https://github.com/dao-xyz/peerbit/commit/305e779cd7bc517e4631d83425640c05c34f43f4), [`e3df1cc`](https://github.com/dao-xyz/peerbit/commit/e3df1ccbb708da56e90e954965d13719b2614bfc), [`551da76`](https://github.com/dao-xyz/peerbit/commit/551da763788f45d0cf31d472531c477a10ac2eef)]:
+  - @peerbit/shared-log@16.0.13
+  - @peerbit/indexer-interface@3.0.12
+  - @peerbit/log@6.2.23
+  - @peerbit/program@6.0.54
+  - @peerbit/canonical-host@1.0.74
+  - @peerbit/canonical-client@1.1.57
+
 ## 2.0.97
 
 ### Patch Changes

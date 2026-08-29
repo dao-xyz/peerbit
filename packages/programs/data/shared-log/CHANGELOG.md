@@ -1,5 +1,20 @@
 # Changelog
 
+## 16.0.13
+
+### Patch Changes
+
+- [#1342](https://github.com/dao-xyz/peerbit/pull/1342) [`305e779`](https://github.com/dao-xyz/peerbit/commit/305e779cd7bc517e4631d83425640c05c34f43f4) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Batch-verify eligible receive signatures even when a program `canAppend` hook is configured.
+
+- [#1339](https://github.com/dao-xyz/peerbit/pull/1339) [`551da76`](https://github.com/dao-xyz/peerbit/commit/551da763788f45d0cf31d472531c477a10ac2eef) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Add opt-in remote application confirmation for replication role and range updates.
+
+- Updated dependencies [[`e3df1cc`](https://github.com/dao-xyz/peerbit/commit/e3df1ccbb708da56e90e954965d13719b2614bfc)]:
+  - @peerbit/indexer-interface@3.0.12
+  - @peerbit/indexer-sqlite3@3.0.18
+  - @peerbit/log@6.2.23
+  - @peerbit/program@6.0.54
+  - @peerbit/rpc@6.1.22
+
 ## 16.0.12
 
 ### Patch Changes
