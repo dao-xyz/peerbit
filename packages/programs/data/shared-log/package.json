@@ -54,6 +54,8 @@
 		"clean": "aegir clean",
 		"build": "aegir build --no-bundle",
 		"benchmark:adaptive-ingest": "node --loader ts-node/esm ./benchmark/adaptive-ingest.ts",
+		"benchmark:batch-canappend-signatures": "node --expose-gc --loader ts-node/esm ./benchmark/batch-canappend-signatures.ts",
+		"benchmark:batch-canappend-signatures-shared-fs": "node --expose-gc --loader ts-node/esm ./benchmark/batch-canappend-signatures.ts --profile shared-fs --skipNoCanAppend --json",
 		"benchmark:append-storage": "node --loader ts-node/esm ./benchmark/index.ts",
 		"benchmark:join-backfill-repair": "node --loader ts-node/esm ./benchmark/join-backfill-repair.ts",
 		"benchmark:native-graph": "node --loader ts-node/esm ./benchmark/native-graph.ts",
