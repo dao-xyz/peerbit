@@ -1,5 +1,12 @@
 # Changelog
 
+## 3.2.65
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @peerbit/log@6.2.22
+
 ## 3.2.64
 
 ### Patch Changes

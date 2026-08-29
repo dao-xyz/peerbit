@@ -1,5 +1,14 @@
 # Changelog
 
+## 6.0.98
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @peerbit/log@6.2.22
+  - @peerbit/document@15.0.12
+  - @peerbit/shared-log@16.0.12
+
 ## 6.0.97
 
 ### Patch Changes
