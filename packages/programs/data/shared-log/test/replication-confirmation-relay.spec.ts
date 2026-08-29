@@ -7,7 +7,7 @@ import type { TransportMessage } from "../src/message.js";
 import { isReplicationInfoV2Message } from "../src/replication.js";
 import { EventStore } from "./utils/stores/event-store.js";
 
-describe("replication application confirmation relay recovery", () => {
+describe("replicate application confirmation relay recovery", () => {
 	let session: TestSession | undefined;
 	let source: EventStore<string, any> | undefined;
 	let target: EventStore<string, any> | undefined;
