@@ -7,7 +7,9 @@ This benchmark answers a narrower question than the synthetic scale census:
 > than a fresh 1,000-document peer?
 
 It is evidence for [#1286](https://github.com/dao-xyz/peerbit/issues/1286).
-It changes no runtime behavior, storage format, protocol, or public API.
+With no compaction flags it changes no runtime behavior, storage format,
+protocol, or public API. Optional checkpoint thresholds exercise the runtime's
+explicitly enabled coordinate-persistence compaction path.
 
 ## Matched workload
 
@@ -28,6 +30,12 @@ quiesces GID cleanup, block writes, native delete cleanup, and coordinate and
 document journals before it samples state and closes normally. The reopen
 process starts from an empty runtime, opens the same directory, validates it,
 and closes normally again.
+
+When configured, the same `compactMaxJournalBytes` and
+`compactMaxJournalRecords` values are passed to both controls and both worker
+processes. Either threshold triggers compaction based on the combined size or
+record count of the transactionally coupled coordinate, document-value, and
+document-signer WALs.
 
 The batch size must not exceed the retained window. This keeps every trim in a
 steady-state batch: an oversized initial batch can otherwise test batch
@@ -75,6 +83,7 @@ Filesystem measurements include logical bytes, allocated bytes, individual
 files, and these categories:
 
 - entry-block store;
+- coordinate-persistence checkpoint generations and checkpoint state;
 - coordinate WAL;
 - document value and signer WALs;
 - head index;
@@ -100,7 +109,7 @@ pnpm run bench:shared-log-lifecycle-census
 ```
 
 The default is the canonical matched `fresh 1k` versus `100k -> retain 1k`
-run. For a quick local check:
+run with compaction disabled. For a quick local check:
 
 ```bash
 pnpm run bench:shared-log-lifecycle-census -- \
@@ -108,6 +117,26 @@ pnpm run bench:shared-log-lifecycle-census -- \
   --retain 100 \
   --batch-size 100
 ```
+
+To measure an explicitly bounded candidate, set either or both compaction
+thresholds. Omitting both is the matched unbounded baseline:
+
+```bash
+pnpm run bench:shared-log-lifecycle-census -- \
+  --history-count 100000 \
+  --retain 1000 \
+  --batch-size 256 \
+  --compact-max-journal-bytes 67108864 \
+  --output lifecycle-census-bounded.json \
+  --json > /dev/null
+```
+
+`--compact-max-journal-records` provides the equivalent record-count gate. The
+environment forms are
+`SHARED_LOG_LIFECYCLE_COMPACT_MAX_JOURNAL_BYTES` and
+`SHARED_LOG_LIFECYCLE_COMPACT_MAX_JOURNAL_RECORDS`. The report records the
+resolved policy in `meta.coordinateCompaction`, so baseline and candidate
+artifacts remain self-describing.
 
 Use a checkpoint file for the canonical run:
 
@@ -125,8 +154,8 @@ The JSON envelope is named `shared-log-lifecycle-census`, schema version 1.
 replaced atomically at each checkpoint.
 
 The manual `Shared log re-census` workflow exposes this as
-`scale-lifecycle-trim`. Ordinary CI runs only `12 -> retain 4`; the canonical
-100k workload remains manual.
+`scale-lifecycle-trim`, with optional byte and record threshold inputs. Ordinary
+CI runs only `12 -> retain 4`; the canonical 100k workload remains manual.
 
 ## Development-machine observation
 

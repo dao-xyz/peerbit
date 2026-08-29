@@ -243,31 +243,43 @@ describe("durable native commit acknowledgement", function () {
 		close: persistence.close.bind(persistence),
 	});
 
-	it("reopens an acknowledged native append after SIGKILL", async function () {
-		if (process.platform === "win32") {
-			this.skip();
-		}
+	const runAcknowledgedAppendHardKill = async <
+		T extends { event: string },
+	>(options: {
+		directoryPrefix: string;
+		writerMode: string;
+		readerMode: string;
+		ackEvent: string;
+		readEvent: string;
+		afterWriterKill?: (storeDirectory: string) => Promise<void>;
+	}): Promise<{
+		acknowledged: { event: string; hash: string };
+		reopened: T;
+	}> => {
 		directory = await fs.mkdtemp(
-			path.join(os.tmpdir(), "peerbit-durable-native-hard-kill-"),
+			path.join(os.tmpdir(), options.directoryPrefix),
 		);
 		const workerPath = path.join(
 			process.cwd(),
 			"test/durable-native-hard-kill-worker.mjs",
 		);
-		const writer = spawn(process.execPath, [workerPath, "write", directory], {
-			stdio: ["ignore", "pipe", "pipe"],
-		});
+		const writer = spawn(
+			process.execPath,
+			[workerPath, options.writerMode, directory],
+			{ stdio: ["ignore", "pipe", "pipe"] },
+		);
 		const writerExit = once(writer, "exit");
-		let acknowledged: { event: "ack"; hash: string } | undefined;
+		let acknowledged: { event: string; hash: string } | undefined;
 		try {
 			acknowledged = await waitForWorkerMessage<{
-				event: "ack";
+				event: string;
 				hash: string;
-			}>(writer, "hard-kill write acknowledgement");
+			}>(writer, `${options.writerMode} acknowledgement`);
+			expect(acknowledged.event).equal(options.ackEvent);
 			expect(writer.kill("SIGKILL")).equal(true);
 			await within(
 				writerExit.then(() => undefined),
-				"hard-kill writer exit",
+				`${options.writerMode} writer exit`,
 			);
 		} finally {
 			if (writer.exitCode === null && writer.signalCode === null) {
@@ -277,29 +289,26 @@ describe("durable native commit acknowledgement", function () {
 		if (!acknowledged) {
 			throw new Error("Writer exited without an acknowledgement");
 		}
+		await options.afterWriterKill?.(directory);
 
 		const reader = spawn(
 			process.execPath,
-			[workerPath, "read", directory, acknowledged.hash],
+			[workerPath, options.readerMode, directory, acknowledged.hash],
 			{ stdio: ["ignore", "pipe", "pipe"] },
 		);
 		const readerExit = once(reader, "exit") as Promise<
 			[number | null, NodeJS.Signals | null]
 		>;
+		let reopened: T | undefined;
 		try {
-			const reopened = await waitForWorkerMessage<{
-				event: "read";
-				documentName?: string;
-				entryHash?: string;
-			}>(reader, "hard-kill reopen");
-			expect(reopened).deep.equal({
-				event: "read",
-				documentName: "hard-kill",
-				entryHash: acknowledged.hash,
-			});
+			reopened = await waitForWorkerMessage<T>(
+				reader,
+				`${options.readerMode} reopen`,
+			);
+			expect(reopened.event).equal(options.readEvent);
 			const [exitCode] = await within(
 				readerExit,
-				"hard-kill reader exit",
+				`${options.readerMode} reader exit`,
 				30_000,
 			);
 			expect(exitCode).equal(0);
@@ -308,6 +317,80 @@ describe("durable native commit acknowledgement", function () {
 				reader.kill("SIGKILL");
 			}
 		}
+		if (!reopened) {
+			throw new Error("Reader exited without a reopen result");
+		}
+		return { acknowledged, reopened };
+	};
+
+	it("reopens an acknowledged native append after SIGKILL", async function () {
+		if (process.platform === "win32") {
+			this.skip();
+		}
+		const { acknowledged, reopened } = await runAcknowledgedAppendHardKill<{
+			event: "read";
+			documentName?: string;
+			entryHash?: string;
+		}>({
+			directoryPrefix: "peerbit-durable-native-hard-kill-",
+			writerMode: "write",
+			readerMode: "read",
+			ackEvent: "ack",
+			readEvent: "read",
+		});
+		expect(reopened).deep.equal({
+			event: "read",
+			documentName: "hard-kill",
+			entryHash: acknowledged.hash,
+		});
+	});
+
+	it("reopens an exact strict native append after forced checkpoint compaction and SIGKILL", async function () {
+		if (process.platform === "win32") {
+			this.skip();
+		}
+		const { acknowledged, reopened } = await runAcknowledgedAppendHardKill<{
+			event: "checkpoint-read";
+			documentName?: string;
+			entryHash?: string;
+			lowerLogLength: number;
+			indexed: boolean;
+			coordinateVisible: boolean;
+			headHashes: string[];
+		}>({
+			directoryPrefix: "peerbit-durable-native-checkpoint-hard-kill-",
+			writerMode: "checkpoint-write",
+			readerMode: "checkpoint-read",
+			ackEvent: "checkpoint-ack",
+			readEvent: "checkpoint-read",
+			afterWriterKill: async (storeDirectory) => {
+				const files = await fs.readdir(
+					path.join(storeDirectory, "coordinate-wal"),
+				);
+				expect(files).to.include("coordinates.bin.checkpoint-state");
+				const checkpointFiles = files.filter((name) =>
+					/^coordinates\.bin\.checkpoint-[ab]$/.test(name),
+				);
+				expect(checkpointFiles).to.have.length(1);
+				const slot = checkpointFiles[0].endsWith("-a") ? "a" : "b";
+				for (const file of [
+					`coordinates.wal.checkpoint-${slot}`,
+					`document-values.wal.checkpoint-${slot}`,
+					`document-signers.wal.checkpoint-${slot}`,
+				]) {
+					expect(files, `${file} was not durably published`).to.include(file);
+				}
+			},
+		});
+		expect(reopened).deep.equal({
+			event: "checkpoint-read",
+			documentName: "hard-kill",
+			entryHash: acknowledged.hash,
+			lowerLogLength: 1,
+			indexed: true,
+			coordinateVisible: true,
+			headHashes: [acknowledged.hash],
+		});
 	});
 
 	it("fails closed when the only native intent slot is corrupt", async () => {

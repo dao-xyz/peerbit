@@ -21,6 +21,16 @@ on:
           - scale-persistent-roots
           - scale-persistent-coordinate
           - scale-lifecycle-trim
+      compact_max_journal_bytes:
+        description: Optional total byte threshold for lifecycle coordinate-WAL compaction
+        required: false
+        default: ""
+        type: string
+      compact_max_journal_records:
+        description: Optional total record threshold for lifecycle coordinate-WAL compaction
+        required: false
+        default: ""
+        type: string
 
 permissions: {}
 
@@ -105,6 +115,8 @@ jobs:
           RECEIVE_PRUNE_COUNTS: "100,1000,5000"
           RECEIVE_PRUNE_RUNS: "1"
           RECEIVE_PRUNE_WARMUP_RUNS: "0"
+          SHARED_LOG_LIFECYCLE_COMPACT_MAX_JOURNAL_BYTES: ${{ inputs.compact_max_journal_bytes }}
+          SHARED_LOG_LIFECYCLE_COMPACT_MAX_JOURNAL_RECORDS: ${{ inputs.compact_max_journal_records }}
         run: |
           set -euo pipefail
           destination="$GITHUB_WORKSPACE/profile-results/${PROFILE}.json"

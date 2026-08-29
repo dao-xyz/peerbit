@@ -3010,6 +3010,12 @@ export type NativeBackboneCoordinatePersistenceStore = {
 	readLimited?(name: string, maxBytes: number): Promise<Uint8Array | undefined>;
 	write(name: string, bytes: Uint8Array): Promise<void>;
 	/**
+	 * Durably replace one named file without exposing a torn destination. The
+	 * replacement is not visible until its bytes and containing directory have
+	 * crossed their physical durability barriers.
+	 */
+	atomicReplace?(name: string, bytes: Uint8Array): Promise<void>;
+	/**
 	 * Appends `bytes` to the named file. Callers hand over ownership of
 	 * `bytes` and must not mutate it afterwards: buffering stores keep the
 	 * array until their next flush instead of copying it. A rejected append
@@ -3124,12 +3130,12 @@ export const nativeBackboneCoordinateDropTombstoneFile =
 	"native-backbone-drop.tombstone";
 
 export const defaultNativeBackboneCoordinateFlushMaxPendingBytes = 1024 * 1024;
-/** @deprecated Built-in coordinate persistence compaction is currently disabled. */
+/** Recommended explicit byte threshold for crash-safe Node checkpointing. */
 export const defaultNativeBackboneCoordinateCompactMaxJournalBytes =
 	64 * 1024 * 1024;
 
 const nativeBackboneCoordinateCompactionDisabledMessage =
-	"Native backbone coordinate persistence compaction is disabled until snapshots use a crash-safe generation protocol";
+	"Native backbone coordinate persistence compaction is disabled for stores without crash-safe atomic replacement";
 
 const nativeBackboneCoordinateJournalMagic = Uint8Array.from([
 	0x50, 0x42, 0x52, 0x49, 0x44, 0x58, 0x57, 0x31,
@@ -3148,6 +3154,260 @@ const coordinateJournalChecksum = (bytes: Uint8Array): number => {
 		checksum = Math.imul(checksum ^ byte, 0x01000193) >>> 0;
 	}
 	return checksum;
+};
+
+type NativeBackboneCoordinateCheckpointSlot = "a" | "b";
+
+type NativeBackboneCoordinateCheckpointAuthority = {
+	generation: bigint;
+	byteLength: number;
+	checksum: number;
+};
+
+type NativeBackboneCoordinateCheckpointState = {
+	configurationChecksum: number;
+	highwater: bigint;
+	pending?: NativeBackboneCoordinateCheckpointAuthority;
+	completed?: NativeBackboneCoordinateCheckpointAuthority;
+};
+
+type NativeBackboneCoordinateCheckpoint = {
+	configurationChecksum: number;
+	generation: bigint;
+	coordinateSnapshot: Uint8Array;
+	documentSnapshot: Uint8Array;
+	documentSignerSnapshot: Uint8Array;
+};
+
+const nativeBackboneCoordinateCheckpointMagic = Uint8Array.from([
+	0x50, 0x42, 0x52, 0x49, 0x44, 0x58, 0x43, 0x31,
+]);
+const nativeBackboneCoordinateCheckpointStateMagic = Uint8Array.from([
+	0x50, 0x42, 0x52, 0x49, 0x44, 0x58, 0x53, 0x31,
+]);
+const nativeBackboneCoordinateLegacyMigrationSentinel = (() => {
+	const payload = Uint8Array.of(0xff);
+	const bytes = new Uint8Array(
+		nativeBackboneCoordinateJournalMagic.byteLength + 8 + payload.byteLength,
+	);
+	bytes.set(nativeBackboneCoordinateJournalMagic, 0);
+	const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+	view.setUint32(nativeBackboneCoordinateJournalMagic.byteLength, 1, true);
+	view.setUint32(
+		nativeBackboneCoordinateJournalMagic.byteLength + 4,
+		coordinateJournalChecksum(payload),
+		true,
+	);
+	bytes.set(payload, nativeBackboneCoordinateJournalMagic.byteLength + 8);
+	return bytes;
+})();
+const nativeBackboneCoordinateCheckpointVersion = 1;
+const nativeBackboneCoordinateCheckpointHeaderBytes = 56;
+const nativeBackboneCoordinateCheckpointStateBytes = 60;
+const nativeBackboneCoordinateMaxU64 = (1n << 64n) - 1n;
+
+const hasBytesPrefix = (bytes: Uint8Array, prefix: Uint8Array): boolean =>
+	bytes.byteLength >= prefix.byteLength &&
+	prefix.every((byte, index) => bytes[index] === byte);
+
+const writeCoordinateCheckpointU64 = (
+	view: DataView,
+	offset: number,
+	value: bigint,
+): void => {
+	if (value < 0n || value > nativeBackboneCoordinateMaxU64) {
+		throw new RangeError("Native backbone checkpoint generation exceeds u64");
+	}
+	view.setUint32(offset, Number(value & 0xffff_ffffn), true);
+	view.setUint32(offset + 4, Number(value >> 32n), true);
+};
+
+const readCoordinateCheckpointU64 = (view: DataView, offset: number): bigint =>
+	BigInt(view.getUint32(offset, true)) |
+	(BigInt(view.getUint32(offset + 4, true)) << 32n);
+
+const encodeNativeBackboneCoordinateCheckpoint = (
+	checkpoint: NativeBackboneCoordinateCheckpoint,
+): Uint8Array => {
+	const coordinateLength = checkpoint.coordinateSnapshot.byteLength;
+	const documentLength = checkpoint.documentSnapshot.byteLength;
+	const signerLength = checkpoint.documentSignerSnapshot.byteLength;
+	const byteLength =
+		nativeBackboneCoordinateCheckpointHeaderBytes +
+		coordinateLength +
+		documentLength +
+		signerLength;
+	if (!Number.isSafeInteger(byteLength) || byteLength > 0xffff_ffff) {
+		throw new RangeError("Native backbone coordinate checkpoint is too large");
+	}
+	const bytes = new Uint8Array(byteLength);
+	bytes.set(nativeBackboneCoordinateCheckpointMagic, 0);
+	const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+	view.setUint32(8, nativeBackboneCoordinateCheckpointVersion, true);
+	view.setUint32(12, nativeBackboneCoordinateCheckpointHeaderBytes, true);
+	writeCoordinateCheckpointU64(view, 16, checkpoint.generation);
+	view.setUint32(24, coordinateLength, true);
+	view.setUint32(28, documentLength, true);
+	view.setUint32(32, signerLength, true);
+	view.setUint32(
+		36,
+		coordinateJournalChecksum(checkpoint.coordinateSnapshot),
+		true,
+	);
+	view.setUint32(
+		40,
+		coordinateJournalChecksum(checkpoint.documentSnapshot),
+		true,
+	);
+	view.setUint32(
+		44,
+		coordinateJournalChecksum(checkpoint.documentSignerSnapshot),
+		true,
+	);
+	view.setUint32(48, checkpoint.configurationChecksum, true);
+	view.setUint32(52, coordinateJournalChecksum(bytes.subarray(8, 52)), true);
+	let offset = nativeBackboneCoordinateCheckpointHeaderBytes;
+	bytes.set(checkpoint.coordinateSnapshot, offset);
+	offset += coordinateLength;
+	bytes.set(checkpoint.documentSnapshot, offset);
+	offset += documentLength;
+	bytes.set(checkpoint.documentSignerSnapshot, offset);
+	return bytes;
+};
+
+const parseNativeBackboneCoordinateCheckpoint = (
+	bytes: Uint8Array,
+	name: string,
+): NativeBackboneCoordinateCheckpoint => {
+	if (
+		bytes.byteLength < nativeBackboneCoordinateCheckpointHeaderBytes ||
+		!hasBytesPrefix(bytes, nativeBackboneCoordinateCheckpointMagic)
+	) {
+		throw new Error(`Native backbone ${name} has an invalid checkpoint header`);
+	}
+	const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+	if (
+		view.getUint32(8, true) !== nativeBackboneCoordinateCheckpointVersion ||
+		view.getUint32(12, true) !==
+			nativeBackboneCoordinateCheckpointHeaderBytes ||
+		view.getUint32(52, true) !==
+			coordinateJournalChecksum(bytes.subarray(8, 52))
+	) {
+		throw new Error(`Native backbone ${name} has invalid checkpoint metadata`);
+	}
+	const coordinateLength = view.getUint32(24, true);
+	const documentLength = view.getUint32(28, true);
+	const signerLength = view.getUint32(32, true);
+	const expectedLength =
+		nativeBackboneCoordinateCheckpointHeaderBytes +
+		coordinateLength +
+		documentLength +
+		signerLength;
+	if (
+		!Number.isSafeInteger(expectedLength) ||
+		expectedLength !== bytes.byteLength
+	) {
+		throw new Error(`Native backbone ${name} has an invalid checkpoint length`);
+	}
+	let offset = nativeBackboneCoordinateCheckpointHeaderBytes;
+	const coordinateSnapshot = bytes.subarray(offset, offset + coordinateLength);
+	offset += coordinateLength;
+	const documentSnapshot = bytes.subarray(offset, offset + documentLength);
+	offset += documentLength;
+	const documentSignerSnapshot = bytes.subarray(offset, offset + signerLength);
+	if (
+		coordinateJournalChecksum(coordinateSnapshot) !==
+			view.getUint32(36, true) ||
+		coordinateJournalChecksum(documentSnapshot) !== view.getUint32(40, true) ||
+		coordinateJournalChecksum(documentSignerSnapshot) !==
+			view.getUint32(44, true)
+	) {
+		throw new Error(
+			`Native backbone ${name} has a checkpoint checksum mismatch`,
+		);
+	}
+	return {
+		configurationChecksum: view.getUint32(48, true),
+		generation: readCoordinateCheckpointU64(view, 16),
+		coordinateSnapshot,
+		documentSnapshot,
+		documentSignerSnapshot,
+	};
+};
+
+const encodeNativeBackboneCoordinateCheckpointState = (
+	state: NativeBackboneCoordinateCheckpointState,
+): Uint8Array => {
+	const bytes = new Uint8Array(nativeBackboneCoordinateCheckpointStateBytes);
+	bytes.set(nativeBackboneCoordinateCheckpointStateMagic, 0);
+	const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+	view.setUint32(8, nativeBackboneCoordinateCheckpointVersion, true);
+	view.setUint32(12, state.configurationChecksum, true);
+	writeCoordinateCheckpointU64(view, 16, state.highwater);
+	writeCoordinateCheckpointU64(view, 24, state.pending?.generation ?? 0n);
+	view.setUint32(32, state.pending?.byteLength ?? 0, true);
+	view.setUint32(36, state.pending?.checksum ?? 0, true);
+	writeCoordinateCheckpointU64(view, 40, state.completed?.generation ?? 0n);
+	view.setUint32(48, state.completed?.byteLength ?? 0, true);
+	view.setUint32(52, state.completed?.checksum ?? 0, true);
+	view.setUint32(56, coordinateJournalChecksum(bytes.subarray(8, 56)), true);
+	return bytes;
+};
+
+const parseNativeBackboneCoordinateCheckpointState = (
+	bytes: Uint8Array,
+	name: string,
+): NativeBackboneCoordinateCheckpointState => {
+	if (
+		bytes.byteLength !== nativeBackboneCoordinateCheckpointStateBytes ||
+		!hasBytesPrefix(bytes, nativeBackboneCoordinateCheckpointStateMagic)
+	) {
+		throw new Error(
+			`Native backbone ${name} has an invalid checkpoint authority`,
+		);
+	}
+	const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+	if (
+		view.getUint32(8, true) !== nativeBackboneCoordinateCheckpointVersion ||
+		view.getUint32(56, true) !==
+			coordinateJournalChecksum(bytes.subarray(8, 56))
+	) {
+		throw new Error(`Native backbone ${name} has corrupt checkpoint authority`);
+	}
+	const configurationChecksum = view.getUint32(12, true);
+	const highwater = readCoordinateCheckpointU64(view, 16);
+	const pendingGeneration = readCoordinateCheckpointU64(view, 24);
+	const completedGeneration = readCoordinateCheckpointU64(view, 40);
+	const authority = (
+		generation: bigint,
+		lengthOffset: number,
+		checksumOffset: number,
+	): NativeBackboneCoordinateCheckpointAuthority | undefined => {
+		const byteLength = view.getUint32(lengthOffset, true);
+		const checksum = view.getUint32(checksumOffset, true);
+		if (generation === 0n) {
+			if (byteLength !== 0 || checksum !== 0) {
+				throw new Error(`Native backbone ${name} has empty authority metadata`);
+			}
+			return undefined;
+		}
+		if (byteLength < nativeBackboneCoordinateCheckpointHeaderBytes) {
+			throw new Error(`Native backbone ${name} has invalid authority length`);
+		}
+		return { generation, byteLength, checksum };
+	};
+	const pending = authority(pendingGeneration, 32, 36);
+	const completed = authority(completedGeneration, 48, 52);
+	if (
+		(completed && completed.generation > highwater) ||
+		(pending && pending.generation !== highwater) ||
+		(pending && completed && pending.generation <= completed.generation) ||
+		(!pending && completed && completed.generation !== highwater) ||
+		(!pending && !completed && highwater !== 0n)
+	) {
+		throw new Error(`Native backbone ${name} has invalid generation authority`);
+	}
+	return { configurationChecksum, highwater, pending, completed };
 };
 
 const hasCoordinateJournalMagic = (bytes: Uint8Array): boolean =>
@@ -3199,11 +3459,24 @@ const resolveCoordinateFlushMaxPendingBytes = (
 			? defaultNativeBackboneCoordinateFlushMaxPendingBytes
 			: undefined;
 
+const validateCoordinateCompactionThreshold = (
+	value: number,
+	name: string,
+): number => {
+	if (!Number.isSafeInteger(value) || value <= 0) {
+		throw new RangeError(
+			`Native backbone ${name} must be a positive safe integer`,
+		);
+	}
+	return value;
+};
+
 type NativeBackboneNodeFs = {
 	mkdir(path: string, options?: { recursive?: boolean }): Promise<unknown>;
 	readFile(path: string): Promise<Uint8Array>;
 	writeFile(path: string, data: Uint8Array): Promise<unknown>;
 	appendFile(path: string, data: Uint8Array): Promise<unknown>;
+	rename?(from: string, to: string): Promise<unknown>;
 	/** Explicit capability for pre-allocation-bounded positional reads. */
 	openBoundedRead?(
 		path: string,
@@ -8979,6 +9252,7 @@ export class NativeBackboneNodeCoordinatePersistenceStore
 		maxBytes: number,
 	) => Promise<Uint8Array | undefined>;
 	readonly durableBarrier?: (name?: string) => Promise<void>;
+	readonly atomicReplace?: (name: string, bytes: Uint8Array) => Promise<void>;
 
 	constructor(
 		private readonly directory: string,
@@ -8993,6 +9267,12 @@ export class NativeBackboneNodeCoordinatePersistenceStore
 		if (!fs || typeof fs.openBoundedRead === "function") {
 			this.readLimited = (name, maxBytes) =>
 				this.readWithinLimit(name, maxBytes);
+		}
+		if (
+			!fs ||
+			(typeof fs.open === "function" && typeof fs.rename === "function")
+		) {
+			this.atomicReplace = (name, bytes) => this.replaceAtomically(name, bytes);
 		}
 	}
 
@@ -9174,6 +9454,51 @@ export class NativeBackboneNodeCoordinatePersistenceStore
 		const path = await this.filePath(name);
 		await this.closeAppendHandle(path);
 		await fs.writeFile(path, bytes);
+	}
+
+	private async replaceAtomically(
+		name: string,
+		bytes: Uint8Array,
+	): Promise<void> {
+		const fs = await this.ensureDirectory();
+		if (!fs.open || !fs.rename) {
+			throw new Error(
+				"Node coordinate persistence does not expose atomic file replacement",
+			);
+		}
+		const validName = validateCoordinatePersistenceName(name);
+		const temporaryName = validateCoordinatePersistenceName(`${validName}.tmp`);
+		const path = await this.filePath(validName);
+		const temporaryPath = await this.filePath(temporaryName);
+		await this.closeAppendHandle(path);
+		await this.closeAppendHandle(temporaryPath);
+		await fs.rm(temporaryPath, { force: true });
+		await fs.writeFile(temporaryPath, bytes);
+		let temporaryHandle: NativeBackboneNodeAppendFileHandle | undefined;
+		try {
+			temporaryHandle = await fs.open(temporaryPath, "r");
+			if (typeof temporaryHandle.sync !== "function") {
+				throw new Error(
+					"Node coordinate persistence atomic replacement does not expose FileHandle.sync",
+				);
+			}
+			await temporaryHandle.sync();
+		} finally {
+			await temporaryHandle?.close();
+		}
+		await fs.rename(temporaryPath, path);
+		let directoryHandle: NativeBackboneNodeAppendFileHandle | undefined;
+		try {
+			directoryHandle = await fs.open(this.directory, "r");
+			if (typeof directoryHandle.sync !== "function") {
+				throw new Error(
+					"Node coordinate persistence atomic replacement does not expose directory sync",
+				);
+			}
+			await directoryHandle.sync();
+		} finally {
+			await directoryHandle?.close();
+		}
 	}
 
 	async append(name: string, bytes: Uint8Array): Promise<void> {
@@ -9528,6 +9853,7 @@ export class NativeBackboneBufferedCoordinatePersistenceStore
 	) => Promise<Uint8Array | undefined>;
 	readonly supportsRemoval: boolean;
 	readonly durableBarrier?: (name?: string) => Promise<void>;
+	readonly atomicReplace?: (name: string, bytes: Uint8Array) => Promise<void>;
 
 	constructor(
 		private readonly inner: NativeBackboneCoordinatePersistenceStore,
@@ -9544,6 +9870,12 @@ export class NativeBackboneBufferedCoordinatePersistenceStore
 			this.durableBarrier = async (name) => {
 				await this.flush(name);
 				await inner.durableBarrier!(name);
+			};
+		}
+		if (typeof inner.atomicReplace === "function") {
+			this.atomicReplace = async (name, bytes) => {
+				await this.flush(name);
+				await inner.atomicReplace!(name, bytes);
 			};
 		}
 	}
@@ -9691,7 +10023,7 @@ export class NativeBackboneCoordinatePersistence {
 	readonly flushIntervalMs?: number;
 	readonly compactMaxJournalBytes?: number;
 	readonly compactMaxJournalRecords?: number;
-	readonly crashSafeCompaction = false;
+	readonly crashSafeCompaction: boolean;
 	readonly durableBarrier: boolean;
 	readonly supportsDrop: boolean;
 	readonly dropIsTerminal = true;
@@ -9701,9 +10033,32 @@ export class NativeBackboneCoordinatePersistence {
 	private readonly documentJournalFile: string;
 	private readonly documentSignerSnapshotFile: string;
 	private readonly documentSignerJournalFile: string;
+	private readonly checkpointConfigurationChecksum: number;
+	private readonly checkpointStateFile: string;
+	private readonly checkpointFiles: Record<
+		NativeBackboneCoordinateCheckpointSlot,
+		string
+	>;
+	private readonly checkpointJournalFiles: Record<
+		NativeBackboneCoordinateCheckpointSlot,
+		{
+			coordinate: string;
+			document: string;
+			signer: string;
+		}
+	>;
 	private journalInitialized: boolean | undefined;
+	private journalByteLength = 0;
+	private journalRecordCount = 0;
 	private documentJournalInitialized: boolean | undefined;
+	private documentJournalByteLength = 0;
+	private documentJournalRecordCount = 0;
 	private documentSignerJournalInitialized: boolean | undefined;
+	private documentSignerJournalByteLength = 0;
+	private documentSignerJournalRecordCount = 0;
+	private checkpointHighwater = 0n;
+	private checkpointCompleted?: NativeBackboneCoordinateCheckpointAuthority;
+	private checkpointPending?: NativeBackboneCoordinateCheckpointAuthority;
 	private lastFlushMs = Date.now();
 	private persistenceQueue: Promise<unknown> | undefined;
 	private persistenceLifecycle:
@@ -9750,23 +10105,86 @@ export class NativeBackboneCoordinatePersistence {
 			options.documentSignerJournal ??
 				nativeBackboneCoordinatePersistenceFiles.documentSignerJournal,
 		);
+		this.checkpointConfigurationChecksum = coordinateJournalChecksum(
+			new TextEncoder().encode(
+				JSON.stringify([
+					this.snapshotFile,
+					this.journalFile,
+					this.documentSnapshotFile,
+					this.documentJournalFile,
+					this.documentSignerSnapshotFile,
+					this.documentSignerJournalFile,
+				]),
+			),
+		);
+		this.checkpointStateFile = validateCoordinatePersistenceName(
+			`${this.snapshotFile}.checkpoint-state`,
+		);
+		this.checkpointFiles = {
+			a: validateCoordinatePersistenceName(`${this.snapshotFile}.checkpoint-a`),
+			b: validateCoordinatePersistenceName(`${this.snapshotFile}.checkpoint-b`),
+		};
+		this.checkpointJournalFiles = {
+			a: {
+				coordinate: validateCoordinatePersistenceName(
+					`${this.journalFile}.checkpoint-a`,
+				),
+				document: validateCoordinatePersistenceName(
+					`${this.documentJournalFile}.checkpoint-a`,
+				),
+				signer: validateCoordinatePersistenceName(
+					`${this.documentSignerJournalFile}.checkpoint-a`,
+				),
+			},
+			b: {
+				coordinate: validateCoordinatePersistenceName(
+					`${this.journalFile}.checkpoint-b`,
+				),
+				document: validateCoordinatePersistenceName(
+					`${this.documentJournalFile}.checkpoint-b`,
+				),
+				signer: validateCoordinatePersistenceName(
+					`${this.documentSignerJournalFile}.checkpoint-b`,
+				),
+			},
+		};
 		if (
-			this.configuredFiles().includes(nativeBackboneCoordinateDropTombstoneFile)
+			this.configuredFiles().includes(
+				nativeBackboneCoordinateDropTombstoneFile,
+			) ||
+			new Set(this.configuredFiles()).size !== this.configuredFiles().length
 		) {
 			throw new Error(
-				"Native backbone coordinate persistence file conflicts with its drop tombstone",
+				"Native backbone coordinate persistence files conflict with one another or with its drop tombstone",
 			);
 		}
+		this.crashSafeCompaction =
+			typeof store.atomicReplace === "function" &&
+			this.supportsDrop &&
+			this.durableBarrier;
 		this.flushOnAppend = options.flushOnAppend ?? true;
 		this.flushMaxPendingBytes = resolveCoordinateFlushMaxPendingBytes(options);
 		if (options.flushIntervalMs != null) {
 			this.flushIntervalMs = Math.max(0, options.flushIntervalMs);
 		}
 		if (
-			options.compactMaxJournalBytes != null ||
-			options.compactMaxJournalRecords != null
+			(options.compactMaxJournalBytes != null ||
+				options.compactMaxJournalRecords != null) &&
+			!this.crashSafeCompaction
 		) {
 			throw new Error(nativeBackboneCoordinateCompactionDisabledMessage);
+		}
+		if (options.compactMaxJournalBytes != null) {
+			this.compactMaxJournalBytes = validateCoordinateCompactionThreshold(
+				options.compactMaxJournalBytes,
+				"compactMaxJournalBytes",
+			);
+		}
+		if (options.compactMaxJournalRecords != null) {
+			this.compactMaxJournalRecords = validateCoordinateCompactionThreshold(
+				options.compactMaxJournalRecords,
+				"compactMaxJournalRecords",
+			);
 		}
 	}
 
@@ -9775,7 +10193,7 @@ export class NativeBackboneCoordinatePersistence {
 		return this.store;
 	}
 
-	private configuredFiles(): string[] {
+	private legacyConfiguredFiles(): string[] {
 		return [
 			this.snapshotFile,
 			this.journalFile,
@@ -9784,6 +10202,47 @@ export class NativeBackboneCoordinatePersistence {
 			this.documentSignerSnapshotFile,
 			this.documentSignerJournalFile,
 		];
+	}
+
+	private configuredFiles(): string[] {
+		return [
+			...this.legacyConfiguredFiles(),
+			this.checkpointStateFile,
+			this.checkpointFiles.a,
+			this.checkpointFiles.b,
+			this.checkpointJournalFiles.a.coordinate,
+			this.checkpointJournalFiles.a.document,
+			this.checkpointJournalFiles.a.signer,
+			this.checkpointJournalFiles.b.coordinate,
+			this.checkpointJournalFiles.b.document,
+			this.checkpointJournalFiles.b.signer,
+			`${this.checkpointStateFile}.tmp`,
+			`${this.checkpointFiles.a}.tmp`,
+			`${this.checkpointFiles.b}.tmp`,
+			`${this.journalFile}.tmp`,
+			`${nativeBackboneCoordinateDropTombstoneFile}.tmp`,
+		];
+	}
+
+	private checkpointSlot(
+		generation: bigint,
+	): NativeBackboneCoordinateCheckpointSlot {
+		return generation % 2n === 1n ? "a" : "b";
+	}
+
+	private activeJournalFiles(): {
+		coordinate: string;
+		document: string;
+		signer: string;
+	} {
+		const completed = this.checkpointCompleted;
+		return completed
+			? this.checkpointJournalFiles[this.checkpointSlot(completed.generation)]
+			: {
+					coordinate: this.journalFile,
+					document: this.documentJournalFile,
+					signer: this.documentSignerJournalFile,
+				};
 	}
 
 	private assertLifecycleActive(operation: string): void {
@@ -9795,9 +10254,7 @@ export class NativeBackboneCoordinatePersistence {
 	}
 
 	private assertActive(operation: string): void {
-		if (this.persistenceFailure !== undefined) {
-			throw this.persistenceFailure;
-		}
+		this.assertPersistenceHealthy();
 		this.assertLifecycleActive(operation);
 		if (this.dropInitiatedOnGeneration) {
 			throw new Error(
@@ -9806,11 +10263,42 @@ export class NativeBackboneCoordinatePersistence {
 		}
 	}
 
+	private assertPersistenceHealthy(): void {
+		if (this.persistenceFailure !== undefined) {
+			throw this.persistenceFailure;
+		}
+	}
+
 	private resetJournalTracking(): void {
 		this.journalInitialized = undefined;
+		this.journalByteLength = 0;
+		this.journalRecordCount = 0;
 		this.documentJournalInitialized = undefined;
+		this.documentJournalByteLength = 0;
+		this.documentJournalRecordCount = 0;
 		this.documentSignerJournalInitialized = undefined;
+		this.documentSignerJournalByteLength = 0;
+		this.documentSignerJournalRecordCount = 0;
+		this.checkpointHighwater = 0n;
+		this.checkpointCompleted = undefined;
+		this.checkpointPending = undefined;
 		this.lastFlushMs = Date.now();
+	}
+
+	private async persistDropTombstone(
+		files: readonly string[],
+		preferAtomicReplace = false,
+	): Promise<void> {
+		const bytes = nativeBackboneCoordinateDropTombstoneBytes(files);
+		if (preferAtomicReplace && this.store.atomicReplace) {
+			await this.store.atomicReplace(
+				nativeBackboneCoordinateDropTombstoneFile,
+				bytes,
+			);
+			return;
+		}
+		await this.store.write(nativeBackboneCoordinateDropTombstoneFile, bytes);
+		await this.barrierFile(nativeBackboneCoordinateDropTombstoneFile);
 	}
 
 	private async eraseDropFiles(files: readonly string[]): Promise<void> {
@@ -9862,17 +10350,7 @@ export class NativeBackboneCoordinatePersistence {
 		this.dropInitiatedOnGeneration = true;
 		this.persistenceLifecycle = "dropping";
 		await this.enqueuePersistence(async () => {
-			await this.store.write(
-				nativeBackboneCoordinateDropTombstoneFile,
-				nativeBackboneCoordinateDropTombstoneBytes(files),
-			);
-			if (this.store.durableBarrier) {
-				await this.store.durableBarrier(
-					nativeBackboneCoordinateDropTombstoneFile,
-				);
-			} else {
-				await this.store.flush?.(nativeBackboneCoordinateDropTombstoneFile);
-			}
+			await this.persistDropTombstone(files);
 			await this.eraseDropFiles(files);
 			this.resetJournalTracking();
 			this.persistenceLifecycle = "dropped";
@@ -9910,6 +10388,57 @@ export class NativeBackboneCoordinatePersistence {
 		});
 	}
 
+	private async barrierFile(name: string): Promise<void> {
+		if (this.store.durableBarrier) {
+			await this.store.durableBarrier(name);
+		} else {
+			await this.store.flush?.(name);
+		}
+	}
+
+	private async hasDurableLegacyMigrationSentinel(): Promise<boolean> {
+		const existing = await this.store.read(this.journalFile);
+		if (
+			existing &&
+			existing.byteLength ===
+				nativeBackboneCoordinateLegacyMigrationSentinel.byteLength &&
+			nativeBackboneCoordinateLegacyMigrationSentinel.every(
+				(byte, index) => existing[index] === byte,
+			)
+		) {
+			// A previous process may have observed the bytes from page cache before
+			// its durability barrier rejected. Cross a fresh barrier on every reopen
+			// before any post-checkpoint WAL append can be admitted.
+			await this.barrierFile(this.journalFile);
+			return true;
+		}
+		return false;
+	}
+
+	private async installLegacyMigrationSentinel(): Promise<void> {
+		if (await this.hasDurableLegacyMigrationSentinel()) {
+			return;
+		}
+		if (!this.store.atomicReplace) {
+			throw new Error(
+				"Native backbone completed checkpoint can not install its downgrade sentinel atomically",
+			);
+		}
+		await this.store.atomicReplace(
+			this.journalFile,
+			nativeBackboneCoordinateLegacyMigrationSentinel,
+		);
+	}
+
+	private async requireLegacyMigrationSentinel(): Promise<void> {
+		if (await this.hasDurableLegacyMigrationSentinel()) {
+			return;
+		}
+		throw new Error(
+			"Native backbone completed checkpoint downgrade sentinel is missing or has been replaced; refusing to overwrite possible legacy writes",
+		);
+	}
+
 	async hydrate(backbone: NativePeerbitBackbone): Promise<number> {
 		this.assertActive("hydrate");
 		// Claim the lifecycle synchronously. close() queues after this complete
@@ -9920,32 +10449,174 @@ export class NativeBackboneCoordinatePersistence {
 				this.assertHydrating();
 				await this.resumeDropInternal("hydrating");
 				this.assertHydrating();
-				const [
-					snapshot,
-					journal,
-					documentSnapshot,
-					documentJournal,
-					documentSignerSnapshot,
-					documentSignerJournal,
-				] = await Promise.all([
-					this.store.read(this.snapshotFile),
-					this.store.read(this.journalFile),
-					this.store.read(this.documentSnapshotFile),
-					this.store.read(this.documentJournalFile),
-					this.store.read(this.documentSignerSnapshotFile),
-					this.store.read(this.documentSignerJournalFile),
-				]);
+				const checkpointStateBytes = await this.store.read(
+					this.checkpointStateFile,
+				);
 				this.assertHydrating();
-				try {
-					validateCoordinateJournal(journal, this.journalFile);
-					validateCoordinateJournal(documentJournal, this.documentJournalFile);
-					validateCoordinateJournal(
+				let checkpointState:
+					| NativeBackboneCoordinateCheckpointState
+					| undefined;
+				if (checkpointStateBytes) {
+					try {
+						checkpointState = parseNativeBackboneCoordinateCheckpointState(
+							checkpointStateBytes,
+							this.checkpointStateFile,
+						);
+						if (
+							checkpointState.configurationChecksum !==
+							this.checkpointConfigurationChecksum
+						) {
+							throw new Error(
+								"Native backbone checkpoint authority does not match the configured persistence files",
+							);
+						}
+					} catch (error) {
+						this.persistenceFailure ??= error;
+						throw this.persistenceFailure;
+					}
+				}
+				this.checkpointHighwater = checkpointState?.highwater ?? 0n;
+				this.checkpointPending = checkpointState?.pending;
+				this.checkpointCompleted = checkpointState?.completed;
+				let checkpointAuthority = this.checkpointCompleted;
+				let promotePendingCheckpoint = false;
+				if (!checkpointAuthority && this.checkpointPending) {
+					try {
+						// On the first generation only, the sentinel is the durable stage
+						// boundary: publication writes it after the pending checkpoint and its
+						// WAL headers, but before completed authority. A pre-checkpoint reader
+						// can no longer consume legacy state, so recovery may validate and
+						// promote the staged generation. Once a completed generation exists the
+						// sentinel predates later pending work and is not a promotion signal.
+						if (await this.hasDurableLegacyMigrationSentinel()) {
+							checkpointAuthority = this.checkpointPending;
+							promotePendingCheckpoint = true;
+						}
+					} catch (error) {
+						this.persistenceFailure ??= error;
+						throw this.persistenceFailure;
+					}
+				}
+
+				let snapshot: Uint8Array | undefined;
+				let journal: Uint8Array | undefined;
+				let documentSnapshot: Uint8Array | undefined;
+				let documentJournal: Uint8Array | undefined;
+				let documentSignerSnapshot: Uint8Array | undefined;
+				let documentSignerJournal: Uint8Array | undefined;
+				let journalNames = {
+					coordinate: this.journalFile,
+					document: this.documentJournalFile,
+					signer: this.documentSignerJournalFile,
+				};
+				if (checkpointAuthority) {
+					const authority = checkpointAuthority;
+					const authorityKind = promotePendingCheckpoint
+						? "promotable pending"
+						: "completed";
+					const slot = this.checkpointSlot(authority.generation);
+					const checkpointFile = this.checkpointFiles[slot];
+					journalNames = this.checkpointJournalFiles[slot];
+					const [
+						checkpointBytes,
+						coordinateJournal,
+						valueJournal,
+						signerJournal,
+					] = await Promise.all([
+						this.store.read(checkpointFile),
+						this.store.read(journalNames.coordinate),
+						this.store.read(journalNames.document),
+						this.store.read(journalNames.signer),
+					]);
+					this.assertHydrating();
+					try {
+						if (
+							!checkpointBytes ||
+							checkpointBytes.byteLength !== authority.byteLength ||
+							coordinateJournalChecksum(checkpointBytes) !== authority.checksum
+						) {
+							throw new Error(
+								`Native backbone ${authorityKind} checkpoint authority is missing or corrupt`,
+							);
+						}
+						if (!coordinateJournal || !valueJournal || !signerJournal) {
+							throw new Error(
+								`Native backbone ${authorityKind} checkpoint WAL generation is incomplete`,
+							);
+						}
+						const checkpoint = parseNativeBackboneCoordinateCheckpoint(
+							checkpointBytes,
+							checkpointFile,
+						);
+						if (
+							checkpoint.generation !== authority.generation ||
+							checkpoint.configurationChecksum !==
+								this.checkpointConfigurationChecksum
+						) {
+							throw new Error(
+								`Native backbone checkpoint generation or configuration does not match its ${authorityKind} authority`,
+							);
+						}
+						snapshot = checkpoint.coordinateSnapshot;
+						documentSnapshot = checkpoint.documentSnapshot;
+						documentSignerSnapshot = checkpoint.documentSignerSnapshot;
+						journal = coordinateJournal;
+						documentJournal = valueJournal;
+						documentSignerJournal = signerJournal;
+					} catch (error) {
+						this.persistenceFailure ??= error;
+						throw this.persistenceFailure;
+					}
+				} else {
+					[
+						snapshot,
+						journal,
+						documentSnapshot,
+						documentJournal,
+						documentSignerSnapshot,
 						documentSignerJournal,
-						this.documentSignerJournalFile,
-					);
+					] = await Promise.all([
+						this.store.read(this.snapshotFile),
+						this.store.read(this.journalFile),
+						this.store.read(this.documentSnapshotFile),
+						this.store.read(this.documentJournalFile),
+						this.store.read(this.documentSignerSnapshotFile),
+						this.store.read(this.documentSignerJournalFile),
+					]);
+					this.assertHydrating();
+				}
+				try {
+					if (
+						checkpointAuthority &&
+						(!journal ||
+							!hasCoordinateJournalMagic(journal) ||
+							!documentJournal ||
+							!hasCoordinateJournalMagic(documentJournal) ||
+							!documentSignerJournal ||
+							!hasCoordinateJournalMagic(documentSignerJournal))
+					) {
+						throw new Error(
+							`Native backbone ${promotePendingCheckpoint ? "promotable pending" : "completed"} checkpoint WAL generation has a missing or invalid header`,
+						);
+					}
+					validateCoordinateJournal(journal, journalNames.coordinate);
+					validateCoordinateJournal(documentJournal, journalNames.document);
+					validateCoordinateJournal(documentSignerJournal, journalNames.signer);
 				} catch (error) {
 					this.persistenceFailure ??= error;
 					throw this.persistenceFailure;
+				}
+				if (checkpointAuthority && !promotePendingCheckpoint) {
+					try {
+						// Completed authority is never permission to overwrite an ordinary
+						// legacy WAL: it may contain writes made by a downgraded process in the
+						// publication cut. Require the exact durable sentinel before loading.
+						await this.requireLegacyMigrationSentinel();
+						this.assertHydrating();
+					} catch (error) {
+						this.persistenceFailure ??= error;
+						throw this.persistenceFailure;
+					}
 				}
 				let operations: number;
 				let documentOperations: number;
@@ -9978,12 +10649,52 @@ export class NativeBackboneCoordinatePersistence {
 					}
 					throw error;
 				}
+				if (promotePendingCheckpoint) {
+					try {
+						const authority = checkpointAuthority!;
+						if (!this.store.atomicReplace) {
+							throw new Error(
+								"Native backbone pending checkpoint can not publish completed authority atomically",
+							);
+						}
+						await this.store.atomicReplace(
+							this.checkpointStateFile,
+							encodeNativeBackboneCoordinateCheckpointState({
+								configurationChecksum: this.checkpointConfigurationChecksum,
+								highwater: authority.generation,
+								completed: authority,
+							}),
+						);
+						this.checkpointCompleted = authority;
+						this.checkpointPending = undefined;
+						this.assertHydrating();
+					} catch (error) {
+						this.persistenceFailure ??= error;
+						throw this.persistenceFailure;
+					}
+				}
+				if (this.checkpointCompleted || this.checkpointPending) {
+					try {
+						await this.cleanupRetiredCheckpointFiles();
+						this.assertHydrating();
+					} catch (error) {
+						this.persistenceFailure ??= error;
+						throw this.persistenceFailure;
+					}
+				}
 				this.assertHydrating();
 				this.journalInitialized = !!journal && journal.byteLength > 0;
+				this.journalByteLength = journal?.byteLength ?? 0;
+				this.journalRecordCount = operations;
 				this.documentJournalInitialized =
 					!!documentJournal && documentJournal.byteLength > 0;
+				this.documentJournalByteLength = documentJournal?.byteLength ?? 0;
+				this.documentJournalRecordCount = documentOperations;
 				this.documentSignerJournalInitialized =
 					!!documentSignerJournal && documentSignerJournal.byteLength > 0;
+				this.documentSignerJournalByteLength =
+					documentSignerJournal?.byteLength ?? 0;
+				this.documentSignerJournalRecordCount = documentSignerOperations;
 				backbone.setCoordinateJournalEnabled(true);
 				backbone.setDocumentJournalEnabled(true);
 				backbone.setDocumentSignerJournalEnabled(true);
@@ -10026,15 +10737,19 @@ export class NativeBackboneCoordinatePersistence {
 			return false;
 		}
 		let tombstone: NativeBackboneCoordinateDropTombstoneBody;
+		let expandedFiles: string[];
 		try {
 			tombstone = parseNativeBackboneCoordinateDropTombstone(bytes);
-			for (const file of this.configuredFiles()) {
+			for (const file of this.legacyConfiguredFiles()) {
 				if (!tombstone.files.includes(file)) {
 					throw new Error(
 						"Native backbone drop tombstone does not cover the configured namespace",
 					);
 				}
 			}
+			expandedFiles = [
+				...new Set([...tombstone.files, ...this.configuredFiles()]),
+			];
 		} catch (error) {
 			// Corruption must never hydrate stale files, but an explicit drop must
 			// remain available to overwrite the bad marker and erase the namespace.
@@ -10042,6 +10757,17 @@ export class NativeBackboneCoordinatePersistence {
 			this.persistenceLifecycle = this.closePromise ? "closing" : "active";
 			throw this.persistenceFailure;
 		}
+		if (expandedFiles.length !== tombstone.files.length) {
+			// Older valid markers only knew the six snapshot/WAL files. Widen the
+			// destructive intent durably before erasing any checkpoint generation,
+			// while preserving additional namespace files recorded by that version.
+			await this.persistDropTombstone(expandedFiles, true);
+			tombstone = { ...tombstone, files: expandedFiles };
+		}
+		// A prior replacement attempt may have made the expanded bytes visible before
+		// its durability barrier rejected. Cross a fresh barrier on every recovery
+		// before allowing any target removal.
+		await this.barrierFile(nativeBackboneCoordinateDropTombstoneFile);
 		await this.eraseDropFiles(tombstone.files);
 		this.resetJournalTracking();
 		this.persistenceLifecycle =
@@ -10098,7 +10824,13 @@ export class NativeBackboneCoordinatePersistence {
 		this.assertActive("flush");
 		// Serialized with compact() so a flush never clears records appended to
 		// the wasm journal while a previous flush was awaiting its disk write.
-		return this.enqueuePersistence(() => this.flushJournalInternal(backbone));
+		return this.enqueuePersistence(() => {
+			// A call can be admitted while an earlier queued write is still in flight.
+			// Re-check the sticky failure at execution time so no suffix can ACK after
+			// that earlier write or authority switch failed.
+			this.assertPersistenceHealthy();
+			return this.flushJournalInternal(backbone);
+		});
 	}
 
 	private enqueuePersistence<T>(fn: () => Promise<T>): Promise<T> {
@@ -10119,9 +10851,185 @@ export class NativeBackboneCoordinatePersistence {
 		return next;
 	}
 
+	private shouldCompactJournal(
+		additionalBytes: number,
+		additionalRecords: number,
+	): boolean {
+		return (
+			(this.compactMaxJournalBytes != null &&
+				this.journalByteLength +
+					this.documentJournalByteLength +
+					this.documentSignerJournalByteLength +
+					additionalBytes >=
+					this.compactMaxJournalBytes) ||
+			(this.compactMaxJournalRecords != null &&
+				this.journalRecordCount +
+					this.documentJournalRecordCount +
+					this.documentSignerJournalRecordCount +
+					additionalRecords >=
+					this.compactMaxJournalRecords)
+		);
+	}
+
+	private nextCheckpointGeneration(): bigint {
+		let generation = this.checkpointHighwater + 1n;
+		const active = this.checkpointCompleted;
+		if (
+			active &&
+			this.checkpointSlot(generation) === this.checkpointSlot(active.generation)
+		) {
+			generation += 1n;
+		}
+		if (generation > nativeBackboneCoordinateMaxU64) {
+			throw new RangeError(
+				"Native backbone checkpoint generation highwater is exhausted",
+			);
+		}
+		return generation;
+	}
+
+	private async publishCheckpoint(checkpoint: {
+		coordinateSnapshot: Uint8Array;
+		documentSnapshot: Uint8Array;
+		documentSignerSnapshot: Uint8Array;
+	}): Promise<void> {
+		if (
+			!this.crashSafeCompaction ||
+			!this.store.atomicReplace ||
+			!this.store.remove
+		) {
+			throw new Error(nativeBackboneCoordinateCompactionDisabledMessage);
+		}
+		const generation = this.nextCheckpointGeneration();
+		const slot = this.checkpointSlot(generation);
+		const checkpointBytes = encodeNativeBackboneCoordinateCheckpoint({
+			configurationChecksum: this.checkpointConfigurationChecksum,
+			generation,
+			...checkpoint,
+		});
+		const authority: NativeBackboneCoordinateCheckpointAuthority = {
+			generation,
+			byteLength: checkpointBytes.byteLength,
+			checksum: coordinateJournalChecksum(checkpointBytes),
+		};
+		const pendingState: NativeBackboneCoordinateCheckpointState = {
+			configurationChecksum: this.checkpointConfigurationChecksum,
+			highwater: generation,
+			pending: authority,
+			completed: this.checkpointCompleted,
+		};
+		await this.store.atomicReplace(
+			this.checkpointStateFile,
+			encodeNativeBackboneCoordinateCheckpointState(pendingState),
+		);
+		this.checkpointHighwater = generation;
+		this.checkpointPending = authority;
+
+		const targetJournals = this.checkpointJournalFiles[slot];
+		for (const file of [
+			targetJournals.coordinate,
+			targetJournals.document,
+			targetJournals.signer,
+		]) {
+			await this.store.remove(file);
+		}
+		const journalHeaders = [
+			[targetJournals.coordinate, nativeBackboneCoordinateJournalMagic],
+			[targetJournals.document, nativeBackboneCoordinateJournalMagic],
+			[targetJournals.signer, nativeBackboneCoordinateJournalMagic],
+		] as const;
+		for (const [file, header] of journalHeaders) {
+			await this.store.write(file, header);
+			await this.barrierFile(file);
+		}
+		await this.store.atomicReplace(this.checkpointFiles[slot], checkpointBytes);
+
+		// A prior release does not understand checkpoint authority. The sentinel is
+		// the first-generation publication boundary: install and durably revalidate
+		// it before completed authority becomes visible. On later generations it
+		// must already be exact; never overwrite possible writes from a downgrade.
+		if (this.checkpointCompleted) {
+			await this.requireLegacyMigrationSentinel();
+		} else {
+			await this.installLegacyMigrationSentinel();
+		}
+
+		const completedState: NativeBackboneCoordinateCheckpointState = {
+			configurationChecksum: this.checkpointConfigurationChecksum,
+			highwater: generation,
+			completed: authority,
+		};
+		await this.store.atomicReplace(
+			this.checkpointStateFile,
+			encodeNativeBackboneCoordinateCheckpointState(completedState),
+		);
+
+		// The completed authority is now the only writable generation. Update all
+		// in-memory routing synchronously before another queued flush can start.
+		this.checkpointCompleted = authority;
+		this.checkpointPending = undefined;
+		this.journalInitialized = true;
+		this.documentJournalInitialized = true;
+		this.documentSignerJournalInitialized = true;
+		this.journalByteLength = nativeBackboneCoordinateJournalMagic.byteLength;
+		this.documentJournalByteLength =
+			nativeBackboneCoordinateJournalMagic.byteLength;
+		this.documentSignerJournalByteLength =
+			nativeBackboneCoordinateJournalMagic.byteLength;
+		this.journalRecordCount = 0;
+		this.documentJournalRecordCount = 0;
+		this.documentSignerJournalRecordCount = 0;
+	}
+
+	private async cleanupRetiredCheckpointFiles(): Promise<void> {
+		if (
+			!this.store.remove ||
+			(!this.checkpointCompleted && !this.checkpointPending)
+		) {
+			return;
+		}
+		const retiredSlot: NativeBackboneCoordinateCheckpointSlot = this
+			.checkpointCompleted
+			? this.checkpointSlot(this.checkpointCompleted.generation) === "a"
+				? "b"
+				: "a"
+			: this.checkpointSlot(this.checkpointPending!.generation);
+		const retiredJournals = this.checkpointJournalFiles[retiredSlot];
+		const files = [
+			...(this.checkpointCompleted
+				? [
+						this.snapshotFile,
+						this.documentSnapshotFile,
+						this.documentJournalFile,
+						this.documentSignerSnapshotFile,
+						this.documentSignerJournalFile,
+					]
+				: []),
+			this.checkpointFiles[retiredSlot],
+			`${this.checkpointFiles[retiredSlot]}.tmp`,
+			retiredJournals.coordinate,
+			retiredJournals.document,
+			retiredJournals.signer,
+		];
+		const removals = await Promise.allSettled(
+			files.map((file) => this.store.remove!(file)),
+		);
+		if (removals.every((result) => result.status === "fulfilled")) {
+			try {
+				await this.store.durableBarrier?.();
+			} catch {
+				// Cleanup is retryable debt. Publication and the caller's ACK already
+				// belong to the new generation, so never turn this into an ambiguous
+				// append failure after the authority switch.
+			}
+		}
+	}
+
 	private async flushJournalInternal(
 		backbone: NativePeerbitBackbone,
+		forceCheckpoint = false,
 	): Promise<number> {
+		this.assertPersistenceHealthy();
 		let written = 0;
 		let persistenceMutationStarted = false;
 		let coordinateBytes: Uint8Array | undefined;
@@ -10133,10 +11041,42 @@ export class NativeBackboneCoordinatePersistence {
 		const documentRecordCount = backbone.documentPendingJournalLength;
 		const signerRecords = backbone.documentSignerJournal();
 		const signerRecordCount = backbone.documentSignerPendingJournalLength;
+		const additionalBytes =
+			coordinateRecords.byteLength +
+			documentRecords.byteLength +
+			signerRecords.byteLength +
+			(coordinateRecords.byteLength > 0 && this.journalInitialized !== true
+				? backbone.coordinateJournalHeader().byteLength
+				: 0) +
+			(documentRecords.byteLength > 0 &&
+			this.documentJournalInitialized !== true
+				? backbone.documentJournalHeader().byteLength
+				: 0) +
+			(signerRecords.byteLength > 0 &&
+			this.documentSignerJournalInitialized !== true
+				? backbone.documentSignerJournalHeader().byteLength
+				: 0);
+		const additionalRecords =
+			coordinateRecordCount + documentRecordCount + signerRecordCount;
+		const checkpointRequested =
+			forceCheckpoint ||
+			(this.crashSafeCompaction &&
+				this.shouldCompactJournal(additionalBytes, additionalRecords));
+		// These three synchronous copies and the journal prefixes above are one
+		// logical cut. No mutation can slip into the checkpoint without also being
+		// represented by one of the captured prefixes.
+		const checkpoint = checkpointRequested
+			? {
+					coordinateSnapshot: backbone.coordinateSnapshot(),
+					documentSnapshot: backbone.documentSnapshot(),
+					documentSignerSnapshot: backbone.documentSignerSnapshot(),
+				}
+			: undefined;
 		try {
+			const activeJournals = this.activeJournalFiles();
 			if (coordinateRecords.byteLength > 0) {
 				if (this.journalInitialized === undefined) {
-					const existing = await this.store.read(this.journalFile);
+					const existing = await this.store.read(activeJournals.coordinate);
 					this.journalInitialized = !!existing && existing.byteLength > 0;
 				}
 				coordinateBytes = this.journalInitialized
@@ -10145,28 +11085,26 @@ export class NativeBackboneCoordinatePersistence {
 							backbone.coordinateJournalHeader(),
 							coordinateRecords,
 						]);
-				await this.store.append(this.journalFile, coordinateBytes);
+				await this.store.append(activeJournals.coordinate, coordinateBytes);
 				persistenceMutationStarted = true;
 				written += coordinateRecords.byteLength;
 			}
 			if (documentRecords.byteLength > 0) {
 				if (this.documentJournalInitialized === undefined) {
-					const existing = await this.store.read(this.documentJournalFile);
+					const existing = await this.store.read(activeJournals.document);
 					this.documentJournalInitialized =
 						!!existing && existing.byteLength > 0;
 				}
 				documentBytes = this.documentJournalInitialized
 					? documentRecords
 					: concatBytes([backbone.documentJournalHeader(), documentRecords]);
-				await this.store.append(this.documentJournalFile, documentBytes);
+				await this.store.append(activeJournals.document, documentBytes);
 				persistenceMutationStarted = true;
 				written += documentRecords.byteLength;
 			}
 			if (signerRecords.byteLength > 0) {
 				if (this.documentSignerJournalInitialized === undefined) {
-					const existing = await this.store.read(
-						this.documentSignerJournalFile,
-					);
+					const existing = await this.store.read(activeJournals.signer);
 					this.documentSignerJournalInitialized =
 						!!existing && existing.byteLength > 0;
 				}
@@ -10176,11 +11114,11 @@ export class NativeBackboneCoordinatePersistence {
 							backbone.documentSignerJournalHeader(),
 							signerRecords,
 						]);
-				await this.store.append(this.documentSignerJournalFile, signerBytes);
+				await this.store.append(activeJournals.signer, signerBytes);
 				persistenceMutationStarted = true;
 				written += signerRecords.byteLength;
 			}
-			if (written === 0) {
+			if (written === 0 && !checkpoint) {
 				this.lastFlushMs = Date.now();
 				return 0;
 			}
@@ -10188,27 +11126,34 @@ export class NativeBackboneCoordinatePersistence {
 			// `append` may only enqueue bytes in a buffered store. Drain and fsync
 			// every affected WAL before clearing its wasm prefix or returning an ACK.
 			for (const file of [
-				coordinateBytes ? this.journalFile : undefined,
-				documentBytes ? this.documentJournalFile : undefined,
-				signerBytes ? this.documentSignerJournalFile : undefined,
+				coordinateBytes ? activeJournals.coordinate : undefined,
+				documentBytes ? activeJournals.document : undefined,
+				signerBytes ? activeJournals.signer : undefined,
 			]) {
 				if (file) {
-					if (this.store.durableBarrier) {
-						await this.store.durableBarrier(file);
-					} else {
-						await this.store.flush?.(file);
-					}
+					await this.barrierFile(file);
 				}
 			}
 
 			if (coordinateBytes) {
 				this.journalInitialized = true;
+				this.journalByteLength += coordinateBytes.byteLength;
+				this.journalRecordCount += coordinateRecordCount;
 			}
 			if (documentBytes) {
 				this.documentJournalInitialized = true;
+				this.documentJournalByteLength += documentBytes.byteLength;
+				this.documentJournalRecordCount += documentRecordCount;
 			}
 			if (signerBytes) {
 				this.documentSignerJournalInitialized = true;
+				this.documentSignerJournalByteLength += signerBytes.byteLength;
+				this.documentSignerJournalRecordCount += signerRecordCount;
+			}
+
+			if (checkpoint) {
+				persistenceMutationStarted = true;
+				await this.publishCheckpoint(checkpoint);
 			}
 
 			backbone.clearCoordinateJournalPrefix(
@@ -10223,6 +11168,9 @@ export class NativeBackboneCoordinatePersistence {
 				signerRecords.byteLength,
 				signerRecordCount,
 			);
+			if (checkpoint) {
+				await this.cleanupRetiredCheckpointFiles();
+			}
 			this.lastFlushMs = Date.now();
 			return written;
 		} catch (error) {
@@ -10234,9 +11182,15 @@ export class NativeBackboneCoordinatePersistence {
 		}
 	}
 
-	async compact(_backbone: NativePeerbitBackbone): Promise<void> {
+	async compact(backbone: NativePeerbitBackbone): Promise<void> {
 		this.assertActive("compact");
-		throw new Error(nativeBackboneCoordinateCompactionDisabledMessage);
+		if (!this.crashSafeCompaction) {
+			throw new Error(nativeBackboneCoordinateCompactionDisabledMessage);
+		}
+		await this.enqueuePersistence(async () => {
+			this.assertPersistenceHealthy();
+			await this.flushJournalInternal(backbone, true);
+		});
 	}
 
 	close(): Promise<void> {

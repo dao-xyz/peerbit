@@ -3,6 +3,40 @@ import { parseArgs } from "node:util";
 export const LIFECYCLE_CENSUS_NAME = "shared-log-lifecycle-census";
 export const LIFECYCLE_CENSUS_SCENARIOS = Object.freeze(["fresh", "history"]);
 
+export const classifyLifecycleCensusFile = (path) => {
+	if (
+		/^coordinate-wal\/coordinates\.bin\.checkpoint-(?:state|a|b)$/.test(path)
+	) {
+		return "coordinateCheckpoint";
+	}
+	if (
+		/^coordinate-wal\/coordinates\.(?:bin|wal(?:\.checkpoint-[ab])?)$/.test(
+			path,
+		)
+	) {
+		return "coordinateWal";
+	}
+	if (
+		/^coordinate-wal\/document-values\.(?:bin|wal(?:\.checkpoint-[ab])?)$/.test(
+			path,
+		)
+	) {
+		return "documentValueWal";
+	}
+	if (
+		/^coordinate-wal\/document-signers\.(?:bin|wal(?:\.checkpoint-[ab])?)$/.test(
+			path,
+		)
+	) {
+		return "documentSignerWal";
+	}
+	if (path.includes("/sublevels/blocks/")) return "entryBlockStore";
+	if (path.includes("/log/heads/")) return "headIndex";
+	if (path.includes("/replication/")) return "replicationIndex";
+	if (path.startsWith("libp2p/")) return "libp2p";
+	return "fixedAndOther";
+};
+
 const parsePositiveInteger = (value, label) => {
 	const normalized = String(value).replaceAll("_", "");
 	if (!/^[1-9][0-9]*$/.test(normalized)) {
@@ -21,6 +55,9 @@ const parseScenario = (value) => {
 	}
 	return value;
 };
+
+const nonemptyEnvironmentValue = (value) =>
+	typeof value === "string" && value.trim() === "" ? undefined : value;
 
 const validateWorkload = ({ historyCount, retain, batchSize }) => {
 	if (historyCount <= retain) {
@@ -54,6 +91,8 @@ export const parseLifecycleCensusArgs = (args, env = {}) => {
 			directory: { type: "string" },
 			"probe-hash": { type: "string" },
 			"retained-probe-hash": { type: "string" },
+			"compact-max-journal-bytes": { type: "string" },
+			"compact-max-journal-records": { type: "string" },
 		},
 	});
 
@@ -73,6 +112,34 @@ export const parseLifecycleCensusArgs = (args, env = {}) => {
 		values["batch-size"] ?? env.SHARED_LOG_LIFECYCLE_BATCH_SIZE ?? "256",
 		"batch-size",
 	);
+	const compactMaxJournalBytesValue =
+		values["compact-max-journal-bytes"] ??
+		nonemptyEnvironmentValue(
+			env.SHARED_LOG_LIFECYCLE_COMPACT_MAX_JOURNAL_BYTES,
+		);
+	const compactMaxJournalRecordsValue =
+		values["compact-max-journal-records"] ??
+		nonemptyEnvironmentValue(
+			env.SHARED_LOG_LIFECYCLE_COMPACT_MAX_JOURNAL_RECORDS,
+		);
+	const compactionOptions = {
+		...(compactMaxJournalBytesValue != null
+			? {
+					compactMaxJournalBytes: parsePositiveInteger(
+						compactMaxJournalBytesValue,
+						"compact-max-journal-bytes",
+					),
+				}
+			: {}),
+		...(compactMaxJournalRecordsValue != null
+			? {
+					compactMaxJournalRecords: parsePositiveInteger(
+						compactMaxJournalRecordsValue,
+						"compact-max-journal-records",
+					),
+				}
+			: {}),
+	};
 	validateWorkload({ historyCount, retain, batchSize });
 
 	if (values.worker) {
@@ -111,6 +178,7 @@ export const parseLifecycleCensusArgs = (args, env = {}) => {
 			historyCount,
 			retain,
 			batchSize,
+			...compactionOptions,
 			...(values["probe-hash"] ? { probeHash: values["probe-hash"] } : {}),
 			...(values["retained-probe-hash"]
 				? { retainedProbeHash: values["retained-probe-hash"] }
@@ -136,6 +204,7 @@ export const parseLifecycleCensusArgs = (args, env = {}) => {
 		historyCount,
 		retain,
 		batchSize,
+		...compactionOptions,
 		runs: parsePositiveInteger(
 			values.runs ?? env.SHARED_LOG_LIFECYCLE_RUNS ?? "1",
 			"runs",
@@ -275,6 +344,8 @@ export const buildLifecycleCensusReport = ({
 	historyCount,
 	retain,
 	batchSize,
+	compactMaxJournalBytes,
+	compactMaxJournalRecords,
 	runs,
 	rows,
 	host,
@@ -288,6 +359,10 @@ export const buildLifecycleCensusReport = ({
 		retain,
 		batchSize,
 		runs,
+		coordinateCompaction: {
+			maxJournalBytes: compactMaxJournalBytes ?? null,
+			maxJournalRecords: compactMaxJournalRecords ?? null,
+		},
 		isolation:
 			"fresh and historical controls use separate data directories; seed and reopen use separate processes",
 		measurement:

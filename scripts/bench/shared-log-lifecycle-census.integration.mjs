@@ -27,6 +27,8 @@ test("round-trips a trimmed real Peerbit store in fresh processes", async () => 
 				"4",
 				"--runs",
 				"1",
+				"--compact-max-journal-records",
+				"1",
 				"--output",
 				output,
 				"--json",
@@ -38,6 +40,10 @@ test("round-trips a trimmed real Peerbit store in fresh processes", async () => 
 		assert.deepEqual(JSON.parse(await readFile(output, "utf8")), report);
 		assert.equal(report.name, LIFECYCLE_CENSUS_NAME);
 		assert.equal(report.progress.complete, true);
+		assert.deepEqual(report.meta.coordinateCompaction, {
+			maxJournalBytes: null,
+			maxJournalRecords: 1,
+		});
 		assert.equal(report.rows.length, 1);
 		const [row] = report.rows;
 		assert.equal(row.fresh.seed.count, 4);
@@ -67,6 +73,10 @@ test("round-trips a trimmed real Peerbit store in fresh processes", async () => 
 			row.history.seed,
 			row.history.reopen,
 		]) {
+			assert.ok(
+				measurement.disk.categories.coordinateCheckpoint?.files > 0,
+				"compaction should leave a classified coordinate checkpoint",
+			);
 			assert.equal(measurement.state.enumeratedDocumentRows, 4);
 			assert.equal(measurement.state.retainedLowerShallowMissing, 0);
 			assert.equal(measurement.state.retainedNativeGraphMissing, 0);

@@ -190,6 +190,96 @@ const contextOnlySchema = () => {
 	return Uint8Array.from(out);
 };
 
+const configureCheckpointDocumentSchema = (
+	backbone: NativeBackboneTestInstance,
+): void => {
+	backbone.configureDocumentSchemaIr(contextOnlySchema());
+	backbone.setDocumentContextHeadField(3);
+	backbone.setDocumentContextFields({
+		created: 1,
+		modified: 2,
+		head: 3,
+		gid: 4,
+		size: 5,
+	});
+};
+
+const appendCheckpointFixture = (
+	backbone: NativeBackboneTestInstance,
+	label: string,
+	ordinal: number,
+): void => {
+	backbone.putEntryCoordinates(
+		`hash-checkpoint-${label}`,
+		`gid-checkpoint-coordinate-${label}`,
+		[BigInt(ordinal)],
+		false,
+		1,
+		BigInt(ordinal),
+	);
+	backbone.preparePlainCommittedNoNextStorageAppendDocumentIndexCompactTransaction(
+		{
+			wallTime: BigInt(ordinal),
+			logical: ordinal,
+			gid: `gid-checkpoint-document-${label}`,
+			payloadData: new Uint8Array([ordinal & 0xff]),
+			replicas: 1,
+			selfHash: "peer",
+			documentIndex: {
+				key: `doc-checkpoint-${label}`,
+				valuePrefixBytes: new Uint8Array(0),
+			},
+		},
+	);
+	const documentValue = backbone.documentValueBytes(`doc-checkpoint-${label}`);
+	if (!documentValue) {
+		throw new Error(`Missing checkpoint fixture document ${label}`);
+	}
+	backbone.putDocumentEncodedPartsStored(
+		`doc-checkpoint-${label}`,
+		documentValue,
+		new Uint8Array(0),
+	);
+};
+
+const expectCheckpointFixtures = (
+	backbone: NativeBackboneTestInstance,
+	labels: readonly string[],
+): void => {
+	for (const label of labels) {
+		expect(backbone.hasCoordinateIndexHash(`hash-checkpoint-${label}`)).equal(
+			true,
+		);
+	}
+	expect(
+		Array.from(
+			backbone.documentKeysExist(
+				labels.map((label) => `doc-checkpoint-${label}`),
+			),
+		),
+	).to.deep.equal(labels.map(() => 1));
+	const documentValues = labels.map((label) => {
+		const value = backbone.documentValueBytes(`doc-checkpoint-${label}`);
+		expect(value, `document ${label}`).to.exist;
+		return value!;
+	});
+	backbone.clearDocumentIndex();
+	for (const [index, label] of labels.entries()) {
+		backbone.putDocumentEncodedPartsStored(
+			`doc-checkpoint-${label}`,
+			documentValues[index]!,
+			new Uint8Array(0),
+		);
+		expect(
+			Array.from(
+				backbone.documentPreviousSignaturePublicKey(`doc-checkpoint-${label}`)
+					?.publicKey ?? [],
+			),
+			`signer ${label}`,
+		).to.deep.equal(Array.from(publicKey));
+	}
+};
+
 const configureContextDocumentIndex = (
 	backbone: NativeBackboneTestInstance,
 ): void => {
@@ -3559,6 +3649,152 @@ describe("native peerbit backbone", () => {
 		expect(memory.files.size).equal(0);
 	});
 
+	it("durably upgrades legacy interrupted-drop tombstones before erase", async () => {
+		const legacyFiles = [
+			"coordinates.bin",
+			"coordinates.wal",
+			"document-values.bin",
+			"document-values.wal",
+			"document-signers.bin",
+			"document-signers.wal",
+		] as const;
+		const checkpointFiles = [
+			"coordinates.bin.checkpoint-state",
+			"coordinates.bin.checkpoint-a",
+			"coordinates.bin.checkpoint-b",
+			"coordinates.wal.checkpoint-a",
+			"document-values.wal.checkpoint-a",
+			"document-signers.wal.checkpoint-a",
+			"coordinates.wal.checkpoint-b",
+			"document-values.wal.checkpoint-b",
+			"document-signers.wal.checkpoint-b",
+			"coordinates.bin.checkpoint-state.tmp",
+			"coordinates.bin.checkpoint-a.tmp",
+			"coordinates.bin.checkpoint-b.tmp",
+			"coordinates.wal.tmp",
+			"native-backbone-drop.tombstone.tmp",
+		] as const;
+		const extraFile = "strict-intent-from-old-version";
+		const expectedExpandedFiles = [
+			...legacyFiles,
+			extraFile,
+			...checkpointFiles,
+		];
+		const legacyTombstone = new TextEncoder().encode(
+			JSON.stringify({
+				format: "peerbit-native-backbone-coordinate-drop",
+				version: 1,
+				files: [...legacyFiles, extraFile],
+				// Golden CRC32 from the V1 body above, as emitted before checkpoint files
+				// became part of the configured namespace.
+				checksum: "391beb42",
+			}),
+		);
+
+		for (const atomic of [true, false]) {
+			const memory = new NativeBackboneMemoryCoordinatePersistenceStore();
+			for (const file of expectedExpandedFiles) {
+				await memory.write(file, new Uint8Array([1]));
+			}
+			await memory.write("native-backbone-drop.tombstone", legacyTombstone);
+
+			let rejectRemovals = true;
+			let upgradeWritten = false;
+			let upgradeDurable = false;
+			let removeBeforeUpgradeWasDurable = false;
+			let directTombstoneWrites = 0;
+			let atomicTombstoneReplacements = 0;
+			const flushes: Array<string | undefined> = [];
+			const removals: string[] = [];
+			const store: NativeBackboneCoordinatePersistenceStore = {
+				read: (name) => memory.read(name),
+				write: async (name, bytes) => {
+					if (name === "native-backbone-drop.tombstone") {
+						directTombstoneWrites++;
+						upgradeWritten = true;
+						upgradeDurable = false;
+					}
+					await memory.write(name, bytes);
+				},
+				append: (name, bytes) => memory.append(name, bytes),
+				remove: async (name) => {
+					if (!upgradeDurable) {
+						removeBeforeUpgradeWasDurable = true;
+					}
+					removals.push(name);
+					if (rejectRemovals) {
+						throw new Error("injected post-upgrade erase failure");
+					}
+					await memory.remove(name);
+				},
+				flush: async (name) => {
+					flushes.push(name);
+					await memory.flush(name);
+					if (name === "native-backbone-drop.tombstone" && upgradeWritten) {
+						upgradeDurable = true;
+					}
+				},
+				...(atomic
+					? {
+							atomicReplace: async (name: string, bytes: Uint8Array) => {
+								if (name === "native-backbone-drop.tombstone") {
+									atomicTombstoneReplacements++;
+									upgradeWritten = true;
+									upgradeDurable = true;
+								}
+								await memory.write(name, bytes);
+							},
+						}
+					: {}),
+			};
+
+			const interrupted = new NativeBackboneCoordinatePersistence(store);
+			const firstFailure = await interrupted.resumeDrop().then(
+				() => undefined,
+				(error: unknown) => error,
+			);
+			expect(firstFailure, `atomic=${String(atomic)}`).to.be.instanceOf(
+				AggregateError,
+			);
+			expect(upgradeDurable, `atomic=${String(atomic)}`).equal(true);
+			expect(removeBeforeUpgradeWasDurable, `atomic=${String(atomic)}`).equal(
+				false,
+			);
+			expect(
+				atomicTombstoneReplacements,
+				`atomic replacements, atomic=${String(atomic)}`,
+			).equal(atomic ? 1 : 0);
+			expect(
+				directTombstoneWrites,
+				`direct writes, atomic=${String(atomic)}`,
+			).equal(atomic ? 0 : 1);
+			if (!atomic) {
+				expect(flushes).to.include("native-backbone-drop.tombstone");
+			}
+			const upgradedBytes = memory.files.get("native-backbone-drop.tombstone");
+			expect(upgradedBytes, `atomic=${String(atomic)}`).to.exist;
+			const upgraded = JSON.parse(new TextDecoder().decode(upgradedBytes)) as {
+				files: string[];
+			};
+			expect(upgraded.files, `atomic=${String(atomic)}`).to.deep.equal(
+				expectedExpandedFiles,
+			);
+
+			// A fresh process must validate the upgraded marker and finish its complete
+			// erase without trying to rewrite the already-current intent.
+			rejectRemovals = false;
+			removals.length = 0;
+			const recovering = new NativeBackboneCoordinatePersistence(store);
+			expect(await recovering.resumeDrop()).equal(true);
+			for (const file of expectedExpandedFiles) {
+				expect(removals, `atomic=${String(atomic)}`).to.include(file);
+			}
+			expect(memory.files.size, `atomic=${String(atomic)}`).equal(0);
+			expect(atomicTombstoneReplacements).equal(atomic ? 1 : 0);
+			expect(directTombstoneWrites).equal(atomic ? 0 : 1);
+		}
+	});
+
 	it("makes close terminal before a later drop can touch the store", async () => {
 		const memory = new NativeBackboneMemoryCoordinatePersistenceStore();
 		let closed = false;
@@ -5366,22 +5602,1211 @@ describe("native peerbit backbone", () => {
 		}
 	});
 
-	it("rejects node coordinate WAL compaction thresholds", async () => {
-		const [{ mkdtemp, rm }, { tmpdir }, { join }] = await Promise.all([
+	it("rejects invalid Node checkpoint thresholds", () => {
+		for (const options of [
+			{ compactMaxJournalBytes: 0 },
+			{ compactMaxJournalRecords: Number.NaN },
+		]) {
+			expect(
+				() =>
+					new NativeBackboneNodeCoordinatePersistence(
+						"unused-node-checkpoint-directory",
+						options,
+					),
+			).to.throw(/positive safe integer/);
+		}
+	});
+
+	it("checkpoints and reopens through the buffered Node helper", async () => {
+		const [{ mkdtemp, readdir, rm }, { tmpdir }, { join }] = await Promise.all([
 			import("node:fs/promises"),
 			import("node:os"),
 			import("node:path"),
 		]);
 		const directory = await mkdtemp(
+			join(tmpdir(), "peerbit-native-backbone-buffered-checkpoint-"),
+		);
+		try {
+			const source = await createNativePeerbitBackbone({
+				clockId: publicKey,
+				privateKey,
+				publicKey,
+			});
+			const restored = await createNativePeerbitBackbone({
+				clockId: publicKey,
+				privateKey,
+				publicKey,
+			});
+			for (const backbone of [source, restored]) {
+				configureCheckpointDocumentSchema(backbone);
+			}
+
+			const persistence = createBufferedNativeBackboneNodeCoordinatePersistence(
+				directory,
+				{
+					compactMaxJournalRecords: 1,
+				},
+			);
+			expect(persistence.crashSafeCompaction).equal(true);
+			await persistence.hydrate(source);
+			appendCheckpointFixture(source, "buffered-helper", 1);
+			await persistence.flushJournal(source);
+			await persistence.close?.();
+			expect(await readdir(directory)).to.include(
+				"coordinates.bin.checkpoint-state",
+			);
+
+			const reopening = new NativeBackboneNodeCoordinatePersistence(directory);
+			await reopening.hydrate(restored);
+			expectCheckpointFixtures(restored, ["buffered-helper"]);
+			await reopening.close();
+		} finally {
+			await rm(directory, { recursive: true, force: true });
+		}
+	});
+
+	it("migrates all legacy native WAL domains into an opt-in Node checkpoint", async () => {
+		const [{ mkdtemp, readFile, readdir, rm }, { tmpdir }, { join }] =
+			await Promise.all([
+				import("node:fs/promises"),
+				import("node:os"),
+				import("node:path"),
+			]);
+		const directory = await mkdtemp(
 			join(tmpdir(), "peerbit-native-backbone-node-coordinate-compact-"),
 		);
 		try {
+			const legacySource = await createNativePeerbitBackbone({
+				clockId: publicKey,
+				privateKey,
+				publicKey,
+			});
+			const checkpointSource = await createNativePeerbitBackbone({
+				clockId: publicKey,
+				privateKey,
+				publicKey,
+			});
+			const restored = await createNativePeerbitBackbone({
+				clockId: publicKey,
+				privateKey,
+				publicKey,
+			});
+			for (const backbone of [legacySource, checkpointSource, restored]) {
+				configureCheckpointDocumentSchema(backbone);
+			}
+
+			const legacy = new NativeBackboneNodeCoordinatePersistence(directory);
+			await legacy.hydrate(legacySource);
+			appendCheckpointFixture(legacySource, "legacy", 1);
+			await legacy.flushJournal(legacySource);
+			await legacy.close();
+
+			const checkpointing = new NativeBackboneNodeCoordinatePersistence(
+				directory,
+				{ compactMaxJournalRecords: 1 },
+			);
+			expect(checkpointing.crashSafeCompaction).equal(true);
+			await checkpointing.hydrate(checkpointSource);
+			appendCheckpointFixture(checkpointSource, "migration", 2);
+			await checkpointing.flushJournal(checkpointSource);
+			appendCheckpointFixture(checkpointSource, "rotation", 3);
+			await checkpointing.flushJournal(checkpointSource);
+			await checkpointing.close();
+
+			const files = await readdir(directory);
+			expect(files).to.include("coordinates.bin.checkpoint-state");
+			const downgrade = await createNativePeerbitBackbone({
+				clockId: publicKey,
+				privateKey,
+				publicKey,
+			});
+			const legacySentinel = await readFile(join(directory, "coordinates.wal"));
+			expect(() =>
+				downgrade.loadCoordinateSnapshotAndJournal(undefined, legacySentinel),
+			).to.throw();
+			// Two threshold crossings rotate A -> B. The completed highwater makes B
+			// authoritative and permits cleanup of A as retryable retired state.
+			expect(files).to.include("coordinates.bin.checkpoint-b");
+			expect(files).to.not.include("coordinates.bin.checkpoint-a");
+			for (const journal of [
+				"coordinates.wal",
+				"document-values.wal",
+				"document-signers.wal",
+			]) {
+				expect(files, journal).to.include(`${journal}.checkpoint-b`);
+				expect(files, journal).to.not.include(`${journal}.checkpoint-a`);
+			}
+
+			const reopening = new NativeBackboneNodeCoordinatePersistence(directory);
+			await reopening.hydrate(restored);
+			expectCheckpointFixtures(restored, ["legacy", "migration", "rotation"]);
+			await reopening.close();
+		} finally {
+			await rm(directory, { recursive: true, force: true });
+		}
+	});
+
+	it("recovers exact state across Node checkpoint authority cuts", async () => {
+		const [fsPromises, { tmpdir }, { join }] = await Promise.all([
+			import("node:fs/promises"),
+			import("node:os"),
+			import("node:path"),
+		]);
+		const { mkdtemp, readFile, rm } = fsPromises;
+		const journalNames = [
+			"coordinates.wal",
+			"document-values.wal",
+			"document-signers.wal",
+		] as const;
+		const readU64 = (bytes: Uint8Array, offset: number): bigint => {
+			const view = new DataView(
+				bytes.buffer,
+				bytes.byteOffset,
+				bytes.byteLength,
+			);
+			return (
+				BigInt(view.getUint32(offset, true)) |
+				(BigInt(view.getUint32(offset + 4, true)) << 32n)
+			);
+		};
+		const cases = [
+			{
+				name: "before pending authority",
+				id: "before-pending",
+				failStateRename: 1,
+				recoveredHighwater: 0n,
+				promotesPending: false,
+				completedGeneration: 1n,
+			},
+			{
+				name: "after sentinel and before completed authority",
+				id: "before-completed",
+				failStateRename: 2,
+				recoveredHighwater: 1n,
+				promotesPending: true,
+				completedGeneration: 2n,
+			},
+		] as const;
+
+		for (const testCase of cases) {
+			const directory = await mkdtemp(
+				join(tmpdir(), `peerbit-native-backbone-checkpoint-${testCase.id}-`),
+			);
+			try {
+				let stateRenames = 0;
+				const injectedFailure = new Error(
+					`injected checkpoint cut ${testCase.name}`,
+				);
+				const source = await createNativePeerbitBackbone({
+					clockId: publicKey,
+					privateKey,
+					publicKey,
+				});
+				configureCheckpointDocumentSchema(source);
+				const failing = new NativeBackboneNodeCoordinatePersistence(directory, {
+					fs: {
+						mkdir: async (path, options) => fsPromises.mkdir(path, options),
+						readFile: async (path) => fsPromises.readFile(path),
+						writeFile: async (path, data) => fsPromises.writeFile(path, data),
+						appendFile: async (path, data) => fsPromises.appendFile(path, data),
+						openBoundedRead: async (path) => fsPromises.open(path, "r"),
+						open: async (path, flags) => fsPromises.open(path, flags),
+						rename: async (from, to) => {
+							if (
+								to.endsWith("coordinates.bin.checkpoint-state") &&
+								++stateRenames === testCase.failStateRename
+							) {
+								throw injectedFailure;
+							}
+							await fsPromises.rename(from, to);
+						},
+						rm: async (path, options) => fsPromises.rm(path, options),
+					},
+				});
+				await failing.hydrate(source);
+				appendCheckpointFixture(source, `${testCase.id}-base`, 1);
+				await failing.flushJournal(source);
+				appendCheckpointFixture(source, `${testCase.id}-cut`, 2);
+				const failure = await failing.compact(source).then(
+					() => undefined,
+					(error: unknown) => error,
+				);
+				expect(failure, testCase.name).equal(injectedFailure);
+				await failing.close();
+
+				const authoritativeWal = new Map<string, Uint8Array>();
+				for (const journal of journalNames) {
+					authoritativeWal.set(
+						journal,
+						await readFile(join(directory, journal)),
+					);
+				}
+				let cutState: Uint8Array | undefined;
+				try {
+					cutState = await readFile(
+						join(directory, "coordinates.bin.checkpoint-state"),
+					);
+				} catch (error) {
+					if ((error as { code?: string }).code !== "ENOENT") {
+						throw error;
+					}
+				}
+				if (testCase.recoveredHighwater === 0n) {
+					expect(cutState, testCase.name).equal(undefined);
+				} else {
+					expect(cutState, testCase.name).to.exist;
+					expect(readU64(cutState!, 16), `${testCase.name} highwater`).equal(
+						testCase.recoveredHighwater,
+					);
+					expect(readU64(cutState!, 24), `${testCase.name} pending`).equal(
+						testCase.recoveredHighwater,
+					);
+					expect(readU64(cutState!, 40), `${testCase.name} completed`).equal(
+						0n,
+					);
+				}
+
+				const recovered = await createNativePeerbitBackbone({
+					clockId: publicKey,
+					privateKey,
+					publicKey,
+				});
+				configureCheckpointDocumentSchema(recovered);
+				const recovery = new NativeBackboneNodeCoordinatePersistence(directory);
+				await recovery.hydrate(recovered);
+				expectCheckpointFixtures(recovered, [
+					`${testCase.id}-base`,
+					`${testCase.id}-cut`,
+				]);
+				expect(recovered.coordinateIndexLength, testCase.name).equal(4);
+				expect(recovered.coordinateValueLength, testCase.name).equal(4);
+				expect(recovered.documentIndexLength, testCase.name).equal(2);
+				expect(recovered.documentValueLength, testCase.name).equal(2);
+				if (!testCase.promotesPending) {
+					for (const journal of journalNames) {
+						expect(
+							await readFile(join(directory, journal)),
+							`${testCase.name} ${journal} authority`,
+						).to.deep.equal(authoritativeWal.get(journal));
+					}
+				}
+				const recoveredJournalNames = journalNames.map((journal) =>
+					testCase.promotesPending ? `${journal}.checkpoint-a` : journal,
+				);
+				const recoveredWal = new Map<string, Uint8Array>();
+				for (const journal of recoveredJournalNames) {
+					recoveredWal.set(journal, await readFile(join(directory, journal)));
+				}
+
+				appendCheckpointFixture(recovered, `${testCase.id}-writable`, 3);
+				await recovery.flushJournal(recovered);
+				for (const journal of recoveredJournalNames) {
+					const before = recoveredWal.get(journal)!;
+					const after = await readFile(join(directory, journal));
+					expect(
+						after.subarray(0, before.byteLength),
+						`${testCase.name} ${journal} prefix`,
+					).to.deep.equal(before);
+					expect(
+						after.byteLength,
+						`${testCase.name} ${journal} writable`,
+					).to.be.greaterThan(before.byteLength);
+				}
+
+				await recovery.compact(recovered);
+				await recovery.close();
+				const completedState = await readFile(
+					join(directory, "coordinates.bin.checkpoint-state"),
+				);
+				expect(readU64(completedState, 16), `${testCase.name} highwater`).equal(
+					testCase.completedGeneration,
+				);
+				expect(readU64(completedState, 24), `${testCase.name} pending`).equal(
+					0n,
+				);
+				expect(readU64(completedState, 40), `${testCase.name} completed`).equal(
+					testCase.completedGeneration,
+				);
+
+				const verified = await createNativePeerbitBackbone({
+					clockId: publicKey,
+					privateKey,
+					publicKey,
+				});
+				configureCheckpointDocumentSchema(verified);
+				const verifier = new NativeBackboneNodeCoordinatePersistence(directory);
+				await verifier.hydrate(verified);
+				expectCheckpointFixtures(verified, [
+					`${testCase.id}-base`,
+					`${testCase.id}-cut`,
+					`${testCase.id}-writable`,
+				]);
+				expect(verified.coordinateIndexLength, testCase.name).equal(6);
+				expect(verified.coordinateValueLength, testCase.name).equal(6);
+				expect(verified.documentIndexLength, testCase.name).equal(3);
+				expect(verified.documentValueLength, testCase.name).equal(3);
+				await verifier.close();
+			} finally {
+				await rm(directory, { recursive: true, force: true });
+			}
+		}
+	});
+
+	it("recovers across every checkpoint publication mutation cut", async () => {
+		type FaultOperation =
+			| "atomicReplace"
+			| "remove"
+			| "write"
+			| "durableBarrier";
+		type FaultCase = {
+			id: string;
+			operation: FaultOperation;
+			target: string;
+			timing: "before" | "after";
+			occurrence?: number;
+			rotation?: boolean;
+			cleanupFailure?: boolean;
+			legacyReadable: boolean;
+			expectedCompletedGeneration: bigint;
+		};
+		const cases: readonly FaultCase[] = [
+			{
+				id: "pending-before-effect",
+				operation: "atomicReplace",
+				target: "coordinates.bin.checkpoint-state",
+				timing: "before",
+				legacyReadable: true,
+				expectedCompletedGeneration: 1n,
+			},
+			{
+				id: "pending-after-effect",
+				operation: "atomicReplace",
+				target: "coordinates.bin.checkpoint-state",
+				timing: "after",
+				legacyReadable: true,
+				expectedCompletedGeneration: 2n,
+			},
+			{
+				id: "wal-reset-after-effect",
+				operation: "remove",
+				target: "coordinates.wal.checkpoint-a",
+				timing: "after",
+				legacyReadable: true,
+				expectedCompletedGeneration: 2n,
+			},
+			{
+				id: "wal-header-after-effect",
+				operation: "write",
+				target: "coordinates.wal.checkpoint-a",
+				timing: "after",
+				legacyReadable: true,
+				expectedCompletedGeneration: 2n,
+			},
+			{
+				id: "wal-barrier-after-effect",
+				operation: "durableBarrier",
+				target: "coordinates.wal.checkpoint-a",
+				timing: "after",
+				legacyReadable: true,
+				expectedCompletedGeneration: 2n,
+			},
+			{
+				id: "checkpoint-before-effect",
+				operation: "atomicReplace",
+				target: "coordinates.bin.checkpoint-a",
+				timing: "before",
+				legacyReadable: true,
+				expectedCompletedGeneration: 2n,
+			},
+			{
+				id: "checkpoint-after-effect",
+				operation: "atomicReplace",
+				target: "coordinates.bin.checkpoint-a",
+				timing: "after",
+				legacyReadable: true,
+				expectedCompletedGeneration: 2n,
+			},
+			{
+				id: "completed-before-effect",
+				operation: "atomicReplace",
+				target: "coordinates.bin.checkpoint-state",
+				timing: "before",
+				occurrence: 2,
+				legacyReadable: false,
+				expectedCompletedGeneration: 2n,
+			},
+			{
+				id: "completed-after-effect",
+				operation: "atomicReplace",
+				target: "coordinates.bin.checkpoint-state",
+				timing: "after",
+				occurrence: 2,
+				legacyReadable: false,
+				expectedCompletedGeneration: 2n,
+			},
+			{
+				id: "sentinel-before-effect",
+				operation: "atomicReplace",
+				target: "coordinates.wal",
+				timing: "before",
+				legacyReadable: true,
+				expectedCompletedGeneration: 2n,
+			},
+			{
+				id: "sentinel-after-effect",
+				operation: "atomicReplace",
+				target: "coordinates.wal",
+				timing: "after",
+				legacyReadable: false,
+				expectedCompletedGeneration: 2n,
+			},
+			{
+				id: "rotation-pending-after-effect",
+				operation: "atomicReplace",
+				target: "coordinates.bin.checkpoint-state",
+				timing: "after",
+				rotation: true,
+				legacyReadable: false,
+				expectedCompletedGeneration: 4n,
+			},
+			{
+				id: "rotation-checkpoint-after-effect",
+				operation: "atomicReplace",
+				target: "coordinates.bin.checkpoint-b",
+				timing: "after",
+				rotation: true,
+				legacyReadable: false,
+				expectedCompletedGeneration: 4n,
+			},
+			{
+				id: "rotation-completed-after-effect",
+				operation: "atomicReplace",
+				target: "coordinates.bin.checkpoint-state",
+				timing: "after",
+				occurrence: 2,
+				rotation: true,
+				legacyReadable: false,
+				expectedCompletedGeneration: 3n,
+			},
+			{
+				id: "rotation-cleanup-before-effect",
+				operation: "remove",
+				target: "coordinates.bin.checkpoint-a",
+				timing: "before",
+				rotation: true,
+				cleanupFailure: true,
+				legacyReadable: false,
+				expectedCompletedGeneration: 2n,
+			},
+		];
+
+		for (const testCase of cases) {
+			const memory = new NativeBackboneMemoryCoordinatePersistenceStore();
+			const injectedFailure = new Error(
+				`injected ${testCase.id} checkpoint failure`,
+			);
+			let armed = false;
+			let matchingCalls = 0;
+			let faultConsumed = false;
+			const invoke = async <T>(
+				operation: FaultOperation,
+				target: string,
+				effect: () => Promise<T>,
+			): Promise<T> => {
+				if (
+					!armed ||
+					faultConsumed ||
+					operation !== testCase.operation ||
+					target !== testCase.target
+				) {
+					return effect();
+				}
+				matchingCalls++;
+				if (matchingCalls !== (testCase.occurrence ?? 1)) {
+					return effect();
+				}
+				faultConsumed = true;
+				if (testCase.timing === "before") {
+					throw injectedFailure;
+				}
+				await effect();
+				throw injectedFailure;
+			};
+			const store: NativeBackboneCoordinatePersistenceStore = {
+				supportsRemoval: true,
+				read: (name) => memory.read(name),
+				readLimited: (name, maxBytes) => memory.readLimited(name, maxBytes),
+				write: (name, bytes) =>
+					invoke("write", name, () => memory.write(name, bytes)),
+				atomicReplace: (name, bytes) =>
+					invoke("atomicReplace", name, () => memory.write(name, bytes)),
+				append: (name, bytes) => memory.append(name, bytes),
+				remove: (name) => invoke("remove", name, () => memory.remove(name)),
+				durableBarrier: (name) =>
+					invoke("durableBarrier", name ?? "", () => memory.flush(name)),
+				flush: (name) => memory.flush(name),
+			};
+			const source = await createNativePeerbitBackbone({
+				clockId: publicKey,
+				privateKey,
+				publicKey,
+			});
+			configureCheckpointDocumentSchema(source);
+			const persistence = new NativeBackboneCoordinatePersistence(store);
+			await persistence.hydrate(source);
+			appendCheckpointFixture(source, `${testCase.id}-base`, 1);
+			await persistence.flushJournal(source);
+			if (testCase.rotation) {
+				await persistence.compact(source);
+			}
+			appendCheckpointFixture(source, `${testCase.id}-cut`, 2);
+			armed = true;
+			const failure = await persistence.compact(source).then(
+				() => undefined,
+				(error: unknown) => error,
+			);
+			armed = false;
+			expect(faultConsumed, testCase.id).equal(true);
+			if (testCase.cleanupFailure) {
+				expect(failure, testCase.id).equal(undefined);
+				expect(
+					memory.files.has("coordinates.bin.checkpoint-a"),
+					`${testCase.id} retained cleanup debt`,
+				).equal(true);
+			} else {
+				expect(failure, testCase.id).equal(injectedFailure);
+			}
+
+			// Model a pre-checkpoint package by reading only the six legacy files and
+			// ignoring checkpoint authority. Every stable publication cut must expose
+			// either the complete authoritative legacy generation or the semantic
+			// rejection sentinel; it must never expose a stale-but-readable downgrade.
+			const legacyReader = await createNativePeerbitBackbone({
+				clockId: publicKey,
+				privateKey,
+				publicKey,
+			});
+			configureCheckpointDocumentSchema(legacyReader);
+			let legacyFailure: unknown;
+			try {
+				legacyReader.loadCoordinateSnapshotAndJournal(
+					await memory.read("coordinates.bin"),
+					await memory.read("coordinates.wal"),
+				);
+				legacyReader.loadDocumentSnapshotAndJournal(
+					await memory.read("document-values.bin"),
+					await memory.read("document-values.wal"),
+				);
+				legacyReader.loadDocumentSignerSnapshotAndJournal(
+					await memory.read("document-signers.bin"),
+					await memory.read("document-signers.wal"),
+				);
+			} catch (error) {
+				legacyFailure = error;
+			}
+			if (testCase.legacyReadable) {
+				expect(legacyFailure, `${testCase.id} legacy authority`).equal(
+					undefined,
+				);
+				expectCheckpointFixtures(legacyReader, [
+					`${testCase.id}-base`,
+					`${testCase.id}-cut`,
+				]);
+			} else {
+				expect(legacyFailure, `${testCase.id} downgrade rejection`).to.exist;
+			}
+
+			// Simulate a process crash by abandoning the failed adapter without close.
+			// The fresh adapter must choose exactly one authority and remain writable.
+			const recovered = await createNativePeerbitBackbone({
+				clockId: publicKey,
+				privateKey,
+				publicKey,
+			});
+			configureCheckpointDocumentSchema(recovered);
+			const recovery = new NativeBackboneCoordinatePersistence(store);
+			await recovery.hydrate(recovered);
+			expectCheckpointFixtures(recovered, [
+				`${testCase.id}-base`,
+				`${testCase.id}-cut`,
+			]);
+			if (testCase.cleanupFailure) {
+				expect(
+					memory.files.has("coordinates.bin.checkpoint-a"),
+					`${testCase.id} retried cleanup debt`,
+				).equal(false);
+			}
+			appendCheckpointFixture(recovered, `${testCase.id}-after`, 3);
+			await recovery.flushJournal(recovered);
+			if (!testCase.cleanupFailure) {
+				await recovery.compact(recovered);
+			}
+			await recovery.close();
+
+			const state = await memory.read("coordinates.bin.checkpoint-state");
+			expect(state, `${testCase.id} completed authority`).to.exist;
+			const stateView = new DataView(
+				state!.buffer,
+				state!.byteOffset,
+				state!.byteLength,
+			);
+			const readU64 = (offset: number) =>
+				BigInt(stateView.getUint32(offset, true)) |
+				(BigInt(stateView.getUint32(offset + 4, true)) << 32n);
+			expect(readU64(16), `${testCase.id} highwater`).equal(
+				testCase.expectedCompletedGeneration,
+			);
+			expect(readU64(24), `${testCase.id} pending`).equal(0n);
+			expect(readU64(40), `${testCase.id} completed`).equal(
+				testCase.expectedCompletedGeneration,
+			);
+
+			const verified = await createNativePeerbitBackbone({
+				clockId: publicKey,
+				privateKey,
+				publicKey,
+			});
+			configureCheckpointDocumentSchema(verified);
+			const verifier = new NativeBackboneCoordinatePersistence(store);
+			await verifier.hydrate(verified);
+			expectCheckpointFixtures(verified, [
+				`${testCase.id}-base`,
+				`${testCase.id}-cut`,
+				`${testCase.id}-after`,
+			]);
+			await verifier.close();
+		}
+	});
+
+	it("never overwrites valid legacy writes after completed checkpoint authority", async () => {
+		const [fsPromises, { tmpdir }, { join }] = await Promise.all([
+			import("node:fs/promises"),
+			import("node:os"),
+			import("node:path"),
+		]);
+		const { appendFile, mkdtemp, readFile, rm, writeFile } = fsPromises;
+		const directory = await mkdtemp(
+			join(tmpdir(), "peerbit-native-backbone-checkpoint-downgrade-write-"),
+		);
+		const journalNames = [
+			"coordinates.wal",
+			"document-values.wal",
+			"document-signers.wal",
+		] as const;
+		try {
+			const source = await createNativePeerbitBackbone({
+				clockId: publicKey,
+				privateKey,
+				publicKey,
+			});
+			configureCheckpointDocumentSchema(source);
+			const persistence = new NativeBackboneNodeCoordinatePersistence(
+				directory,
+			);
+			await persistence.hydrate(source);
+			appendCheckpointFixture(source, "pre-downgrade", 1);
+			await persistence.flushJournal(source);
+			const legacyGeneration = new Map<string, Uint8Array>();
+			for (const journal of journalNames) {
+				legacyGeneration.set(journal, await readFile(join(directory, journal)));
+			}
+			await persistence.compact(source);
+			await persistence.close();
+
+			// A pre-checkpoint process ignores completed authority, restores the last
+			// readable legacy generation, and appends a fully valid new suffix.
+			const downgraded = await createNativePeerbitBackbone({
+				clockId: publicKey,
+				privateKey,
+				publicKey,
+			});
+			configureCheckpointDocumentSchema(downgraded);
+			downgraded.loadCoordinateSnapshotAndJournal(
+				undefined,
+				legacyGeneration.get("coordinates.wal"),
+			);
+			downgraded.loadDocumentSnapshotAndJournal(
+				undefined,
+				legacyGeneration.get("document-values.wal"),
+			);
+			downgraded.loadDocumentSignerSnapshotAndJournal(
+				undefined,
+				legacyGeneration.get("document-signers.wal"),
+			);
+			downgraded.setCoordinateJournalEnabled(true);
+			downgraded.setDocumentJournalEnabled(true);
+			downgraded.setDocumentSignerJournalEnabled(true);
+			appendCheckpointFixture(downgraded, "post-downgrade", 2);
+			const downgradeSuffixes = new Map<string, Uint8Array>([
+				["coordinates.wal", downgraded.coordinateJournal()],
+				["document-values.wal", downgraded.documentJournal()],
+				["document-signers.wal", downgraded.documentSignerJournal()],
+			]);
+			for (const journal of journalNames) {
+				await writeFile(
+					join(directory, journal),
+					legacyGeneration.get(journal)!,
+				);
+				await appendFile(
+					join(directory, journal),
+					downgradeSuffixes.get(journal)!,
+				);
+			}
+			const downgradeCoordinateWal = await readFile(
+				join(directory, "coordinates.wal"),
+			);
+
+			const current = await createNativePeerbitBackbone({
+				clockId: publicKey,
+				privateKey,
+				publicKey,
+			});
+			configureCheckpointDocumentSchema(current);
+			const reopening = new NativeBackboneNodeCoordinatePersistence(directory);
+			const failure = await reopening.hydrate(current).then(
+				() => undefined,
+				(error: unknown) => error,
+			);
+			expect(String(failure)).to.contain(
+				"downgrade sentinel is missing or has been replaced",
+			);
+			expect(await readFile(join(directory, "coordinates.wal"))).to.deep.equal(
+				downgradeCoordinateWal,
+			);
+
+			const legacyVerifier = await createNativePeerbitBackbone({
+				clockId: publicKey,
+				privateKey,
+				publicKey,
+			});
+			configureCheckpointDocumentSchema(legacyVerifier);
+			legacyVerifier.loadCoordinateSnapshotAndJournal(
+				undefined,
+				await readFile(join(directory, "coordinates.wal")),
+			);
+			legacyVerifier.loadDocumentSnapshotAndJournal(
+				undefined,
+				await readFile(join(directory, "document-values.wal")),
+			);
+			legacyVerifier.loadDocumentSignerSnapshotAndJournal(
+				undefined,
+				await readFile(join(directory, "document-signers.wal")),
+			);
+			expectCheckpointFixtures(legacyVerifier, [
+				"pre-downgrade",
+				"post-downgrade",
+			]);
+			await reopening.close();
+		} finally {
+			await rm(directory, { recursive: true, force: true });
+		}
+	});
+
+	it("queues a concurrent WAL suffix behind Node checkpoint publication", async () => {
+		const [fsPromises, { tmpdir }, { join }] = await Promise.all([
+			import("node:fs/promises"),
+			import("node:os"),
+			import("node:path"),
+		]);
+		const { mkdtemp, readFile, rm } = fsPromises;
+		const directory = await mkdtemp(
+			join(tmpdir(), "peerbit-native-backbone-node-checkpoint-suffix-"),
+		);
+		let releasePublication!: () => void;
+		const publicationReleased = new Promise<void>((resolve) => {
+			releasePublication = resolve;
+		});
+		let reportPublication!: () => void;
+		const publicationEntered = new Promise<void>((resolve) => {
+			reportPublication = resolve;
+		});
+		let gatePublication = false;
+		let checkpointStateRenames = 0;
+		try {
+			const source = await createNativePeerbitBackbone({
+				clockId: publicKey,
+				privateKey,
+				publicKey,
+			});
+			const restored = await createNativePeerbitBackbone({
+				clockId: publicKey,
+				privateKey,
+				publicKey,
+			});
+			for (const backbone of [source, restored]) {
+				configureCheckpointDocumentSchema(backbone);
+			}
+			const persistence = new NativeBackboneNodeCoordinatePersistence(
+				directory,
+				{
+					fs: {
+						mkdir: async (path, options) => fsPromises.mkdir(path, options),
+						readFile: async (path) => fsPromises.readFile(path),
+						writeFile: async (path, data) => fsPromises.writeFile(path, data),
+						appendFile: async (path, data) => fsPromises.appendFile(path, data),
+						openBoundedRead: async (path) => fsPromises.open(path, "r"),
+						open: async (path, flags) => fsPromises.open(path, flags),
+						rename: async (from, to) => {
+							if (
+								gatePublication &&
+								to.endsWith("coordinates.bin.checkpoint-state")
+							) {
+								checkpointStateRenames++;
+								if (checkpointStateRenames === 2) {
+									reportPublication();
+									await publicationReleased;
+								}
+							}
+							await fsPromises.rename(from, to);
+						},
+						rm: async (path, options) => fsPromises.rm(path, options),
+					},
+				},
+			);
+			await persistence.hydrate(source);
+			appendCheckpointFixture(source, "base", 1);
+			await persistence.flushJournal(source);
+
+			gatePublication = true;
+			const compacting = persistence.compact(source);
+			await publicationEntered;
+			appendCheckpointFixture(source, "suffix", 2);
+			const flushingSuffix = persistence.flushJournal(source);
+			releasePublication();
+			await compacting;
+			await flushingSuffix;
+			await persistence.close();
+
+			const slotSuffix = async (journal: string, headerBytes: number) => {
+				for (const slot of ["a", "b"]) {
+					try {
+						const bytes = await readFile(
+							join(directory, `${journal}.checkpoint-${slot}`),
+						);
+						if (bytes.byteLength > headerBytes) {
+							return true;
+						}
+					} catch (error) {
+						if ((error as { code?: string }).code !== "ENOENT") {
+							throw error;
+						}
+					}
+				}
+				return false;
+			};
 			expect(
-				() =>
-					new NativeBackboneNodeCoordinatePersistence(directory, {
-						compactMaxJournalRecords: 1,
-					}),
-			).to.throw("compaction is disabled");
+				await slotSuffix(
+					"coordinates.wal",
+					source.coordinateJournalHeader().byteLength,
+				),
+				"coordinate suffix",
+			).equal(true);
+			expect(
+				await slotSuffix(
+					"document-values.wal",
+					source.documentJournalHeader().byteLength,
+				),
+				"document suffix",
+			).equal(true);
+			expect(
+				await slotSuffix(
+					"document-signers.wal",
+					source.documentSignerJournalHeader().byteLength,
+				),
+				"signer suffix",
+			).equal(true);
+
+			const reopening = new NativeBackboneNodeCoordinatePersistence(directory);
+			await reopening.hydrate(restored);
+			expectCheckpointFixtures(restored, ["base", "suffix"]);
+			await reopening.close();
+		} finally {
+			releasePublication();
+			await rm(directory, { recursive: true, force: true });
+		}
+	});
+
+	it("keeps a queued WAL suffix pending after checkpoint publication fails", async () => {
+		const [fsPromises, { tmpdir }, { join }] = await Promise.all([
+			import("node:fs/promises"),
+			import("node:os"),
+			import("node:path"),
+		]);
+		const { mkdtemp, readFile, rm } = fsPromises;
+		const directory = await mkdtemp(
+			join(tmpdir(), "peerbit-native-backbone-checkpoint-queued-failure-"),
+		);
+		let releasePublication!: () => void;
+		const publicationReleased = new Promise<void>((resolve) => {
+			releasePublication = resolve;
+		});
+		let reportPublication!: () => void;
+		const publicationEntered = new Promise<void>((resolve) => {
+			reportPublication = resolve;
+		});
+		const injectedFailure = new Error(
+			"injected checkpoint publication failure",
+		);
+		let checkpointStateRenames = 0;
+		let failPublication = false;
+		try {
+			const source = await createNativePeerbitBackbone({
+				clockId: publicKey,
+				privateKey,
+				publicKey,
+			});
+			configureCheckpointDocumentSchema(source);
+			const persistence = new NativeBackboneNodeCoordinatePersistence(
+				directory,
+				{
+					fs: {
+						mkdir: async (path, options) => fsPromises.mkdir(path, options),
+						readFile: async (path) => fsPromises.readFile(path),
+						writeFile: async (path, data) => fsPromises.writeFile(path, data),
+						appendFile: async (path, data) => fsPromises.appendFile(path, data),
+						openBoundedRead: async (path) => fsPromises.open(path, "r"),
+						open: async (path, flags) => fsPromises.open(path, flags),
+						rename: async (from, to) => {
+							if (
+								failPublication &&
+								to.endsWith("coordinates.bin.checkpoint-state") &&
+								++checkpointStateRenames === 2
+							) {
+								reportPublication();
+								await publicationReleased;
+								throw injectedFailure;
+							}
+							await fsPromises.rename(from, to);
+						},
+						rm: async (path, options) => fsPromises.rm(path, options),
+					},
+				},
+			);
+			await persistence.hydrate(source);
+			appendCheckpointFixture(source, "queued-failure-base", 1);
+			await persistence.flushJournal(source);
+			const legacyWal = new Map<string, Uint8Array>();
+			for (const journal of [
+				"coordinates.wal",
+				"document-values.wal",
+				"document-signers.wal",
+			]) {
+				legacyWal.set(journal, await readFile(join(directory, journal)));
+			}
+
+			failPublication = true;
+			const checkpointing = persistence.compact(source);
+			await publicationEntered;
+			appendCheckpointFixture(source, "queued-failure-suffix", 2);
+			const pendingBeforeRelease = {
+				coordinateRecords: source.coordinatePendingJournalLength,
+				coordinateBytes: source.coordinatePendingJournalByteLength,
+				documentRecords: source.documentPendingJournalLength,
+				documentBytes: source.documentPendingJournalByteLength,
+				signerRecords: source.documentSignerPendingJournalLength,
+				signerBytes: source.documentSignerPendingJournalByteLength,
+			};
+			expect(
+				pendingBeforeRelease.coordinateRecords +
+					pendingBeforeRelease.documentRecords +
+					pendingBeforeRelease.signerRecords,
+			).to.be.greaterThan(0);
+			const queuedFlush = persistence.flushJournal(source);
+			releasePublication();
+			const [checkpointFailure, queuedFailure] = await Promise.all([
+				checkpointing.then(
+					() => undefined,
+					(error: unknown) => error,
+				),
+				queuedFlush.then(
+					() => undefined,
+					(error: unknown) => error,
+				),
+			]);
+			expect(checkpointFailure).equal(injectedFailure);
+			expect(queuedFailure).equal(injectedFailure);
+			expect({
+				coordinateRecords: source.coordinatePendingJournalLength,
+				coordinateBytes: source.coordinatePendingJournalByteLength,
+				documentRecords: source.documentPendingJournalLength,
+				documentBytes: source.documentPendingJournalByteLength,
+				signerRecords: source.documentSignerPendingJournalLength,
+				signerBytes: source.documentSignerPendingJournalByteLength,
+			}).to.deep.equal(pendingBeforeRelease);
+			const legacyCoordinateSentinel = await readFile(
+				join(directory, "coordinates.wal"),
+			);
+			expect(legacyCoordinateSentinel).to.not.deep.equal(
+				legacyWal.get("coordinates.wal"),
+			);
+			const downgrade = await createNativePeerbitBackbone({
+				clockId: publicKey,
+				privateKey,
+				publicKey,
+			});
+			expect(() =>
+				downgrade.loadCoordinateSnapshotAndJournal(
+					undefined,
+					legacyCoordinateSentinel,
+				),
+			).to.throw();
+			for (const journal of ["document-values.wal", "document-signers.wal"]) {
+				expect(await readFile(join(directory, journal)), journal).to.deep.equal(
+					legacyWal.get(journal),
+				);
+			}
+			await persistence.close();
+
+			const restored = await createNativePeerbitBackbone({
+				clockId: publicKey,
+				privateKey,
+				publicKey,
+			});
+			configureCheckpointDocumentSchema(restored);
+			const reopening = new NativeBackboneNodeCoordinatePersistence(directory);
+			await reopening.hydrate(restored);
+			expectCheckpointFixtures(restored, ["queued-failure-base"]);
+			expect(
+				restored.hasCoordinateIndexHash(
+					"hash-checkpoint-queued-failure-suffix",
+				),
+			).equal(false);
+			expect(
+				Array.from(
+					restored.documentKeysExist(["doc-checkpoint-queued-failure-suffix"]),
+				),
+			).to.deep.equal([0]);
+			await reopening.close();
+		} finally {
+			releasePublication();
+			await rm(directory, { recursive: true, force: true });
+		}
+	});
+
+	it("fails closed when completed Node checkpoint authority is corrupt", async () => {
+		const [fsPromises, { tmpdir }, { join }] = await Promise.all([
+			import("node:fs/promises"),
+			import("node:os"),
+			import("node:path"),
+		]);
+		const { mkdtemp, readFile, readdir, rm, writeFile } = fsPromises;
+		const directory = await mkdtemp(
+			join(tmpdir(), "peerbit-native-backbone-node-checkpoint-corrupt-"),
+		);
+		try {
+			const source = await createNativePeerbitBackbone({
+				clockId: publicKey,
+				privateKey,
+				publicKey,
+			});
+			const restored = await createNativePeerbitBackbone({
+				clockId: publicKey,
+				privateKey,
+				publicKey,
+			});
+			for (const backbone of [source, restored]) {
+				configureCheckpointDocumentSchema(backbone);
+			}
+			const persistence = new NativeBackboneNodeCoordinatePersistence(
+				directory,
+			);
+			await persistence.hydrate(source);
+			appendCheckpointFixture(source, "authority", 1);
+			await persistence.flushJournal(source);
+			const legacyJournals = new Map<string, Uint8Array>();
+			for (const journal of [
+				"coordinates.wal",
+				"document-values.wal",
+				"document-signers.wal",
+			]) {
+				legacyJournals.set(journal, await readFile(join(directory, journal)));
+			}
+			await persistence.compact(source);
+			await persistence.close();
+
+			const checkpoint = (await readdir(directory)).find((name) =>
+				/^coordinates\.bin\.checkpoint-[ab]$/.test(name),
+			);
+			expect(checkpoint).to.exist;
+			const checkpointPath = join(directory, checkpoint!);
+			const corrupt = await readFile(checkpointPath);
+			expect(corrupt.byteLength).to.be.greaterThan(0);
+			const corruptOffset = corrupt.byteLength - 1;
+			corrupt[corruptOffset] = corrupt[corruptOffset]! ^ 0xff;
+			await writeFile(checkpointPath, corrupt);
+			// Leave a complete, valid legacy generation behind. Once checkpoint-state
+			// says publication completed, recovery must not silently select it.
+			for (const [journal, bytes] of legacyJournals) {
+				await writeFile(join(directory, journal), bytes);
+			}
+
+			const reopening = new NativeBackboneNodeCoordinatePersistence(directory);
+			const failure = await reopening.hydrate(restored).then(
+				() => undefined,
+				(error: unknown) => error,
+			);
+			expect(failure).to.exist;
+			expect(String(failure)).to.match(
+				/checkpoint.*(?:corrupt|checksum)|checksum.*checkpoint/i,
+			);
+			await reopening.close();
+		} finally {
+			await rm(directory, { recursive: true, force: true });
+		}
+	});
+
+	it("fails closed when a completed Node checkpoint WAL is empty", async () => {
+		const [fsPromises, { tmpdir }, { join }] = await Promise.all([
+			import("node:fs/promises"),
+			import("node:os"),
+			import("node:path"),
+		]);
+		const { mkdtemp, readdir, rm, writeFile } = fsPromises;
+		const directory = await mkdtemp(
+			join(tmpdir(), "peerbit-native-backbone-checkpoint-empty-wal-"),
+		);
+		try {
+			const source = await createNativePeerbitBackbone({
+				clockId: publicKey,
+				privateKey,
+				publicKey,
+			});
+			configureCheckpointDocumentSchema(source);
+			const persistence = new NativeBackboneNodeCoordinatePersistence(
+				directory,
+			);
+			await persistence.hydrate(source);
+			appendCheckpointFixture(source, "empty-active-wal", 1);
+			await persistence.flushJournal(source);
+			await persistence.compact(source);
+			await persistence.close();
+
+			const checkpoint = (await readdir(directory)).find((name) =>
+				/^coordinates\.bin\.checkpoint-[ab]$/.test(name),
+			);
+			expect(checkpoint).to.exist;
+			const slot = checkpoint!.endsWith("-a") ? "a" : "b";
+			await writeFile(
+				join(directory, `document-values.wal.checkpoint-${slot}`),
+				new Uint8Array(0),
+			);
+
+			const restored = await createNativePeerbitBackbone({
+				clockId: publicKey,
+				privateKey,
+				publicKey,
+			});
+			configureCheckpointDocumentSchema(restored);
+			const reopening = new NativeBackboneNodeCoordinatePersistence(directory);
+			const failure = await reopening.hydrate(restored).then(
+				() => undefined,
+				(error: unknown) => error,
+			);
+			expect(failure).to.exist;
+			expect(String(failure)).to.match(
+				/completed checkpoint WAL generation.*(?:incomplete|missing|invalid header)/i,
+			);
+			await reopening.close();
 		} finally {
 			await rm(directory, { recursive: true, force: true });
 		}
