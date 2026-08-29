@@ -74,6 +74,7 @@ import {
 	type CanRead,
 	type CanSearch,
 	DocumentIndex,
+	type DocumentIndexWriteSession,
 	type GetOptions,
 	INDEX_CONTEXT_SHAPE,
 	type IndexedContextOnly,
@@ -2025,6 +2026,7 @@ export class Documents<
 	 */
 	private getLocalIndexedContextForChange(
 		key: indexerTypes.IdKey,
+		orderedSession?: DocumentIndexWriteSession<I>,
 	): Promise<indexerTypes.IndexedResult<IndexedContextOnly<I>> | undefined> {
 		// Not every backing index resolves asynchronously (the native one answers
 		// synchronously, and may throw synchronously), so guard both shapes without
@@ -2033,9 +2035,9 @@ export class Documents<
 			| indexerTypes.IndexedResult<IndexedContextOnly<I>>
 			| undefined;
 		try {
-			const result = this.getLocalIndexedContext(
-				key,
-			) as MaybePromise<LocalIndexedContext>;
+			const result = (orderedSession
+				? orderedSession.get(key, { shape: INDEX_CONTEXT_SHAPE })
+				: this.getLocalIndexedContext(key)) as MaybePromise<LocalIndexedContext>;
 			return (
 				isPromiseLike(result)
 					? result.catch((error) => this.recoverClosedIndexContextRead(error))
@@ -5342,6 +5344,24 @@ export class Documents<
 		reference?: PutChangeReference<T, I>,
 	): Promise<void> {
 		logger.trace("handleChanges called", change);
+		if (
+			reference == null &&
+			change.added.length >= 2 &&
+			!this.isNativeMode() &&
+			this._index.canUseOrderedWriteSession()
+		) {
+			return this._index.withOrderedWriteSession((orderedSession) =>
+				this.handleChangesInOrder(change, reference, orderedSession),
+			);
+		}
+		return this.handleChangesInOrder(change, reference);
+	}
+
+	private async handleChangesInOrder(
+		change: Change<Operation>,
+		reference?: PutChangeReference<T, I>,
+		orderedSession?: DocumentIndexWriteSession<I>,
+	): Promise<void> {
 		const isAppendOperation =
 			change?.added.length === 1 ? !!change.added[0] : false;
 		const removedSet = new Map<string, ShallowOrFullEntry<Operation>>();
@@ -5382,6 +5402,7 @@ export class Documents<
 		let modified: Set<string | number | bigint> = new Set();
 		for (const item of sortedEntries) {
 			if (!item) {
+				await orderedSession?.flush();
 				continue;
 			}
 
@@ -5394,6 +5415,7 @@ export class Documents<
 					? reference.operation
 					: await this.getAppendOperation(item);
 				if (!payload) {
+					await orderedSession?.flush();
 					continue;
 				}
 
@@ -5448,6 +5470,9 @@ export class Documents<
 
 					// document is already updated with more recent entry
 					if (modified.has(key.primitive)) {
+						// Duplicate ids deliberately retain the scalar boundary until
+						// their callback and event semantics are proven independently.
+						await orderedSession?.flush();
 						continue;
 					}
 
@@ -5459,7 +5484,10 @@ export class Documents<
 								? reference.existing
 								: this.isNativeMode()
 									? this.getNativeModeIndexedContext(key) || null
-									: (await this.getLocalIndexedContextForChange(key)) || null;
+									: (await this.getLocalIndexedContextForChange(
+											key,
+											orderedSession,
+										)) || null;
 					if (!this.strictHistory && existing) {
 						// if immutable use oldest, else use newest
 						let shouldIgnoreChange = this.immutable
@@ -5468,8 +5496,17 @@ export class Documents<
 							: existing.value.__context.modified >
 								item.meta.clock.timestamp.wallTime;
 						if (shouldIgnoreChange) {
+							await orderedSession?.flush();
 							continue;
 						}
+					}
+
+					const useOrderedWrite =
+						orderedSession != null &&
+						existing == null &&
+						!(value instanceof Program);
+					if (!useOrderedWrite) {
+						await orderedSession?.flush();
 					}
 
 					// Program specific
@@ -5497,6 +5534,7 @@ export class Documents<
 						key,
 						item,
 						existing,
+						useOrderedWrite ? orderedSession : undefined,
 					);
 					documentsChanged?.added.push(
 						coerceWithIndexed(coerceWithContext(value, context), indexable),
@@ -5508,6 +5546,7 @@ export class Documents<
 					isPutOperation(payload) ||
 					removedSet.has(item.hash)
 				) {
+					await orderedSession?.flush();
 					if (
 						!documentsChanged &&
 						(await this.collectRemovedPutChangeFromNativeId(payload, modified))
@@ -5525,12 +5564,14 @@ export class Documents<
 				}
 			} catch (error) {
 				if (error instanceof AccessError) {
+					await orderedSession?.flush();
 					continue;
 				}
 				throw error;
 			}
 		}
 
+		await orderedSession?.flush();
 		if (canRemoveByIndexedHead && change.removed.length > 0) {
 			const handled = await this.collectRemovedDocumentChangesFromIndexedHeads(
 				change.removed,
