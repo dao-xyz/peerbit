@@ -247,6 +247,9 @@ export class RequestReplicationInfoV2AppliedMessage extends TransportMessage {
 	@field({ type: "u64" })
 	sequence: bigint;
 
+	// design-note: This opaque wire correlation value identifies multiple
+	// application states within one sender epoch/session. Lifecycle identity
+	// cannot tell a receiver which of those states the sender is confirming.
 	@field({ type: "u64" })
 	revision: bigint;
 
@@ -276,6 +279,9 @@ export class ReplicationInfoV2AppliedMessage extends TransportMessage {
 	@field({ type: "u64" })
 	sequence: bigint;
 
+	// design-note: Echoing the query's application-state token proves the exact
+	// state requested within one still-current session; it is not used to fence
+	// an asynchronous continuation.
 	@field({ type: "u64" })
 	revision: bigint;
 

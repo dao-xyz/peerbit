@@ -8,8 +8,8 @@ import {
 import { AbortError, TimeoutError } from "@peerbit/time";
 import type { TransportMessage } from "./message.js";
 import type { ReplicationRangeIndexable } from "./ranges.js";
-import { deriveReplicationInfoV2ReceiverBinding } from "./replication-info-v2-binding.js";
 import type { ReplicationInfoMutation } from "./replication-info-mutation.js";
+import { deriveReplicationInfoV2ReceiverBinding } from "./replication-info-v2-binding.js";
 import {
 	AddedReplicationInfoV2Message,
 	FullReplicationInfoV2Message,
@@ -140,6 +140,10 @@ export class ReplicationInfoV2SendCoordinator<R extends "u32" | "u64"> {
 	_retiringWorkersByPeer!: Map<string, Promise<void>>;
 	_confirmations!: Set<ApplicationConfirmationWaiter>;
 	_confirmationRetryTimer?: ReturnType<typeof setTimeout>;
+	// design-note: This is application-state identity, not an async-lifecycle
+	// fence. One transport session can carry several committed replication
+	// assignments, so session identity cannot distinguish which assignment a
+	// remote applied; the monotonic value also lets superseded waiters coalesce.
 	_revision!: bigint;
 
 	private readonly sendRetryMs: number;
@@ -331,8 +335,7 @@ export class ReplicationInfoV2SendCoordinator<R extends "u32" | "u64"> {
 						state.appliedRevision >= revision) ||
 					(state.inFlightRevision !== undefined &&
 						state.inFlightRevision >= revision) ||
-					(state.pending !== undefined &&
-						state.pending.revision >= revision) ||
+					(state.pending !== undefined && state.pending.revision >= revision) ||
 					(!forceReassert &&
 						state.applicationConfirmationRequest !== undefined &&
 						state.applicationConfirmationRequest.revision >= revision)
