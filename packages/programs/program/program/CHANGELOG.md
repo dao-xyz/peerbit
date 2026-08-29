@@ -1,5 +1,12 @@
 # Changelog
 
+## 6.0.53
+
+### Patch Changes
+
+- Updated dependencies [[`bedff76`](https://github.com/dao-xyz/peerbit/commit/bedff76f5d9943c07bc3a02a8d7a42841439b98a)]:
+  - @peerbit/blocks@4.2.12
+
 ## 6.0.52
 
 ### Patch Changes

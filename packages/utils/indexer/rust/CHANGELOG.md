@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.0.12
+
+### Patch Changes
+
+- [#1324](https://github.com/dao-xyz/peerbit/pull/1324) [`be42386`](https://github.com/dao-xyz/peerbit/commit/be423862c5978a146fed5ea09cf2bf7260f3ce83) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Store singleton native query postings inline to reduce WASM heap growth on large index restores.
+
+- [#1323](https://github.com/dao-xyz/peerbit/pull/1323) [`f4ed121`](https://github.com/dao-xyz/peerbit/commit/f4ed1211653c3c0809400c3d35da63eec38384f2) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Reuse checksum-validated V1 snapshot and journal bytes when rebuilding native-compatible indexes to avoid serializing every restored document a second time.
+
 ## 1.0.11
 
 ### Patch Changes

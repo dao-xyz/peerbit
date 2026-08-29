@@ -1,5 +1,17 @@
 # Changelog
 
+## 2.0.99
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @peerbit/program@6.0.53
+  - @peerbit/document@15.0.11
+  - @peerbit/shared-log-proxy@2.0.96
+  - @peerbit/canonical-host@1.0.72
+  - @peerbit/document-interface@3.2.64
+  - @peerbit/canonical-client@1.1.56
+
 ## 2.0.98
 
 ### Patch Changes

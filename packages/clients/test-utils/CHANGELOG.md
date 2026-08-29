@@ -1,5 +1,14 @@
 # Changelog
 
+## 3.1.31
+
+### Patch Changes
+
+- Updated dependencies [[`bedff76`](https://github.com/dao-xyz/peerbit/commit/bedff76f5d9943c07bc3a02a8d7a42841439b98a)]:
+  - @peerbit/blocks@4.2.12
+  - peerbit@5.3.31
+  - @peerbit/program@6.0.53
+
 ## 3.1.30
 
 ### Patch Changes

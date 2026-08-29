@@ -1,5 +1,15 @@
 # Changelog
 
+## 6.0.13
+
+### Patch Changes
+
+- Updated dependencies [[`bedff76`](https://github.com/dao-xyz/peerbit/commit/bedff76f5d9943c07bc3a02a8d7a42841439b98a), [`17b0eaf`](https://github.com/dao-xyz/peerbit/commit/17b0eafdd6b8c2bdd1a6451cce7ab588498303cc)]:
+  - @peerbit/shared-log@16.0.11
+  - @peerbit/log@6.2.21
+  - @peerbit/program@6.0.53
+  - @peerbit/rpc@6.1.21
+
 ## 6.0.12
 
 ### Patch Changes
