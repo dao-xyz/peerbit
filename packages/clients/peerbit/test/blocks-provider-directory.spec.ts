@@ -5,6 +5,49 @@ import { Peerbit } from "../src/index.js";
 const isNode = typeof process !== "undefined" && !!process.versions?.node;
 
 describe("blocks provider discovery", () => {
+	(isNode ? it : it.skip)(
+		"preserves connected and directory evidence under saturation",
+		async function () {
+			this.timeout(30_000);
+
+			const provider = await Peerbit.create();
+			const consumer = await Peerbit.create();
+			let queryStub: sinon.SinonStub | undefined;
+			const syntheticConnected = Array.from(
+				{ length: 8 },
+				(_, index) => `connected-non-provider-${index}`,
+			);
+
+			try {
+				await consumer.dial(provider.getMultiaddrs()[0]!);
+				const directoryProvider = "directory-only-provider";
+				queryStub = sinon
+					.stub(consumer.services.fanout, "queryProviders")
+					.resolves([directoryProvider]);
+				const blocks = consumer.services.blocks as any;
+				for (const peerHash of syntheticConnected) {
+					blocks.peers.set(peerHash, {});
+				}
+				const remoteBlocks = blocks.remoteBlocks;
+
+				const candidates = await remoteBlocks.options.resolveProviders(
+					"test-cid",
+				);
+				expect(queryStub.calledOnce).to.equal(true);
+				expect(candidates[0]).to.equal(
+					provider.identity.publicKey.hashcode(),
+				);
+				expect(candidates).to.include(directoryProvider);
+				expect(candidates).to.have.length.lessThanOrEqual(8);
+			} finally {
+				queryStub?.restore();
+				const peers = (consumer.services.blocks as any).peers;
+				for (const peerHash of syntheticConnected) peers.delete(peerHash);
+				await Promise.all([consumer.stop(), provider.stop()]);
+			}
+		},
+	);
+
 	(isNode ? it : it.skip)("fetches via fanout provider directory", async function () {
 		this.timeout(30_000);
 
@@ -37,4 +80,3 @@ describe("blocks provider discovery", () => {
 		}
 	});
 });
-

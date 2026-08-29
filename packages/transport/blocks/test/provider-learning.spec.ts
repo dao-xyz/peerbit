@@ -401,4 +401,47 @@ describe("validated block provider learning", () => {
 			[trustedProvider],
 		]);
 	});
+
+	it("lets a fresh provider displace a saturated stale hint cache", async function () {
+		this.timeout(10_000);
+		const staleProviders = Array.from(
+			{ length: 8 },
+			(_, index) => `stale-provider-${index}`,
+		);
+		const liveProvider = "live-provider";
+		const requestTargets: string[][] = [];
+		const remote = await createRemote({
+			maxProvidersPerCid: staleProviders.length,
+			requestTargets,
+			resolveProviders: () => [liveProvider],
+		});
+		remote.hintProviders(CID, staleProviders);
+
+		const originalPublish = remote.options.publish;
+		remote.options.publish = async (message, options) => {
+			await originalPublish(message, options);
+			if (
+				message instanceof BlockRequest &&
+				((options as any).mode?.to as string[] | undefined)?.includes(
+					liveProvider,
+				)
+			) {
+				queueMicrotask(() => {
+					void remote.onMessage(new BlockResponse(CID, VALID_BYTES), {
+						from: liveProvider,
+					});
+				});
+			}
+		};
+
+		const startedAt = Date.now();
+		const read = await remote.get(CID, { remote: { timeout: 5_000 } });
+
+		expect(read).to.deep.equal(VALID_BYTES);
+		expect(Date.now() - startedAt).to.be.lessThan(3_000);
+		expect(requestTargets[0]).to.deep.equal(staleProviders.slice(0, 2));
+		expect(requestTargets.some((targets) => targets.includes(liveProvider))).to
+			.be.true;
+		expect(cachedProviders(remote)?.[0]).to.equal(liveProvider);
+	});
 });

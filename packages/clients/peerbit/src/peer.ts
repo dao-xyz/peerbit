@@ -608,27 +608,45 @@ export class Peerbit implements ProgramClient {
 
 						const resolveProviders = async (
 							cid: string,
-							options?: { signal?: AbortSignal },
+							options?: { signal?: AbortSignal; refresh?: boolean },
 						) => {
+							const connected = fallbackConnectedPeers();
+							let discovered: string[] = [];
 							// 1) tracker-backed provider directory (best-effort, bounded)
 							try {
-								const providers = await fanout?.queryProviders(
-									blockProviderNamespace(cid),
-									{
-										want: 8,
-										timeoutMs: 2_000,
-										queryTimeoutMs: 500,
-										bootstrapMaxPeers: 2,
-										signal: options?.signal,
-									},
-								);
-								if (providers && providers.length > 0) return providers;
+								discovered =
+									(await fanout?.queryProviders(
+										blockProviderNamespace(cid),
+										{
+											want: 8,
+											timeoutMs: 2_000,
+											queryTimeoutMs: 500,
+											bootstrapMaxPeers: 2,
+											signal: options?.signal,
+										},
+									)) ?? [];
 							} catch {
 								// ignore discovery failures
 							}
 
-							// 2) fallback to currently connected peers (keeps local/small nets working without trackers)
-							return fallbackConnectedPeers();
+							// Preserve both kinds of evidence inside the bounded target set:
+							// current reachability and CID-specific directory membership. Neither
+							// a stale directory nor many unrelated connections may starve the other.
+							const candidates: string[] = [];
+							const push = (provider?: string) => {
+								if (!provider || candidates.includes(provider)) return;
+								candidates.push(provider);
+							};
+							for (
+								let i = 0;
+								candidates.length < 8 &&
+								(i < connected.length || i < discovered.length);
+								i++
+							) {
+								push(connected[i]);
+								if (candidates.length < 8) push(discovered[i]);
+							}
+							return candidates;
 						};
 
 						blocksService = new DirectBlock(c, {

@@ -203,11 +203,12 @@ export class RemoteBlocks implements IBlocks {
 			 * Optional provider resolver used when `remote: true` is used without `remote.from`.
 			 *
 			 * This is intentionally best-effort and must be bounded; returning large lists is
-			 * counterproductive at scale.
+			 * counterproductive at scale. `refresh` is true on retry lookups, allowing an
+			 * implementation to widen or reorder candidates using newer evidence.
 			 */
 			resolveProviders?: (
 				cid: string,
-				options?: { signal?: AbortSignal },
+				options?: { signal?: AbortSignal; refresh?: boolean },
 			) => Promise<string[] | undefined> | string[] | undefined;
 			/**
 			 * Optional push-based provider watcher used to wake pending remote reads as soon as
@@ -727,9 +728,9 @@ export class RemoteBlocks implements IBlocks {
 		cidString: string,
 		options?: { signal?: AbortSignal; refresh?: boolean },
 	): Promise<string[]> {
-		// Priority:
-		// 1. cached providers (from previous reads)
-		// 2. resolveProviders hook (e.g. program-level replicators, DHT, tracker)
+		// Cached providers avoid unnecessary lookups on the first attempt. A forced
+		// refresh reverses that priority because the resolver has newer reachability
+		// evidence than the bounded cache.
 		const cached = this.normalizeProviderHints(
 			this.getCachedProviders(cidString),
 		);
@@ -738,8 +739,11 @@ export class RemoteBlocks implements IBlocks {
 		try {
 			const resolved = await this.options.resolveProviders(cidString, options);
 			const normalized = this.normalizeProviderHints([
-				...cached,
-				...(resolved ?? []),
+				// A forced refresh is fresh evidence. Put it ahead of the bounded
+				// cache so a cache filled with departed providers cannot exclude a
+				// newly reachable candidate from the request set.
+				...(options?.refresh ? (resolved ?? []) : cached),
+				...(options?.refresh ? cached : (resolved ?? [])),
 			]);
 			if (normalized.length > 0) {
 				this.rememberProviderHints(cidString, normalized);
@@ -1214,6 +1218,21 @@ export class RemoteBlocks implements IBlocks {
 
 			let requeryCount = 0;
 			const maxRequests = Math.max(1, this.maxRequeryOnReachable);
+			const attemptedProviders = new Set<string>();
+			const pickUnattemptedRequestBatch = (candidates: string[]) => {
+				const batchSize = Math.min(2, candidates.length);
+				const batch: string[] = [];
+				for (const candidate of candidates) {
+					if (attemptedProviders.has(candidate)) continue;
+					batch.push(candidate);
+					if (batch.length >= batchSize) break;
+				}
+				// If every current candidate was already tried, retain the historical
+				// rotating retry behavior for transient provider failures.
+				return batch.length > 0
+					? batch
+					: this.pickRequestBatch(candidates, requeryCount);
+			};
 			const requestRetryIntervalMs = Math.max(
 				1_000,
 				Math.min(
@@ -1235,7 +1254,9 @@ export class RemoteBlocks implements IBlocks {
 					refresh: force,
 				});
 				if (resolved.length > 0) {
-					providers = this.normalizeProviderHints([...providers, ...resolved]);
+					providers = this.normalizeProviderHints(
+						force ? [...resolved, ...providers] : [...providers, ...resolved],
+					);
 				}
 			};
 			const tryPublishRequest = async (properties?: {
@@ -1247,14 +1268,18 @@ export class RemoteBlocks implements IBlocks {
 				if (providers.length === 0 || properties?.refreshProviders) {
 					await refreshProviders(properties?.refreshProviders === true);
 				}
+				if (!this._resolvers.has(cidString) || readWasAborted()) return;
 				if (providers.length === 0) return;
 				try {
 					const expiresAt = Date.now() + (options.timeout ?? 30_000);
 					const requestProviders =
 						properties?.providers && properties.providers.length > 0
 							? this.normalizeProviderHints(properties.providers)
-							: this.pickRequestBatch(providers, requeryCount);
+							: pickUnattemptedRequestBatch(providers);
 					if (requestProviders.length === 0) return;
+					for (const provider of requestProviders) {
+						attemptedProviders.add(provider);
+					}
 					await this.options.publish(new BlockRequest(cidString), {
 						priority: requestPriority,
 						responsePriority: requestPriority,

@@ -36,7 +36,7 @@ export class DirectBlock extends DirectStream implements IBlocks {
 			eagerBlocks?: EagerBlocksSetting;
 			resolveProviders?: (
 				cid: string,
-				options?: { signal?: AbortSignal },
+				options?: { signal?: AbortSignal; refresh?: boolean },
 			) => Promise<string[] | undefined> | string[] | undefined;
 			watchProviders?: (
 				cid: string,
