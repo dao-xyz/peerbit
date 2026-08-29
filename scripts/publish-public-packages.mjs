@@ -11,10 +11,11 @@ const rootDir = process.cwd();
 const pnpmCmd = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
 const npmCmd = process.platform === "win32" ? "npm.cmd" : "npm";
 // npm can accept a publish and keep returning 404 while the package version is
-// still being processed. Keep this bounded, but allow the documented
-// "few minutes" path enough time before treating a successful publish as lost.
+// still being processed. Observed processing can exceed five minutes, so keep
+// a bounded eight-minute window before treating a successful publish as lost.
 const REGISTRY_VERIFICATION_DELAYS_MS = Object.freeze([
-	0, 2_000, 4_000, 8_000, 15_000, 30_000, 60_000, 60_000, 60_000,
+	0, 2_000, 4_000, 8_000, 15_000, 30_000, 60_000, 60_000, 60_000, 60_000,
+	60_000, 60_000, 60_000,
 ]);
 
 const args = process.argv.slice(2);

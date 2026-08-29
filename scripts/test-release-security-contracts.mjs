@@ -797,12 +797,12 @@ const registryVerificationWindowMs = registryVerificationDelays.reduce(
 	0,
 );
 assert(
-	registryVerificationWindowMs >= 180_000,
-	"the publisher must tolerate at least three minutes of npm processing and propagation delay",
+	registryVerificationWindowMs >= 420_000,
+	"the publisher must tolerate at least seven minutes of npm processing and propagation delay",
 );
 assert(
-	registryVerificationWindowMs <= 300_000,
-	"registry verification must remain bounded to at most five minutes",
+	registryVerificationWindowMs <= 600_000,
+	"registry verification must remain bounded to at most ten minutes",
 );
 assert.doesNotMatch(
 	publicPackagePublisher,
