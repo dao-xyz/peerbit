@@ -133,6 +133,37 @@ describe(`replicate`, () => {
 	});
 
 	describe("observer", () => {
+		it("confirms observer role changes after remote application through a relay", async () => {
+			db1 = await session.peers[0].open(new EventStore<string, any>(), {
+				args: { replicate: false, timeUntilRoleMaturity: 0 },
+			});
+			db2 = (await EventStore.open<EventStore<string, any>>(
+				db1.address!,
+				session.peers[2],
+				{
+					args: { replicate: false, timeUntilRoleMaturity: 0 },
+				},
+			))!;
+			await db1.waitFor(session.peers[2].peerId);
+
+			await db1.log.replicate({ factor: 1 }, { confirm: { timeout: 10_000 } });
+
+			expect(
+				await db2.log.replicationIndex.count({
+					query: { hash: db1.node.identity.publicKey.hashcode() },
+				}),
+			).to.be.greaterThan(0);
+
+			await db1.log.unreplicate(undefined, {
+				confirm: { timeout: 10_000 },
+			});
+			expect(
+				await db2.log.replicationIndex.count({
+					query: { hash: db1.node.identity.publicKey.hashcode() },
+				}),
+			).to.equal(0);
+		});
+
 		it("can update", async () => {
 			db1 = await session.peers[0].open(new EventStore<string, any>());
 

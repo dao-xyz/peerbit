@@ -21,6 +21,8 @@ import {
 	AddedReplicationInfoV2Message,
 	AddedReplicationSegmentMessage,
 	FullReplicationInfoV2Message,
+	ReplicationInfoV2AppliedMessage,
+	RequestReplicationInfoV2AppliedMessage,
 	StoppedReplicationInfoV2Message,
 } from "../src/replication.js";
 import { EventStore } from "./utils/stores/index.js";
@@ -876,6 +878,52 @@ describe("receive admission replication-info V2 receiver state", () => {
 		});
 		expect(prepare(wrongEpoch)).to.be.undefined;
 		expect(state.lastSequence).to.equal(5n);
+	});
+
+	it("drops a confirmation query before commit and answers its retry after commit", () => {
+		expect(markLocalReady()).to.be.true;
+		expect(observeSender()).to.be.true;
+		const state = coordinator._receiveStates.get(peerHash)!;
+		const senderEpoch = bytes(44);
+		const full = new FullReplicationInfoV2Message({
+			receiverChallenge: state.receiverBinding!.slice(),
+			senderEpoch,
+			sequence: 1n,
+			segments: [],
+		});
+		const admission = prepare(full)!;
+		const request = new RequestReplicationInfoV2AppliedMessage({
+			receiverChallenge: state.receiverBinding!.slice(),
+			senderEpoch,
+			sequence: 1n,
+			revision: 7n,
+		});
+		const properties = {
+			from: sender,
+			peerSession: currentSession,
+			receiveEpoch: currentReceiveEpoch,
+			senderTransportSession,
+		};
+
+		expect(coordinator.confirmApplied(request, properties)).to.be.undefined;
+		expect(coordinator.commit(admission)).to.be.true;
+		const applied = coordinator.confirmApplied(request, properties);
+		expect(applied).to.be.instanceOf(ReplicationInfoV2AppliedMessage);
+		expect(applied?.sequence).to.equal(1n);
+		expect(applied?.revision).to.equal(7n);
+		expect(state.lastSequence).to.equal(1n);
+
+		expect(
+			coordinator.confirmApplied(
+				new RequestReplicationInfoV2AppliedMessage({
+					receiverChallenge: state.receiverBinding!.slice(),
+					senderEpoch,
+					sequence: 2n,
+					revision: 8n,
+				}),
+				properties,
+			),
+		).to.be.undefined;
 	});
 
 	it("fences a parked delta across same-session recovery", () => {

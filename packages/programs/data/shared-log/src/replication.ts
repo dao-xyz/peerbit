@@ -230,6 +230,75 @@ export class RequestReplicationInfoV2Message extends TransportMessage {
 	}
 }
 
+/**
+ * Opt-in query for proof that one V2 stream sequence has reached the receiver's
+ * durable application boundary. `revision` is sender-local and opaque to the
+ * receiver; echoing it lets the sender coalesce newer authoritative snapshots
+ * without retaining an unbounded sequence-to-revision history.
+ */
+@variant([1, 10])
+export class RequestReplicationInfoV2AppliedMessage extends TransportMessage {
+	@field({ type: fixedArray("u8", 32) })
+	receiverChallenge: Uint8Array;
+
+	@field({ type: fixedArray("u8", 32) })
+	senderEpoch: Uint8Array;
+
+	@field({ type: "u64" })
+	sequence: bigint;
+
+	// design-note: This opaque wire correlation value identifies multiple
+	// application states within one sender epoch/session. Lifecycle identity
+	// cannot tell a receiver which of those states the sender is confirming.
+	@field({ type: "u64" })
+	revision: bigint;
+
+	constructor(properties: {
+		receiverChallenge: Uint8Array;
+		senderEpoch: Uint8Array;
+		sequence: bigint;
+		revision: bigint;
+	}) {
+		super();
+		this.receiverChallenge = properties.receiverChallenge;
+		this.senderEpoch = properties.senderEpoch;
+		this.sequence = properties.sequence;
+		this.revision = properties.revision;
+	}
+}
+
+/** Signed receiver response emitted only after the queried sequence applied. */
+@variant([1, 11])
+export class ReplicationInfoV2AppliedMessage extends TransportMessage {
+	@field({ type: fixedArray("u8", 32) })
+	receiverChallenge: Uint8Array;
+
+	@field({ type: fixedArray("u8", 32) })
+	senderEpoch: Uint8Array;
+
+	@field({ type: "u64" })
+	sequence: bigint;
+
+	// design-note: Echoing the query's application-state token proves the exact
+	// state requested within one still-current session; it is not used to fence
+	// an asynchronous continuation.
+	@field({ type: "u64" })
+	revision: bigint;
+
+	constructor(properties: {
+		receiverChallenge: Uint8Array;
+		senderEpoch: Uint8Array;
+		sequence: bigint;
+		revision: bigint;
+	}) {
+		super();
+		this.receiverChallenge = properties.receiverChallenge;
+		this.senderEpoch = properties.senderEpoch;
+		this.sequence = properties.sequence;
+		this.revision = properties.revision;
+	}
+}
+
 export type ReplicationInfoV2Message =
 	| FullReplicationInfoV2Message
 	| AddedReplicationInfoV2Message

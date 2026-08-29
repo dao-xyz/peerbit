@@ -5,13 +5,16 @@ import {
 	AcknowledgeDelivery,
 	CONVERGENCE_MESSAGE_PRIORITY,
 } from "@peerbit/stream-interface";
+import { AbortError, TimeoutError } from "@peerbit/time";
 import type { TransportMessage } from "./message.js";
 import type { ReplicationRangeIndexable } from "./ranges.js";
-import { deriveReplicationInfoV2ReceiverBinding } from "./replication-info-v2-binding.js";
 import type { ReplicationInfoMutation } from "./replication-info-mutation.js";
+import { deriveReplicationInfoV2ReceiverBinding } from "./replication-info-v2-binding.js";
 import {
 	AddedReplicationInfoV2Message,
 	FullReplicationInfoV2Message,
+	ReplicationInfoV2AppliedMessage,
+	RequestReplicationInfoV2AppliedMessage,
 	RequestReplicationInfoV2Message,
 	StoppedReplicationInfoV2Message,
 } from "./replication.js";
@@ -21,13 +24,45 @@ const logger = loggerFn("peerbit:shared-log:replication-info-v2-send");
 const MAX_U64 = (1n << 64n) - 1n;
 const DEFAULT_SEND_RETRY_MS = 1_000;
 const DEFAULT_MAX_SEND_RETRY_MS = 30_000;
+const DEFAULT_CONFIRM_RETRY_MS = 1_000;
+const DEFAULT_CONFIRM_TIMEOUT_MS = 30_000;
+const DEFAULT_MAX_CONFIRMATION_WAITERS = 1_024;
+const MAX_TIMER_MS = 2_147_483_647;
 const MAX_BACKOFF_EXPONENT = 20;
 
 export { deriveReplicationInfoV2ReceiverBinding } from "./replication-info-v2-binding.js";
 
 type SendRequest =
-	| { kind: "snapshot" }
-	| { kind: "mutation"; mutation: ReplicationInfoMutation };
+	| { kind: "snapshot"; revision: bigint }
+	| {
+			kind: "mutation";
+			mutation: ReplicationInfoMutation;
+			revision: bigint;
+	  };
+
+type ApplicationConfirmationRequest = {
+	sequence: bigint;
+	revision: bigint;
+	controller: AbortController;
+};
+
+type ApplicationConfirmationWaiter = {
+	revision: bigint;
+	minPeers: number;
+	resolve: () => void;
+	reject: (error: unknown) => void;
+	timer?: ReturnType<typeof setTimeout>;
+	signal?: AbortSignal;
+	onAbort?: () => void;
+};
+
+export type ReplicationInfoV2ConfirmationOptions = {
+	/** Distinct current peers that must report durable application. Defaults to 1. */
+	minPeers?: number;
+	/** Maximum wait in milliseconds. Defaults to 30 seconds. */
+	timeout?: number;
+	signal?: AbortSignal;
+};
 
 export type ReplicationInfoV2SendState = {
 	peerHash: string;
@@ -46,11 +81,14 @@ export type ReplicationInfoV2SendState = {
 	established: boolean;
 	suspended: boolean;
 	inFlightSequence?: bigint;
+	inFlightRevision?: bigint;
 	retryTimer?: ReturnType<typeof setTimeout>;
 	retryAttempts: number;
 	controller: AbortController;
 	pending?: SendRequest;
 	worker?: Promise<void>;
+	applicationConfirmationRequest?: ApplicationConfirmationRequest;
+	appliedRevision?: bigint;
 };
 
 export type ReplicationInfoV2SendDeps<R extends "u32" | "u64"> = {
@@ -68,8 +106,14 @@ export type ReplicationInfoV2SendDeps<R extends "u32" | "u64"> = {
 	isReplicationOwnershipLifecycleActive: (
 		controller: AbortController,
 	) => boolean;
+	supportsApplicationConfirmation?: (
+		peerHash: string,
+		receiverTransportSession: bigint,
+	) => boolean;
 	sendRetryMs?: number;
 	maxSendRetryMs?: number;
+	confirmationRetryMs?: number;
+	maxConfirmationWaiters?: number;
 };
 
 const bytesEqual = (left: Uint8Array, right: Uint8Array): boolean => {
@@ -94,9 +138,18 @@ export class ReplicationInfoV2SendCoordinator<R extends "u32" | "u64"> {
 	_sendStates!: Map<string, ReplicationInfoV2SendState>;
 	_spentPeerSessions!: WeakSet<object>;
 	_retiringWorkersByPeer!: Map<string, Promise<void>>;
+	_confirmations!: Set<ApplicationConfirmationWaiter>;
+	_confirmationRetryTimer?: ReturnType<typeof setTimeout>;
+	// design-note: This is application-state identity, not an async-lifecycle
+	// fence. One transport session can carry several committed replication
+	// assignments, so session identity cannot distinguish which assignment a
+	// remote applied; the monotonic value also lets superseded waiters coalesce.
+	_revision!: bigint;
 
 	private readonly sendRetryMs: number;
 	private readonly maxSendRetryMs: number;
+	private readonly confirmationRetryMs: number;
+	private readonly maxConfirmationWaiters: number;
 
 	constructor(private readonly deps: ReplicationInfoV2SendDeps<R>) {
 		this.sendRetryMs = Math.max(1, deps.sendRetryMs ?? DEFAULT_SEND_RETRY_MS);
@@ -104,10 +157,23 @@ export class ReplicationInfoV2SendCoordinator<R extends "u32" | "u64"> {
 			this.sendRetryMs,
 			deps.maxSendRetryMs ?? DEFAULT_MAX_SEND_RETRY_MS,
 		);
+		this.confirmationRetryMs = Math.max(
+			1,
+			deps.confirmationRetryMs ?? DEFAULT_CONFIRM_RETRY_MS,
+		);
+		const configuredMaxConfirmationWaiters =
+			deps.maxConfirmationWaiters ?? DEFAULT_MAX_CONFIRMATION_WAITERS;
+		this.maxConfirmationWaiters =
+			Number.isSafeInteger(configuredMaxConfirmationWaiters) &&
+			configuredMaxConfirmationWaiters > 0
+				? configuredMaxConfirmationWaiters
+				: DEFAULT_MAX_CONFIRMATION_WAITERS;
 		this._senderEpoch = randomBytes(32);
 		this._sendStates = new Map();
 		this._spentPeerSessions = new WeakSet();
 		this._retiringWorkersByPeer = new Map();
+		this._confirmations = new Set();
+		this._revision = 0n;
 	}
 
 	resetForOpen(): void {
@@ -115,9 +181,11 @@ export class ReplicationInfoV2SendCoordinator<R extends "u32" | "u64"> {
 		this._senderEpoch = randomBytes(32);
 		this._sendStates = new Map();
 		this._spentPeerSessions = new WeakSet();
+		this._revision = 0n;
 	}
 
 	clearForClose(): void {
+		this.rejectConfirmations(new AbortError("Replication-info sender closed"));
 		for (const state of [...(this._sendStates?.values() ?? [])]) {
 			this.clearState(state);
 		}
@@ -150,9 +218,217 @@ export class ReplicationInfoV2SendCoordinator<R extends "u32" | "u64"> {
 			state.ownershipAbortListener,
 		);
 		state.controller.abort();
+		state.applicationConfirmationRequest?.controller.abort();
+		state.applicationConfirmationRequest = undefined;
+		state.appliedRevision = undefined;
 		if (this._sendStates.get(state.peerHash) === state) {
 			this._sendStates.delete(state.peerHash);
 		}
+	}
+
+	private supportsApplicationConfirmation(
+		state: ReplicationInfoV2SendState,
+	): boolean {
+		return (
+			this.deps.supportsApplicationConfirmation?.(
+				state.peerHash,
+				state.receiverTransportSession,
+			) === true
+		);
+	}
+
+	private clearConfirmationWaiter(waiter: ApplicationConfirmationWaiter): void {
+		if (!this._confirmations.delete(waiter)) {
+			return;
+		}
+		if (waiter.timer) {
+			clearTimeout(waiter.timer);
+			waiter.timer = undefined;
+		}
+		if (waiter.signal && waiter.onAbort) {
+			waiter.signal.removeEventListener("abort", waiter.onAbort);
+		}
+		waiter.onAbort = undefined;
+		for (const state of this._sendStates.values()) {
+			const requested = state.applicationConfirmationRequest;
+			if (requested && !this.hasConfirmationFor(requested.revision)) {
+				state.applicationConfirmationRequest = undefined;
+				requested.controller.abort(
+					new AbortError("Replication confirmation no longer pending"),
+				);
+			}
+		}
+		if (this._confirmations.size === 0 && this._confirmationRetryTimer) {
+			clearTimeout(this._confirmationRetryTimer);
+			this._confirmationRetryTimer = undefined;
+		}
+	}
+
+	private rejectConfirmations(error: unknown): void {
+		if (this._confirmationRetryTimer) {
+			clearTimeout(this._confirmationRetryTimer);
+			this._confirmationRetryTimer = undefined;
+		}
+		for (const waiter of [...(this._confirmations ?? [])]) {
+			this.clearConfirmationWaiter(waiter);
+			waiter.reject(error);
+		}
+	}
+
+	private countAppliedPeers(revision: bigint): number {
+		let applied = 0;
+		for (const state of this._sendStates.values()) {
+			if (
+				state.appliedRevision !== undefined &&
+				state.appliedRevision >= revision &&
+				this.isDestinationReady(state) &&
+				this.supportsApplicationConfirmation(state)
+			) {
+				applied++;
+			}
+		}
+		return applied;
+	}
+
+	private settleConfirmations(): void {
+		for (const waiter of [...this._confirmations]) {
+			if (this.countAppliedPeers(waiter.revision) >= waiter.minPeers) {
+				this.clearConfirmationWaiter(waiter);
+				waiter.resolve();
+			}
+		}
+	}
+
+	private hasConfirmationFor(revision: bigint): boolean {
+		for (const waiter of this._confirmations) {
+			if (waiter.revision <= revision) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	private scheduleConfirmationRetry(): void {
+		if (this._confirmations.size === 0 || this._confirmationRetryTimer) {
+			return;
+		}
+		this._confirmationRetryTimer = setTimeout(() => {
+			this._confirmationRetryTimer = undefined;
+			this.nudgeConfirmations(true);
+		}, this.confirmationRetryMs);
+		this._confirmationRetryTimer.unref?.();
+	}
+
+	private nudgeConfirmations(forceReassert = false): void {
+		this.settleConfirmations();
+		if (this._confirmations.size === 0 || this.deps.isClosed()) {
+			return;
+		}
+		for (const state of [...this._sendStates.values()]) {
+			if (
+				this.isCurrent(state) &&
+				this.supportsApplicationConfirmation(state)
+			) {
+				const revision = this._revision;
+				if (
+					(state.appliedRevision !== undefined &&
+						state.appliedRevision >= revision) ||
+					(state.inFlightRevision !== undefined &&
+						state.inFlightRevision >= revision) ||
+					(state.pending !== undefined && state.pending.revision >= revision) ||
+					(!forceReassert &&
+						state.applicationConfirmationRequest !== undefined &&
+						state.applicationConfirmationRequest.revision >= revision)
+				) {
+					continue;
+				}
+				this.enqueueState(state, {
+					kind: "snapshot",
+					revision,
+				});
+			}
+		}
+		this.scheduleConfirmationRetry();
+	}
+
+	/**
+	 * Wait until the latest committed local replication revision is reported as
+	 * durably applied by the configured number of current peers. Revisions newer
+	 * than this call satisfy it, so rapid updates coalesce to one authoritative
+	 * snapshot without weakening older callers' guarantees.
+	 */
+	confirmLatest(
+		options: ReplicationInfoV2ConfirmationOptions = {},
+	): Promise<void> {
+		const minPeers = options.minPeers ?? 1;
+		const timeout = options.timeout ?? DEFAULT_CONFIRM_TIMEOUT_MS;
+		if (!Number.isSafeInteger(minPeers) || minPeers <= 0) {
+			return Promise.reject(
+				new RangeError("Replication confirmation minPeers must be positive"),
+			);
+		}
+		if (
+			!Number.isSafeInteger(timeout) ||
+			timeout <= 0 ||
+			timeout > MAX_TIMER_MS
+		) {
+			return Promise.reject(
+				new RangeError(
+					`Replication confirmation timeout must be an integer from 1 to ${MAX_TIMER_MS} milliseconds`,
+				),
+			);
+		}
+		if (this.deps.isClosed()) {
+			return Promise.reject(new AbortError("Replication-info sender closed"));
+		}
+		if (options.signal?.aborted) {
+			return Promise.reject(
+				options.signal.reason instanceof Error
+					? options.signal.reason
+					: new AbortError("Replication confirmation aborted"),
+			);
+		}
+		if (this._confirmations.size >= this.maxConfirmationWaiters) {
+			return Promise.reject(
+				new RangeError(
+					`Too many pending replication confirmations (maximum ${this.maxConfirmationWaiters})`,
+				),
+			);
+		}
+
+		return new Promise<void>((resolve, reject) => {
+			const waiter: ApplicationConfirmationWaiter = {
+				revision: this._revision,
+				minPeers,
+				resolve,
+				reject,
+				signal: options.signal,
+			};
+			waiter.timer = setTimeout(() => {
+				this.clearConfirmationWaiter(waiter);
+				reject(
+					new TimeoutError(
+						`Timed out waiting for ${minPeers} peer${minPeers === 1 ? "" : "s"} to apply replication revision ${waiter.revision}`,
+					),
+				);
+			}, timeout);
+			waiter.timer.unref?.();
+			if (options.signal) {
+				waiter.onAbort = () => {
+					this.clearConfirmationWaiter(waiter);
+					reject(
+						options.signal!.reason instanceof Error
+							? options.signal!.reason
+							: new AbortError("Replication confirmation aborted"),
+					);
+				};
+				options.signal.addEventListener("abort", waiter.onAbort, {
+					once: true,
+				});
+			}
+			this._confirmations.add(waiter);
+			this.nudgeConfirmations();
+		});
 	}
 
 	private trackRetiringWorker(state: ReplicationInfoV2SendState): void {
@@ -216,6 +492,9 @@ export class ReplicationInfoV2SendCoordinator<R extends "u32" | "u64"> {
 	 */
 	private parkSnapshotForRetry(state: ReplicationInfoV2SendState): void {
 		state.inFlightSequence = undefined;
+		state.inFlightRevision = undefined;
+		state.applicationConfirmationRequest?.controller.abort();
+		state.applicationConfirmationRequest = undefined;
 		if (state.nextSequence > MAX_U64) {
 			this.retireSpentState(state);
 			return;
@@ -238,7 +517,7 @@ export class ReplicationInfoV2SendCoordinator<R extends "u32" | "u64"> {
 		}
 
 		state.suspended = true;
-		state.pending = { kind: "snapshot" };
+		state.pending = { kind: "snapshot", revision: this._revision };
 		this.scheduleRetry(state);
 	}
 
@@ -320,8 +599,14 @@ export class ReplicationInfoV2SendCoordinator<R extends "u32" | "u64"> {
 					previous.retryTimer = undefined;
 				}
 				previous.suspended = false;
-				previous.pending = { kind: "snapshot" };
-				this.enqueueState(previous, { kind: "snapshot" });
+				previous.pending = {
+					kind: "snapshot",
+					revision: this._revision,
+				};
+				this.enqueueState(previous, {
+					kind: "snapshot",
+					revision: this._revision,
+				});
 				return true;
 			}
 
@@ -382,13 +667,24 @@ export class ReplicationInfoV2SendCoordinator<R extends "u32" | "u64"> {
 			{ once: true },
 		);
 		this._sendStates.set(peerHash, state);
-		this.enqueueState(state, { kind: "snapshot" });
+		this.enqueueState(state, {
+			kind: "snapshot",
+			revision: this._revision,
+		});
 		return true;
 	}
 
 	enqueue(mutation: ReplicationInfoMutation): void {
+		if (this._revision === MAX_U64) {
+			throw new Error("Replication-info confirmation revision exhausted");
+		}
+		this._revision += 1n;
 		for (const state of [...this._sendStates.values()]) {
-			this.enqueueState(state, { kind: "mutation", mutation });
+			this.enqueueState(state, {
+				kind: "mutation",
+				mutation,
+				revision: this._revision,
+			});
 		}
 	}
 
@@ -456,7 +752,7 @@ export class ReplicationInfoV2SendCoordinator<R extends "u32" | "u64"> {
 
 		// One pending item is the hard bound. Once another mutation arrives,
 		// replace the pending delta with a current authoritative snapshot.
-		state.pending = { kind: "snapshot" };
+		state.pending = { kind: "snapshot", revision: this._revision };
 	}
 
 	private retryDelay(state: ReplicationInfoV2SendState): number {
@@ -498,8 +794,11 @@ export class ReplicationInfoV2SendCoordinator<R extends "u32" | "u64"> {
 				return;
 			}
 			state.suspended = false;
-			state.pending = { kind: "snapshot" };
-			this.enqueueState(state, { kind: "snapshot" });
+			state.pending = { kind: "snapshot", revision: this._revision };
+			this.enqueueState(state, {
+				kind: "snapshot",
+				revision: this._revision,
+			});
 		}, this.retryDelay(state));
 		state.retryTimer.unref?.();
 	}
@@ -542,6 +841,102 @@ export class ReplicationInfoV2SendCoordinator<R extends "u32" | "u64"> {
 		});
 	}
 
+	/**
+	 * Detach coordinator progress from a transport that ignores abort. The
+	 * transport promise still gets a rejection handler, while this logical send
+	 * drops its listener as soon as either side settles.
+	 */
+	private sendConfirmationRequest(
+		request: RequestReplicationInfoV2AppliedMessage,
+		state: ReplicationInfoV2SendState,
+		signal: AbortSignal,
+	): Promise<void> {
+		return new Promise<void>((resolve, reject) => {
+			let settled = false;
+			const cleanup = () => signal.removeEventListener("abort", onAbort);
+			const succeed = () => {
+				if (settled) return;
+				settled = true;
+				cleanup();
+				resolve();
+			};
+			const fail = (error: unknown) => {
+				if (settled) return;
+				settled = true;
+				cleanup();
+				reject(error);
+			};
+			const onAbort = () =>
+				fail(
+					signal.reason instanceof Error
+						? signal.reason
+						: new AbortError("Replication confirmation send aborted"),
+				);
+			signal.addEventListener("abort", onAbort, { once: true });
+			if (signal.aborted) {
+				onAbort();
+				return;
+			}
+			void Promise.resolve()
+				.then(() => {
+					if (signal.aborted) {
+						throw signal.reason instanceof Error
+							? signal.reason
+							: new AbortError("Replication confirmation send aborted");
+					}
+					return this.deps.getRpc().send(request, {
+						mode: new AcknowledgeDelivery({
+							to: [state.target],
+							redundancy: 1,
+						}),
+						priority: CONVERGENCE_MESSAGE_PRIORITY,
+						signal,
+					});
+				})
+				.then(succeed, fail);
+		});
+	}
+
+	/** Accept an exact, signed response to this destination's latest query. */
+	acceptApplied(
+		message: ReplicationInfoV2AppliedMessage,
+		properties: {
+			from: PublicSignKey;
+			receiverTransportSession: bigint;
+		},
+	): boolean {
+		const peerHash = properties.from.hashcode();
+		const state = this._sendStates.get(peerHash);
+		const requested = state?.applicationConfirmationRequest;
+		if (
+			!state ||
+			!requested ||
+			!state.target.equals(properties.from) ||
+			state.receiverTransportSession !== properties.receiverTransportSession ||
+			!this.isDestinationReady(state) ||
+			!this.supportsApplicationConfirmation(state) ||
+			!bytesEqual(message.receiverChallenge, state.receiverChallenge) ||
+			!bytesEqual(message.senderEpoch, state.senderEpoch) ||
+			message.sequence !== requested.sequence ||
+			message.revision !== requested.revision ||
+			message.revision > this._revision
+		) {
+			return false;
+		}
+		state.applicationConfirmationRequest = undefined;
+		requested.controller.abort(
+			new AbortError("Replication confirmation response received"),
+		);
+		if (
+			state.appliedRevision === undefined ||
+			message.revision > state.appliedRevision
+		) {
+			state.appliedRevision = message.revision;
+		}
+		this.settleConfirmations();
+		return true;
+	}
+
 	private async runWorker(state: ReplicationInfoV2SendState): Promise<void> {
 		while (true) {
 			if (state.nextSequence > MAX_U64 || !this.isCurrent(state)) {
@@ -553,6 +948,7 @@ export class ReplicationInfoV2SendCoordinator<R extends "u32" | "u64"> {
 				return;
 			}
 			state.pending = undefined;
+			state.inFlightRevision = request.revision;
 			const message = await this.createMessage(state, request);
 			if (state.nextSequence > MAX_U64 || !this.isCurrent(state)) {
 				this.parkSnapshotForRetry(state);
@@ -576,6 +972,51 @@ export class ReplicationInfoV2SendCoordinator<R extends "u32" | "u64"> {
 				]),
 			});
 			state.inFlightSequence = undefined;
+			if (
+				this.hasConfirmationFor(request.revision) &&
+				this.supportsApplicationConfirmation(state) &&
+				this.isCurrent(state)
+			) {
+				const confirmationRequest: ApplicationConfirmationRequest = {
+					sequence: message.sequence,
+					revision: request.revision,
+					controller: new AbortController(),
+				};
+				// Install before invoking transport: an in-process or very fast remote
+				// response may arrive before this send promise resolves.
+				state.applicationConfirmationRequest?.controller.abort(
+					new AbortError("Replication confirmation superseded"),
+				);
+				state.applicationConfirmationRequest = confirmationRequest;
+				const confirmationSignal = AbortSignal.any([
+					state.controller.signal,
+					state.ownershipLifecycleController.signal,
+					confirmationRequest.controller.signal,
+				]);
+				try {
+					await this.sendConfirmationRequest(
+						new RequestReplicationInfoV2AppliedMessage({
+							receiverChallenge: state.receiverChallenge.slice(),
+							senderEpoch: state.senderEpoch.slice(),
+							sequence: message.sequence,
+							revision: request.revision,
+						}),
+						state,
+						confirmationSignal,
+					);
+				} catch (error) {
+					if (state.applicationConfirmationRequest === confirmationRequest) {
+						state.applicationConfirmationRequest = undefined;
+					}
+					if (confirmationRequest.controller.signal.aborted) {
+						if (!this.isCurrent(state)) return;
+						state.inFlightRevision = undefined;
+						continue;
+					}
+					throw error;
+				}
+			}
+			state.inFlightRevision = undefined;
 			if (state.nextSequence > MAX_U64 || !this.isCurrent(state)) {
 				this.parkSnapshotForRetry(state);
 				return;

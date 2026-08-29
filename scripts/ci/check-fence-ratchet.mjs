@@ -83,8 +83,10 @@ const TARGETS = new Map([
 		"packages/programs/data/shared-log/src/replication-info-v2-send.ts",
 		// _senderEpoch predates this file's TARGETS entry; it entered the
 		// baseline as existing inventory when the completeness leg below started
-		// enumerating every src file, not as fence growth.
-		["_senderEpoch"],
+		// enumerating every src file, not as fence growth. _revision is the
+		// explicitly reviewed application-state identity used to distinguish
+		// multiple committed assignments inside one sender/session identity.
+		["_revision", "_senderEpoch"],
 	],
 	[
 		"packages/programs/data/shared-log/src/replication-info-v2-receive.ts",
@@ -150,7 +152,12 @@ const TARGETS = new Map([
 	// scanner as the per-file leg, so a file whose only fence field was written
 	// in the plain style looked fence-free and was never required to join
 	// TARGETS. Grandfathered; pre-existing, not individually reviewed.
-	["packages/programs/data/shared-log/src/replication.ts", ["senderEpoch"]],
+	[
+		"packages/programs/data/shared-log/src/replication.ts",
+		// revision is an opaque request/response application-state token, not an
+		// async-continuation fence; the transport epoch/session can contain many.
+		["revision", "senderEpoch"],
+	],
 ]);
 // Token match is per camelCase/underscore segment so "generationOfLastPrune"
 // and "epochCounter" are caught while "aggregateTotals" is not.
