@@ -6,6 +6,7 @@ import {
 	LIFECYCLE_LIVE_VALUE_FIELDS,
 	buildLifecycleCensusReport,
 	buildLifecycleComparison,
+	classifyLifecycleCensusFile,
 	parseLifecycleCensusArgs,
 } from "./shared-log-lifecycle-census-lib.mjs";
 
@@ -18,6 +19,13 @@ test("parses the canonical lifecycle census", () => {
 		runs: 1,
 		json: false,
 	});
+	assert.deepEqual(
+		parseLifecycleCensusArgs([], {
+			SHARED_LOG_LIFECYCLE_COMPACT_MAX_JOURNAL_BYTES: "",
+			SHARED_LOG_LIFECYCLE_COMPACT_MAX_JOURNAL_RECORDS: "   ",
+		}),
+		parseLifecycleCensusArgs([], {}),
+	);
 });
 
 test("accepts explicit and environment lifecycle options", () => {
@@ -32,6 +40,10 @@ test("accepts explicit and environment lifecycle options", () => {
 				"50",
 				"--runs",
 				"2",
+				"--compact-max-journal-bytes",
+				"16_777_216",
+				"--compact-max-journal-records",
+				"50_000",
 				"--json",
 			],
 			{},
@@ -41,6 +53,8 @@ test("accepts explicit and environment lifecycle options", () => {
 			historyCount: 10_000,
 			retain: 100,
 			batchSize: 50,
+			compactMaxJournalBytes: 16_777_216,
+			compactMaxJournalRecords: 50_000,
 			runs: 2,
 			json: true,
 		},
@@ -51,6 +65,12 @@ test("accepts explicit and environment lifecycle options", () => {
 		}).output,
 		"/tmp/lifecycle.json",
 	);
+	const environmentCompaction = parseLifecycleCensusArgs([], {
+		SHARED_LOG_LIFECYCLE_COMPACT_MAX_JOURNAL_BYTES: "64_000_000",
+		SHARED_LOG_LIFECYCLE_COMPACT_MAX_JOURNAL_RECORDS: "120_000",
+	});
+	assert.equal(environmentCompaction.compactMaxJournalBytes, 64_000_000);
+	assert.equal(environmentCompaction.compactMaxJournalRecords, 120_000);
 });
 
 test("parses isolated lifecycle workers", () => {
@@ -70,6 +90,8 @@ test("parses isolated lifecycle workers", () => {
 				"hash-a",
 				"--retained-probe-hash",
 				"hash-z",
+				"--compact-max-journal-records",
+				"10_000",
 			],
 			{},
 		),
@@ -82,6 +104,7 @@ test("parses isolated lifecycle workers", () => {
 			historyCount: 100_000,
 			retain: 1_000,
 			batchSize: 256,
+			compactMaxJournalRecords: 10_000,
 			probeHash: "hash-a",
 			retainedProbeHash: "hash-z",
 		},
@@ -92,6 +115,10 @@ test("rejects workloads that cannot prove steady-state trimming", () => {
 	assert.throws(
 		() => parseLifecycleCensusArgs(["--retain", "0"], {}),
 		/retain must be a positive integer/,
+	);
+	assert.throws(
+		() => parseLifecycleCensusArgs(["--compact-max-journal-bytes", "0"], {}),
+		/compact-max-journal-bytes must be a positive integer/,
 	);
 	assert.throws(
 		() =>
@@ -135,6 +162,41 @@ test("rejects workloads that cannot prove steady-state trimming", () => {
 				{},
 			),
 		/requires --probe-hash and --retained-probe-hash/,
+	);
+});
+
+test("classifies checkpoint generations without hiding staging files", () => {
+	for (const path of [
+		"coordinate-wal/coordinates.bin.checkpoint-state",
+		"coordinate-wal/coordinates.bin.checkpoint-a",
+		"coordinate-wal/coordinates.bin.checkpoint-b",
+	]) {
+		assert.equal(classifyLifecycleCensusFile(path), "coordinateCheckpoint");
+	}
+	for (const path of [
+		"coordinate-wal/coordinates.wal",
+		"coordinate-wal/coordinates.wal.checkpoint-a",
+		"coordinate-wal/coordinates.wal.checkpoint-b",
+	]) {
+		assert.equal(classifyLifecycleCensusFile(path), "coordinateWal");
+	}
+	assert.equal(
+		classifyLifecycleCensusFile(
+			"coordinate-wal/document-values.wal.checkpoint-a",
+		),
+		"documentValueWal",
+	);
+	assert.equal(
+		classifyLifecycleCensusFile(
+			"coordinate-wal/document-signers.wal.checkpoint-b",
+		),
+		"documentSignerWal",
+	);
+	assert.equal(
+		classifyLifecycleCensusFile(
+			"coordinate-wal/coordinates.bin.checkpoint-a.tmp-123",
+		),
+		"fixedAndOther",
 	);
 });
 
@@ -219,12 +281,17 @@ test("builds a versioned checkpoint report", () => {
 		historyCount: 100,
 		retain: 10,
 		batchSize: 5,
+		compactMaxJournalBytes: 16_777_216,
 		runs: 1,
 		rows: [{ run: 1 }],
 		host: { node: "v22.0.0", platform: "linux" },
 	});
 	assert.equal(report.name, LIFECYCLE_CENSUS_NAME);
 	assert.equal(report.schemaVersion, 1);
+	assert.deepEqual(report.meta.coordinateCompaction, {
+		maxJournalBytes: 16_777_216,
+		maxJournalRecords: null,
+	});
 	assert.deepEqual(report.progress, {
 		expectedRows: 1,
 		completedRows: 1,

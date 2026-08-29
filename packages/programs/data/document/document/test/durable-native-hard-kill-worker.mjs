@@ -16,6 +16,7 @@ const [mode, directory, expectedHash, expectedOtherHash] =
 if (!mode || !directory) {
 	throw new Error("Expected mode and directory");
 }
+const checkpointCompactionMode = mode.startsWith("checkpoint-");
 
 const storeId = new Uint8Array(32);
 for (let index = 0; index < storeId.length; index++) {
@@ -38,7 +39,10 @@ await client.open(store, {
 			documentIndex: true,
 			coordinatePersistence: new NativeBackboneNodeCoordinatePersistence(
 				path.join(directory, "coordinate-wal"),
-				{ flushOnAppend: true },
+				{
+					flushOnAppend: true,
+					...(checkpointCompactionMode ? { compactMaxJournalRecords: 1 } : {}),
+				},
 			),
 		},
 		canPerform: policy.allowAll(),
@@ -229,12 +233,15 @@ if (mode === "strict-generic-torn-marker-write") {
 		return originalWrite(name, bytes);
 	};
 	await store.docs.put(new Document({ id: "hard-kill", name: "hard-kill" }));
-} else if (mode === "write") {
+} else if (mode === "write" || mode === "checkpoint-write") {
 	const result = await store.docs.put(
 		new Document({ id: "hard-kill", name: "hard-kill" }),
 	);
 	process.stdout.write(
-		`${JSON.stringify({ event: "ack", hash: result.entry.hash })}\n`,
+		`${JSON.stringify({
+			event: mode === "checkpoint-write" ? "checkpoint-ack" : "ack",
+			hash: result.entry.hash,
+		})}\n`,
 	);
 	// The parent deliberately SIGKILLs this process after observing the ack.
 	setInterval(() => {}, 60_000);
@@ -326,6 +333,29 @@ if (mode === "strict-generic-torn-marker-write") {
 			event: "read",
 			documentName: document?.name,
 			entryHash: block ? expectedHash : undefined,
+		})}\n`,
+	);
+	await client.stop();
+} else if (mode === "checkpoint-read") {
+	const sharedLog = store.docs.log;
+	const document = await store.docs.get("hard-kill");
+	const block = expectedHash
+		? await sharedLog.log.blocks.get(expectedHash)
+		: undefined;
+	const heads = await sharedLog.log.getHeads().all();
+	process.stdout.write(
+		`${JSON.stringify({
+			event: "checkpoint-read",
+			documentName: document?.name,
+			entryHash: block ? expectedHash : undefined,
+			lowerLogLength: sharedLog.log.length,
+			indexed: expectedHash
+				? await sharedLog.log.entryIndex.has(expectedHash)
+				: false,
+			coordinateVisible: expectedHash
+				? sharedLog._residentEntryCoordinatesByHash?.has(expectedHash) === true
+				: false,
+			headHashes: heads.map((entry) => entry.hash),
 		})}\n`,
 	);
 	await client.stop();

@@ -21,6 +21,7 @@ import {
 	LIFECYCLE_CENSUS_SCENARIOS,
 	buildLifecycleCensusReport,
 	buildLifecycleComparison,
+	classifyLifecycleCensusFile,
 	parseLifecycleCensusArgs,
 } from "./shared-log-lifecycle-census-lib.mjs";
 
@@ -79,21 +80,6 @@ const mapEdges = (value) => {
 	return count;
 };
 
-const classifyFile = (path) => {
-	if (path.startsWith("coordinate-wal/coordinates")) return "coordinateWal";
-	if (path.startsWith("coordinate-wal/document-values")) {
-		return "documentValueWal";
-	}
-	if (path.startsWith("coordinate-wal/document-signers")) {
-		return "documentSignerWal";
-	}
-	if (path.includes("/sublevels/blocks/")) return "entryBlockStore";
-	if (path.includes("/log/heads/")) return "headIndex";
-	if (path.includes("/replication/")) return "replicationIndex";
-	if (path.startsWith("libp2p/")) return "libp2p";
-	return "fixedAndOther";
-};
-
 const diskFootprint = async (root) => {
 	const files = [];
 	const visit = async (directory) => {
@@ -106,7 +92,7 @@ const diskFootprint = async (root) => {
 				const relativePath = relative(root, path).split(sep).join("/");
 				files.push({
 					path: relativePath,
-					category: classifyFile(relativePath),
+					category: classifyLifecycleCensusFile(relativePath),
 					logicalBytes: stats.size,
 					allocatedBytes:
 						typeof stats.blocks === "number" ? stats.blocks * 512 : null,
@@ -203,6 +189,8 @@ const openArgs = ({
 	policy,
 	transform,
 	NativeBackboneNodeCoordinatePersistence,
+	compactMaxJournalBytes,
+	compactMaxJournalRecords,
 }) => ({
 	mode: "native",
 	replicate: { factor: 1 },
@@ -214,7 +202,13 @@ const openArgs = ({
 		documentIndex: true,
 		coordinatePersistence: new NativeBackboneNodeCoordinatePersistence(
 			join(directory, "coordinate-wal"),
-			{ flushOnAppend: true },
+			{
+				flushOnAppend: true,
+				...(compactMaxJournalBytes != null ? { compactMaxJournalBytes } : {}),
+				...(compactMaxJournalRecords != null
+					? { compactMaxJournalRecords }
+					: {}),
+			},
 		),
 	},
 	canPerform: policy.allowAll(),
@@ -680,6 +674,8 @@ const seedWorker = async (options) => {
 				...runtime,
 				directory: options.directory,
 				retain: options.retain,
+				compactMaxJournalBytes: options.compactMaxJournalBytes,
+				compactMaxJournalRecords: options.compactMaxJournalRecords,
 			}),
 		});
 		const openMs = elapsed(openStarted);
@@ -790,6 +786,8 @@ const reopenWorker = async (options) => {
 				...runtime,
 				directory: options.directory,
 				retain: options.retain,
+				compactMaxJournalBytes: options.compactMaxJournalBytes,
+				compactMaxJournalRecords: options.compactMaxJournalRecords,
 			}),
 		});
 		const openMs = elapsed(openStarted);
@@ -861,6 +859,18 @@ const runWorkerProcess = (options) => {
 		"--batch-size",
 		String(options.batchSize),
 	];
+	if (options.compactMaxJournalBytes != null) {
+		args.push(
+			"--compact-max-journal-bytes",
+			String(options.compactMaxJournalBytes),
+		);
+	}
+	if (options.compactMaxJournalRecords != null) {
+		args.push(
+			"--compact-max-journal-records",
+			String(options.compactMaxJournalRecords),
+		);
+	}
 	if (options.probeHash) args.push("--probe-hash", options.probeHash);
 	if (options.retainedProbeHash) {
 		args.push("--retained-probe-hash", options.retainedProbeHash);
@@ -1014,6 +1024,10 @@ Options:
   --history-count <n>  Historical append count (default: 100000)
   --retain <n>         Live entries retained in both controls (default: 1000)
   --batch-size <n>     Append batch size, at most retain (default: 256)
+  --compact-max-journal-bytes <n>
+                       Compact the three coupled WALs at this total byte count
+  --compact-max-journal-records <n>
+                       Compact the three coupled WALs at this total record count
   --runs <n>           Matched isolated runs (default: 1)
   --output <path>      Atomically checkpoint the JSON report after each run
   --json               Emit the versioned JSON report
