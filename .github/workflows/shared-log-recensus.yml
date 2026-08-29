@@ -20,6 +20,7 @@ on:
           - scale-persistent-chain
           - scale-persistent-roots
           - scale-persistent-coordinate
+          - scale-lifecycle-trim
 
 permissions: {}
 
@@ -35,7 +36,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        profile: ${{ fromJSON(inputs.profile == 'all' && '["sync-phase","receive-prune","scale-resident","scale-persistent-chain","scale-persistent-roots","scale-persistent-coordinate"]' || format('["{0}"]', inputs.profile)) }}
+        profile: ${{ fromJSON(inputs.profile == 'all' && '["sync-phase","receive-prune","scale-resident","scale-persistent-chain","scale-persistent-roots","scale-persistent-coordinate","scale-lifecycle-trim"]' || format('["{0}"]', inputs.profile)) }}
     concurrency:
       group: shared-log-recensus-${{ inputs.ref }}-${{ matrix.profile }}
       cancel-in-progress: false
@@ -82,7 +83,12 @@ jobs:
         run: pnpm install --frozen-lockfile=false
 
       - name: Build shared-log workspace
+        if: matrix.profile != 'scale-lifecycle-trim'
         run: pnpm --filter @peerbit/shared-log... run build
+
+      - name: Build lifecycle-census workspace
+        if: matrix.profile == 'scale-lifecycle-trim'
+        run: pnpm --filter peerbit... --filter @peerbit/document... run build
 
       - name: Run profile
         id: profile
@@ -113,6 +119,15 @@ jobs:
               ;;
             receive-prune)
               node --loader ts-node/esm ./benchmark/receive-prune.ts > "$destination"
+              ;;
+            scale-lifecycle-trim)
+              node "$GITHUB_WORKSPACE/scripts/bench/shared-log-lifecycle-census.mjs" \
+                --history-count 100000 \
+                --retain 1000 \
+                --batch-size 256 \
+                --runs 1 \
+                --output "$destination" \
+                --json > /dev/null
               ;;
             scale-*)
               case "$PROFILE" in
@@ -155,9 +170,11 @@ jobs:
               "sync-phase": "shared-log-sync-phase-profile",
               "receive-prune": "shared-log-receive-prune",
             };
-            const expectedName = process.env.PROFILE.startsWith("scale-")
-              ? "shared-log-scale-census"
-              : expectedNames[process.env.PROFILE];
+            const expectedName = process.env.PROFILE === "scale-lifecycle-trim"
+              ? "shared-log-lifecycle-census"
+              : process.env.PROFILE.startsWith("scale-")
+                ? "shared-log-scale-census"
+                : expectedNames[process.env.PROFILE];
             if (!expectedName) {
               throw new Error(`Unknown profile '${process.env.PROFILE}'`);
             }
@@ -168,8 +185,8 @@ jobs:
             if (!Array.isArray(rows) || rows.length === 0) {
               throw new Error(`${file} carries no measured profile rows`);
             }
-            if (expectedName === "shared-log-scale-census" && result.progress?.complete !== true) {
-              throw new Error(`${file} is an incomplete scale-census checkpoint`);
+            if (expectedName.endsWith("-census") && result.progress?.complete !== true) {
+              throw new Error(`${file} is an incomplete census checkpoint`);
             }
           NODE
 

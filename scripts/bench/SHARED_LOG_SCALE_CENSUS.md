@@ -59,6 +59,12 @@ The shallow-entry fixtures contain graph/index metadata, not entry blocks or
 media payloads. The coordinate fixtures use real schemas with deterministic
 synthetic metadata. Application document indexes are not included.
 
+The complementary
+[`SHARED_LOG_LIFECYCLE_CENSUS.md`](./SHARED_LOG_LIFECYCLE_CENSUS.md) uses a real
+durable Peerbit document stack to compare a fresh retained set with the same
+live set after historical trim churn. It covers append/WAL history that these
+compact synthetic snapshots intentionally exclude.
+
 ## Running
 
 Build the shared-log dependency closure first:
