@@ -1,5 +1,22 @@
 # Changelog
 
+## 15.0.13
+
+### Patch Changes
+
+- [#1341](https://github.com/dao-xyz/peerbit/pull/1341) [`b2e0679`](https://github.com/dao-xyz/peerbit/commit/b2e06792fb7ab32538916e401777ae108c66b0f9) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Use ordered index write sessions for semantics-preserving fresh remote document projections.
+
+- Updated dependencies [[`305e779`](https://github.com/dao-xyz/peerbit/commit/305e779cd7bc517e4631d83425640c05c34f43f4), [`e3df1cc`](https://github.com/dao-xyz/peerbit/commit/e3df1ccbb708da56e90e954965d13719b2614bfc), [`551da76`](https://github.com/dao-xyz/peerbit/commit/551da763788f45d0cf31d472531c477a10ac2eef)]:
+  - @peerbit/shared-log@16.0.13
+  - @peerbit/indexer-interface@3.0.12
+  - @peerbit/indexer-sqlite3@3.0.18
+  - @peerbit/log@6.2.23
+  - @peerbit/document-interface@3.2.66
+  - @peerbit/program@6.0.54
+  - @peerbit/indexer-cache@0.2.15
+  - @peerbit/indexer-simple@1.2.16
+  - @peerbit/rpc@6.1.22
+
 ## 15.0.12
 
 ### Patch Changes
