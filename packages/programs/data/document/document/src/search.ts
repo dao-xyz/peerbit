@@ -739,6 +739,9 @@ export type WithContext<I> = {
 	__context: types.Context;
 } & I;
 
+export type DocumentIndexWriteSession<I extends Record<string, any>> =
+	indexerTypes.OrderedIndexWriteSession<WithContext<I>>;
+
 export const INDEX_CONTEXT_SHAPE = {
 	__context: {
 		created: true,
@@ -1133,6 +1136,23 @@ export class DocumentIndex<
 
 	get valueEncoding() {
 		return this._valueEncoding;
+	}
+
+	public canUseOrderedWriteSession(): boolean {
+		return (
+			!this.isProgramValued &&
+			typeof this.index.withOrderedWriteSession === "function"
+		);
+	}
+
+	public async withOrderedWriteSession<R>(
+		operation: (session: DocumentIndexWriteSession<I>) => MaybePromise<R>,
+	): Promise<R> {
+		const withSession = this.index.withOrderedWriteSession;
+		if (!withSession) {
+			throw new Error("Backing index does not support ordered write sessions");
+		}
+		return withSession.call(this.index, operation) as MaybePromise<R>;
 	}
 
 	private ensurePrefetchAccumulator() {
@@ -3090,10 +3110,11 @@ export class DocumentIndex<
 			| indexerTypes.IndexedResult<IndexedContextOnly<I>>
 			| null
 			| undefined,
+		orderedSession?: DocumentIndexWriteSession<I>,
 	): Promise<{ context: types.Context; indexable: I }> {
 		const existingDefined =
 			existing === undefined
-				? await this.index.get(id, {
+				? await (orderedSession ?? this.index).get(id, {
 						shape: INDEX_CONTEXT_SHAPE,
 					})
 				: existing;
@@ -3106,10 +3127,16 @@ export class DocumentIndex<
 			gid: entry.meta.gid,
 			size: entry.payload.byteLength,
 		});
-		return this.putWithContext(value, id, context, {
-			replace: existingDefined != null,
-			transformFacts: { entryPublicKeys: entry.publicKeys },
-		});
+		return this.putWithContext(
+			value,
+			id,
+			context,
+			{
+				replace: existingDefined != null,
+				transformFacts: { entryPublicKeys: entry.publicKeys },
+			},
+			orderedSession,
+		);
 	}
 
 	public async putWithContext(
@@ -3117,6 +3144,7 @@ export class DocumentIndex<
 		id: indexerTypes.IdKey,
 		context: types.Context,
 		options?: ContextualPutOptions,
+		orderedSession?: DocumentIndexWriteSession<I>,
 	): Promise<{ context: types.Context; indexable: I }> {
 		const idString = id.primitive;
 		this.cacheResolvedValue(idString, value);
@@ -3129,10 +3157,17 @@ export class DocumentIndex<
 		coerceWithContext(value, context);
 
 		try {
-			const contextualPut = this.transformerIsIdentity
-				? (this.index as ContextualIndexPut<I>).putWithContext
-				: undefined;
-			if (contextualPut) {
+			const contextualPut =
+				!orderedSession && this.transformerIsIdentity
+					? (this.index as ContextualIndexPut<I>).putWithContext
+					: undefined;
+			if (orderedSession) {
+				await orderedSession.put(
+					new this.wrappedIndexedType(valueToIndex, context),
+					id,
+					stripEncodedValue(options),
+				);
+			} else if (contextualPut) {
 				const encodedValueParts = this.encodeContextualIndexedValueParts(
 					options?.encodedValue,
 					context,
