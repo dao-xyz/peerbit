@@ -10,7 +10,9 @@ import {
 	AddedReplicationSegmentMessage,
 	AllReplicatingSegmentsMessage,
 	FullReplicationInfoV2Message,
+	ReplicationInfoV2AppliedMessage,
 	type ReplicationInfoV2Message,
+	RequestReplicationInfoV2AppliedMessage,
 	RequestReplicationInfoV2Message,
 	StoppedReplicating,
 	StoppedReplicationInfoV2Message,
@@ -1248,6 +1250,46 @@ export class ReplicationInfoV2ReceiveCoordinator {
 		admission.committed = true;
 		this.release(admission);
 		return true;
+	}
+
+	/**
+	 * Answer only after the exact authenticated receive generation has committed
+	 * the queried sequence (or a newer one). No pending query is retained: the
+	 * sender's bounded retry loop reissues an authoritative snapshot and query.
+	 */
+	confirmApplied(
+		request: RequestReplicationInfoV2AppliedMessage,
+		properties: {
+			from: PublicSignKey;
+			peerSession: object;
+			receiveEpoch: object | null;
+			senderTransportSession: bigint;
+		},
+	): ReplicationInfoV2AppliedMessage | undefined {
+		const state = this._receiveStates.get(properties.from.hashcode());
+		if (
+			!state ||
+			state.peerSession !== properties.peerSession ||
+			state.receiveEpoch !== properties.receiveEpoch ||
+			state.senderTransportSession !== properties.senderTransportSession ||
+			!state.target.equals(properties.from) ||
+			!state.receiverBinding ||
+			!bytesEqual(request.receiverChallenge, state.receiverBinding) ||
+			!state.senderEpoch ||
+			!bytesEqual(request.senderEpoch, state.senderEpoch) ||
+			request.sequence <= 0n ||
+			state.lastSequence === undefined ||
+			state.lastSequence < request.sequence ||
+			!this.isStateCurrent(state)
+		) {
+			return undefined;
+		}
+		return new ReplicationInfoV2AppliedMessage({
+			receiverChallenge: request.receiverChallenge.slice(),
+			senderEpoch: request.senderEpoch.slice(),
+			sequence: request.sequence,
+			revision: request.revision,
+		});
 	}
 
 	requireFullAfterFailure(

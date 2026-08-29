@@ -164,6 +164,7 @@ import {
 	ResponseIPruneV2,
 	SYNC_CAPABILITY_RAW_EXCHANGE_HEADS,
 	SYNC_CAPABILITY_REPLICATION_INFO_V2_APPLY,
+	SYNC_CAPABILITY_REPLICATION_INFO_V2_CONFIRM,
 	SYNC_CAPABILITY_REPLICATION_INFO_V2_DECODE,
 	SYNC_CAPABILITY_REPLICATION_INFO_V2_SEND,
 	StashBackedRawExchangeHeadsMessage,
@@ -251,7 +252,10 @@ import type {
 	FullReplicationInfoMutation,
 } from "./replication-info-mutation.js";
 import { ReplicationInfoV2ReceiveCoordinator } from "./replication-info-v2-receive.js";
-import { ReplicationInfoV2SendCoordinator } from "./replication-info-v2-send.js";
+import {
+	type ReplicationInfoV2ConfirmationOptions,
+	ReplicationInfoV2SendCoordinator,
+} from "./replication-info-v2-send.js";
 import {
 	type ReplicationStatus,
 	classifyReplicationStatus,
@@ -264,10 +268,12 @@ import {
 	FullReplicationInfoV2Message,
 	MinReplicas,
 	ReplicationError,
+	ReplicationInfoV2AppliedMessage,
 	type ReplicationInfoV2Message,
 	type ReplicationLimits,
 	ReplicationPingMessage,
 	RequestReplicationInfoMessage,
+	RequestReplicationInfoV2AppliedMessage,
 	RequestReplicationInfoV2Message,
 	ResponseRoleMessage,
 	StoppedReplicating,
@@ -1064,6 +1070,10 @@ type ExistingReplicationOptions<R extends "u32" | "u64" = any> = {
 export type ReplicationOptions<R extends "u32" | "u64" = any> =
 	| NewReplicationOptions<R>
 	| ExistingReplicationOptions<R>;
+
+/** Opt-in proof that a local replication-role update applied remotely. */
+export type ReplicationConfirmationOptions =
+	ReplicationInfoV2ConfirmationOptions;
 
 export { BlocksMessage };
 
@@ -3561,6 +3571,12 @@ export class SharedLog<
 				this.captureReplicationOwnershipLifecycle(),
 			isReplicationOwnershipLifecycleActive: (controller) =>
 				this.isRepairLifecycleActive(controller),
+			supportsApplicationConfirmation: (peerHash, receiverTransportSession) =>
+				this._peerSyncCapabilitySessions.get(peerHash) ===
+					receiverTransportSession &&
+				((this._peerSyncCapabilities.get(peerHash) ?? 0) &
+					SYNC_CAPABILITY_REPLICATION_INFO_V2_CONFIRM) !==
+					0,
 		});
 	}
 
@@ -3569,6 +3585,7 @@ export class SharedLog<
 			SYNC_CAPABILITY_REPLICATION_INFO_V2_DECODE |
 			SYNC_CAPABILITY_REPLICATION_INFO_V2_SEND |
 			SYNC_CAPABILITY_REPLICATION_INFO_V2_APPLY |
+			SYNC_CAPABILITY_REPLICATION_INFO_V2_CONFIRM |
 			(this._logProperties?.sync?.rawExchangeHeads === true
 				? SYNC_CAPABILITY_RAW_EXCHANGE_HEADS
 				: 0)
@@ -6187,6 +6204,8 @@ export class SharedLog<
 			checkDuplicates?: boolean;
 			rebalance?: boolean;
 			mergeSegments?: boolean;
+			/** Wait for explicit remote durable application; omitted is unchanged. */
+			confirm?: boolean | ReplicationConfirmationOptions;
 			announce?: (
 				msg: FullReplicationInfoMutation | AddedReplicationInfoMutation,
 			) => void;
@@ -6197,7 +6216,13 @@ export class SharedLog<
 			? this.replicationController?.maxMemoryLimit
 			: undefined;
 		try {
-			return await this.applyReplicationRole(rangeOrEntry, options);
+			const ranges = await this.applyReplicationRole(rangeOrEntry, options);
+			if (options?.confirm) {
+				await this._v2Send.confirmLatest(
+					typeof options.confirm === "object" ? options.confirm : undefined,
+				);
+			}
+			return ranges;
 		} finally {
 			const storageObjective = this._isAdaptiveReplicating
 				? this.replicationController?.maxMemoryLimit
@@ -6329,7 +6354,10 @@ export class SharedLog<
 		);
 	}
 
-	async unreplicate(rangeOrEntry?: Entry<T> | { id: Uint8Array }[]) {
+	async unreplicate(
+		rangeOrEntry?: Entry<T> | { id: Uint8Array }[],
+		options?: { confirm?: boolean | ReplicationConfirmationOptions },
+	) {
 		const wasAdaptiveReplicating = this._isAdaptiveReplicating;
 		const previousStorageObjective = wasAdaptiveReplicating
 			? this.replicationController?.maxMemoryLimit
@@ -6340,10 +6368,16 @@ export class SharedLog<
 		const replicationOwnershipLifecycleController =
 			this.captureReplicationOwnershipLifecycle();
 		try {
-			return await this._unreplicate(
+			const result = await this._unreplicate(
 				rangeOrEntry,
 				replicationOwnershipLifecycleController,
 			);
+			if (options?.confirm) {
+				await this._v2Send.confirmLatest(
+					typeof options.confirm === "object" ? options.confirm : undefined,
+				);
+			}
+			return result;
 		} finally {
 			const storageObjective = this._isAdaptiveReplicating
 				? this.replicationController?.maxMemoryLimit
@@ -20152,6 +20186,42 @@ export class SharedLog<
 				} else if (msg instanceof ConfirmEntriesMessage) {
 					this.markEntriesKnownByPeer(msg.hashes, context.from.hashcode());
 					this.clearRepairFrontierHashes(context.from.hashcode(), msg.hashes);
+					return;
+				} else if (msg instanceof RequestReplicationInfoV2AppliedMessage) {
+					if (
+						receiveSession?.phase === "open" &&
+						this._peerSyncCapabilitySessions.get(receiveFromHash) ===
+							context.message.header.session &&
+						((this._peerSyncCapabilities.get(receiveFromHash) ?? 0) &
+							SYNC_CAPABILITY_REPLICATION_INFO_V2_CONFIRM) !==
+							0
+					) {
+						const applied = this._v2Receive.confirmApplied(msg, {
+							from: context.from,
+							peerSession: receiveSession,
+							receiveEpoch: receiveReplicationInfoReceiveEpoch,
+							senderTransportSession: context.message.header.session,
+						});
+						if (applied) {
+							await this.rpc.send(applied, {
+								mode: new SilentDelivery({
+									to: [context.from],
+									redundancy: 1,
+								}),
+								priority: CONVERGENCE_MESSAGE_PRIORITY,
+								signal: AbortSignal.any([
+									this._closeController.signal,
+									lane.ownershipLifecycleController.signal,
+								]),
+							});
+						}
+					}
+					return;
+				} else if (msg instanceof ReplicationInfoV2AppliedMessage) {
+					this._v2Send.acceptApplied(msg, {
+						from: context.from,
+						receiverTransportSession: context.message.header.session,
+					});
 					return;
 				} else if (isReplicationInfoV2Message(msg)) {
 					await this.handleReplicationInfoV2Announcement(

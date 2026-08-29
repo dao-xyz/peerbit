@@ -6,6 +6,7 @@ import sinon from "sinon";
 import {
 	SYNC_CAPABILITY_RAW_EXCHANGE_HEADS,
 	SYNC_CAPABILITY_REPLICATION_INFO_V2_APPLY,
+	SYNC_CAPABILITY_REPLICATION_INFO_V2_CONFIRM,
 	SYNC_CAPABILITY_REPLICATION_INFO_V2_DECODE,
 	SYNC_CAPABILITY_REPLICATION_INFO_V2_SEND,
 	SyncCapabilitiesMessage,
@@ -20,7 +21,9 @@ import {
 	AddedReplicationSegmentMessage,
 	AllReplicatingSegmentsMessage,
 	FullReplicationInfoV2Message,
+	ReplicationInfoV2AppliedMessage,
 	RequestReplicationInfoMessage,
+	RequestReplicationInfoV2AppliedMessage,
 	RequestReplicationInfoV2Message,
 	ResponseRoleMessage,
 	StoppedReplicating,
@@ -36,6 +39,7 @@ const SENDER_EPOCH = Uint8Array.from(
 );
 const SEQUENCE = 0x0102030405060708n;
 const SENDER_SESSION = 0x1112131415161718n;
+const REVISION = 0x2122232425262728n;
 const INTENDED_SENDER = new Ed25519PublicKey({
 	publicKey: Uint8Array.from({ length: 32 }, (_, index) => 0x80 + index),
 });
@@ -46,6 +50,7 @@ const SENDER_EPOCH_HEX =
 	"fffefdfcfbfaf9f8f7f6f5f4f3f2f1f0efeeedecebeae9e8e7e6e5e4e3e2e1e0";
 const SEQUENCE_HEX = "0807060504030201";
 const SENDER_SESSION_HEX = "1817161514131211";
+const REVISION_HEX = "2827262524232221";
 
 const hex = (value: unknown): string =>
 	Buffer.from(serialize(value)).toString("hex");
@@ -130,6 +135,38 @@ describe("receive admission replication-info V2 decode-only codec", () => {
 			expect((decoded as FullReplicationInfoV2Message).sequence).to.equal(
 				SEQUENCE,
 			);
+		}
+	});
+
+	it("pins the opt-in application confirmation variants", () => {
+		const suffix = `${RECEIVER_CHALLENGE_HEX}${SENDER_EPOCH_HEX}${SEQUENCE_HEX}${REVISION_HEX}`;
+		const cases = [
+			[
+				new RequestReplicationInfoV2AppliedMessage({
+					receiverChallenge: RECEIVER_CHALLENGE,
+					senderEpoch: SENDER_EPOCH,
+					sequence: SEQUENCE,
+					revision: REVISION,
+				}),
+				RequestReplicationInfoV2AppliedMessage,
+				`00010a${suffix}`,
+			],
+			[
+				new ReplicationInfoV2AppliedMessage({
+					receiverChallenge: RECEIVER_CHALLENGE,
+					senderEpoch: SENDER_EPOCH,
+					sequence: SEQUENCE,
+					revision: REVISION,
+				}),
+				ReplicationInfoV2AppliedMessage,
+				`00010b${suffix}`,
+			],
+		] as const;
+		for (const [message, type, expected] of cases) {
+			expect(hex(message)).to.equal(expected);
+			const decoded = deserialize(serialize(message), TransportMessage);
+			expect(decoded).to.be.instanceOf(type);
+			expect(hex(decoded)).to.equal(expected);
 		}
 	});
 
@@ -259,11 +296,12 @@ describe("receive admission replication-info V2 decode-only codec", () => {
 		}
 	});
 
-	it("pins the decode, send and apply capability vocabulary", () => {
+	it("pins the decode, send, apply and confirmation capability vocabulary", () => {
 		expect(SYNC_CAPABILITY_RAW_EXCHANGE_HEADS).to.equal(1);
 		expect(SYNC_CAPABILITY_REPLICATION_INFO_V2_DECODE).to.equal(2);
 		expect(SYNC_CAPABILITY_REPLICATION_INFO_V2_SEND).to.equal(4);
 		expect(SYNC_CAPABILITY_REPLICATION_INFO_V2_APPLY).to.equal(8);
+		expect(SYNC_CAPABILITY_REPLICATION_INFO_V2_CONFIRM).to.equal(16);
 		expect(hex(new SyncCapabilitiesMessage())).to.equal("00000a01000000");
 		expect(
 			hex(
@@ -376,11 +414,15 @@ describe("receive admission replication-info V2 decode-only codec", () => {
 				capability!.capabilities & SYNC_CAPABILITY_REPLICATION_INFO_V2_APPLY,
 			).to.equal(SYNC_CAPABILITY_REPLICATION_INFO_V2_APPLY);
 			expect(
+				capability!.capabilities & SYNC_CAPABILITY_REPLICATION_INFO_V2_CONFIRM,
+			).to.equal(SYNC_CAPABILITY_REPLICATION_INFO_V2_CONFIRM);
+			expect(
 				capability!.capabilities &
 					~(
 						SYNC_CAPABILITY_REPLICATION_INFO_V2_DECODE |
 						SYNC_CAPABILITY_REPLICATION_INFO_V2_SEND |
 						SYNC_CAPABILITY_REPLICATION_INFO_V2_APPLY |
+						SYNC_CAPABILITY_REPLICATION_INFO_V2_CONFIRM |
 						SYNC_CAPABILITY_RAW_EXCHANGE_HEADS
 					),
 			).to.equal(0);

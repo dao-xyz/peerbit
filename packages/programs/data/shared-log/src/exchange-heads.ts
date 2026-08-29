@@ -370,6 +370,13 @@ export const SYNC_CAPABILITY_REPLICATION_INFO_V2_SEND = 1 << 2;
 export const SYNC_CAPABILITY_REPLICATION_INFO_V2_APPLY = 1 << 3;
 
 /**
+ * Capability bit: the peer can decode the opt-in replication-info V2
+ * application-confirmation request/response variants. Existing V2 delivery
+ * remains fire-and-converge unless a caller explicitly waits for confirmation.
+ */
+export const SYNC_CAPABILITY_REPLICATION_INFO_V2_CONFIRM = 1 << 4;
+
+/**
  * One-shot capability advertisement, sent to a peer when it (or we) subscribe
  * to the program topic. Peers that do not know this message drop it as an
  * unknown variant. Each feature still requires its explicit bit.
