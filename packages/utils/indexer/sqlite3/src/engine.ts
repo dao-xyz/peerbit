@@ -157,30 +157,40 @@ export class SQLiteIndex<T extends Record<string, any>>
 	private _operationBarrier: Promise<void> = Promise.resolve();
 	private readonly databaseCoordinator: DatabaseCoordinator;
 
-	private async withDatabaseBarrier<R>(fn: () => Promise<R>): Promise<R> {
+	private async acquireDatabaseBarrier(): Promise<() => void> {
 		const prev = this.databaseCoordinator.tail;
-		let release!: () => void;
-		const next = new Promise<void>((r) => (release = r));
+		let releaseBarrier!: () => void;
+		const next = new Promise<void>((resolve) => (releaseBarrier = resolve));
 		// Keep the chain alive even if `prev` rejected.
 		this.databaseCoordinator.tail = prev.then(
 			() => next,
 			() => next,
 		);
 
-		const pending = (async () => {
-			// Wait for the previous database operation without propagating its error.
-			await prev.catch(() => undefined);
-			try {
-				return await fn();
-			} finally {
-				release();
-			}
-		})();
+		const pending = prev.catch(() => undefined).then(() => next);
 		this._operationBarrier = pending.then(
 			() => undefined,
 			() => undefined,
 		);
-		return pending;
+		// Wait for the previous database operation without propagating its error.
+		await prev.catch(() => undefined);
+		let released = false;
+		return () => {
+			if (released) {
+				return;
+			}
+			released = true;
+			releaseBarrier();
+		};
+	}
+
+	private async withDatabaseBarrier<R>(fn: () => Promise<R>): Promise<R> {
+		const release = await this.acquireDatabaseBarrier();
+		try {
+			return await fn();
+		} finally {
+			release();
+		}
 	}
 
 	primaryKeyArr!: string[];
@@ -626,38 +636,45 @@ export class SQLiteIndex<T extends Record<string, any>>
 		id: types.IdKey,
 		options?: { shape: Shape },
 	): Promise<IndexedResult<T> | undefined> {
-		return this.withDatabaseIfOpen(undefined, async () => {
-			for (const table of this._rootTables) {
-				const { join: joinMap, selects } = selectAllFieldsFromTable(
-					table,
-					options?.shape,
-				);
-				const sql = `${generateSelectQuery(table, selects)} ${buildJoin(joinMap).join} where ${table.name}.${this.primaryKeyString} = ? limit 1`;
-				const stmt = await this.properties.db.prepare(sql, sql);
-				const rows = await stmt.get([
-					table.primaryField?.from?.type
-						? convertToSQLType(id.key, table.primaryField.from.type)
-						: id.key,
-				]);
-				if (
-					rows?.[getTablePrefixedField(table, table.primary as string)] == null
-				) {
-					continue;
-				}
-				return {
-					value: (await resolveInstanceFromValue(
-						rows,
-						this.tables,
-						table,
-						this.resolveDependencies.bind(this),
-						true,
-						options?.shape,
-					)) as unknown as T,
-					id,
-				};
+		return this.withDatabaseIfOpen(undefined, () =>
+			this.getUnlocked(id, options),
+		);
+	}
+
+	private async getUnlocked(
+		id: types.IdKey,
+		options?: { shape: Shape },
+	): Promise<IndexedResult<T> | undefined> {
+		for (const table of this._rootTables) {
+			const { join: joinMap, selects } = selectAllFieldsFromTable(
+				table,
+				options?.shape,
+			);
+			const sql = `${generateSelectQuery(table, selects)} ${buildJoin(joinMap).join} where ${table.name}.${this.primaryKeyString} = ? limit 1`;
+			const stmt = await this.properties.db.prepare(sql, sql);
+			const rows = await stmt.get([
+				table.primaryField?.from?.type
+					? convertToSQLType(id.key, table.primaryField.from.type)
+					: id.key,
+			]);
+			if (
+				rows?.[getTablePrefixedField(table, table.primary as string)] == null
+			) {
+				continue;
 			}
-			return undefined;
-		});
+			return {
+				value: (await resolveInstanceFromValue(
+					rows,
+					this.tables,
+					table,
+					this.resolveDependencies.bind(this),
+					true,
+					options?.shape,
+				)) as unknown as T,
+				id,
+			};
+		}
+		return undefined;
 	}
 
 	async put(
@@ -803,6 +820,151 @@ export class SQLiteIndex<T extends Record<string, any>>
 				this.mutationVersion++;
 			}
 		});
+	}
+
+	async withOrderedWriteSession<R>(
+		operation: (session: types.OrderedIndexWriteSession<T>) => Promise<R> | R,
+	): Promise<R> {
+		this.assertOpen();
+		let active = true;
+		let releaseAdmission: (() => void) | undefined;
+		let chunkSavepoint: string | undefined;
+		let successfulWrites = 0;
+
+		const assertActive = () => {
+			if (!active) {
+				throw new Error("Ordered index write session is no longer active");
+			}
+		};
+
+		const acquireAdmission = async () => {
+			if (releaseAdmission) {
+				return;
+			}
+			this.assertOpen();
+			const release = await this.acquireDatabaseBarrier();
+			if (this.state !== "open") {
+				release();
+				throw new types.NotStartedError();
+			}
+			releaseAdmission = release;
+		};
+
+		const flush = async () => {
+			const release = releaseAdmission;
+			if (!release) {
+				return;
+			}
+			const savepoint = chunkSavepoint;
+			const writes = successfulWrites;
+			try {
+				if (savepoint) {
+					await this.properties.db.exec(`RELEASE SAVEPOINT ${savepoint}`);
+					if (writes > 0) {
+						this.mutationVersion++;
+					}
+				}
+			} finally {
+				chunkSavepoint = undefined;
+				successfulWrites = 0;
+				releaseAdmission = undefined;
+				release();
+			}
+		};
+
+		const session: types.OrderedIndexWriteSession<T> = {
+			get: async (id, options) => {
+				assertActive();
+				await acquireAdmission();
+				try {
+					return await this.getUnlocked(id, options);
+				} finally {
+					// Match an ordinary scalar get's admission window when there is
+					// no successful prefix whose transaction must remain open.
+					if (!chunkSavepoint) {
+						await flush();
+					}
+				}
+			},
+			put: async (value, _id, options) => {
+				assertActive();
+				await acquireAdmission();
+				if (!chunkSavepoint) {
+					const nextChunkSavepoint = `peerbit_ordered_chunk_${this.databaseCoordinator.nextSavepointId++}`;
+					await this.properties.db.exec(`SAVEPOINT ${nextChunkSavepoint}`);
+					chunkSavepoint = nextChunkSavepoint;
+				}
+
+				const rowSavepoint = `peerbit_ordered_row_${this.databaseCoordinator.nextSavepointId++}`;
+				let rowOpen = false;
+				try {
+					await this.properties.db.exec(`SAVEPOINT ${rowSavepoint}`);
+					rowOpen = true;
+					await this.putUnlocked(value, options);
+					await this.properties.db.exec(`RELEASE SAVEPOINT ${rowSavepoint}`);
+					rowOpen = false;
+					successfulWrites++;
+					if (successfulWrites >= PUT_BATCH_CHUNK_SIZE) {
+						await flush();
+					}
+				} catch (error) {
+					let cleanupError: unknown;
+					if (rowOpen) {
+						try {
+							await this.properties.db.exec(
+								`ROLLBACK TO SAVEPOINT ${rowSavepoint}`,
+							);
+							await this.properties.db.exec(
+								`RELEASE SAVEPOINT ${rowSavepoint}`,
+							);
+						} catch (rollbackError) {
+							cleanupError = rollbackError;
+						}
+					}
+					try {
+						await flush();
+					} catch (flushError) {
+						cleanupError = cleanupError
+							? new AggregateError(
+									[cleanupError, flushError],
+									"SQLite ordered write cleanup failed",
+								)
+							: flushError;
+					}
+					if (cleanupError) {
+						throw new AggregateError(
+							[error, cleanupError],
+							"SQLite ordered write and cleanup both failed",
+						);
+					}
+					throw error;
+				}
+			},
+			flush: async () => {
+				assertActive();
+				await flush();
+			},
+		};
+
+		try {
+			const result = await operation(session);
+			await flush();
+			return result;
+		} catch (error) {
+			try {
+				await flush();
+			} catch (flushError) {
+				throw new AggregateError(
+					[error, flushError],
+					"SQLite ordered callback and prefix commit both failed",
+				);
+			}
+			throw error;
+		} finally {
+			active = false;
+			releaseAdmission?.();
+			releaseAdmission = undefined;
+		}
 	}
 
 	iterate<S extends Shape | undefined>(
