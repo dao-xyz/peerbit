@@ -184,6 +184,7 @@ describe("@peerbit/indexer-sqlite3 — shutdown safety", () => {
 
 		const lateDoc = new Document({ key: "b", value: "world" });
 		await expectNotStarted(() => index.put(lateDoc));
+		await expectNotStarted(() => index.putBatch([lateDoc]));
 		await expectNotStarted(() => index.get(toId("b")));
 		await expectNotStarted(() =>
 			index.del({ query: { key: "b" } as Record<string, any> }),
@@ -224,6 +225,11 @@ describe("@peerbit/indexer-sqlite3 — shutdown safety", () => {
 		expect(
 			await index.put(new Document({ key: "b", value: "world" })),
 		).to.equal(undefined);
+		expect(
+			await index.putBatch([
+				new Document({ key: "batch", value: "during-close" }),
+			]),
+		).to.equal(undefined);
 		expect(await index.get(toId("b"))).to.equal(undefined);
 		expect(
 			await index.del({ query: { key: "b" } as Record<string, any> }),
@@ -250,6 +256,9 @@ describe("@peerbit/indexer-sqlite3 — shutdown safety", () => {
 
 		await expectNotStarted(() =>
 			index.put(new Document({ key: "c", value: "closed" })),
+		);
+		await expectNotStarted(() =>
+			index.putBatch([new Document({ key: "batch", value: "closed" })]),
 		);
 	});
 });
