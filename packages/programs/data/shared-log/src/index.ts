@@ -1408,6 +1408,8 @@ const RECALCULATE_PARTICIPATION_MIN_RELATIVE_CHANGE_WITH_CPU_LIMIT = 0.005;
 const RECALCULATE_PARTICIPATION_MIN_RELATIVE_CHANGE_WITH_MEMORY_LIMIT = 0.001;
 const RECALCULATE_PARTICIPATION_RELATIVE_DENOMINATOR_FLOOR = 1e-3;
 const TOPIC_SUBSCRIBERS_CACHE_TTL_MS = 250;
+const LOCAL_REACHABLE_PEERS_CACHE_TTL_MS = 250;
+const LOCAL_REACHABLE_PEERS_MAX = 64;
 const LEADER_SELECTION_CONTEXT_CACHE_TTL_MS = 50;
 // Leader-plan results are invalidated structurally (replication:change,
 // replicator:mature, subscriber changes). The TTL bounds wall-clock maturity
@@ -3446,6 +3448,14 @@ export class SharedLog<
 		string,
 		{ expiresAt: number; keys: PublicSignKey[] }
 	>;
+	private _localReachablePeerHashesCache!: Map<
+		string,
+		{
+			expiresAt: number;
+			hashes?: string[];
+			inFlight?: Promise<string[]>;
+		}
+	>;
 	private _leaderSelectionContextCache?: {
 		expiresAt: number;
 		context: LeaderSelectionContext;
@@ -3786,6 +3796,7 @@ export class SharedLog<
 		this._joinAuthoritativeRepairPeersByDelay = new Map();
 		this._appendBackfillPendingByTarget = new Map();
 		this._topicSubscribersCache = new Map();
+		this._localReachablePeerHashesCache = new Map();
 		this._peerSyncCapabilities = new Map();
 		this._peerSyncCapabilitySessions = new Map();
 		this._peerSyncCapabilityTimestamps = new Map();
@@ -5154,6 +5165,93 @@ export class SharedLog<
 		);
 	}
 
+	private async _getLocalReachablePeerHashes(topic: string): Promise<string[]> {
+		const cache = (this._localReachablePeerHashesCache ??= new Map());
+		const cached = cache.get(topic);
+		if (cached?.hashes && cached.expiresAt > Date.now()) {
+			return cached.hashes.slice();
+		}
+		if (cached?.inFlight) {
+			return (await cached.inFlight).slice();
+		}
+
+		const entry: {
+			expiresAt: number;
+			hashes?: string[];
+			inFlight?: Promise<string[]>;
+		} = { expiresAt: 0 };
+		const inFlight = (async () => {
+			const selfHash = this.node.identity.publicKey.hashcode();
+			const hashes: string[] = [];
+			const seen = new Set<string>();
+			const addHash = (hash: unknown) => {
+				if (
+					typeof hash !== "string" ||
+					hash.length === 0 ||
+					hash === selfHash ||
+					seen.has(hash) ||
+					hashes.length >= LOCAL_REACHABLE_PEERS_MAX
+				) {
+					return;
+				}
+				seen.add(hash);
+				hashes.push(hash);
+			};
+
+			const pubsub = this.node.services.pubsub as any;
+			const peerMap = pubsub?.peers;
+			if (peerMap?.entries) {
+				for (const [hash, peer] of peerMap.entries()) {
+					addHash(peer?.publicKey?.hashcode?.());
+					addHash(hash);
+					if (hashes.length >= LOCAL_REACHABLE_PEERS_MAX) break;
+				}
+			}
+
+			if (hashes.length < LOCAL_REACHABLE_PEERS_MAX) {
+				const connectionManager = pubsub?.components?.connectionManager;
+				for (const conn of connectionManager?.getConnections?.() ?? []) {
+					const peerId = conn?.remotePeer;
+					if (!peerId) continue;
+					try {
+						addHash(getPublicKeyFromPeerId(peerId).hashcode());
+					} catch {
+						// Best-effort only.
+					}
+					if (hashes.length >= LOCAL_REACHABLE_PEERS_MAX) break;
+				}
+			}
+
+			if (hashes.length < LOCAL_REACHABLE_PEERS_MAX) {
+				try {
+					for (const subscriber of (await pubsub.getSubscribers(topic)) ?? []) {
+						addHash(subscriber?.hashcode?.());
+						if (hashes.length >= LOCAL_REACHABLE_PEERS_MAX) break;
+					}
+				} catch {
+					// Local reachability is best-effort.
+				}
+			}
+
+			return hashes;
+		})();
+		entry.inFlight = inFlight;
+		cache.set(topic, entry);
+
+		try {
+			const hashes = await inFlight;
+			if (cache.get(topic) === entry) {
+				entry.hashes = hashes;
+				entry.expiresAt = Date.now() + LOCAL_REACHABLE_PEERS_CACHE_TTL_MS;
+				entry.inFlight = undefined;
+			}
+			return hashes.slice();
+		} catch (error) {
+			if (cache.get(topic) === entry) cache.delete(topic);
+			throw error;
+		}
+	}
+
 	private async _getTopicSubscribers(
 		topic: string,
 	): Promise<PublicSignKey[] | undefined> {
@@ -5278,6 +5376,7 @@ export class SharedLog<
 		for (const topic of topics) {
 			if (!topic) continue;
 			this._topicSubscribersCache.delete(topic);
+			this._localReachablePeerHashesCache?.delete(topic);
 		}
 		this.invalidateLeaderSelectionContextCache();
 	}
@@ -14564,6 +14663,7 @@ export class SharedLog<
 		this._appendBackfillPendingByTarget = new Map();
 		this._repairMetrics = createRepairMetrics();
 		this._topicSubscribersCache = new Map();
+		this._localReachablePeerHashesCache = new Map();
 		this._leaderSelectionContextCache = undefined;
 		this._leaderPlanCache = new LeaderPlanCache({
 			max: LEADER_PLAN_CACHE_MAX,
@@ -14784,31 +14884,73 @@ export class SharedLog<
 			// compatible eager path with bounded validation and storage budgets.
 			eagerBlocks: options?.eagerBlocks ?? false,
 			resolveProviders: async (cid, opts) => {
-				// 1) tracker-backed provider directory (best-effort, bounded)
-				try {
-					const providers = await fanoutService?.queryProviders(
-						blockProviderNamespace(cid),
-						{
-							want: 8,
-							timeoutMs: 2_000,
-							queryTimeoutMs: 500,
-							bootstrapMaxPeers: 2,
-							signal: opts?.signal,
-						},
-					);
-					if (providers && providers.length > 0) return providers;
-				} catch {
-					// ignore discovery failures
-				}
-
-				// 2) reuse the same per-hash / replicator / subscriber fallback used by
-				// entry loads so block retries can widen beyond stale explicit hints.
-				return (
+				const maxPeers = 8;
+				const localCandidates =
 					(await this.resolveCandidatePeersForHash(cid, {
 						signal: opts?.signal,
-						maxPeers: 8,
-					})) ?? []
+						maxPeers,
+					})) ?? [];
+				if (opts?.signal?.aborted) return [];
+				const locallyReachable = new Set(
+					await this._getLocalReachablePeerHashes(this.topic),
 				);
+				const confirmed = this._checkedPrune.getConfirmedReplicators(cid);
+				const contacted = this._checkedPrune.getContactedReplicators(cid);
+				const hasLiveCandidate = localCandidates.some(
+					(peer) =>
+						locallyReachable.has(peer) &&
+						(confirmed?.has(peer) ||
+							contacted?.has(peer) ||
+							this.uniqueReplicators.has(peer)),
+				);
+
+				// Only reachability corroborated by provider/replicator evidence may
+				// bypass the initial CID lookup. Arbitrary bootstrap connections are
+				// useful fallbacks, but are not evidence that they hold this block.
+				if (hasLiveCandidate && !opts?.refresh) {
+					return localCandidates;
+				}
+
+				let directoryProviders: string[] = [];
+				try {
+					directoryProviders =
+						(await fanoutService?.queryProviders(
+							blockProviderNamespace(cid),
+							{
+								want: maxPeers,
+								timeoutMs: 2_000,
+								queryTimeoutMs: 500,
+								bootstrapMaxPeers: 2,
+								signal: opts?.signal,
+							},
+						)) ?? [];
+				} catch {
+					// Ignore discovery failures; local evidence remains usable.
+				}
+
+				const selected: string[] = [];
+				const selectedSet = new Set<string>();
+				const add = (peer: string | undefined) => {
+					if (
+						!peer ||
+						selectedSet.has(peer) ||
+						selected.length >= maxPeers
+					) {
+						return;
+					}
+					selectedSet.add(peer);
+					selected.push(peer);
+				};
+				for (
+					let index = 0;
+					selected.length < maxPeers &&
+					(index < localCandidates.length || index < directoryProviders.length);
+					index++
+				) {
+					add(localCandidates[index]);
+					add(directoryProviders[index]);
+				}
+				return selected;
 			},
 			watchProviders: fanoutService
 				? (cid, opts) =>
@@ -16182,73 +16324,99 @@ export class SharedLog<
 		if (options?.signal?.aborted) return undefined;
 
 		const maxPeers = options?.maxPeers ?? 8;
+		if (maxPeers <= 0) return undefined;
 		const self = this.node.identity.publicKey.hashcode();
 		const seed = hashToSeed32(hash);
 
-		const hinted = this._checkedPrune.getConfirmedReplicators(hash);
-		if (hinted && hinted.size > 0) {
-			const peers = [...hinted].filter((p) => p !== self);
-			return peers.length > 0
-				? pickDeterministicSubset(peers, seed, maxPeers)
-				: undefined;
-		}
-
+		// Replication/provider knowledge deliberately outlives a transport session.
+		// That is useful for repair, but it must not fill the bounded fetch target set
+		// with departed peers while a reachable holder is available. The local
+		// snapshot performs no tracker/provider discovery or key resolution.
+		const reachable = await this._getLocalReachablePeerHashes(this.topic);
+		if (options?.signal?.aborted) return undefined;
+		const reachableSet = new Set(reachable);
+		const confirmed = this._checkedPrune.getConfirmedReplicators(hash);
 		const contacted = this._checkedPrune.getContactedReplicators(hash);
-		if (contacted && contacted.size > 0) {
-			const peers = [...contacted].filter((p) => p !== self);
-			return peers.length > 0
-				? pickDeterministicSubset(peers, seed, maxPeers)
-				: undefined;
-		}
+		const evidenceTiers: readonly Iterable<string>[] = [
+			confirmed ?? [],
+			contacted ?? [],
+			this.uniqueReplicators,
+		];
 
-		let candidates: string[] | undefined;
-		const replicatorCandidates = [...this.uniqueReplicators].filter(
-			(p) => p !== self,
+		// Peers supported by both current transport state and provider history are
+		// the strongest signal. Afterwards alternate live-only and historical-only
+		// evidence so either source can widen a saturated bounded set. Derive the
+		// live intersection from the bounded reachability snapshot; never clone or
+		// scan an unbounded historical replicator set per missing block.
+		const liveEvidenceTiers: string[][] = [[], [], []];
+		for (const peer of reachable) {
+			if (confirmed?.has(peer)) liveEvidenceTiers[0].push(peer);
+			else if (contacted?.has(peer)) liveEvidenceTiers[1].push(peer);
+			else if (this.uniqueReplicators.has(peer)) liveEvidenceTiers[2].push(peer);
+		}
+		const liveKnown: string[] = [];
+		for (let tier = 0; tier < liveEvidenceTiers.length; tier++) {
+			liveKnown.push(
+				...pickDeterministicSubset(
+					liveEvidenceTiers[tier],
+					(seed ^ Math.imul(tier + 1, 0x9e3779b1)) >>> 0,
+					maxPeers - liveKnown.length,
+				),
+			);
+			if (liveKnown.length >= maxPeers) break;
+		}
+		const liveKnownSet = new Set(liveKnown);
+		const liveOnly = pickDeterministicSubset(
+			reachable.filter((peer) => !liveKnownSet.has(peer)),
+			(seed ^ 0x85ebca6b) >>> 0,
+			maxPeers,
 		);
-		if (replicatorCandidates.length > 0) {
-			candidates = replicatorCandidates;
-		} else {
-			try {
-				const subscribers = await this._getTopicSubscribers(this.topic);
-				const subscriberCandidates =
-					subscribers?.map((k) => k.hashcode()).filter((p) => p !== self) ?? [];
-				candidates =
-					subscriberCandidates.length > 0 ? subscriberCandidates : undefined;
-			} catch {
-				// Best-effort only.
+		const historicalOnly: string[] = [];
+		const historicalSeen = new Set<string>();
+		for (let tier = 0; tier < evidenceTiers.length; tier++) {
+			const available: string[] = [];
+			let inspected = 0;
+			for (const peer of evidenceTiers[tier]) {
+				if (inspected++ >= LOCAL_REACHABLE_PEERS_MAX) break;
+				if (
+					!peer ||
+					peer === self ||
+					reachableSet.has(peer) ||
+					historicalSeen.has(peer)
+				) {
+					continue;
+				}
+				historicalSeen.add(peer);
+				available.push(peer);
 			}
-
-			if (!candidates || candidates.length === 0) {
-				const peerMap = (this.node.services.pubsub as any)?.peers;
-				if (peerMap?.keys) {
-					candidates = [...peerMap.keys()];
-				}
+			historicalOnly.push(
+				...pickDeterministicSubset(
+					available,
+					(seed ^ Math.imul(tier + 5, 0x9e3779b1)) >>> 0,
+					maxPeers - historicalOnly.length,
+				),
+			);
+			if (historicalOnly.length >= maxPeers) break;
+		}
+		const selected = liveKnown.slice(0, maxPeers);
+		let liveIndex = 0;
+		let historicalIndex = 0;
+		while (
+			selected.length < maxPeers &&
+			(liveIndex < liveOnly.length || historicalIndex < historicalOnly.length)
+		) {
+			if (liveIndex < liveOnly.length) {
+				selected.push(liveOnly[liveIndex++]);
 			}
-
-			if (!candidates || candidates.length === 0) {
-				const connectionManager = (this.node.services.pubsub as any)?.components
-					?.connectionManager;
-				const connections = connectionManager?.getConnections?.() ?? [];
-				const connectionHashes: string[] = [];
-				for (const conn of connections) {
-					const peerId = conn?.remotePeer;
-					if (!peerId) continue;
-					try {
-						connectionHashes.push(getPublicKeyFromPeerId(peerId).hashcode());
-					} catch {
-						// Best-effort only.
-					}
-				}
-				if (connectionHashes.length > 0) {
-					candidates = connectionHashes;
-				}
+			if (
+				selected.length < maxPeers &&
+				historicalIndex < historicalOnly.length
+			) {
+				selected.push(historicalOnly[historicalIndex++]);
 			}
 		}
 
-		if (!candidates || candidates.length === 0) return undefined;
-		const peers = candidates.filter((p) => p !== self);
-		if (peers.length === 0) return undefined;
-		return pickDeterministicSubset(peers, seed, maxPeers);
+		return selected.length > 0 ? selected : undefined;
 	}
 
 	async getMemoryUsage() {
@@ -17418,6 +17586,7 @@ export class SharedLog<
 			this.recentlyRebalanced?.clear();
 			this.uniqueReplicators?.clear();
 			this._topicSubscribersCache?.clear();
+			this._localReachablePeerHashesCache?.clear();
 			this._closeController.abort();
 			clearInterval(this.interval);
 			this._liveness?.stopReplicatorLivenessSweep();
@@ -25468,9 +25637,11 @@ export class SharedLog<
 
 		const fromHash = evt.detail.from.hashcode();
 		const subscriptionEpoch = this._peerSessions.rotate(fromHash, "opening");
-		this.remoteBlocks.onReachable(evt.detail.from);
 		this._peerSessions.blockReplicationInfo(fromHash);
 		this.invalidateSharedLogTopicSubscribersCache();
+		// Invalidate the local reachability snapshot before waking block reads;
+		// their forced resolver runs synchronously from the reachable event.
+		this.remoteBlocks.onReachable(evt.detail.from);
 
 		await this.handleSubscriptionChange(
 			evt.detail.from,
