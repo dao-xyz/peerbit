@@ -136,6 +136,25 @@ export interface Index<T extends Record<string, any>, NestedType = any> {
 		},
 	): MaybePromise<void>;
 	putBatch?(values: T[]): MaybePromise<void>;
+	/**
+	 * Run sequential index work while allowing the engine to amortize storage
+	 * admission and transaction setup across writes.
+	 *
+	 * The callback and its session methods must be awaited serially. A completed
+	 * `put` belongs to the successful prefix: if a later callback step or write
+	 * fails, that prefix is committed before the original error is rethrown and
+	 * the failing write must not leave partial state. Implementations may commit
+	 * and release admission at fixed internal bounds. `flush` forces that boundary
+	 * so callers can safely fall back to ordinary index operations.
+	 *
+	 * This is optional because not every engine can provide the ordering,
+	 * isolation, and successful-prefix guarantees. Do not start an ordinary index
+	 * operation while the session has unflushed work. After awaiting `flush`, the
+	 * callback may await ordinary index work before using the session again.
+	 */
+	withOrderedWriteSession?<R>(
+		operation: (session: OrderedIndexWriteSession<T>) => MaybePromise<R>,
+	): MaybePromise<R>;
 	del(query: DeleteOptions): MaybePromise<IdKey[]>;
 	sum(query: SumOptions): MaybePromise<bigint | number>;
 	count(query?: CountOptions): MaybePromise<number>;
@@ -147,6 +166,22 @@ export interface Index<T extends Record<string, any>, NestedType = any> {
 	persisted(): MaybePromise<boolean>;
 	start(): MaybePromise<void>;
 	stop(): MaybePromise<void>;
+}
+
+export interface OrderedIndexWriteSession<T extends Record<string, any>> {
+	get(
+		id: IdKey,
+		options?: { shape: Shape },
+	): MaybePromise<IndexedResult<T> | undefined>;
+	put(
+		value: T,
+		id?: IdKey,
+		options?: {
+			replace?: boolean;
+		},
+	): MaybePromise<void>;
+	/** Commit the current successful prefix and release engine admission. */
+	flush(): MaybePromise<void>;
 }
 
 export const iteratorInSeries = <
