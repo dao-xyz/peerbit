@@ -3086,7 +3086,6 @@ export class Documents<
 				throw new Error("Unsupported operation");
 			}
 
-			return operation as PutOperation | DeleteOperation;
 		} catch (error) {
 			if (error instanceof AccessError) {
 				return false; // we cant index because we can not decrypt
