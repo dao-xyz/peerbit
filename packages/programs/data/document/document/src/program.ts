@@ -1,6 +1,7 @@
 import {
 	type AbstractType,
 	BorshError,
+	deserialize,
 	field,
 	serialize,
 	variant,
@@ -44,6 +45,10 @@ import {
 	SharedLog,
 	type SharedLogOptions,
 } from "@peerbit/shared-log";
+import {
+	detachCanPerformCallbackProperties,
+	detachEntryPayloadForCallback,
+} from "./callback-detachment.js";
 import { MAX_BATCH_SIZE } from "./constants.js";
 import type { CustomDocumentDomain } from "./domain.js";
 import type { DocumentEvents, DocumentsChange } from "./events.js";
@@ -1088,12 +1093,23 @@ export class Documents<
 	private _documentChangeListenerTrackingInitialized = false;
 	private _documentBackend!: DocumentBackend<T>;
 	private _canAppendDecodedDocuments = new WeakMap<PutOperation, T>();
+	private acceptPutOperation(
+		operation: PutOperation,
+		document: T | undefined,
+		hasDocument: boolean,
+	): PutOperation {
+		if (hasDocument) {
+			this._canAppendDecodedDocuments.set(operation, document!);
+		}
+		return operation;
+	}
 	private _nativeDocumentIdExtractionPlan?: SimpleDocumentFieldExtractionPlan;
 	private _nativeDocumentFieldExtractionPlans?: Map<
 		string,
 		SimpleDocumentFieldExtractionPlan | undefined
 	>;
 	private _hasLogTrim = false;
+	private _hasCustomIdResolver = false;
 	private idResolver!: (any: any) => indexerTypes.Ideable;
 	private domain?: CustomDocumentDomain<InferR<D>>;
 	private strictHistory: boolean;
@@ -1129,6 +1145,84 @@ export class Documents<
 					this.putManyCompatDocumentBackend.bind(this),
 					this.delCompatDocumentBackend.bind(this),
 				);
+	}
+
+	private detachDomainEntryCallback(
+		domain: CustomDocumentDomain<InferR<D>>,
+	): CustomDocumentDomain<InferR<D>> {
+		const boundMethods = new Map<
+			PropertyKey,
+			{ source: Function; bound: Function }
+		>();
+		const detachedFromEntry = (
+			entry: Parameters<CustomDocumentDomain<InferR<D>>["fromEntry"]>[0],
+		) => {
+			const fromEntry = Reflect.get(
+				domain,
+				"fromEntry",
+				domain,
+			) as CustomDocumentDomain<InferR<D>>["fromEntry"];
+			return Reflect.apply(fromEntry, domain, [
+				entry instanceof Entry
+					? detachEntryPayloadForCallback(entry)
+					: entry,
+			]);
+		};
+		const facade = Object.create(
+			Object.getPrototypeOf(domain),
+		) as CustomDocumentDomain<InferR<D>>;
+		let callbackDomain: CustomDocumentDomain<InferR<D>>;
+		callbackDomain = new Proxy(facade, {
+			get(_target, property) {
+				if (property === "fromEntry") {
+					return detachedFromEntry;
+				}
+				if (property === "valueOf") {
+					return () => callbackDomain;
+				}
+				const value = Reflect.get(domain, property, domain);
+				if (property === "constructor" || typeof value !== "function") {
+					return value;
+				}
+				const existing = boundMethods.get(property);
+				if (existing && existing.source === value) {
+					return existing.bound;
+				}
+				const bound = value.bind(domain);
+				boundMethods.set(property, { source: value, bound });
+				return bound;
+			},
+			set(_target, property, value) {
+				return Reflect.set(domain, property, value, domain);
+			},
+			has(_target, property) {
+				return Reflect.has(domain, property);
+			},
+			ownKeys() {
+				return Reflect.ownKeys(domain);
+			},
+			getOwnPropertyDescriptor(_target, property) {
+				const descriptor = Reflect.getOwnPropertyDescriptor(domain, property);
+				if (!descriptor) {
+					return undefined;
+				}
+				if (property === "fromEntry") {
+					return "value" in descriptor
+						? {
+								...descriptor,
+								value: detachedFromEntry,
+								configurable: true,
+							}
+						: {
+								...descriptor,
+								get: () => detachedFromEntry,
+								configurable: true,
+							};
+				}
+				return { ...descriptor, configurable: true };
+			},
+		});
+		return callbackDomain;
 	}
 
 	private createNativeDocumentBackendContext(): NativeDocumentBackendContext<
@@ -2356,6 +2450,7 @@ export class Documents<
 				: (obj: any) =>
 						indexerTypes.extractFieldValue(obj, idProperty as string[]));
 
+		this._hasCustomIdResolver = options.id != null;
 		this.idResolver = idResolver;
 		this.strictHistory = options.strictHistory ?? false;
 		this._hasLogTrim = options.log?.trim != null;
@@ -2404,7 +2499,9 @@ export class Documents<
 		// 7 -> log v9) is retired; the rejection at the top of open() fires for
 		// any defined value before this point.
 
-		this.domain = options.domain?.(this);
+		this.domain = options.domain
+			? this.detachDomainEntryCallback(options.domain(this))
+			: undefined;
 
 		let keepFunction:
 			| ((
@@ -2449,7 +2546,16 @@ export class Documents<
 				return false;
 			};
 		} else {
-			keepFunction = options?.keep;
+			const keep = options?.keep;
+			keepFunction = keep
+				? function (this: unknown, entry) {
+						return Reflect.apply(keep, this, [
+							entry instanceof Entry
+								? detachEntryPayloadForCallback(entry)
+								: entry,
+						]);
+					}
+				: undefined;
 		}
 
 		await this.log.open({
@@ -2473,7 +2579,10 @@ export class Documents<
 			distributionDebounceTime: options?.distributionDebounceTime,
 			strictFullReplicaFallback: false,
 			domain: options?.domain
-				? () => options.domain!(this) as unknown as D
+				? () =>
+						this.detachDomainEntryCallback(
+							options.domain!(this),
+						) as unknown as D
 				: undefined,
 			eagerBlocks: options?.eagerBlocks,
 			fanout: options?.fanout,
@@ -2565,7 +2674,7 @@ export class Documents<
 		}
 
 		try {
-			let operation: PutOperation | DeleteOperation = l0;
+			const operation: PutOperation | DeleteOperation = l0;
 			if (this._optionCanPerform) {
 				if (this._optionCanPerformNativePolicy && this.isNativeMode()) {
 					return this.nativeCanPerformAllowsAppend(
@@ -2575,22 +2684,22 @@ export class Documents<
 						reference?.document,
 					);
 				}
-				let document: T | undefined = reference?.document;
-				if (!document) {
-					if (isPutOperation(l0)) {
-						document =
-							this._canAppendDecodedDocuments.get(l0) ??
-							this._index.valueEncoding.decoder(l0.data);
-						if (!document) {
-							return false;
-						}
-					} else if (isDeleteOperation(l0)) {
-						// Nothing to do here by default.
-						// Checking if the document exists is not necessary since it
-						// might already be deleted.
-					} else {
-						throw new Error("Unsupported operation");
+				let document: T | undefined;
+				if (isPutOperation(l0)) {
+					const cachedDocument = this._canAppendDecodedDocuments.get(l0);
+					this._canAppendDecodedDocuments.delete(l0);
+					document =
+						cachedDocument ??
+						this._index.valueEncoding.decoder(new Uint8Array(l0.data));
+					if (!document) {
+						return false;
 					}
+				} else if (isDeleteOperation(l0)) {
+					// Nothing to do here by default.
+					// Checking if the document exists is not necessary since it
+					// might already be deleted.
+				} else {
+					throw new Error("Unsupported operation");
 				}
 				const previousEntries =
 					this._optionCanPerformNativePolicy &&
@@ -2598,7 +2707,9 @@ export class Documents<
 					canPerformPolicyNeedsPreviousEntries(
 						this._optionCanPerformNativePolicy,
 					)
-						? await this.resolveCanPerformPreviousEntries(entry)
+						? (await this.resolveCanPerformPreviousEntries(entry)).map(
+								detachEntryPayloadForCallback,
+							)
 						: undefined;
 				const deleteValue =
 					this._optionCanPerformNativePolicy &&
@@ -2610,20 +2721,22 @@ export class Documents<
 						: undefined;
 				if (
 					!(await this._optionCanPerform(
-						isPutOperation(operation)
-							? {
-									type: "put",
-									value: document!,
-									operation,
-									entry: entry as unknown as Entry<PutOperation>,
-									previousEntries,
-								}
-							: {
-									type: "delete",
-									value: deleteValue,
-									operation,
-									entry: entry as unknown as Entry<DeleteOperation>,
-								},
+						detachCanPerformCallbackProperties(
+							isPutOperation(operation)
+								? {
+										type: "put",
+										value: document!,
+										operation,
+										entry: entry as unknown as Entry<PutOperation>,
+										previousEntries,
+									}
+								: {
+										type: "delete",
+										value: deleteValue,
+										operation,
+										entry: entry as unknown as Entry<DeleteOperation>,
+									},
+						),
 					))
 				) {
 					return false;
@@ -2712,6 +2825,12 @@ export class Documents<
 		return entries;
 	}
 
+	private detachDocumentValueForCallback(document: T): T {
+		return this._index.valueEncoding.decoder(
+			this._index.valueEncoding.encoder(document),
+		);
+	}
+
 	private async resolveCanPerformDeleteValue(
 		operation: DeleteOperation,
 		options?: { allowEntryFallback?: boolean },
@@ -2728,12 +2847,15 @@ export class Documents<
 		const indexedDocument =
 			await this.getLocalIdentityDocumentByHead(existingHead);
 		if (indexedDocument) {
-			return indexedDocument;
+			return this.detachDocumentValueForCallback(indexedDocument);
 		}
 		const indexedPolicyDocument =
 			await this.getLocalIndexedDocumentForNativeDeletePolicy(key);
 		if (indexedPolicyDocument) {
-			return indexedPolicyDocument;
+			return deserialize(
+				serialize(indexedPolicyDocument),
+				this._index.indexedType,
+			) as unknown as T;
 		}
 		if (options?.allowEntryFallback === false) {
 			return;
@@ -2745,7 +2867,9 @@ export class Documents<
 		if (!isPutOperation(existingOperation)) {
 			return;
 		}
-		return this._index.valueEncoding.decoder(existingOperation.data);
+		return this._index.valueEncoding.decoder(
+			new Uint8Array(existingOperation.data),
+		);
 	}
 
 	protected async _canAppend(
@@ -2796,17 +2920,32 @@ export class Documents<
 			if (isPutOperation(operation)) {
 				// check nexts
 				const putOperation = operation as PutOperation;
+				let decodedDocumentForCanPerform: T | undefined;
+				let hasDecodedDocumentForCanPerform = false;
 				let keyValue: indexerTypes.Ideable | undefined;
 				if (reference?.document) {
-					keyValue = this.idResolver(reference.document);
+					keyValue = this.idResolver(
+						this._hasCustomIdResolver
+							? this.index.valueEncoding.decoder(
+									new Uint8Array(putOperation.data),
+								)
+							: reference.document,
+					);
 				} else {
 					keyValue = await this.getNativeDocumentIdFromPutOperation(putOperation);
 					if (keyValue == null) {
 						if (this.isNativeMode()) {
 							return false;
 						}
-						const value = this.index.valueEncoding.decoder(putOperation.data);
-						this._canAppendDecodedDocuments.set(putOperation, value);
+						const value = this.index.valueEncoding.decoder(
+							this._hasCustomIdResolver || this._optionCanPerform
+								? new Uint8Array(putOperation.data)
+								: putOperation.data,
+						);
+						if (this._optionCanPerform && !this._hasCustomIdResolver) {
+							decodedDocumentForCanPerform = value;
+							hasDecodedDocumentForCanPerform = true;
+						}
 						keyValue = this.idResolver(value);
 					}
 				}
@@ -2843,7 +2982,11 @@ export class Documents<
 							return false; // can not append to immutable document
 						}
 
-						return putOperation;
+						return this.acceptPutOperation(
+							putOperation,
+							decodedDocumentForCanPerform,
+							hasDecodedDocumentForCanPerform,
+						);
 					} else {
 						if (this.strictHistory) {
 							// make sure that the next pointer exist and points to the existing documents
@@ -2851,7 +2994,11 @@ export class Documents<
 								return false;
 							}
 							if (entry.meta.next[0] === existingContext.head) {
-								return putOperation;
+								return this.acceptPutOperation(
+									putOperation,
+									decodedDocumentForCanPerform,
+									hasDecodedDocumentForCanPerform,
+								);
 							}
 
 							const prevEntry = await this.log.log.entryIndex.get(
@@ -2866,14 +3013,29 @@ export class Documents<
 							}
 							const referenceHistoryCorrectly =
 								await pointsToHistory(prevEntry);
-							return referenceHistoryCorrectly ? putOperation : false;
+							return referenceHistoryCorrectly
+								? this.acceptPutOperation(
+										putOperation,
+										decodedDocumentForCanPerform,
+										hasDecodedDocumentForCanPerform,
+									)
+								: false;
 						} else {
-							return putOperation;
+							return this.acceptPutOperation(
+								putOperation,
+								decodedDocumentForCanPerform,
+								hasDecodedDocumentForCanPerform,
+							);
 						}
 					}
 				} else {
 					// Keep existing behavior: next pointers may express document dependencies.
 				}
+				return this.acceptPutOperation(
+					putOperation,
+					decodedDocumentForCanPerform,
+					hasDecodedDocumentForCanPerform,
+				);
 			} else if (isDeleteOperation(operation)) {
 				if (entry.meta.next.length !== 1) {
 					return false;
@@ -2924,7 +3086,6 @@ export class Documents<
 				throw new Error("Unsupported operation");
 			}
 
-			return operation;
 		} catch (error) {
 			if (error instanceof AccessError) {
 				return false; // we cant index because we can not decrypt
@@ -5459,14 +5620,25 @@ export class Documents<
 						}
 					}
 					let value =
-						(isReferencedAppendEntry && reference?.document) ||
-						this.index.valueEncoding.decoder(payload.data);
+						isReferencedAppendEntry && reference?.document
+							? reference.document
+							: this.index.valueEncoding.decoder(
+									new Uint8Array(payload.data),
+								);
 
 					// get index key from value
 					const key =
 						isReferencedAppendEntry && reference?.key
 							? reference.key
-							: indexerTypes.toId(this.idResolver(value));
+							: indexerTypes.toId(
+									this.idResolver(
+										this._hasCustomIdResolver
+											? this.index.valueEncoding.decoder(
+													new Uint8Array(payload.data),
+												)
+											: value,
+									),
+								);
 
 					// document is already updated with more recent entry
 					if (modified.has(key.primitive)) {

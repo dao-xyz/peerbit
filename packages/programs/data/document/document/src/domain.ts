@@ -9,6 +9,7 @@ import {
 	type ReplicationDomain,
 	type SharedLog,
 } from "@peerbit/shared-log";
+import { detachEntryPayloadForCallback } from "./callback-detachment.js";
 import { type Operation, isPutOperation } from "./operation.js";
 import type { DocumentIndex } from "./search.js";
 
@@ -93,8 +94,13 @@ export const createDocumentDomain =
 	): ((db: DB) => CustomDocumentDomain<InferR<DB>>) =>
 	(db: DB) => {
 		let maxValue = args.resolution === "u32" ? MAX_U32 : MAX_U64;
+		const detachEntry = (
+			entry: ShallowEntry | Entry<Operation> | EntryReplicated<any>,
+		) =>
+			entry instanceof Entry ? detachEntryPayloadForCallback(entry) : entry;
 		let fromEntry = (args as FromEntry<InferR<DB>>).fromEntry
-			? (args as FromEntry<InferR<DB>>).fromEntry!
+			? (entry: ShallowEntry | Entry<Operation> | EntryReplicated<any>) =>
+					(args as FromEntry<InferR<DB>>).fromEntry!(detachEntry(entry))
 			: async (
 					entry: ShallowEntry | Entry<Operation> | EntryReplicated<any>,
 				) => {
@@ -106,11 +112,13 @@ export const createDocumentDomain =
 					if (!item) {
 						logger.error("Item not found");
 					} else if (isPutOperation(item)) {
-						document = db.index.valueEncoding.decoder(item.data);
+						document = db.index.valueEncoding.decoder(
+							new Uint8Array(item.data),
+						);
 					}
 					return (args as FromValue<any, any>).fromValue!(
 						document,
-						entry,
+						detachEntry(entry),
 					) as NumberFromType<InferR<DB>>;
 				};
 		return {
