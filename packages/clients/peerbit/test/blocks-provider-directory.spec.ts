@@ -48,6 +48,58 @@ describe("blocks provider discovery", () => {
 		},
 	);
 
+	(isNode ? it : it.skip)(
+		"widens a refresh beyond excluded directory candidates",
+		async function () {
+			this.timeout(30_000);
+
+			const consumer = await Peerbit.create();
+			let queryStub: sinon.SinonStub | undefined;
+			const staleProviders = Array.from(
+				{ length: 8 },
+				(_, index) => `stale-provider-${index}`,
+			);
+			const syntheticConnected = Array.from(
+				{ length: 8 },
+				(_, index) => `connected-non-provider-${index}`,
+			);
+			const liveProvider = "live-provider";
+
+			try {
+				queryStub = sinon
+					.stub(consumer.services.fanout, "queryProviders")
+					.callsFake(async (_namespace, options) =>
+						[...staleProviders, liveProvider].slice(0, options?.want),
+					);
+				const blocks = consumer.services.blocks as any;
+				for (const peerHash of syntheticConnected) {
+					blocks.peers.set(peerHash, {});
+				}
+				const remoteBlocks = blocks.remoteBlocks;
+				const candidates = await remoteBlocks.options.resolveProviders(
+					"test-cid",
+					{
+						refresh: true,
+						exclude: staleProviders.slice(0, 2),
+					},
+				);
+
+				expect(queryStub.calledOnce).to.equal(true);
+				expect(queryStub.firstCall.args[1]?.want).to.equal(10);
+				expect(candidates).to.include(liveProvider);
+				expect(candidates).to.include(syntheticConnected[0]);
+				expect(candidates).not.to.include(staleProviders[0]);
+				expect(candidates).not.to.include(staleProviders[1]);
+				expect(candidates).to.have.length.lessThanOrEqual(8);
+			} finally {
+				queryStub?.restore();
+				const peers = (consumer.services.blocks as any).peers;
+				for (const peerHash of syntheticConnected) peers.delete(peerHash);
+				await consumer.stop();
+			}
+		},
+	);
+
 	(isNode ? it : it.skip)("fetches via fanout provider directory", async function () {
 		this.timeout(30_000);
 

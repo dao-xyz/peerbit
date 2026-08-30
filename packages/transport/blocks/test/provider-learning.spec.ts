@@ -41,7 +41,11 @@ describe("validated block provider learning", () => {
 		requestTargets?: string[][];
 		resolveProviders?: (
 			cid: string,
-			options?: { signal?: AbortSignal },
+			options?: {
+				signal?: AbortSignal;
+				refresh?: boolean;
+				exclude?: readonly string[];
+			},
 		) => Promise<string[] | undefined> | string[] | undefined;
 	}) => {
 		const key = await Ed25519Keypair.create();
@@ -402,7 +406,7 @@ describe("validated block provider learning", () => {
 		]);
 	});
 
-	it("lets a fresh provider displace a saturated stale hint cache", async function () {
+	it("widens past attempted stale hints and prioritizes a fresh provider", async function () {
 		this.timeout(10_000);
 		const staleProviders = Array.from(
 			{ length: 8 },
@@ -410,10 +414,22 @@ describe("validated block provider learning", () => {
 		);
 		const liveProvider = "live-provider";
 		const requestTargets: string[][] = [];
+		const resolverOptions: Array<
+			| {
+					refresh?: boolean;
+					exclude?: readonly string[];
+			  }
+			| undefined
+		> = [];
 		const remote = await createRemote({
 			maxProvidersPerCid: staleProviders.length,
 			requestTargets,
-			resolveProviders: () => [liveProvider],
+			resolveProviders: (_cid, options) => {
+				resolverOptions.push(options);
+				// Model a directory that widens its old eight-result window. The new
+				// live provider is deliberately ninth, behind every stale candidate.
+				return [...staleProviders, liveProvider];
+			},
 		});
 		remote.hintProviders(CID, staleProviders);
 
@@ -440,6 +456,14 @@ describe("validated block provider learning", () => {
 		expect(read).to.deep.equal(VALID_BYTES);
 		expect(Date.now() - startedAt).to.be.lessThan(3_000);
 		expect(requestTargets[0]).to.deep.equal(staleProviders.slice(0, 2));
+		expect(resolverOptions.some((options) => options?.refresh)).to.equal(true);
+		expect(
+			resolverOptions.some(
+				(options) =>
+					options?.exclude?.includes(staleProviders[0]) &&
+					options.exclude.includes(staleProviders[1]),
+			),
+		).to.equal(true);
 		expect(requestTargets.some((targets) => targets.includes(liveProvider))).to
 			.be.true;
 		expect(cachedProviders(remote)?.[0]).to.equal(liveProvider);
