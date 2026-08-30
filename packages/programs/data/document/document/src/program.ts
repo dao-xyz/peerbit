@@ -47,6 +47,7 @@ import {
 } from "@peerbit/shared-log";
 import {
 	detachCanPerformCallbackProperties,
+	detachEntryForCallback,
 	detachEntryPayloadForCallback,
 } from "./callback-detachment.js";
 import { MAX_BATCH_SIZE } from "./constants.js";
@@ -1162,11 +1163,7 @@ export class Documents<
 				"fromEntry",
 				domain,
 			) as CustomDocumentDomain<InferR<D>>["fromEntry"];
-			return Reflect.apply(fromEntry, domain, [
-				entry instanceof Entry
-					? detachEntryPayloadForCallback(entry)
-					: entry,
-			]);
+			return Reflect.apply(fromEntry, domain, [detachEntryForCallback(entry)]);
 		};
 		const facade = Object.create(
 			Object.getPrototypeOf(domain),
@@ -1223,6 +1220,25 @@ export class Documents<
 			},
 		});
 		return callbackDomain;
+	}
+
+	private detachTrimEntryCallback(
+		option: TrimOptions | undefined,
+	): TrimOptions | undefined {
+		const filter = option?.filter;
+		if (!option || !filter?.canTrim) {
+			return option;
+		}
+		const canTrim = filter.canTrim;
+		return {
+			...option,
+			filter: {
+				...filter,
+				canTrim: function (this: unknown, entry: ShallowEntry) {
+					return Reflect.apply(canTrim, this, [detachEntryForCallback(entry)]);
+				},
+			},
+		} as TrimOptions;
 	}
 
 	private createNativeDocumentBackendContext(): NativeDocumentBackendContext<
@@ -2549,11 +2565,7 @@ export class Documents<
 			const keep = options?.keep;
 			keepFunction = keep
 				? function (this: unknown, entry) {
-						return Reflect.apply(keep, this, [
-							entry instanceof Entry
-								? detachEntryPayloadForCallback(entry)
-								: entry,
-						]);
+						return Reflect.apply(keep, this, [detachEntryForCallback(entry)]);
 					}
 				: undefined;
 		}
@@ -2563,7 +2575,7 @@ export class Documents<
 			canReplicate: options?.canReplicate,
 			canAppend: this.canAppend.bind(this),
 			onChange: this.handleChanges.bind(this),
-			trim: options?.log?.trim,
+			trim: this.detachTrimEntryCallback(options?.log?.trim),
 			appendDurability: options?.appendDurability,
 			nativeBackbone: options?.nativeBackbone,
 			nativeGraph: options?.nativeGraph,

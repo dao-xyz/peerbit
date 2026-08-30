@@ -243,6 +243,15 @@ const mutateBytes = (document: AliasingDocument, marker: number): void => {
 	document.mapped.get("bytes")![0] = marker + 3;
 };
 
+const mutateFirstByte = (
+	bytes: Uint8Array | undefined,
+	marker: number,
+): void => {
+	if (bytes?.length) {
+		bytes[0] = marker;
+	}
+};
+
 const materialize = (entry: Entry<Operation>): Entry<Operation> =>
 	(deserialize(serialize(entry), Entry) as Entry<Operation>).init(entry);
 
@@ -830,6 +839,7 @@ describe("document callback typed-array detachment", () => {
 			},
 		);
 		const inputs: number[][] = [];
+		const entryInputs: Array<Array<number | undefined>> = [];
 		let attempts = 0;
 		const target = await session.peers[1].open(source.clone(), {
 			args: {
@@ -840,9 +850,38 @@ describe("document callback typed-array detachment", () => {
 						return true;
 					}
 					inputs.push(firstBytes(properties.value));
+					const callbackSignature = properties.entry.signatures[0];
+					const callbackKey = properties.entry.publicKeys[0];
+					const callbackDigest = (
+						properties.entry as any
+					).getHashDigestBytes?.() as Uint8Array | undefined;
+					entryInputs.push([
+						properties.entry.meta.data?.[0],
+						properties.entry.meta.clock.id[0],
+						callbackSignature?.signature[0],
+						(callbackKey as any)?.publicKey?.[0],
+						callbackKey?.bytes[0],
+						callbackDigest?.[0],
+					]);
 					mutateBytes(properties.value, 50);
 					properties.operation.data[properties.operation.data.length - 1] ^=
 						0xff;
+					if (properties.entry.meta.data?.length) {
+						properties.entry.meta.data[0] = 60;
+					}
+					properties.entry.meta.clock.id[0] = 61;
+					if (callbackSignature?.signature.length) {
+						callbackSignature.signature[0] = 62;
+					}
+					if ((callbackKey as any)?.publicKey?.length) {
+						(callbackKey as any).publicKey[0] = 63;
+					}
+					if (callbackKey?.bytes.length) {
+						callbackKey.bytes[0] = 64;
+					}
+					if (callbackDigest?.length) {
+						callbackDigest[0] = 65;
+					}
 					attempts++;
 					if (attempts === 1) {
 						throw new Error("retry callback");
@@ -904,6 +943,24 @@ describe("document callback typed-array detachment", () => {
 			[1, 3, 5, 7],
 			[1, 3, 5, 7],
 		]);
+		const canonicalSignature = received.signatures[0];
+		const canonicalKey = received.publicKeys[0];
+		const canonicalDigest = (received as any).getHashDigestBytes?.() as
+			| Uint8Array
+			| undefined;
+		const canonicalEntryInput = [
+			received.meta.data?.[0],
+			received.meta.clock.id[0],
+			canonicalSignature?.signature[0],
+			(canonicalKey as any)?.publicKey?.[0],
+			canonicalKey?.bytes[0],
+			canonicalDigest?.[0],
+		];
+		expect(entryInputs).to.deep.equal([
+			canonicalEntryInput,
+			canonicalEntryInput,
+			canonicalEntryInput,
+		]);
 		expect(firstBytes((await target.docs.get("retry"))!)).to.deep.equal([
 			1, 3, 5, 7,
 		]);
@@ -912,6 +969,7 @@ describe("document callback typed-array detachment", () => {
 
 	it("isolates previous-entry payloads supplied to canPerform", async () => {
 		const previousInputs: number[][] = [];
+		const signedEntryInputs: Array<Array<number | bigint | undefined>> = [];
 		let updateAttempts = 0;
 		let store!: AliasingStore<AliasingProjection>;
 		const canPerform = withPolicyDescriptor<AliasingDocument>(
@@ -919,18 +977,51 @@ describe("document callback typed-array detachment", () => {
 				if (properties.type !== "put" || !properties.previousEntries?.length) {
 					return true;
 				}
-				const operation =
-					await properties.previousEntries[0]!.getPayloadValue();
+				const previous = properties.previousEntries[0]!;
+				const operation = await previous.getPayloadValue();
 				if (!isPutOperation(operation)) {
 					return false;
 				}
+				const meta = await previous.getMeta();
+				const clock = await previous.getClock();
+				const signatures = await previous.getSignatures();
+				const publicKeys = await previous.getPublicKeys();
+				const metaBytes = (previous as any).getMetaBytes() as Uint8Array;
+				const digest = (previous as any).getHashDigestBytes() as Uint8Array;
+				const shallow = previous.toShallow(true);
+				signedEntryInputs.push([
+					meta.data?.[0],
+					clock.id[0],
+					clock.timestamp.logical,
+					meta.next.length,
+					metaBytes?.[0],
+					digest?.[0],
+					signatures[0]?.signature[0],
+					(publicKeys[0] as any)?.publicKey?.[0],
+					publicKeys[0]?.bytes[0],
+					shallow.meta.data?.[0],
+					shallow.meta.clock.id[0],
+					shallow.meta.next.length,
+				]);
 				const document = store.docs.index.valueEncoding.decoder(
 					operation.data,
 				) as AliasingDocument;
 				previousInputs.push(firstBytes(document));
 				mutateBytes(document, 90);
 				operation.data[0] ^= 0xff;
-				properties.previousEntries[0]!.payload.data[0] ^= 0xff;
+				previous.payload.data[0] ^= 0xff;
+				mutateFirstByte(meta.data, 91);
+				mutateFirstByte(clock.id, 92);
+				clock.timestamp.logical += 1000;
+				meta.next.push("callback");
+				mutateFirstByte(metaBytes, 93);
+				mutateFirstByte(digest, 94);
+				mutateFirstByte(signatures[0]?.signature, 95);
+				mutateFirstByte((publicKeys[0] as any)?.publicKey, 96);
+				mutateFirstByte(publicKeys[0]?.bytes, 97);
+				mutateFirstByte(shallow.meta.data, 98);
+				mutateFirstByte(shallow.meta.clock.id, 99);
+				shallow.meta.next.push("shallow-callback");
 				updateAttempts++;
 				if (updateAttempts === 1) {
 					throw new Error("retry previous entry callback");
@@ -950,7 +1041,15 @@ describe("document callback typed-array detachment", () => {
 			replicate: false,
 			target: "none",
 		});
+		const canonicalDigest = Uint8Array.from(
+			{ length: 32 },
+			(_, index) => index + 1,
+		);
+		(first.entry as any)._hashDigestBytes = canonicalDigest;
 		const firstSerialized = snapshotEntryBytes(first.entry);
+		const canonicalStorage = new Uint8Array(first.entry.getStorageBytes());
+		const canonicalSignable = new Uint8Array(first.entry.getSignableBytes());
+		const canonicalShallow = serialize(first.entry.toShallow(true));
 		const update = createDocument("previous");
 		update.direct[0] = 2;
 
@@ -964,7 +1063,18 @@ describe("document callback typed-array detachment", () => {
 			[1, 3, 5, 7],
 			[1, 3, 5, 7],
 		]);
+		expect(signedEntryInputs).to.have.length(2);
+		expect(signedEntryInputs[1]).to.deep.equal(signedEntryInputs[0]);
 		expectBytesUnchanged(first.entry, firstSerialized);
+		expect(first.entry.getStorageBytes()).to.deep.equal(canonicalStorage);
+		expect(first.entry.getSignableBytes()).to.deep.equal(canonicalSignable);
+		expect((first.entry as any).getHashDigestBytes()).to.deep.equal(
+			canonicalDigest,
+		);
+		expect(serialize(first.entry.toShallow(true))).to.deep.equal(
+			canonicalShallow,
+		);
+		expect(await first.entry.verifySignatures()).to.equal(true);
 	});
 
 	it("isolates rejected delete values, fallback decodes, and byte keys", async () => {
