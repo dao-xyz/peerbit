@@ -1,59 +1,46 @@
 # Trusted network
+
 ## 🚧 Experimental state 🚧
 
-A store that lets you build trusted networks of identities.
+`@peerbit/trusted-network` stores a directed graph of trust between signing
+identities. A configured root identity is always trusted. An identity is also
+trusted when the replicated graph contains a path from the root to that
+identity.
 
-The store is defined by the "root trust" which has the responsibility in the beginning to trust additional identities. Later, these identities can add more identities to the network. 
-Trusted identities can also be revoked.
+```ts
+import { TrustedNetwork } from "@peerbit/trusted-network";
 
-Distributing content among untrusted peers will be unreliable, and not resilient to malicious parties that start to participate in the replication process with large amount (>> min replicas) of nodes followed by shutting them down simultaneously (no way for the original peers recover all lost data). To mitigate this, you can launch your program in a "Network", which is basically a list of nodes that trust each other. Symbolically you could thing of this as a VPC.
+const network = await peer.open(
+	new TrustedNetwork({ rootTrust: rootPeer.identity.publicKey }),
+);
 
-To do this, you only have to implement the "Network" interface: 
-```typescript
-import { Peerbit, Network } from 'peerbit'
-import { Log } from '@peerbit/log'
-import { Program } from '@peerbit/program' 
-import { TrustedNetwork } from '@peerbit/trusted-network' 
-import { field, variant } from '@dao-xyz/borst-ts' 
+// The local append identity owns the new local -> member edge.
+await network.add(memberPeer.identity.publicKey);
 
-@variant("string_store") 
-@network({property: 'network'})
-class StringStore extends Program
-{
-    @field({type: Store})
-    log: Log<Uint8Array>
-
-    @field({type: TrustedNetwork}) 
-    network: TrustedNetwork // this is a database storing all peers. Peers that are trusted can add new peers
-
-    constructor(properties:{ log: Store<any>, network: TrustedNetwork }) {
-       
-		this.log = properties.store
-		this.network = properties.network;
-        
-    }
-
-    async setup() 
-    {
-        await store.setup({ encoding: ... , canPerform: ..., index: {... canRead ...}})
-        await trustedNetwork.setup()
-    }
-}
-
-
-// Later 
-const peer1 = await Peerbit.create(LIBP2P_CLIENT, {... options ...})
-const peer2 = await Peerbit.create(LIBP2P_CLIENT_2, {... options ...})
-
-const programPeer1 = await peer1.open(new StringStore({log: new Log(), network: new TrustedNetwork()}), {... options ...})
-
-// add trust to another peer
-await program.network.add(peer2.identity.publicKey) 
-
-
-// peer2 also has to "join" the network, in practice this means that peer2 adds a record telling that its Peer ID trusts its libp2p Id
-const programPeer2 = await peer2.open(programPeer1.address, {... options ...})
-await peer2.join(programPeer2) // This might fail with "AccessError" if you do this too quickly after "open", because it has not yet received the full trust graph from peer1 yet
+// Only that same owner can remove the edge.
+await network.revoke(memberPeer.identity.publicKey);
 ```
 
-See [this test(s)](./src/__tests__/network.test.ts) for working examples
+Trust relations are directional. A trusted identity may add an outgoing edge
+of its own, but it cannot add an edge on behalf of another identity. Likewise,
+`revoke()` removes only the caller's direct outgoing edge while that owner is
+still trusted. For example, B may revoke B → C, and the root may revoke root →
+B, but B cannot delete root → C. Calling `revoke()` for an absent local edge is
+a no-op and returns `undefined`.
+
+Revoking an edge immediately affects future `isTrusted()` checks after the
+operation has replicated. Removing root → B also makes identities reachable
+only through B untrusted. It does not retroactively revalidate application
+writes that replicas accepted before the revocation.
+
+The graph itself is currently readable by any peer (`canRead` allows all), and
+replication is not a confidentiality boundary. Applications that require a
+private membership graph or confidential content must add content-layer
+encryption and key rotation.
+
+## Upgrade note
+
+Releases before the owner-authorized revoke change accepted a relation delete
+signed by any currently trusted identity. Deploy the security update across all
+writers and validating replicas before relying on the stronger rule; an old
+replica can still accept an unauthorized delete that an updated replica rejects.

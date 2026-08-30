@@ -132,6 +132,7 @@ describe("copy-stable public keys", () => {
 			await Wallet.createRandom(),
 		);
 		let stored: IdentityRelation | undefined;
+		let putCount = 0;
 		const network = new TrustedNetwork({ rootTrust: root });
 		network.node = { identity: { publicKey: root } } as any;
 		network.trustGraph = {
@@ -140,6 +141,7 @@ describe("copy-stable public keys", () => {
 					stored && equals(stored.id, id) ? stored : undefined,
 			},
 			put: async (relation: IdentityRelation) => {
+				putCount++;
 				stored = relation;
 			},
 		} as any;
@@ -153,6 +155,39 @@ describe("copy-stable public keys", () => {
 			asStructuralPublicKey(trustee),
 		);
 		expect(found?.id).to.deep.equal(relation.id);
+		expect(await network.add(asStructuralPublicKey(trustee))).to.equal(relation);
+		expect(putCount).to.equal(1);
+	});
+
+	it("requires a relation delete to be signed by its owner", async () => {
+		const root = await Ed25519Keypair.create();
+		const other = await Ed25519Keypair.create();
+		const trustee = await Secp256k1PublicKey.recover(
+			await Wallet.createRandom(),
+		);
+		let relation = new IdentityRelation({
+			from: root.publicKey,
+			to: trustee,
+		});
+		const network = new TrustedNetwork({ rootTrust: root.publicKey });
+		network.isTrusted = async (key) => key.equals(root.publicKey);
+		network.trustGraph = {
+			index: { get: async () => relation },
+		} as any;
+		const canDelete = (signer: PublicSignKey) =>
+			network.canPerform({
+				type: "delete",
+				operation: { key: relation.id },
+				entry: { getPublicKeys: async () => [signer] },
+			} as any);
+
+		expect(await canDelete(other.publicKey)).to.be.false;
+		expect(await canDelete(root.publicKey)).to.be.true;
+		relation = new IdentityRelation({
+			from: other.publicKey,
+			to: trustee,
+		});
+		expect(await canDelete(other.publicKey)).to.be.false;
 	});
 });
 
@@ -267,7 +302,7 @@ describe("index", () => {
 			expect(trustingB).to.be.empty;
 		});
 
-		it("uses a native-describable policy for default relation puts", async () => {
+		it("uses a native-describable owner policy for default relations", async () => {
 			const store = new IdentityGraph({
 				relationGraph: createIdentityGraphStore(),
 			});
@@ -281,6 +316,10 @@ describe("index", () => {
 				from: session.peers[0].identity.publicKey,
 			});
 			await docs.put(allowed);
+			await expect(
+				docs.del(allowed.id, { identity: await Ed25519Keypair.create() }),
+			).eventually.rejectedWith(AccessError);
+			await docs.del(allowed.id);
 
 			await expect(
 				docs.put(
@@ -494,6 +533,112 @@ describe("index", () => {
 					).to.be.true;
 				} finally {
 					await l0a.close();
+				}
+			});
+
+			it("only lets an owner revoke its outgoing trust relations", async function () {
+				this.timeout(300_000);
+				let rootNetwork: TrustedNetwork | undefined = new TrustedNetwork({
+					rootTrust: session.peers[0].peerId,
+				});
+				let memberNetwork: TrustedNetwork | undefined;
+				let reopened: TrustedNetwork | undefined;
+				try {
+					await session.peers[0].open(rootNetwork);
+					const rootToMember = await rootNetwork.add(session.peers[1].peerId);
+					const rootToOther = await rootNetwork.add(session.peers[2].peerId);
+
+					memberNetwork = await TrustedNetwork.open(
+						rootNetwork.address!,
+						session.peers[1],
+					);
+					await (
+						memberNetwork.trustGraph as Documents<IdentityRelation, FromTo>
+					).log.log.join(
+						await (
+							rootNetwork.trustGraph as Documents<IdentityRelation, FromTo>
+						).log.log.getHeads().all(),
+					);
+					await waitForResolved(async () =>
+						expect(await memberNetwork!.trustGraph.index.getSize()).to.equal(2),
+					);
+
+					// Being trusted does not authorize B to delete root -> C.
+					await expect(
+						memberNetwork.trustGraph.del(rootToOther.id),
+					).eventually.rejectedWith(AccessError);
+					expect(
+						await memberNetwork.getRelation(
+							session.peers[0].peerId,
+							session.peers[2].peerId,
+						),
+					).not.to.equal(undefined);
+
+					// B can create and revoke its own B -> C edge.
+					const memberToOther = await memberNetwork.add(session.peers[2].peerId);
+					expect(await memberNetwork.revoke(session.peers[2].peerId)).to.equal(
+						memberToOther,
+					);
+					expect(
+						await memberNetwork.getRelation(
+							session.peers[1].peerId,
+							session.peers[2].peerId,
+						),
+					).to.equal(undefined);
+
+					await (
+						rootNetwork.trustGraph as Documents<IdentityRelation, FromTo>
+					).log.log.join(
+						await (
+							memberNetwork.trustGraph as Documents<IdentityRelation, FromTo>
+						).log.log.getHeads().all(),
+					);
+					await waitForResolved(async () => {
+						expect(
+							await rootNetwork!.getRelation(
+								session.peers[1].peerId,
+								session.peers[2].peerId,
+							),
+						).to.equal(undefined);
+						expect(
+							await rootNetwork!.getRelation(
+								session.peers[0].peerId,
+								session.peers[2].peerId,
+							),
+						).not.to.equal(undefined);
+					});
+
+					// Root owns root -> B and can revoke it.
+					expect(await rootNetwork.revoke(session.peers[1].peerId)).to.equal(
+						rootToMember,
+					);
+					expect(
+						await rootNetwork.getRelation(
+							session.peers[0].peerId,
+							session.peers[1].peerId,
+						),
+					).to.equal(undefined);
+
+					const address = rootNetwork.address!;
+					await rootNetwork.close();
+					rootNetwork = undefined;
+					reopened = await TrustedNetwork.open(address, session.peers[0]);
+					expect(
+						await reopened.getRelation(
+							session.peers[0].peerId,
+							session.peers[1].peerId,
+						),
+					).to.equal(undefined);
+					expect(
+						await reopened.getRelation(
+							session.peers[0].peerId,
+							session.peers[2].peerId,
+						),
+					).not.to.equal(undefined);
+				} finally {
+					await reopened?.close();
+					await memberNetwork?.close();
+					await rootNetwork?.close();
 				}
 			});
 
