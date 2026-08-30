@@ -63,20 +63,27 @@ const canPerformByRelation = async (
 	properties: CanPerformOperations<IdentityRelation>,
 	isTrusted?: (key: PublicSignKey) => Promise<boolean>,
 ): Promise<boolean> => {
-	// verify the payload
+	let owner: PublicSignKey;
+	try {
+		if (!properties.value) {
+			return false;
+		}
+		owner = coercePublicKey(properties.value.from);
+	} catch {
+		return false;
+	}
+
 	const keys = await properties.entry.getPublicKeys();
 	const checkKey = async (key: PublicSignKey): Promise<boolean> => {
-		if (properties.type === "put") {
-			try {
-				const from = coercePublicKey(properties.value.from);
-				const signer = coercePublicKey(key);
-				if (!from.equals(signer)) {
-					return false;
-				}
-			} catch {
+		try {
+			const signer = coercePublicKey(key);
+			if (!owner.equals(signer)) {
 				return false;
 			}
+		} catch {
+			return false;
 		}
+
 		if (isTrusted) {
 			const trusted = await isTrusted(key);
 			return trusted;
@@ -95,7 +102,7 @@ const canPerformByRelation = async (
 
 const defaultIdentityGraphCanPerform = policy.or<IdentityRelation>(
 	policy.put(policy.signedByField<IdentityRelation>("_from")),
-	policy.delete(policy.allowAll<IdentityRelation>()),
+	policy.deleteSignedByExistingField<IdentityRelation>("_from"),
 );
 
 type IdentityGraphArgs = {
@@ -200,7 +207,20 @@ export class TrustedNetwork extends Program<TrustedNetworkArgs> {
 	async canPerform(
 		properties: CanPerformOperations<IdentityRelation>,
 	): Promise<boolean> {
-		return canPerformByRelation(properties, (key) => this.isTrusted(key));
+		if (properties.type === "put") {
+			return canPerformByRelation(properties, (key) => this.isTrusted(key));
+		}
+
+		// Arbitrary canPerform callbacks do not make Documents decode the removed
+		// value. Resolve it locally so the delete signature can be checked against
+		// the owner of the exact relation being removed.
+		const relation = await this.trustGraph.index.get(properties.operation.key, {
+			remote: false,
+			local: true,
+		});
+		return canPerformByRelation({ ...properties, value: relation }, (key) =>
+			this.isTrusted(key),
+		);
 	}
 
 	async canRead(relation: any, publicKey?: PublicSignKey): Promise<boolean> {
@@ -212,18 +232,42 @@ export class TrustedNetwork extends Program<TrustedNetworkArgs> {
 		options?: AppendOptions<Operation>,
 	) {
 		const key = coercePublicKey(trustee);
-		const truster = coercePublicKey(this.node.identity.publicKey);
+		const truster = coercePublicKey(
+			options?.identity?.publicKey || this.node.identity.publicKey,
+		);
 
-		const existingRelation = await this.getRelation(key, truster);
+		const existingRelation = await this.getRelation(truster, key);
 		if (!existingRelation) {
 			const relation = new IdentityRelation({
 				to: key,
 				from: truster,
 			});
-			await this.trustGraph!.put(relation);
+			await this.trustGraph!.put(relation, options);
 			return relation;
 		}
 		return existingRelation;
+	}
+
+	/**
+	 * Revoke this identity's direct trust in `trustee`.
+	 *
+	 * A caller can only remove the outgoing edge signed by the append identity.
+	 * The operation is idempotent and returns `undefined` when that edge is absent.
+	 */
+	async revoke(
+		trustee: PublicSignKey | PeerId,
+		options?: AppendOptions<Operation>,
+	): Promise<IdentityRelation | undefined> {
+		const key = coercePublicKey(trustee);
+		const truster = coercePublicKey(
+			options?.identity?.publicKey || this.node.identity.publicKey,
+		);
+		const relation = await this.getRelation(truster, key);
+		if (!relation) {
+			return;
+		}
+		await this.trustGraph.del(relation.id, options);
+		return relation;
 	}
 
 	async hasRelation(
