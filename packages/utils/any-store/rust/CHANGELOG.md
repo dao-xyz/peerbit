@@ -1,5 +1,13 @@
 # @peerbit/any-store-rust
 
+## 0.1.5
+
+### Patch Changes
+
+- [#1351](https://github.com/dao-xyz/peerbit/pull/1351) [`39dc27a`](https://github.com/dao-xyz/peerbit/commit/39dc27aad3898eb60e10760fd811bc0766ce18cf) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Bound strict native entry-block WAL history on POSIX Node with crash-atomic,
+  legacy-compatible live-state checkpoints and adaptive rewrite thresholds. CUT
+  heads and other live tombstones remain unchanged.
+
 ## 0.1.4
 
 ### Patch Changes

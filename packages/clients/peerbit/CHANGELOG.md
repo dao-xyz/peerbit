@@ -1,5 +1,15 @@
 # Changelog
 
+## 5.3.34
+
+### Patch Changes
+
+- [#1345](https://github.com/dao-xyz/peerbit/pull/1345) [`b220071`](https://github.com/dao-xyz/peerbit/commit/b220071038aa79ae96f98ac976b4d1047f7ff62e) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Widen forced block-provider refreshes past attempted stale hints and prioritize newly discovered candidates in the bounded request set.
+
+- Updated dependencies [[`b220071`](https://github.com/dao-xyz/peerbit/commit/b220071038aa79ae96f98ac976b4d1047f7ff62e)]:
+  - @peerbit/blocks@4.2.13
+  - @peerbit/program@6.0.55
+
 ## 5.3.33
 
 ### Patch Changes
