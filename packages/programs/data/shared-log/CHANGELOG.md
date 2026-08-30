@@ -1,5 +1,18 @@
 # Changelog
 
+## 16.0.14
+
+### Patch Changes
+
+- [#1351](https://github.com/dao-xyz/peerbit/pull/1351) [`39dc27a`](https://github.com/dao-xyz/peerbit/commit/39dc27aad3898eb60e10760fd811bc0766ce18cf) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Bound strict native entry-block WAL history on POSIX Node with crash-atomic,
+  legacy-compatible live-state checkpoints and adaptive rewrite thresholds. CUT
+  heads and other live tombstones remain unchanged.
+- Updated dependencies [[`b220071`](https://github.com/dao-xyz/peerbit/commit/b220071038aa79ae96f98ac976b4d1047f7ff62e)]:
+  - @peerbit/blocks@4.2.13
+  - @peerbit/log@6.2.24
+  - @peerbit/program@6.0.55
+  - @peerbit/rpc@6.1.23
+
 ## 16.0.13
 
 ### Patch Changes

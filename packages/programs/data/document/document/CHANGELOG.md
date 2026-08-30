@@ -1,5 +1,27 @@
 # Changelog
 
+## 15.0.14
+
+### Patch Changes
+
+- [#1354](https://github.com/dao-xyz/peerbit/pull/1354) [`ab34ddb`](https://github.com/dao-xyz/peerbit/commit/ab34ddb07b3577b2082491591fc0a30de90b3d1f) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Detach verified document payload bytes and delete keys before exposing them to
+  custom ID revalidation, `canPerform`, `keep`, and replication-domain callbacks.
+  Custom ID revalidation and custom `canPerform` now receive independently decoded,
+  signed-equivalent values. This tightens local `canPerform`: callback mutations
+  can no longer change the persisted operation or projected document.
+
+  Callbacks that receive an `Entry` now see an interface-compatible,
+  payload-byte-isolated view. Its object identity differs from the canonical
+  `Entry`, while `instanceof`, constructor, and `valueOf()` self semantics are
+  preserved. Wire/storage encodings and API type signatures are unchanged.
+
+- Updated dependencies [[`39dc27a`](https://github.com/dao-xyz/peerbit/commit/39dc27aad3898eb60e10760fd811bc0766ce18cf)]:
+  - @peerbit/shared-log@16.0.14
+  - @peerbit/log@6.2.24
+  - @peerbit/program@6.0.55
+  - @peerbit/rpc@6.1.23
+  - @peerbit/document-interface@3.2.67
+
 ## 15.0.13
 
 ### Patch Changes

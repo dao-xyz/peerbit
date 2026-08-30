@@ -1,5 +1,18 @@
 # Changelog
 
+## 6.0.100
+
+### Patch Changes
+
+- [#1344](https://github.com/dao-xyz/peerbit/pull/1344) [`b446d61`](https://github.com/dao-xyz/peerbit/commit/b446d61f9ecaf22cdb745742ac786043685a204f) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Require trust-relation deletes to be signed by the relation owner and add an
+  idempotent `TrustedNetwork.revoke()` API for removing the caller's outgoing
+  trust edge.
+- Updated dependencies [[`39dc27a`](https://github.com/dao-xyz/peerbit/commit/39dc27aad3898eb60e10760fd811bc0766ce18cf), [`ab34ddb`](https://github.com/dao-xyz/peerbit/commit/ab34ddb07b3577b2082491591fc0a30de90b3d1f)]:
+  - @peerbit/shared-log@16.0.14
+  - @peerbit/document@15.0.14
+  - @peerbit/log@6.2.24
+  - @peerbit/program@6.0.55
+
 ## 6.0.99
 
 ### Patch Changes
