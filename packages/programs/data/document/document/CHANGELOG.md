@@ -1,5 +1,11 @@
 # Changelog
 
+## 15.0.15
+
+### Patch Changes
+
+- [#1355](https://github.com/dao-xyz/peerbit/pull/1355) [`88517ca`](https://github.com/dao-xyz/peerbit/commit/88517ca28e6d42f60c59ad81033514829d2fd6be) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Isolate signed entry metadata, signature, key, digest, and prepared-join byte views passed to document callbacks.
+
 ## 15.0.14
 
 ### Patch Changes
