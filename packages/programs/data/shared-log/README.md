@@ -2,6 +2,20 @@
 
 A log that can be replicated
 
+## Durable native history checkpoints
+
+Persistent peers created with `createRustPeerbitOptions()` automatically bound
+discarded mutation history in the native entry-block mirror on POSIX Node. Once
+the mirror's WAL has accumulated at least 64 MiB beyond its last checkpoint, a
+mutation acknowledgement periodically waits while the current live block map is
+rewritten as a crash-safe checkpoint. The allowance grows with the live map, so
+an expanding store is rewritten geometrically instead of every fixed 64 MiB.
+
+This is a physical entry-block WAL checkpoint, not logical log compaction. CUT
+heads and other live tombstones remain unchanged for anti-resurrection, and the
+coordinate, document-value, and document-signer WALs are outside this slice.
+Windows, browsers, and custom persistence backends keep their existing behavior.
+
 ## Replication status
 
 `SharedLog.getReplicationStatus()` returns a detached, local snapshot of the
