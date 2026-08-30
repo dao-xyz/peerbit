@@ -9,7 +9,7 @@ import {
 	type ReplicationDomain,
 	type SharedLog,
 } from "@peerbit/shared-log";
-import { detachEntryPayloadForCallback } from "./callback-detachment.js";
+import { detachEntryForCallback } from "./callback-detachment.js";
 import { type Operation, isPutOperation } from "./operation.js";
 import type { DocumentIndex } from "./search.js";
 
@@ -96,8 +96,7 @@ export const createDocumentDomain =
 		let maxValue = args.resolution === "u32" ? MAX_U32 : MAX_U64;
 		const detachEntry = (
 			entry: ShallowEntry | Entry<Operation> | EntryReplicated<any>,
-		) =>
-			entry instanceof Entry ? detachEntryPayloadForCallback(entry) : entry;
+		) => detachEntryForCallback(entry);
 		let fromEntry = (args as FromEntry<InferR<DB>>).fromEntry
 			? (entry: ShallowEntry | Entry<Operation> | EntryReplicated<any>) =>
 					(args as FromEntry<InferR<DB>>).fromEntry!(detachEntry(entry))

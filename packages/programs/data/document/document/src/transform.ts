@@ -43,6 +43,7 @@ export type DocumentTransformDescriptor =
 const NATIVE_DOCUMENT_TRANSFORM = Symbol.for(
 	"@peerbit/document/native-document-transform",
 );
+const builtInDocumentTransformers = new WeakSet<Function>();
 
 type DescribedDocumentTransformer<T, I> = DocumentTransformer<T, I> & {
 	readonly [NATIVE_DOCUMENT_TRANSFORM]?: DocumentTransformDescriptor;
@@ -142,8 +143,14 @@ const attachDocumentTransformDescriptor = <T, I>(
 		writable: false,
 		configurable: false,
 	});
+	builtInDocumentTransformers.add(fn);
 	return fn;
 };
+
+/** Distinguish library-created transforms from forgeable public descriptors. */
+export const isBuiltInDocumentTransformer = <T, I>(
+	transformer: DocumentTransformer<T, I> | undefined,
+): boolean => !!transformer && builtInDocumentTransformers.has(transformer);
 
 export const getDocumentTransformDescriptor = <T, I>(
 	transformer: DocumentTransformer<T, I> | undefined,

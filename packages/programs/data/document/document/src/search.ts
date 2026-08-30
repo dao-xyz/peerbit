@@ -44,6 +44,7 @@ import { AbortError, TimeoutError, waitFor } from "@peerbit/time";
 import pDefer, { type DeferredPromise } from "p-defer";
 import { concat, equals, fromString } from "uint8arrays";
 import { copySerialization } from "./borsh.js";
+import { detachPublicKeysForCallback } from "./callback-detachment.js";
 import { MAX_BATCH_SIZE } from "./constants.js";
 import type { DocumentEvents, DocumentsChange } from "./events.js";
 import type { QueryPredictor } from "./most-common-query-predictor.js";
@@ -74,6 +75,7 @@ import {
 	canPrepareDocumentTransformWithAppendFacts,
 	documentTransformPreservesFieldPath,
 	getDocumentTransformDescriptor,
+	isBuiltInDocumentTransformer,
 } from "./transform.js";
 
 const WARNING_WHEN_ITERATING_FOR_MORE_THAN = 1e5;
@@ -1050,6 +1052,7 @@ export class DocumentIndex<
 	// transform options
 	transformer: Transformer<T, I>;
 	private transformerIsIdentity = false;
+	private detachTransformerFacts = false;
 	private nativeTransformDescriptor?: DocumentTransformDescriptor;
 	private nativeTransformProjectionPlan?: SimpleDocumentProjectionPlan;
 	private nativeBackboneDocumentProjection?: NativeBackboneDocumentProjection;
@@ -1631,6 +1634,9 @@ export class DocumentIndex<
 		this.nativeTransformDescriptor = hasTransformFunction
 			? getDocumentTransformDescriptor(transformOptions.transform)
 			: undefined;
+		this.detachTransformerFacts =
+			hasTransformFunction &&
+			!isBuiltInDocumentTransformer(transformOptions.transform);
 		this.nativeTransformProjectionPlan = createSimpleProjectionPlan(
 			getSchema(this.documentType),
 			indexedSchema,
@@ -1827,6 +1833,36 @@ export class DocumentIndex<
 		);
 	}
 
+	private transformWithDetachedFacts(
+		value: T,
+		context: types.Context,
+		facts?: DocumentTransformFacts,
+	): MaybePromise<I> {
+		let callbackFacts = facts;
+		if (facts?.entryPublicKeys && this.detachTransformerFacts) {
+			const sourceKeys = facts.entryPublicKeys;
+			let callbackKeys: readonly PublicSignKey[] | undefined;
+			let resolved = false;
+			callbackFacts = { ...facts };
+			Object.defineProperty(callbackFacts, "entryPublicKeys", {
+				configurable: true,
+				enumerable: true,
+				get: () => {
+					if (!resolved) {
+						callbackKeys = detachPublicKeysForCallback(sourceKeys);
+						resolved = true;
+					}
+					return callbackKeys;
+				},
+				set: (value: readonly PublicSignKey[] | undefined) => {
+					callbackKeys = value;
+					resolved = true;
+				},
+			});
+		}
+		return this.transformer(value, context, callbackFacts);
+	}
+
 	private prepareNativeBackboneDocumentIndexCommit(
 		value: T,
 		encodedDocument: Uint8Array,
@@ -1851,7 +1887,7 @@ export class DocumentIndex<
 				},
 				getIndexable: () => {
 					if (!hasCached) {
-						const transformed = this.transformer(
+						const transformed = this.transformWithDetachedFacts(
 							value,
 							projectionContext as types.Context,
 							transformFacts,
@@ -1878,7 +1914,7 @@ export class DocumentIndex<
 		) {
 			return;
 		}
-		const transformed = this.transformer(
+		const transformed = this.transformWithDetachedFacts(
 			value,
 			undefined as unknown as types.Context,
 			transformFacts,
@@ -1924,7 +1960,7 @@ export class DocumentIndex<
 				},
 				getIndexable: () => {
 					if (!hasCached) {
-						const transformed = this.transformer(
+						const transformed = this.transformWithDetachedFacts(
 							value,
 							projectionContext as types.Context,
 							transformFacts,
@@ -1961,7 +1997,11 @@ export class DocumentIndex<
 		) {
 			return;
 		}
-		const transformed = this.transformer(value, context, transformFacts);
+		const transformed = this.transformWithDetachedFacts(
+			value,
+			context,
+			transformFacts,
+		);
 		if (isPromiseLike(transformed)) {
 			return;
 		}
@@ -3150,7 +3190,11 @@ export class DocumentIndex<
 		this.cacheResolvedValue(idString, value);
 		const valueToIndex = this.transformerIsIdentity
 			? (value as any as I)
-			: await this.transformer(value, context, options?.transformFacts);
+			: await this.transformWithDetachedFacts(
+					value,
+					context,
+					options?.transformFacts,
+				);
 
 		coerceWithIndexed(value, valueToIndex);
 
