@@ -2,6 +2,7 @@ import { type AnyStore } from "@peerbit/any-store-interface";
 import {
 	type RustAnyStorePersistenceBackend,
 	createPersistenceBackend,
+	supportsCrashSafeNodeJournalReplacement,
 } from "./persistence.js";
 
 type NativeAnyStore = {
@@ -44,6 +45,15 @@ export type RustAnyStoreOptions = {
 	 * checkpoint trigger for larger journals.
 	 */
 	compactOnCloseMinJournalBytes?: number;
+	/**
+	 * For strict Node stores, crash-atomically checkpoint after this many bytes
+	 * have been appended beyond the last verified checkpoint. Once a checkpoint
+	 * itself exceeds this floor, its byte length becomes the next allowance so a
+	 * growing live map is rewritten geometrically rather than every fixed-size
+	 * interval. The replacement WAL contains a legacy-compatible CLEAR followed
+	 * by the complete live map.
+	 */
+	compactMaxJournalBytes?: number;
 	durability?: "normal" | "strict";
 };
 
@@ -95,6 +105,7 @@ const loadWasm = async (): Promise<WasmModule> => {
 const copyBytes = (bytes: Uint8Array): Uint8Array => new Uint8Array(bytes);
 
 export class RustAnyStore implements AnyStore {
+	readonly supportsCrashSafeJournalCheckpoint: boolean;
 	private native?: NativeAnyStore;
 	private persistence?: RustAnyStorePersistenceBackend;
 	private openPromise?: Promise<void>;
@@ -106,6 +117,8 @@ export class RustAnyStore implements AnyStore {
 	private journalQueue: Promise<unknown> = Promise.resolve();
 	private journalError?: unknown;
 	private journalByteLength = 0;
+	private journalBytesSinceCheckpoint = 0;
+	private checkpointJournalByteLength = 0;
 	private children = new Map<string, RustAnyStore>();
 	private _status: StoreStatus = "closed";
 
@@ -113,7 +126,30 @@ export class RustAnyStore implements AnyStore {
 		readonly directory?: string,
 		private readonly level: string[] = [],
 		private readonly options: RustAnyStoreOptions = {},
-	) {}
+	) {
+		this.supportsCrashSafeJournalCheckpoint =
+			!!directory && supportsCrashSafeNodeJournalReplacement();
+		if (options.compactMaxJournalBytes != null) {
+			if (
+				!Number.isSafeInteger(options.compactMaxJournalBytes) ||
+				options.compactMaxJournalBytes <= 0
+			) {
+				throw new RangeError(
+					"RustAnyStore compactMaxJournalBytes must be a positive safe integer",
+				);
+			}
+			if (options.durability !== "strict") {
+				throw new Error(
+					"RustAnyStore compactMaxJournalBytes requires strict durability",
+				);
+			}
+			if (!directory) {
+				throw new Error(
+					"RustAnyStore compactMaxJournalBytes requires a persistent directory",
+				);
+			}
+		}
+	}
 
 	status(): StoreStatus {
 		return this._status;
@@ -448,6 +484,10 @@ export class RustAnyStore implements AnyStore {
 				requested?.compactOnCloseMinJournalBytes !== undefined
 					? requested.compactOnCloseMinJournalBytes
 					: this.options.compactOnCloseMinJournalBytes,
+			compactMaxJournalBytes:
+				requested?.compactMaxJournalBytes !== undefined
+					? requested.compactMaxJournalBytes
+					: this.options.compactMaxJournalBytes,
 			durability:
 				requested?.durability !== undefined
 					? requested.durability
@@ -474,6 +514,11 @@ export class RustAnyStore implements AnyStore {
 			this.options.compactOnCloseMinJournalBytes == null
 				? undefined
 				: Math.max(0, this.options.compactOnCloseMinJournalBytes),
+		);
+		this.assertCompatibleSublevelOption(
+			"compactMaxJournalBytes",
+			requested.compactMaxJournalBytes,
+			this.options.compactMaxJournalBytes,
 		);
 		this.assertCompatibleSublevelOption(
 			"durability",
@@ -570,14 +615,26 @@ export class RustAnyStore implements AnyStore {
 			this.directory,
 			this.level,
 		);
+		if (
+			this.options.compactMaxJournalBytes != null &&
+			this.persistence.crashSafeJournalReplacement !== true
+		) {
+			throw new Error(
+				"RustAnyStore strict journal checkpointing is unavailable on this persistence backend",
+			);
+		}
 		const snapshot = await this.persistence.readSnapshot();
 		if (snapshot && snapshot.byteLength > 0) {
 			native.load_snapshot(snapshot);
 		}
 		const journal = await this.persistence.readJournal();
 		this.journalByteLength = journal?.byteLength ?? 0;
+		this.journalBytesSinceCheckpoint =
+			this.options.compactMaxJournalBytes != null ? this.journalByteLength : 0;
+		this.checkpointJournalByteLength = 0;
+		let applied = 0;
 		if (journal && journal.byteLength > 0) {
-			const applied = native.apply_journal(journal);
+			applied = native.apply_journal(journal);
 			if (applied < journal.byteLength) {
 				// Torn tail from a mid-write crash: retain the verified WAL prefix and
 				// durably remove only the unreadable suffix. A checkpoint rewrite is
@@ -586,6 +643,14 @@ export class RustAnyStore implements AnyStore {
 				this.journalByteLength = applied;
 			}
 		}
+		if (this.options.compactMaxJournalBytes != null) {
+			const checkpointBase =
+				(await this.persistence.readJournalCheckpointBase?.(applied)) ?? 0;
+			this.journalBytesSinceCheckpoint =
+				checkpointBase <= applied ? applied - checkpointBase : applied;
+			this.checkpointJournalByteLength =
+				checkpointBase <= applied ? checkpointBase : 0;
+		}
 		// A journal failure poisons the current open generation. Only a complete
 		// close/reopen that replays a verified checkpoint may clear it.
 		this.journalError = undefined;
@@ -593,11 +658,14 @@ export class RustAnyStore implements AnyStore {
 	}
 
 	private shouldCompactOnClose(): boolean {
-		// Strict mode backs acknowledgement-sensitive mirrors. Until every backend
-		// has a proven crash-atomic generation protocol, neither an explicit close
-		// request nor a forced threshold may replace its WAL with a checkpoint.
 		if (this.options.durability === "strict") {
-			return false;
+			const maxJournalBytes = this.checkpointHistoryAllowance();
+			return (
+				maxJournalBytes != null &&
+				this.journalBytesSinceCheckpoint >= maxJournalBytes &&
+				this.persistence?.crashSafeJournalReplacement === true &&
+				typeof this.persistence?.replaceJournalWithCheckpoint === "function"
+			);
 		}
 		if (this.options.compactOnClose !== false) {
 			return true;
@@ -685,7 +753,16 @@ export class RustAnyStore implements AnyStore {
 			const native = await this.ensureOpen(drainAllowed);
 			const openError = this.pendingJournalError();
 			if (openError) throw openError;
-			return fn(native);
+			const result = await fn(native);
+			const checkpointFloor = this.options.compactMaxJournalBytes;
+			if (
+				checkpointFloor != null &&
+				this.journalBytesSinceCheckpoint >=
+					Math.max(checkpointFloor, this.checkpointJournalByteLength)
+			) {
+				await this.checkpointJournal(native);
+			}
+			return result;
 		});
 		this.mutationQueue = next.then(
 			() => undefined,
@@ -710,13 +787,73 @@ export class RustAnyStore implements AnyStore {
 		if (!native) {
 			return;
 		}
-		const journaled = this.journaledNative(native);
 		await this.waitForJournal();
 		if (!this.persistence) {
 			throw new Error("RustAnyStore persistence backend is not open");
 		}
+		if (this.options.durability === "strict") {
+			await this.compactNative(native);
+			return;
+		}
+		const journaled = this.journaledNative(native);
 		await this.persistence.writeSnapshot(journaled.snapshot());
 		this.journalByteLength = 0;
+		this.journalBytesSinceCheckpoint = 0;
+		this.checkpointJournalByteLength = 0;
+	}
+
+	private *encodeCheckpointJournal(
+		native: JournaledNativeAnyStore,
+	): IterableIterator<Uint8Array> {
+		// Replay starts by clearing any legacy snapshot or WAL prefix, then rebuilds
+		// only the current live map. `entries()` materializes one O(live-key/value)
+		// array (not constant memory), but never scales with historical throughput;
+		// encoded output adds only one bounded 256-row batch at a time.
+		yield native.encode_clear_record();
+		const entries = native.entries();
+		const batchSize = 256;
+		for (let offset = 0; offset < entries.length; offset += batchSize) {
+			const batch = entries.slice(offset, offset + batchSize);
+			yield native.encode_put_records(
+				batch.map(([key]) => key),
+				batch.map(([, value]) => value),
+			);
+		}
+	}
+
+	private async checkpointJournal(native: NativeAnyStore): Promise<void> {
+		try {
+			await this.compactNative(native);
+		} catch (error) {
+			this.journalError ??= error;
+			throw this.journalError;
+		}
+	}
+
+	private async compactNative(native: NativeAnyStore): Promise<void> {
+		const journaled = this.journaledNative(native);
+		if (!this.persistence) {
+			throw new Error("RustAnyStore persistence backend is not open");
+		}
+		const replace = this.persistence.replaceJournalWithCheckpoint;
+		if (!replace) {
+			throw new Error(
+				"RustAnyStore strict journal checkpointing is unavailable on this persistence backend",
+			);
+		}
+		this.journalByteLength = await replace.call(
+			this.persistence,
+			this.encodeCheckpointJournal(journaled),
+		);
+		this.journalBytesSinceCheckpoint = 0;
+		this.checkpointJournalByteLength = this.journalByteLength;
+	}
+
+	private checkpointHistoryAllowance(): number | undefined {
+		const floor = this.options.compactMaxJournalBytes;
+		return floor == null
+			? undefined
+			: Math.max(floor, this.checkpointJournalByteLength);
 	}
 
 	private recordJournal(record: Uint8Array): Promise<void> {
@@ -733,6 +870,9 @@ export class RustAnyStore implements AnyStore {
 					this.options.durability ?? "normal",
 				);
 				this.journalByteLength += recordByteLength;
+				if (this.options.compactMaxJournalBytes != null) {
+					this.journalBytesSinceCheckpoint += recordByteLength;
+				}
 			})
 			.catch((error) => {
 				this.journalError ??= error;

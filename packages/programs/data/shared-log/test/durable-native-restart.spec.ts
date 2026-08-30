@@ -21,6 +21,7 @@
 //   (iii) the log length / heads match pre-restart,
 //   (iv) coordinates are restored (kept green here; the isolated coordinate
 //        proof lives in coordinate-persistence-restart.spec.ts).
+import { EntryType } from "@peerbit/log";
 import { expect } from "chai";
 import fs from "fs/promises";
 import os from "os";
@@ -82,6 +83,7 @@ describe("durable native block store restart", function () {
 			| {
 					compactOnClose?: boolean;
 					compactOnCloseMinJournalBytes?: number;
+					compactMaxJournalBytes?: number;
 			  }
 			| undefined;
 		expect(
@@ -90,8 +92,12 @@ describe("durable native block store restart", function () {
 		).to.equal(false);
 		expect(
 			durableBlockOptions?.compactOnCloseMinJournalBytes,
-			"strict native durable block WAL has no checkpoint threshold",
+			"strict native durable block WAL does not use unsafe close compaction",
 		).to.equal(undefined);
+		expect(
+			durableBlockOptions?.compactMaxJournalBytes,
+			"strict native durable block WAL has a crash-safe history threshold",
+		).to.equal(process.platform === "win32" ? undefined : 64 * 1024 * 1024);
 
 		for (let index = 0; index < entryCount; index++) {
 			await store1.add(`entry-${index}`, { meta: { next: [] } });
@@ -187,5 +193,151 @@ describe("durable native block store restart", function () {
 			restoredCoordinateHashes,
 			"restored coordinates match pre-restart",
 		).to.deep.equal(preRestartCoordinateHashes);
+	});
+
+	it("keeps the established sublevel options for custom storage backends", async () => {
+		directory = await fs.mkdtemp(
+			path.join(os.tmpdir(), "peerbit-durable-native-custom-storage-"),
+		);
+		const preset = createRustPeerbitOptions();
+		const storeFactory = preset.storage.storeFactory!;
+		type Store = ReturnType<typeof storeFactory>;
+		const observed: Array<Record<string, unknown>> = [];
+		const proxies = new WeakMap<object, Store>();
+		const wrap = (store: Store): Store => {
+			const cached = proxies.get(store as object);
+			if (cached) return cached;
+			const proxy = new Proxy(store as Store & Record<PropertyKey, unknown>, {
+				get(target, property, receiver) {
+					if (property === "supportsCrashSafeJournalCheckpoint") {
+						return undefined;
+					}
+					if (property === "sublevel") {
+						return async (name: string, options?: Record<string, unknown>) => {
+							if (options) {
+								observed.push(options);
+								for (const key of Object.keys(options)) {
+									if (
+										![
+											"compactOnClose",
+											"compactOnCloseMinJournalBytes",
+											"durability",
+										].includes(key)
+									) {
+										throw new Error(`unsupported sublevel option: ${key}`);
+									}
+								}
+							}
+							const sublevel = store.sublevel as unknown as (
+								name: string,
+								options?: Record<string, unknown>,
+							) => Store | Promise<Store>;
+							return wrap(await sublevel.call(store, name, options));
+						};
+					}
+					const value = Reflect.get(target, property, receiver);
+					return typeof value === "function" ? value.bind(store) : value;
+				},
+			});
+			proxies.set(store as object, proxy);
+			return proxy;
+		};
+
+		client = await Peerbit.create({
+			directory,
+			...preset,
+			storage: {
+				...preset.storage,
+				storeFactory: (storeDirectory) => wrap(storeFactory(storeDirectory)),
+			},
+		});
+		await client.open(
+			new EventStore<string, any>({ id: new Uint8Array(32).fill(44) }),
+			{ args: { replicate: { factor: 1 } } },
+		);
+		const durableOptions = observed.find(
+			(options) =>
+				options.compactOnClose === false && options.durability === "strict",
+		);
+		expect(durableOptions).to.exist;
+		expect(durableOptions).to.not.have.property("compactMaxJournalBytes");
+	});
+
+	it("keeps a CUT head while checkpointing its trimmed block history", async () => {
+		directory = await fs.mkdtemp(
+			path.join(os.tmpdir(), "peerbit-durable-native-cut-checkpoint-"),
+		);
+		const storeId = new Uint8Array(32).fill(29);
+		client = await Peerbit.create({
+			directory,
+			...createRustPeerbitOptions(),
+		});
+		const store1 = await client.open(
+			new EventStore<string, any>({ id: storeId }),
+			{ args: { replicate: { factor: 1 } } },
+		);
+		const log1 = store1.log as any;
+		const durable = log1.remoteBlocks.localStore?.durable?._store as
+			| { options?: { compactMaxJournalBytes?: number } }
+			| undefined;
+		expect(durable?.options).to.exist;
+		// Force the production mechanism at a tiny threshold; the production
+		// default remains 64 MiB. This is deliberately an internal test seam, not
+		// another shared-log/public configuration surface.
+		durable!.options!.compactMaxJournalBytes = 1;
+
+		const removed = await store1.add("removed-by-cut", {
+			meta: { next: [] },
+		});
+		const cut = await store1.log.append(
+			{ op: "DELETE", value: "removed-by-cut" },
+			{
+				meta: {
+					next: [removed.entry],
+					type: EntryType.CUT,
+				},
+			},
+		);
+		expect(
+			await store1.log.log.blocks.hasMany!([
+				removed.entry.hash,
+				cut.entry.hash,
+			]),
+		).to.deep.equal([false, true]);
+		expect(store1.log.log.length).to.equal(1);
+		const identity = client.identity;
+		await client.stop();
+		client = undefined;
+
+		client = await Peerbit.create({
+			directory,
+			...createRustPeerbitOptions(),
+		});
+		expect(client.identity.publicKey.equals(identity.publicKey)).to.equal(true);
+		const store2 = await client.open(
+			new EventStore<string, any>({ id: storeId }),
+			{ args: { replicate: { factor: 1 } } },
+		);
+		expect(store2.log.log.length).to.equal(1);
+		expect(
+			(await store2.log.log.getHeads(true).all()).map(
+				(entry: any) => entry.hash,
+			),
+		).to.deep.equal([cut.entry.hash]);
+		expect(
+			await store2.log.log.blocks.hasMany!([
+				removed.entry.hash,
+				cut.entry.hash,
+			]),
+		).to.deep.equal([false, true]);
+
+		// A peer replaying the old full entry after reopen must still be covered by
+		// the retained CUT head. Checkpointing mutation history never compacts the
+		// logical tombstone or weakens the anti-resurrection comparison.
+		await store2.log.log.join([removed.entry]);
+		expect(store2.log.log.length).to.equal(1);
+		expect(
+			await store2.log.log.blocks.hasMany!([removed.entry.hash]),
+		).to.deep.equal([false]);
 	});
 });
