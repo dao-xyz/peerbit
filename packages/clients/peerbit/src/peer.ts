@@ -608,9 +608,14 @@ export class Peerbit implements ProgramClient {
 
 						const resolveProviders = async (
 							cid: string,
-							options?: { signal?: AbortSignal; refresh?: boolean },
+							options?: {
+								signal?: AbortSignal;
+								refresh?: boolean;
+								exclude?: readonly string[];
+							},
 						) => {
 							const connected = fallbackConnectedPeers();
+							const excluded = new Set((options?.exclude ?? []).slice(0, 8));
 							let discovered: string[] = [];
 							// 1) tracker-backed provider directory (best-effort, bounded)
 							try {
@@ -618,7 +623,9 @@ export class Peerbit implements ProgramClient {
 									(await fanout?.queryProviders(
 										blockProviderNamespace(cid),
 										{
-											want: 8,
+											want: options?.refresh
+												? Math.min(16, 8 + excluded.size)
+												: 8,
 											timeoutMs: 2_000,
 											queryTimeoutMs: 500,
 											bootstrapMaxPeers: 2,
@@ -637,15 +644,60 @@ export class Peerbit implements ProgramClient {
 								if (!provider || candidates.includes(provider)) return;
 								candidates.push(provider);
 							};
-							for (
-								let i = 0;
-								candidates.length < 8 &&
-								(i < connected.length || i < discovered.length);
-								i++
-							) {
-								push(connected[i]);
-								if (candidates.length < 8) push(discovered[i]);
+							const appendAll = (
+								providers: string[],
+								includeExcluded: boolean,
+								predicate: (provider: string) => boolean = () => true,
+							) => {
+								for (const provider of providers) {
+									if (candidates.length >= 8) return;
+									if (
+										excluded.has(provider) === includeExcluded &&
+										predicate(provider)
+									) {
+										push(provider);
+									}
+								}
+							};
+							const appendInterleaved = (includeExcluded: boolean) => {
+								for (
+									let i = 0;
+									candidates.length < 8 &&
+									(i < connected.length || i < discovered.length);
+									i++
+								) {
+									const connectedProvider = connected[i];
+									if (
+										connectedProvider &&
+										excluded.has(connectedProvider) === includeExcluded
+									) {
+										push(connectedProvider);
+									}
+									const discoveredProvider = discovered[i];
+									if (
+										candidates.length < 8 &&
+										discoveredProvider &&
+										excluded.has(discoveredProvider) === includeExcluded
+									) {
+										push(discoveredProvider);
+									}
+								}
+							};
+							if (options?.refresh) {
+								// A connected peer with CID-specific evidence is strongest. After a
+								// failed attempt, prefer the remaining CID directory before unrelated
+								// connections so a widened result cannot be crowded out again.
+								const connectedSet = new Set(connected);
+								appendAll(discovered, false, (provider) =>
+									connectedSet.has(provider),
+								);
+								appendAll(discovered, false);
+								appendAll(connected, false);
+							} else {
+								appendInterleaved(false);
 							}
+							// Keep attempted providers as bounded fallback for transient failures.
+							appendInterleaved(true);
 							return candidates;
 						};
 

@@ -208,7 +208,12 @@ export class RemoteBlocks implements IBlocks {
 			 */
 			resolveProviders?: (
 				cid: string,
-				options?: { signal?: AbortSignal; refresh?: boolean },
+				options?: {
+					signal?: AbortSignal;
+					refresh?: boolean;
+					/** Previously attempted provider hashes that fresh discovery should deprioritize. */
+					exclude?: readonly string[];
+				},
 			) => Promise<string[] | undefined> | string[] | undefined;
 			/**
 			 * Optional push-based provider watcher used to wake pending remote reads as soon as
@@ -726,7 +731,11 @@ export class RemoteBlocks implements IBlocks {
 
 	private async resolveRemoteProviders(
 		cidString: string,
-		options?: { signal?: AbortSignal; refresh?: boolean },
+		options?: {
+			signal?: AbortSignal;
+			refresh?: boolean;
+			exclude?: readonly string[];
+		},
 	): Promise<string[]> {
 		// Cached providers avoid unnecessary lookups on the first attempt. A forced
 		// refresh reverses that priority because the resolver has newer reachability
@@ -738,13 +747,25 @@ export class RemoteBlocks implements IBlocks {
 		if (cached.length > 0 && !options?.refresh) return cached;
 		try {
 			const resolved = await this.options.resolveProviders(cidString, options);
-			const normalized = this.normalizeProviderHints([
-				// A forced refresh is fresh evidence. Put it ahead of the bounded
-				// cache so a cache filled with departed providers cannot exclude a
-				// newly reachable candidate from the request set.
-				...(options?.refresh ? (resolved ?? []) : cached),
-				...(options?.refresh ? cached : (resolved ?? [])),
-			]);
+			const resolvedHints = this.normalizeProviderHints(
+				resolved,
+				Math.max(1, this.maxProviderHintsPerCid * 2),
+			);
+			let ordered = [...cached, ...resolvedHints];
+			if (options?.refresh) {
+				const cachedSet = new Set(cached);
+				const excluded = new Set(
+					(options.exclude ?? []).slice(0, this.maxProviderHintsPerCid),
+				);
+				const priority = (provider: string) =>
+					excluded.has(provider) ? 2 : cachedSet.has(provider) ? 1 : 0;
+				// Fresh results sort ahead of the old cache and attempted results sort
+				// last. Thus a live ninth result can enter the bounded eight-peer set.
+				ordered = [...resolvedHints, ...cached].sort(
+					(a, b) => priority(a) - priority(b),
+				);
+			}
+			const normalized = this.normalizeProviderHints(ordered);
 			if (normalized.length > 0) {
 				this.rememberProviderHints(cidString, normalized);
 			}
@@ -1252,6 +1273,9 @@ export class RemoteBlocks implements IBlocks {
 				const resolved = await this.resolveRemoteProviders(cidString, {
 					signal: options.signal,
 					refresh: force,
+					exclude: force
+						? [...attemptedProviders].slice(0, this.maxProviderHintsPerCid)
+						: undefined,
 				});
 				if (resolved.length > 0) {
 					providers = this.normalizeProviderHints(

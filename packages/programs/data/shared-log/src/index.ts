@@ -498,25 +498,36 @@ const joinNativeCoordinateDirectory = (
 	`${nodeDirectory.replace(/[/\\]+$/, "")}/coordinates/${fsSafeLogId}`;
 
 type DurableBlockSublevelStore = {
+	readonly supportsCrashSafeJournalCheckpoint?: boolean;
 	sublevel(
 		name: string,
 		options?: {
 			compactOnClose?: boolean;
 			compactOnCloseMinJournalBytes?: number;
+			compactMaxJournalBytes?: number;
 			durability?: "normal" | "strict";
 		},
 	): MaybePromise<AnyStore>;
 };
+
+const defaultNativeEntryBlockCompactMaxJournalBytes = 64 * 1024 * 1024;
 
 const createNativeDurableBlockStore = async (
 	storage: DurableBlockSublevelStore,
 ): Promise<AnyBlockStore> =>
 	new AnyBlockStore(
 		await storage.sublevel("blocks", {
-			// Strict mirrors remain WAL-backed across close. The available snapshot
-			// rewrite is not a crash-atomic generation protocol, so thresholds must
-			// not re-enable it behind this acknowledgement boundary.
+			// Strict mirrors remain WAL-backed. On POSIX Node, checkpoint only the
+			// historical suffix through the Rust store's fsync + atomic-rename path;
+			// browsers/custom backends and Windows retain the prior unbounded WAL until
+			// they expose an equally strong directory durability barrier.
 			compactOnClose: false,
+			...(storage.supportsCrashSafeJournalCheckpoint === true
+				? {
+						compactMaxJournalBytes:
+							defaultNativeEntryBlockCompactMaxJournalBytes,
+					}
+				: {}),
 			// A native append is acknowledged only after this mirror resolves. The
 			// Rust store's normal immutable fast path may resolve before its WAL write;
 			// strict mode waits for the journal write and sync, closing the SIGKILL gap.

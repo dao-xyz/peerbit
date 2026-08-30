@@ -1,8 +1,17 @@
 export type PersistenceDurability = "normal" | "strict";
 
 export interface RustAnyStorePersistenceBackend {
+	/** True only when replacement has a durable file + directory barrier. */
+	readonly crashSafeJournalReplacement?: boolean;
 	readSnapshot(): Promise<Uint8Array | undefined>;
 	readJournal(): Promise<Uint8Array | undefined>;
+	/**
+	 * Return the durable compacted-prefix length when the current journal still
+	 * begins with the exact checkpoint recorded by this backend. A missing or
+	 * stale hint returns zero; hints affect checkpoint scheduling only, never
+	 * journal replay.
+	 */
+	readJournalCheckpointBase?(journalByteLength: number): Promise<number>;
 	appendJournal(
 		record: Uint8Array,
 		durability: PersistenceDurability,
@@ -12,6 +21,12 @@ export interface RustAnyStorePersistenceBackend {
 	 * any later record can be appended.
 	 */
 	truncateJournal(byteLength: number): Promise<void>;
+	/**
+	 * Crash-atomically replace the journal with a legacy-compatible checkpoint
+	 * stream. Implementations must not acknowledge until the replacement file
+	 * and its directory entry are durable.
+	 */
+	replaceJournalWithCheckpoint?(records: Iterable<Uint8Array>): Promise<number>;
 	writeSnapshot(snapshot: Uint8Array): Promise<void>;
 	removeSublevels(): Promise<void>;
 	close(): Promise<void>;
@@ -20,6 +35,10 @@ export interface RustAnyStorePersistenceBackend {
 const SNAPSHOT_FILE_NAME = "store.bin";
 const SNAPSHOT_TEMP_FILE_NAME = "store.bin.tmp";
 const JOURNAL_FILE_NAME = "store.wal";
+const JOURNAL_REPLACEMENT_TEMP_FILE_NAME = "store.wal.replacement.tmp";
+const JOURNAL_CHECKPOINT_FILE_NAME = "store.wal.checkpoint";
+const JOURNAL_CHECKPOINT_TEMP_FILE_NAME = "store.wal.checkpoint.tmp";
+const JOURNAL_CHECKPOINT_VERSION = 1;
 const SUBLEVEL_DIRECTORY_NAME = "sublevels";
 const MANIFEST_A_FILE_NAME = "manifest-a.json";
 const MANIFEST_B_FILE_NAME = "manifest-b.json";
@@ -138,8 +157,9 @@ const importNodePathJoin = (): Promise<(...parts: string[]) => string> => {
 
 const readNodeFileIfExists = async (
 	path: string,
+	fs?: NodeFsModule,
 ): Promise<Uint8Array | undefined> => {
-	const { readFile } = await importNodeFs();
+	const { readFile } = fs ?? (await importNodeFs());
 	try {
 		return new Uint8Array(await readFile(path));
 	} catch (error) {
@@ -147,6 +167,37 @@ const readNodeFileIfExists = async (
 			return undefined;
 		}
 		throw error;
+	}
+};
+
+const encodeJournalCheckpoint = (properties: {
+	byteLength: number;
+}): Uint8Array =>
+	new TextEncoder().encode(
+		JSON.stringify({
+			version: JOURNAL_CHECKPOINT_VERSION,
+			byteLength: properties.byteLength,
+		}),
+	);
+
+const decodeJournalCheckpoint = (
+	bytes: Uint8Array,
+): { byteLength: number } | undefined => {
+	try {
+		const decoded = JSON.parse(new TextDecoder().decode(bytes)) as {
+			version?: number;
+			byteLength?: number;
+		};
+		if (
+			decoded.version !== JOURNAL_CHECKPOINT_VERSION ||
+			!Number.isSafeInteger(decoded.byteLength) ||
+			decoded.byteLength! <= 0
+		) {
+			return undefined;
+		}
+		return { byteLength: decoded.byteLength! };
+	} catch {
+		return undefined;
 	}
 };
 
@@ -163,7 +214,22 @@ const validateWriteProgress = (
 	return written;
 };
 
+export const supportsCrashSafeNodeJournalReplacement = (): boolean => {
+	const processLike = (
+		globalThis as {
+			process?: { versions?: { node?: string }; platform?: string };
+		}
+	).process;
+	return (
+		!!processLike?.versions?.node &&
+		typeof processLike.platform === "string" &&
+		processLike.platform !== "win32"
+	);
+};
+
 export class NodePersistenceBackend implements RustAnyStorePersistenceBackend {
+	readonly crashSafeJournalReplacement =
+		supportsCrashSafeNodeJournalReplacement();
 	private journalHandle?: import("fs/promises").FileHandle;
 	private journalOffset?: number;
 	private journalPoison?: unknown;
@@ -172,23 +238,66 @@ export class NodePersistenceBackend implements RustAnyStorePersistenceBackend {
 	private snapshotFilePath?: string;
 	private snapshotTempFilePath?: string;
 	private journalFilePath?: string;
+	private journalReplacementTempFilePath?: string;
+	private journalCheckpointFilePath?: string;
+	private journalCheckpointTempFilePath?: string;
 	private directoryEnsured = false;
 
 	constructor(
 		private readonly rootDirectory: string,
 		private readonly level: string[],
+		private readonly fs?: NodeFsModule,
 	) {}
 
+	private nodeFs(): Promise<NodeFsModule> {
+		return this.fs ? Promise.resolve(this.fs) : importNodeFs();
+	}
+
 	async readSnapshot(): Promise<Uint8Array | undefined> {
-		return readNodeFileIfExists(await this.snapshotPath());
+		return readNodeFileIfExists(await this.snapshotPath(), await this.nodeFs());
 	}
 
 	async readJournal(): Promise<Uint8Array | undefined> {
-		const journal = await readNodeFileIfExists(await this.journalPath());
+		const journal = await readNodeFileIfExists(
+			await this.journalPath(),
+			await this.nodeFs(),
+		);
 		if (journal) {
 			this.journalOffset = journal.byteLength;
 		}
 		return journal;
+	}
+
+	async readJournalCheckpointBase(journalByteLength: number): Promise<number> {
+		// A process can die after syncing a temporary checkpoint but before rename.
+		// These fixed names are non-authoritative. Clean them only for stores that
+		// opted into checkpoint scheduling so ordinary store opens do no extra I/O.
+		const fs = await this.nodeFs();
+		await Promise.allSettled([
+			fs.rm(await this.journalReplacementTempPath(), { force: true }),
+			fs.rm(await this.journalCheckpointTempPath(), { force: true }),
+		]);
+		const checkpointBytes = await readNodeFileIfExists(
+			await this.journalCheckpointPath(),
+			fs,
+		);
+		if (!checkpointBytes) {
+			return 0;
+		}
+		const checkpoint = decodeJournalCheckpoint(checkpointBytes);
+		if (!checkpoint || checkpoint.byteLength > journalByteLength) {
+			// Old normal-mode versions can leave this scheduling sidecar behind after
+			// truncating the WAL. It never participates in replay; remove an invalid
+			// hint best-effort so a later, longer journal cannot accidentally reuse it.
+			try {
+				await fs.rm(await this.journalCheckpointPath(), { force: true });
+				await this.syncLevelDirectory();
+			} catch {
+				// A scheduling hint must never make an otherwise valid store fail to open.
+			}
+			return 0;
+		}
+		return checkpoint.byteLength;
 	}
 
 	async appendJournal(
@@ -260,10 +369,108 @@ export class NodePersistenceBackend implements RustAnyStorePersistenceBackend {
 		}
 	}
 
+	async replaceJournalWithCheckpoint(
+		records: Iterable<Uint8Array>,
+	): Promise<number> {
+		if (!this.crashSafeJournalReplacement) {
+			throw new Error(
+				"Node persistence crash-safe journal replacement is unavailable on win32 because Node does not expose a durable directory barrier",
+			);
+		}
+		if (this.journalPoison !== undefined) {
+			throw this.journalPoison;
+		}
+		await this.ensureLevelDirectory();
+		await this.closeJournalHandle();
+		const fs = await this.nodeFs();
+		const journalPath = await this.journalPath();
+		const temporaryPath = await this.journalReplacementTempPath();
+		let byteLength = 0;
+		try {
+			await fs.rm(temporaryPath, { force: true });
+			const temporary = await fs.open(temporaryPath, "w+");
+			try {
+				for (const record of records) {
+					let written = 0;
+					while (written < record.byteLength) {
+						const remaining = record.byteLength - written;
+						const result = await temporary.write(
+							record,
+							written,
+							remaining,
+							byteLength + written,
+						);
+						written += validateWriteProgress(
+							result.bytesWritten,
+							remaining,
+							"Node persistence checkpoint journal",
+						);
+					}
+					byteLength += record.byteLength;
+				}
+				if (byteLength === 0) {
+					throw new Error("Node persistence checkpoint journal is empty");
+				}
+				await temporary.sync();
+			} finally {
+				await temporary.close();
+			}
+
+			// Invalidate the prior scheduling hint durably before selecting a new WAL.
+			// A crash before rename therefore leaves the old complete WAL without a
+			// hint (one conservative re-checkpoint); a crash after rename can never
+			// pair the new WAL with a stale base length. This avoids scanning the live
+			// checkpoint prefix on every reopen.
+			await Promise.all([
+				fs.rm(await this.journalCheckpointPath(), { force: true }),
+				fs.rm(await this.journalCheckpointTempPath(), { force: true }),
+			]);
+			await this.syncLevelDirectory();
+
+			// The old handle is closed above so Node can replace the destination.
+			// Node's rename operation replaces an existing file atomically. A crash
+			// before this point leaves the old complete WAL; a crash afterwards selects
+			// the new complete WAL. Both replay to the same acknowledged state.
+			await fs.rename(temporaryPath, journalPath);
+			await this.syncLevelDirectory();
+			this.journalOffset = byteLength;
+
+			// The sidecar is only an ordered scheduling hint: replay never trusts it.
+			// Publish it after the WAL switch so a crash can at worst cause one extra
+			// checkpoint, never skip required replay or resurrect a deleted key.
+			try {
+				await this.replaceFileAtomically(
+					await this.journalCheckpointPath(),
+					await this.journalCheckpointTempPath(),
+					encodeJournalCheckpoint({ byteLength }),
+				);
+			} catch {
+				// The WAL is already durable. A missing hint only causes a conservative
+				// re-checkpoint after reopen; it cannot affect replay or acknowledgement.
+				await Promise.allSettled([
+					fs.rm(await this.journalCheckpointPath(), { force: true }),
+					fs.rm(await this.journalCheckpointTempPath(), { force: true }),
+				]);
+			}
+
+			// The replacement WAL starts with CLEAR and is self-contained. Retiring a
+			// legacy snapshot after the WAL switch is therefore safe on either side of
+			// a crash: snapshot + CLEAR-WAL and CLEAR-WAL alone replay identically.
+			await Promise.allSettled([
+				fs.rm(await this.snapshotPath(), { force: true }),
+				fs.rm(await this.snapshotTempPath(), { force: true }),
+			]);
+			return byteLength;
+		} catch (error) {
+			this.journalPoison ??= error;
+			throw this.journalPoison;
+		}
+	}
+
 	async writeSnapshot(snapshot: Uint8Array): Promise<void> {
 		await this.close();
 		await this.ensureLevelDirectory();
-		const { rename, writeFile } = await importNodeFs();
+		const { rename, writeFile } = await this.nodeFs();
 		const tempPath = await this.snapshotTempPath();
 		await writeFile(tempPath, snapshot);
 		await rename(tempPath, await this.snapshotPath());
@@ -272,7 +479,7 @@ export class NodePersistenceBackend implements RustAnyStorePersistenceBackend {
 	}
 
 	async removeSublevels(): Promise<void> {
-		const { rm } = await importNodeFs();
+		const { rm } = await this.nodeFs();
 		await rm(await this.sublevelsDirectory(), { recursive: true, force: true });
 	}
 
@@ -280,6 +487,10 @@ export class NodePersistenceBackend implements RustAnyStorePersistenceBackend {
 		this.directoryEnsured = false;
 		this.journalOffset = undefined;
 		this.journalPoison = undefined;
+		await this.closeJournalHandle();
+	}
+
+	private async closeJournalHandle(): Promise<void> {
 		if (!this.journalHandle) {
 			return;
 		}
@@ -293,7 +504,7 @@ export class NodePersistenceBackend implements RustAnyStorePersistenceBackend {
 		if (this.directoryEnsured) {
 			return;
 		}
-		const { mkdir } = await importNodeFs();
+		const { mkdir } = await this.nodeFs();
 		await mkdir(await this.levelDirectory(), { recursive: true });
 		this.directoryEnsured = true;
 	}
@@ -302,7 +513,7 @@ export class NodePersistenceBackend implements RustAnyStorePersistenceBackend {
 		if (this.journalHandle) {
 			return;
 		}
-		const { open, stat } = await importNodeFs();
+		const { open, stat } = await this.nodeFs();
 		const path = await this.journalPath();
 		try {
 			// O_APPEND ignores positional offsets on Linux. Use a positional
@@ -320,6 +531,43 @@ export class NodePersistenceBackend implements RustAnyStorePersistenceBackend {
 			} catch {
 				this.journalOffset = 0;
 			}
+		}
+	}
+
+	private async replaceFileAtomically(
+		path: string,
+		temporaryPath: string,
+		bytes: Uint8Array,
+	): Promise<void> {
+		const fs = await this.nodeFs();
+		await fs.rm(temporaryPath, { force: true });
+		const handle = await fs.open(temporaryPath, "w+");
+		try {
+			let written = 0;
+			while (written < bytes.byteLength) {
+				const remaining = bytes.byteLength - written;
+				const result = await handle.write(bytes, written, remaining, written);
+				written += validateWriteProgress(
+					result.bytesWritten,
+					remaining,
+					"Node persistence checkpoint authority",
+				);
+			}
+			await handle.sync();
+		} finally {
+			await handle.close();
+		}
+		await fs.rename(temporaryPath, path);
+		await this.syncLevelDirectory();
+	}
+
+	private async syncLevelDirectory(): Promise<void> {
+		const fs = await this.nodeFs();
+		const handle = await fs.open(await this.levelDirectory(), "r");
+		try {
+			await handle.sync();
+		} finally {
+			await handle.close();
 		}
 	}
 
@@ -365,6 +613,30 @@ export class NodePersistenceBackend implements RustAnyStorePersistenceBackend {
 			JOURNAL_FILE_NAME,
 		);
 		return this.journalFilePath;
+	}
+
+	private async journalCheckpointPath(): Promise<string> {
+		this.journalCheckpointFilePath ??= (await importNodePathJoin())(
+			await this.levelDirectory(),
+			JOURNAL_CHECKPOINT_FILE_NAME,
+		);
+		return this.journalCheckpointFilePath;
+	}
+
+	private async journalReplacementTempPath(): Promise<string> {
+		this.journalReplacementTempFilePath ??= (await importNodePathJoin())(
+			await this.levelDirectory(),
+			JOURNAL_REPLACEMENT_TEMP_FILE_NAME,
+		);
+		return this.journalReplacementTempFilePath;
+	}
+
+	private async journalCheckpointTempPath(): Promise<string> {
+		this.journalCheckpointTempFilePath ??= (await importNodePathJoin())(
+			await this.levelDirectory(),
+			JOURNAL_CHECKPOINT_TEMP_FILE_NAME,
+		);
+		return this.journalCheckpointTempFilePath;
 	}
 }
 
