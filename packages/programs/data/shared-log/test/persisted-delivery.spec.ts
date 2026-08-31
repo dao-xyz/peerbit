@@ -1,6 +1,8 @@
+import { createStore } from "@peerbit/any-store";
 import { calculateRawCid } from "@peerbit/blocks-interface";
 import { randomBytes } from "@peerbit/crypto";
 import { toId } from "@peerbit/indexer-interface";
+import { create as createSQLiteIndices } from "@peerbit/indexer-sqlite3";
 import { SilentDelivery } from "@peerbit/stream-interface";
 import { TestSession } from "@peerbit/test-utils";
 import { waitForResolved } from "@peerbit/time";
@@ -27,6 +29,15 @@ describe("append delivery options — persisted receipts", function () {
 	let session: TestSession | undefined;
 	let directory: string | undefined;
 
+	const crashSafeDirectoryOptions = (directory: string) => ({
+		directory,
+		storage: {
+			storeFactory: (storeDirectory?: string) => createStore(storeDirectory),
+		},
+		indexer: (indexDirectory?: string) =>
+			createSQLiteIndices(indexDirectory),
+	});
+
 	afterEach(async () => {
 		await session?.stop();
 		session = undefined;
@@ -45,8 +56,8 @@ describe("append delivery options — persisted receipts", function () {
 				path.join(os.tmpdir(), "peerbit-persisted-delivery-"),
 			);
 			session = await TestSession.connected(2, [
-				{ directory: path.join(directory, "writer") },
-				{ directory: path.join(directory, "receiver") },
+				crashSafeDirectoryOptions(path.join(directory, "writer")),
+				crashSafeDirectoryOptions(path.join(directory, "receiver")),
 			]);
 		} else {
 			session = await TestSession.connected(2);
@@ -597,8 +608,8 @@ describe("append delivery options — persisted receipts", function () {
 		const writerDirectory = path.join(directory, "writer");
 		const receiverDirectory = path.join(directory, "receiver");
 		session = await TestSession.connected(2, [
-			{ directory: writerDirectory },
-			{ directory: receiverDirectory },
+			crashSafeDirectoryOptions(writerDirectory),
+			crashSafeDirectoryOptions(receiverDirectory),
 		]);
 		const writerArgs = {
 			replicas: { min: 2 },
@@ -699,9 +710,9 @@ describe("append delivery options — persisted receipts", function () {
 		// physical block/index/native-journal primitives separately.
 		await session.stop();
 		session = undefined;
-		session = await TestSession.disconnected(1, {
-			directory: receiverDirectory,
-		});
+		session = await TestSession.disconnected(1, [
+			crashSafeDirectoryOptions(receiverDirectory),
+		]);
 		const reopened = await session.peers[0].open(receiverClone, {
 			args: { ...receiverArgs, replicate: false },
 		});
@@ -835,16 +846,15 @@ describe("append delivery options — persisted receipts", function () {
 	it("repairs a dropped initial entry before issuing its receipt", async () => {
 		const { writer, receiver } = await openPair(true);
 		await waitForPersistedCapability(writer, receiver);
-		const rpc = writer.log.rpc as any;
+		const sharedLog = writer.log as any;
+		const rpc = sharedLog.rpc as any;
 		const originalSend = rpc.send.bind(rpc);
 		let droppedInitialEntry = false;
-		let targetEntrySendCount = 0;
 		const send = sinon.stub(rpc, "send").callsFake(async (...args: any[]) => {
 			if (args[0] instanceof ExchangeHeadsMessage) {
 				for (const head of args[0].heads) {
 					const operation = await head.entry.getPayloadValue();
 					if (operation.value === "repair-before-receipt") {
-						targetEntrySendCount++;
 						if (!droppedInitialEntry) {
 							droppedInitialEntry = true;
 							return;
@@ -854,6 +864,29 @@ describe("append delivery options — persisted receipts", function () {
 			}
 			return originalSend(...args);
 		});
+		const originalPushEntryHashes = sharedLog.pushEntryHashes.bind(sharedLog);
+		const missingBeforeReceiptRepair = new Set<string>();
+		const presentAfterReceiptRepair = new Set<string>();
+		const pushEntryHashes = sinon
+			.stub(sharedLog, "pushEntryHashes")
+			.callsFake(async (...args: any[]) => {
+				const receiptRepairHashes =
+					args[2]?.repairHint === true && args[2]?.operationQueue
+						? ([...args[1]] as string[])
+						: [];
+				for (const hash of receiptRepairHashes) {
+					if (!(await receiver.log.log.has(hash))) {
+						missingBeforeReceiptRepair.add(hash);
+					}
+				}
+				const result = await originalPushEntryHashes(...args);
+				for (const hash of receiptRepairHashes) {
+					if (await receiver.log.log.has(hash)) {
+						presentAfterReceiptRepair.add(hash);
+					}
+				}
+				return result;
+			});
 
 		try {
 			const { entry } = await writer.add("repair-before-receipt", {
@@ -866,9 +899,11 @@ describe("append delivery options — persisted receipts", function () {
 			});
 
 			expect(droppedInitialEntry).to.equal(true);
+			expect(missingBeforeReceiptRepair.has(entry.hash)).to.equal(true);
+			expect(presentAfterReceiptRepair.has(entry.hash)).to.equal(true);
 			expect(await receiver.log.log.has(entry.hash)).to.equal(true);
-			expect(targetEntrySendCount).to.be.greaterThan(1);
 		} finally {
+			pushEntryHashes.restore();
 			send.restore();
 		}
 	});
@@ -1077,10 +1112,13 @@ describe("append delivery options — persisted receipts", function () {
 	it("waits for both block and coordinate durability barriers", async () => {
 		const { writer, receiver } = await openPair(true);
 		await waitForPersistedCapability(writer, receiver);
-		const blockDurability = (receiver.log as any).remoteBlocks
-			.crashSafeDurability!;
-		const coordinateDurability =
-			receiver.log.entryCoordinatesIndex.crashSafeDurability!;
+		const receiverLog = receiver.log as any;
+		const receiptStorage = receiverLog.resolvePersistedReceiptStorage();
+		const resolveReceiptStorage = sinon
+			.stub(receiverLog, "resolvePersistedReceiptStorage")
+			.returns(receiptStorage);
+		const blockDurability = receiptStorage.block;
+		const coordinateDurability = receiptStorage.coordinate;
 		expect(blockDurability).not.equal(coordinateDurability);
 
 		let releaseBlock!: () => void;
@@ -1128,6 +1166,7 @@ describe("append delivery options — persisted receipts", function () {
 			releaseCoordinate();
 			blockBarrier.restore();
 			coordinateBarrier.restore();
+			resolveReceiptStorage.restore();
 		}
 	});
 
@@ -1184,7 +1223,7 @@ describe("append delivery options — persisted receipts", function () {
 		);
 		session = await TestSession.connected(2, [
 			{},
-			{ directory: path.join(directory, "receiver") },
+			crashSafeDirectoryOptions(path.join(directory, "receiver")),
 		]);
 		const writer = await session.peers[0].open(new EventStore<string, any>(), {
 			args: {
