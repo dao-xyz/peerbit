@@ -6,6 +6,7 @@ Documentation
 - [Scalable fanout pubsub](/scalable-fanout.md)
 - [Fanout tree protocol](/fanout-tree-protocol.md)
 - [Native durability protocol (proposal)](/native-shared-log-durability.md)
+- [TrustedNetwork v2 protocol (proposal)](/trusted-network-v2-protocol.md)
 - [Development (borsh-ts)](/development/borsh-ts.md)
 
 Updates
