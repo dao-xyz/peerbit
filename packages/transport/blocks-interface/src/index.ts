@@ -17,6 +17,10 @@ export type PutOptions = {
 };
 
 type MaybePromise<T> = Promise<T> | T;
+export type CrashSafeBlockDurability = {
+	readonly crashSafe: true;
+	barrier(): MaybePromise<void>;
+};
 
 export interface Blocks extends WaitForPeer {
 	put(
@@ -56,6 +60,7 @@ export interface Blocks extends WaitForPeer {
 	iterator(): AsyncGenerator<[string, Uint8Array], void, void>;
 	size(): MaybePromise<number>;
 	persisted(): MaybePromise<boolean>;
+	readonly crashSafeDurability?: CrashSafeBlockDurability;
 }
 
 export {

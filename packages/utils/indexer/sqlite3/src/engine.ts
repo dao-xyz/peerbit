@@ -248,6 +248,10 @@ export class SQLiteIndex<T extends Record<string, any>>
 		return this.properties.persisted ?? true;
 	}
 
+	get crashSafeDurability() {
+		return this.properties.db.crashSafeDurability;
+	}
+
 	private static readonly _emptyTables = new Map<string, Table>();
 	private static readonly _emptyRootTables: Table[] = [];
 	private static readonly _emptyCursor = new Map();

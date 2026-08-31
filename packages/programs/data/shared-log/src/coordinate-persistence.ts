@@ -1008,6 +1008,27 @@ export class CoordinatePersistenceCoordinator<R extends "u32" | "u64"> {
 			: this.createCoordinateEntryFromNativeFields(entry);
 	}
 
+	/**
+	 * Read the coordinate row from the state that is authoritative for receipt
+	 * presence. Native backbone-only receives deliberately do not duplicate their
+	 * coordinate rows into the generic index, so the hydrated resident mirror is
+	 * authoritative while that mode is active. Its absence is also authoritative:
+	 * falling back to the generic index could resurrect a stale row after a native
+	 * delete. Callers still own journal flushing and crash-safe barriers before
+	 * treating this presence check as a durable receipt.
+	 */
+	async getAuthoritativeCoordinateEntryForReceipt(
+		hash: string,
+	): Promise<EntryReplicated<R> | undefined> {
+		if (this.canUseBackboneOnlyCoordinatePersistence()) {
+			const resident = this._residentEntryCoordinatesByHash?.get(hash);
+			return resident
+				? this.materializeResidentCoordinateEntry(resident)
+				: undefined;
+		}
+		return (await this.deps.entryCoordinatesIndex().get(toId(hash)))?.value;
+	}
+
 	materializeRepairDispatchEntries(
 		entries: ReadonlyMap<string, RepairDispatchEntry<R>>,
 	): Map<string, EntryReplicated<R>> {

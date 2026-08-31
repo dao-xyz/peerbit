@@ -1,6 +1,7 @@
 import { type AnyStore } from "@peerbit/any-store-interface";
 import { type AbstractLevel } from "abstract-level";
 import { ClassicLevel } from "classic-level";
+import { v4 as uuid } from "uuid";
 
 type GetFn = (
 	key: string,
@@ -20,8 +21,46 @@ const getOrGetSync = (level: AbstractLevel<any, any, any>): GetFn => {
 
 export class LevelStore implements AnyStore {
 	private getFn: GetFn;
+	private crashSafe = false;
+	private _crashSafeDurability?: {
+		readonly crashSafe: true;
+		barrier: () => Promise<void>;
+	};
 	constructor(readonly store: AbstractLevel<any, any, any>) {
 		this.getFn = getOrGetSync(store);
+		if (store instanceof ClassicLevel) {
+			this.enableCrashSafeDurability();
+		}
+	}
+
+	private enableCrashSafeDurability(): void {
+		if (this.crashSafe) return;
+		this.crashSafe = true;
+		const barrierKey = `\0peerbit:durability-barrier:${uuid()}`;
+		this._crashSafeDurability = {
+			crashSafe: true,
+			barrier: async () => {
+				// abstract-level elides empty batches. A non-empty atomic put+delete
+				// leaves no logical row while forcing LevelDB to fsync this write and
+				// all preceding mutations before the promise resolves.
+				await this.store.batch(
+					[
+						{
+							type: "put",
+							key: barrierKey,
+							value: new Uint8Array(0),
+							valueEncoding: "view",
+						},
+						{ type: "del", key: barrierKey },
+					],
+					{ sync: true } as any,
+				);
+			},
+		};
+	}
+
+	get crashSafeDurability() {
+		return this._crashSafeDurability;
 	}
 
 	status() {
@@ -114,10 +153,16 @@ export class LevelStore implements AnyStore {
 	}
 
 	async sublevel(name: string) {
-		return new LevelStore(this.store.sublevel(name, { valueEncoding: "view" }));
+		const sublevel = new LevelStore(
+			this.store.sublevel(name, { valueEncoding: "view" }),
+		);
+		if (this.crashSafe) {
+			sublevel.enableCrashSafeDurability();
+		}
+		return sublevel;
 	}
 
 	persisted() {
-		return this.store instanceof ClassicLevel;
+		return this.crashSafe;
 	}
 }

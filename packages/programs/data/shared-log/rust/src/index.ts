@@ -144,10 +144,7 @@ type RepairDispatchPlanInput = {
 	selfHash: string;
 };
 
-type RepairDispatchEntryPlanInput = Omit<
-	RepairDispatchPlanInput,
-	"entries"
-> & {
+type RepairDispatchEntryPlanInput = Omit<RepairDispatchPlanInput, "entries"> & {
 	entries: Iterable<RepairDispatchEntryPlanBatchEntry>;
 };
 type ResidentRepairDispatchPlanInput = Omit<
@@ -240,6 +237,18 @@ type NativeRangePlannerHandle = {
 		fullReplicaFallback: boolean,
 		includeStrictFullReplica: boolean,
 	) => unknown[];
+	plan_leader_samples_for_gids_batch?: (
+		gids: string[],
+		replicaCounts: number[],
+		roleAgeMs: number,
+		now: string,
+		peerFilter: string[] | undefined,
+		expandPeerFilter: boolean,
+		selfHash: string,
+		includeSelf: boolean,
+		fullReplicaFallback: boolean,
+		includeStrictFullReplica: boolean,
+	) => unknown[];
 	plan_local_leaders_for_gids_batch?: (
 		hashes: string[],
 		gids: string[],
@@ -294,6 +303,17 @@ type NativeRangePlannerHandle = {
 		now: string,
 		includeStrict: boolean,
 		peerFilter?: string[],
+	) => unknown[] | undefined;
+	get_routing_full_replica_leaders?: (
+		replicas: number,
+		roleAgeMs: number,
+		now: string,
+		peerFilter: string[] | undefined,
+		expandPeerFilter: boolean,
+		selfHash: string,
+		includeSelf: boolean,
+		fullReplicaFallback: boolean,
+		includeStrictFullReplica: boolean,
 	) => unknown[] | undefined;
 	include_matured_peers: (
 		peerFilter: string[] | undefined,
@@ -471,7 +491,16 @@ type NativeSharedLogStateHandle = {
 		reliabilityAck: boolean,
 		minAcks: number | undefined,
 		requireRecipients: boolean,
-	) => [boolean, boolean, boolean, string[], string[], string[], string[], string[]];
+	) => [
+		boolean,
+		boolean,
+		boolean,
+		string[],
+		string[],
+		string[],
+		string[],
+		string[],
+	];
 	plan_append_for_gid: (
 		entryHash: string,
 		gid: string,
@@ -498,7 +527,16 @@ type NativeSharedLogStateHandle = {
 		unknown[],
 		boolean,
 		boolean,
-		[boolean, boolean, boolean, string[], string[], string[], string[], string[]],
+		[
+			boolean,
+			boolean,
+			boolean,
+			string[],
+			string[],
+			string[],
+			string[],
+			string[],
+		],
 		unknown[],
 	];
 	plan_append_for_gids_batch: (
@@ -527,7 +565,16 @@ type NativeSharedLogStateHandle = {
 		unknown[],
 		boolean,
 		boolean,
-		[boolean, boolean, boolean, string[], string[], string[], string[], string[]],
+		[
+			boolean,
+			boolean,
+			boolean,
+			string[],
+			string[],
+			string[],
+			string[],
+			string[],
+		],
 		unknown[],
 	][];
 	plan_receive_coordinates_for_gids_batch: (
@@ -710,7 +757,9 @@ const appendCoordinatePlanFromRow = (
 	};
 };
 
-const findLeaderArguments = (options?: FindLeaderOptions): [
+const findLeaderArguments = (
+	options?: FindLeaderOptions,
+): [
 	number,
 	string,
 	string[] | undefined,
@@ -912,6 +961,22 @@ export class SharedLogRangePlanner {
 		});
 	}
 
+	planLeaderSamplesForGidsBatch(
+		items: Iterable<LeaderGidBatchInput>,
+		options?: FindLeaderOptions,
+	): Array<Map<string, LeaderSample>> | undefined {
+		if (!this.native.plan_leader_samples_for_gids_batch) {
+			return undefined;
+		}
+		const entries = [...items];
+		const rows = this.native.plan_leader_samples_for_gids_batch(
+			entries.map((entry) => entry.gid),
+			entries.map((entry) => entry.replicas),
+			...findLeaderArguments(options),
+		);
+		return rows.map((row) => rowsToSamples(row as unknown[]));
+	}
+
 	planLocalLeaderHashesForGidsBatch(
 		items: Iterable<LeaderGidHashBatchInput>,
 		options?: FindLeaderOptions,
@@ -1025,6 +1090,20 @@ export class SharedLogRangePlanner {
 		return rows ? rowsToSamples(rows) : undefined;
 	}
 
+	getRoutingFullReplicaLeaders(
+		replicas: number,
+		options?: FindLeaderOptions,
+	): Map<string, LeaderSample> | undefined {
+		if (!this.native.get_routing_full_replica_leaders) {
+			return undefined;
+		}
+		const rows = this.native.get_routing_full_replica_leaders(
+			replicas,
+			...findLeaderArguments(options),
+		);
+		return rows ? rowsToSamples(rows) : undefined;
+	}
+
 	includeMaturedPeers(
 		peerFilter: Iterable<string> | undefined,
 		replicas: number,
@@ -1065,7 +1144,9 @@ export class SharedLogNativeState {
 		private readonly resolution: RangeResolution,
 	) {}
 
-	static async create(resolution: RangeResolution): Promise<SharedLogNativeState> {
+	static async create(
+		resolution: RangeResolution,
+	): Promise<SharedLogNativeState> {
 		const wasm = await loadWasm();
 		return new SharedLogNativeState(
 			new wasm.NativeSharedLogState(resolution),
@@ -1129,7 +1210,9 @@ export class SharedLogNativeState {
 
 	getEntryCoordinates(hash: string): Array<number | bigint> | undefined {
 		const coordinates = this.native.get_entry_coordinates(hash);
-		return coordinates ? rowsToNumbers(this.resolution, coordinates) : undefined;
+		return coordinates
+			? rowsToNumbers(this.resolution, coordinates)
+			: undefined;
 	}
 
 	getEntryCoordinateHashes(): string[] {
@@ -1215,9 +1298,7 @@ export class SharedLogNativeState {
 		end2: bigint | number | string;
 		limit: number;
 	}): bigint[] | undefined {
-		if (
-			typeof this.native.entry_hash_numbers_in_range_limited !== "function"
-		) {
+		if (typeof this.native.entry_hash_numbers_in_range_limited !== "function") {
 			return undefined;
 		}
 		return rowsToNumbers(
@@ -1294,8 +1375,7 @@ export class SharedLogNativeState {
 				hashNumber: asIntegerString(entry.hashNumber ?? 0),
 				coordinates,
 				nextHashes: [...entry.nextHashes],
-				assignedToRangeBoundary:
-					entry.assignedToRangeBoundary === true ? 1 : 0,
+				assignedToRangeBoundary: entry.assignedToRangeBoundary === true ? 1 : 0,
 				requestedReplicas: entry.requestedReplicas ?? coordinates.length,
 			};
 		});
@@ -1365,11 +1445,7 @@ export class SharedLogNativeState {
 		this.native.clear_entry_coordinates();
 	}
 
-	addGidPeers(
-		gid: string,
-		peers: Iterable<string>,
-		reset = false,
-	): number {
+	addGidPeers(gid: string, peers: Iterable<string>, reset = false): number {
 		return this.native.add_gid_peers(gid, [...peers], reset);
 	}
 
@@ -1417,12 +1493,11 @@ export class SharedLogNativeState {
 		replicas: number,
 		options?: FindLeaderOptions,
 	): LeaderPlan {
-		const [coordinateRows, leaderRows] =
-			this.native.plan_entry_leaders_for_gid(
-				gid,
-				replicas,
-				...findLeaderArguments(options),
-			);
+		const [coordinateRows, leaderRows] = this.native.plan_entry_leaders_for_gid(
+			gid,
+			replicas,
+			...findLeaderArguments(options),
+		);
 		return {
 			coordinates: rowsToNumbers(this.resolution, coordinateRows),
 			leaders: rowsToSamples(leaderRows),

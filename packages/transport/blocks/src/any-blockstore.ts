@@ -366,4 +366,8 @@ export class AnyBlockStore implements Blocks {
 	persisted(): boolean | Promise<boolean> {
 		return this._store.persisted();
 	}
+
+	get crashSafeDurability() {
+		return this._store.crashSafeDurability;
+	}
 }

@@ -1,3 +1,4 @@
+import type { CrashSafeIndexDurability } from "@peerbit/indexer-interface";
 import type { BindableValue, SQLLiteValue } from "./schema.js";
 
 export type SQLite = {
@@ -18,6 +19,7 @@ export type Database = {
 		size: number;
 	};
 	status: () => Promise<"open" | "closed"> | "open" | "closed";
+	readonly crashSafeDurability?: CrashSafeIndexDurability;
 };
 
 export type StatementGetResult = { [key: string]: SQLLiteValue } | undefined;

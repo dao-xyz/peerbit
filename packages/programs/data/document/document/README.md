@@ -6,6 +6,31 @@ This store is built on top of the base store. This store allows for type-safe do
 
 As of now, go through the [tests](./src//__tests__/index.integration.test.ts) for documentation on how to use the module.
 
+## Durable remote delivery
+
+Document puts can opt in to waiting for crash-safe persistence on current remote
+replica owners:
+
+```typescript
+await store.docs.putMany(documents, {
+	unique: true,
+	delivery: {
+		reliability: "persisted",
+		minAcks: 2,
+		timeout: 120_000,
+	},
+});
+```
+
+`minAcks` counts distinct remote owners; it does not increase the store's
+configured replication degree. A successful return proves persistence at the
+receipt instant, not permanent custody or Byzantine correctness. The local
+commit happens first, so a later delivery failure reports the exact committed
+hashes in a `PersistedDeliveryError` with `retrySafe === false`.
+
+Persisted delivery currently supports `put` and independent, distinct-key
+`putMany` operations. Deletes do not yet support persisted receipts.
+
 
 
 Example 

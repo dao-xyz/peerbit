@@ -26,6 +26,7 @@ import { type Encoding, NO_ENCODING } from "./encoding.js";
 import {
 	EntryIndex,
 	type EntryIndexHashMutationLockOwner,
+	EntryIndexPostCommitError,
 	type MaybeResolveOptions,
 	type NativeCommittedAppendFactsTransaction,
 	type NativeLogGraph,
@@ -154,6 +155,7 @@ type InternalProfileEvent = {
 };
 type InternalProfileSink = (event: InternalProfileEvent) => void;
 type InternalAppendHashesSink = (hashes: string[]) => void | Promise<void>;
+type InternalLocalCommitEvidenceSink = (hashes: readonly string[]) => void;
 
 type NativeCommittedAppendFinalizer = {
 	acknowledge(onLowerMarkerDurable?: () => Promise<void>): Promise<void>;
@@ -438,11 +440,17 @@ export type AppendOptions<T> = {
 
 type TrustedAppendOptions<T> = AppendOptions<T> & {
 	__peerbitCanAppendAlreadyValidated?: boolean;
+	__peerbitOnLocalCommit?: InternalLocalCommitEvidenceSink;
 };
 
 const canAppendAlreadyValidated = (options?: unknown): boolean =>
 	(options as { __peerbitCanAppendAlreadyValidated?: unknown } | undefined)
 		?.__peerbitCanAppendAlreadyValidated === true;
+
+const localCommitEvidenceSink = <T>(
+	options: AppendOptions<T> | undefined,
+): InternalLocalCommitEvidenceSink | undefined =>
+	(options as TrustedAppendOptions<T> | undefined)?.__peerbitOnLocalCommit;
 
 const withCanAppendAlreadyValidated = <T>(
 	options: AppendOptions<T> = {},
@@ -1067,6 +1075,10 @@ export class Log<T> {
 		return this._entryIndex;
 	}
 
+	get appendDurability(): AppendDurability {
+		return this._appendDurability;
+	}
+
 	get keychain() {
 		return this._keychain;
 	}
@@ -1222,6 +1234,7 @@ export class Log<T> {
 		data: T,
 		options: AppendOptions<T>,
 	): Promise<{ entry: Entry<T>; removed: ShallowOrFullEntry<T>[] }> {
+		const onLocalCommit = localCommitEvidenceSink(options);
 		const nexts = await this.getNextsForAppend(options);
 		const deferBlockStore = hasPutMany(this._storage);
 		type MutationResult = {
@@ -1282,6 +1295,7 @@ export class Log<T> {
 					}
 					throw error;
 				}
+				onLocalCommit?.([entry.hash]);
 				mutation = await finishMutation(entry);
 			}
 		}
@@ -1354,6 +1368,7 @@ export class Log<T> {
 			);
 		}
 
+		const onLocalCommit = localCommitEvidenceSink(options);
 		const appendOptions = withCanAppendAlreadyValidated(options);
 		const nextsResult = this.getNextsForAppend(appendOptions);
 		const nexts = isPromiseLike(nextsResult) ? await nextsResult : nextsResult;
@@ -1392,6 +1407,7 @@ export class Log<T> {
 				}
 				throw error;
 			}
+			onLocalCommit?.([entry.hash]);
 		} else {
 			if (data == null && properties?.payloadData) {
 				throw new Error(
@@ -1581,6 +1597,7 @@ export class Log<T> {
 		if (!(identity instanceof Ed25519Keypair)) {
 			return undefined;
 		}
+		const onLocalCommit = localCommitEvidenceSink(options);
 		const payloadData =
 			properties.payloadData ??
 			(data == null ? undefined : this._encoding.encoder(data));
@@ -1870,6 +1887,7 @@ export class Log<T> {
 							hashes: [hash],
 							restoreNativeCids: trimmedHashes,
 							ownershipToken: prepared.nativeCommitOwnershipToken,
+							...(onLocalCommit ? { onLocalCommit } : undefined),
 						})
 					: undefined;
 				const putResult = this.entryIndex.putNativeCommittedAppendFacts(
@@ -1897,6 +1915,9 @@ export class Log<T> {
 						this._storage.acknowledgeNativeCommitOwnership(
 							prepared.nativeCommitOwnershipToken,
 						);
+					}
+					if (!finalizer) {
+						onLocalCommit?.([hash]);
 					}
 					return value;
 				});
@@ -1953,6 +1974,7 @@ export class Log<T> {
 		if (!(identity instanceof Ed25519Keypair)) {
 			return undefined;
 		}
+		const onLocalCommit = localCommitEvidenceSink(options);
 		const payloadData =
 			properties.payloadData ??
 			(data == null ? undefined : this._encoding.encoder(data));
@@ -2267,6 +2289,7 @@ export class Log<T> {
 									hashes: [hash],
 									restoreNativeCids: trimmedHashes,
 									ownershipToken: prepared.nativeCommitOwnershipToken,
+									...(onLocalCommit ? { onLocalCommit } : undefined),
 								})
 							: undefined;
 						const putResult = this.entryIndex.putNativeCommittedAppendFacts(
@@ -2294,6 +2317,9 @@ export class Log<T> {
 								this._storage.acknowledgeNativeCommitOwnership(
 									prepared.nativeCommitOwnershipToken,
 								);
+							}
+							if (!finalizer) {
+								onLocalCommit?.([hash]);
 							}
 							return value;
 						});
@@ -2385,6 +2411,7 @@ export class Log<T> {
 			return undefined;
 		}
 
+		const onLocalCommit = localCommitEvidenceSink(appendOptions);
 		const appendFacts = nativeAppendChain.appendFacts[0]!;
 		const shallowEntry = nativeAppendChain.shallowEntries[0]!;
 		let materializedEntry: Entry<T> | undefined;
@@ -2532,6 +2559,7 @@ export class Log<T> {
 			}
 			throw error;
 		};
+		let settled: MaybePromise<PreparedCommitOnlyAppendResult<T>>;
 		try {
 			let result: MaybePromise<PreparedCommitOnlyAppendResult<T>>;
 			if (!properties?.skipMissingNextJoin && nexts.length > 0) {
@@ -2542,10 +2570,17 @@ export class Log<T> {
 			} else {
 				result = finishBlocks();
 			}
-			return isPromiseLike(result) ? result.catch(rollback) : result;
+			settled = isPromiseLike(result) ? result.catch(rollback) : result;
 		} catch (error) {
 			return rollback(error);
 		}
+		if (!onLocalCommit) {
+			return settled;
+		}
+		return mapMaybePromise(settled, (result) => {
+			onLocalCommit([appendFacts.hash]);
+			return result;
+		});
 	}
 
 	private async appendLocallyPreparedManyIndependent(
@@ -2610,6 +2645,7 @@ export class Log<T> {
 			);
 		}
 
+		const onLocalCommit = localCommitEvidenceSink(options);
 		const appendOptions = withCanAppendAlreadyValidated(options);
 		const deferBlockStore = hasPutMany(this._storage);
 		const nativeAppendBatch = await this.createNativePlainAppendEntriesBatch(
@@ -2646,6 +2682,9 @@ export class Log<T> {
 				await this.rollbackNativeAppendBlocks(entries);
 			}
 			throw error;
+		}
+		if (onLocalCommit) {
+			onLocalCommit(entries.map((entry) => entry.hash));
 		}
 
 		for (const entry of entries) {
@@ -2721,6 +2760,7 @@ export class Log<T> {
 		if (!(identity instanceof Ed25519Keypair) || !hasPutMany(this._storage)) {
 			return undefined;
 		}
+		const onLocalCommit = localCommitEvidenceSink(options);
 		const nativeTrimLengthTo = this.getNativeCommitOnlyTrimLengthTo(
 			options.trim,
 			properties.resolveTrimmedEntries,
@@ -2991,6 +3031,7 @@ export class Log<T> {
 							hashes: appendHashes,
 							restoreNativeCids: trimmedEntryHashes,
 							ownershipToken: nativeCommitOwnershipToken,
+							...(onLocalCommit ? { onLocalCommit } : undefined),
 						})
 					: undefined;
 				const putResult = this.entryIndex.putNativeCommittedAppendFactsBatch(
@@ -3016,6 +3057,9 @@ export class Log<T> {
 						this._storage.acknowledgeNativeCommitOwnership(
 							nativeCommitOwnershipToken,
 						);
+					}
+					if (!finalizer) {
+						onLocalCommit?.(appendHashes);
 					}
 					return value;
 				});
@@ -3359,7 +3403,10 @@ export class Log<T> {
 					timestamp,
 				}),
 		);
-		const metaDatas = data.map(() => options.meta?.data);
+		const metaDatas = Array.from(
+			{ length: data.length },
+			() => options.meta?.data,
+		);
 		const directBatch = nativeGraph?.prepareEntryV0PlainEntriesCommit
 			? await EntryV0.createPlainAppendEntriesBatch<T>({
 					data,
@@ -3614,6 +3661,7 @@ export class Log<T> {
 		hashes: string[];
 		restoreNativeCids?: string[];
 		ownershipToken?: unknown;
+		onLocalCommit?: InternalLocalCommitEvidenceSink;
 	}): NativeCommittedAppendFinalizer {
 		if (this._terminalAdmissionClosed || this._lifecycleState !== "active") {
 			throw new Error(
@@ -3675,6 +3723,7 @@ export class Log<T> {
 					acknowledgePromise = undefined;
 					throw error;
 				}
+				properties.onLocalCommit?.(properties.hashes);
 			},
 			retainForRecovery: () => {
 				if (state === "acknowledged") {
@@ -3707,6 +3756,7 @@ export class Log<T> {
 				}
 				state = "acknowledged";
 				this._nativeCommittedAppendFinalizers?.delete(finalizer);
+				properties.onLocalCommit?.(properties.hashes);
 				if (failures.length > 0) {
 					throw new AggregateError(
 						failures,
@@ -3951,16 +4001,26 @@ export class Log<T> {
 	}
 
 	private async putAppendEntry(entry: Entry<T>, options: AppendOptions<T>) {
-		await this.entryIndex.put(entry, {
-			unique: true,
-			isHead: true,
-			toMultiHash: false,
-			deferIndexWrite:
-				options.deferIndexWrite ??
-				(options.durability
-					? options.durability === "buffered"
-					: this._appendDurability === "buffered"),
-		});
+		const onLocalCommit = localCommitEvidenceSink(options);
+		try {
+			await this.entryIndex.put(entry, {
+				unique: true,
+				isHead: true,
+				toMultiHash: false,
+				deferIndexWrite:
+					options.deferIndexWrite ??
+					(options.durability
+						? options.durability === "buffered"
+						: this._appendDurability === "buffered"),
+			});
+		} catch (error) {
+			if (error instanceof EntryIndexPostCommitError) {
+				onLocalCommit?.([error.committedHash]);
+				throw error.cause;
+			}
+			throw error;
+		}
+		onLocalCommit?.([entry.hash]);
 	}
 
 	private async putAppendEntries(

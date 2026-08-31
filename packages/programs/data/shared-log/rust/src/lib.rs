@@ -1385,6 +1385,39 @@ fn get_routing_full_replica_leaders(
 }
 
 #[allow(clippy::too_many_arguments)]
+fn plan_routing_full_replica_leaders(
+    planner: &RangePlanner,
+    replicas: usize,
+    role_age_ms: f64,
+    now: &str,
+    peer_filter: JsValue,
+    expand_peer_filter: bool,
+    self_hash: &str,
+    include_self: bool,
+    full_replica_fallback: bool,
+    include_strict_full_replica: bool,
+) -> Result<Option<Vec<LeaderSample>>, SharedLogError> {
+    if !full_replica_fallback {
+        return Ok(None);
+    }
+    let options = find_leader_options(role_age_ms, now, peer_filter)?;
+    let prepared_options = prepare_find_leader_options(
+        planner,
+        &options,
+        replicas,
+        expand_peer_filter,
+        self_hash,
+        include_self,
+    );
+    Ok(get_routing_full_replica_leaders(
+        planner,
+        replicas,
+        &prepared_options,
+        include_strict_full_replica,
+    ))
+}
+
+#[allow(clippy::too_many_arguments)]
 fn prepared_options_for_replicas<'a>(
     planner: &RangePlanner,
     replicas: usize,
@@ -1450,6 +1483,41 @@ fn find_leaders_with_batch_caches(
     }
 
     find_leaders_with_prepared_options(planner, cursors, replicas, prepared_options, false, true)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn plan_leader_samples_for_gids_batch_core(
+    planner: &RangePlanner,
+    gids: &[String],
+    replica_counts: &[usize],
+    options: &SampleOptions,
+    expand_peer_filter: bool,
+    self_hash: &str,
+    include_self: bool,
+    full_replica_fallback: bool,
+    include_strict_full_replica: bool,
+) -> Vec<Vec<LeaderSample>> {
+    let mut prepared_options_by_replicas = HashMap::new();
+    let mut full_replica_leaders_by_replicas = HashMap::new();
+    gids.iter()
+        .zip(replica_counts.iter().copied())
+        .map(|(gid, replicas)| {
+            let coordinates = planner.get_gid_coordinates(gid, replicas);
+            find_leaders_with_batch_caches(
+                planner,
+                &coordinates,
+                replicas,
+                options,
+                &mut prepared_options_by_replicas,
+                &mut full_replica_leaders_by_replicas,
+                expand_peer_filter,
+                self_hash,
+                include_self,
+                full_replica_fallback,
+                include_strict_full_replica,
+            )
+        })
+        .collect()
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -2093,6 +2161,33 @@ impl NativeSharedLogState {
 
         Ok(out)
     }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn plan_routing_full_replica_leaders_core(
+        &self,
+        replicas: usize,
+        role_age_ms: f64,
+        now: &str,
+        peer_filter: JsValue,
+        expand_peer_filter: bool,
+        self_hash: &str,
+        include_self: bool,
+        full_replica_fallback: bool,
+        include_strict_full_replica: bool,
+    ) -> Result<Option<Vec<LeaderSample>>, SharedLogError> {
+        plan_routing_full_replica_leaders(
+            &self.inner.range_planner,
+            replicas,
+            role_age_ms,
+            now,
+            peer_filter,
+            expand_peer_filter,
+            self_hash,
+            include_self,
+            full_replica_fallback,
+            include_strict_full_replica,
+        )
+    }
 }
 
 #[wasm_bindgen]
@@ -2347,6 +2442,42 @@ impl NativeRangePlanner {
     }
 
     #[allow(clippy::too_many_arguments)]
+    pub fn plan_leader_samples_for_gids_batch(
+        &self,
+        gids: Array,
+        replica_counts: Array,
+        role_age_ms: f64,
+        now: String,
+        peer_filter: JsValue,
+        expand_peer_filter: bool,
+        self_hash: String,
+        include_self: bool,
+        full_replica_fallback: bool,
+        include_strict_full_replica: bool,
+    ) -> Result<Array, JsValue> {
+        let gids = strings_from_array(gids)?;
+        let replica_counts = usize_from_array(replica_counts)?;
+        ensure_same_len(gids.len(), replica_counts.len(), "gid leader batch")?;
+        let options = find_leader_options(role_age_ms, &now, peer_filter)?;
+        let leaders = plan_leader_samples_for_gids_batch_core(
+            &self.inner,
+            &gids,
+            &replica_counts,
+            &options,
+            expand_peer_filter,
+            &self_hash,
+            include_self,
+            full_replica_fallback,
+            include_strict_full_replica,
+        );
+        let out = Array::new();
+        for samples in leaders {
+            out.push(&samples_to_rows(samples));
+        }
+        Ok(out)
+    }
+
+    #[allow(clippy::too_many_arguments)]
     pub fn plan_local_leaders_for_gids_batch(
         &self,
         hashes: Array,
@@ -2571,6 +2702,38 @@ impl NativeRangePlanner {
                 .inner
                 .get_full_replica_leaders(replicas, &options, include_strict)
             {
+                Some(leaders) => samples_to_rows(leaders).into(),
+                None => JsValue::UNDEFINED,
+            },
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn get_routing_full_replica_leaders(
+        &self,
+        replicas: usize,
+        role_age_ms: f64,
+        now: String,
+        peer_filter: JsValue,
+        expand_peer_filter: bool,
+        self_hash: String,
+        include_self: bool,
+        full_replica_fallback: bool,
+        include_strict_full_replica: bool,
+    ) -> Result<JsValue, JsValue> {
+        Ok(
+            match plan_routing_full_replica_leaders(
+                &self.inner,
+                replicas,
+                role_age_ms,
+                &now,
+                peer_filter,
+                expand_peer_filter,
+                &self_hash,
+                include_self,
+                full_replica_fallback,
+                include_strict_full_replica,
+            )? {
                 Some(leaders) => samples_to_rows(leaders).into(),
                 None => JsValue::UNDEFINED,
             },
@@ -3432,57 +3595,21 @@ impl NativeSharedLogState {
         let replica_counts = usize_from_array(replica_counts)?;
         ensure_same_len(gids.len(), replica_counts.len(), "gid leader batch")?;
         let options = find_leader_options(role_age_ms, &now, peer_filter)?;
-        let mut prepared_options_by_replicas = HashMap::new();
-        let mut full_replica_leaders_by_replicas = HashMap::new();
+        let leaders = plan_leader_samples_for_gids_batch_core(
+            &self.inner.range_planner,
+            &gids,
+            &replica_counts,
+            &options,
+            expand_peer_filter,
+            &self_hash,
+            include_self,
+            full_replica_fallback,
+            include_strict_full_replica,
+        );
         let out = Array::new();
-
-        for (gid, replicas) in gids.into_iter().zip(replica_counts) {
-            let leaders = if full_replica_fallback {
-                let prepared_options = prepared_options_for_replicas(
-                    &self.inner.range_planner,
-                    replicas,
-                    &options,
-                    &mut prepared_options_by_replicas,
-                    expand_peer_filter,
-                    &self_hash,
-                    include_self,
-                );
-                full_replica_leaders_by_replicas
-                    .entry(replicas)
-                    .or_insert_with(|| {
-                        get_routing_full_replica_leaders(
-                            &self.inner.range_planner,
-                            replicas,
-                            prepared_options,
-                            include_strict_full_replica,
-                        )
-                    })
-                    .clone()
-            } else {
-                None
-            };
-            let leaders = match leaders {
-                Some(leaders) => leaders,
-                None => {
-                    let coordinates = self.inner.range_planner.get_gid_coordinates(&gid, replicas);
-                    find_leaders_with_batch_caches(
-                        &self.inner.range_planner,
-                        &coordinates,
-                        replicas,
-                        &options,
-                        &mut prepared_options_by_replicas,
-                        &mut full_replica_leaders_by_replicas,
-                        expand_peer_filter,
-                        &self_hash,
-                        include_self,
-                        full_replica_fallback,
-                        include_strict_full_replica,
-                    )
-                }
-            };
-            out.push(&samples_to_rows(leaders));
+        for samples in leaders {
+            out.push(&samples_to_rows(samples));
         }
-
         Ok(out)
     }
 

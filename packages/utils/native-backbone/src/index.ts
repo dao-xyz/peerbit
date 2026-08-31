@@ -706,6 +706,17 @@ type NativePeerbitBackboneHandle = {
 		minReplicas: number,
 		selfHash: string,
 	) => string[];
+	get_routing_full_replica_leaders?: (
+		replicas: number,
+		roleAgeMs: number,
+		now: string,
+		peerFilter: string[] | undefined,
+		expandPeerFilter: boolean,
+		selfHash: string,
+		includeSelf: boolean,
+		fullReplicaFallback: boolean,
+		includeStrictFullReplica: boolean,
+	) => unknown[] | undefined;
 	put_range: (
 		id: string,
 		hash: string,
@@ -7449,6 +7460,21 @@ export class NativePeerbitBackbone {
 	/** @internal */
 	fullReplicaCandidatesFor(minReplicas: number, selfHash: string): string[] {
 		return this.native.full_replica_candidates_for(minReplicas, selfHash);
+	}
+
+	getRoutingFullReplicaLeaders(
+		replicas: number,
+		options?: NativeBackboneFindLeaderOptions,
+	): Map<string, NativeBackboneLeaderSample> | undefined {
+		if (!this.native.get_routing_full_replica_leaders) {
+			return undefined;
+		}
+		return rowsToSamples(
+			this.native.get_routing_full_replica_leaders(
+				replicas,
+				...findLeaderArguments(options),
+			),
+		);
 	}
 
 	clearEntryCoordinates(): void {

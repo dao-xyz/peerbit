@@ -1,0 +1,771 @@
+import { toId } from "@peerbit/indexer-interface";
+import { NativeBackboneMemoryCoordinatePersistenceStore } from "@peerbit/native-backbone";
+import { PersistedDeliveryError } from "@peerbit/shared-log";
+import { TestSession } from "@peerbit/test-utils";
+import { expect } from "chai";
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { Peerbit } from "peerbit";
+import { createRustPeerbitOptions } from "peerbit/rust";
+import sinon from "sinon";
+import { v4 as uuid } from "uuid";
+import { policy, transform } from "../src/index.js";
+import { Documents } from "../src/program.js";
+import { Document, TestStore } from "./data.js";
+
+const persistedDelivery = {
+	reliability: "persisted" as const,
+	minAcks: 1,
+};
+
+describe("document persisted delivery", function () {
+	this.timeout(120_000);
+
+	let session: TestSession;
+	let store: TestStore | undefined;
+
+	before(async () => {
+		session = await TestSession.connected(1, createRustPeerbitOptions());
+	});
+
+	afterEach(async () => {
+		await store?.close();
+		store = undefined;
+	});
+
+	after(async () => {
+		await session.stop();
+	});
+
+	const openStore = async (mode: "auto" | "native") => {
+		store = new TestStore({ docs: new Documents<Document>() });
+		await session.peers[0].open(store, {
+			args:
+				mode === "native"
+					? {
+							mode,
+							replicate: false,
+							nativeGraph: true,
+							nativeBackbone: {
+								optional: false,
+								documentIndex: true,
+								coordinatePersistence: {
+									store: new NativeBackboneMemoryCoordinatePersistenceStore(),
+									buffered: true,
+									flushOnAppend: false,
+								},
+							},
+							canPerform: policy.allowAll<Document>(),
+							index: {
+								type: Document,
+								transform: transform.identity<Document>(),
+							},
+						}
+					: {
+							mode,
+							replicate: false,
+							nativeGraph: true,
+						},
+		});
+		return store;
+	};
+
+	for (const mode of ["auto", "native"] as const) {
+		it(`settles one persisted receipt batch after the ${mode} document commit`, async () => {
+			const opened = await openStore(mode);
+			const docs = [
+				new Document({ id: uuid(), name: `${mode}-first` }),
+				new Document({ id: uuid(), name: `${mode}-second` }),
+			];
+			const options = {
+				unique: true,
+				delivery: persistedDelivery,
+			};
+			let readableAtReceipt = false;
+			const deliverStub = sinon
+				.stub(opened.docs.log as any, "deliverPersistedAppendCommits")
+				.callsFake(async () => {
+					readableAtReceipt = (
+						await Promise.all(docs.map((doc) => opened.docs.get(doc.id)))
+					).every((doc) => doc != null);
+				});
+			const localBatchSpy = sinon.spy(
+				opened.docs.log as any,
+				"appendLocallyPreparedPayloadsManyIndependent",
+			);
+			const providerNotifySpy = sinon.spy(
+				(opened.docs.log as any).remoteBlocks,
+				"notifyStoredDeferred",
+			);
+
+			const result = await opened.docs.putMany(docs, options);
+
+			expect(result.entries).to.have.length(docs.length);
+			expect(localBatchSpy.callCount).equal(1);
+			expect(localBatchSpy.firstCall.args[1]).to.include({
+				target: "none",
+				delivery: false,
+				replicate: false,
+			});
+			expect(providerNotifySpy.callCount).equal(0);
+			expect(deliverStub.callCount).equal(1);
+			expect(deliverStub.firstCall.args[0]).to.have.length(docs.length);
+			expect(deliverStub.firstCall.args[2]).equal(options);
+			expect(readableAtReceipt).equal(true);
+		});
+	}
+
+	it("delivers native putMany commit facts before materializing public entries", async () => {
+		const opened = await openStore("native");
+		const docs = [
+			new Document({ id: uuid(), name: "lazy-first" }),
+			new Document({ id: uuid(), name: "lazy-second" }),
+		];
+		const log = opened.docs.log as any;
+		const originalAppend =
+			log.appendLocallyPreparedPayloadsManyIndependent.bind(log);
+		let materializationCount = 0;
+		let deliveredHashes: string[] = [];
+		const localBatchStub = sinon
+			.stub(log, "appendLocallyPreparedPayloadsManyIndependent")
+			.callsFake(async (...args: unknown[]) => {
+				const appended = await originalAppend(...args);
+				appended.materializeEntries = appended.materializeEntries.map(
+					(materializeEntry: () => unknown) => () => {
+						materializationCount++;
+						return materializeEntry();
+					},
+				);
+				return appended;
+			});
+		const deliveryStub = sinon
+			.stub(log, "deliverPersistedAppendCommits")
+			.callsFake(async (...args: unknown[]) => {
+				const appendCommits = args[0] as Array<{
+					hash: string;
+					coordinateFields?: unknown;
+				}>;
+				expect(materializationCount).equal(0);
+				expect(appendCommits).to.have.length(docs.length);
+				expect(
+					appendCommits.every((commit) => commit.coordinateFields != null),
+				).equal(true);
+				deliveredHashes = appendCommits.map((commit) => commit.hash);
+			});
+
+		const result = await opened.docs.putMany(docs, {
+			unique: true,
+			delivery: persistedDelivery,
+		});
+
+		expect(localBatchStub.callCount).equal(1);
+		expect(deliveryStub.callCount).equal(1);
+		expect(materializationCount).equal(0);
+		const entries = result.entries;
+		expect(entries).to.have.length(docs.length);
+		expect(entries.map((entry) => entry.hash)).to.deep.equal(deliveredHashes);
+		expect(materializationCount).equal(docs.length);
+	});
+
+	it("persists every independent putMany entry on a durable remote replica", async () => {
+		const directory = await fs.mkdtemp(
+			path.join(os.tmpdir(), "peerbit-persisted-put-many-"),
+		);
+		let writer: Peerbit | undefined;
+		let receiver: Peerbit | undefined;
+		let writerStore: TestStore | undefined;
+		let receiverStore: TestStore | undefined;
+		try {
+			writer = await Peerbit.create();
+			receiver = await Peerbit.create({ directory });
+			await writer.dial(receiver);
+
+			const storeId = Uint8Array.from(
+				{ length: 32 },
+				(_, index) => (index * 17 + 11) & 0xff,
+			);
+			const createStore = () => {
+				const created = new TestStore({
+					docs: new Documents<Document>({ id: storeId }),
+				});
+				created.id = storeId;
+				return created;
+			};
+			const openArgs = (
+				replicate: false | { offset: number; factor: number },
+			) => ({
+				replicas: { min: 1 },
+				replicate,
+				timeUntilRoleMaturity: 0,
+				canPerform: policy.allowAll<Document>(),
+				index: {
+					type: Document,
+					transform: transform.identity<Document>(),
+				},
+			});
+
+			writerStore = createStore();
+			receiverStore = createStore();
+			await writer.open(writerStore, { args: openArgs(false) });
+			await receiver.open(receiverStore, {
+				args: openArgs({ offset: 0, factor: 1 }),
+			});
+			await writerStore.docs.log.waitForReplicator(
+				receiver.identity.publicKey,
+				{ roleAge: 0, timeout: 15_000 },
+			);
+			const receiverHash = receiver.identity.publicKey.hashcode();
+			const capabilityDeadline = Date.now() + 15_000;
+			while (
+				(((writerStore.docs.log as any)._peerSyncCapabilities.get(
+					receiverHash,
+				) ?? 0) &
+					(1 << 5)) ===
+				0
+			) {
+				if (Date.now() >= capabilityDeadline) {
+					throw new Error("Timed out waiting for persisted receipt capability");
+				}
+				await new Promise((resolve) => setTimeout(resolve, 25));
+			}
+
+			const docs = [
+				new Document({ id: "durable-batch-first", name: "first" }),
+				new Document({ id: "durable-batch-second", name: "second" }),
+			];
+			const result = await writerStore.docs.putMany(docs, {
+				unique: true,
+				delivery: { ...persistedDelivery, timeout: 15_000 },
+			});
+
+			expect(result.entries).to.have.length(docs.length);
+			for (let index = 0; index < result.entries.length; index++) {
+				const entry = result.entries[index]!;
+				expect(entry.meta.data).instanceOf(Uint8Array);
+				expect(entry.meta.data).to.have.length.greaterThan(0);
+				const [block, lower, coordinate, document] = await Promise.all([
+					(receiverStore.docs.log as any).remoteBlocks.localStore.has(
+						entry.hash,
+					),
+					receiverStore.docs.log.log.entryIndex.properties.index.get(
+						toId(entry.hash),
+					),
+					receiverStore.docs.log.entryCoordinatesIndex.get(toId(entry.hash)),
+					receiverStore.docs.get(docs[index]!.id, {
+						local: true,
+						remote: false,
+					}),
+				]);
+				expect(block).equal(true);
+				expect(lower).to.exist;
+				expect(coordinate).to.exist;
+				expect(document?.name).equal(docs[index]!.name);
+			}
+		} finally {
+			await Promise.allSettled([writerStore?.close(), receiverStore?.close()]);
+			await Promise.allSettled([writer?.stop(), receiver?.stop()]);
+			await fs.rm(directory, { recursive: true, force: true });
+		}
+	});
+
+	it("does not settle twice when a generic append owns the receipt", async () => {
+		const opened = await openStore("auto");
+		const doc = new Document({ id: uuid(), name: "generic-path" });
+		const keepCache = new Set<string>();
+		(opened.docs as any).keepCache = keepCache;
+		let readableAtReceipt = false;
+		let keptAtReceipt = false;
+		sinon
+			.stub(opened.docs.log as any, "_appendDeliverToReplicators")
+			.resolves();
+		const settleStub = sinon
+			.stub(opened.docs.log as any, "settlePersistedDelivery")
+			.callsFake(async (...args: unknown[]) => {
+				const entries = args[0] as Array<{ hash: string }>;
+				readableAtReceipt = (await opened.docs.get(doc.id)) != null;
+				keptAtReceipt = keepCache.has(entries[0]!.hash);
+			});
+		const publicDeliverySpy = sinon.spy(
+			opened.docs.log as any,
+			"deliverPersistedEntries",
+		);
+
+		await opened.docs.put(doc, {
+			unique: true,
+			canAppend: async () => true,
+			delivery: persistedDelivery,
+		});
+
+		expect(settleStub.callCount).equal(1);
+		expect(publicDeliverySpy.callCount).equal(0);
+		expect(readableAtReceipt).equal(true);
+		expect(keptAtReceipt).equal(true);
+	});
+
+	it("preserves exact committed hashes for generic post-commit failures", async () => {
+		const opened = await openStore("auto");
+		const injectedFailure = new Error("injected generic change failure");
+		sinon.stub(opened.docs as any, "handleChanges").throws(injectedFailure);
+
+		let failure: unknown;
+		try {
+			await opened.docs.put(
+				new Document({ id: uuid(), name: "generic-post-commit-failure" }),
+				{
+					unique: true,
+					canAppend: async () => true,
+					delivery: persistedDelivery,
+				},
+			);
+		} catch (error) {
+			failure = error;
+		}
+
+		expect(failure).instanceOf(PersistedDeliveryError);
+		const persistedFailure = failure as PersistedDeliveryError;
+		expect(persistedFailure.cause).equal(injectedFailure);
+		expect(persistedFailure.committedHashes).to.have.length(1);
+		expect(
+			await opened.docs.log.log.has(persistedFailure.committedHashes[0]!),
+		).equal(true);
+	});
+
+	it("classifies a trusted append failure after its lower commit", async () => {
+		const opened = await openStore("auto");
+		const injectedFailure = new Error("injected trusted post-commit failure");
+		const finish = sinon
+			.stub(opened.docs.log as any, "finishPreparedPayloadCommitOnlyAppend")
+			.throws(injectedFailure);
+		let failure: unknown;
+
+		try {
+			await opened.docs.put(
+				new Document({ id: uuid(), name: "trusted-post-commit-failure" }),
+				{
+					unique: true,
+					delivery: persistedDelivery,
+				},
+			);
+		} catch (error) {
+			failure = error;
+		}
+
+		expect(finish.callCount).equal(1);
+		expect(failure).instanceOf(PersistedDeliveryError);
+		const persistedFailure = failure as PersistedDeliveryError;
+		expect(persistedFailure.cause).equal(injectedFailure);
+		expect(persistedFailure.committedHashes).to.have.length(1);
+		expect(
+			await opened.docs.log.log.has(persistedFailure.committedHashes[0]!),
+		).equal(true);
+	});
+
+	it("classifies a trusted prepared failure before the lower append returns", async () => {
+		const opened = await openStore("auto");
+		const injectedFailure = new Error(
+			"injected trusted lower post-write failure",
+		);
+		const commitOnly = sinon
+			.stub(opened.docs.log as any, "appendLocallyPreparedPayloadCommitOnly")
+			.returns(undefined);
+		const trim = sinon
+			.stub(opened.docs.log.log as any, "trimIfConfigured")
+			.rejects(injectedFailure);
+		let failure: unknown;
+
+		try {
+			await opened.docs.put(
+				new Document({ id: uuid(), name: "trusted-lower-post-write" }),
+				{
+					unique: true,
+					delivery: persistedDelivery,
+				},
+			);
+		} catch (error) {
+			failure = error;
+		}
+
+		expect(commitOnly.callCount).equal(1);
+		expect(trim.callCount).equal(1);
+		expect(failure).instanceOf(PersistedDeliveryError);
+		const persistedFailure = failure as PersistedDeliveryError;
+		expect(persistedFailure.cause).equal(injectedFailure);
+		expect(persistedFailure.committedHashes).to.have.length(1);
+		expect(
+			await opened.docs.log.log.has(persistedFailure.committedHashes[0]!),
+		).equal(true);
+	});
+
+	it("classifies every trusted independent-batch hash before the lower return", async () => {
+		const opened = await openStore("auto");
+		const injectedFailure = new Error(
+			"injected trusted lower batch post-write failure",
+		);
+		const nativeBatch = sinon
+			.stub(
+				opened.docs.log as any,
+				"appendLocallyPreparedPayloadsManyNativeBackboneDocumentIndexBatch",
+			)
+			.resolves(undefined);
+		const trim = sinon
+			.stub(opened.docs.log.log as any, "trimIfConfigured")
+			.rejects(injectedFailure);
+		const docs = [
+			new Document({ id: uuid(), name: "trusted-lower-batch-first" }),
+			new Document({ id: uuid(), name: "trusted-lower-batch-second" }),
+		];
+		let failure: unknown;
+
+		try {
+			await opened.docs.putMany(docs, {
+				unique: true,
+				delivery: persistedDelivery,
+			});
+		} catch (error) {
+			failure = error;
+		}
+
+		expect(nativeBatch.callCount).equal(1);
+		expect(trim.callCount).equal(1);
+		expect(failure).instanceOf(PersistedDeliveryError);
+		const persistedFailure = failure as PersistedDeliveryError;
+		expect(persistedFailure.cause).equal(injectedFailure);
+		expect(persistedFailure.committedHashes).to.have.length(docs.length);
+		expect(new Set(persistedFailure.committedHashes).size).equal(docs.length);
+		for (const hash of persistedFailure.committedHashes) {
+			expect(await opened.docs.log.log.has(hash)).equal(true);
+		}
+	});
+
+	it("classifies a strict-native single failure after final commit acknowledgement", async () => {
+		const opened = await openStore("native");
+		const injectedFailure = new Error("injected strict-native success failure");
+		sinon
+			.stub(
+				opened.docs.log as any,
+				"applyPreparedAppendFactsWithDeferredCoordinateDeletes",
+			)
+			.throws(injectedFailure);
+		let failure: unknown;
+
+		try {
+			await opened.docs.put(
+				new Document({ id: uuid(), name: "strict-native-post-commit" }),
+				{
+					unique: true,
+					delivery: persistedDelivery,
+				},
+			);
+		} catch (error) {
+			failure = error;
+		}
+
+		expect(failure).instanceOf(PersistedDeliveryError);
+		const persistedFailure = failure as PersistedDeliveryError;
+		expect(persistedFailure.cause).equal(injectedFailure);
+		expect(persistedFailure.committedHashes).to.have.length(1);
+		expect(
+			await opened.docs.log.log.has(persistedFailure.committedHashes[0]!),
+		).equal(true);
+	});
+
+	it("classifies every strict-native batch hash after final commit acknowledgement", async () => {
+		const opened = await openStore("native");
+		const injectedFailure = new Error(
+			"injected strict-native batch success failure",
+		);
+		sinon
+			.stub(
+				opened.docs.log as any,
+				"applyPreparedAppendFactsWithDeferredCoordinateDeletes",
+			)
+			.throws(injectedFailure);
+		const docs = [
+			new Document({ id: uuid(), name: "strict-native-batch-first" }),
+			new Document({ id: uuid(), name: "strict-native-batch-second" }),
+		];
+		let failure: unknown;
+
+		try {
+			await opened.docs.putMany(docs, {
+				unique: true,
+				delivery: persistedDelivery,
+			});
+		} catch (error) {
+			failure = error;
+		}
+
+		expect(failure).instanceOf(PersistedDeliveryError);
+		const persistedFailure = failure as PersistedDeliveryError;
+		expect(persistedFailure.cause).equal(injectedFailure);
+		expect(persistedFailure.committedHashes).to.have.length(docs.length);
+		expect(new Set(persistedFailure.committedHashes).size).equal(docs.length);
+		for (const hash of persistedFailure.committedHashes) {
+			expect(await opened.docs.log.log.has(hash)).equal(true);
+		}
+	});
+
+	it("keeps a 513-document independent commit in one persisted delivery batch", async () => {
+		const opened = await openStore("auto");
+		const docs = Array.from(
+			{ length: 513 },
+			(_, index) => new Document({ id: uuid(), name: `large-batch-${index}` }),
+		);
+		const deliverStub = sinon
+			.stub(opened.docs.log as any, "deliverPersistedAppendCommits")
+			.resolves();
+		const localBatchSpy = sinon.spy(
+			opened.docs.log as any,
+			"appendLocallyPreparedPayloadsManyIndependent",
+		);
+
+		const result = await opened.docs.putMany(docs, {
+			unique: true,
+			delivery: persistedDelivery,
+		});
+
+		expect(result.entries).to.have.length(513);
+		expect(localBatchSpy.callCount).equal(1);
+		expect(deliverStub.callCount).equal(1);
+		expect(deliverStub.firstCall.args[0]).to.have.length(513);
+		expect(await opened.docs.index.getSize()).equal(513);
+	});
+
+	it("rejects invalid persisted receipt options before a local commit", async () => {
+		const opened = await openStore("auto");
+		const singleCommitSpy = sinon.spy(
+			opened.docs as any,
+			"commitNativeDocumentAppend",
+		);
+		const batchCommitSpy = sinon.spy(
+			opened.docs as any,
+			"commitNativeDocumentAppendMany",
+		);
+		const invalidMinAcks = {
+			unique: true,
+			delivery: { reliability: "persisted" as const, minAcks: 0 },
+		};
+
+		await expect(
+			opened.docs.put(
+				new Document({ id: uuid(), name: "invalid-single" }),
+				invalidMinAcks,
+			),
+		).to.be.rejectedWith(
+			'persisted delivery requires a positive explicit "minAcks"',
+		);
+		await expect(
+			opened.docs.putMany(
+				[new Document({ id: uuid(), name: "invalid-batch" })],
+				invalidMinAcks,
+			),
+		).to.be.rejectedWith(
+			'persisted delivery requires a positive explicit "minAcks"',
+		);
+		await expect(
+			opened.docs.putMany(
+				[new Document({ id: uuid(), name: "invalid-timeout" })],
+				{
+					unique: true,
+					delivery: { ...persistedDelivery, timeout: 0 },
+				},
+			),
+		).to.be.rejectedWith(
+			"persisted delivery timeout must be a positive number no greater than 2147483647",
+		);
+		await expect(
+			opened.docs.put(
+				new Document({ id: uuid(), name: "invalid-target" }),
+				{
+					unique: true,
+					target: "future-target",
+					delivery: persistedDelivery,
+				} as any,
+			),
+		).to.be.rejectedWith(
+			'persisted delivery requires target="replicators" (or an omitted target)',
+		);
+		await expect(
+			opened.docs.putMany(
+				[new Document({ id: uuid(), name: "fractional-quorum" })],
+				{
+					unique: true,
+					delivery: { ...persistedDelivery, minAcks: 1.5 },
+				},
+			),
+		).to.be.rejectedWith(
+			'persisted delivery requires a positive explicit "minAcks"',
+		);
+		await expect(
+			opened.docs.putMany(
+				[new Document({ id: uuid(), name: "unsafe-quorum" })],
+				{
+					unique: true,
+					delivery: {
+						...persistedDelivery,
+						minAcks: Number.MAX_SAFE_INTEGER + 1,
+					},
+				},
+			),
+		).to.be.rejectedWith(
+			'persisted delivery requires a positive explicit "minAcks"',
+		);
+		await expect(
+			opened.docs.putMany(
+				[new Document({ id: uuid(), name: "overflow-timeout" })],
+				{
+					unique: true,
+					delivery: {
+						...persistedDelivery,
+						timeout: 2_147_483_648,
+					},
+				},
+			),
+		).to.be.rejectedWith(
+			"persisted delivery timeout must be a positive number no greater than 2147483647",
+		);
+		const cancellation = new Error("cancelled before append");
+		const abortController = new AbortController();
+		abortController.abort(cancellation);
+		let abortedFailure: unknown;
+		try {
+			await opened.docs.putMany(
+				[new Document({ id: uuid(), name: "pre-aborted" })],
+				{
+					unique: true,
+					delivery: {
+						...persistedDelivery,
+						signal: abortController.signal,
+					},
+				},
+			);
+		} catch (error) {
+			abortedFailure = error;
+		}
+		expect(abortedFailure).equal(cancellation);
+		expect(singleCommitSpy.callCount).equal(0);
+		expect(batchCommitSpy.callCount).equal(0);
+		expect(opened.docs.log.log.length).equal(0);
+		expect(await opened.docs.index.getSize()).equal(0);
+	});
+
+	it("keeps locally committed documents readable when receipt settlement fails", async () => {
+		const opened = await openStore("auto");
+		const docs = [
+			new Document({ id: uuid(), name: "committed-first" }),
+			new Document({ id: uuid(), name: "committed-second" }),
+		];
+		const deliverSpy = sinon.spy(
+			opened.docs.log as any,
+			"deliverPersistedAppendCommits",
+		);
+
+		let failure: unknown;
+		try {
+			await opened.docs.putMany(docs, {
+				unique: true,
+				delivery: { ...persistedDelivery, timeout: 1_000 },
+			});
+		} catch (error) {
+			failure = error;
+		}
+
+		expect(failure).instanceOf(PersistedDeliveryError);
+		const persistedFailure = failure as PersistedDeliveryError;
+		expect(persistedFailure.localCommitSucceeded).equal(true);
+		expect(persistedFailure.retrySafe).equal(false);
+		expect(persistedFailure.message).contains("automatic retry is unsafe");
+		expect(deliverSpy.callCount).equal(1);
+		const deliveredCommits = deliverSpy.firstCall.args[0] as Array<{
+			hash: string;
+		}>;
+		expect(persistedFailure.committedHashes).to.deep.equal(
+			deliveredCommits.map((commit) => commit.hash),
+		);
+		expect(opened.docs.log.log.length).equal(docs.length);
+		for (const doc of docs) {
+			expect((await opened.docs.get(doc.id))?.name).equal(doc.name);
+		}
+	});
+
+	it("reports the known committed hash when post-commit fact construction fails", async () => {
+		const opened = await openStore("auto");
+		const injectedFailure = new Error("injected fact construction failure");
+		let committedHash: string | undefined;
+		const constructFacts = sinon
+			.stub(opened.docs as any, "createNativeCheckedDocumentAppendCommitFacts")
+			.callsFake((...args: unknown[]) => {
+				const appended = args[1] as { appendCommit: { hash: string } };
+				committedHash = appended.appendCommit.hash;
+				throw injectedFailure;
+			});
+
+		let failure: unknown;
+		try {
+			await opened.docs.put(
+				new Document({ id: uuid(), name: "known-commit-failure" }),
+				{
+					unique: true,
+					delivery: persistedDelivery,
+				},
+			);
+		} catch (error) {
+			failure = error;
+		}
+
+		expect(constructFacts.callCount).equal(1);
+		expect(committedHash).to.be.a("string").and.not.equal("");
+		expect(failure).instanceOf(PersistedDeliveryError);
+		const persistedFailure = failure as PersistedDeliveryError;
+		expect(persistedFailure.cause).equal(injectedFailure);
+		expect(persistedFailure.committedHashes).to.deep.equal([committedHash]);
+		expect(await opened.docs.log.log.has(committedHash!)).equal(true);
+	});
+
+	it("reports every committed hash when batch fact construction fails", async () => {
+		const opened = await openStore("auto");
+		const docs = [
+			new Document({ id: uuid(), name: "batch-fact-first" }),
+			new Document({ id: uuid(), name: "batch-fact-second" }),
+			new Document({ id: uuid(), name: "batch-fact-third" }),
+		];
+		const injectedFailure = new Error(
+			"injected batch fact construction failure",
+		);
+		let committedHashes: string[] = [];
+		const constructFacts = sinon
+			.stub(opened.docs as any, "createDocumentAppendCommitFactsBatch")
+			.callsFake((...args: unknown[]) => {
+				const inputs = args[0] as Array<{
+					appended: { appendCommit: { hash: string } };
+				}>;
+				committedHashes = inputs.map(
+					(input) => input.appended.appendCommit.hash,
+				);
+				throw injectedFailure;
+			});
+
+		let failure: unknown;
+		try {
+			await opened.docs.putMany(docs, {
+				unique: true,
+				delivery: persistedDelivery,
+			});
+		} catch (error) {
+			failure = error;
+		}
+
+		expect(constructFacts.callCount).equal(1);
+		expect(committedHashes).to.have.length(docs.length);
+		expect(new Set(committedHashes).size).equal(docs.length);
+		expect(failure).instanceOf(PersistedDeliveryError);
+		const persistedFailure = failure as PersistedDeliveryError;
+		expect(persistedFailure.cause).equal(injectedFailure);
+		expect(persistedFailure.committedHashes).to.deep.equal(committedHashes);
+		for (const hash of committedHashes) {
+			expect(await opened.docs.log.log.has(hash)).equal(true);
+			expect((await opened.docs.log.log.get(hash))?.hash).equal(hash);
+		}
+	});
+});
