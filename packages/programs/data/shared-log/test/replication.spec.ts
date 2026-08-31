@@ -618,17 +618,19 @@ testSetups.forEach((setup) => {
 						).collect();
 						expect(db2Entries.length).equal(1);
 
-						expect([
-							...(
-								await db2.log.findLeadersFromEntry(
-									db2Entries[0],
-									maxReplicas(db2.log, db2Entries),
-								)
-							).keys(),
-						]).include.members([
-							session.peers[0].identity.publicKey.hashcode(),
-							session.peers[1].identity.publicKey.hashcode(),
-						]);
+						await waitForResolved(async () =>
+							expect([
+								...(
+									await db2.log.findLeadersFromEntry(
+										db2Entries[0],
+										maxReplicas(db2.log, db2Entries),
+									)
+								).keys(),
+							]).include.members([
+								session.peers[0].identity.publicKey.hashcode(),
+								session.peers[1].identity.publicKey.hashcode(),
+							]),
+						);
 						expect(db2Entries[0].payload.getValue().value).equal(value);
 					});
 
