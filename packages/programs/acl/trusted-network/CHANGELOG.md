@@ -1,5 +1,12 @@
 # Changelog
 
+## 6.0.105
+
+### Patch Changes
+
+- [#1365](https://github.com/dao-xyz/peerbit/pull/1365) [`54cd1b8`](https://github.com/dao-xyz/peerbit/commit/54cd1b879c088a07d4e719070c9074c6e5c4294e) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Add a protocol-fixed raw-byte policy-entry ceiling and bounded, cancellable
+  parent resolution to the internal non-activatable TrustedNetwork v2 reducer.
+
 ## 6.0.104
 
 ### Patch Changes
