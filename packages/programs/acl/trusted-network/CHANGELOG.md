@@ -1,5 +1,11 @@
 # Changelog
 
+## 6.0.107
+
+### Patch Changes
+
+- [#1369](https://github.com/dao-xyz/peerbit/pull/1369) [`056faf2`](https://github.com/dao-xyz/peerbit/commit/056faf21abfc4550f51597a318a86d33f83cc5ad) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Add real ClassicLevel SIGKILL and reopen conformance coverage for the internal TrustedNetwork v2 durable policy anchor.
+
 ## 6.0.106
 
 ### Patch Changes
