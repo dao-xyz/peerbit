@@ -69,6 +69,7 @@
 		"uint8arrays": "^5.1.0"
 	},
 	"devDependencies": {
+		"@peerbit/any-store": "workspace:*",
 		"@peerbit/test-utils": "workspace:*",
 		"@peerbit/time": "workspace:*",
 		"ethers": "^6.17.0"
