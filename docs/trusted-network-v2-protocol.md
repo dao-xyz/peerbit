@@ -201,6 +201,13 @@ canonical public-key bytes must equal the descriptor authority. A different
 entry type, signature cardinality, coverage rule, or signer requires a new
 profile identifier.
 
+Profile `1` also fixes the maximum canonical serialized policy-entry size at
+131,072 bytes. Replicas apply that ceiling to direct admissions, resolved
+parents, restored anchors, pending candidates, and fork observations before
+copying, decoding, or verifying the entry. The ceiling is a consensus rule,
+not a replica-local resource setting; changing it requires a new signature
+profile or protocol version.
+
 The top-level program uses a new variant such as `trusted_network_v2`.
 `"trusted_network"`, `"relations"`, `IdentityRelation`, and existing v1
 addresses retain their present meaning.
@@ -302,6 +309,16 @@ A policy snapshot is valid only when:
 3. bindings are complete, sorted, unique, and understood;
 4. the network and protocol domains match; and
 5. the policy-authority signature is valid.
+
+Parent-resolution attempts are locally deadline-bounded and receive a
+lifecycle cancellation signal. A timeout, cancellation, resolver failure,
+malformed response, oversized response, or response for the wrong digest is
+dependency unavailability rather than proof that the candidate is invalid. A
+candidate whose own ancestry cannot be resolved stays in the bounded pending
+set with an exact parent-fetch hint. Failure to resolve ancestry needed to
+compare against the already accepted head makes authorization `UNAVAILABLE`
+and fail closed until an explicit retry succeeds. Late resolver completion
+cannot mutate reducer state.
 
 The authority must sign at most one child per parent. Two otherwise valid
 authority-signed children are durable evidence of equivocation. The network

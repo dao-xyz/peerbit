@@ -33,6 +33,13 @@ export const TRUSTED_NETWORK_V2_POLICY_HASH_SHA256 = 1;
  */
 export const TRUSTED_NETWORK_V2_ENTRY_V0_AUTHORITY_ONLY_SIGNATURE_PROFILE = 1;
 
+/**
+ * Consensus ceiling for the canonical serialized EntryV0 carrying a v2 policy
+ * snapshot. Every replica applies this exact bound before decoding the entry;
+ * it is part of signature profile 1 rather than a replica-local resource knob.
+ */
+export const TRUSTED_NETWORK_V2_MAX_POLICY_ENTRY_BYTES = 128 * 1024;
+
 export const TRUSTED_NETWORK_V2_NETWORK_ID_DOMAIN =
 	"peerbit/trusted-network/v2/network-id/v1";
 export const TRUSTED_NETWORK_V2_POLICY_DIGEST_DOMAIN =

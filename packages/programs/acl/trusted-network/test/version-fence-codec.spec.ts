@@ -13,6 +13,7 @@ import {
 	PolicySnapshotBodyV2,
 	PolicySubjectBindingV2,
 	TRUSTED_NETWORK_V2_ENTRY_V0_AUTHORITY_ONLY_SIGNATURE_PROFILE,
+	TRUSTED_NETWORK_V2_MAX_POLICY_ENTRY_BYTES,
 	TRUSTED_NETWORK_V2_NETWORK_ID_DOMAIN,
 	TRUSTED_NETWORK_V2_POLICY_DIGEST_DOMAIN,
 	TRUSTED_NETWORK_V2_POLICY_HASH_SHA256,
@@ -123,6 +124,7 @@ describe("TrustedNetwork v2 codec and version fence", () => {
 		expect(
 			TRUSTED_NETWORK_V2_ENTRY_V0_AUTHORITY_ONLY_SIGNATURE_PROFILE,
 		).to.equal(1);
+		expect(TRUSTED_NETWORK_V2_MAX_POLICY_ENTRY_BYTES).to.equal(128 * 1024);
 		expect(hex(fixture.networkId)).to.equal(NETWORK_ID_HEX);
 		expect(hex(fixture.policyDigest)).to.equal(POLICY_DIGEST_HEX);
 		expect(hex(fixture.descriptor)).to.equal(DESCRIPTOR_HEX);
