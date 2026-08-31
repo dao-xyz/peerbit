@@ -1,5 +1,11 @@
 # Changelog
 
+## 6.0.104
+
+### Patch Changes
+
+- [#1363](https://github.com/dao-xyz/peerbit/pull/1363) [`b23c92a`](https://github.com/dao-xyz/peerbit/commit/b23c92a2b9e24b76ecc3260d31513331babfd3b9) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Add an internal, non-activatable TrustedNetwork v2 authenticated policy-chain reducer with bounded pending state, fail-closed resolver unavailability, deterministic role projection, and canonical fork detection evidence.
+
 ## 6.0.103
 
 ### Patch Changes
