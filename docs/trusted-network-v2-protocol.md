@@ -479,6 +479,30 @@ complete storage snapshot can still roll back that local anchor; preventing
 operator-level snapshot rollback requires an external monotonic anchor and is
 not claimed by this protocol.
 
+The initial internal policy-anchor implementation uses Peerbit's generic
+crash-safe store capability. It fails closed when that capability or its
+physical durability barrier is absent; `persisted()` alone is not sufficient.
+The reducer publishes a new authorization projection only after every
+immutable, checksummed state or direct-child-observation generation has crossed
+its durability barrier. Reopen crosses a fresh barrier, validates the complete
+contiguous generation chain, re-authenticates the exact retained policy-entry
+bytes, and restores `UNAVAILABLE` or `FORKED` without serving authorization in
+either state. Candidate-only missing-parent work remains intentionally
+ephemeral.
+
+This first anchor format assumes one writer owns a descriptor-scoped store. It
+does not claim multi-process compare-and-swap, compaction, or protection from
+operator rollback of the whole storage snapshot. Its self-contained state and
+fork-observation generations remain append-only until the generic authenticated
+checkpoint and truncation primitive exists. Backends that do not advertise the
+generic crash-safe barrier remain unsupported instead of receiving a weaker
+TrustedNetwork-specific persistence fallback.
+
+Exact fork-observation deduplication also retains one hash per unique proof.
+This is not a bounded-state completion and must remain non-activatable until a
+fixed fail-stop evidence ceiling or a generic bounded durable index and
+checkpoint design lands.
+
 ## Confidentiality boundary
 
 Replication and routing operate on ciphertext and public policy metadata.

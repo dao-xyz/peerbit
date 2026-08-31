@@ -122,10 +122,48 @@ export type PolicyAdmissionResultV2 = {
 	status: PolicyAdmissionStatusV2;
 	reason?: string;
 	head?: PolicyHeadProjectionV2;
+	/**
+	 * Authenticated direct children surfaced while entering or already in
+	 * FORKED. The outer durable layer can persist these proofs without decoding
+	 * or verifying them a second time. They are bounded by one admission plus the
+	 * pending working set and are not accumulated by this reducer.
+	 */
+	forkObservations?: PolicyForkChildProofV2[];
 	fetchHints: PolicyParentFetchHintV2[];
 	pendingCount: number;
 	pendingBytes: number;
 	evictedPolicyDigests?: Uint8Array[];
+};
+
+export type PolicyReducerDurableStateV2 =
+	| { formatVersion: 1; state: "EMPTY" }
+	| {
+			formatVersion: 1;
+			state: "ACTIVE";
+			acceptedHeadEntryBytes: Uint8Array;
+	  }
+	| {
+			formatVersion: 1;
+			state: "UNAVAILABLE";
+			acceptedHeadEntryBytes: Uint8Array;
+			comparisonCandidateEntryBytes: Uint8Array;
+			acceptedAncestorDigest: Uint8Array;
+			reason: string;
+	  }
+	| {
+			formatVersion: 1;
+			state: "FORKED";
+			commonParentEntryBytes: Uint8Array;
+			childEntryBytes: [Uint8Array, Uint8Array];
+	  };
+
+export type TrustedNetworkV2PolicyReducerProperties = {
+	descriptor: NetworkDescriptorV2;
+	resolvePolicyEntry: PolicySnapshotResolverV2;
+	resolveTimeoutMs?: number;
+	signal?: AbortSignal;
+	maxPending?: number;
+	maxPendingPolicyBytes?: number;
 };
 
 type PendingPolicySnapshotV2 = {
@@ -135,7 +173,7 @@ type PendingPolicySnapshotV2 = {
 
 type UnavailablePolicyComparisonV2 = {
 	acceptedAncestorDigest: Uint8Array;
-	candidateDigestKey: string;
+	comparisonCandidate: ValidatedPolicySnapshotV2;
 	reason: string;
 };
 
@@ -165,7 +203,7 @@ type EvaluationV2 =
 
 type PendingDrainOutcomeV2 =
 	| { status: "accepted" }
-	| { status: "forked" }
+	| { status: "forked"; forkObservations: PolicyForkChildProofV2[] }
 	| { status: "halted" }
 	| {
 			status: "unavailable";
@@ -336,6 +374,84 @@ const copyForkEvidence = (
 	],
 });
 
+const captureDurableStateV2 = (
+	durableState: PolicyReducerDurableStateV2,
+): PolicyReducerDurableStateV2 => {
+	if (
+		durableState === null ||
+		typeof durableState !== "object" ||
+		durableState.formatVersion !== 1
+	) {
+		throw new Error("Unsupported TrustedNetwork v2 reducer state format");
+	}
+
+	switch (durableState.state) {
+		case "EMPTY":
+			return { formatVersion: 1, state: "EMPTY" };
+		case "ACTIVE":
+			return {
+				formatVersion: 1,
+				state: "ACTIVE",
+				acceptedHeadEntryBytes: capturePolicySnapshotEntryBytesV2(
+					durableState.acceptedHeadEntryBytes,
+				),
+			};
+		case "UNAVAILABLE": {
+			if (
+				!(durableState.acceptedAncestorDigest instanceof Uint8Array) ||
+				durableState.acceptedAncestorDigest.byteLength !== 32
+			) {
+				throw new Error(
+					"Unavailable accepted ancestor digest must contain exactly 32 bytes",
+				);
+			}
+			if (
+				typeof durableState.reason !== "string" ||
+				durableState.reason.length === 0 ||
+				durableState.reason.length > MAX_UNAVAILABLE_REASON_LENGTH_V2
+			) {
+				throw new Error(
+					`Unavailable reason must contain 1-${MAX_UNAVAILABLE_REASON_LENGTH_V2} characters`,
+				);
+			}
+			return {
+				formatVersion: 1,
+				state: "UNAVAILABLE",
+				acceptedHeadEntryBytes: capturePolicySnapshotEntryBytesV2(
+					durableState.acceptedHeadEntryBytes,
+				),
+				comparisonCandidateEntryBytes: capturePolicySnapshotEntryBytesV2(
+					durableState.comparisonCandidateEntryBytes,
+				),
+				acceptedAncestorDigest: copyBytes(durableState.acceptedAncestorDigest),
+				reason: durableState.reason,
+			};
+		}
+		case "FORKED":
+			if (
+				!Array.isArray(durableState.childEntryBytes) ||
+				durableState.childEntryBytes.length !== 2
+			) {
+				throw new Error(
+					"Forked reducer state must contain exactly two children",
+				);
+			}
+			return {
+				formatVersion: 1,
+				state: "FORKED",
+				commonParentEntryBytes: capturePolicySnapshotEntryBytesV2(
+					durableState.commonParentEntryBytes,
+				),
+				childEntryBytes: [
+					capturePolicySnapshotEntryBytesV2(durableState.childEntryBytes[0]),
+					capturePolicySnapshotEntryBytesV2(durableState.childEntryBytes[1]),
+				],
+			};
+		default:
+			throw new Error("Unsupported TrustedNetwork v2 reducer state");
+	}
+};
+
 export class TrustedNetworkV2PolicyReducer {
 	private readonly descriptor: NetworkDescriptorV2;
 	private readonly resolvePolicyEntry: PolicySnapshotResolverV2;
@@ -354,14 +470,7 @@ export class TrustedNetworkV2PolicyReducer {
 	private fork?: PolicyForkEvidenceV2;
 	private admissionTail: Promise<void> = Promise.resolve();
 
-	constructor(properties: {
-		descriptor: NetworkDescriptorV2;
-		resolvePolicyEntry: PolicySnapshotResolverV2;
-		resolveTimeoutMs?: number;
-		signal?: AbortSignal;
-		maxPending?: number;
-		maxPendingPolicyBytes?: number;
-	}) {
+	constructor(properties: TrustedNetworkV2PolicyReducerProperties) {
 		assertNetworkDescriptorV2(properties.descriptor);
 		const maxPending = properties.maxPending ?? DEFAULT_MAX_PENDING_POLICIES_V2;
 		if (!Number.isSafeInteger(maxPending) || maxPending < 1) {
@@ -415,6 +524,101 @@ export class TrustedNetworkV2PolicyReducer {
 		}
 	}
 
+	static async restore(
+		properties: TrustedNetworkV2PolicyReducerProperties & {
+			durableState: PolicyReducerDurableStateV2;
+		},
+	): Promise<TrustedNetworkV2PolicyReducer> {
+		// Capture the complete checkpoint before the first await. Persistence
+		// adapters commonly reuse read buffers, and mutation during authentication
+		// must not change what is restored.
+		const durableState = captureDurableStateV2(properties.durableState);
+		const reducer = new TrustedNetworkV2PolicyReducer(properties);
+		const authenticate = (
+			entryBytes: Uint8Array,
+		): Promise<ValidatedPolicySnapshotV2> =>
+			authenticateCapturedPolicySnapshotEntryV2(entryBytes, reducer.descriptor);
+
+		try {
+			switch (durableState.state) {
+				case "EMPTY":
+					return reducer;
+				case "ACTIVE": {
+					const acceptedHead = await authenticate(
+						durableState.acceptedHeadEntryBytes,
+					);
+					// A durable ACTIVE head is a trusted prior-validation checkpoint. Its
+					// authority signature and network binding are re-authenticated above,
+					// but restore deliberately does not require historical resolver data.
+					reducer.project(acceptedHead);
+					return reducer;
+				}
+				case "UNAVAILABLE": {
+					const [acceptedHead, comparisonCandidate] = await Promise.all([
+						authenticate(durableState.acceptedHeadEntryBytes),
+						authenticate(durableState.comparisonCandidateEntryBytes),
+					]);
+					if (equals(acceptedHead.digest, comparisonCandidate.digest)) {
+						throw new Error(
+							"Unavailable comparison candidate must differ from the accepted head",
+						);
+					}
+					reducer.project(acceptedHead);
+					reducer.addPending(
+						comparisonCandidate,
+						durableState.acceptedAncestorDigest,
+					);
+					reducer.unavailable = {
+						acceptedAncestorDigest: copyBytes(
+							durableState.acceptedAncestorDigest,
+						),
+						comparisonCandidate: copySnapshot(comparisonCandidate),
+						reason: durableState.reason,
+					};
+					return reducer;
+				}
+				case "FORKED": {
+					const [commonParent, firstChild, secondChild] = await Promise.all([
+						authenticate(durableState.commonParentEntryBytes),
+						authenticate(durableState.childEntryBytes[0]),
+						authenticate(durableState.childEntryBytes[1]),
+					]);
+					for (const child of [firstChild, secondChild]) {
+						if (
+							child.body.sequence !== commonParent.body.sequence + 1n ||
+							!equals(child.body.previousPolicyDigest, commonParent.digest)
+						) {
+							throw new Error(
+								"Fork child must be a direct successor of the common parent",
+							);
+						}
+					}
+					if (equals(firstChild.digest, secondChild.digest)) {
+						throw new Error("Fork children must have distinct policy digests");
+					}
+
+					const children = [
+						forkProofFromSnapshot(firstChild),
+						forkProofFromSnapshot(secondChild),
+					].sort(compareForkChildProofs) as [
+						PolicyForkChildProofV2,
+						PolicyForkChildProofV2,
+					];
+					reducer.project(commonParent);
+					reducer.fork = {
+						commonParent: projectionFromSnapshot(commonParent),
+						children,
+					};
+					return reducer;
+				}
+			}
+		} catch (error) {
+			// Do not retain a caller-owned AbortSignal listener when restore rejects.
+			reducer.abort();
+			throw error;
+		}
+	}
+
 	get state(): "EMPTY" | "ACTIVE" | "UNAVAILABLE" | "FORKED" | "HALTED" {
 		if (this.lifecycleController.signal.aborted) return "HALTED";
 		if (this.fork !== undefined) return "FORKED";
@@ -448,6 +652,50 @@ export class TrustedNetworkV2PolicyReducer {
 		return [...this.pending.values()]
 			.sort((a, b) => compareKeys(a.snapshot.digestKey, b.snapshot.digestKey))
 			.map(({ snapshot }) => copyBytes(snapshot.digest));
+	}
+
+	exportDurableState(): PolicyReducerDurableStateV2 {
+		// Lifecycle cancellation is process-local. Export the underlying protocol
+		// safety state so a replacement process cannot erase UNAVAILABLE/FORKED.
+		if (this.fork !== undefined) {
+			if (this.acceptedHead === undefined) {
+				throw new Error("Forked reducer is missing its common-parent entry");
+			}
+			return {
+				formatVersion: 1,
+				state: "FORKED",
+				commonParentEntryBytes: copyBytes(this.acceptedHead.entryBytes),
+				childEntryBytes: [
+					copyBytes(this.fork.children[0].entryBytes),
+					copyBytes(this.fork.children[1].entryBytes),
+				],
+			};
+		}
+		if (this.unavailable !== undefined) {
+			if (this.acceptedHead === undefined) {
+				throw new Error("Unavailable reducer is missing its accepted head");
+			}
+			return {
+				formatVersion: 1,
+				state: "UNAVAILABLE",
+				acceptedHeadEntryBytes: copyBytes(this.acceptedHead.entryBytes),
+				comparisonCandidateEntryBytes: copyBytes(
+					this.unavailable.comparisonCandidate.entryBytes,
+				),
+				acceptedAncestorDigest: copyBytes(
+					this.unavailable.acceptedAncestorDigest,
+				),
+				reason: this.unavailable.reason,
+			};
+		}
+		if (this.acceptedHead !== undefined) {
+			return {
+				formatVersion: 1,
+				state: "ACTIVE",
+				acceptedHeadEntryBytes: copyBytes(this.acceptedHead.entryBytes),
+			};
+		}
+		return { formatVersion: 1, state: "EMPTY" };
 	}
 
 	rolesFor(subject: PublicSignKey): number {
@@ -504,11 +752,16 @@ export class TrustedNetworkV2PolicyReducer {
 		status: PolicyAdmissionStatusV2,
 		reason?: string,
 		evictedPolicyDigests?: Uint8Array[],
+		forkObservations?: PolicyForkChildProofV2[],
 	): PolicyAdmissionResultV2 {
 		return {
 			status,
 			reason,
 			head: this.head,
+			forkObservations:
+				forkObservations === undefined
+					? undefined
+					: forkObservations.map(copyForkChildProof),
 			fetchHints: this.fetchHints(),
 			pendingCount: this.pending.size,
 			pendingBytes: this.pendingBytes,
@@ -519,8 +772,15 @@ export class TrustedNetworkV2PolicyReducer {
 		};
 	}
 
-	private forkedResult(): PolicyAdmissionResultV2 {
-		return this.result("forked", "Policy authority signed competing children");
+	private forkedResult(
+		forkObservations?: PolicyForkChildProofV2[],
+	): PolicyAdmissionResultV2 {
+		return this.result(
+			"forked",
+			"Policy authority signed competing children",
+			undefined,
+			forkObservations,
+		);
 	}
 
 	private haltedResult(): PolicyAdmissionResultV2 {
@@ -533,7 +793,7 @@ export class TrustedNetworkV2PolicyReducer {
 	}): PolicyAdmissionResultV2 {
 		const blockedCandidateRetained =
 			this.unavailable !== undefined &&
-			this.pending.has(this.unavailable.candidateDigestKey);
+			this.pending.has(this.unavailable.comparisonCandidate.digestKey);
 		const recoverable =
 			(retention?.retained ?? true) && blockedCandidateRetained;
 		const reason = recoverable
@@ -551,7 +811,9 @@ export class TrustedNetworkV2PolicyReducer {
 	private completedDrainResult(
 		outcome: PendingDrainOutcomeV2 | undefined,
 	): PolicyAdmissionResultV2 | undefined {
-		if (outcome?.status === "forked") return this.forkedResult();
+		if (outcome?.status === "forked") {
+			return this.forkedResult(outcome.forkObservations);
+		}
 		if (outcome?.status === "halted") return this.haltedResult();
 		return outcome?.status === "unavailable"
 			? this.unavailableResult(outcome)
@@ -826,7 +1088,39 @@ export class TrustedNetworkV2PolicyReducer {
 		};
 	}
 
-	private setFork(evaluation: Extract<EvaluationV2, { status: "fork" }>): void {
+	private setFork(
+		evaluation: Extract<EvaluationV2, { status: "fork" }>,
+	): PolicyForkChildProofV2[] {
+		// Pending snapshots were authenticated when admitted. Combine every one
+		// that is already provably a direct child with the pair that first exposed
+		// the fork. Canonical selection below may displace either initial child, so
+		// the durable layer needs the complete bounded observation set and removes
+		// whichever final pair is carried by exportDurableState().
+		const pendingForkObservationSnapshots = [...this.pending.values()]
+			.map(({ snapshot }) => snapshot)
+			.filter(
+				(snapshot) =>
+					snapshot.body.sequence ===
+						evaluation.commonParent.body.sequence + 1n &&
+					equals(
+						snapshot.body.previousPolicyDigest,
+						evaluation.commonParent.digest,
+					),
+			);
+		const forkObservationSnapshots = [
+			evaluation.candidateChild,
+			evaluation.acceptedChild,
+			...pendingForkObservationSnapshots,
+		];
+		const forkObservations = forkObservationSnapshots
+			.map(forkProofFromSnapshot)
+			.sort(compareForkChildProofs)
+			.filter(
+				(proof, index, observations) =>
+					index === 0 ||
+					!equals(proof.entryBytes, observations[index - 1]!.entryBytes),
+			);
+
 		this.project(evaluation.commonParent);
 		const children = [
 			forkProofFromSnapshot(evaluation.candidateChild),
@@ -839,8 +1133,12 @@ export class TrustedNetworkV2PolicyReducer {
 			commonParent: projectionFromSnapshot(evaluation.commonParent),
 			children,
 		};
+		for (const snapshot of forkObservationSnapshots) {
+			this.retainCanonicalForkChild(snapshot);
+		}
 		this.unavailable = undefined;
 		this.pending.clear();
+		return forkObservations;
 	}
 
 	private retainCanonicalForkChild(snapshot: ValidatedPolicySnapshotV2): void {
@@ -866,20 +1164,26 @@ export class TrustedNetworkV2PolicyReducer {
 		this.fork.children = [canonical[0]!, canonical[1]!];
 	}
 
-	private observeAfterFork(snapshot: ValidatedPolicySnapshotV2): void {
-		if (this.fork === undefined || this.acceptedHead === undefined) return;
+	private observeAfterFork(
+		snapshot: ValidatedPolicySnapshotV2,
+	): PolicyForkChildProofV2 | undefined {
+		if (this.fork === undefined || this.acceptedHead === undefined) {
+			return undefined;
+		}
 		const commonParent = this.acceptedHead;
 		if (
 			snapshot.body.sequence !== commonParent.body.sequence + 1n ||
 			!equals(snapshot.body.previousPolicyDigest, commonParent.digest)
 		) {
-			return;
+			return undefined;
 		}
 
-		// This bounded kernel deliberately retains only the canonical two direct
-		// child proofs. Durable storage of every authenticated fork observation is
-		// an outer-layer responsibility for a later integration slice.
+		// This bounded kernel retains only the canonical two direct child proofs.
+		// Return this already-authenticated observation so the durable outer layer
+		// can retain every proof without verifying it twice.
+		const observation = forkProofFromSnapshot(snapshot);
 		this.retainCanonicalForkChild(snapshot);
+		return observation;
 	}
 
 	private addPending(
@@ -932,7 +1236,7 @@ export class TrustedNetworkV2PolicyReducer {
 		const retention = this.addPending(snapshot, evaluation.digest);
 		this.unavailable = {
 			acceptedAncestorDigest: copyBytes(evaluation.digest),
-			candidateDigestKey: snapshot.digestKey,
+			comparisonCandidate: copySnapshot(snapshot),
 			reason: boundedUnavailableReason(evaluation.reason),
 		};
 		return retention;
@@ -974,8 +1278,10 @@ export class TrustedNetworkV2PolicyReducer {
 					this.project(pending.snapshot);
 					accepted = true;
 				} else if (evaluation.status === "fork") {
-					this.setFork(evaluation);
-					return { status: "forked" };
+					return {
+						status: "forked",
+						forkObservations: this.setFork(evaluation),
+					};
 				}
 			}
 		}
@@ -1036,10 +1342,12 @@ export class TrustedNetworkV2PolicyReducer {
 		if (this.lifecycleController.signal.aborted) return this.haltedResult();
 
 		if (this.fork !== undefined) {
-			this.observeAfterFork(snapshot);
+			const forkObservation = this.observeAfterFork(snapshot);
 			return this.result(
 				"halted",
 				"Policy reducer is halted by authority equivocation",
+				undefined,
+				forkObservation === undefined ? undefined : [forkObservation],
 			);
 		}
 		this.retainCanonicalHeadEntry(snapshot);
@@ -1047,6 +1355,15 @@ export class TrustedNetworkV2PolicyReducer {
 		if (this.unavailable !== undefined) {
 			if (this.acceptedHead?.digestKey === snapshot.digestKey) {
 				return this.result("unavailable", this.unavailable.reason);
+			}
+			if (
+				this.unavailable.comparisonCandidate.digestKey === snapshot.digestKey &&
+				compare(
+					snapshot.entryBytes,
+					this.unavailable.comparisonCandidate.entryBytes,
+				) < 0
+			) {
+				this.unavailable.comparisonCandidate = copySnapshot(snapshot);
 			}
 			const existingPending = this.pending.get(snapshot.digestKey);
 			if (existingPending !== undefined) {
@@ -1075,8 +1392,7 @@ export class TrustedNetworkV2PolicyReducer {
 			return this.result("duplicate");
 		}
 		if (evaluation.status === "fork") {
-			this.setFork(evaluation);
-			return this.forkedResult();
+			return this.forkedResult(this.setFork(evaluation));
 		}
 		if (evaluation.status === "unavailable") {
 			const retention = this.enterUnavailable(snapshot, evaluation);
@@ -1112,7 +1428,7 @@ export class TrustedNetworkV2PolicyReducer {
 		if (unavailable === undefined) {
 			return this.result("duplicate", "Policy reducer is not unavailable");
 		}
-		const pending = this.pending.get(unavailable.candidateDigestKey);
+		const pending = this.pending.get(unavailable.comparisonCandidate.digestKey);
 		if (pending === undefined) {
 			return this.result(
 				"capacity",
@@ -1126,7 +1442,7 @@ export class TrustedNetworkV2PolicyReducer {
 			pending.missingParentDigest = copyBytes(evaluation.digest);
 			this.unavailable = {
 				acceptedAncestorDigest: copyBytes(evaluation.digest),
-				candidateDigestKey: pending.snapshot.digestKey,
+				comparisonCandidate: copySnapshot(pending.snapshot),
 				reason: boundedUnavailableReason(evaluation.reason),
 			};
 			return this.result("unavailable", this.unavailable.reason);
@@ -1142,8 +1458,7 @@ export class TrustedNetworkV2PolicyReducer {
 		} else {
 			this.pending.delete(pending.snapshot.digestKey);
 			if (evaluation.status === "fork") {
-				this.setFork(evaluation);
-				return this.forkedResult();
+				return this.forkedResult(this.setFork(evaluation));
 			}
 			if (evaluation.status === "accept") {
 				this.project(pending.snapshot);
