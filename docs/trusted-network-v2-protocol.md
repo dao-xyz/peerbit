@@ -194,6 +194,13 @@ digest, the derived network ID, and a sorted binding that assigns `ADMIN` to the
 authority. The authority signs its enclosing Peerbit entry, and the descriptor
 pins the resulting canonical body digest.
 
+Initial entry-signature profile `1` is `EntryV0 authority-only`: the entry must
+use the normal `EntryV0.toSignable()` coverage (including causal metadata),
+contain exactly one successfully verified signature, and that signer's
+canonical public-key bytes must equal the descriptor authority. A different
+entry type, signature cardinality, coverage rule, or signer requires a new
+profile identifier.
+
 The top-level program uses a new variant such as `trusted_network_v2`.
 `"trusted_network"`, `"relations"`, `IdentityRelation`, and existing v1
 addresses retain their present meaning.
