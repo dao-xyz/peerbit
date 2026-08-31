@@ -72,6 +72,23 @@ describe(`index`, function () {
 				expect(store.persisted()).equal(type === "disc");
 			});
 
+			it("exposes crash-safe barriers only for LevelStore and propagates them to sublevels", async () => {
+				const sublevel = await store.sublevel("durability-capability");
+
+				if (store.constructor.name === "LevelStore") {
+					expect(store.crashSafeDurability?.crashSafe).to.equal(true);
+					expect(sublevel.crashSafeDurability?.crashSafe).to.equal(true);
+
+					await store.put("durability-root", new Uint8Array([1]));
+					await sublevel.put("durability-sublevel", new Uint8Array([2]));
+					await store.crashSafeDurability!.barrier();
+					await sublevel.crashSafeDurability!.barrier();
+				} else if (type === "memory") {
+					expect(store.crashSafeDurability).to.equal(undefined);
+					expect(sublevel.crashSafeDurability).to.equal(undefined);
+				}
+			});
+
 			it("get", async () => {
 				const result = await store.get(data.key);
 				expect(result).to.deep.equal(new Uint8Array([123]));

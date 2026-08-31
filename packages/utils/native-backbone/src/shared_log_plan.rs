@@ -392,6 +392,36 @@ impl NativePeerbitBackbone {
     }
 
     #[allow(clippy::too_many_arguments)]
+    pub fn get_routing_full_replica_leaders(
+        &self,
+        replicas: usize,
+        role_age_ms: f64,
+        now: String,
+        peer_filter: JsValue,
+        expand_peer_filter: bool,
+        self_hash: String,
+        include_self: bool,
+        full_replica_fallback: bool,
+        include_strict_full_replica: bool,
+    ) -> Result<JsValue, JsValue> {
+        let leaders = self
+            .shared_log
+            .plan_routing_full_replica_leaders_core(
+                replicas,
+                role_age_ms,
+                &now,
+                peer_filter,
+                expand_peer_filter,
+                &self_hash,
+                include_self,
+                full_replica_fallback,
+                include_strict_full_replica,
+            )
+            .map_err(JsValue::from)?;
+        Ok(leader_samples_to_optional_rows(&leaders))
+    }
+
+    #[allow(clippy::too_many_arguments)]
     pub fn put_range(
         &mut self,
         id: String,

@@ -1167,4 +1167,18 @@ export class NativeBackboneWriteThroughBlockStore {
 		// callers that gate durable-only behavior on this flag behave correctly.
 		return true;
 	}
+
+	get crashSafeDurability() {
+		const durable = this.durable.crashSafeDurability;
+		if (!durable) {
+			return undefined;
+		}
+		return {
+			crashSafe: true as const,
+			barrier: async () => {
+				await this.drainDurable();
+				await durable.barrier();
+			},
+		};
+	}
 }

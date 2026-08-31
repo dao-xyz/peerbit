@@ -34,6 +34,27 @@ const log = baseLogger.newScope("entry-index");
 const LOG_ENTRY_REMOTE_READ_PRIORITY = FOREGROUND_READ_MESSAGE_PRIORITY;
 
 /**
+ * Internal marker for failures after a generic entry row became locally
+ * admitted. Callers must not retry the logical append without accounting for
+ * `committedHash`; the original failure remains available as `cause`.
+ */
+export class EntryIndexPostCommitError extends Error {
+	readonly cause: unknown;
+	readonly committedHash: string;
+
+	constructor(committedHash: string, cause: unknown) {
+		super(
+			`Entry ${committedHash} was admitted before append finalization failed: ${
+				cause instanceof Error ? cause.message : String(cause)
+			}`,
+		);
+		this.name = "EntryIndexPostCommitError";
+		this.committedHash = committedHash;
+		this.cause = cause;
+	}
+}
+
+/**
  * Native local append can cache a concrete EntryV0 whose payload/signature
  * bytes stay only in the native block store. Unlike the lazy wire wrapper,
  * that EntryV0 inherits Entry.toMaterialized() as a no-op. Detect the missing
@@ -2655,49 +2676,58 @@ export class EntryIndex<T> {
 				return await existingPromise;
 			} else {
 				const fn = async () => {
-					if (properties.unique === true || !(await this.has(entry.hash))) {
-						this._length++;
-					}
+					let admitted = false;
+					try {
+						if (properties.unique === true || !(await this.has(entry.hash))) {
+							this._length++;
+						}
 
-					// add cache after .has check before .has uses the cache
-					this.cache.add(entry.hash, entry);
-					const shallowEntry =
-						Entry.takePreparedShallowEntry(entry, properties.isHead) ??
-						entry.toShallow(properties.isHead);
-					const nativeEntry =
-						Entry.takePreparedNativeLogEntry(entry, properties.isHead) ??
-						toNativeLogEntry(shallowEntry);
-					const shouldDeferIndexWrite =
-						properties.deferIndexWrite === true &&
-						properties.isHead &&
-						entry.meta.type !== EntryType.CUT &&
-						entry.meta.next.length === 0;
+						// add cache after .has check before .has uses the cache
+						this.cache.add(entry.hash, entry);
+						const shallowEntry =
+							Entry.takePreparedShallowEntry(entry, properties.isHead) ??
+							entry.toShallow(properties.isHead);
+						const nativeEntry =
+							Entry.takePreparedNativeLogEntry(entry, properties.isHead) ??
+							toNativeLogEntry(shallowEntry);
+						const shouldDeferIndexWrite =
+							properties.deferIndexWrite === true &&
+							properties.isHead &&
+							entry.meta.type !== EntryType.CUT &&
+							entry.meta.next.length === 0;
 
-					if (shouldDeferIndexWrite) {
-						this.setPendingIndexWrite(entry.hash, shallowEntry);
-						this.schedulePendingIndexWriteFlush();
-					} else {
-						await this.flushPendingWrites(
-							entry.meta.next,
+						if (shouldDeferIndexWrite) {
+							this.setPendingIndexWrite(entry.hash, shallowEntry);
+							this.schedulePendingIndexWriteFlush();
+						} else {
+							await this.flushPendingWrites(
+								entry.meta.next,
+								hashMutationLockOwner,
+							);
+							await this.properties.index.put(shallowEntry);
+						}
+						admitted = true;
+						this.properties.nativeGraph?.graph.put(nativeEntry);
+
+						// check if gids has been shadowed, by query all nexts that have a different gid
+						await this.notifyShadowedGids(entry);
+
+						// mark all next entries as not heads
+						await this.privateUpdateNextHeadProperty(
+							entry,
+							false,
 							hashMutationLockOwner,
 						);
-						await this.properties.index.put(shallowEntry);
+					} catch (error) {
+						if (admitted) {
+							throw new EntryIndexPostCommitError(entry.hash, error);
+						}
+						throw error;
 					}
-					this.properties.nativeGraph?.graph.put(nativeEntry);
-
-					// check if gids has been shadowed, by query all nexts that have a different gid
-					await this.notifyShadowedGids(entry);
-
-					// mark all next entries as not heads
-					await this.privateUpdateNextHeadProperty(
-						entry,
-						false,
-						hashMutationLockOwner,
-					);
-
-					this.insertionPromises.delete(entry.hash);
 				};
-				const promise = fn();
+				const promise = fn().finally(() => {
+					this.insertionPromises.delete(entry.hash);
+				});
 				this.insertionPromises.set(entry.hash, promise);
 				return await promise;
 			}

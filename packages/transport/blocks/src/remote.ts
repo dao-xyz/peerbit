@@ -46,6 +46,10 @@ import type { BlockStore } from "./interface.js";
 export const logger = loggerFn("peerbit:transport:blocks");
 const warn = logger.newScope("warn");
 
+// Keep batch hooks bounded without changing their completion contract: a
+// successful batch put still waits until every onPut callback has settled.
+const STORED_NOTIFICATION_CONCURRENCY = 8;
+
 export class BlockMessage {}
 
 @variant(0)
@@ -185,6 +189,8 @@ export class RemoteBlocks implements IBlocks {
 	private _readFromPeersPromises: Map<string, InFlightRead>;
 	private _deferredStoredNotificationCids?: Set<string>;
 	private _deferredStoredNotificationTimer?: ReturnType<typeof setTimeout>;
+	private _deferredStoredNotificationDrain?: Promise<void>;
+	private _storedNotificationTasks = new Set<Promise<void>>();
 	_open = false;
 	private _events: TypedEventEmitter<{
 		"peer:reachable": CustomEvent<PublicSignKey>;
@@ -237,6 +243,15 @@ export class RemoteBlocks implements IBlocks {
 			 * this transport to a specific directory implementation.
 			 */
 			onPut?: (cid: string) => Promise<void> | void;
+			/**
+			 * Optional aggregate hook called after a multi-block store (best-effort).
+			 *
+			 * When present, this replaces the per-CID `onPut` calls for batches. The
+			 * callback must therefore make every supplied CID discoverable through an
+			 * equivalent aggregate mechanism. Without it, `onPut` is invoked and
+			 * awaited once for every CID with bounded concurrency.
+			 */
+			onPutMany?: (cids: string[]) => Promise<void> | void;
 			/**
 			 * Cache of learned/suggested providers per CID to reduce repeated lookups and avoid
 			 * expensive "search" behaviors.
@@ -309,12 +324,14 @@ export class RemoteBlocks implements IBlocks {
 				);
 				const durableBarrier = this.waitForDurableWrites?.();
 				if (durableBarrier && typeof durableBarrier.then === "function") {
-					void Promise.resolve(durableBarrier).then(
-						() => this.notifyPuts(stored),
-						(): void => undefined,
+					this.trackStoredNotificationTask(
+						Promise.resolve(durableBarrier).then(
+							() => this.notifyPuts(stored),
+							(): void => undefined,
+						),
 					);
 				} else {
-					void this.notifyPuts(stored);
+					this.trackStoredNotificationTask(this.notifyPuts(stored));
 				}
 				return stored;
 			};
@@ -820,7 +837,7 @@ export class RemoteBlocks implements IBlocks {
 	}
 
 	hasNotifyStoredHook(): boolean {
-		return !!this.options.onPut;
+		return !!(this.options.onPut || this.options.onPutMany);
 	}
 
 	notifyStored(cid: string): Promise<void> | void {
@@ -836,7 +853,11 @@ export class RemoteBlocks implements IBlocks {
 	}
 
 	notifyStoredManyDeferred(cids: string[]): void {
-		if (!this.options.onPut || cids.length === 0) {
+		if (
+			!this.hasNotifyStoredHook() ||
+			cids.length === 0 ||
+			this.closeController.signal.aborted
+		) {
 			return;
 		}
 		let pending = this._deferredStoredNotificationCids;
@@ -845,11 +866,18 @@ export class RemoteBlocks implements IBlocks {
 			this._deferredStoredNotificationCids = pending;
 		}
 		for (const cid of cids) {
-			if (cid) {
-				pending.add(cid);
-			}
+			if (cid) pending.add(cid);
 		}
-		if (pending.size === 0 || this._deferredStoredNotificationTimer) {
+		this.scheduleDeferredStoredNotifications();
+	}
+
+	private scheduleDeferredStoredNotifications(): void {
+		if (
+			this.closeController.signal.aborted ||
+			!this._deferredStoredNotificationCids?.size ||
+			this._deferredStoredNotificationTimer ||
+			this._deferredStoredNotificationDrain
+		) {
 			return;
 		}
 		this._deferredStoredNotificationTimer = setTimeout(() => {
@@ -862,29 +890,70 @@ export class RemoteBlocks implements IBlocks {
 	}
 
 	private flushDeferredStoredNotifications(): Promise<void> | void {
+		if (this._deferredStoredNotificationTimer) {
+			clearTimeout(this._deferredStoredNotificationTimer);
+			this._deferredStoredNotificationTimer = undefined;
+		}
+		if (this._deferredStoredNotificationDrain) {
+			return this._deferredStoredNotificationDrain.then(() =>
+				this.flushDeferredStoredNotifications(),
+			);
+		}
 		const pending = this._deferredStoredNotificationCids;
 		if (!pending || pending.size === 0) {
 			return;
 		}
-		this._deferredStoredNotificationCids = undefined;
-		const waits: Promise<void>[] = [];
-		for (const cid of pending) {
-			try {
-				const result = this.notifyStored(cid);
-				if (result && typeof result.then === "function") {
-					waits.push(result);
+		if (this.options.onPutMany && pending.size > 1) {
+			// Detach the current batch before awaiting the aggregate hook. New
+			// notifications collect in a fresh Set and are scheduled by the drain's
+			// finalizer, while this generation retains only one bounded aggregate
+			// task instead of one promise/network announcement per CID.
+			this._deferredStoredNotificationCids = undefined;
+			const cids = [...pending];
+			pending.clear();
+			const drain = Promise.resolve(this.notifyPuts(cids));
+			const trackedDrain = drain.finally(() => {
+				if (this._deferredStoredNotificationDrain === trackedDrain) {
+					this._deferredStoredNotificationDrain = undefined;
 				}
-			} catch {
-				// ignore best-effort hooks
+				this.scheduleDeferredStoredNotifications();
+			});
+			this._deferredStoredNotificationDrain = trackedDrain;
+			return trackedDrain;
+		}
+
+		const worker = async () => {
+			for (;;) {
+				const next = pending.values().next();
+				if (next.done) return;
+				pending.delete(next.value);
+				await this.notifyStored(next.value);
 			}
-		}
-		if (waits.length > 0) {
-			return Promise.all(waits).then((): void => undefined);
-		}
+		};
+		const workerCount = Math.min(STORED_NOTIFICATION_CONCURRENCY, pending.size);
+		const drain = Promise.all(
+			Array.from({ length: workerCount }, () => worker()),
+		).then((): void => undefined);
+		const trackedDrain = drain.finally(() => {
+			if (this._deferredStoredNotificationDrain === trackedDrain) {
+				this._deferredStoredNotificationDrain = undefined;
+			}
+			if (pending.size === 0) {
+				this._deferredStoredNotificationCids = undefined;
+				return;
+			}
+			this.scheduleDeferredStoredNotifications();
+		});
+		this._deferredStoredNotificationDrain = trackedDrain;
+		return trackedDrain;
 	}
 
 	private notifyPut(cid: string): Promise<void> | void {
-		const onPut = this.options.onPut;
+		const onPut =
+			this.options.onPut ??
+			(this.options.onPutMany
+				? (storedCid: string) => this.options.onPutMany!([storedCid])
+				: undefined);
 		if (!onPut) {
 			return;
 		}
@@ -899,22 +968,54 @@ export class RemoteBlocks implements IBlocks {
 	}
 
 	private notifyPuts(cids: string[]): Promise<void> | void {
-		const onPut = this.options.onPut;
-		if (!onPut || cids.length === 0) {
+		if (cids.length === 0) {
 			return;
 		}
 		if (cids.length === 1) {
 			return this.notifyPut(cids[0]!);
 		}
-		return Promise.all(
-			cids.map(async (cid) => {
-				try {
-					await onPut(cid);
-				} catch {
-					// ignore best-effort hooks
+		const onPutMany = this.options.onPutMany;
+		if (onPutMany) {
+			try {
+				const result = onPutMany(cids);
+				if (result && typeof result.then === "function") {
+					return result.catch((): void => undefined);
 				}
-			}),
+			} catch {
+				// ignore best-effort hooks
+			}
+			return;
+		}
+		if (!this.options.onPut) return;
+		let nextIndex = 0;
+		const worker = async () => {
+			for (;;) {
+				const index = nextIndex++;
+				if (index >= cids.length) return;
+				await this.notifyPut(cids[index]!);
+			}
+		};
+		return Promise.all(
+			Array.from(
+				{ length: Math.min(STORED_NOTIFICATION_CONCURRENCY, cids.length) },
+				() => worker(),
+			),
 		).then((): void => undefined);
+	}
+
+	private trackStoredNotificationTask(task: Promise<void> | void): void {
+		if (!task || typeof task.then !== "function") return;
+		const tracked = Promise.resolve(task).catch((): void => undefined);
+		this._storedNotificationTasks.add(tracked);
+		tracked
+			.finally(() => this._storedNotificationTasks.delete(tracked))
+			.catch((): void => undefined);
+	}
+
+	private async drainStoredNotificationTasks(): Promise<void> {
+		while (this._storedNotificationTasks.size > 0) {
+			await Promise.all([...this._storedNotificationTasks]);
+		}
 	}
 
 	async has(cid: string) {
@@ -985,6 +1086,7 @@ export class RemoteBlocks implements IBlocks {
 	async start(): Promise<void> {
 		this._events = new TypedEventEmitter();
 		this.closeController = new AbortController();
+		this._storedNotificationTasks = new Set();
 		await this.localStore?.start();
 		this._open = true;
 	}
@@ -1518,6 +1620,7 @@ export class RemoteBlocks implements IBlocks {
 			this._deferredStoredNotificationTimer = undefined;
 		}
 		await capture(() => this.flushDeferredStoredNotifications());
+		await capture(() => this.drainStoredNotificationTasks());
 		// Queued wrappers observe the aborted generation and drain without starting
 		// new work. Avoid PQueue.clear(): it would strand promises already returned
 		// by the nested background-admission queue.
@@ -1558,5 +1661,9 @@ export class RemoteBlocks implements IBlocks {
 
 	persisted(): boolean | Promise<boolean> {
 		return this.localStore?.persisted() || false;
+	}
+
+	get crashSafeDurability() {
+		return this.localStore?.crashSafeDurability;
 	}
 }

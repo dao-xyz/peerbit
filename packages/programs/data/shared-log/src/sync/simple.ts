@@ -88,6 +88,28 @@ export class ConfirmEntriesMessage extends TransportMessage {
 	}
 }
 
+/**
+ * Correlated request for a point-in-time persisted-entry receipt.
+ *
+ * `expectedReceiverSession` binds the request to the transport session that
+ * advertised support. Unknown/legacy peers ignore this variant and therefore
+ * can never be counted as persisted replicas.
+ */
+@variant([0, 13])
+export class RequestPersistedEntriesV1 extends TransportMessage {
+	@field({ type: "u64" })
+	expectedReceiverSession: bigint;
+
+	@field({ type: vec("string") })
+	hashes: string[];
+
+	constructor(props: { expectedReceiverSession: bigint; hashes: string[] }) {
+		super();
+		this.expectedReceiverSession = props.expectedReceiverSession;
+		this.hashes = props.hashes;
+	}
+}
+
 export const SIMPLE_SYNC_RAW_EXCHANGE_HEADS_CAPABILITY = 1;
 
 @variant([0, 8])

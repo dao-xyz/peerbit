@@ -1,4 +1,8 @@
 export type MaybePromise<T> = Promise<T> | T;
+export type CrashSafeDurability = {
+	readonly crashSafe: true;
+	barrier(): MaybePromise<void>;
+};
 
 export interface AnyStore {
 	status(): MaybePromise<"opening" | "open" | "closing" | "closed">;
@@ -27,4 +31,9 @@ export interface AnyStore {
 	 */
 	size(): MaybePromise<number>;
 	persisted(): MaybePromise<boolean>;
+	/**
+	 * Optional, per-instance proof that prior awaited mutations can be fenced by
+	 * a crash-safe physical barrier. Absence deliberately fails closed.
+	 */
+	readonly crashSafeDurability?: CrashSafeDurability;
 }

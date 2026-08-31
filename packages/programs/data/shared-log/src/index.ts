@@ -115,6 +115,7 @@ import {
 	AbortError,
 	TimeoutError,
 	debounceFixedInterval,
+	delay,
 	waitFor,
 } from "@peerbit/time";
 import pDefer, { type DeferredPromise } from "p-defer";
@@ -147,6 +148,7 @@ import {
 	CompatibilityModeRetiredError,
 	NativeDurableCommitError,
 	NoPeersError,
+	PersistedDeliveryError,
 	isNotStartedError,
 } from "./errors.js";
 import {
@@ -162,6 +164,7 @@ import {
 	RequestIPruneV2,
 	ResponseIPrune,
 	ResponseIPruneV2,
+	SYNC_CAPABILITY_PERSISTED_ENTRY_RECEIPTS,
 	SYNC_CAPABILITY_RAW_EXCHANGE_HEADS,
 	SYNC_CAPABILITY_REPLICATION_INFO_V2_APPLY,
 	SYNC_CAPABILITY_REPLICATION_INFO_V2_CONFIRM,
@@ -306,6 +309,7 @@ import {
 import {
 	ConfirmEntriesMessage,
 	RECENT_KNOWN_EXCHANGE_HEAD_SUPPRESSION_MS,
+	RequestPersistedEntriesV1,
 	SYNC_MESSAGE_PRIORITY,
 	SimpleSyncronizer,
 } from "./sync/simple.js";
@@ -449,6 +453,7 @@ export {
 	CompatibilityModeRetiredError,
 	NativeDurableCommitError,
 	NoPeersError,
+	PersistedDeliveryError,
 };
 export { MAX_U32, MAX_U64, type NumberFromType };
 export type {
@@ -551,6 +556,7 @@ type LeaderMap = Map<string, { intersecting: boolean }>;
 type LeaderSelectionOptions<R extends "u32" | "u64"> = {
 	roleAge?: number;
 	candidates?: Iterable<string>;
+	freshLeaderPlan?: boolean;
 	onLeader?: (key: string) => void;
 	persist?:
 		| {
@@ -697,6 +703,10 @@ type PreparedLocalAppendCommit<R extends "u32" | "u64"> = {
 		size: number;
 	};
 };
+
+type PersistedDeliveryPlanningEntry<T, R extends "u32" | "u64"> =
+	| ShallowOrFullEntry<T>
+	| EntryReplicated<R>;
 
 type NativeBackboneSimpleDocumentProjectionPlan = {
 	documentVariantType?: "u8" | "string";
@@ -908,10 +918,15 @@ const nativeStrictDurableTransactionJournalRecordBytes = (
 	return new TextEncoder().encode(JSON.stringify(record));
 };
 
+type TrustedLocalCommitEvidence = {
+	committedHashes: Set<string>;
+};
+
 type PreparedPayloadCommitOnlyProperties =
 	NativeBackboneDocumentCommitOptions & {
 		skipMissingNextJoin?: boolean;
 		resolveTrimmedEntries?: boolean;
+		localCommitEvidence?: TrustedLocalCommitEvidence;
 	};
 
 type PreparedPayloadsManyIndependentProperties<T> = {
@@ -920,6 +935,7 @@ type PreparedPayloadsManyIndependentProperties<T> = {
 	nexts?: ShallowOrFullEntry<T>[][];
 	nativeBackboneDocumentIndexes?: NativeBackboneDocumentIndexCommitInput[];
 	retainMaterializationBytes?: boolean;
+	localCommitEvidence?: TrustedLocalCommitEvidence;
 };
 
 type PreparedPayloadCommitOnlyResult<T, R extends "u32" | "u64"> = {
@@ -1681,10 +1697,23 @@ export type Args<
 		: "u32",
 > = LogProperties<T> & LogEvents<T> & SharedLogOptions<T, D, R>;
 
-export type DeliveryReliability = "ack" | "best-effort";
+/**
+ * `persisted` waits, after the local commit, for `minAcks` distinct remote
+ * leaders that advertised crash-safe receipt support. Each receipt proves that
+ * the exact block, lower-log row, and replication-coordinate row crossed that
+ * peer's storage barriers at the receipt instant. It is cooperative-peer
+ * evidence, not a Byzantine proof or a promise that the peer will retain the
+ * entry forever. Only current capable leaders count.
+ */
+export type DeliveryReliability = "ack" | "best-effort" | "persisted";
 
 export type DeliveryOptions = {
 	reliability?: DeliveryReliability;
+	/**
+	 * Required for persisted delivery; counts distinct current remote leaders.
+	 * This does not increase the entry's replication degree, so the configured
+	 * replication must make at least this many capable remote leaders eligible.
+	 */
 	minAcks?: number;
 	requireRecipients?: boolean;
 	/**
@@ -1692,9 +1721,130 @@ export type DeliveryOptions = {
 	 * its control lane, so this only changes the direct/fallback RPC path.
 	 */
 	priority?: number;
+	/**
+	 * Overall delivery deadline in milliseconds. For persisted delivery it
+	 * starts after the local append has returned and includes leader planning,
+	 * transfer, receipt requests, and final ownership/session validation. The
+	 * omitted persisted default is 10 seconds plus one admission-attempt budget
+	 * per transfer chunk and the minimum receipt sender-pacing time implied by
+	 * the batch size. An explicit timeout remains exact.
+	 */
 	timeout?: number;
 	signal?: AbortSignal;
 };
+
+type CrashSafeStorageBarrier = {
+	readonly crashSafe: true;
+	barrier(): MaybePromise<void>;
+};
+
+type PersistedReceiptStorage = {
+	block: CrashSafeStorageBarrier;
+	lower: CrashSafeStorageBarrier;
+	coordinate: CrashSafeStorageBarrier;
+};
+
+type PersistedDeliveryDeadline = {
+	deadline: number;
+	signal: AbortSignal;
+	dispose(): void;
+};
+
+const MAX_PERSISTED_RECEIPT_HASHES = 1_024;
+const MAX_PERSISTED_RECEIPT_HASH_BYTES = 128 * 1_024;
+const PERSISTED_RECEIPT_CHUNK_SIZE = 512;
+const PERSISTED_TRANSFER_CHUNK_SIZE = 256;
+const DEFAULT_PERSISTED_RECEIPT_TIMEOUT_MS = 10_000;
+const MAX_PERSISTED_DELIVERY_TIMEOUT_MS = 2_147_483_647;
+const PERSISTED_RECEIPT_RETRY_MS = 50;
+const MAX_PERSISTED_RECEIPT_ATTEMPT_MS = 2_000;
+const MAX_PERSISTED_RECEIPT_REQUESTS_GLOBAL = 8;
+const MAX_PERSISTED_RECEIPT_REQUESTS_PER_PEER = 2;
+const PERSISTED_RECEIPT_INGRESS_PEER_REQUEST_CAPACITY = 16;
+const PERSISTED_RECEIPT_INGRESS_PEER_HASH_CAPACITY = 8_192;
+const PERSISTED_RECEIPT_INGRESS_PEER_REQUESTS_PER_SECOND = 8;
+const PERSISTED_RECEIPT_INGRESS_PEER_HASHES_PER_SECOND = 4_096;
+const PERSISTED_RECEIPT_INGRESS_NODE_REQUEST_CAPACITY = 32;
+const PERSISTED_RECEIPT_INGRESS_NODE_HASH_CAPACITY = 16_384;
+const PERSISTED_RECEIPT_INGRESS_NODE_REQUESTS_PER_SECOND = 16;
+const PERSISTED_RECEIPT_INGRESS_NODE_HASHES_PER_SECOND = 8_192;
+const MAX_PERSISTED_RECEIPT_INGRESS_PEER_SESSIONS = 256;
+
+type PersistedReceiptIngressBucket = {
+	requestTokens: number;
+	hashTokens: number;
+	refilledAt: number;
+};
+
+type PersistedReceiptNodeIngressBudget = PersistedReceiptIngressBucket & {
+	peerSessions: Map<string, PersistedReceiptIngressBucket>;
+};
+
+type PersistedReceiptNodeEgressBudget = {
+	peerSessions: Map<string, PersistedReceiptIngressBucket>;
+};
+
+const persistedReceiptIngressBudgets = new WeakMap<
+	object,
+	PersistedReceiptNodeIngressBudget
+>();
+
+// Sender pacing mirrors the receiver's per-peer/session allowance. Keeping it
+// on the Peerbit node (rather than one SharedLog) prevents independent programs
+// from silently overrunning the same remote receiver together.
+const persistedReceiptEgressBudgets = new WeakMap<
+	object,
+	PersistedReceiptNodeEgressBudget
+>();
+
+const refillPersistedReceiptIngressBucket = (
+	bucket: PersistedReceiptIngressBucket,
+	now: number,
+	requestCapacity: number,
+	hashCapacity: number,
+	requestsPerSecond: number,
+	hashesPerSecond: number,
+) => {
+	// Never move the refill watermark backwards. Date.now() can jump after a
+	// clock correction; accepting that earlier timestamp would grant the same
+	// elapsed interval again on the next request.
+	if (now <= bucket.refilledAt) {
+		return;
+	}
+	const elapsedSeconds = Math.max(0, now - bucket.refilledAt) / 1_000;
+	if (elapsedSeconds > 0) {
+		bucket.requestTokens = Math.min(
+			requestCapacity,
+			bucket.requestTokens + elapsedSeconds * requestsPerSecond,
+		);
+		bucket.hashTokens = Math.min(
+			hashCapacity,
+			bucket.hashTokens + elapsedSeconds * hashesPerSecond,
+		);
+	}
+	bucket.refilledAt = now;
+};
+
+const persistedReceiptPacingFloorMs = (hashCount: number): number => {
+	const boundedHashCount = Math.max(0, Math.floor(hashCount));
+	const requestCount = Math.ceil(
+		boundedHashCount / PERSISTED_RECEIPT_CHUNK_SIZE,
+	);
+	return Math.max(
+		0,
+		((requestCount - PERSISTED_RECEIPT_INGRESS_PEER_REQUEST_CAPACITY) /
+			PERSISTED_RECEIPT_INGRESS_PEER_REQUESTS_PER_SECOND) *
+			1_000,
+		((boundedHashCount - PERSISTED_RECEIPT_INGRESS_PEER_HASH_CAPACITY) /
+			PERSISTED_RECEIPT_INGRESS_PEER_HASHES_PER_SECOND) *
+			1_000,
+	);
+};
+
+const persistedTransferAdmissionBudgetMs = (hashCount: number): number =>
+	Math.ceil(
+		Math.max(0, Math.floor(hashCount)) / PERSISTED_TRANSFER_CHUNK_SIZE,
+	) * MAX_PERSISTED_RECEIPT_ATTEMPT_MS;
 
 export type SharedLogFanoutOptions = {
 	root?: string;
@@ -1709,6 +1859,19 @@ type SharedAppendBaseOptions<T> = AppendOptions<T> & {
 
 type TrustedLogAppendOptions<T> = AppendOptions<T> & {
 	__peerbitCanAppendAlreadyValidated?: boolean;
+	__peerbitOnLocalCommit?: (hashes: readonly string[]) => void;
+};
+
+const attachTrustedLocalCommitEvidence = <T>(
+	options: AppendOptions<T>,
+	evidence: TrustedLocalCommitEvidence | undefined,
+): void => {
+	if (!evidence) return;
+	(options as TrustedLogAppendOptions<T>).__peerbitOnLocalCommit = (hashes) => {
+		for (const hash of hashes) {
+			evidence.committedHashes.add(hash);
+		}
+	};
 };
 
 export type SharedAppendOptions<T> =
@@ -3019,6 +3182,37 @@ export class SharedLog<
 		}
 	}
 
+	private async finishCommittedNativeStrictDurableTransaction<TValue>(
+		handle: NativeStrictDurableTransactionHandle | undefined,
+		finish: () => MaybePromise<TValue>,
+		shouldWarnOnRetirementFailure: () => boolean = () => true,
+	): Promise<TValue> {
+		let finishResult: TValue | undefined;
+		let finishError: unknown;
+		let finishFailed = false;
+		try {
+			finishResult = await finish();
+		} catch (error) {
+			finishError = error;
+			finishFailed = true;
+		}
+		try {
+			await this.completeNativeStrictDurableTransaction(handle);
+		} catch (error) {
+			// The acknowledged lower commit is already final. Completion poisons and
+			// releases the in-memory transaction before throwing, so preserve an
+			// earlier post-commit failure while leaving recovery to retire the intent.
+			if (!finishFailed && !shouldWarnOnRetirementFailure()) {
+				throw error;
+			}
+			warn(`Failed to retire committed native intent: ${String(error)}`);
+		}
+		if (finishFailed) {
+			throw finishError;
+		}
+		return finishResult as TValue;
+	}
+
 	private releaseNativeStrictDurableTransaction(
 		handle: NativeStrictDurableTransactionHandle | undefined,
 		cause: unknown = new Error(
@@ -3504,6 +3698,9 @@ export class SharedLog<
 	// parallel map so existing capability-number consumers remain unchanged.
 	private _peerSyncCapabilitySessions!: Map<string, bigint>;
 	private _peerSyncCapabilityTimestamps!: Map<string, bigint>;
+	private _persistedReceiptStorage?: PersistedReceiptStorage;
+	private _persistedReceiptRequestsInFlight!: Map<string, number>;
+	private _persistedReceiptRequestsInFlightTotal!: number;
 	// Pending live raw exchange-head gossip, coalesced per recipient set and
 	// flushed at the end of the current event-loop turn (or when a batch cap
 	// is hit). Only used when every recipient advertised raw capability.
@@ -3578,10 +3775,7 @@ export class SharedLog<
 		return new ReplicationInfoV2SendCoordinator<R>({
 			getRpc: () => this.rpc,
 			getSelfKey: () => this.node.identity.publicKey,
-			getSenderTransportSession: () =>
-				BigInt(
-					(this.node.services.pubsub as unknown as { session: number }).session,
-				),
+			getSenderTransportSession: () => this.ownTransportSession(),
 			getMyReplicationSegments: () => this.getMyReplicationSegments(),
 			validatePersistedReplicationRangeSnapshot: (ranges) =>
 				this.validatePersistedReplicationRangeSnapshot(ranges),
@@ -3606,12 +3800,37 @@ export class SharedLog<
 		});
 	}
 
+	private resolvePersistedReceiptStorage():
+		| PersistedReceiptStorage
+		| undefined {
+		if (this.log.appendDurability !== "strict") {
+			return undefined;
+		}
+		const block = this.remoteBlocks.crashSafeDurability;
+		const lower = this.log.entryIndex.properties.index.crashSafeDurability;
+		const coordinate = this.entryCoordinatesIndex.crashSafeDurability;
+		if (!block || !lower || !coordinate) {
+			return undefined;
+		}
+		return { block, lower, coordinate };
+	}
+
+	private ownTransportSession(): bigint {
+		return BigInt(
+			(this.node.services.pubsub as unknown as { session: number | bigint })
+				.session,
+		);
+	}
+
 	private replicationInfoV2ReceiveCapabilities(): number {
 		return (
 			SYNC_CAPABILITY_REPLICATION_INFO_V2_DECODE |
 			SYNC_CAPABILITY_REPLICATION_INFO_V2_SEND |
 			SYNC_CAPABILITY_REPLICATION_INFO_V2_APPLY |
 			SYNC_CAPABILITY_REPLICATION_INFO_V2_CONFIRM |
+			(this._persistedReceiptStorage
+				? SYNC_CAPABILITY_PERSISTED_ENTRY_RECEIPTS
+				: 0) |
 			(this._logProperties?.sync?.rawExchangeHeads === true
 				? SYNC_CAPABILITY_RAW_EXCHANGE_HEADS
 				: 0)
@@ -3627,9 +3846,7 @@ export class SharedLog<
 		{ receiverTransportSession: bigint; requestNotBeforeMs: number } | undefined
 	> {
 		const peerHash = properties.target.hashcode();
-		const receiverTransportSession = BigInt(
-			(this.node.services.pubsub as unknown as { session: number }).session,
-		);
+		const receiverTransportSession = this.ownTransportSession();
 		await this.rpc.send(
 			new SyncCapabilitiesMessage({
 				capabilities: this.replicationInfoV2ReceiveCapabilities(),
@@ -3655,9 +3872,7 @@ export class SharedLog<
 			) ||
 			this._peerSessions.isReplicationInfoBlocked(peerHash) ||
 			!this._peerSessions.isReceiveCleanupGateOpen(peerHash) ||
-			BigInt(
-				(this.node.services.pubsub as unknown as { session: number }).session,
-			) !== receiverTransportSession
+			this.ownTransportSession() !== receiverTransportSession
 		) {
 			return undefined;
 		}
@@ -3670,10 +3885,7 @@ export class SharedLog<
 	private createReplicationInfoV2ReceiveCoordinator(): ReplicationInfoV2ReceiveCoordinator {
 		return new ReplicationInfoV2ReceiveCoordinator({
 			getSelfKey: () => this.node.identity.publicKey,
-			getReceiverTransportSession: () =>
-				BigInt(
-					(this.node.services.pubsub as unknown as { session: number }).session,
-				),
+			getReceiverTransportSession: () => this.ownTransportSession(),
 			isClosed: () => this.closed,
 			isPeerSessionCurrent: (peerHash, peerSession) =>
 				this._peerSessions.isCurrent(peerHash, peerSession) &&
@@ -3843,6 +4055,9 @@ export class SharedLog<
 		this._peerSyncCapabilities = new Map();
 		this._peerSyncCapabilitySessions = new Map();
 		this._peerSyncCapabilityTimestamps = new Map();
+		this._persistedReceiptStorage = undefined;
+		this._persistedReceiptRequestsInFlight = new Map();
+		this._persistedReceiptRequestsInFlightTotal = 0;
 		this._liveRawGossipBatches = new Map();
 		this._liveRawGossipFlushScheduled = false;
 		this.coordinateToHash = new Cache<string>({ max: 1e6, ttl: 1e4 });
@@ -4012,6 +4227,14 @@ export class SharedLog<
 		this._fanoutChannel = undefined;
 	}
 
+	private ensureLogProviderHandle(fanoutService: FanoutTree): void {
+		if (this._providerHandle || this._closeController.signal.aborted) return;
+		this._providerHandle = fanoutService.provide(`shared-log|${this.topic}`, {
+			ttlMs: 120_000,
+			announceIntervalMs: 60_000,
+		});
+	}
+
 	private async _onFanoutData(detail: FanoutTreeDataEvent) {
 		let envelope: FanoutEnvelope;
 		try {
@@ -4138,11 +4361,23 @@ export class SharedLog<
 		const reliability: DeliveryReliability = delivery.reliability ?? "ack";
 		const deliveryTimeout = delivery.timeout;
 		const deliverySignal = delivery.signal;
-		const requireRecipients = delivery.requireRecipients === true;
+		const requireRecipients =
+			reliability === "persisted" || delivery.requireRecipients === true;
 		const minAcks =
 			delivery.minAcks != null && Number.isFinite(delivery.minAcks)
 				? Math.max(0, Math.floor(delivery.minAcks))
 				: undefined;
+		if (reliability === "persisted") {
+			if (
+				delivery.minAcks == null ||
+				!Number.isSafeInteger(delivery.minAcks) ||
+				delivery.minAcks <= 0
+			) {
+				throw new Error(
+					'persisted delivery requires a positive explicit "minAcks"',
+				);
+			}
+		}
 
 		const wrap =
 			deliveryTimeout == null && deliverySignal == null
@@ -4215,6 +4450,82 @@ export class SharedLog<
 			minAcks,
 			wrap,
 		};
+	}
+
+	private validatePersistedReceiptRequestShape(
+		request: RequestPersistedEntriesV1,
+	): void {
+		if (
+			request.hashes.length === 0 ||
+			request.hashes.length > MAX_PERSISTED_RECEIPT_HASHES
+		) {
+			throw new Error(
+				`Persisted receipt requests require 1-${MAX_PERSISTED_RECEIPT_HASHES} hashes`,
+			);
+		}
+		let bytes = 0;
+		const encoder = new TextEncoder();
+		for (const hash of request.hashes) {
+			if (hash.length === 0 || hash.length > MAX_PERSISTED_RECEIPT_HASH_BYTES) {
+				throw new Error("Invalid persisted receipt hash batch");
+			}
+			bytes += encoder.encode(hash).byteLength;
+			if (bytes > MAX_PERSISTED_RECEIPT_HASH_BYTES) {
+				throw new Error("Invalid persisted receipt hash batch");
+			}
+		}
+	}
+
+	private hasValidPersistedReceiptHashes(
+		request: RequestPersistedEntriesV1,
+	): boolean {
+		const seen = new Set<string>();
+		try {
+			for (const hash of request.hashes) {
+				if (seen.has(hash)) return false;
+				cidifyString(hash);
+				seen.add(hash);
+			}
+		} catch {
+			return false;
+		}
+		return true;
+	}
+
+	private getPersistedDeliveryOptions(
+		options?: SharedAppendOptions<T>,
+	): DeliveryOptions | undefined {
+		const delivery = options?.delivery;
+		if (typeof delivery !== "object" || delivery.reliability !== "persisted") {
+			return undefined;
+		}
+		const parsed = this._parseDeliveryOptions(options?.delivery);
+		const target = (options as { target?: string } | undefined)?.target;
+		if (target !== undefined && target !== "replicators") {
+			throw new Error(
+				'persisted delivery requires target="replicators" (or an omitted target)',
+			);
+		}
+		if (
+			parsed.delivery?.timeout != null &&
+			(!Number.isFinite(parsed.delivery.timeout) ||
+				parsed.delivery.timeout <= 0 ||
+				parsed.delivery.timeout > MAX_PERSISTED_DELIVERY_TIMEOUT_MS)
+		) {
+			throw new Error(
+				`persisted delivery timeout must be a positive number no greater than ${MAX_PERSISTED_DELIVERY_TIMEOUT_MS}`,
+			);
+		}
+		if (parsed.delivery?.signal?.aborted) {
+			throw parsed.delivery.signal.reason ?? new AbortError();
+		}
+		return parsed.delivery!;
+	}
+
+	private assertPersistedDeliveryOptions(
+		options?: SharedAppendOptions<T>,
+	): void {
+		this.getPersistedDeliveryOptions(options);
 	}
 
 	private async _getSortedRouteHints(targetHash: string): Promise<RouteHint[]> {
@@ -4631,6 +4942,7 @@ export class SharedLog<
 		plan: RawExchangeHeadSendPlan,
 		to: string[] | Set<string>,
 		options?: {
+			acknowledge?: boolean;
 			priority?: number;
 			reserved?: Uint8Array;
 			signal?: AbortSignal;
@@ -4645,7 +4957,7 @@ export class SharedLog<
 				payload: Uint8Array,
 				properties: { topics: string[] },
 				options: {
-					mode: SilentDelivery;
+					mode: SilentDelivery | AcknowledgeDelivery;
 					priority?: number;
 					signal?: AbortSignal;
 				},
@@ -4733,7 +5045,9 @@ export class SharedLog<
 					item.payload,
 					{ topics: [topic] },
 					{
-						mode: new SilentDelivery({ redundancy: 1, to: [...to] }),
+						mode: options?.acknowledge
+							? new AcknowledgeDelivery({ redundancy: 1, to: [...to] })
+							: new SilentDelivery({ redundancy: 1, to: [...to] }),
 						priority: options?.priority,
 						signal: options?.signal,
 					},
@@ -4772,6 +5086,7 @@ export class SharedLog<
 		hashes: string[],
 		to: string[],
 		options?: {
+			acknowledge?: boolean;
 			priority?: number;
 			reserved?: Uint8Array;
 			signal?: AbortSignal;
@@ -4788,6 +5103,733 @@ export class SharedLog<
 			return 0;
 		}
 		return this.sendFusedRawExchangeHeadsPlan(plan, to, options);
+	}
+
+	private persistedReceiptPeerSession(
+		peerHash: string,
+	): { capabilitySession: bigint; peerSession: PeerSession } | undefined {
+		const capabilitySession = this._peerSyncCapabilitySessions.get(peerHash);
+		const peerSession = this._peerSessions.current(peerHash);
+		if (
+			capabilitySession == null ||
+			!peerSession ||
+			peerSession.phase !== "open" ||
+			!this._peerSessions.isCurrent(peerHash, peerSession) ||
+			!this._peerSyncCapabilityTimestamps.has(peerHash) ||
+			((this._peerSyncCapabilities.get(peerHash) ?? 0) &
+				SYNC_CAPABILITY_PERSISTED_ENTRY_RECEIPTS) ===
+				0
+		) {
+			return undefined;
+		}
+		return { capabilitySession, peerSession };
+	}
+
+	private async waitPersistedReceiptRetry(
+		signal: AbortSignal,
+		ms: number,
+	): Promise<void> {
+		try {
+			await delay(ms, { signal });
+		} catch (error) {
+			throw signal.aborted ? (signal.reason ?? error) : error;
+		}
+	}
+
+	private reservePersistedReceiptEgress(
+		peer: string,
+		capabilitySession: bigint,
+		hashCount: number,
+		now = Date.now(),
+	): number {
+		let nodeBudget = persistedReceiptEgressBudgets.get(this.node);
+		if (!nodeBudget) {
+			nodeBudget = { peerSessions: new Map() };
+			persistedReceiptEgressBudgets.set(this.node, nodeBudget);
+		}
+		const peerSessionKey = `${peer}\0${capabilitySession}`;
+		let bucket = nodeBudget.peerSessions.get(peerSessionKey);
+		if (!bucket) {
+			while (
+				nodeBudget.peerSessions.size >=
+				MAX_PERSISTED_RECEIPT_INGRESS_PEER_SESSIONS
+			) {
+				const oldest = nodeBudget.peerSessions.keys().next().value;
+				if (oldest === undefined) break;
+				nodeBudget.peerSessions.delete(oldest);
+			}
+			bucket = {
+				requestTokens: PERSISTED_RECEIPT_INGRESS_PEER_REQUEST_CAPACITY,
+				hashTokens: PERSISTED_RECEIPT_INGRESS_PEER_HASH_CAPACITY,
+				refilledAt: now,
+			};
+			nodeBudget.peerSessions.set(peerSessionKey, bucket);
+		} else {
+			nodeBudget.peerSessions.delete(peerSessionKey);
+			nodeBudget.peerSessions.set(peerSessionKey, bucket);
+		}
+		refillPersistedReceiptIngressBucket(
+			bucket,
+			now,
+			PERSISTED_RECEIPT_INGRESS_PEER_REQUEST_CAPACITY,
+			PERSISTED_RECEIPT_INGRESS_PEER_HASH_CAPACITY,
+			PERSISTED_RECEIPT_INGRESS_PEER_REQUESTS_PER_SECOND,
+			PERSISTED_RECEIPT_INGRESS_PEER_HASHES_PER_SECOND,
+		);
+		if (bucket.requestTokens >= 1 && bucket.hashTokens >= hashCount) {
+			bucket.requestTokens -= 1;
+			bucket.hashTokens -= hashCount;
+			return 0;
+		}
+		return Math.max(
+			1,
+			Math.ceil(
+				Math.max(
+					((1 - bucket.requestTokens) /
+						PERSISTED_RECEIPT_INGRESS_PEER_REQUESTS_PER_SECOND) *
+						1_000,
+					((hashCount - bucket.hashTokens) /
+						PERSISTED_RECEIPT_INGRESS_PEER_HASHES_PER_SECOND) *
+						1_000,
+				),
+			),
+		);
+	}
+
+	private async waitForPersistedReceiptEgressAdmission(
+		peer: string,
+		capabilitySession: bigint,
+		hashCount: number,
+		signal: AbortSignal,
+	): Promise<void> {
+		while (true) {
+			if (signal.aborted) {
+				throw signal.reason ?? new AbortError();
+			}
+			const waitMs = this.reservePersistedReceiptEgress(
+				peer,
+				capabilitySession,
+				hashCount,
+			);
+			if (waitMs === 0) return;
+			await this.waitPersistedReceiptRetry(signal, waitMs);
+		}
+	}
+
+	private persistedDeliveryTimeoutMs(
+		delivery: DeliveryOptions,
+		hashCount: number,
+	): number {
+		return (
+			delivery.timeout ??
+			Math.min(
+				MAX_PERSISTED_DELIVERY_TIMEOUT_MS,
+				DEFAULT_PERSISTED_RECEIPT_TIMEOUT_MS +
+					persistedTransferAdmissionBudgetMs(hashCount) +
+					Math.ceil(persistedReceiptPacingFloorMs(hashCount)),
+			)
+		);
+	}
+
+	private async waitForPersistedTransferAdmission(
+		peer: string,
+		hashes: readonly string[],
+		captured: { capabilitySession: bigint; peerSession: PeerSession },
+		signal: AbortSignal,
+		isStillCurrent: () => boolean,
+	): Promise<boolean> {
+		const expiresAt = Date.now() + MAX_PERSISTED_RECEIPT_ATTEMPT_MS;
+		while (!signal.aborted && isStillCurrent()) {
+			const current = this.persistedReceiptPeerSession(peer);
+			if (
+				!current ||
+				current.capabilitySession !== captured.capabilitySession ||
+				current.peerSession !== captured.peerSession
+			) {
+				return false;
+			}
+			if (hashes.every((hash) => this.isEntryKnownByPeer(hash, peer))) {
+				return true;
+			}
+			const remaining = expiresAt - Date.now();
+			if (remaining <= 0) return false;
+			await this.waitPersistedReceiptRetry(
+				signal,
+				Math.min(PERSISTED_RECEIPT_RETRY_MS, remaining),
+			);
+		}
+		if (signal.aborted) throw signal.reason ?? new AbortError();
+		return false;
+	}
+
+	private createPersistedDeliveryDeadline(
+		delivery: DeliveryOptions,
+		ownershipLifecycleController: AbortController,
+		hashCount = 1,
+	): PersistedDeliveryDeadline {
+		const timeoutMs = this.persistedDeliveryTimeoutMs(delivery, hashCount);
+		if (
+			!Number.isFinite(timeoutMs) ||
+			timeoutMs <= 0 ||
+			timeoutMs > MAX_PERSISTED_DELIVERY_TIMEOUT_MS
+		) {
+			throw new Error(
+				`persisted delivery timeout must be a positive number no greater than ${MAX_PERSISTED_DELIVERY_TIMEOUT_MS}`,
+			);
+		}
+		const minAcks = Math.floor(delivery.minAcks!);
+		const deadlineController = new AbortController();
+		const timeout = setTimeout(
+			() =>
+				deadlineController.abort(
+					new TimeoutError(
+						`Timed out waiting for ${minAcks} persisted remote replicas.`,
+					),
+				),
+			timeoutMs,
+		);
+		timeout.unref?.();
+		return {
+			deadline: Date.now() + timeoutMs,
+			signal: AbortSignal.any(
+				[
+					delivery.signal,
+					this._closeController.signal,
+					ownershipLifecycleController.signal,
+					deadlineController.signal,
+				].filter((value): value is AbortSignal => !!value),
+			),
+			dispose: () => clearTimeout(timeout),
+		};
+	}
+
+	private async planPersistedDeliveryLeaders(
+		entries: PersistedDeliveryPlanningEntry<T, R>[],
+		replicas: number,
+		ownershipLifecycleController: AbortController,
+	): Promise<LeaderMap[]> {
+		if (
+			this.findLeadersFromEntry !== SharedLog.prototype.findLeadersFromEntry
+		) {
+			const leaders: LeaderMap[] = [];
+			for (const entry of entries) {
+				leaders.push(
+					await this.findLeadersFromEntry(
+						entry,
+						replicas,
+						{ freshLeaderPlan: true },
+						ownershipLifecycleController,
+					),
+				);
+			}
+			return leaders;
+		}
+		const items: EntryLeaderBatchItem<R>[] = entries.map((entry) => ({
+			entry,
+			replicas,
+			options: { freshLeaderPlan: true, persist: false },
+		}));
+		const nativeRoutingPlanner =
+			this._nativeRangePlanner ?? this._nativeBackbone;
+		if (this.canPlanNativeEntryLeaderBatch(items) && nativeRoutingPlanner) {
+			const options = items[0]!.options!;
+			const context = await this.createLeaderSelectionContext(
+				options,
+				ownershipLifecycleController,
+			);
+			this.throwIfReplicationOwnershipLifecycleInactive(
+				ownershipLifecycleController,
+			);
+			const nativeOptions = this.createNativeLeaderOptions(context, options);
+			const fullReplicaLeaders =
+				nativeRoutingPlanner.getRoutingFullReplicaLeaders?.(
+					replicas,
+					nativeOptions,
+				);
+			this.throwIfReplicationOwnershipLifecycleInactive(
+				ownershipLifecycleController,
+			);
+			if (fullReplicaLeaders) {
+				// Receipt settlement treats leader maps as read-only. Reusing the one
+				// gid-independent routing result avoids one Map allocation per entry.
+				return new Array<LeaderMap>(items.length).fill(fullReplicaLeaders);
+			}
+			if (nativeRoutingPlanner.planLeaderSamplesForGidsBatch) {
+				const nativeLeaders =
+					nativeRoutingPlanner.planLeaderSamplesForGidsBatch(
+						items.map((item) => ({
+							gid: this.getEntryGid(item.entry),
+							replicas: item.replicas,
+						})),
+						nativeOptions,
+					);
+				this.throwIfReplicationOwnershipLifecycleInactive(
+					ownershipLifecycleController,
+				);
+				if (nativeLeaders?.length === items.length) {
+					return nativeLeaders;
+				}
+			}
+		}
+		return (
+			await this.planEntryLeaderBatch(items, ownershipLifecycleController)
+		).map((plan) => plan.leaders);
+	}
+
+	private async settlePersistedDelivery(
+		input: PersistedDeliveryPlanningEntry<T, R>[],
+		replicas: number,
+		delivery: DeliveryOptions,
+		ownershipLifecycleController = this.captureReplicationOwnershipLifecycle(),
+		persistedDeadline?: PersistedDeliveryDeadline,
+		transferOnFirstRound = false,
+	): Promise<void> {
+		const minAcks = Math.floor(delivery.minAcks!);
+		const entries = new Map(input.map((entry) => [entry.hash, entry]));
+		if (entries.size === 0) return;
+
+		const committedHashes = [...entries.keys()];
+		const ownedDeadline = !persistedDeadline;
+		const deadline =
+			persistedDeadline ??
+			this.createPersistedDeliveryDeadline(
+				delivery,
+				ownershipLifecycleController,
+				entries.size,
+			);
+		const signal = deadline.signal;
+		let maxAttemptMs = MAX_PERSISTED_RECEIPT_ATTEMPT_MS;
+		let initialTransferPending = transferOnFirstRound;
+		let needsInitialLeaderCheck = true;
+		const carriedAcknowledgements = new Map<
+			string,
+			Map<string, { capabilitySession: bigint; peerSession: PeerSession }>
+		>(committedHashes.map((hash) => [hash, new Map()]));
+		const repairsByPeer = new Map<
+			string,
+			{
+				capabilitySession: bigint;
+				peerSession: PeerSession;
+				hashes: Set<string>;
+			}
+		>();
+		let acknowledgementOwnershipRevision: number | undefined;
+		const purgePeerDeliveryState = (peer: string) => {
+			for (const acknowledgements of carriedAcknowledgements.values()) {
+				acknowledgements.delete(peer);
+			}
+			repairsByPeer.delete(peer);
+		};
+		try {
+			while (true) {
+				if (signal.aborted) {
+					throw signal.reason ?? new AbortError();
+				}
+				this.throwIfReplicationOwnershipLifecycleInactive(
+					ownershipLifecycleController,
+				);
+				const ownershipRevision =
+					this._instanceLifecycle?._receiveOwnershipRevision ?? 0;
+				const isRoundOwnershipCurrent = () =>
+					this.isReceiveOwnershipSnapshotStable(ownershipRevision);
+				if (acknowledgementOwnershipRevision !== ownershipRevision) {
+					for (const acknowledgements of carriedAcknowledgements.values()) {
+						acknowledgements.clear();
+					}
+					repairsByPeer.clear();
+					acknowledgementOwnershipRevision = ownershipRevision;
+				} else {
+					for (const acknowledgements of carriedAcknowledgements.values()) {
+						for (const [peer, captured] of acknowledgements) {
+							const current = this.persistedReceiptPeerSession(peer);
+							if (
+								!current ||
+								current.capabilitySession !== captured.capabilitySession ||
+								current.peerSession !== captured.peerSession
+							) {
+								purgePeerDeliveryState(peer);
+							}
+						}
+					}
+				}
+				if (!isRoundOwnershipCurrent()) {
+					await this.waitPersistedReceiptRetry(
+						signal,
+						PERSISTED_RECEIPT_RETRY_MS,
+					);
+					continue;
+				}
+
+				// Carry receipts only across retries in the exact same ownership and
+				// transport epoch. A revision/session change purges them before they can
+				// survive an away-and-back leader transition or combine with a later peer.
+				const hashesByPeer = new Map<string, string[]>();
+				const entryArray = [...entries.values()];
+				const leadersByEntry = await this.planPersistedDeliveryLeaders(
+					entryArray,
+					replicas,
+					ownershipLifecycleController,
+				);
+				if (!isRoundOwnershipCurrent()) continue;
+				const selfHash = this.node.identity.publicKey.hashcode();
+				if (needsInitialLeaderCheck) {
+					needsInitialLeaderCheck = false;
+					if (
+						leadersByEntry.some(
+							(leaders) =>
+								leaders.size === 0 ||
+								(leaders.size === 1 && leaders.has(selfHash)),
+						)
+					) {
+						throw new NoPeersError(this.rpc.topic);
+					}
+				}
+				for (let index = 0; index < entryArray.length; index++) {
+					const hash = entryArray[index]!.hash;
+					const leaders = leadersByEntry[index]!;
+					if (signal.aborted) {
+						throw signal.reason ?? new AbortError();
+					}
+					if (!isRoundOwnershipCurrent()) break;
+					const acknowledgements = carriedAcknowledgements.get(hash)!;
+					for (const [peer, captured] of acknowledgements) {
+						const current = this.persistedReceiptPeerSession(peer);
+						if (
+							!leaders.has(peer) ||
+							!current ||
+							current.capabilitySession !== captured.capabilitySession ||
+							current.peerSession !== captured.peerSession
+						) {
+							acknowledgements.delete(peer);
+						}
+					}
+					if (acknowledgements.size >= minAcks) continue;
+					for (const peer of leaders.keys()) {
+						if (peer === selfHash) continue;
+						const current = this.persistedReceiptPeerSession(peer);
+						if (!current) continue;
+						if (acknowledgements.has(peer)) continue;
+						const hashes = hashesByPeer.get(peer) ?? [];
+						hashes.push(hash);
+						hashesByPeer.set(peer, hashes);
+					}
+				}
+				if (!isRoundOwnershipCurrent()) continue;
+
+				const operationQueue = new PQueue({
+					concurrency: MAX_PERSISTED_RECEIPT_REQUESTS_GLOBAL,
+				});
+				const candidateWaves = Math.max(
+					1,
+					Math.ceil(hashesByPeer.size / MAX_PERSISTED_RECEIPT_REQUESTS_GLOBAL),
+				);
+				const roundController = new AbortController();
+				const roundSignal = AbortSignal.any([signal, roundController.signal]);
+				const getAttemptTimeout = () =>
+					Math.max(
+						1,
+						Math.min(
+							maxAttemptMs,
+							Math.floor((deadline.deadline - Date.now()) / candidateWaves),
+						),
+					);
+				const requests = new Set<Promise<void>>();
+				const transferAllOnRound = initialTransferPending;
+				try {
+					for (const [peer, hashes] of hashesByPeer) {
+						let request!: Promise<void>;
+						request = (async () => {
+							const captured = this.persistedReceiptPeerSession(peer);
+							if (!captured) return;
+							const previousRepair = repairsByPeer.get(peer);
+							if (
+								previousRepair &&
+								(previousRepair.capabilitySession !==
+									captured.capabilitySession ||
+									previousRepair.peerSession !== captured.peerSession)
+							) {
+								repairsByPeer.delete(peer);
+							}
+							const ensureRepairState = () => {
+								let state = repairsByPeer.get(peer);
+								if (!state) {
+									state = {
+										capabilitySession: captured.capabilitySession,
+										peerSession: captured.peerSession,
+										hashes: new Set<string>(),
+									};
+									repairsByPeer.set(peer, state);
+								}
+								return state;
+							};
+							const isPeerRoundCurrent = () => {
+								if (roundSignal.aborted || !isRoundOwnershipCurrent()) {
+									return false;
+								}
+								const current = this.persistedReceiptPeerSession(peer);
+								return (
+									!!current &&
+									current.capabilitySession === captured.capabilitySession &&
+									current.peerSession === captured.peerSession
+								);
+							};
+							const repairs = repairsByPeer.get(peer)?.hashes;
+							const transferHashes = transferAllOnRound
+								? hashes
+								: repairs
+									? hashes.filter((hash) => repairs.has(hash))
+									: [];
+							let attemptedHashCount = 0;
+							if (transferHashes.length > 0) {
+								try {
+									await this.pushEntryHashes(peer, transferHashes, {
+										acknowledge: false,
+										chunkTimeout: getAttemptTimeout,
+										chunkSize: PERSISTED_TRANSFER_CHUNK_SIZE,
+										isStillCurrent: isPeerRoundCurrent,
+										onChunkAttempted: (chunk) => {
+											attemptedHashCount += chunk.length;
+											if (!transferAllOnRound) {
+												const state = repairsByPeer.get(peer);
+												for (const hash of chunk) state?.hashes.delete(hash);
+											}
+										},
+										onChunkSent: async (chunk) => {
+											return this.waitForPersistedTransferAdmission(
+												peer,
+												chunk,
+												captured,
+												roundSignal,
+												isPeerRoundCurrent,
+											);
+										},
+										operationQueue,
+										priority: delivery.priority,
+										repairHint: !transferAllOnRound,
+										signal: roundSignal,
+									});
+								} catch {
+									// A send can fail after remote admission. The attempted prefix
+									// includes that uncertain chunk for authoritative receipt probing.
+								}
+								if (
+									transferAllOnRound &&
+									attemptedHashCount < transferHashes.length
+								) {
+									const state = ensureRepairState();
+									for (const hash of transferHashes.slice(attemptedHashCount)) {
+										state.hashes.add(hash);
+									}
+								}
+							}
+							const receiptHashes = transferAllOnRound
+								? hashes.slice(0, attemptedHashCount)
+								: hashes;
+							if (!isPeerRoundCurrent()) {
+								purgePeerDeliveryState(peer);
+								return;
+							}
+							// Keep receipt chunks sequential per peer. The shared operation
+							// queue bounds only active sends/requests; admission waits never
+							// occupy its slots and cannot starve a later healthy candidate.
+							for (
+								let offset = 0;
+								offset < receiptHashes.length;
+								offset += PERSISTED_RECEIPT_CHUNK_SIZE
+							) {
+								const requestedHashes = receiptHashes.slice(
+									offset,
+									offset + PERSISTED_RECEIPT_CHUNK_SIZE,
+								);
+								if (roundSignal.aborted || !isPeerRoundCurrent()) {
+									if (!isRoundOwnershipCurrent()) roundController.abort();
+									break;
+								}
+								let responses;
+								try {
+									await this.waitForPersistedReceiptEgressAdmission(
+										peer,
+										captured.capabilitySession,
+										requestedHashes.length,
+										roundSignal,
+									);
+									if (!isPeerRoundCurrent()) break;
+									const attemptTimeout = getAttemptTimeout();
+									responses =
+										(await operationQueue.add(async () => {
+											if (!isPeerRoundCurrent()) return [];
+											return this.rpc.request(
+												new RequestPersistedEntriesV1({
+													expectedReceiverSession: captured.capabilitySession,
+													hashes: requestedHashes,
+												}),
+												{
+													mode: new SilentDelivery({
+														to: [peer],
+														redundancy: 1,
+													}),
+													amount: 1,
+													priority: delivery.priority,
+													timeout: attemptTimeout,
+													signal: roundSignal,
+												},
+											);
+										})) ?? [];
+								} catch {
+									if (roundSignal.aborted) break;
+									// A peer can disconnect or miss this retry while the overall
+									// quorum deadline remains active. Replan on the next round.
+									break;
+								}
+								if (!isRoundOwnershipCurrent()) {
+									roundController.abort();
+									break;
+								}
+								const current = this.persistedReceiptPeerSession(peer);
+								if (
+									!current ||
+									current.capabilitySession !== captured.capabilitySession ||
+									current.peerSession !== captured.peerSession
+								) {
+									purgePeerDeliveryState(peer);
+									break;
+								}
+								const requested = new Set(requestedHashes);
+								const confirmed = new Set<string>();
+								let receivedValidConfirmation = false;
+								for (const result of responses) {
+									if (
+										!(result.response instanceof ConfirmEntriesMessage) ||
+										result.from?.hashcode() !== peer ||
+										result.message.header.session !== captured.capabilitySession
+									) {
+										continue;
+									}
+									const unique = new Set(result.response.hashes);
+									if (
+										unique.size !== result.response.hashes.length ||
+										[...unique].some((hash) => !requested.has(hash))
+									) {
+										continue;
+									}
+									receivedValidConfirmation = true;
+									for (const hash of unique) {
+										confirmed.add(hash);
+										carriedAcknowledgements.get(hash)?.set(peer, captured);
+									}
+								}
+								if (receivedValidConfirmation) {
+									const state = ensureRepairState();
+									for (const hash of requested) {
+										if (confirmed.has(hash)) {
+											state.hashes.delete(hash);
+										} else {
+											state.hashes.add(hash);
+										}
+									}
+								}
+							}
+						})()
+							.then(() => undefined)
+							.catch(() => undefined)
+							.finally(() => requests.delete(request));
+						requests.add(request);
+					}
+
+					const roundComplete = async (): Promise<boolean> => {
+						if (signal.aborted) {
+							throw signal.reason ?? new AbortError();
+						}
+						if (!isRoundOwnershipCurrent()) return false;
+						for (const acknowledgements of carriedAcknowledgements.values()) {
+							if (acknowledgements.size < minAcks) return false;
+						}
+						const validatedLeaders = await this.planPersistedDeliveryLeaders(
+							entryArray,
+							replicas,
+							ownershipLifecycleController,
+						);
+						for (let index = 0; index < entryArray.length; index++) {
+							if (signal.aborted || !isRoundOwnershipCurrent()) {
+								if (signal.aborted) {
+									throw signal.reason ?? new AbortError();
+								}
+								return false;
+							}
+							const hash = entryArray[index]!.hash;
+							const leaders = validatedLeaders[index]!;
+							let valid = 0;
+							const acknowledgements = carriedAcknowledgements.get(hash)!;
+							for (const [peer, captured] of acknowledgements) {
+								const current = this.persistedReceiptPeerSession(peer);
+								if (
+									!current ||
+									current.capabilitySession !== captured.capabilitySession ||
+									current.peerSession !== captured.peerSession
+								) {
+									purgePeerDeliveryState(peer);
+									continue;
+								}
+								if (!leaders.has(peer)) {
+									acknowledgements.delete(peer);
+									continue;
+								}
+								if (++valid >= minAcks) {
+									break;
+								}
+							}
+							if (valid < minAcks) return false;
+						}
+						this.throwIfReplicationOwnershipLifecycleInactive(
+							ownershipLifecycleController,
+						);
+						if (signal.aborted) {
+							throw signal.reason ?? new AbortError();
+						}
+						return isRoundOwnershipCurrent();
+					};
+
+					while (requests.size > 0) {
+						await Promise.race(requests);
+						if (await roundComplete()) {
+							return;
+						}
+					}
+					if (await roundComplete()) {
+						return;
+					}
+				} finally {
+					roundController.abort();
+					void Promise.allSettled([...requests]);
+				}
+				if (isRoundOwnershipCurrent()) {
+					initialTransferPending = false;
+				}
+				// Keep early retries fair and responsive, then let a caller's longer
+				// overall deadline accommodate a genuinely slow durability barrier.
+				maxAttemptMs = Math.min(
+					MAX_PERSISTED_DELIVERY_TIMEOUT_MS,
+					maxAttemptMs * 2,
+				);
+				await this.waitPersistedReceiptRetry(
+					signal,
+					Math.max(
+						0,
+						Math.min(
+							PERSISTED_RECEIPT_RETRY_MS,
+							deadline.deadline - Date.now(),
+						),
+					),
+				);
+			}
+		} catch (error) {
+			if (error instanceof PersistedDeliveryError) {
+				throw error;
+			}
+			throw new PersistedDeliveryError(error, committedHashes);
+		} finally {
+			if (ownedDeadline) deadline.dispose();
+		}
 	}
 
 	private async _appendDeliverToReplicators(
@@ -7850,13 +8892,7 @@ export class SharedLog<
 				try {
 					const fanoutService = getSharedLogFanoutService(this.node.services);
 					if (fanoutService?.provide && !this._providerHandle) {
-						this._providerHandle = fanoutService.provide(
-							`shared-log|${this.topic}`,
-							{
-								ttlMs: 120_000,
-								announceIntervalMs: 60_000,
-							},
-						);
+						this.ensureLogProviderHandle(fanoutService);
 					}
 				} catch {
 					// Best-effort only.
@@ -8368,61 +9404,133 @@ export class SharedLog<
 		}
 	}
 
+	private async pushEntryHashChunk(
+		target: string,
+		chunk: string[],
+		options: {
+			acknowledge?: boolean;
+			priority?: number;
+			repairHint?: boolean;
+			signal?: AbortSignal;
+		},
+		isStillCurrent: () => boolean,
+	): Promise<boolean> {
+		if (!isStillCurrent()) return false;
+		const useRaw =
+			this._logProperties?.sync?.rawExchangeHeads === true &&
+			this.peerSupportsRawExchangeHeads(target);
+		if (useRaw) {
+			const reserved = options.repairHint ? new Uint8Array(4) : undefined;
+			if (reserved) reserved[0] |= EXCHANGE_HEADS_REPAIR_HINT;
+			const sentMessages = await this.trySendFusedRawExchangeHeads(
+				chunk,
+				[target],
+				{
+					acknowledge: options.acknowledge,
+					priority: options.priority,
+					reserved,
+					signal: options.signal,
+				},
+			);
+			if (!isStillCurrent()) return false;
+			if (sentMessages === undefined) {
+				for await (const message of createRawExchangeHeadsMessages(
+					this.log,
+					chunk,
+					this._logProperties?.sync?.profile,
+				)) {
+					if (!isStillCurrent()) return false;
+					if (options.repairHint) {
+						message.reserved[0] |= EXCHANGE_HEADS_REPAIR_HINT;
+					}
+					await this.rpc.send(message, {
+						priority: options.priority,
+						mode: options.acknowledge
+							? new AcknowledgeDelivery({ to: [target], redundancy: 1 })
+							: new SilentDelivery({ to: [target], redundancy: 1 }),
+						signal: options.signal,
+					});
+				}
+			}
+		} else {
+			for await (const message of createExchangeHeadsMessages(
+				this.log,
+				chunk,
+			)) {
+				if (!isStillCurrent()) return false;
+				if (options.repairHint) {
+					message.reserved[0] |= EXCHANGE_HEADS_REPAIR_HINT;
+				}
+				await this.rpc.send(message, {
+					priority: options.priority,
+					mode: options.acknowledge
+						? new AcknowledgeDelivery({ to: [target], redundancy: 1 })
+						: new SilentDelivery({ to: [target], redundancy: 1 }),
+					signal: options.signal,
+				});
+			}
+		}
+		return isStillCurrent();
+	}
+
+	private async pushEntryHashes(
+		target: string,
+		hashes: string[],
+		options: {
+			acknowledge?: boolean;
+			chunkTimeout?: () => number;
+			chunkSize?: number;
+			isStillCurrent?: () => boolean;
+			onChunkAttempted?: (hashes: readonly string[]) => void;
+			onChunkSent?: (hashes: readonly string[]) => Promise<boolean>;
+			operationQueue?: PQueue;
+			priority?: number;
+			repairHint?: boolean;
+			signal?: AbortSignal;
+		},
+	) {
+		const isStillCurrent = options.isStillCurrent ?? (() => true);
+		if (!isStillCurrent()) return;
+		const chunkSize = Math.max(1, options.chunkSize ?? hashes.length);
+		for (let offset = 0; offset < hashes.length; offset += chunkSize) {
+			const chunk = hashes.slice(offset, offset + chunkSize);
+			const pushChunk = () => {
+				options.onChunkAttempted?.(chunk);
+				const chunkTimeout = options.chunkTimeout?.();
+				const chunkSignal =
+					chunkTimeout == null
+						? options.signal
+						: AbortSignal.any([
+								...(options.signal ? [options.signal] : []),
+								AbortSignal.timeout(Math.max(1, chunkTimeout)),
+							]);
+				return this.pushEntryHashChunk(
+					target,
+					chunk,
+					{ ...options, signal: chunkSignal },
+					isStillCurrent,
+				);
+			};
+			const pushed = options.operationQueue
+				? await options.operationQueue.add(pushChunk)
+				: await pushChunk();
+			if (pushed !== true) return;
+			if (options.onChunkSent && !(await options.onChunkSent(chunk))) return;
+		}
+	}
+
 	private async pushRepairEntries(
 		target: string,
 		entries: ReadonlyMap<string, RepairDispatchEntry<R>>,
 		isStillCurrent: () => boolean = () => true,
 		signal?: AbortSignal,
 	) {
-		if (!isStillCurrent()) {
-			return;
-		}
-		const hashes = [...entries.keys()];
-		if (
-			this._logProperties?.sync?.rawExchangeHeads === true &&
-			this.peerSupportsRawExchangeHeads(target)
-		) {
-			const reserved = new Uint8Array(4);
-			reserved[0] |= EXCHANGE_HEADS_REPAIR_HINT;
-			const sentMessages = await this.trySendFusedRawExchangeHeads(
-				hashes,
-				[target],
-				{ priority: SYNC_MESSAGE_PRIORITY, reserved, signal },
-			);
-			if (!isStillCurrent()) {
-				return;
-			}
-			if (sentMessages !== undefined) {
-				return;
-			}
-			for await (const message of createRawExchangeHeadsMessages(
-				this.log,
-				hashes,
-				this._logProperties?.sync?.profile,
-			)) {
-				if (!isStillCurrent()) {
-					return;
-				}
-				message.reserved[0] |= EXCHANGE_HEADS_REPAIR_HINT;
-				await this.rpc.send(message, {
-					priority: SYNC_MESSAGE_PRIORITY,
-					mode: new SilentDelivery({ to: [target], redundancy: 1 }),
-					signal,
-				});
-			}
-			return;
-		}
-		for await (const message of createExchangeHeadsMessages(this.log, hashes)) {
-			if (!isStillCurrent()) {
-				return;
-			}
-			message.reserved[0] |= EXCHANGE_HEADS_REPAIR_HINT;
-			await this.rpc.send(message, {
-				priority: SYNC_MESSAGE_PRIORITY,
-				mode: new SilentDelivery({ to: [target], redundancy: 1 }),
-				signal,
-			});
-		}
+		return this.pushEntryHashes(target, [...entries.keys()], {
+			isStillCurrent,
+			priority: SYNC_MESSAGE_PRIORITY,
+			repairHint: true,
+			signal,
+		});
 	}
 
 	private async sendRepairEntriesWithTransport(
@@ -10395,6 +11503,7 @@ export class SharedLog<
 		removed: ShallowOrFullEntry<T>[];
 	}> {
 		this.throwIfNativeDurableCommitFailed();
+		const persistedDelivery = this.getPersistedDeliveryOptions(options);
 		const ownershipLifecycleController =
 			this.captureReplicationOwnershipLifecycle();
 		if (this._isAdaptiveReplicating) {
@@ -10405,18 +11514,73 @@ export class SharedLog<
 			options,
 			ownershipLifecycleController,
 		);
-		const result = await this.log.append(data, appendOptions);
-		this.throwIfReplicationOwnershipLifecycleInactive(
-			ownershipLifecycleController,
-		);
-		await this.processLocalAppend(result.entry, result.removed, options, {
-			minReplicasValue,
-			ownershipLifecycleController,
-		});
-		this.throwIfReplicationOwnershipLifecycleInactive(
-			ownershipLifecycleController,
-		);
-		return result;
+		let committedHashes: readonly string[] | undefined;
+		if (persistedDelivery) {
+			(appendOptions as TrustedLogAppendOptions<T>).__peerbitOnLocalCommit = (
+				hashes,
+			) => {
+				// The lower log reports the exact hashes immediately after their
+				// irreversible local mutation and before entry initialization, trim,
+				// or change callbacks can reject the append.
+				committedHashes = hashes;
+			};
+		}
+		let persistedDeadline: PersistedDeliveryDeadline | undefined;
+		const throwIfDeliveryAborted = () => {
+			if (persistedDeadline?.signal.aborted) {
+				throw persistedDeadline.signal.reason ?? new AbortError();
+			}
+		};
+		try {
+			const result = await this.log.append(data, appendOptions);
+			committedHashes ??= [result.entry.hash];
+			persistedDeadline = persistedDelivery
+				? this.createPersistedDeliveryDeadline(
+						persistedDelivery,
+						ownershipLifecycleController,
+						1,
+					)
+				: undefined;
+			this.throwIfReplicationOwnershipLifecycleInactive(
+				ownershipLifecycleController,
+			);
+			throwIfDeliveryAborted();
+			await this.processLocalAppend(result.entry, result.removed, options, {
+				minReplicasValue,
+				ownershipLifecycleController,
+			});
+			throwIfDeliveryAborted();
+			if (persistedDelivery && persistedDeadline) {
+				await this.settlePersistedDelivery(
+					[result.entry],
+					minReplicasValue,
+					persistedDelivery,
+					ownershipLifecycleController,
+					persistedDeadline,
+				);
+			}
+			this.throwIfReplicationOwnershipLifecycleInactive(
+				ownershipLifecycleController,
+			);
+			return result;
+		} catch (error) {
+			if (persistedDelivery && committedHashes) {
+				throw new PersistedDeliveryError(error, committedHashes);
+			}
+			throw error;
+		} finally {
+			persistedDeadline?.dispose();
+		}
+	}
+
+	private rejectPersistedDeliveryOnTrustedLocalAppend(
+		options?: SharedAppendOptions<T>,
+	): void {
+		if (this.getPersistedDeliveryOptions(options)) {
+			throw new Error(
+				"trusted local append paths require delivery=false; call deliverPersistedEntries after the local commit",
+			);
+		}
 	}
 
 	// Trusted local append path for callers that already validated the entry.
@@ -10428,6 +11592,7 @@ export class SharedLog<
 		removed: ShallowOrFullEntry<T>[];
 	}> {
 		this.throwIfNativeDurableCommitFailed();
+		this.rejectPersistedDeliveryOnTrustedLocalAppend(options);
 		const ownershipLifecycleController =
 			this.captureReplicationOwnershipLifecycle();
 		if (options?.canAppend || options?.onChange) {
@@ -10468,6 +11633,7 @@ export class SharedLog<
 			skipMissingNextJoin?: boolean;
 			resolveTrimmedEntries?: boolean;
 			payloadData?: Uint8Array;
+			localCommitEvidence?: TrustedLocalCommitEvidence;
 		},
 	): Promise<{
 		entry: Entry<T>;
@@ -10477,6 +11643,7 @@ export class SharedLog<
 		appendCommit: PreparedLocalAppendCommit<R>;
 	}> {
 		this.throwIfNativeDurableCommitFailed();
+		this.rejectPersistedDeliveryOnTrustedLocalAppend(options);
 		const ownershipLifecycleController =
 			this.captureReplicationOwnershipLifecycle();
 		if (options?.canAppend || options?.onChange) {
@@ -10491,6 +11658,10 @@ export class SharedLog<
 		const { appendOptions, minReplicasValue } =
 			this.createLogAppendOptions(options);
 		appendOptions.__peerbitCanAppendAlreadyValidated = true;
+		attachTrustedLocalCommitEvidence(
+			appendOptions,
+			properties?.localCommitEvidence,
+		);
 		const result = await asTrustedLowerLog(this.log).appendLocallyPrepared(
 			data,
 			appendOptions,
@@ -10500,6 +11671,11 @@ export class SharedLog<
 				payloadData: properties?.payloadData,
 			},
 		);
+		if (properties?.localCommitEvidence) {
+			properties.localCommitEvidence.committedHashes.add(
+				result.appendFacts.hash,
+			);
+		}
 		this.throwIfReplicationOwnershipLifecycleInactive(
 			ownershipLifecycleController,
 		);
@@ -10748,6 +11924,9 @@ export class SharedLog<
 			skipMissingNextJoin: properties?.skipMissingNextJoin,
 			resolveTrimmedEntries: properties?.resolveTrimmedEntries,
 			payloadData,
+			...(properties?.localCommitEvidence
+				? { localCommitEvidence: properties.localCommitEvidence }
+				: undefined),
 		});
 	}
 
@@ -10758,6 +11937,7 @@ export class SharedLog<
 		properties?: PreparedPayloadCommitOnlyProperties,
 	): MaybePromise<PreparedPayloadCommitOnlyResult<T, R> | undefined> {
 		this.throwIfNativeDurableCommitFailed();
+		this.rejectPersistedDeliveryOnTrustedLocalAppend(options);
 		if (options?.canAppend || options?.onChange) {
 			throw new Error(
 				"appendLocallyPreparedPayloadCommitOnly does not accept canAppend or onChange hooks",
@@ -10781,6 +11961,10 @@ export class SharedLog<
 		const { appendOptions, minReplicasValue } =
 			this.createLogAppendOptions(options);
 		appendOptions.__peerbitCanAppendAlreadyValidated = true;
+		attachTrustedLocalCommitEvidence(
+			appendOptions,
+			properties?.localCommitEvidence,
+		);
 		const deferHeadCoordinatePersistence =
 			this.shouldDeferHeadCoordinatePersistence(options);
 		const nativeBackboneResult =
@@ -10830,6 +12014,7 @@ export class SharedLog<
 		properties?: PreparedPayloadCommitOnlyProperties,
 	): MaybePromise<PreparedPayloadCommitOnlyResult<T, R> | undefined> {
 		this.throwIfNativeDurableCommitFailed();
+		this.rejectPersistedDeliveryOnTrustedLocalAppend(options);
 		if (options?.canAppend || options?.onChange) {
 			throw new Error(
 				"appendStrictNativeDocumentPayloadCommitOnly does not accept canAppend or onChange hooks",
@@ -10853,6 +12038,10 @@ export class SharedLog<
 		const { appendOptions, minReplicasValue } =
 			this.createLogAppendOptions(options);
 		appendOptions.__peerbitCanAppendAlreadyValidated = true;
+		attachTrustedLocalCommitEvidence(
+			appendOptions,
+			properties?.localCommitEvidence,
+		);
 		const result = this.appendLocallyPreparedPayloadNativeBackboneCommitOnly(
 			payloadData,
 			appendOptions,
@@ -10892,6 +12081,11 @@ export class SharedLog<
 			includeAppendFactsBytes: !deferHeadCoordinatePersistence,
 		});
 		return mapMaybePromise(resultMaybe, (result) => {
+			if (result && properties?.localCommitEvidence) {
+				properties.localCommitEvidence.committedHashes.add(
+					result.appendFacts.hash,
+				);
+			}
 			this.throwIfReplicationOwnershipLifecycleInactive(
 				ownershipLifecycleController,
 			);
@@ -11472,25 +12666,28 @@ export class SharedLog<
 			// boundary separates the catch above from this statement and
 			// `rollback` can no longer fire. Nothing downstream rolls back
 			// (the retire below only warns), so the token is terminal here.
-			this._coordinates.settleResidentCoordinateSnapshot(
-				lowerPublicationRollback?.coordinateEntries,
-			);
-			this.applyPreparedAppendFactsWithDeferredCoordinateDeletes(
-				prepared.appendFacts,
-				prepared.removed,
-				prepared.materializeEntry,
-				{
-					removedHashes: prepared.removedHashes,
-					removedGids: prepared.removedGids,
+			if (properties?.localCommitEvidence) {
+				properties.localCommitEvidence.committedHashes.add(
+					prepared.appendFacts.hash,
+				);
+			}
+			await this.finishCommittedNativeStrictDurableTransaction(
+				nativeStrictTransaction,
+				() => {
+					this._coordinates.settleResidentCoordinateSnapshot(
+						lowerPublicationRollback?.coordinateEntries,
+					);
+					this.applyPreparedAppendFactsWithDeferredCoordinateDeletes(
+						prepared.appendFacts,
+						prepared.removed,
+						prepared.materializeEntry,
+						{
+							removedHashes: prepared.removedHashes,
+							removedGids: prepared.removedGids,
+						},
+					);
 				},
 			);
-			try {
-				await this.completeNativeStrictDurableTransaction(
-					nativeStrictTransaction,
-				);
-			} catch (error) {
-				warn(`Failed to retire committed native intent: ${String(error)}`);
-			}
 			return finishResult;
 		});
 	}
@@ -12123,26 +13320,29 @@ export class SharedLog<
 					// Success seam: the finalizer acknowledge above is the last
 					// await inside the protected try, so `rollback` can no
 					// longer fire and the retire below only warns.
-					this._coordinates.settleResidentCoordinateSnapshot(
-						rollbackCoordinateEntries,
-					);
-					this.applyPreparedAppendFactsWithDeferredCoordinateDeletes(
-						prepared.appendFacts,
-						prepared.removed,
-						prepared.materializeEntry,
-						{
-							forgetNativeCoordinates: false,
-							removedHashes: prepared.removedHashes,
-							removedGids: prepared.removedGids,
+					if (properties?.localCommitEvidence) {
+						properties.localCommitEvidence.committedHashes.add(
+							prepared.appendFacts.hash,
+						);
+					}
+					await this.finishCommittedNativeStrictDurableTransaction(
+						nativeStrictTransaction,
+						() => {
+							this._coordinates.settleResidentCoordinateSnapshot(
+								rollbackCoordinateEntries,
+							);
+							this.applyPreparedAppendFactsWithDeferredCoordinateDeletes(
+								prepared.appendFacts,
+								prepared.removed,
+								prepared.materializeEntry,
+								{
+									forgetNativeCoordinates: false,
+									removedHashes: prepared.removedHashes,
+									removedGids: prepared.removedGids,
+								},
+							);
 						},
 					);
-					try {
-						await this.completeNativeStrictDurableTransaction(
-							nativeStrictTransaction,
-						);
-					} catch (error) {
-						warn(`Failed to retire committed native intent: ${String(error)}`);
-					}
 					if (
 						commitBlocksInBackbone &&
 						!runtimeOnlyCoordinates &&
@@ -13235,73 +14435,73 @@ export class SharedLog<
 					nativeStrictTransaction,
 				);
 			});
-			this.throwIfReplicationOwnershipLifecycleInactive(
-				ownershipLifecycleController,
-			);
 		} catch (error) {
 			return rollbackBatch(error);
 		}
 		// Success seam: `rollbackBatch` has exactly one call site (the catch
 		// above), and everything from here on escapes without any rollback.
-		this._coordinates.settleResidentCoordinateSnapshot(
-			batchCoordinateRollback,
-		);
-
-		this.throwIfReplicationOwnershipLifecycleInactive(
-			ownershipLifecycleController,
-		);
-		const appendCommits: PreparedLocalAppendCommit<R>[] = [];
-		for (let i = 0; i < coordinateRows.length; i++) {
-			const {
-				facts,
-				backboneAppend,
-				coordinateFields,
-				plannedCoordinateDeleteHashes,
-			} = coordinateRows[i]!;
-			this.applyPreparedAppendFactsWithDeferredCoordinateDeletes(
-				facts,
-				[],
-				appended.materializeEntries[i]!,
-				{
-					forgetNativeCoordinates: false,
-					removedHashes: plannedCoordinateDeleteHashes,
-					removedGids:
-						backboneAppend.trimmedGids ??
-						(backboneAppend.trimmed.length > 0
-							? backboneAppend.trimmed.map((entry) => entry.gid)
-							: undefined),
-				},
-			);
-			if (!runtimeOnlyCoordinates && this.remoteBlocks.hasNotifyStoredHook()) {
-				this.remoteBlocks.notifyStoredDeferred(facts.hash);
+		if (properties?.localCommitEvidence) {
+			for (const facts of appended.appendFacts) {
+				properties.localCommitEvidence.committedHashes.add(facts.hash);
 			}
-			const appendCommit = this.createPreparedLocalAppendCommitFromFacts(
-				facts,
-				{
-					hashNumber: backboneAppend.coordinate.hashNumber as NumberFromType<R>,
-					coordinateFields,
-				},
-			);
-			appendCommit.nativeBackboneDocumentIndexCommitted = true;
-			appendCommit.nativeBackboneDocumentIndexTrimmedHeadsProcessed =
-				appended.documentTrimmedHeadsProcessed?.[i];
-			appendCommit.documentPreviousContext =
-				backboneAppend.documentPreviousContext;
-			appendCommits.push(appendCommit);
 		}
-		try {
-			await this.completeNativeStrictDurableTransaction(
+		const appendCommits =
+			await this.finishCommittedNativeStrictDurableTransaction(
 				nativeStrictTransaction,
+				() => {
+					this._coordinates.settleResidentCoordinateSnapshot(
+						batchCoordinateRollback,
+					);
+					this.throwIfReplicationOwnershipLifecycleInactive(
+						ownershipLifecycleController,
+					);
+					const commits: PreparedLocalAppendCommit<R>[] = [];
+					for (let i = 0; i < coordinateRows.length; i++) {
+						const {
+							facts,
+							backboneAppend,
+							coordinateFields,
+							plannedCoordinateDeleteHashes,
+						} = coordinateRows[i]!;
+						this.applyPreparedAppendFactsWithDeferredCoordinateDeletes(
+							facts,
+							[],
+							appended.materializeEntries[i]!,
+							{
+								forgetNativeCoordinates: false,
+								removedHashes: plannedCoordinateDeleteHashes,
+								removedGids:
+									backboneAppend.trimmedGids ??
+									(backboneAppend.trimmed.length > 0
+										? backboneAppend.trimmed.map((entry) => entry.gid)
+										: undefined),
+							},
+						);
+						if (
+							!runtimeOnlyCoordinates &&
+							this.remoteBlocks.hasNotifyStoredHook()
+						) {
+							this.remoteBlocks.notifyStoredDeferred(facts.hash);
+						}
+						const appendCommit = this.createPreparedLocalAppendCommitFromFacts(
+							facts,
+							{
+								hashNumber: backboneAppend.coordinate
+									.hashNumber as NumberFromType<R>,
+								coordinateFields,
+							},
+						);
+						appendCommit.nativeBackboneDocumentIndexCommitted = true;
+						appendCommit.nativeBackboneDocumentIndexTrimmedHeadsProcessed =
+							appended.documentTrimmedHeadsProcessed?.[i];
+						appendCommit.documentPreviousContext =
+							backboneAppend.documentPreviousContext;
+						commits.push(appendCommit);
+					}
+					return commits;
+				},
+				() => this.isRepairLifecycleActive(ownershipLifecycleController),
 			);
-			this.throwIfReplicationOwnershipLifecycleInactive(
-				ownershipLifecycleController,
-			);
-		} catch (error) {
-			if (!this.isRepairLifecycleActive(ownershipLifecycleController)) {
-				throw error;
-			}
-			warn(`Failed to retire committed native intent: ${String(error)}`);
-		}
 		this.throwIfReplicationOwnershipLifecycleInactive(
 			ownershipLifecycleController,
 		);
@@ -13333,6 +14533,7 @@ export class SharedLog<
 		| undefined
 	> {
 		this.throwIfNativeDurableCommitFailed();
+		this.rejectPersistedDeliveryOnTrustedLocalAppend(options);
 		if (data.length === 0) {
 			return { entries: [], removed: [], appendCommits: [] };
 		}
@@ -13350,6 +14551,10 @@ export class SharedLog<
 		const { appendOptions, minReplicasValue } =
 			this.createLogAppendOptions(options);
 		appendOptions.__peerbitCanAppendAlreadyValidated = true;
+		attachTrustedLocalCommitEvidence(
+			appendOptions,
+			properties?.localCommitEvidence,
+		);
 		const nativeBackboneBatch =
 			await this.appendLocallyPreparedPayloadsManyNativeBackboneDocumentIndexBatch(
 				data,
@@ -13372,6 +14577,11 @@ export class SharedLog<
 			payloadDatas: properties?.payloadDatas,
 			nexts: properties?.nexts,
 		});
+		if (result && properties?.localCommitEvidence) {
+			for (const facts of result.appendFacts) {
+				properties.localCommitEvidence.committedHashes.add(facts.hash);
+			}
+		}
 		this.throwIfReplicationOwnershipLifecycleInactive(
 			ownershipLifecycleController,
 		);
@@ -13501,6 +14711,9 @@ export class SharedLog<
 				nativeBackboneDocumentIndexes:
 					properties?.nativeBackboneDocumentIndexes,
 				retainMaterializationBytes: properties?.retainMaterializationBytes,
+				...(properties?.localCommitEvidence
+					? { localCommitEvidence: properties.localCommitEvidence }
+					: undefined),
 			},
 		);
 	}
@@ -13513,8 +14726,14 @@ export class SharedLog<
 		removed: ShallowOrFullEntry<T>[];
 	}> {
 		this.throwIfNativeDurableCommitFailed();
+		const persistedDelivery = this.getPersistedDeliveryOptions(options);
 		if (data.length === 0) {
 			return { entries: [], removed: [] };
+		}
+		if (persistedDelivery) {
+			throw new Error(
+				"persisted delivery is not supported for chained appendMany; use independent document puts",
+			);
 		}
 		const ownershipLifecycleController =
 			this.captureReplicationOwnershipLifecycle();
@@ -13590,6 +14809,123 @@ export class SharedLog<
 			);
 		}
 		return result;
+	}
+
+	/**
+	 * Deliver entries that were already committed locally, then wait for the
+	 * requested persisted remote quorum. This is the post-commit seam used by
+	 * higher-level transactional/batched writers so a receipt timeout never
+	 * rolls back or hides their successful local commit.
+	 */
+	private async deliverPersistedPlanningEntries(
+		resolveEntries: () => PersistedDeliveryPlanningEntry<T, R>[],
+		committedHashes: string[],
+		options: SharedAppendOptions<T>,
+	): Promise<void> {
+		let persistedDeadline: PersistedDeliveryDeadline | undefined;
+		try {
+			const delivery = this.getPersistedDeliveryOptions(options);
+			if (!delivery) {
+				throw new Error(
+					'deliverPersistedEntries requires reliability="persisted"',
+				);
+			}
+			const ownershipLifecycleController =
+				this.captureReplicationOwnershipLifecycle();
+			const deadline = this.createPersistedDeliveryDeadline(
+				delivery,
+				ownershipLifecycleController,
+				committedHashes.length,
+			);
+			persistedDeadline = deadline;
+			const throwIfDeliveryAborted = () => {
+				if (deadline.signal.aborted) {
+					throw deadline.signal.reason ?? new AbortError();
+				}
+				if (Date.now() >= deadline.deadline) {
+					throw new TimeoutError(
+						`Timed out waiting for ${Math.floor(delivery.minAcks!)} persisted remote replicas.`,
+					);
+				}
+			};
+			const entries = resolveEntries();
+			throwIfDeliveryAborted();
+			if (entries.length === 0) return;
+			const { minReplicasValue } = this.createLogAppendOptions(
+				options,
+				ownershipLifecycleController,
+			);
+			throwIfDeliveryAborted();
+			await this.settlePersistedDelivery(
+				entries,
+				minReplicasValue,
+				delivery,
+				ownershipLifecycleController,
+				deadline,
+				true,
+			);
+		} catch (error) {
+			throw new PersistedDeliveryError(error, committedHashes);
+		} finally {
+			persistedDeadline?.dispose();
+		}
+	}
+
+	private createPersistedDeliveryPlanningEntries(
+		appendCommits: PreparedLocalAppendCommit<R>[],
+		materializeEntries: () => Entry<T>[],
+	): PersistedDeliveryPlanningEntry<T, R>[] {
+		let materializedEntries: Entry<T>[] | undefined;
+		const requiresFullEntries =
+			this.findLeadersFromEntry !== SharedLog.prototype.findLeadersFromEntry;
+		const getMaterializedEntry = (
+			appendCommit: PreparedLocalAppendCommit<R>,
+			index: number,
+		) => {
+			materializedEntries ??= materializeEntries();
+			const entry = materializedEntries[index];
+			if (!entry || entry.hash !== appendCommit.hash) {
+				throw new Error(
+					`Persisted delivery materializer did not return committed entry ${appendCommit.hash}`,
+				);
+			}
+			return entry;
+		};
+		return appendCommits.map((appendCommit, index) => {
+			if (!requiresFullEntries && appendCommit.coordinateFields) {
+				return this._coordinates.materializeResidentCoordinateEntry(
+					appendCommit.coordinateFields,
+				);
+			}
+			return getMaterializedEntry(appendCommit, index);
+		});
+	}
+
+	private deliverPersistedAppendCommits(
+		appendCommits: PreparedLocalAppendCommit<R>[],
+		materializeEntries: () => Entry<T>[],
+		options: SharedAppendOptions<T>,
+	): Promise<void> {
+		return this.deliverPersistedPlanningEntries(
+			() =>
+				this.createPersistedDeliveryPlanningEntries(
+					appendCommits,
+					materializeEntries,
+				),
+			appendCommits.map((appendCommit) => appendCommit.hash),
+			options,
+		);
+	}
+
+	async deliverPersistedEntries(
+		entries: Entry<T>[],
+		options: SharedAppendOptions<T>,
+	): Promise<void> {
+		return this.deliverPersistedPlanningEntries(
+			() => entries,
+			entries.map((entry) => entry.hash),
+			options,
+		);
 	}
 
 	private canCoalesceLocalAppendMany(
@@ -14733,6 +16069,9 @@ export class SharedLog<
 		this._peerSyncCapabilities = new Map();
 		this._peerSyncCapabilitySessions = new Map();
 		this._peerSyncCapabilityTimestamps = new Map();
+		this._persistedReceiptStorage = undefined;
+		this._persistedReceiptRequestsInFlight = new Map();
+		this._persistedReceiptRequestsInFlightTotal = 0;
 		this._liveRawGossipBatches = new Map();
 		this._liveRawGossipFlushScheduled = false;
 		this.coordinateToHash = new Cache<string>({ max: 1e6, ttl: 1e4 });
@@ -14875,6 +16214,43 @@ export class SharedLog<
 
 		const fanoutService = getSharedLogFanoutService(this.node.services);
 		const blockProviderNamespace = (cid: string) => `cid:${cid}`;
+		const logProviderNamespace = `shared-log|${this.topic}`;
+		const announceBlockProvider = async (cid: string): Promise<void> => {
+			try {
+				await fanoutService?.announceProvider(blockProviderNamespace(cid), {
+					ttlMs: 120_000,
+					bootstrapMaxPeers: 2,
+				});
+			} catch {
+				// Provider publication is best-effort.
+			}
+		};
+		const announceBlockProviders = async (cids: string[]): Promise<void> => {
+			const batchedAnnounce = fanoutService?.announceProviders;
+			if (typeof batchedAnnounce === "function") {
+				const namespaces = function* () {
+					for (const cid of cids) yield blockProviderNamespace(cid);
+				};
+				await batchedAnnounce.call(fanoutService, namespaces(), {
+					ttlMs: 120_000,
+					bootstrapMaxPeers: 2,
+				});
+				return;
+			}
+
+			// Tolerate a skewed runtime that supplied an older FanoutTree service.
+			let nextIndex = 0;
+			const worker = async () => {
+				for (;;) {
+					const index = nextIndex++;
+					if (index >= cids.length) return;
+					await announceBlockProvider(cids[index]!);
+				}
+			};
+			await Promise.all(
+				Array.from({ length: Math.min(8, cids.length) }, () => worker()),
+			);
+		};
 		const [replicationIndex, logIndex] = await Promise.all([
 			logScope.scope("replication"),
 			logScope.scope("log"),
@@ -14974,17 +16350,23 @@ export class SharedLog<
 
 				let directoryProviders: string[] = [];
 				try {
-					directoryProviders =
-						(await fanoutService?.queryProviders(
-							blockProviderNamespace(cid),
-							{
-								want: maxPeers,
-								timeoutMs: 2_000,
-								queryTimeoutMs: 500,
-								bootstrapMaxPeers: 2,
-								signal: opts?.signal,
-							},
-						)) ?? [];
+					const query = (namespace: string) =>
+						fanoutService?.queryProviders(namespace, {
+							want: maxPeers,
+							timeoutMs: 2_000,
+							queryTimeoutMs: 500,
+							bootstrapMaxPeers: 2,
+							signal: opts?.signal,
+						}) ?? Promise.resolve([]);
+					const results = await Promise.allSettled([
+						query(blockProviderNamespace(cid)),
+						query(logProviderNamespace),
+					]);
+					for (const result of results) {
+						if (result.status === "fulfilled") {
+							directoryProviders.push(...result.value);
+						}
+					}
 				} catch {
 					// Ignore discovery failures; local evidence remains usable.
 				}
@@ -14992,11 +16374,7 @@ export class SharedLog<
 				const selected: string[] = [];
 				const selectedSet = new Set<string>();
 				const add = (peer: string | undefined) => {
-					if (
-						!peer ||
-						selectedSet.has(peer) ||
-						selected.length >= maxPeers
-					) {
+					if (!peer || selectedSet.has(peer) || selected.length >= maxPeers) {
 						return;
 					}
 					selectedSet.add(peer);
@@ -15014,31 +16392,46 @@ export class SharedLog<
 				return selected;
 			},
 			watchProviders: fanoutService
-				? (cid, opts) =>
-						fanoutService.watchProviders(blockProviderNamespace(cid), {
-							signal: opts.signal,
-							want: 8,
-							ttlMs: 10_000,
-							renewIntervalMs: 5_000,
-							bootstrapMaxPeers: 2,
-							onProviders: (providers) =>
-								opts.onProviders(providers.map((provider) => provider.hash)),
-						})
-				: undefined,
-			onPut: fanoutService
-				? async (cid) => {
-						// Best-effort directory announce for "get without remote.from" workflows.
+				? (cid, opts) => {
+						const watch = (namespace: string) =>
+							fanoutService.watchProviders(namespace, {
+								signal: opts.signal,
+								want: 8,
+								ttlMs: 10_000,
+								renewIntervalMs: 5_000,
+								bootstrapMaxPeers: 2,
+								onProviders: (providers) =>
+									opts.onProviders(providers.map((provider) => provider.hash)),
+							});
+						const cidWatch = watch(blockProviderNamespace(cid));
 						try {
-							await fanoutService.announceProvider(
-								blockProviderNamespace(cid),
-								{
-									ttlMs: 120_000,
-									bootstrapMaxPeers: 2,
+							const logWatch = watch(logProviderNamespace);
+							return {
+								close: () => {
+									cidWatch.close();
+									logWatch.close();
 								},
-							);
+							};
+						} catch (error) {
+							cidWatch.close();
+							throw error;
+						}
+					}
+				: undefined,
+			onPut: fanoutService ? announceBlockProvider : undefined,
+			onPutMany: fanoutService
+				? (cids) => {
+						// A renewable log-wide provider lease makes every CID in a
+						// stored batch discoverable to current readers. Retain the
+						// per-CID directory publications for released readers that only
+						// know the legacy namespace; the bounded workers avoid creating
+						// one in-flight promise per block.
+						try {
+							this.ensureLogProviderHandle(fanoutService);
 						} catch {
 							// ignore announce failures
 						}
+						return announceBlockProviders(cids);
 					}
 				: undefined,
 		});
@@ -15290,6 +16683,7 @@ export class SharedLog<
 			},
 			indexer: logIndex,
 		});
+		this._persistedReceiptStorage = this.resolvePersistedReceiptStorage();
 		try {
 			const recovered =
 				await this.recoverNativeStrictDurableTransactionIntent();
@@ -16088,13 +17482,12 @@ export class SharedLog<
 			this.topic,
 		);
 		// We do this here, because these calls requires this.closed == false
-		void this.pruneOfflineReplicators()
-			.catch((error) => {
-				if (isNotStartedError(error as Error)) {
-					return;
-				}
-				logger.error(error);
-			});
+		void this.pruneOfflineReplicators().catch((error) => {
+			if (isNotStartedError(error as Error)) {
+				return;
+			}
+			logger.error(error);
+		});
 
 		this._liveness.startReplicatorLivenessSweep();
 
@@ -16413,7 +17806,8 @@ export class SharedLog<
 		for (const peer of reachable) {
 			if (confirmed?.has(peer)) liveEvidenceTiers[0].push(peer);
 			else if (contacted?.has(peer)) liveEvidenceTiers[1].push(peer);
-			else if (this.uniqueReplicators.has(peer)) liveEvidenceTiers[2].push(peer);
+			else if (this.uniqueReplicators.has(peer))
+				liveEvidenceTiers[2].push(peer);
 		}
 		const liveKnown: string[] = [];
 		for (let tier = 0; tier < liveEvidenceTiers.length; tier++) {
@@ -16983,8 +18377,7 @@ export class SharedLog<
 	): Promise<void> {
 		if (!gids) return;
 		const candidates = [...new Set(gids)].filter(
-			(gid) =>
-				history === this._gidPeersHistory && !!gid && history.has(gid),
+			(gid) => history === this._gidPeersHistory && !!gid && history.has(gid),
 		);
 		if (candidates.length === 0) return;
 		const hasHeads = await this.hasAnyHeadForGidSets(
@@ -17018,9 +18411,7 @@ export class SharedLog<
 		for (const gid of gids) {
 			if (!gid || !history.has(gid)) continue;
 			if (state.pending.has(gid)) continue;
-			if (
-				state.pending.size >= GID_PEER_HISTORY_CLEANUP_PENDING_CAPACITY
-			) {
+			if (state.pending.size >= GID_PEER_HISTORY_CLEANUP_PENDING_CAPACITY) {
 				// History is only a suppression memo. Under sustained synchronous
 				// production, forgetting an overflow row is the bounded, safe fallback:
 				// it can cause redundant delivery but cannot affect ownership or data.
@@ -17819,6 +19210,9 @@ export class SharedLog<
 			this._peerSyncCapabilities?.clear();
 			this._peerSyncCapabilitySessions?.clear();
 			this._peerSyncCapabilityTimestamps?.clear();
+			this._persistedReceiptStorage = undefined;
+			this._persistedReceiptRequestsInFlight?.clear();
+			this._persistedReceiptRequestsInFlightTotal = 0;
 			this._v2Receive?.clearForClose();
 			this._v2Send?.clearForClose();
 			this._liveRawGossipBatches?.clear();
@@ -18591,7 +19985,11 @@ export class SharedLog<
 	async onMessage(
 		msg: TransportMessage,
 		context: RequestContext,
-	): Promise<void> {
+	): Promise<void>;
+	async onMessage(
+		msg: TransportMessage,
+		context: RequestContext,
+	): Promise<any> {
 		const stashBackedRawMessage = isStashBackedRawExchangeHeadsMessage(msg)
 			? msg
 			: undefined;
@@ -18667,6 +20065,7 @@ export class SharedLog<
 			if (
 				!context.from.equals(this.node.identity.publicKey) &&
 				!(msg instanceof RequestReplicationInfoV2Message) &&
+				!(msg instanceof RequestPersistedEntriesV1) &&
 				!isReplicationInfoV2Message(msg)
 			) {
 				this._liveness.markReplicatorActivity(receiveFromHash);
@@ -20113,24 +21512,30 @@ export class SharedLog<
 								);
 							}
 							if (syncProfile) {
-								emitSyncProfileDuration(syncProfile, coordinatePersistStartedAt, {
-									name: "sharedLog.receive.coordinatePersist",
-									component: "shared-log",
-									entries: entriesToPersist.length,
-									messages: 1,
-									details: {
-										reusedLeaderPlans: reusableCoordinatePersistItemCount,
-										nativeBackboneOnly:
-											nativeBackboneOnlyPersistedHashes?.size ?? 0,
+								emitSyncProfileDuration(
+									syncProfile,
+									coordinatePersistStartedAt,
+									{
+										name: "sharedLog.receive.coordinatePersist",
+										component: "shared-log",
+										entries: entriesToPersist.length,
+										messages: 1,
+										details: {
+											reusedLeaderPlans: reusableCoordinatePersistItemCount,
+											nativeBackboneOnly:
+												nativeBackboneOnlyPersistedHashes?.size ?? 0,
+										},
 									},
-								});
+								);
 							}
 							for (const hash of admittedHashes) {
 								confirmedHashes.add(hash);
 							}
 							const checkedPruneStartedAt = syncProfileStart(syncProfile);
 							const ownershipChangedDuringReceive =
-								!this.isReceiveOwnershipSnapshotStable(receiveOwnershipRevision);
+								!this.isReceiveOwnershipSnapshotStable(
+									receiveOwnershipRevision,
+								);
 							if (ownershipChangedDuringReceive) {
 								const freshAuditRevision =
 									this._instanceLifecycle?._receiveOwnershipRevision ?? 0;
@@ -20307,7 +21712,13 @@ export class SharedLog<
 				};
 				// The prelude already threw when `context.from` was missing.
 				const laneRequestContext = context as ReceiveRequestContext;
-				if (msg instanceof RequestIPruneV2) {
+				if (msg instanceof RequestPersistedEntriesV1) {
+					return await this.handleRequestPersistedEntriesV1(
+						msg,
+						laneRequestContext,
+						lane,
+					);
+				} else if (msg instanceof RequestIPruneV2) {
 					await this.handleRequestIPruneV2(msg, laneRequestContext, lane);
 				} else if (msg instanceof ResponseIPruneV2) {
 					await this.handleResponseIPruneV2(msg, laneRequestContext, lane);
@@ -20513,6 +21924,322 @@ export class SharedLog<
 	// `onMessage`'s shared catch/finally envelope (error classification,
 	// wire-stash release, lease release, durable-poison recheck).
 	// -----------------------------------------------------------------
+
+	private isPersistedReceiptRequestSessionCurrent(
+		request: RequestPersistedEntriesV1,
+		context: ReceiveRequestContext,
+		lane: ReceiveLaneContext,
+	): boolean {
+		const session = lane.session;
+		return (
+			!!this._persistedReceiptStorage &&
+			!context.from.equals(this.node.identity.publicKey) &&
+			request.expectedReceiverSession === this.ownTransportSession() &&
+			session !== null &&
+			session.phase === "open" &&
+			this._peerSessions.isCurrent(lane.fromHash, session) &&
+			!this._peerSessions.isReplicationInfoBlocked(lane.fromHash) &&
+			this._peerSessions.isReceiveCleanupGateOpen(lane.fromHash) &&
+			this._peerSyncCapabilitySessions.get(lane.fromHash) ===
+				context.message.header.session &&
+			this._peerSyncCapabilityTimestamps.has(lane.fromHash) &&
+			this.isRepairLifecycleActive(lane.ownershipLifecycleController)
+		);
+	}
+
+	private admitPersistedReceiptIngress(
+		peer: string,
+		transportSession: bigint,
+		hashCount: number,
+		now = Date.now(),
+	): boolean {
+		// Charge malformed empty/oversized vectors too. The request was already
+		// decoded by the transport, so letting an invalid shape bypass this bucket
+		// would leave an authenticated peer with an unmetered validation/logging
+		// path. Clamp only the accounting cost; shape validation still rejects the
+		// request below.
+		const hashCost = Math.max(
+			1,
+			Math.min(MAX_PERSISTED_RECEIPT_HASHES, hashCount),
+		);
+		let nodeBudget = persistedReceiptIngressBudgets.get(this.node);
+		if (!nodeBudget) {
+			nodeBudget = {
+				requestTokens: PERSISTED_RECEIPT_INGRESS_NODE_REQUEST_CAPACITY,
+				hashTokens: PERSISTED_RECEIPT_INGRESS_NODE_HASH_CAPACITY,
+				refilledAt: now,
+				peerSessions: new Map(),
+			};
+			persistedReceiptIngressBudgets.set(this.node, nodeBudget);
+		}
+		refillPersistedReceiptIngressBucket(
+			nodeBudget,
+			now,
+			PERSISTED_RECEIPT_INGRESS_NODE_REQUEST_CAPACITY,
+			PERSISTED_RECEIPT_INGRESS_NODE_HASH_CAPACITY,
+			PERSISTED_RECEIPT_INGRESS_NODE_REQUESTS_PER_SECOND,
+			PERSISTED_RECEIPT_INGRESS_NODE_HASHES_PER_SECOND,
+		);
+
+		const peerSessionKey = `${peer}\0${transportSession}`;
+		let peerBudget = nodeBudget.peerSessions.get(peerSessionKey);
+		if (!peerBudget) {
+			while (
+				nodeBudget.peerSessions.size >=
+				MAX_PERSISTED_RECEIPT_INGRESS_PEER_SESSIONS
+			) {
+				const oldest = nodeBudget.peerSessions.keys().next().value;
+				if (oldest === undefined) break;
+				nodeBudget.peerSessions.delete(oldest);
+			}
+			peerBudget = {
+				requestTokens: PERSISTED_RECEIPT_INGRESS_PEER_REQUEST_CAPACITY,
+				hashTokens: PERSISTED_RECEIPT_INGRESS_PEER_HASH_CAPACITY,
+				refilledAt: now,
+			};
+			nodeBudget.peerSessions.set(peerSessionKey, peerBudget);
+		} else {
+			// Refresh insertion order so bounded eviction prefers inactive sessions.
+			nodeBudget.peerSessions.delete(peerSessionKey);
+			nodeBudget.peerSessions.set(peerSessionKey, peerBudget);
+		}
+		refillPersistedReceiptIngressBucket(
+			peerBudget,
+			now,
+			PERSISTED_RECEIPT_INGRESS_PEER_REQUEST_CAPACITY,
+			PERSISTED_RECEIPT_INGRESS_PEER_HASH_CAPACITY,
+			PERSISTED_RECEIPT_INGRESS_PEER_REQUESTS_PER_SECOND,
+			PERSISTED_RECEIPT_INGRESS_PEER_HASHES_PER_SECOND,
+		);
+
+		if (
+			nodeBudget.requestTokens < 1 ||
+			nodeBudget.hashTokens < hashCost ||
+			peerBudget.requestTokens < 1 ||
+			peerBudget.hashTokens < hashCost
+		) {
+			return false;
+		}
+		nodeBudget.requestTokens -= 1;
+		nodeBudget.hashTokens -= hashCost;
+		peerBudget.requestTokens -= 1;
+		peerBudget.hashTokens -= hashCost;
+		return true;
+	}
+
+	private async handleRequestPersistedEntriesV1(
+		request: RequestPersistedEntriesV1,
+		context: ReceiveRequestContext,
+		lane: ReceiveLaneContext,
+	): Promise<ConfirmEntriesMessage | undefined> {
+		if (!this.isPersistedReceiptRequestSessionCurrent(request, context, lane)) {
+			return undefined;
+		}
+		if (
+			!this.admitPersistedReceiptIngress(
+				lane.fromHash,
+				context.message.header.session,
+				request.hashes.length,
+			)
+		) {
+			return undefined;
+		}
+		// Charge the request before shape validation and attacker-controlled CID
+		// parsing. Invalid shapes are rejected quietly here so they cannot turn the
+		// outer receive error logger into a post-budget work amplifier.
+		try {
+			this.validatePersistedReceiptRequestShape(request);
+		} catch {
+			return undefined;
+		}
+		if (!this.hasValidPersistedReceiptHashes(request)) {
+			return undefined;
+		}
+		const peerInFlight =
+			this._persistedReceiptRequestsInFlight.get(lane.fromHash) ?? 0;
+		if (
+			peerInFlight >= MAX_PERSISTED_RECEIPT_REQUESTS_PER_PEER ||
+			this._persistedReceiptRequestsInFlightTotal >=
+				MAX_PERSISTED_RECEIPT_REQUESTS_GLOBAL
+		) {
+			return undefined;
+		}
+		this._persistedReceiptRequestsInFlight.set(lane.fromHash, peerInFlight + 1);
+		this._persistedReceiptRequestsInFlightTotal++;
+
+		try {
+			// A positive receipt requires the block itself. Reject entirely absent
+			// batches before the serialized mutation lane and, critically, before a
+			// request can force unrelated pending index/coordinate journals durable.
+			// A concurrent put can yield a harmless false negative: the sender retries.
+			const blockPresence = await this.remoteBlocks.localStore.hasMany(
+				request.hashes,
+			);
+			const presentBlockHashes = request.hashes.filter(
+				(_hash, index) => blockPresence[index] === true,
+			);
+			if (
+				!this.isPersistedReceiptRequestSessionCurrent(request, context, lane)
+			) {
+				return undefined;
+			}
+			if (presentBlockHashes.length === 0) {
+				return new ConfirmEntriesMessage({ hashes: [] });
+			}
+			this._liveness.markReplicatorActivity(lane.fromHash);
+			return await this.withReplicationRangeMutationQueue(async () => {
+				if (
+					!this.isPersistedReceiptRequestSessionCurrent(request, context, lane)
+				) {
+					return undefined;
+				}
+				this.throwIfNativeDurableCommitFailed();
+				const storage = this.resolvePersistedReceiptStorage();
+				if (!storage) {
+					return undefined;
+				}
+
+				await this.log.entryIndex.flushPendingWrites(presentBlockHashes);
+				await this._coordinates.flushNativeBackboneCoordinateJournal();
+				const candidates = new Map(
+					await Promise.all(
+						presentBlockHashes.map(async (hash) => {
+							const [blockPresent, lowerRow, coordinate] = await Promise.all([
+								this.remoteBlocks.localStore.has(hash),
+								this.log.entryIndex.properties.index.get(toId(hash)),
+								this._coordinates.getAuthoritativeCoordinateEntryForReceipt(
+									hash,
+								),
+							]);
+							return [hash, { blockPresent, lowerRow, coordinate }] as const;
+						}),
+					),
+				);
+				const presentHashes = presentBlockHashes.filter((hash) => {
+					const candidate = candidates.get(hash)!;
+					return (
+						candidate.blockPresent &&
+						candidate.lowerRow != null &&
+						candidate.coordinate != null
+					);
+				});
+				if (presentHashes.length === 0) {
+					return new ConfirmEntriesMessage({ hashes: [] });
+				}
+				await Promise.all(
+					[...new Set([storage.block, storage.lower, storage.coordinate])].map(
+						(store) => store.barrier(),
+					),
+				);
+				this.throwIfNativeDurableCommitFailed();
+				if (
+					!this.isPersistedReceiptRequestSessionCurrent(request, context, lane)
+				) {
+					return undefined;
+				}
+
+				const ownershipRevision =
+					this._instanceLifecycle?._receiveOwnershipRevision ?? 0;
+				if (!this.isReceiveOwnershipSnapshotStable(ownershipRevision)) {
+					return new ConfirmEntriesMessage({ hashes: [] });
+				}
+
+				const selfHash = this.node.identity.publicKey.hashcode();
+				const confirmed: string[] = [];
+				for (const hash of presentHashes) {
+					const candidate = candidates.get(hash)!;
+					if (
+						!candidate.blockPresent ||
+						!candidate.lowerRow ||
+						!candidate.coordinate ||
+						this._checkedPrune.hasActiveWork(hash) ||
+						!this.isPersistedReceiptRequestSessionCurrent(
+							request,
+							context,
+							lane,
+						) ||
+						!this.isReceiveOwnershipSnapshotStable(ownershipRevision)
+					) {
+						continue;
+					}
+
+					const [blockPresent, lowerRow, coordinate] = await Promise.all([
+						this.remoteBlocks.localStore.has(hash),
+						this.log.entryIndex.properties.index.get(toId(hash)),
+						this._coordinates.getAuthoritativeCoordinateEntryForReceipt(hash),
+					]);
+					if (!blockPresent || !lowerRow || !coordinate) {
+						continue;
+					}
+
+					const replicas = decodeReplicas(coordinate).getValue(this);
+					const leaders = await this.findLeadersFromEntry(
+						coordinate,
+						replicas,
+						{ freshLeaderPlan: true },
+						lane.ownershipLifecycleController,
+					);
+					if (!leaders.has(selfHash)) {
+						continue;
+					}
+					if (
+						!this._checkedPrune.hasActiveWork(hash) &&
+						this.isReceiveOwnershipSnapshotStable(ownershipRevision) &&
+						this.isPersistedReceiptRequestSessionCurrent(request, context, lane)
+					) {
+						confirmed.push(hash);
+					}
+				}
+
+				if (
+					confirmed.length === 0 ||
+					!this.isReceiveOwnershipSnapshotStable(ownershipRevision) ||
+					!this.isPersistedReceiptRequestSessionCurrent(request, context, lane)
+				) {
+					return new ConfirmEntriesMessage({ hashes: [] });
+				}
+				const finalRows = await Promise.all(
+					confirmed.map(async (hash) => {
+						const [block, lower, coordinate] = await Promise.all([
+							this.remoteBlocks.localStore.has(hash),
+							this.log.entryIndex.properties.index.get(toId(hash)),
+							this._coordinates.getAuthoritativeCoordinateEntryForReceipt(hash),
+						]);
+						return { hash, block, lower, coordinate };
+					}),
+				);
+				if (
+					!this.isReceiveOwnershipSnapshotStable(ownershipRevision) ||
+					!this.isPersistedReceiptRequestSessionCurrent(request, context, lane)
+				) {
+					return new ConfirmEntriesMessage({ hashes: [] });
+				}
+				return new ConfirmEntriesMessage({
+					hashes: finalRows
+						.filter(
+							(row) =>
+								row.block &&
+								row.lower &&
+								row.coordinate &&
+								!this._checkedPrune.hasActiveWork(row.hash),
+						)
+						.map((row) => row.hash),
+				});
+			}, lane.ownershipLifecycleController);
+		} finally {
+			const remaining =
+				(this._persistedReceiptRequestsInFlight.get(lane.fromHash) ?? 1) - 1;
+			if (remaining <= 0) {
+				this._persistedReceiptRequestsInFlight.delete(lane.fromHash);
+			} else {
+				this._persistedReceiptRequestsInFlight.set(lane.fromHash, remaining);
+			}
+			this._persistedReceiptRequestsInFlightTotal = Math.max(
+				0,
+				this._persistedReceiptRequestsInFlightTotal - 1,
+			);
+		}
+	}
 
 	private async handleRequestIPruneV2(
 		msg: RequestIPruneV2,

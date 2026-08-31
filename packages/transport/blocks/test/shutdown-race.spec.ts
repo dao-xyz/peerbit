@@ -165,6 +165,371 @@ describe("@peerbit/blocks — shutdown race", () => {
 		}
 	});
 
+	it("awaits every batch provider hook with bounded concurrency", async () => {
+		const local = trackStore(new AnyBlockStore(createStore(tmpDir)));
+		const key = await Ed25519Keypair.create();
+		let releaseNotifications!: () => void;
+		const notificationsReleased = new Promise<void>((resolve) => {
+			releaseNotifications = resolve;
+		});
+		let markNotificationStarted!: () => void;
+		const notificationStarted = new Promise<void>((resolve) => {
+			markNotificationStarted = resolve;
+		});
+		let active = 0;
+		let peakActive = 0;
+		const onPut = sinon.spy(async () => {
+			active += 1;
+			peakActive = Math.max(peakActive, active);
+			markNotificationStarted();
+			await notificationsReleased;
+			active -= 1;
+		});
+		const remote = trackRemote(
+			new RemoteBlocks({
+				local,
+				publicKey: key.publicKey,
+				publish: async () => undefined,
+				waitFor: async () => [],
+				onPut,
+			}),
+		);
+		await remote.start();
+		const blocks = Array.from(
+			{ length: 32 },
+			(_, index) => [`batch-${index}`, new Uint8Array([index])] as const,
+		);
+
+		let settled = false;
+		const putting = remote.putKnownMany(blocks).then((cids) => {
+			settled = true;
+			return cids;
+		});
+		try {
+			await notificationStarted;
+			expect(onPut.callCount).equal(8);
+			expect(peakActive).equal(8);
+			expect(settled).equal(false);
+		} finally {
+			releaseNotifications();
+		}
+		expect(await putting).deep.equal(blocks.map(([cid]) => cid));
+		expect(onPut.callCount).equal(blocks.length);
+		expect(peakActive).equal(8);
+	});
+
+	it("uses an awaited aggregate hook for batches and the CID hook for singles", async () => {
+		const local = trackStore(new AnyBlockStore(createStore(tmpDir)));
+		const key = await Ed25519Keypair.create();
+		let releaseAggregate!: () => void;
+		const aggregateReleased = new Promise<void>((resolve) => {
+			releaseAggregate = resolve;
+		});
+		let markAggregateStarted!: () => void;
+		const aggregateStarted = new Promise<void>((resolve) => {
+			markAggregateStarted = resolve;
+		});
+		const onPut = sinon.spy();
+		const onPutMany = sinon.spy(async (_cids: string[]) => {
+			markAggregateStarted();
+			await aggregateReleased;
+		});
+		const remote = trackRemote(
+			new RemoteBlocks({
+				local,
+				publicKey: key.publicKey,
+				publish: async () => undefined,
+				waitFor: async () => [],
+				onPut,
+				onPutMany,
+			}),
+		);
+		await remote.start();
+		const blocks = Array.from(
+			{ length: 4 },
+			(_, index) => [`aggregate-${index}`, new Uint8Array([index])] as const,
+		);
+
+		let settled = false;
+		const putting = remote.putKnownMany(blocks).then(() => {
+			settled = true;
+		});
+		try {
+			await aggregateStarted;
+			expect(settled).equal(false);
+			expect(onPutMany.callCount).equal(1);
+			expect(onPutMany.firstCall.args[0]).deep.equal(
+				blocks.map(([cid]) => cid),
+			);
+			expect(onPut.callCount).equal(0);
+		} finally {
+			releaseAggregate();
+			await putting;
+		}
+
+		await remote.putKnown("single-after-batch", new Uint8Array([5]));
+		expect(onPut.callCount).equal(1);
+		expect(onPut.firstCall.args[0]).equal("single-after-batch");
+		expect(onPutMany.callCount).equal(1);
+	});
+
+	it("keeps a single put coupled to its provider notification", async () => {
+		const local = trackStore(new AnyBlockStore(createStore(tmpDir)));
+		const key = await Ed25519Keypair.create();
+		let releaseNotification!: () => void;
+		const notificationReleased = new Promise<void>((resolve) => {
+			releaseNotification = resolve;
+		});
+		let markNotificationStarted!: () => void;
+		const notificationStarted = new Promise<void>((resolve) => {
+			markNotificationStarted = resolve;
+		});
+		const onPut = sinon.spy(async () => {
+			markNotificationStarted();
+			await notificationReleased;
+		});
+		const remote = trackRemote(
+			new RemoteBlocks({
+				local,
+				publicKey: key.publicKey,
+				publish: async () => undefined,
+				waitFor: async () => [],
+				onPut,
+			}),
+		);
+		await remote.start();
+
+		let settled = false;
+		const putting = remote.putKnown("single", new Uint8Array([1])).then(() => {
+			settled = true;
+		});
+		try {
+			await notificationStarted;
+			expect(onPut.callCount).equal(1);
+			expect(settled).equal(false);
+		} finally {
+			releaseNotification();
+			await putting;
+		}
+		expect(settled).equal(true);
+	});
+
+	it("de-duplicates deferred provider hooks without dropping distinct CIDs", async () => {
+		const local = trackStore(new AnyBlockStore(createStore(tmpDir)));
+		const key = await Ed25519Keypair.create();
+		const onPut = sinon.spy();
+		const remote = trackRemote(
+			new RemoteBlocks({
+				local,
+				publicKey: key.publicKey,
+				publish: async () => undefined,
+				waitFor: async () => [],
+				onPut,
+			}),
+		);
+		await remote.start();
+		const cids = Array.from({ length: 32 }, (_, index) => `cid-${index}`);
+
+		remote.notifyStoredManyDeferred([...cids, ...cids]);
+		const pending = (remote as any)
+			._deferredStoredNotificationCids as Set<string>;
+		expect(pending.size).equal(cids.length);
+		expect([...pending]).deep.equal(cids);
+
+		// stop() drains all work admitted before its lifecycle fence. Later
+		// notifications cannot escape the closed lifecycle.
+		await remote.stop();
+		await remote.stop();
+		expect(remote.status).equal("closed");
+		remote.notifyStoredDeferred("after-stop");
+		expect(onPut.callCount).equal(cids.length);
+		expect(onPut.getCalls().map((call) => call.args[0])).deep.equal(cids);
+		expect((remote as any)._deferredStoredNotificationCids).equal(undefined);
+	});
+
+	it("uses the aggregate hook for deferred batches when both hooks exist", async () => {
+		const local = trackStore(new AnyBlockStore(createStore(tmpDir)));
+		const key = await Ed25519Keypair.create();
+		const onPut = sinon.spy();
+		let releaseFirstAggregate!: () => void;
+		const firstAggregateReleased = new Promise<void>((resolve) => {
+			releaseFirstAggregate = resolve;
+		});
+		let markFirstAggregateStarted!: () => void;
+		const firstAggregateStarted = new Promise<void>((resolve) => {
+			markFirstAggregateStarted = resolve;
+		});
+		let aggregateCalls = 0;
+		const onPutMany = sinon.spy(async (_cids: string[]) => {
+			aggregateCalls++;
+			if (aggregateCalls === 1) {
+				markFirstAggregateStarted();
+				await firstAggregateReleased;
+			}
+		});
+		const remote = trackRemote(
+			new RemoteBlocks({
+				local,
+				publicKey: key.publicKey,
+				publish: async () => undefined,
+				waitFor: async () => [],
+				onPut,
+				onPutMany,
+			}),
+		);
+		await remote.start();
+		const first = ["batch-a", "batch-b", "batch-c"];
+		const second = ["batch-d", "batch-e"];
+
+		remote.notifyStoredManyDeferred([...first, ...first]);
+		await firstAggregateStarted;
+		remote.notifyStoredManyDeferred(second);
+		const stopping = remote.stop();
+		try {
+			expect(onPut.callCount).equal(0);
+			expect(onPutMany.callCount).equal(1);
+		} finally {
+			releaseFirstAggregate();
+			await stopping;
+		}
+
+		expect(onPut.callCount).equal(0);
+		expect(onPutMany.callCount).equal(2);
+		expect(onPutMany.firstCall.args[0]).deep.equal(first);
+		expect(onPutMany.secondCall.args[0]).deep.equal(second);
+		expect((remote as any)._deferredStoredNotificationCids).equal(undefined);
+	});
+
+	it("drains running and queued provider hooks during stop", async () => {
+		const local = trackStore(new AnyBlockStore(createStore(tmpDir)));
+		const key = await Ed25519Keypair.create();
+		let releaseNotifications!: () => void;
+		const notificationsReleased = new Promise<void>((resolve) => {
+			releaseNotifications = resolve;
+		});
+		let markNotificationStarted!: () => void;
+		const notificationStarted = new Promise<void>((resolve) => {
+			markNotificationStarted = resolve;
+		});
+		const onPut = sinon.spy(async () => {
+			markNotificationStarted();
+			await notificationsReleased;
+		});
+		const remote = trackRemote(
+			new RemoteBlocks({
+				local,
+				publicKey: key.publicKey,
+				publish: async () => undefined,
+				waitFor: async () => [],
+				onPut,
+			}),
+		);
+		await remote.start();
+		let stopped = false;
+		let stopping: Promise<void> | undefined;
+		try {
+			remote.notifyStoredManyDeferred(
+				Array.from({ length: 32 }, (_, index) => `cid-${index}`),
+			);
+			await notificationStarted;
+			expect(onPut.callCount).equal(8);
+
+			stopping = remote.stop().then(() => {
+				stopped = true;
+			});
+			await Promise.resolve();
+			expect(stopped).equal(false);
+		} finally {
+			releaseNotifications();
+			await stopping;
+		}
+		expect(onPut.callCount).equal(32);
+		expect((remote as any)._deferredStoredNotificationCids).equal(undefined);
+	});
+
+	it("delegates the local crash-safe barrier without a duplicate write drain", async () => {
+		const local = trackStore(
+			new AnyBlockStore(createStore(tmpDir)),
+		) as AnyBlockStore & {
+			waitForDurableWrites: () => Promise<void>;
+		};
+		const waitForDurableWrites = sinon.spy(
+			async (): Promise<void> => undefined,
+		);
+		local.waitForDurableWrites = waitForDurableWrites;
+		const key = await Ed25519Keypair.create();
+		const remote = trackRemote(
+			new RemoteBlocks({
+				local,
+				publicKey: key.publicKey,
+				publish: async () => undefined,
+				waitFor: async () => [],
+			}),
+		);
+		await remote.start();
+
+		const localDurability = local.crashSafeDurability;
+		expect(localDurability?.crashSafe).equal(true);
+		expect(remote.crashSafeDurability).equal(localDurability);
+		await remote.crashSafeDurability!.barrier();
+		expect(waitForDurableWrites.called).equal(false);
+	});
+
+	it("drains an admitted columnar aggregate hook during stop", async () => {
+		const local = trackStore(
+			new AnyBlockStore(createStore(tmpDir)),
+		) as AnyBlockStore & {
+			putKnownManyColumns: (cids: string[], bytes: Uint8Array[]) => string[];
+			waitForDurableWrites: () => Promise<void>;
+		};
+		local.putKnownManyColumns = (cids) => cids;
+		local.waitForDurableWrites = async () => undefined;
+		const key = await Ed25519Keypair.create();
+		let releaseAggregate!: () => void;
+		const aggregateReleased = new Promise<void>((resolve) => {
+			releaseAggregate = resolve;
+		});
+		let markAggregateStarted!: () => void;
+		const aggregateStarted = new Promise<void>((resolve) => {
+			markAggregateStarted = resolve;
+		});
+		const onPutMany = sinon.spy(async () => {
+			markAggregateStarted();
+			await aggregateReleased;
+		});
+		const remote = trackRemote(
+			new RemoteBlocks({
+				local,
+				publicKey: key.publicKey,
+				publish: async () => undefined,
+				waitFor: async () => [],
+				onPutMany,
+			}),
+		);
+		await remote.start();
+
+		expect(
+			remote.putKnownManyColumns?.(
+				["column-a", "column-b"],
+				[new Uint8Array([1]), new Uint8Array([2])],
+			),
+		).deep.equal(["column-a", "column-b"]);
+		await aggregateStarted;
+		let stopped = false;
+		const stopping = remote.stop().then(() => {
+			stopped = true;
+		});
+		try {
+			await Promise.resolve();
+			expect(stopped).equal(false);
+			expect(onPutMany.callCount).equal(1);
+		} finally {
+			releaseAggregate();
+			await stopping;
+		}
+		expect(stopped).equal(true);
+	});
+
 	it("does not announce columnar puts when the durability barrier fails", async () => {
 		const local = trackStore(
 			new AnyBlockStore(createStore(tmpDir)),

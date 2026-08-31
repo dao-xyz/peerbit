@@ -122,6 +122,47 @@ describe("native shared-log range planner", () => {
 		);
 	});
 
+	it("returns only routing-safe full replica leaders", async () => {
+		const planner = await createRangePlanner("u32");
+		planner.put(range({ id: "a", hash: "peer-a", start1: 0, end1: 10 }));
+		planner.put(
+			range({
+				id: "b",
+				hash: "peer-b",
+				start1: 90,
+				end1: 100,
+				mode: 1,
+			}),
+		);
+
+		const options = {
+			now: 1_000,
+			peerFilter: ["peer-a"],
+			expandPeerFilter: true,
+			selfHash: "peer-a",
+			selfReplicating: true,
+			fullReplicaFallback: true,
+		};
+		expect(planner.getRoutingFullReplicaLeaders(2, options)).to.deep.equal(
+			new Map([
+				["peer-a", { intersecting: true }],
+				["peer-b", { intersecting: true }],
+			]),
+		);
+		expect(
+			planner.getRoutingFullReplicaLeaders(2, {
+				...options,
+				includeStrictFullReplica: false,
+			}),
+		).to.equal(undefined);
+		expect(
+			planner.getRoutingFullReplicaLeaders(2, {
+				...options,
+				fullReplicaFallback: false,
+			}),
+		).to.equal(undefined);
+	});
+
 	it("honors full replica filters, maturity, and strict fallback options", async () => {
 		const planner = await createRangePlanner("u32");
 		planner.put(range({ id: "a", hash: "peer-a", start1: 0, end1: 10 }));
@@ -338,12 +379,11 @@ describe("native shared-log range planner", () => {
 			{ gid: "entry-gid-b", replicas: 2 },
 		];
 
-		expect(
-			planner.planLeadersForGidsBatch(items, {
-				now: 1_000,
-				fullReplicaFallback: true,
-			}),
-		).to.deep.equal(
+		const plans = planner.planLeadersForGidsBatch(items, {
+			now: 1_000,
+			fullReplicaFallback: true,
+		});
+		expect(plans).to.deep.equal(
 			items.map((item) =>
 				planner.planLeadersForGid(item.gid, item.replicas, {
 					now: 1_000,
@@ -351,6 +391,12 @@ describe("native shared-log range planner", () => {
 				}),
 			),
 		);
+		expect(
+			planner.planLeaderSamplesForGidsBatch(items, {
+				now: 1_000,
+				fullReplicaFallback: true,
+			}),
+		).to.deep.equal(plans.map((plan) => plan.leaders));
 	});
 
 	it("plans local hash gid leaders without returning leader maps", async () => {
@@ -467,7 +513,13 @@ describe("native shared-log range planner", () => {
 		const state = await createSharedLogState("u32");
 		state.putEntryCoordinates("old-head", "old-gid", [1, 2]);
 
-		state.commitEntryCoordinates("new-head", "new-gid", [3, 4], ["old-head"], true);
+		state.commitEntryCoordinates(
+			"new-head",
+			"new-gid",
+			[3, 4],
+			["old-head"],
+			true,
+		);
 
 		expect(state.getEntryCoordinates("new-head")).to.deep.equal([3, 4]);
 		expect(state.getEntryCoordinates("old-head")).to.equal(undefined);
@@ -545,7 +597,15 @@ describe("native shared-log range planner", () => {
 		).to.deep.equal(["head-a", "head-b", "head-c"]);
 
 		state.deleteEntryCoordinates("head-a");
-		state.commitEntryCoordinates("head-d", "gid-d", [4], ["head-c"], false, 1, 7);
+		state.commitEntryCoordinates(
+			"head-d",
+			"gid-d",
+			[4],
+			["head-c"],
+			false,
+			1,
+			7,
+		);
 
 		expect([...state.getEntryHashesForHashNumbers([42, 7])]).to.deep.equal([
 			[42n, ["head-b"]],
@@ -579,12 +639,9 @@ describe("native shared-log range planner", () => {
 			end2: 100n,
 		});
 		expect(typed).to.be.instanceOf(BigUint64Array);
-		expect(Array.from(typed!, (value) => value.toString()).sort()).to.deep.equal([
-			"5",
-			"8",
-			"90",
-			"90",
-		]);
+		expect(
+			Array.from(typed!, (value) => value.toString()).sort(),
+		).to.deep.equal(["5", "8", "90", "90"]);
 		expect(
 			state
 				.getEntryHashNumbersInRangeLimited({
@@ -669,11 +726,7 @@ describe("native shared-log range planner", () => {
 		const leaders = new Map([["peer-a", { intersecting: false }]]);
 
 		expect(
-			state.planAppendLeadersForDelivery(
-				leaders,
-				["peer-b", "peer-c"],
-				2,
-			),
+			state.planAppendLeadersForDelivery(leaders, ["peer-b", "peer-c"], 2),
 		).to.deep.equal(
 			new Map([
 				["peer-a", { intersecting: false }],
@@ -682,11 +735,7 @@ describe("native shared-log range planner", () => {
 			]),
 		);
 		expect(
-			state.planAppendLeadersForDelivery(
-				leaders,
-				["peer-b", "peer-c"],
-				1,
-			),
+			state.planAppendLeadersForDelivery(leaders, ["peer-b", "peer-c"], 1),
 		).to.deep.equal(leaders);
 	});
 

@@ -377,6 +377,13 @@ export const SYNC_CAPABILITY_REPLICATION_INFO_V2_APPLY = 1 << 3;
 export const SYNC_CAPABILITY_REPLICATION_INFO_V2_CONFIRM = 1 << 4;
 
 /**
+ * Capability bit: the peer can answer correlated, session-bound persisted
+ * entry receipt requests. The bit is advertised only when every local storage
+ * component needed to reopen an entry provides strict per-write durability.
+ */
+export const SYNC_CAPABILITY_PERSISTED_ENTRY_RECEIPTS = 1 << 5;
+
+/**
  * One-shot capability advertisement, sent to a peer when it (or we) subscribe
  * to the program topic. Peers that do not know this message drop it as an
  * unknown variant. Each feature still requires its explicit bit.

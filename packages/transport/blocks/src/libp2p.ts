@@ -46,6 +46,7 @@ export class DirectBlock extends DirectStream implements IBlocks {
 				},
 			) => void | { close: () => void } | (() => void);
 			onPut?: (cid: string) => Promise<void> | void;
+			onPutMany?: (cids: string[]) => Promise<void> | void;
 			providerCache?:
 				| boolean
 				| {
@@ -141,6 +142,7 @@ export class DirectBlock extends DirectStream implements IBlocks {
 			resolveProviders: options?.resolveProviders ?? defaultResolveProviders,
 			watchProviders: options?.watchProviders,
 			onPut: options?.onPut,
+			onPutMany: options?.onPutMany,
 			providerCache: options?.providerCache,
 			requeryOnReachable: options?.requeryOnReachable,
 			rust: blockExchange

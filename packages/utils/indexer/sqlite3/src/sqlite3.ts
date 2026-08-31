@@ -1,5 +1,6 @@
 import DB from "better-sqlite3";
 import fs from "fs";
+import { normalizeSQLiteDirectory } from "./directory.js";
 import type { SQLitePragmaOptions } from "./sqlite3-messages.worker.js";
 import type {
 	Database as IDatabase,
@@ -23,6 +24,7 @@ let create = async (
 	directory?: string,
 	options?: { pragmas?: SQLitePragmaOptions },
 ) => {
+	const persistentDirectory = normalizeSQLiteDirectory(directory);
 	let db: DB.Database | undefined = undefined;
 	let statements: Map<string, IStatement> = new Map();
 	let dbFileName: string;
@@ -51,12 +53,12 @@ let create = async (
 		}
 
 		if (!db) {
-			if (directory) {
+			if (persistentDirectory) {
 				// if directory is provided, check if directory exist, if not create it
-				if (!fs.existsSync(directory)) {
-					fs.mkdirSync(directory, { recursive: true });
+				if (!fs.existsSync(persistentDirectory)) {
+					fs.mkdirSync(persistentDirectory, { recursive: true });
 				}
-				dbFileName = `${directory}/db.sqlite`;
+				dbFileName = `${persistentDirectory}/db.sqlite`;
 			} else {
 				dbFileName = ":memory:";
 			}
@@ -96,6 +98,19 @@ let create = async (
 		drop,
 		open,
 		status: () => (db ? "open" : "closed"),
+		crashSafeDurability:
+			persistentDirectory != null &&
+			(options?.pragmas?.synchronous ?? "FULL").toUpperCase() === "FULL"
+				? {
+						crashSafe: true,
+						barrier: () => {
+							if (!db) throw new Error("Database not open");
+							// FULL commits sync the WAL; checkpointing here supplies a concrete
+							// fence for every prior transaction before a receipt is issued.
+							db.pragma("wal_checkpoint(PASSIVE)");
+						},
+					}
+				: undefined,
 	} as IDatabase; // TODO fix this
 };
 

@@ -3,6 +3,10 @@ import { type IdKey } from "./id.js";
 import type { QueryLike, Sort } from "./query.js";
 
 type MaybePromise<T = void> = Promise<T> | T;
+export type CrashSafeIndexDurability = {
+	readonly crashSafe: true;
+	barrier(): MaybePromise<void>;
+};
 
 export interface IndexedResult<
 	T extends Record<string, any> = Record<string, any>,
@@ -164,6 +168,7 @@ export interface Index<T extends Record<string, any>, NestedType = any> {
 	): IndexIterator<T, S>;
 	getSize(): MaybePromise<number>;
 	persisted(): MaybePromise<boolean>;
+	readonly crashSafeDurability?: CrashSafeIndexDurability;
 	start(): MaybePromise<void>;
 	stop(): MaybePromise<void>;
 }

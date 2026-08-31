@@ -28,6 +28,41 @@ export class NoPeersError extends Error {
 }
 
 /**
+ * A persisted-delivery request failed after the entries were committed locally.
+ * Retrying the original append can therefore create a second logical write.
+ */
+export class PersistedDeliveryError extends Error {
+	readonly localCommitSucceeded = true;
+	readonly retrySafe = false;
+	readonly cause: unknown;
+	readonly committedHashes: readonly string[];
+
+	constructor(cause: unknown, committedHashes: Iterable<string>) {
+		const previous =
+			cause instanceof PersistedDeliveryError ? cause.committedHashes : [];
+		const rootCause =
+			cause instanceof PersistedDeliveryError ? cause.cause : cause;
+		const hashes = [...new Set([...previous, ...committedHashes])];
+		const displayedHashes = hashes.slice(0, 8);
+		const omitted = hashes.length - displayedHashes.length;
+		super(
+			`Local commit succeeded, but persisted delivery failed; automatic retry is unsafe: ${
+				rootCause instanceof Error ? rootCause.message : String(rootCause)
+			}${
+				displayedHashes.length > 0
+					? ` (committed hashes: ${displayedHashes.join(", ")}${
+							omitted > 0 ? `, +${omitted} more` : ""
+						})`
+					: ""
+			}`,
+		);
+		this.name = "PersistedDeliveryError";
+		this.cause = rootCause;
+		this.committedHashes = hashes;
+	}
+}
+
+/**
  * The `compatibility` open option was removed: the pre-v10 replication-info
  * network compatibility modes are retired. Any explicitly provided value —
  * including 10, which previously behaved like the default — rejects before

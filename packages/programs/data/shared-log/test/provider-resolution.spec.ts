@@ -145,6 +145,74 @@ describe("join provider resolution", () => {
 		expect(providers).to.have.length(8);
 		expect(providers[0]).to.equal(liveHash);
 		expect(providers).to.include(directoryProviders[0]);
-		expect(providerDirectory.calledOnce).to.be.true;
+		expect(providerDirectory.callCount).to.equal(2);
+		expect(
+			providerDirectory.getCalls().map((call) => call.args[0]),
+		).to.have.members([
+			"cid:provider-resolution-initial",
+			`shared-log|${log.topic}`,
+		]);
+	});
+
+	it("keeps legacy CID discovery alongside the renewable batch lease", async () => {
+		session = await TestSession.disconnected(1);
+		const store = await session.peers[0].open(new EventStore<string, any>(), {
+			args: { replicate: false },
+		});
+		const log = store.log as any;
+		const close = sinon.spy();
+		const provide = sinon
+			.stub((session.peers[0].services as any).fanout, "provide")
+			.returns({ close });
+		let announcedNamespaces: string[] = [];
+		const announce = sinon
+			.stub((session.peers[0].services as any).fanout, "announceProviders")
+			.callsFake(async (namespaces: unknown) => {
+				announcedNamespaces = [...(namespaces as Iterable<string>)];
+			});
+		const cids = Array.from({ length: 10 }, (_, index) => `batch-${index}`);
+
+		await log.remoteBlocks.options.onPutMany(cids);
+
+		expect(provide.calledOnce).to.be.true;
+		expect(provide.firstCall.args).to.deep.equal([
+			`shared-log|${log.topic}`,
+			{ ttlMs: 120_000, announceIntervalMs: 60_000 },
+		]);
+		expect(announce.calledOnce).to.be.true;
+		expect(announcedNamespaces).to.deep.equal(
+			cids.map((cid) => `cid:${cid}`),
+		);
+		expect(announce.firstCall.args[1]).to.deep.equal({
+			ttlMs: 120_000,
+			bootstrapMaxPeers: 2,
+		});
+	});
+
+	it("watches both CID and log-wide provider namespaces", async () => {
+		session = await TestSession.disconnected(1);
+		const store = await session.peers[0].open(new EventStore<string, any>(), {
+			args: { replicate: false },
+		});
+		const log = store.log as any;
+		const closes = [sinon.spy(), sinon.spy()];
+		const watch = sinon
+			.stub((session.peers[0].services as any).fanout, "watchProviders")
+			.onFirstCall()
+			.returns({ close: closes[0] });
+		watch.onSecondCall().returns({ close: closes[1] });
+
+		const handle = log.remoteBlocks.options.watchProviders("watched-cid", {
+			onProviders: sinon.spy(),
+		});
+		expect(watch.callCount).to.equal(2);
+		expect(watch.getCalls().map((call) => call.args[0])).to.deep.equal([
+			"cid:watched-cid",
+			`shared-log|${log.topic}`,
+		]);
+
+		handle.close();
+		expect(closes[0].calledOnce).to.be.true;
+		expect(closes[1].calledOnce).to.be.true;
 	});
 });

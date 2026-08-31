@@ -654,6 +654,8 @@ export type FanoutProviderHandle = {
 	close: () => void;
 };
 
+const PROVIDER_BATCH_ANNOUNCE_CONCURRENCY = 8;
+
 export type FanoutTreeDataEvent = {
 	topic: string;
 	root: string;
@@ -1741,11 +1743,23 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		namespace: string,
 		options: Omit<FanoutProviderAnnounceOptions, "announceIntervalMs"> = {},
 	): Promise<void> {
+		await this.announceProviders([namespace], options);
+	}
+
+	/**
+	 * Announce multiple provider namespaces using the existing single-namespace
+	 * wire frame. Bootstrap discovery is shared across the batch and sends are
+	 * bounded, so released trackers and readers remain compatible without one
+	 * bootstrap lookup or unbounded promise per namespace.
+	 */
+	public async announceProviders(
+		namespaces: Iterable<string>,
+		options: Omit<FanoutProviderAnnounceOptions, "announceIntervalMs"> = {},
+	): Promise<void> {
 		if (!this.started) {
 			throw new Error("FanoutTree must be started before providing");
 		}
 
-		const id = this.getProviderNamespaceId(namespace);
 		const ttlMsRaw = Math.max(0, Math.floor(options.ttlMs ?? 120_000));
 		const ttlMs = Math.min(ttlMsRaw, 120_000);
 
@@ -1764,20 +1778,58 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 			0,
 			Math.floor(options.bootstrapMaxPeers ?? 0),
 		);
-
-		const state: ProviderAnnounceState = {
-			id,
-			ttlMs,
-			// ignored by `announceProviderOnce`
-			announceIntervalMs: 0,
-			bootstrapOverride,
+		const bootstraps = bootstrapOverride ?? this.bootstraps;
+		if (bootstraps.length === 0) return;
+		const signal = this.closeController.signal;
+		const peers = await this.ensureBootstrapPeers(
+			bootstraps,
 			bootstrapDialTimeoutMs,
+			signal,
 			bootstrapMaxPeers,
-			closeController: new AbortController(),
-			closed: false,
-		};
+		);
+		if (peers.length === 0 || signal.aborted) return;
 
-		await this.announceProviderOnce(state, this.closeController.signal, ttlMs);
+		const iterator = namespaces[Symbol.iterator]();
+		const firstNamespaces: string[] = [];
+		for (
+			let index = 0;
+			index < PROVIDER_BATCH_ANNOUNCE_CONCURRENCY;
+			index++
+		) {
+			const next = iterator.next();
+			if (next.done) break;
+			firstNamespaces.push(next.value);
+		}
+		if (firstNamespaces.length === 0) return;
+
+		const addrs = this.getSelfAnnounceAddrs();
+		let firstError: unknown;
+		let failureCount = 0;
+		const announce = async (firstNamespace: string) => {
+			let namespace = firstNamespace;
+			for (;;) {
+				if (signal.aborted) return;
+				try {
+					const id = this.getProviderNamespaceId(namespace);
+					const bytes = this.codec.encodeProviderAnnounce(id.key, ttlMs, addrs);
+					await this._sendControlMany(peers, bytes);
+				} catch (error) {
+					failureCount++;
+					firstError ??= error;
+				}
+				const next = iterator.next();
+				if (next.done) return;
+				namespace = next.value;
+			}
+		};
+		await Promise.all(firstNamespaces.map((namespace) => announce(namespace)));
+		if (failureCount === 1) throw firstError;
+		if (failureCount > 1) {
+			throw new AggregateError(
+				[firstError],
+				`Failed to announce ${failureCount} provider namespaces`,
+			);
+		}
 	}
 
 	private async _providerAnnounceLoop(

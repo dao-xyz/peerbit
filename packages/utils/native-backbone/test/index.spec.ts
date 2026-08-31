@@ -515,6 +515,52 @@ describe("native peerbit backbone", () => {
 		);
 	});
 
+	it("bridges routing-safe full-replica leaders", async () => {
+		const backbone = await createNativePeerbitBackbone({
+			clockId: publicKey,
+			privateKey,
+			publicKey,
+			resolution: "u32",
+		});
+		for (const [id, hash, start, end, mode] of [
+			["a", "peer-a", 0, 10, 0],
+			["b", "peer-b", 90, 100, 1],
+		] as const) {
+			backbone.putRange({
+				id,
+				hash,
+				timestamp: 0,
+				start1: start,
+				end1: end,
+				start2: start,
+				end2: end,
+				width: end - start,
+				mode,
+			});
+		}
+		const options = {
+			now: 1_000,
+			peerFilter: ["peer-a"],
+			expandPeerFilter: true,
+			selfHash: "peer-a",
+			selfReplicating: true,
+			fullReplicaFallback: true,
+		};
+
+		expect(backbone.getRoutingFullReplicaLeaders(2, options)).to.deep.equal(
+			new Map([
+				["peer-a", { intersecting: true }],
+				["peer-b", { intersecting: true }],
+			]),
+		);
+		expect(
+			backbone.getRoutingFullReplicaLeaders(2, {
+				...options,
+				includeStrictFullReplica: false,
+			}),
+		).to.equal(undefined);
+	});
+
 	it("bridges exact full-replica candidate discovery", async () => {
 		const backbone = await createNativePeerbitBackbone({
 			clockId: publicKey,
