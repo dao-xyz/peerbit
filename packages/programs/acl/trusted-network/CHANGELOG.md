@@ -1,5 +1,13 @@
 # Changelog
 
+## 6.0.106
+
+### Patch Changes
+
+- [#1367](https://github.com/dao-xyz/peerbit/pull/1367) [`b449b74`](https://github.com/dao-xyz/peerbit/commit/b449b747ceaa9bf7c69b8df61f975e3ec8a8aa4c) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Add an internal crash-safe durable anchor for the non-activatable
+  TrustedNetwork v2 policy reducer, using generic storage barriers and preserving
+  fail-closed unavailable and fork evidence across reopen.
+
 ## 6.0.105
 
 ### Patch Changes
