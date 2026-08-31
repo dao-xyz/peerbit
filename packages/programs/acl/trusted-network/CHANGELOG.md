@@ -1,5 +1,11 @@
 # Changelog
 
+## 6.0.103
+
+### Patch Changes
+
+- [#1361](https://github.com/dao-xyz/peerbit/pull/1361) [`51ed0c4`](https://github.com/dao-xyz/peerbit/commit/51ed0c4be81e9faad7aaf75dff65d35cf23f0ded) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Add internal, non-activatable TrustedNetwork v2 descriptor and policy codecs while pinning the published v1 wire format and program addresses.
+
 ## 6.0.102
 
 ### Patch Changes
