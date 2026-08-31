@@ -22,7 +22,9 @@ import {
  * resolver instead of being accumulated in memory.
  */
 
-const DEFAULT_MAX_PENDING_POLICIES_V2 = 64;
+/** Internal protocol ceiling; this module is not part of the package root. */
+export const TRUSTED_NETWORK_V2_MAX_PENDING_POLICIES = 64;
+const DEFAULT_MAX_PENDING_POLICIES_V2 = TRUSTED_NETWORK_V2_MAX_PENDING_POLICIES;
 const PENDING_POLICY_ACCOUNTING_OVERHEAD_V2 = 64;
 const MAX_PENDING_POLICY_ACCOUNTED_BYTES_V2 =
 	TRUSTED_NETWORK_V2_MAX_POLICY_ENTRY_BYTES * 2 +
@@ -33,7 +35,58 @@ const DEFAULT_POLICY_RESOLUTION_TIMEOUT_MS_V2 = 10 * 1000;
 const MAX_TIMER_DELAY_MS_V2 = 0x7fffffff;
 const MAX_UNAVAILABLE_REASON_LENGTH_V2 = 512;
 
-const copyBytes = (bytes: Uint8Array): Uint8Array => Uint8Array.from(bytes);
+const TYPED_ARRAY_PROTOTYPE = Object.getPrototypeOf(Uint8Array.prototype);
+const TYPED_ARRAY_BYTE_LENGTH = Object.getOwnPropertyDescriptor(
+	TYPED_ARRAY_PROTOTYPE,
+	"byteLength",
+)!.get!;
+const TYPED_ARRAY_TAG = Object.getOwnPropertyDescriptor(
+	TYPED_ARRAY_PROTOTYPE,
+	Symbol.toStringTag,
+)!.get!;
+const ARRAY_BUFFER_IS_VIEW = ArrayBuffer.isView;
+const UINT8_ARRAY_SET = Uint8Array.prototype.set;
+
+const exactUint8ArrayByteLength = (input: unknown): number => {
+	if (
+		!ARRAY_BUFFER_IS_VIEW(input) ||
+		TYPED_ARRAY_TAG.call(input) !== "Uint8Array"
+	) {
+		throw new TypeError("Expected a genuine Uint8Array");
+	}
+	const byteLength = TYPED_ARRAY_BYTE_LENGTH.call(input) as number;
+	if (byteLength === 0) {
+		// The intrinsic getter reports zero for both empty and detached views. The
+		// intrinsic set distinguishes them without consulting caller properties.
+		UINT8_ARRAY_SET.call(new Uint8Array(0), input as Uint8Array);
+	}
+	return byteLength;
+};
+
+const copyBytesWithLength = (
+	bytes: Uint8Array,
+	byteLength: number,
+): Uint8Array => {
+	const copy = new Uint8Array(byteLength);
+	UINT8_ARRAY_SET.call(copy, bytes);
+	return copy;
+};
+
+const copyBytes = (bytes: Uint8Array): Uint8Array => {
+	const byteLength = exactUint8ArrayByteLength(bytes);
+	return copyBytesWithLength(bytes, byteLength);
+};
+
+const hasExactUint8ArrayByteLength = (
+	input: unknown,
+	expected: number,
+): input is Uint8Array => {
+	try {
+		return exactUint8ArrayByteLength(input) === expected;
+	} catch {
+		return false;
+	}
+};
 
 const bytesKey = (bytes: Uint8Array): string => {
 	let key = "";
@@ -227,13 +280,16 @@ class PolicyDependencyUnavailableErrorV2 extends Error {
 const capturePolicySnapshotEntryBytesV2 = (
 	entryBytes: Uint8Array,
 ): Uint8Array => {
-	if (!(entryBytes instanceof Uint8Array)) {
+	let byteLength: number;
+	try {
+		byteLength = exactUint8ArrayByteLength(entryBytes);
+	} catch {
 		throw new Error("Policy snapshot must use canonical EntryV0 bytes");
 	}
-	if (entryBytes.byteLength === 0) {
+	if (byteLength === 0) {
 		throw new Error("Policy snapshot must use EntryV0");
 	}
-	if (entryBytes.byteLength > TRUSTED_NETWORK_V2_MAX_POLICY_ENTRY_BYTES) {
+	if (byteLength > TRUSTED_NETWORK_V2_MAX_POLICY_ENTRY_BYTES) {
 		throw new Error(
 			`Policy snapshot entry must contain 1-${TRUSTED_NETWORK_V2_MAX_POLICY_ENTRY_BYTES} bytes`,
 		);
@@ -241,7 +297,7 @@ const capturePolicySnapshotEntryBytesV2 = (
 
 	// Apply the protocol byte ceiling before this first copy, decode, or crypto
 	// operation. The retained copy also prevents caller mutation during awaits.
-	return copyBytes(entryBytes);
+	return copyBytesWithLength(entryBytes, byteLength);
 };
 
 const authenticateCapturedPolicySnapshotEntryV2 = async (
@@ -292,12 +348,15 @@ const authenticateCapturedPolicySnapshotEntryV2 = async (
 	}
 
 	const payload = await authenticatedEntry.getPayloadValue();
-	if (!(payload instanceof Uint8Array)) {
+	let canonicalPayload: Uint8Array;
+	try {
+		canonicalPayload = copyBytes(payload as Uint8Array);
+	} catch {
 		throw new Error(
 			"Policy snapshot payload must contain canonical body bytes",
 		);
 	}
-	const body = decodePolicySnapshotBodyV2(copyBytes(payload), descriptor);
+	const body = decodePolicySnapshotBodyV2(canonicalPayload, descriptor);
 	const digest = digestPolicySnapshotBodyV2(body);
 	return {
 		body: copyBody(body),
@@ -398,8 +457,7 @@ const captureDurableStateV2 = (
 			};
 		case "UNAVAILABLE": {
 			if (
-				!(durableState.acceptedAncestorDigest instanceof Uint8Array) ||
-				durableState.acceptedAncestorDigest.byteLength !== 32
+				!hasExactUint8ArrayByteLength(durableState.acceptedAncestorDigest, 32)
 			) {
 				throw new Error(
 					"Unavailable accepted ancestor digest must contain exactly 32 bytes",
@@ -473,8 +531,14 @@ export class TrustedNetworkV2PolicyReducer {
 	constructor(properties: TrustedNetworkV2PolicyReducerProperties) {
 		assertNetworkDescriptorV2(properties.descriptor);
 		const maxPending = properties.maxPending ?? DEFAULT_MAX_PENDING_POLICIES_V2;
-		if (!Number.isSafeInteger(maxPending) || maxPending < 1) {
-			throw new Error("maxPending must be a positive safe integer");
+		if (
+			!Number.isSafeInteger(maxPending) ||
+			maxPending < 1 ||
+			maxPending > TRUSTED_NETWORK_V2_MAX_PENDING_POLICIES
+		) {
+			throw new Error(
+				`maxPending must be a positive safe integer no greater than ${TRUSTED_NETWORK_V2_MAX_PENDING_POLICIES}`,
+			);
 		}
 		const maxPendingPolicyBytes =
 			properties.maxPendingPolicyBytes ?? DEFAULT_MAX_PENDING_POLICY_BYTES_V2;

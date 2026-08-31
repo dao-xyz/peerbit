@@ -24,6 +24,37 @@ const hex = (bytes: Uint8Array): string => Buffer.from(bytes).toString("hex");
 
 const entryBytes = (entry: EntryV0<Uint8Array>): Uint8Array => serialize(entry);
 
+class AdversarialUint8Array extends Uint8Array {
+	iteratorCalls = 0;
+	readonly iteratorLength: number;
+
+	constructor(source: Uint8Array, iteratorLength: number) {
+		super(source.byteLength);
+		Uint8Array.prototype.set.call(this, source);
+		this.iteratorLength = iteratorLength;
+	}
+
+	*[Symbol.iterator](): IterableIterator<number> {
+		this.iteratorCalls += 1;
+		for (let index = 0; index < this.iteratorLength; index++) yield 0;
+	}
+}
+
+const installOwnIterator = (
+	bytes: Uint8Array,
+	iterator: () => IterableIterator<number>,
+): (() => number) => {
+	let calls = 0;
+	Object.defineProperty(bytes, Symbol.iterator, {
+		configurable: true,
+		value: (): IterableIterator<number> => {
+			calls += 1;
+			return iterator();
+		},
+	});
+	return () => calls;
+};
+
 const sortedBindings = (
 	bindings: Array<[PublicSignKey, number]>,
 ): PolicySubjectBindingV2[] =>
@@ -331,6 +362,80 @@ describe("TrustedNetwork v2 policy reducer", () => {
 		expect(pendingReducer.pendingCount).to.equal(1);
 	});
 
+	it("captures the intrinsic Uint8Array extent without iterator or length hooks", async () => {
+		const fixture = await createChain();
+		const valid = entryBytes(fixture.chain[0]!.entry);
+		const freshReducer = (): TrustedNetworkV2PolicyReducer =>
+			new TrustedNetworkV2PolicyReducer({
+				descriptor: fixture.descriptor,
+				resolvePolicyEntry: () => undefined,
+			});
+
+		for (const shadowedLength of [0, Number.NaN]) {
+			const shadowed = Uint8Array.from(valid);
+			Object.defineProperty(shadowed, "byteLength", {
+				value: shadowedLength,
+			});
+			const iteratorCalls = installOwnIterator(
+				shadowed,
+				function* (): IterableIterator<number> {},
+			);
+			expect((await freshReducer().ingest(shadowed)).status).to.equal(
+				"accepted",
+			);
+			expect(iteratorCalls()).to.equal(0);
+		}
+
+		const subclass = new AdversarialUint8Array(
+			valid,
+			TRUSTED_NETWORK_V2_MAX_POLICY_ENTRY_BYTES + 200_000,
+		);
+		expect((await freshReducer().ingest(subclass)).status).to.equal("accepted");
+		expect(subclass.iteratorCalls).to.equal(0);
+
+		const expanding = Uint8Array.of(0xff);
+		const expandingIteratorCalls = installOwnIterator(
+			expanding,
+			function* (): IterableIterator<number> {
+				for (
+					let index = 0;
+					index < TRUSTED_NETWORK_V2_MAX_POLICY_ENTRY_BYTES + 200_000;
+					index++
+				) {
+					yield 0;
+				}
+			},
+		);
+		expect((await freshReducer().ingest(expanding)).status).to.equal(
+			"rejected",
+		);
+		expect(expandingIteratorCalls()).to.equal(0);
+
+		const oversized = new Uint8Array(
+			TRUSTED_NETWORK_V2_MAX_POLICY_ENTRY_BYTES + 1,
+		);
+		Object.defineProperty(oversized, "byteLength", { value: 1 });
+		const oversizedIteratorCalls = installOwnIterator(
+			oversized,
+			function* (): IterableIterator<number> {},
+		);
+		const oversizedResult = await freshReducer().ingest(oversized);
+		expect(oversizedResult.status).to.equal("rejected");
+		expect(oversizedResult.reason).to.contain(
+			String(TRUSTED_NETWORK_V2_MAX_POLICY_ENTRY_BYTES),
+		);
+		expect(oversizedIteratorCalls()).to.equal(0);
+
+		const proxied = new Proxy(Uint8Array.from(valid), {});
+		expect(
+			(await freshReducer().ingest(proxied as unknown as Uint8Array)).status,
+		).to.equal("rejected");
+
+		const detached = new Uint8Array(new ArrayBuffer(8));
+		structuredClone(detached.buffer, { transfer: [detached.buffer] });
+		expect((await freshReducer().ingest(detached)).status).to.equal("rejected");
+	});
+
 	it("bounds signal-ignoring resolver attempts and keeps candidate-only ancestry pending", async () => {
 		const fixture = await createChain();
 		let attemptSignal: AbortSignal | undefined;
@@ -489,6 +594,14 @@ describe("TrustedNetwork v2 policy reducer", () => {
 						TRUSTED_NETWORK_V2_MAX_POLICY_ENTRY_BYTES * 2 + 64 + 1,
 				}),
 		).to.throw("no greater than");
+		expect(
+			() =>
+				new TrustedNetworkV2PolicyReducer({
+					descriptor: fixture.descriptor,
+					resolvePolicyEntry: () => undefined,
+					maxPending: 65,
+				}),
+		).to.throw("no greater than 64");
 	});
 
 	it("aborts an in-flight resolver without allowing late state mutation", async () => {
