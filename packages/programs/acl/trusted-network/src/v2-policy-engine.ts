@@ -7,6 +7,7 @@ import {
 	PolicySnapshotBodyV2,
 	PolicySubjectBindingV2,
 	TRUSTED_NETWORK_V2_KNOWN_ROLE_BITS,
+	TRUSTED_NETWORK_V2_MAX_POLICY_ENTRY_BYTES,
 	assertNetworkDescriptorV2,
 	decodePolicySnapshotBodyV2,
 	digestPolicySnapshotBodyV2,
@@ -22,8 +23,14 @@ import {
  */
 
 const DEFAULT_MAX_PENDING_POLICIES_V2 = 64;
-const DEFAULT_MAX_PENDING_POLICY_BYTES_V2 = 256 * 1024;
 const PENDING_POLICY_ACCOUNTING_OVERHEAD_V2 = 64;
+const MAX_PENDING_POLICY_ACCOUNTED_BYTES_V2 =
+	TRUSTED_NETWORK_V2_MAX_POLICY_ENTRY_BYTES * 2 +
+	PENDING_POLICY_ACCOUNTING_OVERHEAD_V2;
+const DEFAULT_MAX_PENDING_POLICY_BYTES_V2 =
+	MAX_PENDING_POLICY_ACCOUNTED_BYTES_V2;
+const DEFAULT_POLICY_RESOLUTION_TIMEOUT_MS_V2 = 10 * 1000;
+const MAX_TIMER_DELAY_MS_V2 = 0x7fffffff;
 const MAX_UNAVAILABLE_REASON_LENGTH_V2 = 512;
 
 const copyBytes = (bytes: Uint8Array): Uint8Array => Uint8Array.from(bytes);
@@ -76,7 +83,8 @@ const copySnapshot = (
 
 export type PolicySnapshotResolverV2 = (
 	digest: Uint8Array,
-) => EntryV0<Uint8Array> | undefined | Promise<EntryV0<Uint8Array> | undefined>;
+	options: { signal: AbortSignal },
+) => Uint8Array | undefined | Promise<Uint8Array | undefined>;
 
 export type PolicyParentFetchHintV2 = {
 	kind: "policy-parent";
@@ -134,6 +142,7 @@ type UnavailablePolicyComparisonV2 = {
 type ParentResolutionV2 =
 	| { status: "found"; parent: ValidatedPolicySnapshotV2 }
 	| { status: "missing"; digest: Uint8Array }
+	| { status: "unavailable"; digest: Uint8Array; reason: string }
 	| { status: "reject"; digest: Uint8Array; reason: string };
 
 type SnapshotResolutionCacheV2 = Map<
@@ -144,7 +153,7 @@ type SnapshotResolutionCacheV2 = Map<
 type EvaluationV2 =
 	| { status: "accept" }
 	| { status: "duplicate" }
-	| { status: "missing"; digest: Uint8Array }
+	| { status: "missing"; digest: Uint8Array; reason?: string }
 	| { status: "reject"; reason: string }
 	| { status: "unavailable"; digest: Uint8Array; reason: string }
 	| {
@@ -157,6 +166,7 @@ type EvaluationV2 =
 type PendingDrainOutcomeV2 =
 	| { status: "accepted" }
 	| { status: "forked" }
+	| { status: "halted" }
 	| {
 			status: "unavailable";
 			retained: boolean;
@@ -169,33 +179,60 @@ const validationMessage = (error: unknown): string =>
 const boundedUnavailableReason = (reason: string): string =>
 	reason.slice(0, MAX_UNAVAILABLE_REASON_LENGTH_V2);
 
-export const authenticatePolicySnapshotEntryV2 = async (
-	entry: unknown,
-	descriptor: NetworkDescriptorV2,
-): Promise<ValidatedPolicySnapshotV2> => {
-	assertNetworkDescriptorV2(descriptor);
-	if (!(entry instanceof EntryV0)) {
+class PolicyDependencyUnavailableErrorV2 extends Error {
+	constructor(message: string) {
+		super(message);
+		this.name = "PolicyDependencyUnavailableErrorV2";
+	}
+}
+
+const capturePolicySnapshotEntryBytesV2 = (
+	entryBytes: Uint8Array,
+): Uint8Array => {
+	if (!(entryBytes instanceof Uint8Array)) {
+		throw new Error("Policy snapshot must use canonical EntryV0 bytes");
+	}
+	if (entryBytes.byteLength === 0) {
 		throw new Error("Policy snapshot must use EntryV0");
 	}
-	if (!(entry._meta instanceof DecryptedThing)) {
+	if (entryBytes.byteLength > TRUSTED_NETWORK_V2_MAX_POLICY_ENTRY_BYTES) {
+		throw new Error(
+			`Policy snapshot entry must contain 1-${TRUSTED_NETWORK_V2_MAX_POLICY_ENTRY_BYTES} bytes`,
+		);
+	}
+
+	// Apply the protocol byte ceiling before this first copy, decode, or crypto
+	// operation. The retained copy also prevents caller mutation during awaits.
+	return copyBytes(entryBytes);
+};
+
+const authenticateCapturedPolicySnapshotEntryV2 = async (
+	canonicalEntryBytes: Uint8Array,
+	descriptor: NetworkDescriptorV2,
+): Promise<ValidatedPolicySnapshotV2> => {
+	const authenticatedEntry = deserialize(canonicalEntryBytes, Entry);
+	if (!(authenticatedEntry instanceof EntryV0)) {
+		throw new Error("Policy snapshot must use EntryV0");
+	}
+	if (!equals(canonicalEntryBytes, serialize(authenticatedEntry))) {
+		throw new Error("Policy snapshot entry encoding is not canonical");
+	}
+	if (!(authenticatedEntry._meta instanceof DecryptedThing)) {
 		throw new Error("Policy snapshot metadata must be public");
 	}
-	if (!(entry._payload instanceof DecryptedThing)) {
+	if (!(authenticatedEntry._payload instanceof DecryptedThing)) {
 		throw new Error("Policy snapshot payload must be public");
 	}
 	if (
-		entry._signatures === undefined ||
-		entry._signatures.signatures.length !== 1
+		authenticatedEntry._signatures === undefined ||
+		authenticatedEntry._signatures.signatures.length !== 1
 	) {
 		throw new Error("Policy snapshot must contain exactly one signature");
 	}
-	if (!(entry._signatures.signatures[0] instanceof DecryptedThing)) {
+	if (
+		!(authenticatedEntry._signatures.signatures[0] instanceof DecryptedThing)
+	) {
 		throw new Error("Policy snapshot signature must be public");
-	}
-	const entryBytes = serialize(entry);
-	const authenticatedEntry = deserialize(entryBytes, Entry);
-	if (!(authenticatedEntry instanceof EntryV0)) {
-		throw new Error("Policy snapshot must decode as EntryV0");
 	}
 	authenticatedEntry.init({ encoding: NO_ENCODING });
 
@@ -228,12 +265,23 @@ export const authenticatePolicySnapshotEntryV2 = async (
 		body: copyBody(body),
 		digest: copyBytes(digest),
 		digestKey: bytesKey(digest),
-		entryBytes,
+		entryBytes: canonicalEntryBytes,
 		accountedBytes:
-			entryBytes.byteLength +
+			canonicalEntryBytes.byteLength +
 			serialize(body).byteLength +
 			PENDING_POLICY_ACCOUNTING_OVERHEAD_V2,
 	};
+};
+
+export const authenticatePolicySnapshotEntryV2 = async (
+	entryBytes: Uint8Array,
+	descriptor: NetworkDescriptorV2,
+): Promise<ValidatedPolicySnapshotV2> => {
+	assertNetworkDescriptorV2(descriptor);
+	return authenticateCapturedPolicySnapshotEntryV2(
+		capturePolicySnapshotEntryBytesV2(entryBytes),
+		descriptor,
+	);
 };
 
 const projectionFromSnapshot = (
@@ -291,8 +339,12 @@ const copyForkEvidence = (
 export class TrustedNetworkV2PolicyReducer {
 	private readonly descriptor: NetworkDescriptorV2;
 	private readonly resolvePolicyEntry: PolicySnapshotResolverV2;
+	private readonly resolveTimeoutMs: number;
 	private readonly maxPending: number;
 	private readonly maxPendingPolicyBytes: number;
+	private readonly lifecycleController = new AbortController();
+	private externalSignal?: AbortSignal;
+	private externalAbortListener?: () => void;
 	private acceptedHead?: ValidatedPolicySnapshotV2;
 	private projectedRoles = new Map<string, number>();
 	private readonly pending = new Map<string, PendingPolicySnapshotV2>();
@@ -305,6 +357,8 @@ export class TrustedNetworkV2PolicyReducer {
 	constructor(properties: {
 		descriptor: NetworkDescriptorV2;
 		resolvePolicyEntry: PolicySnapshotResolverV2;
+		resolveTimeoutMs?: number;
+		signal?: AbortSignal;
 		maxPending?: number;
 		maxPendingPolicyBytes?: number;
 	}) {
@@ -317,20 +371,52 @@ export class TrustedNetworkV2PolicyReducer {
 			properties.maxPendingPolicyBytes ?? DEFAULT_MAX_PENDING_POLICY_BYTES_V2;
 		if (
 			!Number.isSafeInteger(maxPendingPolicyBytes) ||
-			maxPendingPolicyBytes < 1
+			maxPendingPolicyBytes < 1 ||
+			maxPendingPolicyBytes > MAX_PENDING_POLICY_ACCOUNTED_BYTES_V2
 		) {
-			throw new Error("maxPendingPolicyBytes must be a positive safe integer");
+			throw new Error(
+				`maxPendingPolicyBytes must be a positive safe integer no greater than ${MAX_PENDING_POLICY_ACCOUNTED_BYTES_V2}`,
+			);
+		}
+		const resolveTimeoutMs =
+			properties.resolveTimeoutMs ?? DEFAULT_POLICY_RESOLUTION_TIMEOUT_MS_V2;
+		if (
+			!Number.isSafeInteger(resolveTimeoutMs) ||
+			resolveTimeoutMs < 1 ||
+			resolveTimeoutMs > MAX_TIMER_DELAY_MS_V2
+		) {
+			throw new Error(
+				`resolveTimeoutMs must be a positive safe integer no greater than ${MAX_TIMER_DELAY_MS_V2}`,
+			);
 		}
 		this.descriptor = deserialize(
 			serialize(properties.descriptor),
 			NetworkDescriptorV2,
 		);
 		this.resolvePolicyEntry = properties.resolvePolicyEntry;
+		this.resolveTimeoutMs = resolveTimeoutMs;
 		this.maxPending = maxPending;
 		this.maxPendingPolicyBytes = maxPendingPolicyBytes;
+
+		if (properties.signal?.aborted) {
+			this.lifecycleController.abort();
+		} else if (properties.signal !== undefined) {
+			this.externalSignal = properties.signal;
+			this.externalAbortListener = (): void => {
+				this.externalSignal = undefined;
+				this.externalAbortListener = undefined;
+				this.lifecycleController.abort();
+			};
+			this.externalSignal.addEventListener(
+				"abort",
+				this.externalAbortListener,
+				{ once: true },
+			);
+		}
 	}
 
-	get state(): "EMPTY" | "ACTIVE" | "UNAVAILABLE" | "FORKED" {
+	get state(): "EMPTY" | "ACTIVE" | "UNAVAILABLE" | "FORKED" | "HALTED" {
+		if (this.lifecycleController.signal.aborted) return "HALTED";
 		if (this.fork !== undefined) return "FORKED";
 		if (this.unavailable !== undefined) return "UNAVAILABLE";
 		return this.acceptedHead === undefined ? "EMPTY" : "ACTIVE";
@@ -380,6 +466,21 @@ export class TrustedNetworkV2PolicyReducer {
 		return (this.rolesFor(subject) & roles) === roles;
 	}
 
+	abort(): void {
+		if (
+			this.externalSignal !== undefined &&
+			this.externalAbortListener !== undefined
+		) {
+			this.externalSignal.removeEventListener(
+				"abort",
+				this.externalAbortListener,
+			);
+		}
+		this.externalSignal = undefined;
+		this.externalAbortListener = undefined;
+		this.lifecycleController.abort();
+	}
+
 	private fetchHints(): PolicyParentFetchHintV2[] {
 		const unique = new Map<string, Uint8Array>();
 		for (const { missingParentDigest } of this.pending.values()) {
@@ -422,6 +523,10 @@ export class TrustedNetworkV2PolicyReducer {
 		return this.result("forked", "Policy authority signed competing children");
 	}
 
+	private haltedResult(): PolicyAdmissionResultV2 {
+		return this.result("halted", "Policy reducer lifecycle is aborted");
+	}
+
 	private unavailableResult(retention?: {
 		retained: boolean;
 		evictedPolicyDigests: Uint8Array[];
@@ -447,6 +552,7 @@ export class TrustedNetworkV2PolicyReducer {
 		outcome: PendingDrainOutcomeV2 | undefined,
 	): PolicyAdmissionResultV2 | undefined {
 		if (outcome?.status === "forked") return this.forkedResult();
+		if (outcome?.status === "halted") return this.haltedResult();
 		return outcome?.status === "unavailable"
 			? this.unavailableResult(outcome)
 			: undefined;
@@ -471,6 +577,88 @@ export class TrustedNetworkV2PolicyReducer {
 		}
 	}
 
+	private async resolveExternalSnapshot(
+		digest: Uint8Array,
+	): Promise<ValidatedPolicySnapshotV2 | undefined> {
+		if (this.lifecycleController.signal.aborted) {
+			throw new PolicyDependencyUnavailableErrorV2(
+				"Policy resolver lifecycle is aborted",
+			);
+		}
+
+		const attemptController = new AbortController();
+		let timedOut = false;
+		const abortFromLifecycle = (): void => attemptController.abort();
+		this.lifecycleController.signal.addEventListener(
+			"abort",
+			abortFromLifecycle,
+			{ once: true },
+		);
+		const timeout = setTimeout(() => {
+			timedOut = true;
+			attemptController.abort();
+		}, this.resolveTimeoutMs);
+		const abortError = (): PolicyDependencyUnavailableErrorV2 =>
+			new PolicyDependencyUnavailableErrorV2(
+				timedOut
+					? `Policy resolver timed out after ${this.resolveTimeoutMs} ms`
+					: "Policy resolver attempt was aborted",
+			);
+
+		let rejectOnAbort: (() => void) | undefined;
+		const abortPromise = new Promise<never>((_resolve, reject) => {
+			rejectOnAbort = (): void => {
+				reject(abortError());
+			};
+			attemptController.signal.addEventListener("abort", rejectOnAbort, {
+				once: true,
+			});
+		});
+
+		const resolution = Promise.resolve().then(async () => {
+			if (attemptController.signal.aborted) throw abortError();
+			const entryBytes = await this.resolvePolicyEntry(copyBytes(digest), {
+				signal: attemptController.signal,
+			});
+			// A resolver may ignore cancellation. Do not spend decode or signature
+			// verification work on bytes that arrive after this attempt expired.
+			if (attemptController.signal.aborted) throw abortError();
+			if (entryBytes === undefined) return undefined;
+			const snapshot = await authenticatePolicySnapshotEntryV2(
+				entryBytes,
+				this.descriptor,
+			);
+			if (!equals(snapshot.digest, digest)) {
+				throw new Error("Policy resolver returned the wrong body digest");
+			}
+			return snapshot;
+		});
+		// Promise.race installs handlers, but this explicit observer documents and
+		// preserves consumption if the resolver settles after its deadline.
+		void resolution.then(
+			(): void => undefined,
+			(): void => undefined,
+		);
+
+		try {
+			return await Promise.race([resolution, abortPromise]);
+		} catch (error) {
+			if (error instanceof PolicyDependencyUnavailableErrorV2) throw error;
+			throw new PolicyDependencyUnavailableErrorV2(
+				`Policy resolver dependency is unavailable: ${validationMessage(error)}`,
+			);
+		} finally {
+			clearTimeout(timeout);
+			this.lifecycleController.signal.removeEventListener(
+				"abort",
+				abortFromLifecycle,
+			);
+			if (rejectOnAbort !== undefined) {
+				attemptController.signal.removeEventListener("abort", rejectOnAbort);
+			}
+		}
+	}
+
 	private async resolveSnapshot(
 		digest: Uint8Array,
 		cache?: SnapshotResolutionCacheV2,
@@ -483,18 +671,7 @@ export class TrustedNetworkV2PolicyReducer {
 		if (pending !== undefined) return copySnapshot(pending.snapshot);
 		let resolution = cache?.get(digestKey);
 		if (resolution === undefined) {
-			resolution = (async () => {
-				const entry = await this.resolvePolicyEntry(copyBytes(digest));
-				if (entry === undefined) return undefined;
-				const snapshot = await authenticatePolicySnapshotEntryV2(
-					entry,
-					this.descriptor,
-				);
-				if (!equals(snapshot.digest, digest)) {
-					throw new Error("Policy resolver returned the wrong body digest");
-				}
-				return snapshot;
-			})();
+			resolution = this.resolveExternalSnapshot(digest);
 			cache?.set(digestKey, resolution);
 		}
 		const snapshot = await resolution;
@@ -520,9 +697,9 @@ export class TrustedNetworkV2PolicyReducer {
 			);
 		} catch (error) {
 			return {
-				status: "reject",
+				status: "unavailable",
 				digest: copyBytes(child.body.previousPolicyDigest),
-				reason: `Policy parent validation failed: ${validationMessage(error)}`,
+				reason: `Policy parent dependency is unavailable: ${validationMessage(error)}`,
 			};
 		}
 		if (parent === undefined) {
@@ -541,6 +718,18 @@ export class TrustedNetworkV2PolicyReducer {
 		return { status: "found", parent };
 	}
 
+	private candidateAncestryResult(
+		resolution: Exclude<ParentResolutionV2, { status: "found" }>,
+	): EvaluationV2 {
+		return resolution.status === "unavailable"
+			? {
+					status: "missing",
+					digest: copyBytes(resolution.digest),
+					reason: resolution.reason,
+				}
+			: resolution;
+	}
+
 	private acceptedAncestryUnavailable(
 		resolution: Exclude<ParentResolutionV2, { status: "found" }>,
 	): Extract<EvaluationV2, { status: "unavailable" }> {
@@ -550,7 +739,9 @@ export class TrustedNetworkV2PolicyReducer {
 			reason:
 				resolution.status === "missing"
 					? "Accepted policy ancestry is unavailable from the resolver"
-					: `Accepted policy ancestry validation failed: ${resolution.reason}`,
+					: resolution.status === "unavailable"
+						? `Accepted policy ancestry is unavailable: ${resolution.reason}`
+						: `Accepted policy ancestry validation failed: ${resolution.reason}`,
 		};
 	}
 
@@ -562,7 +753,9 @@ export class TrustedNetworkV2PolicyReducer {
 			let cursor = candidate;
 			while (cursor.body.sequence !== 0n) {
 				const parent = await this.parentOf(cursor, resolutionCache);
-				if (parent.status !== "found") return parent;
+				if (parent.status !== "found") {
+					return this.candidateAncestryResult(parent);
+				}
 				cursor = parent.parent;
 			}
 			return { status: "accept" };
@@ -576,7 +769,9 @@ export class TrustedNetworkV2PolicyReducer {
 		while (candidateCursor.body.sequence > acceptedCursor.body.sequence) {
 			candidateChild = candidateCursor;
 			const parent = await this.parentOf(candidateCursor, resolutionCache);
-			if (parent.status !== "found") return parent;
+			if (parent.status !== "found") {
+				return this.candidateAncestryResult(parent);
+			}
 			candidateCursor = parent.parent;
 		}
 		while (acceptedCursor.body.sequence > candidateCursor.body.sequence) {
@@ -607,7 +802,9 @@ export class TrustedNetworkV2PolicyReducer {
 			if (acceptedParent.status !== "found") {
 				return this.acceptedAncestryUnavailable(acceptedParent);
 			}
-			if (candidateParent.status !== "found") return candidateParent;
+			if (candidateParent.status !== "found") {
+				return this.candidateAncestryResult(candidateParent);
+			}
 			candidateCursor = candidateParent.parent;
 			acceptedCursor = acceptedParent.parent;
 		}
@@ -742,6 +939,9 @@ export class TrustedNetworkV2PolicyReducer {
 	}
 
 	private async drainPending(): Promise<PendingDrainOutcomeV2 | undefined> {
+		if (this.lifecycleController.signal.aborted) {
+			return { status: "halted" };
+		}
 		let accepted = false;
 		let progress = true;
 		while (
@@ -757,6 +957,9 @@ export class TrustedNetworkV2PolicyReducer {
 			for (const pending of ordered) {
 				if (!this.pending.has(pending.snapshot.digestKey)) continue;
 				const evaluation = await this.evaluate(pending.snapshot);
+				if (this.lifecycleController.signal.aborted) {
+					return { status: "halted" };
+				}
 				if (evaluation.status === "missing") {
 					pending.missingParentDigest = copyBytes(evaluation.digest);
 					continue;
@@ -782,7 +985,15 @@ export class TrustedNetworkV2PolicyReducer {
 	private enqueueAdmission(
 		operation: () => Promise<PolicyAdmissionResultV2>,
 	): Promise<PolicyAdmissionResultV2> {
-		const result = this.admissionTail.then(operation);
+		const result = this.admissionTail.then(async () => {
+			if (this.lifecycleController.signal.aborted) {
+				return this.haltedResult();
+			}
+			const admission = await operation();
+			return this.lifecycleController.signal.aborted
+				? this.haltedResult()
+				: admission;
+		});
 		this.admissionTail = result.then(
 			(): void => {},
 			(_reason: unknown): void => {},
@@ -790,24 +1001,39 @@ export class TrustedNetworkV2PolicyReducer {
 		return result;
 	}
 
-	ingest(entry: unknown): Promise<PolicyAdmissionResultV2> {
-		return this.enqueueAdmission(() => this.ingestOne(entry));
+	ingest(entryBytes: Uint8Array): Promise<PolicyAdmissionResultV2> {
+		if (this.lifecycleController.signal.aborted) {
+			return Promise.resolve(this.haltedResult());
+		}
+		let capturedEntryBytes: Uint8Array;
+		try {
+			// Capture at the API boundary, before this admission waits behind earlier
+			// work. Otherwise a caller could mutate a queued entry before validation.
+			capturedEntryBytes = capturePolicySnapshotEntryBytesV2(entryBytes);
+		} catch (error) {
+			const reason = validationMessage(error);
+			return this.enqueueAdmission(async () => this.result("rejected", reason));
+		}
+		return this.enqueueAdmission(() => this.ingestOne(capturedEntryBytes));
 	}
 
 	retryUnavailable(): Promise<PolicyAdmissionResultV2> {
 		return this.enqueueAdmission(() => this.retryUnavailableOne());
 	}
 
-	private async ingestOne(entry: unknown): Promise<PolicyAdmissionResultV2> {
+	private async ingestOne(
+		entryBytes: Uint8Array,
+	): Promise<PolicyAdmissionResultV2> {
 		let snapshot: ValidatedPolicySnapshotV2;
 		try {
-			snapshot = await authenticatePolicySnapshotEntryV2(
-				entry,
+			snapshot = await authenticateCapturedPolicySnapshotEntryV2(
+				entryBytes,
 				this.descriptor,
 			);
 		} catch (error) {
 			return this.result("rejected", validationMessage(error));
 		}
+		if (this.lifecycleController.signal.aborted) return this.haltedResult();
 
 		if (this.fork !== undefined) {
 			this.observeAfterFork(snapshot);
@@ -841,6 +1067,7 @@ export class TrustedNetworkV2PolicyReducer {
 		}
 
 		const evaluation = await this.evaluate(snapshot);
+		if (this.lifecycleController.signal.aborted) return this.haltedResult();
 		if (evaluation.status === "reject") {
 			return this.result("rejected", evaluation.reason);
 		}
@@ -860,7 +1087,7 @@ export class TrustedNetworkV2PolicyReducer {
 			return this.result(
 				pending.retained ? "pending" : "capacity",
 				pending.retained
-					? "Policy parent is missing"
+					? (evaluation.reason ?? "Policy parent is missing")
 					: "Policy pending capacity did not retain this candidate",
 				pending.evictedPolicyDigests,
 			);
@@ -874,6 +1101,7 @@ export class TrustedNetworkV2PolicyReducer {
 	}
 
 	private async retryUnavailableOne(): Promise<PolicyAdmissionResultV2> {
+		if (this.lifecycleController.signal.aborted) return this.haltedResult();
 		if (this.fork !== undefined) {
 			return this.result(
 				"halted",
@@ -893,6 +1121,7 @@ export class TrustedNetworkV2PolicyReducer {
 		}
 
 		const evaluation = await this.evaluate(pending.snapshot);
+		if (this.lifecycleController.signal.aborted) return this.haltedResult();
 		if (evaluation.status === "unavailable") {
 			pending.missingParentDigest = copyBytes(evaluation.digest);
 			this.unavailable = {
@@ -909,7 +1138,7 @@ export class TrustedNetworkV2PolicyReducer {
 		if (evaluation.status === "missing") {
 			pending.missingParentDigest = copyBytes(evaluation.digest);
 			status = "pending";
-			reason = "Policy parent is missing";
+			reason = evaluation.reason ?? "Policy parent is missing";
 		} else {
 			this.pending.delete(pending.snapshot.digestKey);
 			if (evaluation.status === "fork") {

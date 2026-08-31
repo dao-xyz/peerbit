@@ -10,6 +10,7 @@ import {
 	PolicySnapshotBodyV2,
 	PolicySubjectBindingV2,
 	TRUSTED_NETWORK_V2_ENTRY_V0_AUTHORITY_ONLY_SIGNATURE_PROFILE,
+	TRUSTED_NETWORK_V2_MAX_POLICY_ENTRY_BYTES,
 	TRUSTED_NETWORK_V2_POLICY_HASH_SHA256,
 	TRUSTED_NETWORK_V2_PROTOCOL_VERSION,
 	TrustedNetworkRole,
@@ -20,6 +21,8 @@ import {
 const ZERO_DIGEST = new Uint8Array(32);
 
 const hex = (bytes: Uint8Array): string => Buffer.from(bytes).toString("hex");
+
+const entryBytes = (entry: EntryV0<Uint8Array>): Uint8Array => serialize(entry);
 
 const sortedBindings = (
 	bindings: Array<[PublicSignKey, number]>,
@@ -189,12 +192,37 @@ const permutations = <T>(values: T[]): T[][] => {
 };
 
 const createResolver = () => {
-	const entries = new Map<string, EntryV0<Uint8Array>>();
+	const entries = new Map<string, Uint8Array>();
 	return {
 		add: (fixture: PolicyFixture) =>
-			entries.set(hex(fixture.digest), fixture.entry),
+			entries.set(hex(fixture.digest), entryBytes(fixture.entry)),
 		resolve: (digest: Uint8Array) => entries.get(hex(digest)),
 	};
+};
+
+const createPolicyEntryBytesWithSize = async (
+	fixture: ChainFixture,
+	policy: PolicyFixture,
+	targetBytes: number,
+	next?: EntryV0<Uint8Array>,
+): Promise<Uint8Array> => {
+	const bodyBytes = serialize(policy.body);
+	const baseline = entryBytes(
+		await createEntry(bodyBytes, fixture.authority, {
+			metaData: new Uint8Array(),
+			next,
+		}),
+	);
+	const paddingBytes = targetBytes - baseline.byteLength;
+	if (paddingBytes < 0) throw new Error("Target entry size is below baseline");
+	const bytes = entryBytes(
+		await createEntry(bodyBytes, fixture.authority, {
+			metaData: new Uint8Array(paddingBytes),
+			next,
+		}),
+	);
+	expect(bytes.byteLength).to.equal(targetBytes);
+	return bytes;
 };
 
 describe("TrustedNetwork v2 policy reducer", () => {
@@ -209,7 +237,7 @@ describe("TrustedNetwork v2 policy reducer", () => {
 			});
 			for (const policy of order) {
 				resolver.add(policy);
-				await reducer.ingest(policy.entry);
+				await reducer.ingest(entryBytes(policy.entry));
 			}
 
 			expect(reducer.state).to.equal("ACTIVE");
@@ -244,9 +272,268 @@ describe("TrustedNetwork v2 policy reducer", () => {
 			resolvePolicyEntry: () => undefined,
 		});
 		for (const policy of fixture.chain) {
-			expect((await reducer.ingest(policy.entry)).status).to.equal("accepted");
+			expect((await reducer.ingest(entryBytes(policy.entry))).status).to.equal(
+				"accepted",
+			);
 		}
 		expect(reducer.head?.sequence).to.equal(3n);
+	});
+
+	it("enforces the protocol entry ceiling before decoding direct input", async () => {
+		const fixture = await createChain();
+		for (const targetBytes of [
+			TRUSTED_NETWORK_V2_MAX_POLICY_ENTRY_BYTES - 1,
+			TRUSTED_NETWORK_V2_MAX_POLICY_ENTRY_BYTES,
+		]) {
+			const reducer = new TrustedNetworkV2PolicyReducer({
+				descriptor: fixture.descriptor,
+				resolvePolicyEntry: () => undefined,
+			});
+			const bytes = await createPolicyEntryBytesWithSize(
+				fixture,
+				fixture.chain[0]!,
+				targetBytes,
+			);
+			expect((await reducer.ingest(bytes)).status).to.equal("accepted");
+		}
+
+		const atLimit = await createPolicyEntryBytesWithSize(
+			fixture,
+			fixture.chain[0]!,
+			TRUSTED_NETWORK_V2_MAX_POLICY_ENTRY_BYTES,
+		);
+		const reducer = new TrustedNetworkV2PolicyReducer({
+			descriptor: fixture.descriptor,
+			resolvePolicyEntry: () => undefined,
+		});
+		const oversized = await reducer.ingest(
+			concat([atLimit, new Uint8Array([0])]),
+		);
+		expect(oversized.status).to.equal("rejected");
+		expect(oversized.reason).to.contain(
+			String(TRUSTED_NETWORK_V2_MAX_POLICY_ENTRY_BYTES),
+		);
+		expect(oversized.reason).not.to.contain("deserial");
+		expect(reducer.state).to.equal("EMPTY");
+
+		const maxSizedChild = await createPolicyEntryBytesWithSize(
+			fixture,
+			fixture.chain[2]!,
+			TRUSTED_NETWORK_V2_MAX_POLICY_ENTRY_BYTES,
+			fixture.chain[1]!.entry,
+		);
+		const pendingReducer = new TrustedNetworkV2PolicyReducer({
+			descriptor: fixture.descriptor,
+			resolvePolicyEntry: () => undefined,
+		});
+		const pending = await pendingReducer.ingest(maxSizedChild);
+		expect(pending.status).to.equal("pending");
+		expect(pendingReducer.pendingCount).to.equal(1);
+	});
+
+	it("bounds signal-ignoring resolver attempts and keeps candidate-only ancestry pending", async () => {
+		const fixture = await createChain();
+		let attemptSignal: AbortSignal | undefined;
+		let rejectLate: ((error: Error) => void) | undefined;
+		const reducer = new TrustedNetworkV2PolicyReducer({
+			descriptor: fixture.descriptor,
+			resolveTimeoutMs: 10,
+			resolvePolicyEntry: (_digest, { signal }) => {
+				attemptSignal = signal;
+				return new Promise<Uint8Array | undefined>((_resolve, reject) => {
+					rejectLate = reject;
+				});
+			},
+		});
+
+		const started = Date.now();
+		const result = await reducer.ingest(entryBytes(fixture.chain[2]!.entry));
+		expect(Date.now() - started).to.be.lessThan(1_000);
+		expect(result.status).to.equal("pending");
+		expect(result.reason).to.contain("timed out");
+		expect(attemptSignal?.aborted).to.be.true;
+		expect(result.fetchHints.map((hint) => hex(hint.digest))).to.deep.equal([
+			hex(fixture.chain[1]!.digest),
+		]);
+		expect(reducer.state).to.equal("EMPTY");
+
+		rejectLate?.(new Error("late resolver rejection"));
+		await new Promise<void>((resolve) => setTimeout(resolve, 0));
+	});
+
+	it("captures raw entry bytes before an admission waits in the queue", async () => {
+		const fixture = await createChain();
+		let releaseFirstResolution:
+			| ((value: Uint8Array | undefined) => void)
+			| undefined;
+		let markResolutionStarted: (() => void) | undefined;
+		const resolutionStarted = new Promise<void>((resolve) => {
+			markResolutionStarted = resolve;
+		});
+		let firstResolution = true;
+		const reducer = new TrustedNetworkV2PolicyReducer({
+			descriptor: fixture.descriptor,
+			resolvePolicyEntry: () => {
+				if (!firstResolution) return undefined;
+				firstResolution = false;
+				markResolutionStarted?.();
+				return new Promise<Uint8Array | undefined>((resolve) => {
+					releaseFirstResolution = resolve;
+				});
+			},
+		});
+
+		const blockingAdmission = reducer.ingest(
+			entryBytes(fixture.chain[2]!.entry),
+		);
+		await resolutionStarted;
+		const queuedBytes = entryBytes(fixture.chain[0]!.entry);
+		const queuedAdmission = reducer.ingest(queuedBytes);
+		queuedBytes.fill(0xff);
+		releaseFirstResolution?.(undefined);
+
+		expect((await blockingAdmission).status).to.equal("pending");
+		expect((await queuedAdmission).status).to.equal("accepted");
+		expect(reducer.head?.sequence).to.equal(0n);
+	});
+
+	it("treats bad resolver bytes as unavailable and retries accepted ancestry with a fresh attempt", async () => {
+		const fixture = await createChain();
+		let mode: "oversized" | "stalled" | "available" = "oversized";
+		let calls = 0;
+		const seenSignals: AbortSignal[] = [];
+		const reducer = new TrustedNetworkV2PolicyReducer({
+			descriptor: fixture.descriptor,
+			resolveTimeoutMs: 100,
+			resolvePolicyEntry: (digest, { signal }) => {
+				calls += 1;
+				seenSignals.push(signal);
+				if (mode === "oversized") {
+					return new Uint8Array(TRUSTED_NETWORK_V2_MAX_POLICY_ENTRY_BYTES + 1);
+				}
+				if (mode === "stalled") {
+					return new Promise<Uint8Array | undefined>(() => {});
+				}
+				return hex(digest) === hex(fixture.chain[1]!.digest)
+					? entryBytes(fixture.chain[1]!.entry)
+					: undefined;
+			},
+		});
+
+		const pending = await reducer.ingest(entryBytes(fixture.chain[2]!.entry));
+		expect(pending.status).to.equal("pending");
+		expect(pending.reason).to.contain("unavailable");
+		expect(reducer.pendingCount).to.equal(1);
+
+		mode = "available";
+		for (const policy of fixture.chain.slice(0, 3)) {
+			await reducer.ingest(entryBytes(policy.entry));
+		}
+		expect(reducer.state).to.equal("ACTIVE");
+		expect(reducer.head?.sequence).to.equal(2n);
+
+		mode = "stalled";
+		const unavailable = await reducer.ingest(
+			entryBytes(fixture.chain[0]!.entry),
+		);
+		expect(unavailable.status).to.equal("unavailable");
+		expect(reducer.state).to.equal("UNAVAILABLE");
+		expect(
+			reducer.isAuthorized(fixture.alice.publicKey, TrustedNetworkRole.READER),
+		).to.be.false;
+
+		mode = "available";
+		const retried = await reducer.retryUnavailable();
+		expect(retried.status).to.equal("duplicate");
+		expect(reducer.state).to.equal("ACTIVE");
+		expect(calls).to.be.greaterThan(2);
+		expect(seenSignals.some((signal) => signal.aborted)).to.be.true;
+	});
+
+	it("halts authorization on lifecycle abort and bounds pending accounting", async () => {
+		const fixture = await createChain();
+		const lifecycle = new AbortController();
+		const reducer = new TrustedNetworkV2PolicyReducer({
+			descriptor: fixture.descriptor,
+			resolvePolicyEntry: () => undefined,
+			signal: lifecycle.signal,
+		});
+		expect(
+			(await reducer.ingest(entryBytes(fixture.chain[0]!.entry))).status,
+		).to.equal("accepted");
+		expect(
+			reducer.isAuthorized(
+				fixture.authority.publicKey,
+				TrustedNetworkRole.ADMIN,
+			),
+		).to.be.true;
+
+		lifecycle.abort();
+		expect(reducer.state).to.equal("HALTED");
+		expect(
+			reducer.isAuthorized(
+				fixture.authority.publicKey,
+				TrustedNetworkRole.ADMIN,
+			),
+		).to.be.false;
+		expect(
+			(await reducer.ingest(entryBytes(fixture.chain[1]!.entry))).status,
+		).to.equal("halted");
+
+		expect(
+			() =>
+				new TrustedNetworkV2PolicyReducer({
+					descriptor: fixture.descriptor,
+					resolvePolicyEntry: () => undefined,
+					maxPendingPolicyBytes:
+						TRUSTED_NETWORK_V2_MAX_POLICY_ENTRY_BYTES * 2 + 64 + 1,
+				}),
+		).to.throw("no greater than");
+	});
+
+	it("aborts an in-flight resolver without allowing late state mutation", async () => {
+		const fixture = await createChain();
+		let attemptSignal: AbortSignal | undefined;
+		let resolveLate: ((bytes: Uint8Array | undefined) => void) | undefined;
+		let markStarted: (() => void) | undefined;
+		const started = new Promise<void>((resolve) => {
+			markStarted = resolve;
+		});
+		const reducer = new TrustedNetworkV2PolicyReducer({
+			descriptor: fixture.descriptor,
+			resolveTimeoutMs: 10_000,
+			resolvePolicyEntry: (_digest, { signal }) => {
+				attemptSignal = signal;
+				markStarted?.();
+				return new Promise<Uint8Array | undefined>((resolve) => {
+					resolveLate = resolve;
+				});
+			},
+		});
+
+		const admission = reducer.ingest(entryBytes(fixture.chain[2]!.entry));
+		await started;
+		reducer.abort();
+		expect((await admission).status).to.equal("halted");
+		expect(attemptSignal?.aborted).to.be.true;
+		expect(reducer.state).to.equal("HALTED");
+		expect(reducer.head).to.be.undefined;
+		expect(reducer.pendingCount).to.equal(0);
+
+		let validationReads = 0;
+		const lateBytes = new Proxy(entryBytes(fixture.chain[1]!.entry), {
+			get: (target, property) => {
+				if (property === "byteLength") validationReads += 1;
+				const value = Reflect.get(target, property, target) as unknown;
+				return typeof value === "function" ? value.bind(target) : value;
+			},
+		});
+		resolveLate?.(lateBytes);
+		await new Promise<void>((resolve) => setTimeout(resolve, 0));
+		expect(validationReads).to.equal(0);
+		expect(reducer.state).to.equal("HALTED");
+		expect(reducer.head).to.be.undefined;
+		expect(reducer.pendingCount).to.equal(0);
 	});
 
 	it("fails closed on missing accepted ancestry and retries the exact candidate to a fork", async () => {
@@ -267,7 +554,9 @@ describe("TrustedNetwork v2 policy reducer", () => {
 			resolvePolicyEntry: resolver.resolve,
 		});
 		for (const policy of fixture.chain.slice(0, 3)) {
-			expect((await reducer.ingest(policy.entry)).status).to.equal("accepted");
+			expect((await reducer.ingest(entryBytes(policy.entry))).status).to.equal(
+				"accepted",
+			);
 		}
 		expect(
 			reducer.isAuthorized(
@@ -276,7 +565,7 @@ describe("TrustedNetwork v2 policy reducer", () => {
 			),
 		).to.be.true;
 
-		const unavailable = await reducer.ingest(competingChild.entry);
+		const unavailable = await reducer.ingest(entryBytes(competingChild.entry));
 		expect(unavailable.status).to.equal("unavailable");
 		expect(reducer.state).to.equal("UNAVAILABLE");
 		expect(reducer.head?.sequence).to.equal(2n);
@@ -292,7 +581,9 @@ describe("TrustedNetwork v2 policy reducer", () => {
 		).to.be.false;
 
 		unavailable.fetchHints[0]!.digest.fill(0xff);
-		const blockedAdvance = await reducer.ingest(fixture.chain[3]!.entry);
+		const blockedAdvance = await reducer.ingest(
+			entryBytes(fixture.chain[3]!.entry),
+		);
 		expect(blockedAdvance.status).to.equal("unavailable");
 		expect(
 			blockedAdvance.fetchHints.map((hint) => hex(hint.digest)),
@@ -320,12 +611,12 @@ describe("TrustedNetwork v2 policy reducer", () => {
 			resolvePolicyEntry: resolver.resolve,
 		});
 		for (const policy of fixture.chain.slice(0, 3)) {
-			await reducer.ingest(policy.entry);
+			await reducer.ingest(entryBytes(policy.entry));
 		}
 
-		expect((await reducer.ingest(fixture.chain[0]!.entry)).status).to.equal(
-			"unavailable",
-		);
+		expect(
+			(await reducer.ingest(entryBytes(fixture.chain[0]!.entry))).status,
+		).to.equal("unavailable");
 		expect(reducer.state).to.equal("UNAVAILABLE");
 		expect(
 			reducer.isAuthorized(fixture.alice.publicKey, TrustedNetworkRole.READER),
@@ -355,7 +646,7 @@ describe("TrustedNetwork v2 policy reducer", () => {
 		});
 		const failureModes: Array<{
 			name: string;
-			resolve: () => EntryV0<Uint8Array> | undefined;
+			resolve: () => Uint8Array | undefined;
 		}> = [
 			{ name: "missing", resolve: () => undefined },
 			{
@@ -364,10 +655,13 @@ describe("TrustedNetwork v2 policy reducer", () => {
 					throw new Error("resolver unavailable");
 				},
 			},
-			{ name: "wrong digest", resolve: () => fixture.chain[0]!.entry },
+			{
+				name: "wrong digest",
+				resolve: () => entryBytes(fixture.chain[0]!.entry),
+			},
 			{
 				name: "malformed",
-				resolve: () => ({}) as EntryV0<Uint8Array>,
+				resolve: () => new Uint8Array([0xff]),
 			},
 		];
 
@@ -377,13 +671,12 @@ describe("TrustedNetwork v2 policy reducer", () => {
 				resolvePolicyEntry: failure.resolve,
 			});
 			for (const policy of fixture.chain.slice(0, 3)) {
-				expect((await reducer.ingest(policy.entry)).status).to.equal(
-					"accepted",
-					failure.name,
-				);
+				expect(
+					(await reducer.ingest(entryBytes(policy.entry))).status,
+				).to.equal("accepted", failure.name);
 			}
 
-			const result = await reducer.ingest(competingChild.entry);
+			const result = await reducer.ingest(entryBytes(competingChild.entry));
 			expect(result.status, failure.name).to.equal("unavailable");
 			expect(reducer.state, failure.name).to.equal("UNAVAILABLE");
 			expect(reducer.head?.sequence, failure.name).to.equal(2n);
@@ -419,10 +712,10 @@ describe("TrustedNetwork v2 policy reducer", () => {
 			maxPendingPolicyBytes: accountedBytes - 1,
 		});
 		for (const policy of fixture.chain.slice(0, 3)) {
-			await reducer.ingest(policy.entry);
+			await reducer.ingest(entryBytes(policy.entry));
 		}
 
-		const result = await reducer.ingest(competingChild.entry);
+		const result = await reducer.ingest(entryBytes(competingChild.entry));
 		expect(result.status).to.equal("capacity");
 		expect(reducer.state).to.equal("UNAVAILABLE");
 		expect(reducer.pendingCount).to.equal(0);
@@ -465,11 +758,13 @@ describe("TrustedNetwork v2 policy reducer", () => {
 			maxPending: 1,
 		});
 		for (const policy of fixture.chain.slice(0, 3)) {
-			await reducer.ingest(policy.entry);
+			await reducer.ingest(entryBytes(policy.entry));
 		}
 
-		expect((await reducer.ingest(higher.entry)).status).to.equal("unavailable");
-		const overflow = await reducer.ingest(lower.entry);
+		expect((await reducer.ingest(entryBytes(higher.entry))).status).to.equal(
+			"unavailable",
+		);
+		const overflow = await reducer.ingest(entryBytes(lower.entry));
 		expect(overflow.status).to.equal("capacity");
 		expect(overflow.evictedPolicyDigests?.map(hex)).to.include(
 			hex(higher.digest),
@@ -490,7 +785,9 @@ describe("TrustedNetwork v2 policy reducer", () => {
 			resolvePolicyEntry: () => undefined,
 			maxPending: 4,
 		});
-		const childResult = await reducer.ingest(fixture.chain[2]!.entry);
+		const childResult = await reducer.ingest(
+			entryBytes(fixture.chain[2]!.entry),
+		);
 		expect(childResult.status).to.equal("pending");
 		expect(childResult.fetchHints).to.deep.equal([
 			{ kind: "policy-parent", digest: fixture.chain[1]!.digest },
@@ -503,9 +800,9 @@ describe("TrustedNetwork v2 policy reducer", () => {
 			hex(fixture.chain[2]!.digest),
 		);
 
-		await reducer.ingest(fixture.chain[1]!.entry);
+		await reducer.ingest(entryBytes(fixture.chain[1]!.entry));
 		expect(reducer.pendingCount).to.equal(2);
-		await reducer.ingest(fixture.chain[0]!.entry);
+		await reducer.ingest(entryBytes(fixture.chain[0]!.entry));
 		expect(reducer.pendingCount).to.equal(0);
 		expect(reducer.head?.sequence).to.equal(2n);
 	});
@@ -531,8 +828,9 @@ describe("TrustedNetwork v2 policy reducer", () => {
 				maxPending: 2,
 			});
 			const results: PolicyAdmissionResultV2[] = [];
-			for (const policy of order)
-				results.push(await reducer.ingest(policy.entry));
+			for (const policy of order) {
+				results.push(await reducer.ingest(entryBytes(policy.entry)));
+			}
 			expect(reducer.pendingCount).to.equal(2);
 			expect(results.some((result) => result.evictedPolicyDigests)).to.be.true;
 			retained.push(reducer.pendingDigests.map(hex));
@@ -574,7 +872,9 @@ describe("TrustedNetwork v2 policy reducer", () => {
 				maxPending: 2,
 				maxPendingPolicyBytes: Math.max(...accounted),
 			});
-			for (const policy of order) await reducer.ingest(policy.entry);
+			for (const policy of order) {
+				await reducer.ingest(entryBytes(policy.entry));
+			}
 			expect(reducer.pendingCount).to.equal(2);
 			expect(reducer.pendingBytes).to.be.at.most(2 * Math.max(...accounted));
 			retained.push(reducer.pendingDigests.map(hex));
@@ -592,7 +892,7 @@ describe("TrustedNetwork v2 policy reducer", () => {
 			resolvePolicyEntry: () => undefined,
 			maxPendingPolicyBytes: accounted[0]! - 1,
 		});
-		const result = await noCapacity.ingest(candidates[0]!.entry);
+		const result = await noCapacity.ingest(entryBytes(candidates[0]!.entry));
 		expect(result.status).to.equal("capacity");
 		expect(result.pendingCount).to.equal(0);
 		expect(result.pendingBytes).to.equal(0);
@@ -611,10 +911,10 @@ describe("TrustedNetwork v2 policy reducer", () => {
 			descriptor: fixture.descriptor,
 			resolvePolicyEntry: (digest) =>
 				hex(digest) === hex(fixture.chain[0]!.digest)
-					? fixture.chain[0]!.entry
+					? entryBytes(fixture.chain[0]!.entry)
 					: undefined,
 		});
-		const result = await reducer.ingest(invalid.entry);
+		const result = await reducer.ingest(entryBytes(invalid.entry));
 		expect(result.status).to.equal("rejected");
 		expect(result.reason).to.contain("not contiguous");
 	});
@@ -662,7 +962,7 @@ describe("TrustedNetwork v2 policy reducer", () => {
 				descriptor: fixture.descriptor,
 				resolvePolicyEntry: () => undefined,
 			});
-			const result = await reducer.ingest(entry);
+			const result = await reducer.ingest(entryBytes(entry));
 			expect(result.status).to.equal("rejected");
 			expect(result.reason).to.contain(message);
 		}
@@ -710,18 +1010,18 @@ describe("TrustedNetwork v2 policy reducer", () => {
 		);
 		tamperedPayload._payload.decrypted._data![20] ^= 0xff;
 
-		for (const [entry, message] of [
-			[encryptedMeta, "metadata must be public"],
-			[encryptedPayload, "payload must be public"],
-			[trailingBody, "after deserialized"],
-			[tamperedPayload, "signature is invalid"],
-			[{}, "must use EntryV0"],
+		for (const [bytes, message] of [
+			[entryBytes(encryptedMeta), "metadata must be public"],
+			[entryBytes(encryptedPayload), "payload must be public"],
+			[entryBytes(trailingBody), "after deserialized"],
+			[entryBytes(tamperedPayload), "signature is invalid"],
+			[new Uint8Array(), "must use EntryV0"],
 		] as const) {
 			const reducer = new TrustedNetworkV2PolicyReducer({
 				descriptor: fixture.descriptor,
 				resolvePolicyEntry: () => undefined,
 			});
-			const result = await reducer.ingest(entry);
+			const result = await reducer.ingest(bytes);
 			expect(result.status).to.equal("rejected");
 			expect(result.reason).to.contain(message);
 		}
@@ -749,16 +1049,18 @@ describe("TrustedNetwork v2 policy reducer", () => {
 				descriptor: fixture.descriptor,
 				resolvePolicyEntry: resolver.resolve,
 			});
-			await reducer.ingest(fixture.chain[0]!.entry);
+			await reducer.ingest(entryBytes(fixture.chain[0]!.entry));
 			if (forkFirst) {
-				await reducer.ingest(fork.entry);
-				expect((await reducer.ingest(fixture.chain[1]!.entry)).status).to.equal(
+				await reducer.ingest(entryBytes(fork.entry));
+				expect(
+					(await reducer.ingest(entryBytes(fixture.chain[1]!.entry))).status,
+				).to.equal("forked");
+			} else {
+				await reducer.ingest(entryBytes(fixture.chain[1]!.entry));
+				await reducer.ingest(entryBytes(fixture.chain[2]!.entry));
+				expect((await reducer.ingest(entryBytes(fork.entry))).status).to.equal(
 					"forked",
 				);
-			} else {
-				await reducer.ingest(fixture.chain[1]!.entry);
-				await reducer.ingest(fixture.chain[2]!.entry);
-				expect((await reducer.ingest(fork.entry)).status).to.equal("forked");
 			}
 
 			expect(reducer.state).to.equal("FORKED");
@@ -776,9 +1078,9 @@ describe("TrustedNetwork v2 policy reducer", () => {
 			expect(
 				reducer.forkEvidence?.children.map((child) => hex(child.digest)),
 			).to.deep.equal([hex(fixture.chain[1]!.digest), hex(fork.digest)].sort());
-			expect((await reducer.ingest(fixture.chain[3]!.entry)).status).to.equal(
-				"halted",
-			);
+			expect(
+				(await reducer.ingest(entryBytes(fixture.chain[3]!.entry))).status,
+			).to.equal("halted");
 		}
 	});
 
@@ -818,10 +1120,10 @@ describe("TrustedNetwork v2 policy reducer", () => {
 				descriptor: fixture.descriptor,
 				resolvePolicyEntry: resolver.resolve,
 			});
-			await reducer.ingest(fixture.chain[0]!.entry);
+			await reducer.ingest(entryBytes(fixture.chain[0]!.entry));
 			const statuses: string[] = [];
 			for (const child of order) {
-				statuses.push((await reducer.ingest(child.entry)).status);
+				statuses.push((await reducer.ingest(entryBytes(child.entry))).status);
 			}
 
 			expect(statuses).to.deep.equal(["accepted", "forked", "halted"]);
@@ -884,8 +1186,10 @@ describe("TrustedNetwork v2 policy reducer", () => {
 				descriptor: fixture.descriptor,
 				resolvePolicyEntry: resolver.resolve,
 			});
-			await reducer.ingest(fixture.chain[0]!.entry);
-			for (const child of order) await reducer.ingest(child.entry);
+			await reducer.ingest(entryBytes(fixture.chain[0]!.entry));
+			for (const child of order) {
+				await reducer.ingest(entryBytes(child.entry));
+			}
 
 			const retained = reducer.forkEvidence!.children.find(
 				(child) => hex(child.digest) === hex(fixture.chain[1]!.digest),
@@ -894,7 +1198,9 @@ describe("TrustedNetwork v2 policy reducer", () => {
 			const evidenceBeforeInvalid = reducer.forkEvidence!.children.map(
 				(child) => hex(child.entryBytes),
 			);
-			expect((await reducer.ingest({})).status).to.equal("rejected");
+			expect((await reducer.ingest(new Uint8Array())).status).to.equal(
+				"rejected",
+			);
 			expect(
 				reducer.forkEvidence!.children.map((child) => hex(child.entryBytes)),
 			).to.deep.equal(evidenceBeforeInvalid);
@@ -921,10 +1227,10 @@ describe("TrustedNetwork v2 policy reducer", () => {
 			descriptor: fixture.descriptor,
 			resolvePolicyEntry: resolver.resolve,
 		});
-		await reducer.ingest(fixture.chain[0]!.entry);
+		await reducer.ingest(entryBytes(fixture.chain[0]!.entry));
 		const results = await Promise.all([
-			reducer.ingest(fixture.chain[1]!.entry),
-			reducer.ingest(fork.entry),
+			reducer.ingest(entryBytes(fixture.chain[1]!.entry)),
+			reducer.ingest(entryBytes(fork.entry)),
 		]);
 		expect(results.map((result) => result.status)).to.deep.equal([
 			"accepted",
@@ -943,7 +1249,7 @@ describe("TrustedNetwork v2 policy reducer", () => {
 			resolvePolicyEntry: resolver.resolve,
 		});
 		const before = serialize(fixture.chain[0]!.entry);
-		await reducer.ingest(fixture.chain[0]!.entry);
+		await reducer.ingest(entryBytes(fixture.chain[0]!.entry));
 		expect(serialize(fixture.chain[0]!.entry)).to.deep.equal(before);
 
 		const head = reducer.head!;
@@ -973,9 +1279,9 @@ describe("TrustedNetwork v2 policy reducer", () => {
 			descriptor: forkFixture.descriptor,
 			resolvePolicyEntry: forkResolver.resolve,
 		});
-		await forkReducer.ingest(forkFixture.chain[0]!.entry);
-		await forkReducer.ingest(forkFixture.chain[1]!.entry);
-		await forkReducer.ingest(fork.entry);
+		await forkReducer.ingest(entryBytes(forkFixture.chain[0]!.entry));
+		await forkReducer.ingest(entryBytes(forkFixture.chain[1]!.entry));
+		await forkReducer.ingest(entryBytes(fork.entry));
 		const evidence = forkReducer.forkEvidence!;
 		const expectedCommonParentDigest = hex(evidence.commonParent.digest);
 		const expectedChildDigests = evidence.children.map((child) =>
