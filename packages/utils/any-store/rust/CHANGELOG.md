@@ -1,5 +1,12 @@
 # @peerbit/any-store-rust
 
+## 0.1.6
+
+### Patch Changes
+
+- Updated dependencies [[`f19a1c0`](https://github.com/dao-xyz/peerbit/commit/f19a1c0cbf612eaa85d908e2220516cdc4316fb0)]:
+  - @peerbit/any-store-interface@1.1.3
+
 ## 0.1.5
 
 ### Patch Changes

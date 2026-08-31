@@ -1,5 +1,18 @@
 # Changelog
 
+## 3.1.35
+
+### Patch Changes
+
+- Updated dependencies [[`f19a1c0`](https://github.com/dao-xyz/peerbit/commit/f19a1c0cbf612eaa85d908e2220516cdc4316fb0)]:
+  - @peerbit/any-store@2.2.16
+  - @peerbit/indexer-interface@3.0.13
+  - @peerbit/blocks@4.2.14
+  - @peerbit/pubsub@5.4.3
+  - @peerbit/program@6.0.56
+  - peerbit@5.3.35
+  - @peerbit/keychain@1.2.16
+
 ## 3.1.34
 
 ### Patch Changes

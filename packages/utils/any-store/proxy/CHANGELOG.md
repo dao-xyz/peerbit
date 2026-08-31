@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.0.76
+
+### Patch Changes
+
+- Updated dependencies [[`f19a1c0`](https://github.com/dao-xyz/peerbit/commit/f19a1c0cbf612eaa85d908e2220516cdc4316fb0)]:
+  - @peerbit/any-store-interface@1.1.3
+  - @peerbit/canonical-client@1.1.59
+  - @peerbit/canonical-host@1.0.76
+
 ## 1.0.75
 
 ### Patch Changes
