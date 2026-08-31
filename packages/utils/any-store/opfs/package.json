@@ -1,6 +1,6 @@
 {
 	"name": "@peerbit/any-store-opfs",
-	"version": "1.1.13",
+	"version": "1.1.14",
 	"description": "OPFS worker",
 	"sideEffects": true,
 	"type": "module",

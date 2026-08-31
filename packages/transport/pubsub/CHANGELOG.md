@@ -1,5 +1,22 @@
 # Changelog
 
+## 5.4.3
+
+### Patch Changes
+
+- [#1357](https://github.com/dao-xyz/peerbit/pull/1357) [`f19a1c0`](https://github.com/dao-xyz/peerbit/commit/f19a1c0cbf612eaa85d908e2220516cdc4316fb0) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Add session-bound persisted delivery receipts so document and shared-log writers
+  can wait for an exact entry to be crash-safe on a requested number of current
+  remote replicas before retiring. Directory-backed block and index stores now
+  expose the durability barriers required to issue these receipts. Independent
+  payload-only append batches also retain their replication metadata, so remote
+  peers can admit and persist every entry in the batch. Persisted delivery also
+  reuses one native full-replica routing plan across gid-independent batches.
+  Multi-block provider discovery now publishes one renewable log-wide lease while
+  retaining batched, wire-compatible per-CID announcements for mixed-version
+  readers.
+- Updated dependencies [[`f19a1c0`](https://github.com/dao-xyz/peerbit/commit/f19a1c0cbf612eaa85d908e2220516cdc4316fb0)]:
+  - @peerbit/any-store-interface@1.1.3
+
 ## 5.4.2
 
 ### Patch Changes

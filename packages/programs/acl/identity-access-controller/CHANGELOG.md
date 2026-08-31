@@ -1,5 +1,15 @@
 # Changelog
 
+## 6.0.102
+
+### Patch Changes
+
+- Updated dependencies [[`f19a1c0`](https://github.com/dao-xyz/peerbit/commit/f19a1c0cbf612eaa85d908e2220516cdc4316fb0)]:
+  - @peerbit/shared-log@16.0.15
+  - @peerbit/document@15.0.16
+  - @peerbit/program@6.0.56
+  - @peerbit/trusted-network@6.0.102
+
 ## 6.0.101
 
 ### Patch Changes
