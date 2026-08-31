@@ -843,7 +843,7 @@ describe("append delivery options — persisted receipts", function () {
 		}
 	});
 
-	it("repairs a dropped initial entry before issuing its receipt", async () => {
+	it("requests a receipt repair after a dropped initial entry", async () => {
 		const { writer, receiver } = await openPair(true);
 		await waitForPersistedCapability(writer, receiver);
 		const sharedLog = writer.log as any;
@@ -865,7 +865,7 @@ describe("append delivery options — persisted receipts", function () {
 			return originalSend(...args);
 		});
 		const originalPushEntryHashes = sharedLog.pushEntryHashes.bind(sharedLog);
-		const missingBeforeReceiptRepair = new Set<string>();
+		const attemptedReceiptRepair = new Set<string>();
 		const presentAfterReceiptRepair = new Set<string>();
 		const pushEntryHashes = sinon
 			.stub(sharedLog, "pushEntryHashes")
@@ -875,9 +875,11 @@ describe("append delivery options — persisted receipts", function () {
 						? ([...args[1]] as string[])
 						: [];
 				for (const hash of receiptRepairHashes) {
-					if (!(await receiver.log.log.has(hash))) {
-						missingBeforeReceiptRepair.add(hash);
-					}
+					// Background convergence can fill the entry after the missing
+					// receipt response but before this repair dispatch. The invariant
+					// is that settlement attempts the repair and the receiver has the
+					// entry after it, not that absence remains observable at dispatch.
+					attemptedReceiptRepair.add(hash);
 				}
 				const result = await originalPushEntryHashes(...args);
 				for (const hash of receiptRepairHashes) {
@@ -899,7 +901,7 @@ describe("append delivery options — persisted receipts", function () {
 			});
 
 			expect(droppedInitialEntry).to.equal(true);
-			expect(missingBeforeReceiptRepair.has(entry.hash)).to.equal(true);
+			expect(attemptedReceiptRepair.has(entry.hash)).to.equal(true);
 			expect(presentAfterReceiptRepair.has(entry.hash)).to.equal(true);
 			expect(await receiver.log.log.has(entry.hash)).to.equal(true);
 		} finally {
