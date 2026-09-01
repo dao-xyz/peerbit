@@ -145,7 +145,6 @@ const createFixture = async () => {
 	const canonicalChildDigests = children
 		.map(({ digest }) => digest)
 		.sort(compare)
-		.slice(0, 2)
 		.map(hex);
 
 	return {
@@ -229,11 +228,15 @@ const writeAcknowledgedActive = async (directory) => {
 	await holdForKill();
 };
 
-const writeFencedForkPrefix = async (directory) => {
+const writeFork = async (directory, stopAfterFirstObservation) => {
 	const fixture = await createFixture();
 	const store = await openStore(directory);
 	const lowerDurability = store.crashSafeDurability;
-	const intendedPrefix = [expectedGenerationKey(1), expectedGenerationKey(2)];
+	const intendedPrefix = [
+		expectedGenerationKey(1),
+		expectedGenerationKey(2),
+		expectedGenerationKey(3),
+	];
 	let generationWrittenSinceBarrier;
 	let fencedGenerationCount = 0;
 	const probedStore = {
@@ -260,13 +263,13 @@ const writeFencedForkPrefix = async (directory) => {
 					`Unexpected fenced policy generation: ${fencedGeneration}`,
 				);
 				fencedGenerationCount += 1;
-				if (fencedGenerationCount === intendedPrefix.length) {
+				if (stopAfterFirstObservation && fencedGenerationCount === 2) {
 					assert(
 						JSON.stringify(await generationKeys(store)) ===
-							JSON.stringify(intendedPrefix),
-						"Fenced fork prefix is not exactly two contiguous generations",
+							JSON.stringify(intendedPrefix.slice(0, 2)),
+						"Incomplete fork is not exactly one state and one observation",
 					);
-					emit({ event: "fenced-fork-prefix", fixture: fixture.wire });
+					emit({ event: "fenced-incomplete-fork", fixture: fixture.wire });
 					await holdForKill();
 				}
 			},
@@ -294,11 +297,22 @@ const writeFencedForkPrefix = async (directory) => {
 		hex(fixture.genesis.digest),
 		serialize(fixture.genesis.entry),
 	);
-	await anchor.ingest(serialize(fixture.genesis.entry));
+	const forked = await anchor.ingest(serialize(fixture.genesis.entry));
+	assert(forked.status === "forked", "Plural fork was not published");
+	assert(
+		JSON.stringify(await generationKeys(store)) ===
+			JSON.stringify(intendedPrefix),
+		"Complete fork is not exactly one state and two observation generations",
+	);
+	emit({ event: "acknowledged-complete-fork", fixture: fixture.wire });
+	await holdForKill();
 	throw new Error(
 		"Plural fork publication passed the generation hard-kill fence",
 	);
 };
+
+const writeIncompleteFork = (directory) => writeFork(directory, true);
+const writeCompleteFork = (directory) => writeFork(directory, false);
 
 const reopenActive = async (directory, wire) => {
 	const fixture = decodeFixture(wire);
@@ -337,7 +351,32 @@ const reopenActive = async (directory, wire) => {
 	emit(result);
 };
 
-const reopenForkPrefix = async (directory, wire) => {
+const reopenIncompleteFork = async (directory, wire) => {
+	const fixture = decodeFixture(wire);
+	const store = await openStore(directory);
+	let resolverCalls = 0;
+	try {
+		await TrustedNetworkV2DurablePolicyReducer.open({
+			descriptor: fixture.descriptor,
+			resolvePolicyEntry: () => {
+				resolverCalls += 1;
+				throw new Error("Incomplete FORKED reopen must not resolve history");
+			},
+			store,
+			resolveTimeoutMs: 500,
+		});
+		throw new Error("Incomplete FORKED history returned a reducer");
+	} catch (error) {
+		await store.close();
+		emit({
+			event: "rejected-incomplete-fork",
+			message: error instanceof Error ? error.message : String(error),
+			resolverCalls,
+		});
+	}
+};
+
+const reopenCompleteFork = async (directory, wire) => {
 	const fixture = decodeFixture(wire);
 	const store = await openStore(directory);
 	let resolverCalls = 0;
@@ -351,27 +390,15 @@ const reopenForkPrefix = async (directory, wire) => {
 		resolveTimeoutMs: 500,
 	});
 	const initialEvidence = anchor.forkEvidence;
-	const generationCountBeforeReplay = (await generationKeys(store)).length;
-	const replayStatuses = [];
-	for (const entryBytes of fixture.childEntries) {
-		replayStatuses.push((await anchor.ingest(entryBytes)).status);
-	}
-	const finalEvidence = anchor.forkEvidence;
 	const result = {
-		event: "reopened-fork-prefix",
+		event: "reopened-complete-fork",
 		state: anchor.state,
 		commonParentSequence: initialEvidence?.commonParent.sequence.toString(),
 		canonicalDigests: initialEvidence?.children.map(({ digest }) =>
 			hex(digest),
 		),
 		resolverCalls,
-		generationCountBeforeReplay,
-		replayStatuses,
-		generationCountAfterReplay: (await generationKeys(store)).length,
-		finalState: anchor.state,
-		finalCanonicalDigests: finalEvidence?.children.map(({ digest }) =>
-			hex(digest),
-		),
+		generationCount: (await generationKeys(store)).length,
 	};
 	anchor.abort();
 	await store.close();
@@ -383,14 +410,19 @@ if (!mode || !directory) throw new Error("Expected worker mode and directory");
 
 if (mode === "write-active") {
 	await writeAcknowledgedActive(directory);
-} else if (mode === "write-fork-prefix") {
-	await writeFencedForkPrefix(directory);
+} else if (mode === "write-incomplete-fork") {
+	await writeIncompleteFork(directory);
+} else if (mode === "write-complete-fork") {
+	await writeCompleteFork(directory);
 } else if (mode === "read-active") {
 	if (!wireJson) throw new Error("Expected serialized ACTIVE fixture");
 	await reopenActive(directory, JSON.parse(wireJson));
-} else if (mode === "read-fork-prefix") {
+} else if (mode === "read-incomplete-fork") {
 	if (!wireJson) throw new Error("Expected serialized FORKED fixture");
-	await reopenForkPrefix(directory, JSON.parse(wireJson));
+	await reopenIncompleteFork(directory, JSON.parse(wireJson));
+} else if (mode === "read-complete-fork") {
+	if (!wireJson) throw new Error("Expected serialized FORKED fixture");
+	await reopenCompleteFork(directory, JSON.parse(wireJson));
 } else {
 	throw new Error(`Unknown worker mode: ${mode}`);
 }

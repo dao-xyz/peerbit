@@ -20,7 +20,10 @@ type WireFixture = {
 };
 
 type WriterMessage = {
-	event: "acknowledged-active" | "fenced-fork-prefix";
+	event:
+		| "acknowledged-active"
+		| "fenced-incomplete-fork"
+		| "acknowledged-complete-fork";
 	fixture: WireFixture;
 };
 
@@ -41,16 +44,18 @@ type ActiveRecoveryMessage = {
 };
 
 type ForkRecoveryMessage = {
-	event: "reopened-fork-prefix";
+	event: "reopened-complete-fork";
 	state: string;
 	commonParentSequence?: string;
 	canonicalDigests?: string[];
 	resolverCalls: number;
-	generationCountBeforeReplay: number;
-	replayStatuses: string[];
-	generationCountAfterReplay: number;
-	finalState: string;
-	finalCanonicalDigests?: string[];
+	generationCount: number;
+};
+
+type IncompleteForkRecoveryMessage = {
+	event: "rejected-incomplete-fork";
+	message: string;
+	resolverCalls: number;
 };
 
 const waitForMessage = <T extends { event: string }>(
@@ -188,9 +193,9 @@ const terminate = async (child: ChildProcess | undefined): Promise<void> => {
 };
 
 const runScenario = async <T extends { event: string }>(properties: {
-	writeMode: "write-active" | "write-fork-prefix";
+	writeMode: "write-active" | "write-incomplete-fork" | "write-complete-fork";
 	writeEvent: WriterMessage["event"];
-	readMode: "read-active" | "read-fork-prefix";
+	readMode: "read-active" | "read-incomplete-fork" | "read-complete-fork";
 	readEvent: T["event"];
 }): Promise<{ fixture: WireFixture; reopened: T }> => {
 	const directory = await fs.mkdtemp(
@@ -306,26 +311,38 @@ describe("TrustedNetwork v2 durable policy anchor hard-kill recovery", function 
 		});
 	});
 
-	it("reopens and extends a fully fenced FORKED prefix after SIGKILL", async function () {
+	it("rejects an incomplete committed FORKED set after SIGKILL", async function () {
+		if (process.platform === "win32") this.skip();
+		const { reopened } = await runScenario<IncompleteForkRecoveryMessage>({
+			writeMode: "write-incomplete-fork",
+			writeEvent: "fenced-incomplete-fork",
+			readMode: "read-incomplete-fork",
+			readEvent: "rejected-incomplete-fork",
+		});
+
+		expect(reopened.event).to.equal("rejected-incomplete-fork");
+		expect(reopened.message).to.match(
+			/Policy fork evidence is incomplete: expected 4, restored 3/,
+		);
+		expect(reopened.resolverCalls).to.equal(0);
+	});
+
+	it("reopens complete bounded FORKED evidence after SIGKILL", async function () {
 		if (process.platform === "win32") this.skip();
 		const { fixture, reopened } = await runScenario<ForkRecoveryMessage>({
-			writeMode: "write-fork-prefix",
-			writeEvent: "fenced-fork-prefix",
-			readMode: "read-fork-prefix",
-			readEvent: "reopened-fork-prefix",
+			writeMode: "write-complete-fork",
+			writeEvent: "acknowledged-complete-fork",
+			readMode: "read-complete-fork",
+			readEvent: "reopened-complete-fork",
 		});
 
 		expect(reopened).to.deep.equal({
-			event: "reopened-fork-prefix",
+			event: "reopened-complete-fork",
 			state: "FORKED",
 			commonParentSequence: "0",
-			canonicalDigests: fixture.canonicalChildDigests,
+			canonicalDigests: fixture.canonicalChildDigests.slice(0, 2),
 			resolverCalls: 0,
-			generationCountBeforeReplay: 2,
-			replayStatuses: ["halted", "halted", "halted", "halted"],
-			generationCountAfterReplay: 3,
-			finalState: "FORKED",
-			finalCanonicalDigests: fixture.canonicalChildDigests,
+			generationCount: 3,
 		});
 	});
 });

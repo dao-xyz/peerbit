@@ -15,6 +15,7 @@ import type {
 	PolicySnapshotResolverV2,
 } from "./v2-policy-engine.js";
 import {
+	TRUSTED_NETWORK_V2_MAX_PENDING_POLICIES,
 	TrustedNetworkV2PolicyReducer,
 	authenticatePolicySnapshotEntryV2,
 } from "./v2-policy-engine.js";
@@ -41,9 +42,16 @@ export const TRUSTED_NETWORK_V2_MAX_POLICY_ANCHOR_GENERATION_BYTES =
 	TRUSTED_NETWORK_V2_MAX_POLICY_ENTRY_BYTES * 4;
 
 const GENERATION_KEY_PREFIX = `${TRUSTED_NETWORK_V2_POLICY_ANCHOR_STORE_OWNER}/generation/`;
-const FORMAT_VERSION = 1;
+const ANCHOR_FORMAT_VERSION = 2;
+const REDUCER_DURABLE_FORMAT_VERSION = 1;
 const MAX_U64 = 0xffffffffffffffffn;
 const MAX_UNAVAILABLE_REASON_LENGTH = 512;
+// The core admits at most 64 pending policies. A fork transition can surface
+// that complete set plus its accepted and triggering children. Once the
+// transition is durable the wrapper stops policy admission entirely.
+const MAX_FORK_OBSERVATIONS_V2 = TRUSTED_NETWORK_V2_MAX_PENDING_POLICIES + 2;
+const MAX_QUEUED_POLICY_ENTRY_BYTES_V2 =
+	TRUSTED_NETWORK_V2_MAX_POLICY_ENTRY_BYTES * 2;
 const ZERO_DIGEST = new Uint8Array(32);
 const textEncoder = new TextEncoder();
 const DESCRIPTOR_DIGEST_DOMAIN = textEncoder.encode(
@@ -51,6 +59,9 @@ const DESCRIPTOR_DIGEST_DOMAIN = textEncoder.encode(
 );
 const GENERATION_CHECKSUM_DOMAIN = textEncoder.encode(
 	"peerbit/trusted-network/v2/policy-anchor/generation/v1",
+);
+const FORK_OBSERVATION_COMMITMENT_DOMAIN = textEncoder.encode(
+	"peerbit/trusted-network/v2/policy-anchor/fork-observations/v1",
 );
 const ANCHOR_STATE = Object.freeze({
 	ACTIVE: 1,
@@ -133,7 +144,17 @@ class PolicyAnchorStateGenerationPayloadV2 {
 	@field({ type: PolicyAnchorCoreStateRecordV2 })
 	coreState: PolicyAnchorCoreStateRecordV2;
 
-	constructor(properties?: { coreState: PolicyAnchorCoreStateRecordV2 }) {
+	@field({ type: "u8" })
+	forkObservationCount: number;
+
+	@field({ type: fixedArray("u8", 32) })
+	forkObservationCommitment: Uint8Array;
+
+	constructor(properties?: {
+		coreState: PolicyAnchorCoreStateRecordV2;
+		forkObservationCount: number;
+		forkObservationCommitment: Uint8Array;
+	}) {
 		if (properties) Object.assign(this, properties);
 	}
 }
@@ -208,7 +229,56 @@ type PublishedProjectionV2 = {
 	roles: Map<string, number>;
 };
 
-const copyBytes = (bytes: Uint8Array): Uint8Array => Uint8Array.from(bytes);
+const TYPED_ARRAY_PROTOTYPE = Object.getPrototypeOf(Uint8Array.prototype);
+const TYPED_ARRAY_BYTE_LENGTH = Object.getOwnPropertyDescriptor(
+	TYPED_ARRAY_PROTOTYPE,
+	"byteLength",
+)!.get!;
+const TYPED_ARRAY_TAG = Object.getOwnPropertyDescriptor(
+	TYPED_ARRAY_PROTOTYPE,
+	Symbol.toStringTag,
+)!.get!;
+const ARRAY_BUFFER_IS_VIEW = ArrayBuffer.isView;
+const UINT8_ARRAY_SET = Uint8Array.prototype.set;
+
+const exactUint8ArrayByteLength = (input: unknown): number => {
+	if (
+		!ARRAY_BUFFER_IS_VIEW(input) ||
+		TYPED_ARRAY_TAG.call(input) !== "Uint8Array"
+	) {
+		throw new TypeError("Expected a genuine Uint8Array");
+	}
+	const byteLength = TYPED_ARRAY_BYTE_LENGTH.call(input) as number;
+	if (byteLength === 0) {
+		UINT8_ARRAY_SET.call(new Uint8Array(0), input as Uint8Array);
+	}
+	return byteLength;
+};
+
+const copyBytesWithLength = (
+	bytes: Uint8Array,
+	byteLength: number,
+): Uint8Array => {
+	const copy = new Uint8Array(byteLength);
+	UINT8_ARRAY_SET.call(copy, bytes);
+	return copy;
+};
+
+const copyBytes = (bytes: Uint8Array): Uint8Array => {
+	const byteLength = exactUint8ArrayByteLength(bytes);
+	return copyBytesWithLength(bytes, byteLength);
+};
+
+const hasExactUint8ArrayByteLength = (
+	input: unknown,
+	expected: number,
+): input is Uint8Array => {
+	try {
+		return exactUint8ArrayByteLength(input) === expected;
+	} catch {
+		return false;
+	}
+};
 
 const bytesKey = (bytes: Uint8Array): string => {
 	let key = "";
@@ -262,6 +332,44 @@ const generationChecksum = (body: PolicyAnchorGenerationBodyV2): Uint8Array =>
 const observationContentHash = (entryBytes: Uint8Array): Uint8Array =>
 	sha256Sync(entryBytes);
 
+const u32Bytes = (value: number): Uint8Array => {
+	const bytes = new Uint8Array(4);
+	new DataView(bytes.buffer).setUint32(0, value, false);
+	return bytes;
+};
+
+const canonicalForkObservationEntries = (
+	entries: Iterable<Uint8Array>,
+): Uint8Array[] =>
+	[...entries]
+		.map((entryBytes) => ({
+			entryBytes: copyBytes(entryBytes),
+			hash: observationContentHash(entryBytes),
+		}))
+		.sort((left, right) => {
+			const hashOrder = compare(left.hash, right.hash);
+			return hashOrder === 0
+				? compare(left.entryBytes, right.entryBytes)
+				: hashOrder;
+		})
+		.map(({ entryBytes }) => entryBytes);
+
+const forkObservationCommitment = (
+	descriptorHash: Uint8Array,
+	canonicalEntries: readonly Uint8Array[],
+): Uint8Array =>
+	sha256Sync(
+		concat([
+			FORK_OBSERVATION_COMMITMENT_DOMAIN,
+			descriptorHash,
+			Uint8Array.of(canonicalEntries.length),
+			...canonicalEntries.flatMap((entryBytes) => [
+				u32Bytes(entryBytes.byteLength),
+				entryBytes,
+			]),
+		]),
+	);
+
 const generationKey = (generation: bigint): string =>
 	`${GENERATION_KEY_PREFIX}${generation.toString().padStart(20, "0")}`;
 
@@ -272,10 +380,15 @@ const assertOpenNotAborted = (signal: AbortSignal | undefined): void => {
 };
 
 const assertEntryBytes = (bytes: Uint8Array, label: string): void => {
+	let byteLength: number;
+	try {
+		byteLength = exactUint8ArrayByteLength(bytes);
+	} catch {
+		byteLength = -1;
+	}
 	if (
-		!(bytes instanceof Uint8Array) ||
-		bytes.byteLength === 0 ||
-		bytes.byteLength > TRUSTED_NETWORK_V2_MAX_POLICY_ENTRY_BYTES
+		byteLength < 1 ||
+		byteLength > TRUSTED_NETWORK_V2_MAX_POLICY_ENTRY_BYTES
 	) {
 		throw new Error(
 			`${label} must contain 1-${TRUSTED_NETWORK_V2_MAX_POLICY_ENTRY_BYTES} bytes`,
@@ -312,7 +425,7 @@ const retainCanonicalForkChild = (
 };
 
 const assertEmptyBytes = (bytes: Uint8Array, label: string): void => {
-	if (!(bytes instanceof Uint8Array) || bytes.byteLength !== 0) {
+	if (!hasExactUint8ArrayByteLength(bytes, 0)) {
 		throw new Error(`${label} must be empty`);
 	}
 };
@@ -373,7 +486,7 @@ const durableStateFromCoreRecord = (
 		assertEmptyBytes(record.forkChildEntryBytes0, "active fork child 0");
 		assertEmptyBytes(record.forkChildEntryBytes1, "active fork child 1");
 		return {
-			formatVersion: FORMAT_VERSION,
+			formatVersion: REDUCER_DURABLE_FORMAT_VERSION,
 			state: "ACTIVE",
 			acceptedHeadEntryBytes: copyBytes(record.acceptedHeadEntryBytes),
 		};
@@ -383,7 +496,7 @@ const durableStateFromCoreRecord = (
 			record.comparisonCandidateEntryBytes,
 			"unavailable comparison candidate",
 		);
-		if (record.acceptedAncestorDigest.byteLength !== 32) {
+		if (!hasExactUint8ArrayByteLength(record.acceptedAncestorDigest, 32)) {
 			throw new Error("Unavailable accepted-ancestor digest must be 32 bytes");
 		}
 		if (
@@ -397,7 +510,7 @@ const durableStateFromCoreRecord = (
 		assertEmptyBytes(record.forkChildEntryBytes0, "unavailable fork child 0");
 		assertEmptyBytes(record.forkChildEntryBytes1, "unavailable fork child 1");
 		return {
-			formatVersion: FORMAT_VERSION,
+			formatVersion: REDUCER_DURABLE_FORMAT_VERSION,
 			state: "UNAVAILABLE",
 			acceptedHeadEntryBytes: copyBytes(record.acceptedHeadEntryBytes),
 			comparisonCandidateEntryBytes: copyBytes(
@@ -421,7 +534,7 @@ const durableStateFromCoreRecord = (
 		assertEntryBytes(record.forkChildEntryBytes0, "fork child 0");
 		assertEntryBytes(record.forkChildEntryBytes1, "fork child 1");
 		return {
-			formatVersion: FORMAT_VERSION,
+			formatVersion: REDUCER_DURABLE_FORMAT_VERSION,
 			state: "FORKED",
 			commonParentEntryBytes: copyBytes(record.acceptedHeadEntryBytes),
 			childEntryBytes: [
@@ -450,14 +563,16 @@ const decodeCanonicalPayload = <T>(
 	maxBytes: number,
 	label: string,
 ): T => {
-	if (
-		!(input instanceof Uint8Array) ||
-		input.byteLength === 0 ||
-		input.byteLength > maxBytes
-	) {
+	let byteLength: number;
+	try {
+		byteLength = exactUint8ArrayByteLength(input);
+	} catch {
+		byteLength = -1;
+	}
+	if (byteLength < 1 || byteLength > maxBytes) {
 		throw new Error(`${label} exceeds its byte ceiling`);
 	}
-	const bytes = copyBytes(input);
+	const bytes = copyBytesWithLength(input, byteLength);
 	const payload = deserialize(bytes, type);
 	if (!equals(bytes, serialize(payload))) {
 		throw new Error(`${label} is not canonical`);
@@ -475,10 +590,28 @@ const decodeGenerationPayload = (
 			MAX_STATE_GENERATION_PAYLOAD_BYTES,
 			"Policy-anchor state payload",
 		);
+		const durableState = durableStateFromCoreRecord(payload.coreState);
+		if (durableState.state === "FORKED") {
+			if (
+				payload.forkObservationCount < 2 ||
+				payload.forkObservationCount > MAX_FORK_OBSERVATIONS_V2
+			) {
+				throw new Error(
+					`Forked policy-anchor state must commit to 2-${MAX_FORK_OBSERVATIONS_V2} observations`,
+				);
+			}
+		} else if (
+			payload.forkObservationCount !== 0 ||
+			!equals(payload.forkObservationCommitment, ZERO_DIGEST)
+		) {
+			throw new Error(
+				"Non-forked policy-anchor state must not contain a fork commitment",
+			);
+		}
 		return {
 			kind: "state",
 			payload,
-			durableState: durableStateFromCoreRecord(payload.coreState),
+			durableState,
 		};
 	}
 	if (body.kind === GENERATION_KIND.FORK_OBSERVATION) {
@@ -500,19 +633,24 @@ const decodeGenerationRecord = (
 	record: PolicyAnchorGenerationRecordV2;
 	payload: DecodedGenerationPayloadV2;
 } => {
+	let byteLength: number;
+	try {
+		byteLength = exactUint8ArrayByteLength(input);
+	} catch {
+		byteLength = -1;
+	}
 	if (
-		!(input instanceof Uint8Array) ||
-		input.byteLength === 0 ||
-		input.byteLength > TRUSTED_NETWORK_V2_MAX_POLICY_ANCHOR_GENERATION_BYTES
+		byteLength < 1 ||
+		byteLength > TRUSTED_NETWORK_V2_MAX_POLICY_ANCHOR_GENERATION_BYTES
 	) {
 		throw new Error("Policy-anchor generation record exceeds its byte ceiling");
 	}
-	const bytes = copyBytes(input);
+	const bytes = copyBytesWithLength(input, byteLength);
 	const record = deserialize(bytes, PolicyAnchorGenerationRecordV2);
 	if (!equals(bytes, serialize(record))) {
 		throw new Error("Policy-anchor generation record is not canonical");
 	}
-	if (record.body.formatVersion !== FORMAT_VERSION) {
+	if (record.body.formatVersion !== ANCHOR_FORMAT_VERSION) {
 		throw new Error("Unsupported policy-anchor generation format");
 	}
 	if (!equals(record.checksum, generationChecksum(record.body))) {
@@ -571,9 +709,10 @@ export class TrustedNetworkV2DurablePolicyReducer {
 	private generation = 0n;
 	private previousGenerationChecksum = copyBytes(ZERO_DIGEST);
 	private durableCoreBytes?: Uint8Array;
-	private observedHashes = new Set<string>();
 	private operationTail: Promise<void> = Promise.resolve();
 	private authorizationFences = 0;
+	private bufferedAdmissions = 0;
+	private bufferedAdmissionEntryBytes = 0;
 	private terminalError?: Error;
 
 	private constructor(properties: {
@@ -584,7 +723,6 @@ export class TrustedNetworkV2DurablePolicyReducer {
 		generation?: bigint;
 		previousGenerationChecksum?: Uint8Array;
 		durableCoreBytes?: Uint8Array;
-		observedHashes?: ReadonlySet<string>;
 	}) {
 		this.store = properties.store;
 		this.durability = properties.durability;
@@ -603,7 +741,6 @@ export class TrustedNetworkV2DurablePolicyReducer {
 			properties.durableCoreBytes === undefined
 				? undefined
 				: copyBytes(properties.durableCoreBytes);
-		this.observedHashes = new Set(properties.observedHashes);
 	}
 
 	static async open(
@@ -652,11 +789,15 @@ export class TrustedNetworkV2DurablePolicyReducer {
 				if (!/^\d{20}$/.test(suffix)) {
 					throw new Error("Malformed policy-anchor generation key");
 				}
+				let byteLength: number;
+				try {
+					byteLength = exactUint8ArrayByteLength(input);
+				} catch {
+					byteLength = -1;
+				}
 				if (
-					!(input instanceof Uint8Array) ||
-					input.byteLength === 0 ||
-					input.byteLength >
-						TRUSTED_NETWORK_V2_MAX_POLICY_ANCHOR_GENERATION_BYTES
+					byteLength < 1 ||
+					byteLength > TRUSTED_NETWORK_V2_MAX_POLICY_ANCHOR_GENERATION_BYTES
 				) {
 					throw new Error(
 						"Policy-anchor generation record exceeds its byte ceiling",
@@ -687,8 +828,9 @@ export class TrustedNetworkV2DurablePolicyReducer {
 		let core: TrustedNetworkV2PolicyReducer | undefined;
 		let durableCoreBytes: Uint8Array | undefined;
 		let forkEvidence: PolicyForkEvidenceV2 | undefined;
-		const observedHashes = new Set<string>();
-		const authenticatedEvidenceEntryByHash = new Map<string, Uint8Array>();
+		let expectedForkObservationCount: number | undefined;
+		let expectedForkObservationCommitment: Uint8Array | undefined;
+		const observedEntries = new Map<string, Uint8Array>();
 		const canonicalChildren: CanonicalForkChildV2[] = [];
 		try {
 			for (let index = 0; index < generationKeys.length; index++) {
@@ -731,6 +873,10 @@ export class TrustedNetworkV2DurablePolicyReducer {
 					latestCoreBytes = serialize(payload.payload.coreState);
 					latestDurableState = payload.durableState;
 					if (latestDurableState.state === "FORKED") {
+						expectedForkObservationCount = payload.payload.forkObservationCount;
+						expectedForkObservationCommitment = copyBytes(
+							payload.payload.forkObservationCommitment,
+						);
 						core = await TrustedNetworkV2PolicyReducer.restore({
 							...coreProperties,
 							durableState: latestDurableState,
@@ -748,17 +894,12 @@ export class TrustedNetworkV2DurablePolicyReducer {
 							const hashKey = bytesKey(
 								observationContentHash(child.entryBytes),
 							);
-							const retained = authenticatedEvidenceEntryByHash.get(hashKey);
-							if (
-								retained !== undefined &&
-								!equals(retained, child.entryBytes)
-							) {
+							if (observedEntries.has(hashKey)) {
 								throw new Error(
-									"Policy fork-observation content hash collision",
+									"Duplicate policy fork observation in durable state",
 								);
 							}
-							authenticatedEvidenceEntryByHash.set(hashKey, child.entryBytes);
-							observedHashes.add(hashKey);
+							observedEntries.set(hashKey, copyBytes(child.entryBytes));
 							retainCanonicalForkChild(canonicalChildren, child);
 						}
 					}
@@ -774,38 +915,36 @@ export class TrustedNetworkV2DurablePolicyReducer {
 					}
 					const entryBytes = payload.payload.entryBytes;
 					const hashKey = bytesKey(observationContentHash(entryBytes));
-					if (observedHashes.has(hashKey)) {
-						const evidenceEntry = authenticatedEvidenceEntryByHash.get(hashKey);
-						if (
-							evidenceEntry !== undefined &&
-							!equals(evidenceEntry, entryBytes)
-						) {
-							throw new Error("Policy fork-observation content hash collision");
-						}
-					} else {
-						const authenticated = await authenticatePolicySnapshotEntryV2(
-							entryBytes,
-							descriptor,
-						);
-						assertOpenNotAborted(signal);
-						if (
-							authenticated.body.sequence !==
-								forkEvidence.commonParent.sequence + 1n ||
-							!equals(
-								authenticated.body.previousPolicyDigest,
-								forkEvidence.commonParent.digest,
-							)
-						) {
-							throw new Error(
-								"Stored policy fork observation is not a direct child of the common parent",
-							);
-						}
-						observedHashes.add(hashKey);
-						retainCanonicalForkChild(canonicalChildren, {
-							digest: authenticated.digest,
-							entryBytes,
-						});
+					if (observedEntries.has(hashKey)) {
+						throw new Error("Duplicate policy fork-observation generation");
 					}
+					if (observedEntries.size >= MAX_FORK_OBSERVATIONS_V2) {
+						throw new Error(
+							`Policy fork evidence exceeds ${MAX_FORK_OBSERVATIONS_V2} children`,
+						);
+					}
+					const authenticated = await authenticatePolicySnapshotEntryV2(
+						entryBytes,
+						descriptor,
+					);
+					assertOpenNotAborted(signal);
+					if (
+						authenticated.body.sequence !==
+							forkEvidence.commonParent.sequence + 1n ||
+						!equals(
+							authenticated.body.previousPolicyDigest,
+							forkEvidence.commonParent.digest,
+						)
+					) {
+						throw new Error(
+							"Stored policy fork observation is not a direct child of the common parent",
+						);
+					}
+					observedEntries.set(hashKey, copyBytes(entryBytes));
+					retainCanonicalForkChild(canonicalChildren, {
+						digest: authenticated.digest,
+						entryBytes,
+					});
 				}
 				previousChecksum = copyBytes(record.checksum);
 			}
@@ -832,8 +971,24 @@ export class TrustedNetworkV2DurablePolicyReducer {
 			}
 
 			if (latestDurableState?.state === "FORKED") {
-				if (forkEvidence === undefined) {
+				if (
+					forkEvidence === undefined ||
+					expectedForkObservationCount === undefined ||
+					expectedForkObservationCommitment === undefined
+				) {
 					throw new Error("Restored forked policy anchor has no fork evidence");
+				}
+				if (observedEntries.size !== expectedForkObservationCount) {
+					throw new Error(
+						`Policy fork evidence is incomplete: expected ${expectedForkObservationCount}, restored ${observedEntries.size}`,
+					);
+				}
+				const restoredCommitment = forkObservationCommitment(
+					expectedDescriptorHash,
+					canonicalForkObservationEntries(observedEntries.values()),
+				);
+				if (!equals(restoredCommitment, expectedForkObservationCommitment)) {
+					throw new Error("Policy fork evidence commitment mismatch");
 				}
 				if (canonicalChildren.length !== 2) {
 					throw new Error(
@@ -844,7 +999,7 @@ export class TrustedNetworkV2DurablePolicyReducer {
 					PolicyReducerDurableStateV2,
 					{ state: "FORKED" }
 				> = {
-					formatVersion: FORMAT_VERSION,
+					formatVersion: REDUCER_DURABLE_FORMAT_VERSION,
 					state: "FORKED",
 					commonParentEntryBytes: copyBytes(
 						latestDurableState.commonParentEntryBytes,
@@ -876,7 +1031,7 @@ export class TrustedNetworkV2DurablePolicyReducer {
 				}
 				latestDurableState = normalizedForkState;
 				durableCoreBytes = serialize(coreRecordFromState(normalizedForkState));
-			} else if (observedHashes.size !== 0) {
+			} else if (observedEntries.size !== 0) {
 				throw new Error("Non-forked policy anchor has fork observations");
 			}
 
@@ -888,7 +1043,6 @@ export class TrustedNetworkV2DurablePolicyReducer {
 				generation: highestGeneration,
 				previousGenerationChecksum: previousChecksum,
 				durableCoreBytes,
-				observedHashes,
 			});
 		} catch (error) {
 			core?.abort();
@@ -897,9 +1051,11 @@ export class TrustedNetworkV2DurablePolicyReducer {
 	}
 
 	get state(): "EMPTY" | "ACTIVE" | "UNAVAILABLE" | "FORKED" | "HALTED" {
-		if (this.terminalError !== undefined || this.core.state === "HALTED") {
+		if (this.terminalError !== undefined) {
 			return "HALTED";
 		}
+		if (this.published.state === "FORKED") return "FORKED";
+		if (this.core.state === "HALTED") return "HALTED";
 		return this.published.state;
 	}
 
@@ -921,6 +1077,16 @@ export class TrustedNetworkV2DurablePolicyReducer {
 
 	get pendingDigests(): Uint8Array[] {
 		return this.core.pendingDigests.map(copyBytes);
+	}
+
+	/** Internal diagnostics for the fixed pre-publication admission bound. */
+	get bufferedAdmissionCount(): number {
+		return this.bufferedAdmissions;
+	}
+
+	/** Internal diagnostics for copied entry bytes awaiting settlement. */
+	get bufferedAdmissionBytes(): number {
+		return this.bufferedAdmissionEntryBytes;
 	}
 
 	/** Projection query only; use isAuthorized() for the fail-closed gate. */
@@ -946,27 +1112,148 @@ export class TrustedNetworkV2DurablePolicyReducer {
 	}
 
 	ingest(entryBytes: Uint8Array): Promise<PolicyAdmissionResultV2> {
-		const captured =
-			entryBytes instanceof Uint8Array &&
-			entryBytes.byteLength <= TRUSTED_NETWORK_V2_MAX_POLICY_ENTRY_BYTES
-				? copyBytes(entryBytes)
-				: entryBytes;
+		if (this.terminalError !== undefined) {
+			return Promise.reject(this.terminalError);
+		}
+		if (this.published.state === "FORKED") {
+			return Promise.resolve(this.forkFailStopResult());
+		}
+		if (this.core.state === "HALTED") {
+			return Promise.resolve(this.lifecycleHaltedResult());
+		}
+		let reservedEntryBytes: number;
+		try {
+			reservedEntryBytes = exactUint8ArrayByteLength(entryBytes);
+		} catch {
+			return Promise.resolve(
+				this.immediateAdmissionResult(
+					"rejected",
+					"Policy snapshot entry must be a Uint8Array",
+				),
+			);
+		}
+		if (reservedEntryBytes > TRUSTED_NETWORK_V2_MAX_POLICY_ENTRY_BYTES) {
+			return Promise.resolve(
+				this.immediateAdmissionResult(
+					"rejected",
+					`Policy snapshot entry exceeds ${TRUSTED_NETWORK_V2_MAX_POLICY_ENTRY_BYTES} bytes`,
+				),
+			);
+		}
+		if (!this.reserveAdmission(reservedEntryBytes)) {
+			return Promise.resolve(
+				this.immediateAdmissionResult(
+					"capacity",
+					"Durable policy admission queue is at its fixed capacity",
+					this.core.pendingCount,
+					this.core.pendingBytes,
+				),
+			);
+		}
+		let captured: Uint8Array;
+		try {
+			captured = copyBytesWithLength(entryBytes, reservedEntryBytes);
+		} catch (error) {
+			this.releaseAdmission(reservedEntryBytes);
+			return Promise.reject(error);
+		}
 		return this.enqueue(async () => {
+			if (this.published.state === "FORKED") {
+				return this.forkFailStopResult();
+			}
+			if (this.core.state === "HALTED") {
+				return this.lifecycleHaltedResult();
+			}
 			const result = await this.core.ingest(captured);
 			await this.persistCorePublication(result);
 			return result;
-		});
+		}, reservedEntryBytes);
 	}
 
 	retryUnavailable(): Promise<PolicyAdmissionResultV2> {
+		if (this.terminalError !== undefined) {
+			return Promise.reject(this.terminalError);
+		}
+		if (this.published.state === "FORKED") {
+			return Promise.resolve(this.forkFailStopResult());
+		}
+		if (this.core.state === "HALTED") {
+			return Promise.resolve(this.lifecycleHaltedResult());
+		}
+		if (!this.reserveAdmission(0)) {
+			return Promise.resolve(
+				this.immediateAdmissionResult(
+					"capacity",
+					"Durable policy admission queue is at its fixed capacity",
+					this.core.pendingCount,
+					this.core.pendingBytes,
+				),
+			);
+		}
 		return this.enqueue(async () => {
+			if (this.published.state === "FORKED") {
+				return this.forkFailStopResult();
+			}
+			if (this.core.state === "HALTED") {
+				return this.lifecycleHaltedResult();
+			}
 			const result = await this.core.retryUnavailable();
 			await this.persistCorePublication(result);
 			return result;
-		});
+		}, 0);
 	}
 
-	private enqueue<T>(operation: () => Promise<T>): Promise<T> {
+	private forkFailStopResult(): PolicyAdmissionResultV2 {
+		return {
+			status: "halted",
+			reason: "Policy reducer is halted by authority equivocation",
+			fetchHints: [],
+			pendingCount: 0,
+			pendingBytes: 0,
+		};
+	}
+
+	private lifecycleHaltedResult(): PolicyAdmissionResultV2 {
+		return {
+			status: "halted",
+			reason: "Policy reducer lifecycle is aborted",
+			fetchHints: [],
+			pendingCount: this.core.pendingCount,
+			pendingBytes: this.core.pendingBytes,
+		};
+	}
+
+	private immediateAdmissionResult(
+		status: "capacity" | "rejected",
+		reason: string,
+		pendingCount = 0,
+		pendingBytes = 0,
+	): PolicyAdmissionResultV2 {
+		return { status, reason, fetchHints: [], pendingCount, pendingBytes };
+	}
+
+	private reserveAdmission(entryBytes: number): boolean {
+		if (
+			this.bufferedAdmissions >= TRUSTED_NETWORK_V2_MAX_PENDING_POLICIES ||
+			entryBytes >
+				MAX_QUEUED_POLICY_ENTRY_BYTES_V2 - this.bufferedAdmissionEntryBytes
+		) {
+			return false;
+		}
+		this.bufferedAdmissions += 1;
+		this.bufferedAdmissionEntryBytes += entryBytes;
+		return true;
+	}
+
+	private releaseAdmission(entryBytes: number): void {
+		this.bufferedAdmissions -= 1;
+		this.bufferedAdmissionEntryBytes -= entryBytes;
+	}
+
+	private enqueue<T>(
+		operation: () => Promise<T>,
+		bufferedEntryBytes: number,
+	): Promise<T> {
 		this.authorizationFences++;
 		const result = this.operationTail.then(async () => {
 			if (this.terminalError !== undefined) throw this.terminalError;
@@ -982,6 +1269,7 @@ export class TrustedNetworkV2DurablePolicyReducer {
 		);
 		return result.finally(() => {
 			this.authorizationFences--;
+			this.releaseAdmission(bufferedEntryBytes);
 		});
 	}
 
@@ -1010,13 +1298,9 @@ export class TrustedNetworkV2DurablePolicyReducer {
 
 		const coreRecord = coreRecordFromState(durableState);
 		const coreBytes = serialize(coreRecord);
-		// FORKED is terminal. Once its common-parent anchor exists, later child
-		// proofs are observation deltas even when they change the live canonical
-		// pair; reopen derives that pair from the complete delta history.
 		const stateChanged =
-			!(this.published.state === "FORKED" && durableState.state === "FORKED") &&
-			(this.durableCoreBytes === undefined ||
-				!equals(this.durableCoreBytes, coreBytes));
+			this.durableCoreBytes === undefined ||
+			!equals(this.durableCoreBytes, coreBytes);
 		const suppliedObservations = new Map<string, Uint8Array>();
 		for (const proof of result.forkObservations ?? []) {
 			const contentHash = observationContentHash(proof.entryBytes);
@@ -1027,31 +1311,45 @@ export class TrustedNetworkV2DurablePolicyReducer {
 			}
 			suppliedObservations.set(hashKey, copyBytes(proof.entryBytes));
 		}
+		let committedForkObservationCount = 0;
+		let committedForkObservationDigest = copyBytes(ZERO_DIGEST);
 		if (durableState.state !== "FORKED") {
-			if (suppliedObservations.size !== 0 || this.observedHashes.size !== 0) {
+			if (suppliedObservations.size !== 0) {
 				throw this.halt("Only a forked policy anchor may contain observations");
 			}
 		} else {
+			if (this.published.state === "FORKED" || !stateChanged) {
+				throw this.halt("A durable fork transition may be published only once");
+			}
+			if (
+				suppliedObservations.size < 2 ||
+				suppliedObservations.size > MAX_FORK_OBSERVATIONS_V2
+			) {
+				throw this.halt(
+					`A durable fork transition must contain 2-${MAX_FORK_OBSERVATIONS_V2} distinct observations`,
+				);
+			}
+			const completeObservationEntries = canonicalForkObservationEntries(
+				suppliedObservations.values(),
+			);
+			committedForkObservationCount = completeObservationEntries.length;
+			committedForkObservationDigest = forkObservationCommitment(
+				this.descriptorHash,
+				completeObservationEntries,
+			);
 			for (const entryBytes of durableState.childEntryBytes) {
 				const hashKey = bytesKey(observationContentHash(entryBytes));
-				if (stateChanged) suppliedObservations.delete(hashKey);
-				else if (
-					!this.observedHashes.has(hashKey) &&
-					!suppliedObservations.has(hashKey)
-				) {
+				if (!suppliedObservations.delete(hashKey)) {
 					throw this.halt(
 						"Published fork state is missing a canonical observation",
 					);
 				}
 			}
 		}
-		for (const hashKey of this.observedHashes) {
-			suppliedObservations.delete(hashKey);
-		}
 
-		const observationEntries = [...suppliedObservations.entries()]
-			.sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
-			.map(([hashKey, entryBytes]) => ({ hashKey, entryBytes }));
+		const observationEntries = canonicalForkObservationEntries(
+			suppliedObservations.values(),
+		);
 		const recordCount = (stateChanged ? 1 : 0) + observationEntries.length;
 		if (recordCount === 0) return;
 		if (BigInt(recordCount) > MAX_U64 - this.generation) {
@@ -1060,22 +1358,24 @@ export class TrustedNetworkV2DurablePolicyReducer {
 
 		let nextGeneration = this.generation;
 		let previousChecksum = copyBytes(this.previousGenerationChecksum);
-		const stagedObservedHashes = new Set(this.observedHashes);
 		const drafts: Array<{
 			kind: number;
 			payloadBytes: Uint8Array;
-			applyObservationHash?: string;
 		}> = [];
 		if (stateChanged) {
 			const payloadBytes = serialize(
-				new PolicyAnchorStateGenerationPayloadV2({ coreState: coreRecord }),
+				new PolicyAnchorStateGenerationPayloadV2({
+					coreState: coreRecord,
+					forkObservationCount: committedForkObservationCount,
+					forkObservationCommitment: committedForkObservationDigest,
+				}),
 			);
 			if (payloadBytes.byteLength > MAX_STATE_GENERATION_PAYLOAD_BYTES) {
 				throw this.halt("Policy-anchor state payload exceeds its byte ceiling");
 			}
 			drafts.push({ kind: GENERATION_KIND.STATE, payloadBytes });
 		}
-		for (const { hashKey, entryBytes } of observationEntries) {
+		for (const entryBytes of observationEntries) {
 			const payloadBytes = serialize(
 				new PolicyAnchorObservationGenerationPayloadV2({
 					entryBytes: copyBytes(entryBytes),
@@ -1089,25 +1389,13 @@ export class TrustedNetworkV2DurablePolicyReducer {
 			drafts.push({
 				kind: GENERATION_KIND.FORK_OBSERVATION,
 				payloadBytes,
-				applyObservationHash: hashKey,
 			});
 		}
 
 		for (const draft of drafts) {
 			nextGeneration += 1n;
-			if (draft.kind === GENERATION_KIND.STATE) {
-				if (durableState.state === "FORKED") {
-					for (const entryBytes of durableState.childEntryBytes) {
-						stagedObservedHashes.add(
-							bytesKey(observationContentHash(entryBytes)),
-						);
-					}
-				}
-			} else {
-				stagedObservedHashes.add(draft.applyObservationHash!);
-			}
 			const body = new PolicyAnchorGenerationBodyV2({
-				formatVersion: FORMAT_VERSION,
+				formatVersion: ANCHOR_FORMAT_VERSION,
 				generation: nextGeneration,
 				descriptorDigest: copyBytes(this.descriptorHash),
 				previousGenerationChecksum: copyBytes(previousChecksum),
@@ -1142,7 +1430,6 @@ export class TrustedNetworkV2DurablePolicyReducer {
 		this.generation = nextGeneration;
 		this.previousGenerationChecksum = previousChecksum;
 		this.durableCoreBytes = copyBytes(coreBytes);
-		this.observedHashes = stagedObservedHashes;
 		try {
 			this.published = publishedFromReducer(this.core);
 		} catch (error) {

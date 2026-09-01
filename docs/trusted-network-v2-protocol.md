@@ -472,12 +472,12 @@ revoked authority, although the isolated replica may have exposed provisional
 state before learning the revocation.
 
 The highest accepted contiguous sequence, its accepted policy and fence
-digests, and all valid fork evidence must be stored durably. Pending objects
-with missing context do not advance this rollback anchor. This prevents an
-ordinary reopen from forgetting a known revocation or fork. Restoring an older
-complete storage snapshot can still roll back that local anchor; preventing
-operator-level snapshot rollback requires an external monotonic anchor and is
-not claimed by this protocol.
+digests, and every fork proof admitted before the declared fail-stop boundary
+must be stored durably. Pending objects with missing context do not advance this
+rollback anchor. This prevents an ordinary reopen from forgetting a known
+revocation or fork. Restoring an older complete storage snapshot can still roll
+back that local anchor; preventing operator-level snapshot rollback requires an
+external monotonic anchor and is not claimed by this protocol.
 
 The initial internal policy-anchor implementation uses Peerbit's generic
 crash-safe store capability. It fails closed when that capability or its
@@ -490,18 +490,50 @@ bytes, and restores `UNAVAILABLE` or `FORKED` without serving authorization in
 either state. Candidate-only missing-parent work remains intentionally
 ephemeral.
 
+Anchor format 2 makes a `FORKED` state commit to the expected proof count and a
+descriptor-bound digest of the exact canonicalized proof bytes. A crash or
+failure after the state generation but before all promised observation
+generations therefore leaves a durable, explicitly incomplete prefix that
+reopen rejects. Commitment corruption, missing proofs, extra proofs, and
+duplicate proof generations all fail closed. This internal format deliberately
+rejects earlier anchor records; it has no migration fallback while v2 remains
+non-activatable.
+
 This first anchor format assumes one writer owns a descriptor-scoped store. It
 does not claim multi-process compare-and-swap, compaction, or protection from
-operator rollback of the whole storage snapshot. Its self-contained state and
-fork-observation generations remain append-only until the generic authenticated
-checkpoint and truncation primitive exists. Backends that do not advertise the
-generic crash-safe barrier remain unsupported instead of receiving a weaker
+operator rollback of the whole storage snapshot. Backends that do not advertise
+the generic crash-safe barrier remain unsupported instead of receiving a weaker
 TrustedNetwork-specific persistence fallback.
 
-Exact fork-observation deduplication also retains one hash per unique proof.
-This is not a bounded-state completion and must remain non-activatable until a
-fixed fail-stop evidence ceiling or a generic bounded durable index and
-checkpoint design lands.
+The pending-policy ceiling is protocol-fixed at 64. The transition to `FORKED`
+can therefore retain at most those 64 children plus the accepted and triggering
+children: 66 exact child proofs in total. The state generation carries the
+canonical two and at most 64 self-contained observation generations retain the
+rest. After that complete transition crosses its barriers and publishes
+`FORKED`, the durable reducer returns a constant-size halted result before entry
+capture, head projection, authentication, resolution, core mutation, or store
+access. Reopen uses a temporary map of at most 66 proof hashes and exact bytes
+to verify the complete-set commitment, then discards it before returning the
+terminal reducer.
+
+Before `FORKED`, the durable wrapper also bounds admissions retained behind a
+blocked store barrier. At most 64 calls and 256 KiB of copied policy-entry bytes
+may be unsettled at once. Count and byte capacity are reserved synchronously
+before copying caller bytes and released on every settlement path. Oversized or
+incompatible typed-array inputs return `rejected`; well-formed submissions over
+the wrapper limit return `capacity`. Neither path enters the core or retains the
+caller buffer, and `pendingCount`/`pendingBytes` continue to describe only the
+core pending-policy set. Zero-byte retry calls share the same count bound.
+Boundary length checks use the intrinsic typed-array byte extent and copying
+uses the intrinsic typed-array set operation, so subclasses, shadowed
+`byteLength`, custom iterators, proxies, and detached views cannot bypass either
+the 128 KiB entry ceiling or the wrapper accounting.
+
+This bounds the authority-equivocation side of the anchor, but ordinary ACTIVE
+and UNAVAILABLE state generations remain append-only until the generic
+authenticated checkpoint and truncation primitive exists. The implementation
+therefore remains internal and non-activatable while that and the other resource
+enforcement gates are incomplete.
 
 ## Confidentiality boundary
 
@@ -563,6 +595,11 @@ The implementation target is:
 - reader rotation: `O(current readers for that resource)`;
 - direct publisher fanout: bounded, while total dissemination still scales
   with recipients;
+- policy-fork evidence: at most 66 exact child proofs and 65 fork-transition
+  generations, followed by constant-time, constant-size rejection with no entry,
+  projection, authentication, resolver, core, store, or retained-state work;
+- durable policy admission buffering: at most 64 unsettled calls and 256 KiB of
+  copied entry bytes;
 - fence creation: `O(current heads)` until a generic bounded merge/frontier
   primitive exists; and
 - revalidation: entries since the last stable common fence, which is not a
