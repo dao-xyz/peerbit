@@ -1,5 +1,11 @@
 # Changelog
 
+## 6.2.27
+
+### Patch Changes
+
+- [#1380](https://github.com/dao-xyz/peerbit/pull/1380) [`264a86a`](https://github.com/dao-xyz/peerbit/commit/264a86a8865d8e2c6f29130f6a82f9bfc589de8f) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Preserve and validate EntryV0 reserved bytes so JavaScript signature verification covers the same wire bytes as native verification.
+
 ## 6.2.26
 
 ### Patch Changes
