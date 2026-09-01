@@ -478,6 +478,31 @@ export const decodePolicySnapshotBodyV2 = (
 	bytes: Uint8Array,
 	descriptor: NetworkDescriptorV2,
 ): PolicySnapshotBodyV2 => {
+	const byteLength = exactUint8ArrayByteLengthV2(bytes);
+	// [2, 1] variant (2), network id (32), sequence (8), and previous
+	// digest (32) place the bindings vec<u32 LE> count at offset 74 and its
+	// elements at offset 78. Bound that count by captured input before Borsh can
+	// allocate from it. This is only a feasibility guard, not a member cap.
+	const bindingsCountOffset = 74;
+	const bindingsOffset = 78;
+	if (byteLength < bindingsOffset) {
+		throw new Error("Policy snapshot body has truncated bindings framing");
+	}
+	const bindingsCount =
+		bytes[bindingsCountOffset]! +
+		bytes[bindingsCountOffset + 1]! * 0x100 +
+		bytes[bindingsCountOffset + 2]! * 0x10000 +
+		bytes[bindingsCountOffset + 3]! * 0x1000000;
+	// An Ed25519 key variant and key consume 33 bytes; roles and the absent
+	// encryption-commitment option consume one byte each. This 35-byte minimum
+	// is structural, so it bounds allocation without imposing a policy size.
+	const minimumBindingBytes = 35;
+	if (
+		bindingsCount >
+		Math.floor((byteLength - bindingsOffset) / minimumBindingBytes)
+	) {
+		throw new Error("Policy snapshot body has impossible bindings count");
+	}
 	const body = deserialize(bytes, PolicySnapshotBodyV2);
 	assertCanonicalEncoding(bytes, body);
 	assertPolicySnapshotBodyV2(body, descriptor);

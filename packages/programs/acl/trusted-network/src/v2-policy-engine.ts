@@ -1,7 +1,7 @@
 import { deserialize, serialize } from "@dao-xyz/borsh";
-import { DecryptedThing, PublicSignKey, verify } from "@peerbit/crypto";
-import { Entry, EntryV0, NO_ENCODING } from "@peerbit/log";
+import { PublicSignKey } from "@peerbit/crypto";
 import { compare, equals } from "uint8arrays";
+import { authenticateCapturedAuthorityEntryV0V2 } from "./v2-authority-entry.js";
 import {
 	NetworkDescriptorV2,
 	PolicySnapshotBodyV2,
@@ -304,58 +304,11 @@ const authenticateCapturedPolicySnapshotEntryV2 = async (
 	canonicalEntryBytes: Uint8Array,
 	descriptor: NetworkDescriptorV2,
 ): Promise<ValidatedPolicySnapshotV2> => {
-	const authenticatedEntry = deserialize(canonicalEntryBytes, Entry);
-	if (!(authenticatedEntry instanceof EntryV0)) {
-		throw new Error("Policy snapshot must use EntryV0");
-	}
-	if (!equals(canonicalEntryBytes, serialize(authenticatedEntry))) {
-		throw new Error("Policy snapshot entry encoding is not canonical");
-	}
-	if (!(authenticatedEntry._meta instanceof DecryptedThing)) {
-		throw new Error("Policy snapshot metadata must be public");
-	}
-	if (!(authenticatedEntry._payload instanceof DecryptedThing)) {
-		throw new Error("Policy snapshot payload must be public");
-	}
-	if (
-		authenticatedEntry._signatures === undefined ||
-		authenticatedEntry._signatures.signatures.length !== 1
-	) {
-		throw new Error("Policy snapshot must contain exactly one signature");
-	}
-	if (
-		!(authenticatedEntry._signatures.signatures[0] instanceof DecryptedThing)
-	) {
-		throw new Error("Policy snapshot signature must be public");
-	}
-	authenticatedEntry.init({ encoding: NO_ENCODING });
-
-	const signatures = await authenticatedEntry.getSignatures();
-	if (signatures.length !== 1) {
-		throw new Error("Policy snapshot must resolve exactly one signature");
-	}
-	const signature = signatures[0]!;
-	if (
-		!equals(
-			serialize(signature.publicKey),
-			serialize(descriptor.policyAuthority),
-		)
-	) {
-		throw new Error("Policy snapshot signer is not the policy authority");
-	}
-	if (!(await verify(signature, authenticatedEntry.getSignableBytes()))) {
-		throw new Error("Policy snapshot authority signature is invalid");
-	}
-
-	const payload = await authenticatedEntry.getPayloadValue();
-	let canonicalPayload: Uint8Array;
-	try {
-		canonicalPayload = copyBytes(payload as Uint8Array);
-	} catch {
-		throw new Error(
-			"Policy snapshot payload must contain canonical body bytes",
-		);
-	}
+	const authenticated = await authenticateCapturedAuthorityEntryV0V2(
+		canonicalEntryBytes,
+		descriptor,
+	);
+	const canonicalPayload = authenticated.payloadBytes;
 	const body = decodePolicySnapshotBodyV2(canonicalPayload, descriptor);
 	const digest = digestPolicySnapshotBodyV2(body);
 	return {

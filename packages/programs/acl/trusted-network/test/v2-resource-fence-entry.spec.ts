@@ -575,7 +575,7 @@ describe("TrustedNetwork v2 resource-fence EntryV0 authentication", () => {
 				expectedResourceId: RESOURCE_ID,
 				expectedGid: RESOURCE_GID,
 			}),
-		).to.be.rejectedWith("at most 64");
+		).to.be.rejectedWith(/at most 64|impossible direct-parent count/);
 
 		for (let length = 0; length < fixture.entryBytes.byteLength; length++) {
 			await expect(
