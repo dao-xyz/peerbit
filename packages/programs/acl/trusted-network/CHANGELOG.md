@@ -1,5 +1,15 @@
 # Changelog
 
+## 6.0.108
+
+### Patch Changes
+
+- [#1372](https://github.com/dao-xyz/peerbit/pull/1372) [`af5b375`](https://github.com/dao-xyz/peerbit/commit/af5b375d607b950a598750e8796fa69d1cda355f) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Bound the internal TrustedNetwork v2 durable fork evidence and admission
+  windows, commit to the complete fork-proof set, and make a durably published
+  authority fork a constant-time policy-admission fail-stop. Validate and copy
+  policy bytes from their intrinsic typed-array extent so caller hooks cannot
+  bypass those bounds.
+
 ## 6.0.107
 
 ### Patch Changes
