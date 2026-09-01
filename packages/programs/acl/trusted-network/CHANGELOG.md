@@ -1,5 +1,13 @@
 # Changelog
 
+## 6.0.111
+
+### Patch Changes
+
+- [#1378](https://github.com/dao-xyz/peerbit/pull/1378) [`331b263`](https://github.com/dao-xyz/peerbit/commit/331b26324a3968f79160f6c68baaaebefd131027) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Pin exact-length internal v2 resource-fence and operation-policy-proof wire
+  codecs with fail-closed canonical decoding. Resource-entry authentication and
+  revalidation remain unimplemented, and v2 remains non-activatable.
+
 ## 6.0.110
 
 ### Patch Changes
