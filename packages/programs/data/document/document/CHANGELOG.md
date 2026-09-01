@@ -1,5 +1,16 @@
 # Changelog
 
+## 15.0.19
+
+### Patch Changes
+
+- [#1387](https://github.com/dao-xyz/peerbit/pull/1387) [`c131f27`](https://github.com/dao-xyz/peerbit/commit/c131f27be38c16b4184f2092aed86cdb0f1d0902) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Snapshot persisted-delivery options and committed-entry planning evidence before asynchronous work so caller or callback mutation cannot weaken, skip, or retarget a requested durable quorum.
+
+- Updated dependencies [[`c131f27`](https://github.com/dao-xyz/peerbit/commit/c131f27be38c16b4184f2092aed86cdb0f1d0902)]:
+  - @peerbit/log@6.2.28
+  - @peerbit/shared-log@16.0.18
+  - @peerbit/document-interface@3.2.71
+
 ## 15.0.18
 
 ### Patch Changes
