@@ -1,7 +1,11 @@
-import { type AnyStore } from "@peerbit/any-store-interface";
+import {
+	type AnyStore,
+	type CrashSafeAtomicReplaceDurability,
+} from "@peerbit/any-store-interface";
 import { type AbstractLevel } from "abstract-level";
 import { ClassicLevel } from "classic-level";
 import { v4 as uuid } from "uuid";
+import { copyExactUint8Array, getExactUint8ArrayByteLength } from "./bytes.js";
 
 type GetFn = (
 	key: string,
@@ -22,10 +26,7 @@ const getOrGetSync = (level: AbstractLevel<any, any, any>): GetFn => {
 export class LevelStore implements AnyStore {
 	private getFn: GetFn;
 	private crashSafe = false;
-	private _crashSafeDurability?: {
-		readonly crashSafe: true;
-		barrier: () => Promise<void>;
-	};
+	private _crashSafeDurability?: CrashSafeAtomicReplaceDurability;
 	constructor(readonly store: AbstractLevel<any, any, any>) {
 		this.getFn = getOrGetSync(store);
 		if (store instanceof ClassicLevel) {
@@ -52,6 +53,30 @@ export class LevelStore implements AnyStore {
 							valueEncoding: "view",
 						},
 						{ type: "del", key: barrierKey },
+					],
+					{ sync: true } as any,
+				);
+			},
+			atomicReplace: async (key, value) => {
+				const byteLength = getExactUint8ArrayByteLength(
+					value,
+					"Atomic replacement value",
+				);
+				const valueCopy = copyExactUint8Array(
+					value,
+					"Atomic replacement value",
+					byteLength,
+				);
+				// A one-operation LevelDB batch is an atomic write batch. `sync: true`
+				// additionally fences it to stable storage before acknowledgement.
+				await this.store.batch(
+					[
+						{
+							type: "put",
+							key,
+							value: valueCopy,
+							valueEncoding: "view",
+						},
 					],
 					{ sync: true } as any,
 				);

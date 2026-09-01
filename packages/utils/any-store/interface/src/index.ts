@@ -2,6 +2,24 @@ export type MaybePromise<T> = Promise<T> | T;
 export type CrashSafeDurability = {
 	readonly crashSafe: true;
 	barrier(): MaybePromise<void>;
+	/**
+	 * Atomically replaces one value and durably fences that replacement before
+	 * resolving. If the call is interrupted or rejects, reopening must observe
+	 * either the complete previous value or the complete replacement value,
+	 * never a missing or torn intermediate value.
+	 *
+	 * Implementations must reject non-Uint8Array or detached input and capture
+	 * the exact bytes before returning control to the caller.
+	 *
+	 * This capability is optional because `persisted()` alone does not prove
+	 * crash atomicity. Callers that require it must refine the store with
+	 * `CrashSafeAtomicReplaceStore` before writing.
+	 */
+	atomicReplace?(key: string, value: Uint8Array): MaybePromise<void>;
+};
+
+export type CrashSafeAtomicReplaceDurability = CrashSafeDurability & {
+	atomicReplace(key: string, value: Uint8Array): MaybePromise<void>;
 };
 
 export interface AnyStore {
@@ -37,3 +55,8 @@ export interface AnyStore {
 	 */
 	readonly crashSafeDurability?: CrashSafeDurability;
 }
+
+/** An AnyStore that explicitly proves crash-safe atomic value replacement. */
+export type CrashSafeAtomicReplaceStore = AnyStore & {
+	readonly crashSafeDurability: CrashSafeAtomicReplaceDurability;
+};

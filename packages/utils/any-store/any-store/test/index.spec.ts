@@ -78,14 +78,91 @@ describe(`index`, function () {
 				if (store.constructor.name === "LevelStore") {
 					expect(store.crashSafeDurability?.crashSafe).to.equal(true);
 					expect(sublevel.crashSafeDurability?.crashSafe).to.equal(true);
+					expect(store.crashSafeDurability?.atomicReplace).to.be.a("function");
+					expect(sublevel.crashSafeDurability?.atomicReplace).to.be.a(
+						"function",
+					);
 
 					await store.put("durability-root", new Uint8Array([1]));
 					await sublevel.put("durability-sublevel", new Uint8Array([2]));
+					await store.crashSafeDurability!.atomicReplace!(
+						"durability-root",
+						new Uint8Array([3]),
+					);
+					await sublevel.crashSafeDurability!.atomicReplace!(
+						"durability-sublevel",
+						new Uint8Array([4]),
+					);
 					await store.crashSafeDurability!.barrier();
 					await sublevel.crashSafeDurability!.barrier();
-				} else if (type === "memory") {
+					expect(await store.get("durability-root")).to.deep.equal(
+						new Uint8Array([3]),
+					);
+					expect(await sublevel.get("durability-sublevel")).to.deep.equal(
+						new Uint8Array([4]),
+					);
+				} else {
 					expect(store.crashSafeDurability).to.equal(undefined);
 					expect(sublevel.crashSafeDurability).to.equal(undefined);
+				}
+			});
+
+			it("captures exact atomic replacement bytes on root and sublevels", async () => {
+				const sublevel = await store.sublevel("atomic-replacement-capture");
+				if (store.constructor.name !== "LevelStore") return;
+
+				class HostileBytes extends Uint8Array {
+					static get [Symbol.species]() {
+						throw new Error("species must not run");
+					}
+					[Symbol.iterator](): ArrayIterator<number> {
+						throw new Error("iterator must not run");
+					}
+				}
+
+				const targets = [
+					{ name: "root", store },
+					{ name: "sublevel", store: sublevel },
+				];
+				for (const target of targets) {
+					const input = new HostileBytes([1, 2, 3]);
+					Object.defineProperty(input, "byteLength", {
+						get: () => {
+							throw new Error("shadowed byteLength must not run");
+						},
+					});
+					const key = `atomic-replacement-${target.name}`;
+					const replacing = target.store.crashSafeDurability!.atomicReplace!(
+						key,
+						input,
+					);
+					input.fill(9);
+					await replacing;
+					expect(await target.store.get(key)).to.deep.equal(
+						new Uint8Array([1, 2, 3]),
+					);
+
+					const detached = new Uint8Array([1]);
+					structuredClone(detached.buffer, { transfer: [detached.buffer] });
+					const invalid = [
+						new Proxy(new Uint8Array([1]), {}) as Uint8Array,
+						new Uint16Array([1]) as unknown as Uint8Array,
+						detached,
+					];
+					for (const [index, value] of invalid.entries()) {
+						const invalidKey = `${key}-invalid-${index}`;
+						let thrown: unknown;
+						try {
+							await target.store.crashSafeDurability!.atomicReplace!(
+								invalidKey,
+								value,
+							);
+						} catch (error) {
+							thrown = error;
+						}
+						expect(thrown).to.be.instanceOf(TypeError);
+						expect(await target.store.get(invalidKey)).to.equal(undefined);
+					}
 				}
 			});
 
