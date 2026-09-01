@@ -48,7 +48,70 @@ const traceLogger = log.trace as typeof log & { enabled?: boolean };
 const RANDOM_GID_BYTES = 32;
 const RANDOM_GID_POOL_SIZE = 64;
 const NATIVE_RAW_CID_BATCH_MIN_BYTES = 1 << 20;
+const ENTRY_V0_RESERVED_BYTE_LENGTH = 4;
+const TYPED_ARRAY_PROTOTYPE = Object.getPrototypeOf(Uint8Array.prototype);
+const TYPED_ARRAY_BYTE_LENGTH = Object.getOwnPropertyDescriptor(
+	TYPED_ARRAY_PROTOTYPE,
+	"byteLength",
+)!.get!;
+const TYPED_ARRAY_TAG = Object.getOwnPropertyDescriptor(
+	TYPED_ARRAY_PROTOTYPE,
+	Symbol.toStringTag,
+)!.get!;
+const ARRAY_BUFFER_IS_VIEW = ArrayBuffer.isView;
+const UINT8_ARRAY_SET = Uint8Array.prototype.set;
 let randomGidPool: string[] = [];
+
+const copyEntryV0ReservedBytes = (
+	reserved: Uint8Array | undefined,
+): Uint8Array => {
+	if (reserved === undefined) {
+		return new Uint8Array(ENTRY_V0_RESERVED_BYTE_LENGTH);
+	}
+	if (
+		!ARRAY_BUFFER_IS_VIEW(reserved) ||
+		TYPED_ARRAY_TAG.call(reserved) !== "Uint8Array"
+	) {
+		throw new TypeError("EntryV0 reserved bytes must be a genuine Uint8Array");
+	}
+	const byteLength = TYPED_ARRAY_BYTE_LENGTH.call(reserved) as number;
+	if (byteLength === 0) {
+		try {
+			UINT8_ARRAY_SET.call(new Uint8Array(0), reserved);
+		} catch {
+			throw new TypeError("EntryV0 reserved bytes must not be detached");
+		}
+	}
+	if (byteLength !== ENTRY_V0_RESERVED_BYTE_LENGTH) {
+		throw new RangeError(
+			`EntryV0 reserved bytes must contain exactly ${ENTRY_V0_RESERVED_BYTE_LENGTH} bytes`,
+		);
+	}
+	const copy = new Uint8Array(ENTRY_V0_RESERVED_BYTE_LENGTH);
+	try {
+		UINT8_ARRAY_SET.call(copy, reserved);
+	} catch {
+		throw new TypeError("EntryV0 reserved bytes must not be detached");
+	}
+	return copy;
+};
+
+const hasZeroEntryV0ReservedBytes = (reserved: unknown): boolean => {
+	try {
+		if (
+			!ARRAY_BUFFER_IS_VIEW(reserved) ||
+			TYPED_ARRAY_TAG.call(reserved) !== "Uint8Array" ||
+			TYPED_ARRAY_BYTE_LENGTH.call(reserved) !==
+				ENTRY_V0_RESERVED_BYTE_LENGTH
+		) {
+			return false;
+		}
+	} catch {
+		return false;
+	}
+	const bytes = reserved as Uint8Array;
+	return bytes[0] === 0 && bytes[1] === 0 && bytes[2] === 0 && bytes[3] === 0;
+};
 
 const createRandomGid = (): string => {
 	if (randomGidPool.length === 0) {
@@ -482,8 +545,10 @@ export const verifyEntryV0Ed25519BatchFromEntries = async (
 		const rawEntry = entry as EntryV0<any> & {
 			_meta: unknown;
 			_payload: unknown;
+			_reserved?: unknown;
 		};
 		if (
+			!hasZeroEntryV0ReservedBytes(rawEntry._reserved) ||
 			!(rawEntry._meta instanceof DecryptedThing) ||
 			!(rawEntry._payload instanceof DecryptedThing)
 		) {
@@ -653,7 +718,7 @@ export class EntryV0<T>
 	@field({ type: MaybeEncrypted })
 	_payload: MaybeEncrypted<Payload<T>>;
 
-	@field({ type: fixedArray("u8", 4) })
+	@field({ type: fixedArray("u8", ENTRY_V0_RESERVED_BYTE_LENGTH) })
 	_reserved?: Uint8Array;
 
 	@field({ type: option(Signatures) })
@@ -676,7 +741,7 @@ export class EntryV0<T>
 		payload: MaybeEncrypted<Payload<T>>;
 		signatures?: Signatures;
 		meta: MaybeEncrypted<Meta>;
-		reserved?: Uint8Array; // intentational type 0  (not used)h
+		reserved?: Uint8Array;
 		hash?: string;
 		createdLocally?: boolean;
 	}) {
@@ -684,7 +749,7 @@ export class EntryV0<T>
 		this._meta = obj.meta;
 		this._payload = obj.payload;
 		this._signatures = obj.signatures;
-		this._reserved = new Uint8Array([0, 0, 0, 0]);
+		this._reserved = copyEntryV0ReservedBytes(obj.reserved);
 		this.createdLocally = obj.createdLocally;
 	}
 
