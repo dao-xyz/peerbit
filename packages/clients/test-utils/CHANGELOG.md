@@ -1,5 +1,12 @@
 # Changelog
 
+## 3.1.37
+
+### Patch Changes
+
+- Updated dependencies []:
+  - peerbit@5.3.37
+
 ## 3.1.36
 
 ### Patch Changes
