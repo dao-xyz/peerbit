@@ -150,6 +150,18 @@ export type PolicyHeadProjectionV2 = {
 	bindings: PolicySubjectBindingV2[];
 };
 
+/** Internal read-only resolution used by the durable policy-prefix lease. */
+export type AcceptedPolicyPrefixResolutionV2 =
+	| {
+			status: "resolved";
+			policy: PolicyHeadProjectionV2;
+			acceptedHead: PolicyHeadProjectionV2;
+	  }
+	| {
+			status: "unavailable" | "rejected" | "halted";
+			reason: string;
+	  };
+
 export type PolicyForkChildProofV2 = {
 	sequence: bigint;
 	digest: Uint8Array;
@@ -731,6 +743,56 @@ export class TrustedNetworkV2PolicyReducer {
 		return (this.rolesFor(subject) & roles) === roles;
 	}
 
+	/**
+	 * Resolve one exact digest on the currently accepted policy prefix.
+	 *
+	 * The durable wrapper serializes this read with publication and owns the
+	 * callback lifetime. The core still serializes the resolver work with direct
+	 * users of this internal class. Historical snapshots remain resolver-backed;
+	 * this walk retains only one authenticated cursor at a time.
+	 */
+	resolveAcceptedPolicyPrefix(reference: {
+		sequence: bigint;
+		digest: Uint8Array;
+	}): Promise<AcceptedPolicyPrefixResolutionV2> {
+		let capturedSequence: bigint;
+		let capturedDigest: Uint8Array;
+		try {
+			capturedSequence = reference.sequence;
+			if (
+				typeof capturedSequence !== "bigint" ||
+				capturedSequence < 0n ||
+				capturedSequence > 0xffffffffffffffffn
+			) {
+				return Promise.resolve({
+					status: "rejected",
+					reason: "Policy reference sequence must be a u64",
+				});
+			}
+			const suppliedDigest = reference.digest;
+			if (!hasExactUint8ArrayByteLength(suppliedDigest, 32)) {
+				throw new Error("invalid digest");
+			}
+			capturedDigest = copyBytes(suppliedDigest);
+		} catch {
+			return Promise.resolve({
+				status: "rejected",
+				reason: "Policy reference digest must contain exactly 32 bytes",
+			});
+		}
+		const result = this.admissionTail.then(() =>
+			this.resolveAcceptedPolicyPrefixOne({
+				sequence: capturedSequence,
+				digest: capturedDigest,
+			}),
+		);
+		this.admissionTail = result.then(
+			(): void => {},
+			(_reason: unknown): void => {},
+		);
+		return result;
+	}
+
 	abort(): void {
 		if (
 			this.externalSignal !== undefined &&
@@ -744,6 +806,80 @@ export class TrustedNetworkV2PolicyReducer {
 		this.externalSignal = undefined;
 		this.externalAbortListener = undefined;
 		this.lifecycleController.abort();
+	}
+
+	private async resolveAcceptedPolicyPrefixOne(reference: {
+		sequence: bigint;
+		digest: Uint8Array;
+	}): Promise<AcceptedPolicyPrefixResolutionV2> {
+		if (this.lifecycleController.signal.aborted || this.fork !== undefined) {
+			return {
+				status: "halted",
+				reason:
+					this.fork === undefined
+						? "Policy reducer lifecycle is aborted"
+						: "Policy reducer is halted by authority equivocation",
+			};
+		}
+		if (this.unavailable !== undefined) {
+			return {
+				status: "unavailable",
+				reason: "Policy reducer has unresolved accepted ancestry",
+			};
+		}
+		if (this.acceptedHead === undefined) {
+			return {
+				status: "unavailable",
+				reason: "Policy reducer has no accepted head",
+			};
+		}
+		if (reference.sequence > this.acceptedHead.body.sequence) {
+			return {
+				status: "unavailable",
+				reason: "Policy reference is newer than the accepted head",
+			};
+		}
+
+		// The admission queue owns the core for this complete walk, so the internal
+		// accepted snapshot cannot change until the resolution settles.
+		let cursor = this.acceptedHead;
+		while (cursor.body.sequence > reference.sequence) {
+			if (
+				cursor.body.sequence === reference.sequence + 1n &&
+				!equals(cursor.body.previousPolicyDigest, reference.digest)
+			) {
+				return {
+					status: "rejected",
+					reason: "Policy reference is not an accepted prefix",
+				};
+			}
+			const parent = await this.parentOf(cursor);
+			if (this.lifecycleController.signal.aborted) {
+				return {
+					status: "halted",
+					reason: "Policy reducer lifecycle is aborted",
+				};
+			}
+			if (parent.status !== "found") {
+				return {
+					status: "unavailable",
+					reason: "Accepted policy prefix ancestry is unavailable",
+				};
+			}
+			cursor = parent.parent;
+		}
+
+		if (!equals(cursor.digest, reference.digest)) {
+			return {
+				status: "rejected",
+				reason: "Policy reference is not an accepted prefix",
+			};
+		}
+		return {
+			status: "resolved",
+			policy: projectionFromSnapshot(cursor),
+			acceptedHead: projectionFromSnapshot(this.acceptedHead),
+		};
 	}
 
 	private fetchHints(): PolicyParentFetchHintV2[] {

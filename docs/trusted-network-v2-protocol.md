@@ -548,18 +548,52 @@ uses temporary bounded evidence to verify and derive the canonical two
 children, then releases the full checkpoint payload before returning the
 terminal reducer.
 
-Before `FORKED`, the durable wrapper also bounds admissions retained behind a
-blocked store barrier. At most 64 calls and 256 KiB of copied policy-entry bytes
-may be unsettled at once. Count and byte capacity are reserved synchronously
-before copying caller bytes and released on every settlement path. Oversized or
-incompatible typed-array inputs return `rejected`; well-formed submissions over
-the wrapper limit return `capacity`. Neither path enters the core or retains the
-caller buffer, and `pendingCount`/`pendingBytes` continue to describe only the
-core pending-policy set. Zero-byte retry calls share the same count bound.
+Before `FORKED`, the durable wrapper also bounds operations retained behind a
+blocked store barrier or callback. At most 64 calls and 256 KiB of captured
+queue-input bytes may be unsettled at once. Policy admissions account for their
+entry bytes, accepted-prefix leases account for their 32-byte reference digest,
+and zero-byte retry calls share the same count bound. Count and byte capacity
+are reserved synchronously before retaining caller bytes or callbacks and are
+released on every settlement path. Oversized or incompatible typed-array
+inputs return `rejected`; well-formed submissions over the wrapper limit return
+`capacity`. Neither path enters the core or retains the caller buffer, and
+`pendingCount`/`pendingBytes` continue to describe only the core pending-policy
+set.
 Boundary length checks use the intrinsic typed-array byte extent and copying
 uses the intrinsic typed-array set operation, so subclasses, shadowed
 `byteLength`, custom iterators, proxies, and detached views cannot bypass either
 the 128 KiB entry ceiling or the wrapper accounting.
+
+The same internal wrapper provides a callback-scoped accepted-policy-prefix
+lease for the later resource-checkpoint reducer. The caller names one policy
+sequence and digest. In one serialized queue slot, the wrapper proves that
+reference is the current durable head or an authenticated historical prefix,
+then invokes the callback with independent copies of the referenced policy and
+the accepted head. Historical lookup streams backward through the resolver and
+retains no policy history or ancestry cache. A future or unavailable reference
+returns `unavailable`; a digest conclusively outside the accepted prefix returns
+`rejected`; a forked, aborted, or publication-ambiguous anchor returns `halted`.
+Only a callback that fulfills returns `completed`; a callback rejection is
+propagated unchanged and does not halt or modify the anchor.
+
+Historical lookup work is linear in the distance from the accepted head, and
+this internal slice does not yet impose an aggregate step or wall-time fence on
+that walk. The protected-resource profile must add a fixed bound or an
+authenticated checkpoint proof before this lease becomes an activatable
+resource-admission path.
+
+Lease acquisition linearizes immediately before callback invocation. Abort
+before or during historical lookup returns `halted` without invoking the
+callback. Abort after invocation does not revoke the durable fact already
+proved; the wrapper holds the queue until that callback fulfills or rejects,
+then later operations observe the halted lifecycle. A lease callback must not
+await another operation on the same anchor because it already owns that
+anchor's queue slot. The lease proves only the accepted prefix known to this
+anchor at acquisition; later authority-fork evidence can still require resource
+rollback. It neither makes the policy and resource stores atomically commit
+together nor supplies resource-checkpoint durability by itself. This API
+remains absent from the package root with the rest of the non-activatable v2
+implementation, and adds no checkpoint, wire, or schema field.
 
 This bounds ordinary `ACTIVE` and `UNAVAILABLE` anchor history to two logical
 keys as well as bounding authority-equivocation evidence. It does not truncate
@@ -632,8 +666,8 @@ The implementation target is:
   checkpoint payload, followed by constant-time, constant-size rejection with
   no entry, projection, authentication, resolver, core, store, or retained-state
   work;
-- durable policy admission buffering: at most 64 unsettled calls and 256 KiB of
-  copied entry bytes;
+- durable policy operation buffering: at most 64 unsettled calls and 256 KiB of
+  captured queue-input bytes;
 - fence creation: `O(current heads)` until a generic bounded merge/frontier
   primitive exists; and
 - revalidation: entries since the last stable common fence, which is not a
