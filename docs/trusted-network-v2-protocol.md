@@ -173,8 +173,11 @@ requires its own versioned proof and fork rules.
 
 ## Protocol objects
 
-The names below define logical records. The implementation must assign and pin
-exact Borsh variants with golden-byte fixtures before any release.
+The v2 codec scaffold assigns the following Borsh variants: descriptor
+`[2, 0]`, policy snapshot `[2, 1]`, resource fence `[2, 2]`, and operation
+policy proof `[2, 3]`. Golden-byte fixtures pin their field order. These codecs
+remain internal and non-activatable; pinning bytes does not yet expose a
+protected-resource API.
 
 ### `NetworkDescriptorV2`
 
@@ -194,12 +197,14 @@ digest, the derived network ID, and a sorted binding that assigns `ADMIN` to the
 authority. The authority signs its enclosing Peerbit entry, and the descriptor
 pins the resulting canonical body digest.
 
-Initial entry-signature profile `1` is `EntryV0 authority-only`: the entry must
-use the normal `EntryV0.toSignable()` coverage (including causal metadata),
-contain exactly one successfully verified signature, and that signer's
-canonical public-key bytes must equal the descriptor authority. A different
-entry type, signature cardinality, coverage rule, or signer requires a new
-profile identifier.
+Initial authority-record signature profile `1` is `EntryV0 authority-only` for
+policy snapshots and resource fences: the entry must use the normal
+`EntryV0.toSignable()` coverage (including causal metadata), contain exactly
+one successfully verified signature, and that signer's canonical public-key
+bytes must equal the descriptor authority. A different entry type, signature
+cardinality, coverage rule, or signer requires a new profile identifier. This
+profile does not govern writer operations; every protected-resource adapter
+must pin its own bounded operation-entry and signature profile before use.
 
 Profile `1` also fixes the maximum canonical serialized policy-entry size at
 131,072 bytes. Replicas apply that ceiling to direct admissions, resolved
@@ -256,16 +261,21 @@ A fence is an entry in the protected resource's causal log and contains:
 
 The fence is a normal resource-log entry whose sole verified signer is the root
 authority. Its entry signature covers the fence payload and causal links; the
-resource-fence digest is the exact entry hash. No second signature is embedded
-in the payload.
+resource-fence digest is the 32-byte raw digest from that canonical signed
+entry's CIDv1 using SHA-256. `resourceId` is a 32-byte value whose derivation
+must be fixed by the future protected-resource adapter from its canonical
+manifest. No second signature is embedded in the payload.
 
-The fence commits to the cutover frontier. Direct causal links may represent a
-small frontier, but that vector is not inherently bounded. The first
-implementation must pin a maximum direct-frontier size and fail closed rather
-than truncate it. Lifting that limit requires a separately specified generic
-bounded merge or authenticated-frontier primitive. Constructing a fence may
-inspect `O(current heads)` at a policy transition, but ordinary writes must not
-carry that cost.
+The future signed EntryV0 envelope will limit `meta.next` to 64 direct
+predecessors and fail closed rather than truncate them. The previous fence must
+be a causal ancestor, but it need not consume a direct `meta.next` slot when an
+intervening resource entry already proves that ancestry. Lifting the limit
+requires a separately specified generic bounded merge or authenticated-frontier
+primitive. Constructing a fence may inspect `O(current heads)` at a policy
+transition, but ordinary writes must not carry that cost. Canonical `[2, 2]`
+resource-fence bodies are exactly 186 bytes and any other length fails before
+decode. This slice pins only that body codec; it does not yet authenticate its
+EntryV0 envelope or validate its causal frontier.
 
 ### `OperationPolicyProofV2`
 
@@ -287,6 +297,11 @@ be validated over opaque ciphertext. A `REPLICATOR` without `READER` cannot run
 an application predicate that depends on plaintext. Such a predicate requires
 a reader-validator or a future zero-knowledge proof; a blind replicator's
 receipt proves storage, not plaintext-dependent semantic admission.
+
+Canonical `[2, 3]` operation proofs are exactly 146 bytes and any other length
+fails before decode. This pins the signed payload's wire fields only. Entry
+authentication, accepted-policy provenance, and causal validation remain future
+integration work.
 
 ### Encryption-epoch requirement
 
@@ -654,6 +669,13 @@ TrustedNetwork-specific history store.
 - Require one replica cohort to acknowledge the entire persisted dependency
   closure; reject disjoint per-object receipt cohorts.
 - Prove crash/reopen and long-offline catch-up preserve the same verdict.
+
+The internal `[2, 2]` fence-body and `[2, 3]` operation-proof codecs are pinned.
+Signed EntryV0 authentication, accepted policy provenance, causal ancestry,
+transition and fork reduction, pending-context storage and fetch, materialized
+projection revalidation, persistence, crash/reopen, and long-offline catch-up
+remain open. The codec slice does not complete this gate or provide a usable
+authorization path.
 
 ### 4. Role enforcement and encryption
 

@@ -19,17 +19,19 @@ import { compare, concat, equals } from "uint8arrays";
  * Decode-only TrustedNetwork v2 codec scaffold.
  *
  * This module is intentionally absent from the package entry point. It pins
- * the policy wire contract needed by the next slice without exposing a usable
- * controller, policy engine, resource fence, or encryption path.
+ * the policy, resource-fence-body, and operation-proof wire contracts without
+ * exposing a usable controller, resource validator, or encryption path.
  */
 
 export const TRUSTED_NETWORK_V2_PROTOCOL_VERSION = 2;
 export const TRUSTED_NETWORK_V2_POLICY_HASH_SHA256 = 1;
 
 /**
- * Profile 1 accepts only an EntryV0 whose normal toSignable() bytes (including
- * causal metadata) have exactly one successfully verified signature. The
- * signer's canonical public-key bytes must equal the descriptor authority.
+ * Authority-record profile 1 accepts only a policy-snapshot or resource-fence
+ * EntryV0 whose normal toSignable() bytes (including causal metadata) have
+ * exactly one successfully verified signature. The signer's canonical
+ * public-key bytes must equal the descriptor authority. Protected-resource
+ * adapters must define a separate bounded profile for operation entries.
  */
 export const TRUSTED_NETWORK_V2_ENTRY_V0_AUTHORITY_ONLY_SIGNATURE_PROFILE = 1;
 
@@ -44,6 +46,10 @@ export const TRUSTED_NETWORK_V2_NETWORK_ID_DOMAIN =
 	"peerbit/trusted-network/v2/network-id/v1";
 export const TRUSTED_NETWORK_V2_POLICY_DIGEST_DOMAIN =
 	"peerbit/trusted-network/v2/policy-body/v1";
+
+/** Fixed first-profile record lengths. Changing either requires a new variant. */
+export const TRUSTED_NETWORK_V2_RESOURCE_FENCE_BODY_BYTES = 186;
+export const TRUSTED_NETWORK_V2_OPERATION_POLICY_PROOF_BYTES = 146;
 
 export const TrustedNetworkRole = Object.freeze({
 	ADMIN: 0x01,
@@ -60,6 +66,29 @@ export const TRUSTED_NETWORK_V2_KNOWN_ROLE_BITS =
 
 const ZERO_DIGEST = new Uint8Array(32);
 const textEncoder = new TextEncoder();
+const TYPED_ARRAY_PROTOTYPE = Object.getPrototypeOf(Uint8Array.prototype);
+const TYPED_ARRAY_BYTE_LENGTH = Object.getOwnPropertyDescriptor(
+	TYPED_ARRAY_PROTOTYPE,
+	"byteLength",
+)!.get!;
+const TYPED_ARRAY_TAG = Object.getOwnPropertyDescriptor(
+	TYPED_ARRAY_PROTOTYPE,
+	Symbol.toStringTag,
+)!.get!;
+
+const exactUint8ArrayByteLength = (value: unknown): number => {
+	if (
+		!ArrayBuffer.isView(value) ||
+		TYPED_ARRAY_TAG.call(value) !== "Uint8Array"
+	) {
+		throw new TypeError("Expected a genuine Uint8Array");
+	}
+	const byteLength = TYPED_ARRAY_BYTE_LENGTH.call(value) as number;
+	if (byteLength === 0) {
+		Uint8Array.prototype.set.call(new Uint8Array(0), value as Uint8Array);
+	}
+	return byteLength;
+};
 
 const assertByte = (value: number, label: string): void => {
 	if (!Number.isInteger(value) || value < 0 || value > 0xff) {
@@ -80,7 +109,13 @@ const assertU64 = (value: bigint, label: string): void => {
 };
 
 const assertBytes32 = (value: Uint8Array, label: string): void => {
-	if (!(value instanceof Uint8Array) || value.byteLength !== 32) {
+	let byteLength: number;
+	try {
+		byteLength = exactUint8ArrayByteLength(value);
+	} catch {
+		throw new Error(`${label} must contain exactly 32 bytes`);
+	}
+	if (byteLength !== 32) {
 		throw new Error(`${label} must contain exactly 32 bytes`);
 	}
 };
@@ -185,6 +220,80 @@ export class PolicySnapshotBodyV2 {
 		sequence: bigint;
 		previousPolicyDigest: Uint8Array;
 		bindings: PolicySubjectBindingV2[];
+	}) {
+		if (properties) Object.assign(this, properties);
+	}
+}
+
+/** Canonical unsigned payload intended for an authenticated resource fence. */
+@variant([2, 2])
+export class ResourceFenceV2 {
+	@field({ type: fixedArray("u8", 32) })
+	networkId: Uint8Array;
+
+	@field({ type: fixedArray("u8", 32) })
+	resourceId: Uint8Array;
+
+	@field({ type: "u64" })
+	fenceSequence: bigint;
+
+	@field({ type: fixedArray("u8", 32) })
+	previousFenceDigest: Uint8Array;
+
+	@field({ type: "u64" })
+	policySequence: bigint;
+
+	@field({ type: fixedArray("u8", 32) })
+	policyDigest: Uint8Array;
+
+	@field({ type: "u64" })
+	contentEpoch: bigint;
+
+	@field({ type: fixedArray("u8", 32) })
+	epochManifestDigest: Uint8Array;
+
+	constructor(properties?: {
+		networkId: Uint8Array;
+		resourceId: Uint8Array;
+		fenceSequence: bigint;
+		previousFenceDigest: Uint8Array;
+		policySequence: bigint;
+		policyDigest: Uint8Array;
+		contentEpoch: bigint;
+		epochManifestDigest: Uint8Array;
+	}) {
+		if (properties) Object.assign(this, properties);
+	}
+}
+
+/** Constant-size policy commitment intended for a signed resource operation. */
+@variant([2, 3])
+export class OperationPolicyProofV2 {
+	@field({ type: fixedArray("u8", 32) })
+	networkId: Uint8Array;
+
+	@field({ type: fixedArray("u8", 32) })
+	resourceId: Uint8Array;
+
+	@field({ type: "u64" })
+	policySequence: bigint;
+
+	@field({ type: fixedArray("u8", 32) })
+	policyDigest: Uint8Array;
+
+	@field({ type: fixedArray("u8", 32) })
+	fenceDigest: Uint8Array;
+
+	@field({ type: "u64" })
+	contentEpoch: bigint;
+
+	constructor(properties?: {
+		networkId: Uint8Array;
+		resourceId: Uint8Array;
+		policySequence: bigint;
+		policyDigest: Uint8Array;
+		fenceDigest: Uint8Array;
+		contentEpoch: bigint;
 	}) {
 		if (properties) Object.assign(this, properties);
 	}
@@ -352,4 +461,98 @@ export const decodePolicySnapshotBodyV2 = (
 	assertCanonicalEncoding(bytes, body);
 	assertPolicySnapshotBodyV2(body, descriptor);
 	return body;
+};
+
+export const assertResourceFenceV2 = (
+	fence: ResourceFenceV2,
+	descriptor: NetworkDescriptorV2,
+): void => {
+	assertNetworkDescriptorV2(descriptor);
+	assertBytes32(fence.networkId, "networkId");
+	if (!equals(fence.networkId, deriveNetworkIdV2(descriptor))) {
+		throw new Error("Resource fence belongs to another network");
+	}
+	assertBytes32(fence.resourceId, "resourceId");
+	assertU64(fence.fenceSequence, "fenceSequence");
+	assertBytes32(fence.previousFenceDigest, "previousFenceDigest");
+	if (fence.fenceSequence === 0n) {
+		if (!equals(fence.previousFenceDigest, ZERO_DIGEST)) {
+			throw new Error(
+				"Initial resource fence must use the zero previous digest",
+			);
+		}
+	} else if (equals(fence.previousFenceDigest, ZERO_DIGEST)) {
+		throw new Error("A non-initial resource fence must name its predecessor");
+	}
+	assertU64(fence.policySequence, "policySequence");
+	assertBytes32(fence.policyDigest, "policyDigest");
+	assertU64(fence.contentEpoch, "contentEpoch");
+	assertBytes32(fence.epochManifestDigest, "epochManifestDigest");
+};
+
+export const assertOperationPolicyProofV2 = (
+	proof: OperationPolicyProofV2,
+	descriptor: NetworkDescriptorV2,
+): void => {
+	assertNetworkDescriptorV2(descriptor);
+	assertBytes32(proof.networkId, "networkId");
+	if (!equals(proof.networkId, deriveNetworkIdV2(descriptor))) {
+		throw new Error("Operation policy proof belongs to another network");
+	}
+	assertBytes32(proof.resourceId, "resourceId");
+	assertU64(proof.policySequence, "policySequence");
+	assertBytes32(proof.policyDigest, "policyDigest");
+	assertBytes32(proof.fenceDigest, "fenceDigest");
+	assertU64(proof.contentEpoch, "contentEpoch");
+};
+
+const decodeExactCanonicalV2 = <T>(
+	bytes: Uint8Array,
+	exactLength: number,
+	type: new () => T,
+): T => {
+	let byteLength: number;
+	try {
+		byteLength = exactUint8ArrayByteLength(bytes);
+	} catch {
+		throw new Error(
+			`TrustedNetwork v2 record must contain ${exactLength} bytes`,
+		);
+	}
+	if (byteLength !== exactLength) {
+		throw new Error(
+			`TrustedNetwork v2 record must contain ${exactLength} bytes`,
+		);
+	}
+	const captured = new Uint8Array(byteLength);
+	Uint8Array.prototype.set.call(captured, bytes);
+	const value = deserialize(captured, type);
+	assertCanonicalEncoding(captured, value);
+	return value;
+};
+
+export const decodeResourceFenceV2 = (
+	bytes: Uint8Array,
+	descriptor: NetworkDescriptorV2,
+): ResourceFenceV2 => {
+	const fence = decodeExactCanonicalV2(
+		bytes,
+		TRUSTED_NETWORK_V2_RESOURCE_FENCE_BODY_BYTES,
+		ResourceFenceV2,
+	);
+	assertResourceFenceV2(fence, descriptor);
+	return fence;
+};
+
+export const decodeOperationPolicyProofV2 = (
+	bytes: Uint8Array,
+	descriptor: NetworkDescriptorV2,
+): OperationPolicyProofV2 => {
+	const proof = decodeExactCanonicalV2(
+		bytes,
+		TRUSTED_NETWORK_V2_OPERATION_POLICY_PROOF_BYTES,
+		OperationPolicyProofV2,
+	);
+	assertOperationPolicyProofV2(proof, descriptor);
+	return proof;
 };
