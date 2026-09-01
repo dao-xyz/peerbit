@@ -1,5 +1,11 @@
 # Changelog
 
+## 6.0.113
+
+### Patch Changes
+
+- [#1382](https://github.com/dao-xyz/peerbit/pull/1382) [`f01b666`](https://github.com/dao-xyz/peerbit/commit/f01b666adbd4ce2b635f4146ec0000906e6bc8a4) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Authenticate bounded canonical resource-fence EntryV0 bytes, derive fence identity from captured storage, and reject malleable secp256k1 representations before exposing internal TrustedNetwork v2 fence facts.
+
 ## 6.0.112
 
 ### Patch Changes
