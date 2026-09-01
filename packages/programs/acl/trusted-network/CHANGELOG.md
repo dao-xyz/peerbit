@@ -1,5 +1,11 @@
 # Changelog
 
+## 6.0.110
+
+### Patch Changes
+
+- [#1376](https://github.com/dao-xyz/peerbit/pull/1376) [`b19d4d0`](https://github.com/dao-xyz/peerbit/commit/b19d4d0ad40d5f6a2e18d7a3cbe8c49372ef7391) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Replace the internal TrustedNetwork v2 append-only policy anchor with a scope-bound, crash-safe two-slot checkpoint while preserving bounded complete fork evidence and fail-closed recovery.
+
 ## 6.0.109
 
 ### Patch Changes
