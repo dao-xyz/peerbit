@@ -481,6 +481,14 @@ const checkpointKeys = (store: ControlledPolicyAnchorStore): string[] =>
 		.filter((key) => key.startsWith(CHECKPOINT_KEY_PREFIX))
 		.sort();
 
+const storeContainsBytes = (
+	store: ControlledPolicyAnchorStore,
+	bytes: Uint8Array,
+): boolean =>
+	[...store.values.values()].some(
+		(value) => Buffer.from(value).indexOf(Buffer.from(bytes)) >= 0,
+	);
+
 describe("TrustedNetwork v2 durable policy anchor", () => {
 	it("requires an explicit crash-safe durability capability", async () => {
 		const fixture = await createChain();
@@ -585,7 +593,14 @@ describe("TrustedNetwork v2 durable policy anchor", () => {
 		const anchor = await openAnchor(fixture, store);
 		await anchor.ingest(entryBytes(fixture.chain[0].entry));
 		await anchor.ingest(entryBytes(fixture.chain[1].entry));
+		const exactHeadEntryBytes = entryBytes(fixture.chain[1].entry);
+		expect(fixture.chain[1].entry.hash).to.be.a("string").and.not.be.empty;
+		expect(storeContainsBytes(store, exactHeadEntryBytes)).to.equal(true);
 		anchor.abort();
+		const beforeReopen = [...store.values].map(([key, value]) => [
+			key,
+			hex(value),
+		]);
 		let resolverCalls = 0;
 		const reopened = await openAnchor(fixture, store, () => {
 			resolverCalls += 1;
@@ -598,6 +613,14 @@ describe("TrustedNetwork v2 durable policy anchor", () => {
 		expect(
 			reopened.isAuthorized(fixture.bob.publicKey, TrustedNetworkRole.WRITER),
 		).to.equal(true);
+		const replacementsBeforeDuplicate = store.atomicReplaceCalls;
+		expect((await reopened.ingest(exactHeadEntryBytes)).status).to.equal(
+			"duplicate",
+		);
+		expect(store.atomicReplaceCalls).to.equal(replacementsBeforeDuplicate);
+		expect(
+			[...store.values].map(([key, value]) => [key, hex(value)]),
+		).to.deep.equal(beforeReopen);
 	});
 
 	it("does not make a candidate-only PENDING working set durable", async () => {
@@ -641,6 +664,12 @@ describe("TrustedNetwork v2 durable policy anchor", () => {
 			key,
 			hex(value),
 		]);
+		expect(
+			storeContainsBytes(store, entryBytes(fixture.chain[2].entry)),
+		).to.equal(true);
+		expect(storeContainsBytes(store, entryBytes(forkChild.entry))).to.equal(
+			true,
+		);
 		anchor.abort();
 
 		const reopened = await openAnchor(fixture, store, resolver.resolve);
@@ -973,6 +1002,15 @@ describe("TrustedNetwork v2 durable policy anchor", () => {
 		const durableCanonical = anchor.forkEvidence!.children.map(({ digest }) =>
 			hex(digest),
 		);
+		const durableCanonicalEntryBytes = anchor.forkEvidence!.children.map(
+			({ entryBytes }) => hex(entryBytes),
+		);
+		expect(
+			storeContainsBytes(store, entryBytes(fixture.chain[0].entry)),
+		).to.equal(true);
+		for (const child of anchor.forkEvidence!.children) {
+			expect(storeContainsBytes(store, child.entryBytes)).to.equal(true);
+		}
 		const valuesAtFork = [...store.values].map(([key, value]) => [
 			key,
 			hex(value),
@@ -1017,6 +1055,9 @@ describe("TrustedNetwork v2 durable policy anchor", () => {
 		expect(
 			reopened.forkEvidence!.children.map(({ digest }) => hex(digest)),
 		).to.deep.equal(durableCanonical);
+		expect(
+			reopened.forkEvidence!.children.map(({ entryBytes }) => hex(entryBytes)),
+		).to.deep.equal(durableCanonicalEntryBytes);
 	});
 
 	it("releases the external lifecycle listener when a forked anchor is aborted", async () => {

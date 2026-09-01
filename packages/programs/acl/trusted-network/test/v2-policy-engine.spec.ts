@@ -1,9 +1,26 @@
 import { serialize } from "@dao-xyz/borsh";
-import { Ed25519Keypair, PublicSignKey, X25519Keypair } from "@peerbit/crypto";
-import { EntryV0 } from "@peerbit/log";
+import {
+	DecryptedThing,
+	Ed25519Keypair,
+	PublicSignKey,
+	X25519Keypair,
+} from "@peerbit/crypto";
+import {
+	Entry,
+	EntryType,
+	EntryV0,
+	LamportClock,
+	Meta,
+	NO_ENCODING,
+	Signatures,
+	Timestamp,
+} from "@peerbit/log";
 import { expect } from "chai";
 import { compare, concat } from "uint8arrays";
-import { TrustedNetworkV2PolicyReducer } from "../src/v2-policy-engine.js";
+import {
+	TrustedNetworkV2PolicyReducer,
+	authenticatePolicySnapshotEntryV2,
+} from "../src/v2-policy-engine.js";
 import type { PolicyAdmissionResultV2 } from "../src/v2-policy-engine.js";
 import {
 	NetworkDescriptorV2,
@@ -101,6 +118,46 @@ const createEntry = async (
 		signers: properties?.signers?.map((signer) => signer.sign.bind(signer)),
 		encryption: properties?.encryption,
 	})) as EntryV0<Uint8Array>;
+
+const createProfileVariantEntry = async (
+	bodyBytes: Uint8Array,
+	authority: Ed25519Keypair,
+	properties: {
+		clockId?: Uint8Array;
+		type?: EntryType;
+		parents?: string[];
+		reserved?: Uint8Array;
+		hash?: string;
+	} = {},
+): Promise<EntryV0<Uint8Array>> => {
+	const base = await createEntry(bodyBytes, authority);
+	const meta = new Meta({
+		clock: new LamportClock({
+			id: properties.clockId ?? authority.publicKey.bytes,
+			timestamp: new Timestamp({ wallTime: 1n, logical: 2 }),
+		}),
+		gid: "policy-envelope-compatibility",
+		next: properties.parents ?? [],
+		type: properties.type ?? EntryType.APPEND,
+	});
+	const entry = new EntryV0<Uint8Array>({
+		meta: new DecryptedThing({ data: serialize(meta), value: meta }),
+		payload: base._payload,
+		reserved: properties.reserved,
+	});
+	const signature = await authority.sign(entry.getSignableBytes());
+	entry._signatures = new Signatures({
+		signatures: [
+			new DecryptedThing({
+				data: serialize(signature),
+				value: signature,
+			}),
+		],
+	});
+	if (properties.hash !== undefined) entry.hash = properties.hash;
+	entry.init({ encoding: NO_ENCODING });
+	return entry;
+};
 
 const createPolicy = async (properties: {
 	descriptor: NetworkDescriptorV2;
@@ -1030,6 +1087,126 @@ describe("TrustedNetwork v2 policy reducer", () => {
 		const result = await reducer.ingest(entryBytes(invalid.entry));
 		expect(result.status).to.equal("rejected");
 		expect(result.reason).to.contain("not contiguous");
+	});
+
+	it("preserves hashless and hash-bearing raw policy identity", async () => {
+		const fixture = await createChain();
+		const hashBearingBytes = entryBytes(fixture.chain[1]!.entry);
+		const hashlessBytes = new Uint8Array(
+			Entry.getPreparedStorageBytes(fixture.chain[1]!.entry)!,
+		);
+		const [hashBearing, hashless] = await Promise.all([
+			authenticatePolicySnapshotEntryV2(hashBearingBytes, fixture.descriptor),
+			authenticatePolicySnapshotEntryV2(hashlessBytes, fixture.descriptor),
+		]);
+
+		expect(hashBearing.entryBytes).to.deep.equal(hashBearingBytes);
+		expect(hashless.entryBytes).to.deep.equal(hashlessBytes);
+		expect(hex(hashBearing.digest)).to.equal(hex(hashless.digest));
+		expect(hex(hashless.digest)).to.equal(hex(fixture.chain[1]!.digest));
+		expect(hashBearingBytes).not.to.deep.equal(hashlessBytes);
+	});
+
+	it("uses exact hashless or hash-bearing bytes in the raw tie-break", async () => {
+		const fixture = await createChain();
+		const hashBearingBytes = entryBytes(fixture.chain[1]!.entry);
+		const hashlessBytes = new Uint8Array(
+			Entry.getPreparedStorageBytes(fixture.chain[1]!.entry)!,
+		);
+		const canonicalWrapper = [hashBearingBytes, hashlessBytes].sort(
+			compare,
+		)[0]!;
+		const competingChild = await createPolicy({
+			descriptor: fixture.descriptor,
+			sequence: 1n,
+			previousPolicyDigest: fixture.chain[0]!.digest,
+			bindings: [
+				[fixture.authority.publicKey, TrustedNetworkRole.ADMIN],
+				[fixture.bob.publicKey, TrustedNetworkRole.READER],
+			],
+			signer: fixture.authority,
+		});
+
+		for (const wrappers of [
+			[hashBearingBytes, hashlessBytes],
+			[hashlessBytes, hashBearingBytes],
+		]) {
+			const reducer = new TrustedNetworkV2PolicyReducer({
+				descriptor: fixture.descriptor,
+				resolvePolicyEntry: (digest) =>
+					hex(digest) === hex(fixture.chain[0]!.digest)
+						? entryBytes(fixture.chain[0]!.entry)
+						: undefined,
+			});
+			await reducer.ingest(entryBytes(fixture.chain[0]!.entry));
+			expect((await reducer.ingest(wrappers[0]!)).status).to.equal("accepted");
+			expect((await reducer.ingest(wrappers[1]!)).status).to.equal("duplicate");
+			expect(
+				(await reducer.ingest(entryBytes(competingChild.entry))).status,
+			).to.equal("forked");
+			const retained = reducer.forkEvidence!.children.find(
+				(child) => hex(child.digest) === hex(fixture.chain[1]!.digest),
+			)!;
+			expect(retained.entryBytes).to.deep.equal(canonicalWrapper);
+		}
+	});
+
+	it("keeps clock, type, reserved, and parent policy shapes compatible", async () => {
+		const fixture = await createChain();
+		const bodyBytes = serialize(fixture.chain[0]!.body);
+		const variants = [
+			await createProfileVariantEntry(bodyBytes, fixture.authority, {
+				clockId: Uint8Array.of(0xaa),
+				type: EntryType.CUT,
+			}),
+			await createProfileVariantEntry(bodyBytes, fixture.authority, {
+				reserved: Uint8Array.of(1, 2, 3, 4),
+			}),
+			await createProfileVariantEntry(bodyBytes, fixture.authority, {
+				parents: Array.from({ length: 65 }, () => "not-a-canonical-cid"),
+			}),
+		];
+
+		for (const entry of variants) {
+			const bytes = entryBytes(entry);
+			const authenticated = await authenticatePolicySnapshotEntryV2(
+				bytes,
+				fixture.descriptor,
+			);
+			expect(authenticated.entryBytes).to.deep.equal(bytes);
+			expect(hex(authenticated.digest)).to.equal(hex(fixture.chain[0]!.digest));
+		}
+	});
+
+	it("bounds hostile policy binding counts before Borsh deserialization", async () => {
+		const fixture = await createChain();
+		const hostileCountBody = new Uint8Array(serialize(fixture.chain[0]!.body));
+		new DataView(
+			hostileCountBody.buffer,
+			hostileCountBody.byteOffset,
+			hostileCountBody.byteLength,
+		).setUint32(74, 0xffffffff, true);
+		const hostileCount = await createProfileVariantEntry(
+			hostileCountBody,
+			fixture.authority,
+		);
+		await expect(
+			authenticatePolicySnapshotEntryV2(
+				entryBytes(hostileCount),
+				fixture.descriptor,
+			),
+		).to.be.rejectedWith("impossible bindings count");
+
+		const truncated = await createProfileVariantEntry(
+			serialize(fixture.chain[0]!.body).subarray(0, 77),
+			fixture.authority,
+		);
+		await expect(
+			authenticatePolicySnapshotEntryV2(
+				entryBytes(truncated),
+				fixture.descriptor,
+			),
+		).to.be.rejectedWith("truncated bindings framing");
 	});
 
 	it("rejects wrong, additional, invalid, and encrypted signatures", async () => {
