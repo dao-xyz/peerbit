@@ -1,5 +1,15 @@
 # Changelog
 
+## 8.0.26
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @peerbit/program@6.0.57
+  - @peerbit/blocks@4.2.15
+  - @peerbit/pubsub@5.4.4
+  - peerbit@5.3.36
+
 ## 8.0.25
 
 ### Patch Changes

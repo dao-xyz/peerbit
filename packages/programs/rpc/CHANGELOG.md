@@ -1,5 +1,13 @@
 # Changelog
 
+## 6.1.25
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @peerbit/program@6.0.57
+  - @peerbit/pubsub@5.4.4
+
 ## 6.1.24
 
 ### Patch Changes

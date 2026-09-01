@@ -1,5 +1,14 @@
 # Changelog
 
+## 6.2.26
+
+### Patch Changes
+
+- Updated dependencies [[`f6c2658`](https://github.com/dao-xyz/peerbit/commit/f6c265880c4b4af1686eb10988bdb031fbaed3d0)]:
+  - @peerbit/any-store@2.2.17
+  - @peerbit/blocks@4.2.15
+  - @peerbit/keychain@1.2.17
+
 ## 6.2.25
 
 ### Patch Changes

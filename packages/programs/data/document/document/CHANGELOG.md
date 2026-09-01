@@ -1,5 +1,17 @@
 # Changelog
 
+## 15.0.17
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @peerbit/program@6.0.57
+  - @peerbit/pubsub@5.4.4
+  - @peerbit/log@6.2.26
+  - @peerbit/shared-log@16.0.16
+  - @peerbit/rpc@6.1.25
+  - @peerbit/document-interface@3.2.69
+
 ## 15.0.16
 
 ### Patch Changes

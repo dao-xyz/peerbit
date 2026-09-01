@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.2.17
+
+### Patch Changes
+
+- Updated dependencies [[`f6c2658`](https://github.com/dao-xyz/peerbit/commit/f6c265880c4b4af1686eb10988bdb031fbaed3d0)]:
+  - @peerbit/any-store@2.2.17
+
 ## 1.2.16
 
 ### Patch Changes

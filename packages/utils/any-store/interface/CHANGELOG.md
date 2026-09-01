@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.1.4
+
+### Patch Changes
+
+- [#1373](https://github.com/dao-xyz/peerbit/pull/1373) [`f6c2658`](https://github.com/dao-xyz/peerbit/commit/f6c265880c4b4af1686eb10988bdb031fbaed3d0) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Add an opt-in crash-safe atomic-replacement capability and a scope-bound, checksummed two-slot checkpoint helper for ClassicLevel-backed stores.
+
 ## 1.1.3
 
 ### Patch Changes

@@ -1,5 +1,13 @@
 # Changelog
 
+## 4.2.15
+
+### Patch Changes
+
+- Updated dependencies [[`f6c2658`](https://github.com/dao-xyz/peerbit/commit/f6c265880c4b4af1686eb10988bdb031fbaed3d0)]:
+  - @peerbit/any-store-interface@1.1.4
+  - @peerbit/any-store@2.2.17
+
 ## 4.2.14
 
 ### Patch Changes
