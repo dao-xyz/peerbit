@@ -18,6 +18,7 @@ export * from "./encoding.js";
 export * from "./trim.js";
 export * from "./change.js";
 export * from "./entry-v0.js";
+export * from "./entry-v0-causal-reachability.js";
 export * from "./entry-create.js";
 export type { EntryIndexHashMutationLockOwner } from "./entry-index.js";
 export type { TrimToByteLengthOption, TrimToLengthOption } from "./trim.js";
