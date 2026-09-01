@@ -1,5 +1,17 @@
 # Changelog
 
+## 16.0.16
+
+### Patch Changes
+
+- Updated dependencies [[`f6c2658`](https://github.com/dao-xyz/peerbit/commit/f6c265880c4b4af1686eb10988bdb031fbaed3d0)]:
+  - @peerbit/any-store@2.2.17
+  - @peerbit/program@6.0.57
+  - @peerbit/blocks@4.2.15
+  - @peerbit/pubsub@5.4.4
+  - @peerbit/log@6.2.26
+  - @peerbit/rpc@6.1.25
+
 ## 16.0.15
 
 ### Patch Changes
