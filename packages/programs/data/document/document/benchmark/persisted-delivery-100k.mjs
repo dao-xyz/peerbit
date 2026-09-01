@@ -325,8 +325,11 @@ try {
 		}
 		// Match persisted delivery's staged local commit, fresh ownership plan and
 		// admitted 256-entry bulk transfer. Only the receipt RPC is omitted.
+		const planningRecords = result.entries.map((entry) =>
+			sharedLog.snapshotPersistedDeliveryPlanningEntry(entry),
+		);
 		await sharedLog.planPersistedDeliveryLeaders(
-			result.entries,
+			planningRecords,
 			1,
 			sharedLog.captureReplicationOwnershipLifecycle(),
 		);

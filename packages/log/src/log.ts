@@ -7,9 +7,12 @@ import {
 } from "@peerbit/blocks-interface";
 import {
 	Ed25519Keypair,
+	Ed25519PublicKey,
 	type Identity,
 	SignatureWithKey,
 	X25519Keypair,
+	X25519PublicKey,
+	X25519SecretKey,
 	randomBytes,
 	sha256Base64Sync,
 } from "@peerbit/crypto";
@@ -155,7 +158,14 @@ type InternalProfileEvent = {
 };
 type InternalProfileSink = (event: InternalProfileEvent) => void;
 type InternalAppendHashesSink = (hashes: string[]) => void | Promise<void>;
-type InternalLocalCommitEvidenceSink = (hashes: readonly string[]) => void;
+// Private cross-package seam used by SharedLog to bind a post-commit delivery
+// proof to the exact lower-log mutation. Hash-only callers remain supported;
+// append paths additionally expose the just-committed Entry synchronously so a
+// persisted caller can detach owned planning bytes/facts before callbacks run.
+type InternalLocalCommitEvidenceSink = (
+	hashes: readonly string[],
+	entries?: readonly Entry<any>[],
+) => void;
 
 type NativeCommittedAppendFinalizer = {
 	acknowledge(onLowerMarkerDurable?: () => Promise<void>): Promise<void>;
@@ -1087,6 +1097,146 @@ export class Log<T> {
 		return this._encoding;
 	}
 
+	private appendEncryptionRecipientPrototypeKind(
+		value: object,
+	): "x25519" | "ed25519" | undefined {
+		let hasToString = false;
+		let hasEquals = false;
+		let hasHashcode = false;
+		let hasToPeerId = false;
+		let prototype = Object.getPrototypeOf(value);
+		while (prototype && prototype !== Object.prototype) {
+			hasToString ||=
+				typeof Object.getOwnPropertyDescriptor(prototype, "toString")?.value ===
+				"function";
+			hasEquals ||=
+				typeof Object.getOwnPropertyDescriptor(prototype, "equals")?.value ===
+				"function";
+			hasHashcode ||=
+				typeof Object.getOwnPropertyDescriptor(prototype, "hashcode")?.value ===
+				"function";
+			hasToPeerId ||=
+				typeof Object.getOwnPropertyDescriptor(prototype, "toPeerId")?.value ===
+				"function";
+			prototype = Object.getPrototypeOf(prototype);
+		}
+		if (!hasToString || !hasEquals || !hasHashcode) return;
+		return hasToPeerId ? "ed25519" : "x25519";
+	}
+
+	private trySnapshotAppendEncryptionRecipientForTrustedCaller(
+		recipient: unknown,
+	): X25519PublicKey | Ed25519PublicKey | undefined {
+		if (!recipient || typeof recipient !== "object") {
+			return;
+		}
+		const kind =
+			recipient instanceof X25519PublicKey
+				? "x25519"
+				: recipient instanceof Ed25519PublicKey
+					? "ed25519"
+					: this.appendEncryptionRecipientPrototypeKind(recipient);
+		// Plain objects are signature-recipient maps. Classify them before reading
+		// any dynamic key so a valid signer named "publicKey" is not probed twice.
+		if (!kind) return;
+		const publicKeyArgument = (recipient as { publicKey?: unknown }).publicKey;
+		if (!(publicKeyArgument instanceof Uint8Array)) return;
+		if (publicKeyArgument.byteLength !== 32) {
+			throw new Error("Append encryption recipient requires a 32-byte key");
+		}
+		const publicKey = Uint8Array.from(publicKeyArgument);
+		return kind === "ed25519"
+			? new Ed25519PublicKey({ publicKey })
+			: new X25519PublicKey({ publicKey });
+	}
+
+	private snapshotAppendEncryptionRecipientsForTrustedCaller(
+		recipients: unknown,
+	): unknown {
+		if (recipients == null) return recipients;
+		if (Array.isArray(recipients)) {
+			return Object.freeze(
+				recipients.map((recipient) => {
+					const captured =
+						this.trySnapshotAppendEncryptionRecipientForTrustedCaller(
+							recipient,
+						);
+					if (!captured) {
+						throw new Error("Unsupported append encryption recipient key");
+					}
+					return captured;
+				}),
+			);
+		}
+		const captured =
+			this.trySnapshotAppendEncryptionRecipientForTrustedCaller(recipients);
+		if (!captured) {
+			throw new Error("Unsupported append encryption recipient key");
+		}
+		return captured;
+	}
+
+	private snapshotAppendEncryptionForTrustedCaller(
+		encryption: NonNullable<AppendOptions<T>["encryption"]>,
+	): NonNullable<AppendOptions<T>["encryption"]> {
+		const keypairArgument = encryption.keypair;
+		const publicKeyArgument = keypairArgument.publicKey.publicKey;
+		const secretKeyArgument = keypairArgument.secretKey.secretKey;
+		if (
+			!(publicKeyArgument instanceof Uint8Array) ||
+			publicKeyArgument.byteLength !== 32 ||
+			!(secretKeyArgument instanceof Uint8Array) ||
+			secretKeyArgument.byteLength !== 32
+		) {
+			throw new Error("Append encryption requires a 32-byte X25519 keypair");
+		}
+		const keypair = new X25519Keypair({
+			publicKey: new X25519PublicKey({
+				publicKey: Uint8Array.from(publicKeyArgument),
+			}),
+			secretKey: new X25519SecretKey({
+				secretKey: Uint8Array.from(secretKeyArgument),
+			}),
+		});
+		const receiverArgument = encryption.receiver;
+		const meta = receiverArgument.meta;
+		const payload = receiverArgument.payload;
+		const signaturesArgument = receiverArgument.signatures;
+		let signatures: unknown;
+		if (signaturesArgument == null || Array.isArray(signaturesArgument)) {
+			signatures =
+				this.snapshotAppendEncryptionRecipientsForTrustedCaller(
+					signaturesArgument,
+				);
+		} else {
+			const directRecipient =
+				this.trySnapshotAppendEncryptionRecipientForTrustedCaller(
+					signaturesArgument,
+				);
+			if (directRecipient) {
+				signatures = directRecipient;
+			} else {
+				const captured = Object.create(null) as Record<string, unknown>;
+				for (const key of Object.keys(signaturesArgument as object)) {
+					captured[key] =
+						this.snapshotAppendEncryptionRecipientsForTrustedCaller(
+							(signaturesArgument as Record<string, unknown>)[key],
+						);
+				}
+				signatures = Object.freeze(captured);
+			}
+		}
+		return Object.freeze({
+			keypair,
+			receiver: Object.freeze({
+				meta: this.snapshotAppendEncryptionRecipientsForTrustedCaller(meta),
+				payload:
+					this.snapshotAppendEncryptionRecipientsForTrustedCaller(payload),
+				signatures,
+			}),
+		}) as NonNullable<AppendOptions<T>["encryption"]>;
+	}
+
 	get sortFn() {
 		return this._sortFn;
 	}
@@ -1295,7 +1445,7 @@ export class Log<T> {
 					}
 					throw error;
 				}
-				onLocalCommit?.([entry.hash]);
+				onLocalCommit?.([entry.hash], [entry]);
 				mutation = await finishMutation(entry);
 			}
 		}
@@ -1407,7 +1557,7 @@ export class Log<T> {
 				}
 				throw error;
 			}
-			onLocalCommit?.([entry.hash]);
+			onLocalCommit?.([entry.hash], [entry]);
 		} else {
 			if (data == null && properties?.payloadData) {
 				throw new Error(
@@ -4015,12 +4165,12 @@ export class Log<T> {
 			});
 		} catch (error) {
 			if (error instanceof EntryIndexPostCommitError) {
-				onLocalCommit?.([error.committedHash]);
+				onLocalCommit?.([error.committedHash], [entry]);
 				throw error.cause;
 			}
 			throw error;
 		}
-		onLocalCommit?.([entry.hash]);
+		onLocalCommit?.([entry.hash], [entry]);
 	}
 
 	private async putAppendEntries(

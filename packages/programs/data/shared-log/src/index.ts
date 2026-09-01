@@ -688,8 +688,13 @@ type PreparedLocalAppendCommit<R extends "u32" | "u64"> = {
 	next: string[];
 	wallTime: bigint;
 	logical: number;
+	clockId?: Uint8Array;
+	type?: EntryType;
+	metaData?: Uint8Array;
 	payloadSize: number;
+	entrySize?: number;
 	metaBytes?: Uint8Array;
+	storageBytes?: Uint8Array;
 	hashNumber?: NumberFromType<R>;
 	coordinateFields?: SharedLogCoordinateNativeFields<R>;
 	nativeBackboneDocumentIndexCommitted?: boolean;
@@ -707,6 +712,12 @@ type PreparedLocalAppendCommit<R extends "u32" | "u64"> = {
 type PersistedDeliveryPlanningEntry<T, R extends "u32" | "u64"> =
 	| ShallowOrFullEntry<T>
 	| EntryReplicated<R>;
+
+type PersistedDeliveryPlanningRecord<T, R extends "u32" | "u64"> = Readonly<{
+	canonicalHash: string;
+	createDefaultPlanningSource: () => PersistedDeliveryPlanningEntry<T, R>;
+	createFullPlanningSource?: () => Entry<T>;
+}>;
 
 type NativeBackboneSimpleDocumentProjectionPlan = {
 	documentVariantType?: "u8" | "string";
@@ -1733,6 +1744,20 @@ export type DeliveryOptions = {
 	signal?: AbortSignal;
 };
 
+type PersistedDeliveryOptions = Readonly<{
+	reliability: "persisted";
+	minAcks: number;
+	requireRecipients?: boolean;
+	priority?: number;
+	timeout?: number;
+	signal?: AbortSignal;
+}>;
+
+type PersistedAppendInvocation<T> = {
+	options: SharedAppendOptions<T>;
+	delivery: PersistedDeliveryOptions;
+};
+
 type CrashSafeStorageBarrier = {
 	readonly crashSafe: true;
 	barrier(): MaybePromise<void>;
@@ -1859,7 +1884,10 @@ type SharedAppendBaseOptions<T> = AppendOptions<T> & {
 
 type TrustedLogAppendOptions<T> = AppendOptions<T> & {
 	__peerbitCanAppendAlreadyValidated?: boolean;
-	__peerbitOnLocalCommit?: (hashes: readonly string[]) => void;
+	__peerbitOnLocalCommit?: (
+		hashes: readonly string[],
+		entries?: readonly Entry<T>[],
+	) => void;
 };
 
 const attachTrustedLocalCommitEvidence = <T>(
@@ -1885,6 +1913,11 @@ export type SharedAppendOptions<T> =
 			target: "all";
 			delivery?: false | undefined;
 	  });
+
+type DocumentSharedAppendOptions<T> = SharedAppendOptions<T> & {
+	unique?: boolean;
+	checkRemote?: boolean;
+};
 
 type TrustedLowerLogAppendHashesSink = (
 	hashes: string[],
@@ -2006,6 +2039,9 @@ type TrustedLowerLogNativeCommitFinalizer = {
 };
 
 type TrustedLowerLog<T> = {
+	snapshotAppendEncryptionForTrustedCaller(
+		encryption: NonNullable<AppendOptions<T>["encryption"]>,
+	): NonNullable<AppendOptions<T>["encryption"]>;
 	appendLocallyPrepared(
 		data: T,
 		options?: TrustedLogAppendOptions<T>,
@@ -4492,40 +4528,369 @@ export class SharedLog<
 		return true;
 	}
 
-	private getPersistedDeliveryOptions(
-		options?: SharedAppendOptions<T>,
-	): DeliveryOptions | undefined {
-		const delivery = options?.delivery;
-		if (typeof delivery !== "object" || delivery.reliability !== "persisted") {
-			return undefined;
+	private snapshotDeliveryOptions(
+		deliveryArgument: DeliveryOptions,
+		reliability: DeliveryReliability | undefined,
+	): Readonly<DeliveryOptions> {
+		// Keep the selected AbortSignal object live: aborting it remains effective,
+		// while reassigning any caller field cannot change this invocation.
+		return Object.freeze({
+			reliability,
+			minAcks: deliveryArgument.minAcks,
+			requireRecipients: deliveryArgument.requireRecipients,
+			priority: deliveryArgument.priority,
+			timeout: deliveryArgument.timeout,
+			signal: deliveryArgument.signal,
+		});
+	}
+
+	private snapshotAppendTrim(
+		trim: NonNullable<AppendOptions<T>["trim"]>,
+	): NonNullable<AppendOptions<T>["trim"]> {
+		const type = trim.type;
+		const filterArgument = trim.filter;
+		const filter = filterArgument
+			? Object.freeze({
+					canTrim: filterArgument.canTrim,
+					cacheId: filterArgument.cacheId,
+				})
+			: undefined;
+		if (type === "time") {
+			return Object.freeze({ type, maxAge: trim.maxAge, filter });
 		}
-		const parsed = this._parseDeliveryOptions(options?.delivery);
-		const target = (options as { target?: string } | undefined)?.target;
+		if (type === "length" || type === "bytelength") {
+			return Object.freeze({
+				type,
+				to: trim.to,
+				from: trim.from,
+				filter,
+			});
+		}
+		throw new Error("Unsupported append trim type");
+	}
+
+	private snapshotAppendEncryption(
+		encryption: NonNullable<AppendOptions<T>["encryption"]>,
+	): NonNullable<AppendOptions<T>["encryption"]> {
+		return asTrustedLowerLog(this.log).snapshotAppendEncryptionForTrustedCaller(
+			encryption,
+		);
+	}
+
+	private captureFullAppendNextStorageReader(
+		next: Entry<any> | ShallowEntry,
+	): (() => Uint8Array) | undefined {
+		if (next instanceof Entry) {
+			const getStorageBytes = next.getStorageBytes;
+			return () => Reflect.apply(getStorageBytes, next, []);
+		}
+		const candidate = next as Partial<Entry<any>>;
+		const init = candidate.init;
+		const getNext = candidate.getNext;
+		const getClock = candidate.getClock;
+		const getStorageBytes = candidate.getStorageBytes;
+		const verifySignatures = candidate.verifySignatures;
+		if (
+			typeof init !== "function" ||
+			typeof getNext !== "function" ||
+			typeof getClock !== "function" ||
+			typeof getStorageBytes !== "function" ||
+			typeof verifySignatures !== "function"
+		) {
+			return;
+		}
+		return () => Reflect.apply(getStorageBytes, next, []);
+	}
+
+	private snapshotFullAppendNext(
+		next: Entry<any>,
+		getStorageBytes: () => Uint8Array,
+		canonicalHash: string,
+	): Entry<any> | undefined {
+		let entrySize: number | undefined;
+		try {
+			entrySize = next.size;
+		} catch {
+			// A valid but not-yet-sized entry still has exact owned storage bytes below.
+		}
+		const createdLocally = next.createdLocally;
+		let sourceBytes = Entry.getPreparedStorageBytes(next);
+		if (!sourceBytes) {
+			try {
+				sourceBytes = getStorageBytes();
+			} catch {
+				// Native commit-only entries intentionally keep payload/signature bytes
+				// outside the JS Entry. They are valid sortable parents but cannot be
+				// imported into another log as full blocks, so snapshot them below as
+				// shallow canonical references instead.
+				return;
+			}
+		}
+		const bytes = Uint8Array.from(sourceBytes);
+		const captured = deserialize(bytes, Entry) as Entry<any>;
+		const decodedHash = captured.hash;
+		if (decodedHash && decodedHash !== canonicalHash) {
+			throw new Error(
+				`Explicit append next bytes did not match captured hash ${canonicalHash}`,
+			);
+		}
+		captured.hash = "";
+		Entry.prepareMultihashBytes(captured, bytes, canonicalHash);
+		captured.hash = canonicalHash;
+		captured.size = entrySize ?? bytes.byteLength;
+		captured.createdLocally = createdLocally;
+		captured.init({
+			encoding: this.log.encoding,
+			keychain: this.log.keychain,
+		});
+		return captured;
+	}
+
+	private snapshotAppendNext(
+		next: Entry<any> | ShallowEntry,
+	): Entry<any> | ShallowEntry {
+		const hash = next.hash;
+		if (!hash) {
+			throw new Error("Explicit append next requires a canonical hash");
+		}
+		const getStorageBytes = this.captureFullAppendNextStorageReader(next);
+		if (getStorageBytes) {
+			const captured = this.snapshotFullAppendNext(
+				next as Entry<any>,
+				getStorageBytes,
+				hash,
+			);
+			if (captured) return captured;
+		}
+		const meta = next.meta;
+		const gid = meta.gid;
+		const nextHashes = [...meta.next];
+		const type = meta.type;
+		const sourceData = meta.data;
+		const data = sourceData && Uint8Array.from(sourceData);
+		const clock = meta.clock;
+		const clockId = Uint8Array.from(clock.id);
+		const sourceTimestamp = clock.timestamp;
+		const timestamp = new Timestamp({
+			wallTime: sourceTimestamp.wallTime,
+			logical: sourceTimestamp.logical,
+		});
+		const candidate = next as ShallowEntry & { payloadByteLength?: number };
+		let payloadSize = 0;
+		try {
+			const shallowPayloadSize = candidate.payloadSize;
+			if (typeof shallowPayloadSize === "number") {
+				payloadSize = shallowPayloadSize;
+			} else {
+				const fullPayloadSize = candidate.payloadByteLength;
+				if (typeof fullPayloadSize === "number") payloadSize = fullPayloadSize;
+			}
+		} catch {
+			// Hollow native parents need only their canonical sorting/link facts.
+		}
+		const candidateHead = candidate.head;
+		const head = typeof candidateHead === "boolean" ? candidateHead : true;
+		const captured = new ShallowEntry({
+			hash,
+			payloadSize,
+			head,
+			meta: new ShallowMeta({
+				gid,
+				next: nextHashes,
+				type,
+				data,
+				clock: new LamportClock({ id: clockId, timestamp }),
+			}),
+		});
+		Object.freeze(captured.meta.next);
+		Object.freeze(captured.meta.clock.timestamp);
+		Object.freeze(captured.meta.clock);
+		Object.freeze(captured.meta);
+		return Object.freeze(captured);
+	}
+
+	private snapshotSupportedAppendOptions(
+		options: DocumentSharedAppendOptions<T>,
+		delivery: SharedAppendOptions<T>["delivery"],
+		includeDocumentShape: boolean,
+		validateCapturedOptions?: (options: DocumentSharedAppendOptions<T>) => void,
+	): DocumentSharedAppendOptions<T> {
+		// Copy the finite public option surface, not arbitrary enumerable caller
+		// properties. This pins every value that the async append/document paths
+		// reread while avoiding surprising evaluation of unrelated custom getters.
+		const captured = Object.create(null) as DocumentSharedAppendOptions<T>;
+		const durability = options.durability;
+		const deferIndexWrite = options.deferIndexWrite;
+		const meta = options.meta;
+		const identity = options.identity;
+		const signers = options.signers;
+		const trim = options.trim;
+		const encryption = options.encryption;
+		const onChange = options.onChange;
+		const canAppend = options.canAppend;
+		const replicas = options.replicas;
+		const replicate = options.replicate;
+		const target = options.target;
+		const unique = includeDocumentShape ? options.unique : undefined;
+		const checkRemote = includeDocumentShape ? options.checkRemote : undefined;
+
+		if (durability !== undefined) captured.durability = durability;
+		if (deferIndexWrite !== undefined) {
+			captured.deferIndexWrite = deferIndexWrite;
+		}
+		if (meta !== undefined) {
+			const capturedMetaInput = Object.create(null) as NonNullable<
+				SharedAppendOptions<T>["meta"]
+			>;
+			const type = meta.type;
+			const gidSeed = meta.gidSeed;
+			const hasData = "data" in meta;
+			const data = meta.data;
+			const timestamp = meta.timestamp;
+			const next = meta.next;
+			if (type !== undefined) capturedMetaInput.type = type;
+			if (gidSeed !== undefined) capturedMetaInput.gidSeed = gidSeed;
+			if (hasData) capturedMetaInput.data = data;
+			if (timestamp !== undefined) capturedMetaInput.timestamp = timestamp;
+			if (next !== undefined) capturedMetaInput.next = next;
+			captured.meta = capturedMetaInput;
+		}
+		if (identity !== undefined) captured.identity = identity;
+		if (signers !== undefined) captured.signers = signers;
+		if (trim !== undefined) captured.trim = trim;
+		if (encryption !== undefined) captured.encryption = encryption;
+		if (onChange !== undefined) captured.onChange = onChange;
+		if (canAppend !== undefined) captured.canAppend = canAppend;
+		if (replicas !== undefined) captured.replicas = replicas;
+		if (replicate !== undefined) captured.replicate = replicate;
+		if (target !== undefined) captured.target = target;
+		if (delivery !== undefined) captured.delivery = delivery;
+		if (includeDocumentShape) {
+			if (unique !== undefined) captured.unique = unique;
+			if (checkRemote !== undefined) captured.checkRemote = checkRemote;
+		}
+		// Strict-native Documents validates the already-captured finite surface
+		// before any accepted nested value is cloned or normalized. This keeps its
+		// mode error stable even for malformed unsupported option values, without
+		// rereading caller-owned top-level fields.
+		validateCapturedOptions?.(captured);
+		if (meta !== undefined) {
+			const capturedMetaInput = captured.meta!;
+			const capturedMeta = Object.create(null) as NonNullable<
+				SharedAppendOptions<T>["meta"]
+			>;
+			if (capturedMetaInput.type !== undefined) {
+				capturedMeta.type = capturedMetaInput.type;
+			}
+			if (capturedMetaInput.gidSeed !== undefined) {
+				capturedMeta.gidSeed = Uint8Array.from(capturedMetaInput.gidSeed);
+			}
+			if ("data" in capturedMetaInput) {
+				capturedMeta.data =
+					capturedMetaInput.data && Uint8Array.from(capturedMetaInput.data);
+			}
+			if (capturedMetaInput.timestamp !== undefined) {
+				capturedMeta.timestamp = capturedMetaInput.timestamp.clone();
+			}
+			if (capturedMetaInput.next !== undefined) {
+				capturedMeta.next = Object.freeze(
+					capturedMetaInput.next.map((entry) => this.snapshotAppendNext(entry)),
+				) as unknown as Entry<any>[] | ShallowEntry[];
+			}
+			captured.meta = capturedMeta;
+		}
+		if (signers !== undefined) captured.signers = [...signers];
+		if (trim !== undefined) captured.trim = this.snapshotAppendTrim(trim);
+		if (encryption !== undefined) {
+			captured.encryption = this.snapshotAppendEncryption(encryption);
+		}
+		if (replicas !== undefined) {
+			captured.replicas =
+				typeof replicas === "number"
+					? replicas
+					: new AbsoluteReplicas(replicas.getValue(this));
+		}
+		return captured;
+	}
+
+	private validatePersistedAppendInvocation(
+		capturedOptions: SharedAppendOptions<T>,
+		delivery: PersistedDeliveryOptions,
+	): void {
+		this._parseDeliveryOptions(delivery);
+		const target = capturedOptions.target;
 		if (target !== undefined && target !== "replicators") {
 			throw new Error(
 				'persisted delivery requires target="replicators" (or an omitted target)',
 			);
 		}
 		if (
-			parsed.delivery?.timeout != null &&
-			(!Number.isFinite(parsed.delivery.timeout) ||
-				parsed.delivery.timeout <= 0 ||
-				parsed.delivery.timeout > MAX_PERSISTED_DELIVERY_TIMEOUT_MS)
+			delivery.timeout != null &&
+			(!Number.isFinite(delivery.timeout) ||
+				delivery.timeout <= 0 ||
+				delivery.timeout > MAX_PERSISTED_DELIVERY_TIMEOUT_MS)
 		) {
 			throw new Error(
 				`persisted delivery timeout must be a positive number no greater than ${MAX_PERSISTED_DELIVERY_TIMEOUT_MS}`,
 			);
 		}
-		if (parsed.delivery?.signal?.aborted) {
-			throw parsed.delivery.signal.reason ?? new AbortError();
+		if (delivery.signal?.aborted) {
+			throw delivery.signal.reason ?? new AbortError();
 		}
-		return parsed.delivery!;
 	}
 
-	private assertPersistedDeliveryOptions(
+	private capturePersistedAppendInvocation(
 		options?: SharedAppendOptions<T>,
-	): void {
-		this.getPersistedDeliveryOptions(options);
+	): PersistedAppendInvocation<T> | undefined {
+		const deliveryArgument = options?.delivery;
+		if (typeof deliveryArgument !== "object" || deliveryArgument === null) {
+			return undefined;
+		}
+		const reliability = deliveryArgument.reliability;
+		if (reliability !== "persisted") {
+			return undefined;
+		}
+		const delivery = this.snapshotDeliveryOptions(
+			deliveryArgument,
+			reliability,
+		) as PersistedDeliveryOptions;
+		const capturedOptions = this.snapshotSupportedAppendOptions(
+			options!,
+			delivery,
+			false,
+		);
+		this.validatePersistedAppendInvocation(capturedOptions, delivery);
+		return { options: capturedOptions, delivery };
+	}
+
+	private snapshotDocumentAppendOptions(
+		options?: DocumentSharedAppendOptions<T>,
+		validateCapturedOptions?: (options: DocumentSharedAppendOptions<T>) => void,
+	): DocumentSharedAppendOptions<T> | undefined {
+		if (!options) return;
+		const deliveryArgument = options.delivery;
+		let delivery: SharedAppendOptions<T>["delivery"] = deliveryArgument;
+		if (typeof deliveryArgument === "object" && deliveryArgument !== null) {
+			const reliability = deliveryArgument.reliability;
+			delivery = this.snapshotDeliveryOptions(deliveryArgument, reliability);
+		}
+		const capturedOptions = this.snapshotSupportedAppendOptions(
+			options,
+			delivery,
+			true,
+			validateCapturedOptions,
+		);
+		if (
+			typeof delivery === "object" &&
+			delivery !== null &&
+			delivery.reliability === "persisted"
+		) {
+			this.validatePersistedAppendInvocation(
+				capturedOptions,
+				delivery as PersistedDeliveryOptions,
+			);
+		}
+		return capturedOptions;
 	}
 
 	private async _getSortedRouteHints(targetHash: string): Promise<RouteHint[]> {
@@ -5217,7 +5582,7 @@ export class SharedLog<
 	}
 
 	private persistedDeliveryTimeoutMs(
-		delivery: DeliveryOptions,
+		delivery: PersistedDeliveryOptions,
 		hashCount: number,
 	): number {
 		return (
@@ -5263,7 +5628,7 @@ export class SharedLog<
 	}
 
 	private createPersistedDeliveryDeadline(
-		delivery: DeliveryOptions,
+		delivery: PersistedDeliveryOptions,
 		ownershipLifecycleController: AbortController,
 		hashCount = 1,
 	): PersistedDeliveryDeadline {
@@ -5304,7 +5669,7 @@ export class SharedLog<
 	}
 
 	private async planPersistedDeliveryLeaders(
-		entries: PersistedDeliveryPlanningEntry<T, R>[],
+		records: PersistedDeliveryPlanningRecord<T, R>[],
 		replicas: number,
 		ownershipLifecycleController: AbortController,
 	): Promise<LeaderMap[]> {
@@ -5312,7 +5677,13 @@ export class SharedLog<
 			this.findLeadersFromEntry !== SharedLog.prototype.findLeadersFromEntry
 		) {
 			const leaders: LeaderMap[] = [];
-			for (const entry of entries) {
+			for (const record of records) {
+				const entry = record.createFullPlanningSource?.();
+				if (!entry) {
+					throw new Error(
+						`Persisted delivery requires canonical entry bytes for custom leader planning of ${record.canonicalHash}`,
+					);
+				}
 				leaders.push(
 					await this.findLeadersFromEntry(
 						entry,
@@ -5324,8 +5695,8 @@ export class SharedLog<
 			}
 			return leaders;
 		}
-		const items: EntryLeaderBatchItem<R>[] = entries.map((entry) => ({
-			entry,
+		const items: EntryLeaderBatchItem<R>[] = records.map((record) => ({
+			entry: record.createDefaultPlanningSource(),
 			replicas,
 			options: { freshLeaderPlan: true, persist: false },
 		}));
@@ -5377,25 +5748,27 @@ export class SharedLog<
 	}
 
 	private async settlePersistedDelivery(
-		input: PersistedDeliveryPlanningEntry<T, R>[],
+		input: PersistedDeliveryPlanningRecord<T, R>[],
 		replicas: number,
-		delivery: DeliveryOptions,
+		delivery: PersistedDeliveryOptions,
 		ownershipLifecycleController = this.captureReplicationOwnershipLifecycle(),
 		persistedDeadline?: PersistedDeliveryDeadline,
 		transferOnFirstRound = false,
 	): Promise<void> {
 		const minAcks = Math.floor(delivery.minAcks!);
-		const entries = new Map(input.map((entry) => [entry.hash, entry]));
-		if (entries.size === 0) return;
+		const records = new Map(
+			input.map((record) => [record.canonicalHash, record]),
+		);
+		if (records.size === 0) return;
 
-		const committedHashes = [...entries.keys()];
+		const committedHashes = [...records.keys()];
 		const ownedDeadline = !persistedDeadline;
 		const deadline =
 			persistedDeadline ??
 			this.createPersistedDeliveryDeadline(
 				delivery,
 				ownershipLifecycleController,
-				entries.size,
+				records.size,
 			);
 		const signal = deadline.signal;
 		let maxAttemptMs = MAX_PERSISTED_RECEIPT_ATTEMPT_MS;
@@ -5464,7 +5837,7 @@ export class SharedLog<
 				// transport epoch. A revision/session change purges them before they can
 				// survive an away-and-back leader transition or combine with a later peer.
 				const hashesByPeer = new Map<string, string[]>();
-				const entryArray = [...entries.values()];
+				const entryArray = [...records.values()];
 				const leadersByEntry = await this.planPersistedDeliveryLeaders(
 					entryArray,
 					replicas,
@@ -5485,7 +5858,7 @@ export class SharedLog<
 					}
 				}
 				for (let index = 0; index < entryArray.length; index++) {
-					const hash = entryArray[index]!.hash;
+					const hash = entryArray[index]!.canonicalHash;
 					const leaders = leadersByEntry[index]!;
 					if (signal.aborted) {
 						throw signal.reason ?? new AbortError();
@@ -5756,7 +6129,7 @@ export class SharedLog<
 								}
 								return false;
 							}
-							const hash = entryArray[index]!.hash;
+							const hash = entryArray[index]!.canonicalHash;
 							const leaders = validatedLeaders[index]!;
 							let valid = 0;
 							const acknowledgements = carriedAcknowledgements.get(hash)!;
@@ -11503,7 +11876,9 @@ export class SharedLog<
 		removed: ShallowOrFullEntry<T>[];
 	}> {
 		this.throwIfNativeDurableCommitFailed();
-		const persistedDelivery = this.getPersistedDeliveryOptions(options);
+		const persistedInvocation = this.capturePersistedAppendInvocation(options);
+		options = persistedInvocation?.options ?? options;
+		const persistedDelivery = persistedInvocation?.delivery;
 		const ownershipLifecycleController =
 			this.captureReplicationOwnershipLifecycle();
 		if (this._isAdaptiveReplicating) {
@@ -11515,14 +11890,32 @@ export class SharedLog<
 			ownershipLifecycleController,
 		);
 		let committedHashes: readonly string[] | undefined;
+		let persistedAppendCommit: PreparedLocalAppendCommit<R> | undefined;
+		let persistedPlanningRecord:
+			| PersistedDeliveryPlanningRecord<T, R>
+			| undefined;
 		if (persistedDelivery) {
 			(appendOptions as TrustedLogAppendOptions<T>).__peerbitOnLocalCommit = (
 				hashes,
+				entries,
 			) => {
 				// The lower log reports the exact hashes immediately after their
-				// irreversible local mutation and before entry initialization, trim,
-				// or change callbacks can reject the append.
-				committedHashes = hashes;
+				// irreversible local mutation and before trim/change callbacks. Own the
+				// canonical hash first, then detach all planning facts and storage bytes
+				// synchronously so callback mutation cannot retarget the later quorum.
+				committedHashes = Object.freeze([...hashes]);
+				if (hashes.length !== 1 || entries?.length !== 1) {
+					throw new Error(
+						"Persisted delivery requires exact lower-log entry commit evidence",
+					);
+				}
+				persistedAppendCommit = this.capturePersistedLocalAppendCommit(
+					hashes[0]!,
+					entries[0]!,
+				);
+				persistedPlanningRecord = this.createPersistedDeliveryPlanningRecord(
+					persistedAppendCommit,
+				);
 			};
 		}
 		let persistedDeadline: PersistedDeliveryDeadline | undefined;
@@ -11533,7 +11926,11 @@ export class SharedLog<
 		};
 		try {
 			const result = await this.log.append(data, appendOptions);
-			committedHashes ??= [result.entry.hash];
+			if (persistedDelivery && (!committedHashes || !persistedPlanningRecord)) {
+				throw new Error(
+					"Lower log did not provide persisted-delivery commit evidence",
+				);
+			}
 			persistedDeadline = persistedDelivery
 				? this.createPersistedDeliveryDeadline(
 						persistedDelivery,
@@ -11545,14 +11942,17 @@ export class SharedLog<
 				ownershipLifecycleController,
 			);
 			throwIfDeliveryAborted();
-			await this.processLocalAppend(result.entry, result.removed, options, {
+			const processingEntry =
+				persistedPlanningRecord?.createFullPlanningSource?.() ?? result.entry;
+			await this.processLocalAppend(processingEntry, result.removed, options, {
 				minReplicasValue,
+				appendFacts: persistedAppendCommit,
 				ownershipLifecycleController,
 			});
 			throwIfDeliveryAborted();
 			if (persistedDelivery && persistedDeadline) {
 				await this.settlePersistedDelivery(
-					[result.entry],
+					[persistedPlanningRecord!],
 					minReplicasValue,
 					persistedDelivery,
 					ownershipLifecycleController,
@@ -11576,7 +11976,7 @@ export class SharedLog<
 	private rejectPersistedDeliveryOnTrustedLocalAppend(
 		options?: SharedAppendOptions<T>,
 	): void {
-		if (this.getPersistedDeliveryOptions(options)) {
+		if (this.capturePersistedAppendInvocation(options)) {
 			throw new Error(
 				"trusted local append paths require delivery=false; call deliverPersistedEntries after the local commit",
 			);
@@ -14726,7 +15126,7 @@ export class SharedLog<
 		removed: ShallowOrFullEntry<T>[];
 	}> {
 		this.throwIfNativeDurableCommitFailed();
-		const persistedDelivery = this.getPersistedDeliveryOptions(options);
+		const persistedDelivery = this.capturePersistedAppendInvocation(options);
 		if (data.length === 0) {
 			return { entries: [], removed: [] };
 		}
@@ -14818,18 +15218,22 @@ export class SharedLog<
 	 * rolls back or hides their successful local commit.
 	 */
 	private async deliverPersistedPlanningEntries(
-		resolveEntries: () => PersistedDeliveryPlanningEntry<T, R>[],
-		committedHashes: string[],
+		resolveRecords: () => PersistedDeliveryPlanningRecord<T, R>[],
+		committedHashesInput: readonly string[],
 		options: SharedAppendOptions<T>,
 	): Promise<void> {
+		const committedHashes = Object.freeze([...committedHashesInput]);
 		let persistedDeadline: PersistedDeliveryDeadline | undefined;
 		try {
-			const delivery = this.getPersistedDeliveryOptions(options);
-			if (!delivery) {
+			const persistedInvocation =
+				this.capturePersistedAppendInvocation(options);
+			if (!persistedInvocation) {
 				throw new Error(
 					'deliverPersistedEntries requires reliability="persisted"',
 				);
 			}
+			options = persistedInvocation.options;
+			const delivery = persistedInvocation.delivery;
 			const ownershipLifecycleController =
 				this.captureReplicationOwnershipLifecycle();
 			const deadline = this.createPersistedDeliveryDeadline(
@@ -14848,16 +15252,26 @@ export class SharedLog<
 					);
 				}
 			};
-			const entries = resolveEntries();
+			const records = resolveRecords();
 			throwIfDeliveryAborted();
-			if (entries.length === 0) return;
+			if (records.length !== committedHashes.length) {
+				throw new Error("Persisted delivery planning evidence count mismatch");
+			}
+			for (let index = 0; index < records.length; index++) {
+				if (records[index]!.canonicalHash !== committedHashes[index]) {
+					throw new Error(
+						`Persisted delivery planning evidence did not match committed hash ${committedHashes[index]}`,
+					);
+				}
+			}
+			if (records.length === 0) return;
 			const { minReplicasValue } = this.createLogAppendOptions(
 				options,
 				ownershipLifecycleController,
 			);
 			throwIfDeliveryAborted();
 			await this.settlePersistedDelivery(
-				entries,
+				records,
 				minReplicasValue,
 				delivery,
 				ownershipLifecycleController,
@@ -14871,20 +15285,21 @@ export class SharedLog<
 		}
 	}
 
-	private createPersistedDeliveryPlanningEntries(
+	private createPersistedDeliveryPlanningRecords(
 		appendCommits: PreparedLocalAppendCommit<R>[],
 		materializeEntries: () => Entry<T>[],
-	): PersistedDeliveryPlanningEntry<T, R>[] {
+	): PersistedDeliveryPlanningRecord<T, R>[] {
 		let materializedEntries: Entry<T>[] | undefined;
 		const requiresFullEntries =
 			this.findLeadersFromEntry !== SharedLog.prototype.findLeadersFromEntry;
-		const getMaterializedEntry = (
+		const getCommittedEntry = (
 			appendCommit: PreparedLocalAppendCommit<R>,
 			index: number,
 		) => {
 			materializedEntries ??= materializeEntries();
 			const entry = materializedEntries[index];
-			if (!entry || entry.hash !== appendCommit.hash) {
+			const materializedHash = entry?.hash;
+			if (!entry || materializedHash !== appendCommit.hash) {
 				throw new Error(
 					`Persisted delivery materializer did not return committed entry ${appendCommit.hash}`,
 				);
@@ -14892,12 +15307,14 @@ export class SharedLog<
 			return entry;
 		};
 		return appendCommits.map((appendCommit, index) => {
-			if (!requiresFullEntries && appendCommit.coordinateFields) {
-				return this._coordinates.materializeResidentCoordinateEntry(
-					appendCommit.coordinateFields,
+			let capturedCommit = this.snapshotPreparedLocalAppendCommit(appendCommit);
+			if (requiresFullEntries && !capturedCommit.storageBytes) {
+				capturedCommit = this.capturePersistedLocalAppendCommit(
+					capturedCommit.hash,
+					getCommittedEntry(capturedCommit, index),
 				);
 			}
-			return getMaterializedEntry(appendCommit, index);
+			return this.createPersistedDeliveryPlanningRecord(capturedCommit);
 		});
 	}
 
@@ -14908,7 +15325,7 @@ export class SharedLog<
 	): Promise<void> {
 		return this.deliverPersistedPlanningEntries(
 			() =>
-				this.createPersistedDeliveryPlanningEntries(
+				this.createPersistedDeliveryPlanningRecords(
 					appendCommits,
 					materializeEntries,
 				),
@@ -14921,9 +15338,12 @@ export class SharedLog<
 		entries: Entry<T>[],
 		options: SharedAppendOptions<T>,
 	): Promise<void> {
+		const records = entries.map((entry) =>
+			this.snapshotPersistedDeliveryPlanningEntry(entry),
+		);
 		return this.deliverPersistedPlanningEntries(
-			() => entries,
-			entries.map((entry) => entry.hash),
+			() => records,
+			records.map((record) => record.canonicalHash),
 			options,
 		);
 	}
@@ -15871,7 +16291,11 @@ export class SharedLog<
 			next: entry.meta.next,
 			wallTime: entry.meta.clock.timestamp.wallTime,
 			logical: entry.meta.clock.timestamp.logical,
+			clockId: entry.meta.clock.id,
+			type: entry.meta.type,
+			metaData: entry.meta.data,
 			payloadSize: entry.payload.byteLength,
+			entrySize: entry.size,
 			metaBytes: (entry as EntryWithMetaBytes).getMetaBytes?.(),
 			hashNumber: nativeAppendPlan?.hashNumber,
 			coordinateFields: nativeAppendPlan?.preparedCoordinate.fields,
@@ -15892,6 +16316,9 @@ export class SharedLog<
 			next: appendFacts.next,
 			wallTime: appendFacts.wallTime,
 			logical: appendFacts.logical,
+			clockId: appendFacts.clockId,
+			type: appendFacts.type,
+			metaData: appendFacts.metaData,
 			payloadSize: appendFacts.payloadSize,
 			metaBytes: appendFacts.metaBytes,
 			hashNumber: nativeAppendPlan?.hashNumber,
@@ -15899,6 +16326,134 @@ export class SharedLog<
 				nativeAppendPlan?.coordinateFields ??
 				nativeAppendPlan?.preparedCoordinate?.fields,
 		};
+	}
+
+	private snapshotPreparedLocalAppendCommit(
+		appendCommit: PreparedLocalAppendCommit<R>,
+	): PreparedLocalAppendCommit<R> {
+		const coordinateFields = appendCommit.coordinateFields;
+		return Object.freeze({
+			...appendCommit,
+			next: [...appendCommit.next],
+			clockId: appendCommit.clockId && Uint8Array.from(appendCommit.clockId),
+			metaData: appendCommit.metaData && Uint8Array.from(appendCommit.metaData),
+			metaBytes:
+				appendCommit.metaBytes && Uint8Array.from(appendCommit.metaBytes),
+			storageBytes:
+				appendCommit.storageBytes && Uint8Array.from(appendCommit.storageBytes),
+			coordinateFields: coordinateFields
+				? {
+						...coordinateFields,
+						coordinates: [...coordinateFields.coordinates],
+						coordinateStrings: coordinateFields.coordinateStrings && [
+							...coordinateFields.coordinateStrings,
+						],
+						metaBytes: Uint8Array.from(coordinateFields.metaBytes),
+					}
+				: undefined,
+			documentPreviousContext: appendCommit.documentPreviousContext
+				? { ...appendCommit.documentPreviousContext }
+				: undefined,
+		});
+	}
+
+	private capturePersistedLocalAppendCommit(
+		canonicalHash: string,
+		entry: Entry<T>,
+	): PreparedLocalAppendCommit<R> {
+		const sourceHash = entry.hash;
+		if (sourceHash !== canonicalHash) {
+			throw new Error(
+				`Lower-log commit evidence entry did not match committed hash ${canonicalHash}`,
+			);
+		}
+		const storageBytes =
+			Entry.getPreparedStorageBytes(entry) ?? entry.getStorageBytes();
+		return this.snapshotPreparedLocalAppendCommit({
+			...this.createPreparedLocalAppendCommit(entry),
+			hash: canonicalHash,
+			storageBytes,
+		});
+	}
+
+	private createPersistedDeliveryPlanningRecord(
+		appendCommitInput: PreparedLocalAppendCommit<R>,
+	): PersistedDeliveryPlanningRecord<T, R> {
+		// Callers hand this helper an invocation-owned snapshot. Do not duplicate
+		// full entry bytes here; a fresh copy is made only when a custom planner is
+		// actually invoked (and again for each replan so planner mutation cannot
+		// persist between rounds).
+		const appendCommit = appendCommitInput;
+		const canonicalHash = appendCommit.hash;
+		const coordinateFields = appendCommit.coordinateFields;
+		const createDefaultPlanningSource = coordinateFields
+			? () =>
+					this._coordinates.materializeResidentCoordinateEntry({
+						...coordinateFields,
+						coordinates: [...coordinateFields.coordinates],
+						coordinateStrings: coordinateFields.coordinateStrings && [
+							...coordinateFields.coordinateStrings,
+						],
+						metaBytes: Uint8Array.from(coordinateFields.metaBytes),
+					})
+			: () =>
+					new ShallowEntry({
+						hash: canonicalHash,
+						head: true,
+						payloadSize: appendCommit.payloadSize,
+						meta: new ShallowMeta({
+							gid: appendCommit.gid,
+							next: [...appendCommit.next],
+							type: appendCommit.type ?? EntryType.APPEND,
+							data:
+								appendCommit.metaData && Uint8Array.from(appendCommit.metaData),
+							clock: new LamportClock({
+								id: Uint8Array.from(appendCommit.clockId ?? new Uint8Array()),
+								timestamp: new Timestamp({
+									wallTime: appendCommit.wallTime,
+									logical: appendCommit.logical,
+								}),
+							}),
+						}),
+					});
+		const storageBytes = appendCommit.storageBytes;
+		const createFullPlanningSource = storageBytes
+			? () => {
+					const bytes = Uint8Array.from(storageBytes);
+					const entry = deserialize(bytes, Entry) as Entry<T>;
+					const decodedHash = entry.hash;
+					if (decodedHash && decodedHash !== canonicalHash) {
+						throw new Error(
+							`Persisted delivery planning bytes did not match committed hash ${canonicalHash}`,
+						);
+					}
+					if (!decodedHash) {
+						Entry.prepareMultihashBytes(entry, bytes, canonicalHash);
+						entry.hash = canonicalHash;
+					}
+					entry.size = appendCommit.entrySize ?? bytes.byteLength;
+					entry.createdLocally = true;
+					entry.init({
+						encoding: this.log.encoding,
+						keychain: this.log.keychain,
+					});
+					return entry;
+				}
+			: undefined;
+		return Object.freeze({
+			canonicalHash,
+			createDefaultPlanningSource,
+			createFullPlanningSource,
+		});
+	}
+
+	private snapshotPersistedDeliveryPlanningEntry(
+		value: Entry<T>,
+	): PersistedDeliveryPlanningRecord<T, R> {
+		const canonicalHash = value.hash;
+		return this.createPersistedDeliveryPlanningRecord(
+			this.capturePersistedLocalAppendCommit(canonicalHash, value),
+		);
 	}
 
 	private createPreparedLocalAppendCommits(

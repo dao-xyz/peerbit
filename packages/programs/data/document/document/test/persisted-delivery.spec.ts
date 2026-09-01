@@ -111,10 +111,322 @@ describe("document persisted delivery", function () {
 			expect(providerNotifySpy.callCount).equal(0);
 			expect(deliverStub.callCount).equal(1);
 			expect(deliverStub.firstCall.args[0]).to.have.length(docs.length);
-			expect(deliverStub.firstCall.args[2]).equal(options);
+			expect(deliverStub.firstCall.args[2]).to.not.equal(options);
+			expect(deliverStub.firstCall.args[2]).to.include({ unique: true });
+			expect(deliverStub.firstCall.args[2].delivery).to.deep.include(
+				persistedDelivery,
+			);
 			expect(readableAtReceipt).equal(true);
 		});
 	}
+
+	it("keeps persisted put and putMany settlement after caller downgrade", async () => {
+		const opened = await openStore("native");
+		const seed = await opened.docs.put(
+			new Document({ id: uuid(), name: "snapshot-seed" }),
+			{ unique: true },
+		);
+		const backend = (opened.docs as any)._documentBackend;
+		const deliver = sinon
+			.stub(opened.docs.log as any, "deliverPersistedEntries")
+			.resolves();
+		const run = async (many: boolean) => {
+			let entered!: () => void;
+			let release!: () => void;
+			const enteredPromise = new Promise<void>(
+				(resolve) => (entered = resolve),
+			);
+			const releasePromise = new Promise<void>(
+				(resolve) => (release = resolve),
+			);
+			const method = many ? "putMany" : "put";
+			const backendStub = sinon.stub(backend, method).callsFake(async () => {
+				entered();
+				await releasePromise;
+				return many
+					? { entries: [seed.entry], removed: [] }
+					: { entry: seed.entry, removed: [] };
+			});
+			const delivery: any = {
+				reliability: "persisted",
+				minAcks: 2,
+				timeout: 5_000,
+			};
+			const options: any = {
+				unique: true,
+				target: "replicators",
+				replicate: false,
+				replicas: 2,
+				delivery,
+			};
+			try {
+				const pending = many
+					? opened.docs.putMany(
+							[new Document({ id: uuid(), name: "snapshot-many" })],
+							options,
+						)
+					: opened.docs.put(
+							new Document({ id: uuid(), name: "snapshot-one" }),
+							options,
+						);
+				await enteredPromise;
+				delivery.reliability = "ack";
+				delivery.minAcks = 0;
+				delivery.timeout = 1;
+				options.target = "none";
+				options.replicate = true;
+				options.replicas = 1;
+				release();
+				await pending;
+				const captured = deliver.lastCall.args[1];
+				expect(captured).to.include({
+					unique: true,
+					target: "replicators",
+					replicate: false,
+					replicas: 2,
+				});
+				expect(captured.delivery).to.include({
+					reliability: "persisted",
+					minAcks: 2,
+					timeout: 5_000,
+				});
+			} finally {
+				backendStub.restore();
+			}
+		};
+
+		await run(false);
+		await run(true);
+		expect(deliver.callCount).to.equal(2);
+	});
+
+	it("does not upgrade an initially ack document write after backend await", async () => {
+		const opened = await openStore("native");
+		const seed = await opened.docs.put(
+			new Document({ id: uuid(), name: "ack-seed" }),
+			{ unique: true },
+		);
+		const backend = (opened.docs as any)._documentBackend;
+		let entered!: () => void;
+		let release!: () => void;
+		const enteredPromise = new Promise<void>((resolve) => (entered = resolve));
+		const releasePromise = new Promise<void>((resolve) => (release = resolve));
+		const backendStub = sinon.stub(backend, "put").callsFake(async () => {
+			entered();
+			await releasePromise;
+			return { entry: seed.entry, removed: [] };
+		});
+		const deliver = sinon.spy(
+			opened.docs.log as any,
+			"deliverPersistedEntries",
+		);
+		const delivery: any = { reliability: "ack", minAcks: 1 };
+		const options: any = { unique: true, delivery };
+
+		try {
+			const pending = opened.docs.put(
+				new Document({ id: uuid(), name: "ack-no-upgrade" }),
+				options,
+			);
+			await enteredPromise;
+			delivery.reliability = "persisted";
+			release();
+			await pending;
+			expect(deliver.callCount).to.equal(0);
+		} finally {
+			backendStub.restore();
+		}
+	});
+
+	it("pins ack delivery through a gated real compat put", async () => {
+		const opened = await openStore("auto");
+		const documents = opened.docs as any;
+		const log = opened.docs.log as any;
+		let entered!: () => void;
+		let release!: () => void;
+		const enteredPromise = new Promise<void>((resolve) => (entered = resolve));
+		const releasePromise = new Promise<void>((resolve) => (release = resolve));
+		const originalGetLocalIndexedContext =
+			documents.getLocalIndexedContext.bind(documents);
+		const indexGate = sinon
+			.stub(documents, "getLocalIndexedContext")
+			.callsFake(async (...args: unknown[]) => {
+				entered();
+				await releasePromise;
+				return originalGetLocalIndexedContext(...args);
+			});
+		const persistedCapture = sinon.spy(
+			log,
+			"capturePersistedLocalAppendCommit",
+		);
+		const planningSnapshot = sinon.spy(
+			log,
+			"snapshotPersistedDeliveryPlanningEntry",
+		);
+		const planning = sinon.spy(log, "planPersistedDeliveryLeaders");
+		const settlement = sinon.spy(log, "settlePersistedDelivery");
+		const publicSingleDelivery = sinon.spy(log, "deliverPersistedEntries");
+		const publicBatchDelivery = sinon.spy(log, "deliverPersistedAppendCommits");
+		const delivery: any = { reliability: "ack", minAcks: 1 };
+		const options: any = {
+			target: "none",
+			replicate: false,
+			delivery,
+			canAppend: async () => true,
+		};
+		const doc = new Document({ id: uuid(), name: "real-ack-no-upgrade" });
+
+		try {
+			const pending = opened.docs.put(doc, options);
+			await enteredPromise;
+			delivery.reliability = "persisted";
+			release();
+			const result = await pending;
+
+			expect(result.entry.hash).to.be.a("string").and.not.empty;
+			expect((await opened.docs.get(doc.id))?.name).equal(doc.name);
+			expect(persistedCapture.callCount).equal(0);
+			expect(planningSnapshot.callCount).equal(0);
+			expect(planning.callCount).equal(0);
+			expect(settlement.callCount).equal(0);
+			expect(publicSingleDelivery.callCount).equal(0);
+			expect(publicBatchDelivery.callCount).equal(0);
+		} finally {
+			release();
+			indexGate.restore();
+		}
+	});
+
+	it("pins false delivery through a gated real native putMany", async () => {
+		const opened = await openStore("native");
+		const documents = opened.docs as any;
+		const log = opened.docs.log as any;
+		let entered!: () => void;
+		let release!: () => void;
+		const enteredPromise = new Promise<void>((resolve) => (entered = resolve));
+		const releasePromise = new Promise<void>((resolve) => (release = resolve));
+		const originalPolicy =
+			documents.assertNativeModePlainPutPolicySupported.bind(documents);
+		let gated = false;
+		const policyGate = sinon
+			.stub(documents, "assertNativeModePlainPutPolicySupported")
+			.callsFake(async (...args: unknown[]) => {
+				if (!gated) {
+					gated = true;
+					entered();
+					await releasePromise;
+				}
+				return originalPolicy(...args);
+			});
+		const evidencePath = sinon.spy(
+			documents,
+			"commitNativeDocumentAppendManyWithEvidence",
+		);
+		const persistedCapture = sinon.spy(
+			log,
+			"capturePersistedLocalAppendCommit",
+		);
+		const planningSnapshot = sinon.spy(
+			log,
+			"snapshotPersistedDeliveryPlanningEntry",
+		);
+		const planning = sinon.spy(log, "planPersistedDeliveryLeaders");
+		const settlement = sinon.spy(log, "settlePersistedDelivery");
+		const publicSingleDelivery = sinon.spy(log, "deliverPersistedEntries");
+		const publicBatchDelivery = sinon.spy(log, "deliverPersistedAppendCommits");
+		const options: any = {
+			unique: true,
+			target: "none",
+			replicate: false,
+			delivery: false,
+		};
+		const docs = [
+			new Document({ id: uuid(), name: "real-false-first" }),
+			new Document({ id: uuid(), name: "real-false-second" }),
+		];
+
+		try {
+			const pending = opened.docs.putMany(docs, options);
+			await enteredPromise;
+			options.delivery = { ...persistedDelivery };
+			options.target = "replicators";
+			release();
+			const result = await pending;
+
+			expect(result.entries).to.have.length(docs.length);
+			expect(evidencePath.callCount).equal(1);
+			expect(evidencePath.firstCall.args[1]).equal(undefined);
+			expect(persistedCapture.callCount).equal(0);
+			expect(planningSnapshot.callCount).equal(0);
+			expect(planning.callCount).equal(0);
+			expect(settlement.callCount).equal(0);
+			expect(publicSingleDelivery.callCount).equal(0);
+			expect(publicBatchDelivery.callCount).equal(0);
+		} finally {
+			release();
+			policyGate.restore();
+		}
+	});
+
+	it("reuses one captured invocation through sequential putMany fallback", async () => {
+		const opened = await openStore("auto");
+		const documents = opened.docs as any;
+		const log = opened.docs.log as any;
+		let entered!: () => void;
+		let release!: () => void;
+		const enteredPromise = new Promise<void>((resolve) => (entered = resolve));
+		const releasePromise = new Promise<void>((resolve) => (release = resolve));
+		const originalGetLocalIndexedContext =
+			documents.getLocalIndexedContext.bind(documents);
+		let gated = false;
+		const indexGate = sinon
+			.stub(documents, "getLocalIndexedContext")
+			.callsFake(async (...args: unknown[]) => {
+				if (!gated) {
+					gated = true;
+					entered();
+					await releasePromise;
+				}
+				return originalGetLocalIndexedContext(...args);
+			});
+		const invocationSnapshots = sinon.spy(log, "snapshotDocumentAppendOptions");
+		const persistedCapture = sinon.spy(
+			log,
+			"capturePersistedLocalAppendCommit",
+		);
+		const planning = sinon.spy(log, "planPersistedDeliveryLeaders");
+		const settlement = sinon.spy(log, "settlePersistedDelivery");
+		const options: any = {
+			target: "none",
+			replicate: false,
+			delivery: false,
+			canAppend: async () => true,
+		};
+		const docs = [
+			new Document({ id: uuid(), name: "sequential-first" }),
+			new Document({ id: uuid(), name: "sequential-second" }),
+		];
+
+		try {
+			const pending = opened.docs.putMany(docs, options);
+			await enteredPromise;
+			options.delivery = { ...persistedDelivery };
+			options.target = "replicators";
+			options.unique = true;
+			options.checkRemote = true;
+			release();
+			const result = await pending;
+
+			expect(result.entries).to.have.length(docs.length);
+			expect(invocationSnapshots.callCount).equal(1);
+			expect(persistedCapture.callCount).equal(0);
+			expect(planning.callCount).equal(0);
+			expect(settlement.callCount).equal(0);
+		} finally {
+			release();
+			indexGate.restore();
+		}
+	});
 
 	it("delivers native putMany commit facts before materializing public entries", async () => {
 		const opened = await openStore("native");
@@ -282,9 +594,9 @@ describe("document persisted delivery", function () {
 		const settleStub = sinon
 			.stub(opened.docs.log as any, "settlePersistedDelivery")
 			.callsFake(async (...args: unknown[]) => {
-				const entries = args[0] as Array<{ hash: string }>;
+				const entries = args[0] as Array<{ canonicalHash: string }>;
 				readableAtReceipt = (await opened.docs.get(doc.id)) != null;
-				keptAtReceipt = keepCache.has(entries[0]!.hash);
+				keptAtReceipt = keepCache.has(entries[0]!.canonicalHash);
 			});
 		const publicDeliverySpy = sinon.spy(
 			opened.docs.log as any,
@@ -575,14 +887,11 @@ describe("document persisted delivery", function () {
 			"persisted delivery timeout must be a positive number no greater than 2147483647",
 		);
 		await expect(
-			opened.docs.put(
-				new Document({ id: uuid(), name: "invalid-target" }),
-				{
-					unique: true,
-					target: "future-target",
-					delivery: persistedDelivery,
-				} as any,
-			),
+			opened.docs.put(new Document({ id: uuid(), name: "invalid-target" }), {
+				unique: true,
+				target: "future-target",
+				delivery: persistedDelivery,
+			} as any),
 		).to.be.rejectedWith(
 			'persisted delivery requires target="replicators" (or an omitted target)',
 		);
