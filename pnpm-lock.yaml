@@ -2479,18 +2479,9 @@ importers:
       '@peerbit/any-store-opfs':
         specifier: workspace:*
         version: link:../opfs
-      '@peerbit/build-assets':
-        specifier: workspace:*
-        version: link:../../build-assets
-      '@peerbit/crypto':
-        specifier: workspace:*
-        version: link:../../crypto
-      '@peerbit/logger':
-        specifier: workspace:*
-        version: link:../../logger
-      '@peerbit/time':
-        specifier: workspace:*
-        version: link:../../time
+      '@stablelib/sha256':
+        specifier: ^2.0.1
+        version: 2.0.1
       abstract-level:
         specifier: ^3.1.0
         version: 3.1.1
@@ -2504,6 +2495,12 @@ importers:
         specifier: ^11.1.1
         version: 11.1.1
     devDependencies:
+      '@peerbit/build-assets':
+        specifier: workspace:*
+        version: link:../../build-assets
+      '@peerbit/time':
+        specifier: workspace:*
+        version: link:../../time
       '@types/uuid':
         specifier: ^10.0.0
         version: 10.0.0
