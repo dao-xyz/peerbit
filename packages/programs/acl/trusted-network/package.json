@@ -63,6 +63,7 @@
 		"@libp2p/interface": "^3.2.5",
 		"@peerbit/any-store": "workspace:*",
 		"@peerbit/any-store-interface": "workspace:*",
+		"@peerbit/blocks-interface": "workspace:*",
 		"@peerbit/crypto": "workspace:*",
 		"@peerbit/document": "workspace:*",
 		"@peerbit/log": "workspace:*",

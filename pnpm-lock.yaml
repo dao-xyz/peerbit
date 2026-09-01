@@ -1131,6 +1131,9 @@ importers:
       '@peerbit/any-store-interface':
         specifier: workspace:*
         version: link:../../../utils/any-store/interface
+      '@peerbit/blocks-interface':
+        specifier: workspace:*
+        version: link:../../../transport/blocks-interface
       '@peerbit/crypto':
         specifier: workspace:*
         version: link:../../../utils/crypto
