@@ -1,5 +1,11 @@
 # Changelog
 
+## 6.0.114
+
+### Patch Changes
+
+- [#1384](https://github.com/dao-xyz/peerbit/pull/1384) [`48e0e34`](https://github.com/dao-xyz/peerbit/commit/48e0e34e79a17f571b568d7c42b80a5e6890fda8) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Share bounded EntryV0 envelope authentication between policy snapshots and resource fences while preserving exact hash-bearing policy bytes and preflighting hostile policy binding counts.
+
 ## 6.0.113
 
 ### Patch Changes

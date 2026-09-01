@@ -1,5 +1,12 @@
 # Changelog
 
+## 3.2.138
+
+### Patch Changes
+
+- Updated dependencies [[`48e0e34`](https://github.com/dao-xyz/peerbit/commit/48e0e34e79a17f571b568d7c42b80a5e6890fda8)]:
+  - @peerbit/trusted-network@6.0.114
+
 ## 3.2.137
 
 ### Patch Changes
