@@ -56,7 +56,7 @@ const MAX_CHECKPOINT_PAYLOAD_FRAMING_BYTES_V2 = 313;
 export const TRUSTED_NETWORK_V2_MAX_POLICY_ANCHOR_CHECKPOINT_PAYLOAD_BYTES =
 	(MAX_FORK_OBSERVATIONS_V2 + 1) * TRUSTED_NETWORK_V2_MAX_POLICY_ENTRY_BYTES +
 	MAX_CHECKPOINT_PAYLOAD_FRAMING_BYTES_V2;
-const MAX_QUEUED_POLICY_ENTRY_BYTES_V2 =
+const MAX_QUEUED_POLICY_INPUT_BYTES_V2 =
 	TRUSTED_NETWORK_V2_MAX_POLICY_ENTRY_BYTES * 2;
 const ZERO_DIGEST = new Uint8Array(32);
 const textEncoder = new TextEncoder();
@@ -84,6 +84,25 @@ export type TrustedNetworkV2DurablePolicyReducerOptions =
 	DurableReducerOptionsV2 & {
 		store: CrashSafePolicyAnchorStoreV2;
 	};
+
+export type PolicyLeaseReferenceV2 = {
+	sequence: bigint;
+	digest: Uint8Array;
+};
+
+export type AcceptedPolicyLeaseV2 = {
+	/** The exact accepted historical policy named by the reference. */
+	policy: PolicyHeadProjectionV2;
+	/** The durable accepted head observed in the same serialized queue slot. */
+	acceptedHead: PolicyHeadProjectionV2;
+};
+
+export type PolicyLeaseResultV2<T> =
+	| { status: "completed"; value: T }
+	| {
+			status: "unavailable" | "rejected" | "capacity" | "halted";
+			reason: string;
+	  };
 
 /**
  * One self-contained application snapshot. The enclosing generic checkpoint
@@ -701,8 +720,8 @@ export class TrustedNetworkV2DurablePolicyReducer {
 	private durableCoreIdentityBytes?: Uint8Array;
 	private operationTail: Promise<void> = Promise.resolve();
 	private authorizationFences = 0;
-	private bufferedAdmissions = 0;
-	private bufferedAdmissionEntryBytes = 0;
+	private bufferedOperations = 0;
+	private bufferedOperationInputBytes = 0;
 	private terminalError?: Error;
 
 	private constructor(properties: {
@@ -831,14 +850,14 @@ export class TrustedNetworkV2DurablePolicyReducer {
 			: this.core.pendingDigests.map(copyBytes);
 	}
 
-	/** Internal diagnostics for the fixed pre-publication admission bound. */
+	/** Internal diagnostics for the shared fixed operation-queue bound. */
 	get bufferedAdmissionCount(): number {
-		return this.bufferedAdmissions;
+		return this.bufferedOperations;
 	}
 
-	/** Internal diagnostics for copied entry bytes awaiting settlement. */
+	/** Internal diagnostics for captured queue-input bytes awaiting settlement. */
 	get bufferedAdmissionBytes(): number {
-		return this.bufferedAdmissionEntryBytes;
+		return this.bufferedOperationInputBytes;
 	}
 
 	/** Projection query only; use isAuthorized() for the fail-closed gate. */
@@ -892,7 +911,7 @@ export class TrustedNetworkV2DurablePolicyReducer {
 				),
 			);
 		}
-		if (!this.reserveAdmission(reservedEntryBytes)) {
+		if (!this.reserveOperation(reservedEntryBytes)) {
 			return Promise.resolve(
 				this.immediateAdmissionResult(
 					"capacity",
@@ -906,7 +925,7 @@ export class TrustedNetworkV2DurablePolicyReducer {
 		try {
 			captured = copyBytesWithLength(entryBytes, reservedEntryBytes);
 		} catch (error) {
-			this.releaseAdmission(reservedEntryBytes);
+			this.releaseOperation(reservedEntryBytes);
 			return Promise.reject(error);
 		}
 		return this.enqueue(async () => {
@@ -932,7 +951,7 @@ export class TrustedNetworkV2DurablePolicyReducer {
 		if (this.core.state === "HALTED") {
 			return Promise.resolve(this.lifecycleHaltedResult());
 		}
-		if (!this.reserveAdmission(0)) {
+		if (!this.reserveOperation(0)) {
 			return Promise.resolve(
 				this.immediateAdmissionResult(
 					"capacity",
@@ -955,6 +974,105 @@ export class TrustedNetworkV2DurablePolicyReducer {
 		}, 0);
 	}
 
+	/**
+	 * Run one callback while the referenced policy is proven to be an accepted
+	 * prefix and the durable accepted head is held stable.
+	 *
+	 * Lookup and callback execution occupy one operation-queue slot. Callbacks
+	 * must therefore not await an operation on this same anchor. A callback
+	 * throw/rejection is propagated unchanged, but never halts the policy anchor.
+	 */
+	withAcceptedPolicyLease<T>(
+		reference: PolicyLeaseReferenceV2,
+		use: (lease: AcceptedPolicyLeaseV2) => T | Promise<T>,
+	): Promise<PolicyLeaseResultV2<T>> {
+		const halted = this.immediateLeaseHaltedResult();
+		if (halted !== undefined) return Promise.resolve(halted);
+
+		let sequence: bigint;
+		let suppliedDigest: Uint8Array;
+		try {
+			sequence = reference.sequence;
+			if (
+				typeof sequence !== "bigint" ||
+				sequence < 0n ||
+				sequence > 0xffffffffffffffffn
+			) {
+				return Promise.resolve({
+					status: "rejected",
+					reason: "Policy reference sequence must be a u64",
+				});
+			}
+			suppliedDigest = reference.digest;
+			if (!hasExactUint8ArrayByteLength(suppliedDigest, 32)) {
+				return Promise.resolve({
+					status: "rejected",
+					reason: "Policy reference digest must contain exactly 32 bytes",
+				});
+			}
+		} catch {
+			return Promise.resolve({
+				status: "rejected",
+				reason: "Policy lease reference is invalid",
+			});
+		}
+		if (typeof use !== "function") {
+			return Promise.resolve({
+				status: "rejected",
+				reason: "Policy lease callback must be a function",
+			});
+		}
+
+		const retainedReferenceBytes = 32;
+		if (!this.reserveOperation(retainedReferenceBytes)) {
+			return Promise.resolve({
+				status: "capacity",
+				reason: "Durable policy operation queue is at its fixed capacity",
+			});
+		}
+		let digest: Uint8Array;
+		try {
+			digest = copyBytes(suppliedDigest);
+		} catch {
+			this.releaseOperation(retainedReferenceBytes);
+			return Promise.resolve({
+				status: "rejected",
+				reason: "Policy reference digest must contain exactly 32 bytes",
+			});
+		}
+
+		const result: Promise<PolicyLeaseResultV2<T>> = this.operationTail.then(
+			async () => {
+				const queuedHalt = this.immediateLeaseHaltedResult();
+				if (queuedHalt !== undefined) return queuedHalt;
+				const resolution = await this.core.resolveAcceptedPolicyPrefix({
+					sequence,
+					digest,
+				});
+				if (resolution.status !== "resolved") return resolution;
+				// Lifecycle abort before callback invocation loses acquisition. There is
+				// no await between this check and invoking user code, which is the lease's
+				// linearization point.
+				const resolvedHalt = this.immediateLeaseHaltedResult();
+				if (resolvedHalt !== undefined) return resolvedHalt;
+				const value = await use({
+					// The core created these two projections independently and retains
+					// neither, including when the requested policy is the current head.
+					policy: resolution.policy,
+					acceptedHead: resolution.acceptedHead,
+				});
+				return { status: "completed", value };
+			},
+		);
+		this.operationTail = result.then(
+			(): void => {},
+			(): void => {},
+		);
+		return result.finally(() => {
+			this.releaseOperation(retainedReferenceBytes);
+		});
+	}
+
 	private forkFailStopResult(): PolicyAdmissionResultV2 {
 		return {
 			status: "halted",
@@ -975,6 +1093,28 @@ export class TrustedNetworkV2DurablePolicyReducer {
 		};
 	}
 
+	private immediateLeaseHaltedResult(): PolicyLeaseResultV2<never> | undefined {
+		if (this.terminalError !== undefined) {
+			return {
+				status: "halted",
+				reason: "Durable policy publication is ambiguous",
+			};
+		}
+		if (this.published.state === "FORKED") {
+			return {
+				status: "halted",
+				reason: "Policy reducer is halted by authority equivocation",
+			};
+		}
+		if (this.core.state === "HALTED") {
+			return {
+				status: "halted",
+				reason: "Policy reducer lifecycle is aborted",
+			};
+		}
+		return undefined;
+	}
+
 	private immediateAdmissionResult(
 		status: "capacity" | "rejected",
 		reason: string,
@@ -984,27 +1124,27 @@ export class TrustedNetworkV2DurablePolicyReducer {
 		return { status, reason, fetchHints: [], pendingCount, pendingBytes };
 	}
 
-	private reserveAdmission(entryBytes: number): boolean {
+	private reserveOperation(inputBytes: number): boolean {
 		if (
-			this.bufferedAdmissions >= TRUSTED_NETWORK_V2_MAX_PENDING_POLICIES ||
-			entryBytes >
-				MAX_QUEUED_POLICY_ENTRY_BYTES_V2 - this.bufferedAdmissionEntryBytes
+			this.bufferedOperations >= TRUSTED_NETWORK_V2_MAX_PENDING_POLICIES ||
+			inputBytes >
+				MAX_QUEUED_POLICY_INPUT_BYTES_V2 - this.bufferedOperationInputBytes
 		) {
 			return false;
 		}
-		this.bufferedAdmissions += 1;
-		this.bufferedAdmissionEntryBytes += entryBytes;
+		this.bufferedOperations += 1;
+		this.bufferedOperationInputBytes += inputBytes;
 		return true;
 	}
 
-	private releaseAdmission(entryBytes: number): void {
-		this.bufferedAdmissions -= 1;
-		this.bufferedAdmissionEntryBytes -= entryBytes;
+	private releaseOperation(inputBytes: number): void {
+		this.bufferedOperations -= 1;
+		this.bufferedOperationInputBytes -= inputBytes;
 	}
 
 	private enqueue<T>(
 		operation: () => Promise<T>,
-		bufferedEntryBytes: number,
+		bufferedInputBytes: number,
 	): Promise<T> {
 		this.authorizationFences++;
 		const result = this.operationTail.then(async () => {
@@ -1021,7 +1161,7 @@ export class TrustedNetworkV2DurablePolicyReducer {
 		);
 		return result.finally(() => {
 			this.authorizationFences--;
-			this.releaseAdmission(bufferedEntryBytes);
+			this.releaseOperation(bufferedInputBytes);
 		});
 	}
 

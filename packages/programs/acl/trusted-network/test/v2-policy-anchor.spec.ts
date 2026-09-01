@@ -802,6 +802,652 @@ describe("TrustedNetwork v2 durable policy anchor", () => {
 		expectHead(anchor, fixture.chain[2]);
 	});
 
+	it("leases an exact historical accepted prefix with independent projections", async () => {
+		const fixture = await createChain();
+		const store = new ControlledPolicyAnchorStore();
+		const resolver = createResolver();
+		resolver.add(...fixture.chain);
+		let resolverCalls = 0;
+		const anchor = await openAnchor(fixture, store, (digest) => {
+			resolverCalls += 1;
+			return resolver.resolve(digest);
+		});
+		for (const policy of fixture.chain) {
+			expect((await anchor.ingest(entryBytes(policy.entry))).status).to.equal(
+				"accepted",
+			);
+		}
+		const replacementsBeforeLease = store.atomicReplaceCalls;
+		const originalHead = anchor.head!;
+		const leased = await anchor.withAcceptedPolicyLease(
+			{
+				sequence: fixture.chain[1].body.sequence,
+				digest: fixture.chain[1].digest,
+			},
+			({ policy, acceptedHead }) => {
+				expect(policy.sequence).to.equal(1n);
+				expect(hex(policy.digest)).to.equal(hex(fixture.chain[1].digest));
+				expect(acceptedHead.sequence).to.equal(3n);
+				expect(hex(acceptedHead.digest)).to.equal(hex(fixture.chain[3].digest));
+				expect(policy).not.to.equal(acceptedHead);
+				expect(policy.digest).not.to.equal(acceptedHead.digest);
+				expect(policy.bindings).not.to.equal(acceptedHead.bindings);
+				policy.digest.fill(0xff);
+				acceptedHead.digest.fill(0xee);
+				policy.bindings[0]!.roles = 0;
+				acceptedHead.bindings[0]!.roles = 0;
+				return "resource-checkpoint";
+			},
+		);
+
+		expect(leased).to.deep.equal({
+			status: "completed",
+			value: "resource-checkpoint",
+		});
+		expect(resolverCalls).to.equal(2);
+		expect(store.atomicReplaceCalls).to.equal(replacementsBeforeLease);
+		expect(anchor.head).to.deep.equal(originalHead);
+		expect(
+			anchor.isAuthorized(fixture.alice.publicKey, TrustedNetworkRole.WRITER),
+		).to.equal(true);
+
+		const callsBeforeHeadLease = resolverCalls;
+		const current = await anchor.withAcceptedPolicyLease(
+			{ sequence: 3n, digest: fixture.chain[3].digest },
+			({ policy, acceptedHead }) => {
+				expect(policy).not.to.equal(acceptedHead);
+				expect(policy.digest).not.to.equal(acceptedHead.digest);
+				expect(policy.bindings).not.to.equal(acceptedHead.bindings);
+				return policy.sequence;
+			},
+		);
+		expect(current).to.deep.equal({ status: "completed", value: 3n });
+		expect(resolverCalls).to.equal(callsBeforeHeadLease);
+	});
+
+	it("holds one queue slot through the callback and bounds queued leases", async () => {
+		const fixture = await createChain();
+		const store = new ControlledPolicyAnchorStore();
+		const anchor = await openAnchor(fixture, store);
+		await anchor.ingest(entryBytes(fixture.chain[0].entry));
+		const callbackEntered = deferred();
+		const callbackRelease = deferred();
+		const firstLease = anchor.withAcceptedPolicyLease(
+			{ sequence: 0n, digest: fixture.chain[0].digest },
+			async ({ acceptedHead }) => {
+				callbackEntered.resolve();
+				expect(acceptedHead.sequence).to.equal(0n);
+				expect(
+					anchor.isAuthorized(
+						fixture.alice.publicKey,
+						TrustedNetworkRole.WRITER,
+					),
+				).to.equal(true);
+				await callbackRelease.promise;
+				return 0;
+			},
+		);
+		await callbackEntered.promise;
+
+		const queuedLeases = Array.from(
+			{ length: MAX_PENDING_POLICIES - 1 },
+			(_, index) =>
+				anchor.withAcceptedPolicyLease(
+					{ sequence: 0n, digest: fixture.chain[0].digest },
+					() => index + 1,
+				),
+		);
+		expect(anchor.bufferedAdmissionCount).to.equal(MAX_PENDING_POLICIES);
+		expect(anchor.bufferedAdmissionBytes).to.equal(MAX_PENDING_POLICIES * 32);
+		let overflowCallbackCalls = 0;
+		const overflow = await anchor.withAcceptedPolicyLease(
+			{ sequence: 0n, digest: fixture.chain[0].digest },
+			() => {
+				overflowCallbackCalls += 1;
+			},
+		);
+		expect(overflow.status).to.equal("capacity");
+		expect(overflowCallbackCalls).to.equal(0);
+
+		callbackRelease.resolve();
+		const settled = await Promise.all([firstLease, ...queuedLeases]);
+		expect(settled.every(({ status }) => status === "completed")).to.equal(
+			true,
+		);
+		expect(anchor.bufferedAdmissionCount).to.equal(0);
+		expect(anchor.bufferedAdmissionBytes).to.equal(0);
+		expect(
+			(
+				await anchor.withAcceptedPolicyLease(
+					{ sequence: 0n, digest: fixture.chain[0].digest },
+					() => "released",
+				)
+			).status,
+		).to.equal("completed");
+	});
+
+	it("serializes policy publication around a lease callback", async () => {
+		const fixture = await createChain();
+		const store = new ControlledPolicyAnchorStore();
+		const anchor = await openAnchor(fixture, store);
+		await anchor.ingest(entryBytes(fixture.chain[0].entry));
+		const callbackEntered = deferred();
+		const callbackRelease = deferred();
+		const lease = anchor.withAcceptedPolicyLease(
+			{ sequence: 0n, digest: fixture.chain[0].digest },
+			async ({ acceptedHead }) => {
+				callbackEntered.resolve();
+				await callbackRelease.promise;
+				return acceptedHead.sequence;
+			},
+		);
+		await callbackEntered.promise;
+		const replacementsBeforeQueuedAdmission = store.atomicReplaceCalls;
+		const admission = anchor.ingest(entryBytes(fixture.chain[1].entry));
+		expect(
+			anchor.isAuthorized(fixture.alice.publicKey, TrustedNetworkRole.WRITER),
+		).to.equal(false);
+		await Promise.resolve();
+		expect(store.atomicReplaceCalls).to.equal(
+			replacementsBeforeQueuedAdmission,
+		);
+		callbackRelease.resolve();
+
+		expect(await lease).to.deep.equal({ status: "completed", value: 0n });
+		expect((await admission).status).to.equal("accepted");
+		expectHead(anchor, fixture.chain[1]);
+		const afterAdmission = await anchor.withAcceptedPolicyLease(
+			{ sequence: 1n, digest: fixture.chain[1].digest },
+			({ acceptedHead }) => acceptedHead.sequence,
+		);
+		expect(afterAdmission).to.deep.equal({
+			status: "completed",
+			value: 1n,
+		});
+	});
+
+	it("returns typed prefix failures without mutating durable authorization", async () => {
+		const fixture = await createChain();
+		const emptyStore = new ControlledPolicyAnchorStore();
+		const empty = await openAnchor(fixture, emptyStore);
+		let callbackCalls = 0;
+		expect(
+			(
+				await empty.withAcceptedPolicyLease(
+					{ sequence: 0n, digest: fixture.chain[0].digest },
+					() => {
+						callbackCalls += 1;
+					},
+				)
+			).status,
+		).to.equal("unavailable");
+
+		const store = new ControlledPolicyAnchorStore();
+		const historyResolver = createResolver();
+		const anchor = await openAnchor(fixture, store, historyResolver.resolve);
+		for (const policy of fixture.chain) {
+			await anchor.ingest(entryBytes(policy.entry));
+		}
+		const replacementsBeforeQueries = store.atomicReplaceCalls;
+		const wrongDigest = Uint8Array.from(fixture.chain[3].digest);
+		wrongDigest[0] ^= 0xff;
+		expect(
+			(
+				await anchor.withAcceptedPolicyLease(
+					{ sequence: 3n, digest: wrongDigest },
+					() => {
+						callbackCalls += 1;
+					},
+				)
+			).status,
+		).to.equal("rejected");
+		expect(
+			(
+				await anchor.withAcceptedPolicyLease(
+					{ sequence: 4n, digest: fixture.chain[3].digest },
+					() => {
+						callbackCalls += 1;
+					},
+				)
+			).status,
+		).to.equal("unavailable");
+		const wrongDirectParent = Uint8Array.from(fixture.chain[2].digest);
+		wrongDirectParent[0] ^= 0xff;
+		expect(
+			(
+				await anchor.withAcceptedPolicyLease(
+					{ sequence: 2n, digest: wrongDirectParent },
+					() => {
+						callbackCalls += 1;
+					},
+				)
+			).status,
+		).to.equal("rejected");
+		expect(
+			(
+				await anchor.withAcceptedPolicyLease(
+					{ sequence: 2n, digest: fixture.chain[2].digest },
+					() => {
+						callbackCalls += 1;
+					},
+				)
+			).status,
+		).to.equal("unavailable");
+		historyResolver.add(fixture.chain[2]);
+		const wrongDeeperPrefix = Uint8Array.from(fixture.chain[1].digest);
+		wrongDeeperPrefix[0] ^= 0xff;
+		expect(
+			(
+				await anchor.withAcceptedPolicyLease(
+					{ sequence: 1n, digest: wrongDeeperPrefix },
+					() => {
+						callbackCalls += 1;
+					},
+				)
+			).status,
+		).to.equal("rejected");
+		expect(
+			(
+				await anchor.withAcceptedPolicyLease(
+					{ sequence: 1n, digest: fixture.chain[1].digest },
+					() => {
+						callbackCalls += 1;
+					},
+				)
+			).status,
+		).to.equal("unavailable");
+		expect(callbackCalls).to.equal(0);
+		expect(anchor.state).to.equal("ACTIVE");
+		expectHead(anchor, fixture.chain[3]);
+		expect(store.atomicReplaceCalls).to.equal(replacementsBeforeQueries);
+	});
+
+	it("propagates callback failure without halting or wedging the queue", async () => {
+		const fixture = await createChain();
+		const anchor = await openAnchor(fixture, new ControlledPolicyAnchorStore());
+		await anchor.ingest(entryBytes(fixture.chain[0].entry));
+		const callbackFailure = new Error("resource checkpoint rejected");
+		const callbackEntered = deferred();
+		const callbackRelease = deferred();
+		const failed = anchor.withAcceptedPolicyLease(
+			{ sequence: 0n, digest: fixture.chain[0].digest },
+			async () => {
+				callbackEntered.resolve();
+				await callbackRelease.promise;
+				throw callbackFailure;
+			},
+		);
+		await callbackEntered.promise;
+		const queuedAdmission = anchor.ingest(entryBytes(fixture.chain[1].entry));
+		callbackRelease.resolve();
+		expect(await rejection(failed)).to.equal(callbackFailure);
+		expect((await queuedAdmission).status).to.equal("accepted");
+		expect(anchor.state).to.equal("ACTIVE");
+		expect(anchor.bufferedAdmissionCount).to.equal(0);
+		expect(anchor.bufferedAdmissionBytes).to.equal(0);
+
+		const recovered = await anchor.withAcceptedPolicyLease(
+			{ sequence: 1n, digest: fixture.chain[1].digest },
+			() => 42,
+		);
+		expect(recovered).to.deep.equal({ status: "completed", value: 42 });
+	});
+
+	it("restores historical lease resolution without changing checkpoint bytes", async () => {
+		const fixture = await createChain();
+		const store = new ControlledPolicyAnchorStore();
+		const original = await openAnchor(fixture, store);
+		for (const policy of fixture.chain) {
+			await original.ingest(entryBytes(policy.entry));
+		}
+		original.abort();
+		const checkpointBeforeLeases = [...store.values].map(([key, value]) => [
+			key,
+			hex(value),
+		]);
+
+		let peerlessResolverCalls = 0;
+		const peerless = await openAnchor(fixture, store, () => {
+			peerlessResolverCalls += 1;
+			throw new Error("historical policy is offline");
+		});
+		expect(
+			(
+				await peerless.withAcceptedPolicyLease(
+					{ sequence: 3n, digest: fixture.chain[3].digest },
+					({ policy }) => policy.sequence,
+				)
+			).status,
+		).to.equal("completed");
+		expect(peerlessResolverCalls).to.equal(0);
+		expect(
+			(
+				await peerless.withAcceptedPolicyLease(
+					{ sequence: 1n, digest: fixture.chain[1].digest },
+					(): void => undefined,
+				)
+			).status,
+		).to.equal("unavailable");
+		expect(peerlessResolverCalls).to.equal(1);
+		expect(peerless.state).to.equal("ACTIVE");
+		peerless.abort();
+
+		const resolver = createResolver();
+		resolver.add(...fixture.chain);
+		const connected = await openAnchor(fixture, store, resolver.resolve);
+		const historical = await connected.withAcceptedPolicyLease(
+			{ sequence: 1n, digest: fixture.chain[1].digest },
+			({ policy, acceptedHead }) => [policy.sequence, acceptedHead.sequence],
+		);
+		expect(historical).to.deep.equal({
+			status: "completed",
+			value: [1n, 3n],
+		});
+		expect(
+			[...store.values].map(([key, value]) => [key, hex(value)]),
+		).to.deep.equal(checkpointBeforeLeases);
+	});
+
+	it("maps unavailable, forked, lifecycle, and terminal states fail closed", async () => {
+		const fixture = await createChain();
+		let callbackCalls = 0;
+		const callback = (): void => {
+			callbackCalls += 1;
+		};
+
+		const unavailableStore = new ControlledPolicyAnchorStore();
+		const unavailable = await openAnchor(fixture, unavailableStore);
+		for (const policy of fixture.chain.slice(0, 3)) {
+			await unavailable.ingest(entryBytes(policy.entry));
+		}
+		const competing = await createDirectChild(
+			fixture,
+			TrustedNetworkRole.REPLICATOR,
+		);
+		expect(
+			(await unavailable.ingest(entryBytes(competing.entry))).status,
+		).to.equal("unavailable");
+		expect(unavailable.state).to.equal("UNAVAILABLE");
+		expect(
+			(
+				await unavailable.withAcceptedPolicyLease(
+					{ sequence: 2n, digest: fixture.chain[2].digest },
+					callback,
+				)
+			).status,
+		).to.equal("unavailable");
+		unavailable.abort();
+		const reopenedUnavailable = await openAnchor(fixture, unavailableStore);
+		expect(reopenedUnavailable.state).to.equal("UNAVAILABLE");
+		expect(
+			(
+				await reopenedUnavailable.withAcceptedPolicyLease(
+					{ sequence: 2n, digest: fixture.chain[2].digest },
+					callback,
+				)
+			).status,
+		).to.equal("unavailable");
+
+		const forkStore = new ControlledPolicyAnchorStore();
+		const forkResolver = createResolver();
+		forkResolver.add(fixture.chain[0]);
+		const forked = await openAnchor(fixture, forkStore, forkResolver.resolve);
+		const siblings = await Promise.all([
+			createDirectChild(fixture, TrustedNetworkRole.WRITER),
+			createDirectChild(fixture, TrustedNetworkRole.READER),
+		]);
+		await forked.ingest(entryBytes(fixture.chain[0].entry));
+		await forked.ingest(entryBytes(siblings[0].entry));
+		expect(
+			(await forked.ingest(entryBytes(siblings[1].entry))).status,
+		).to.equal("forked");
+		const hostileReference = new Proxy({} as never, {
+			get: () => {
+				throw new Error("terminal lease must not inspect its reference");
+			},
+		});
+		expect(
+			(await forked.withAcceptedPolicyLease(hostileReference, callback)).status,
+		).to.equal("halted");
+		forked.abort();
+		const reopenedForked = await openAnchor(fixture, forkStore);
+		expect(reopenedForked.state).to.equal("FORKED");
+		expect(
+			(await reopenedForked.withAcceptedPolicyLease(hostileReference, callback))
+				.status,
+		).to.equal("halted");
+
+		const aborted = await openAnchor(
+			fixture,
+			new ControlledPolicyAnchorStore(),
+		);
+		aborted.abort();
+		expect(
+			(await aborted.withAcceptedPolicyLease(hostileReference, callback))
+				.status,
+		).to.equal("halted");
+
+		const poisonedStore = new ControlledPolicyAnchorStore();
+		const poisoned = await openAnchor(fixture, poisonedStore);
+		poisonedStore.failNextAtomicReplace(new Error("ambiguous checkpoint"));
+		await rejection(poisoned.ingest(entryBytes(fixture.chain[0].entry)));
+		expect(
+			(await poisoned.withAcceptedPolicyLease(hostileReference, callback))
+				.status,
+		).to.equal("halted");
+
+		const queuedStore = new ControlledPolicyAnchorStore();
+		const queuedPoison = await openAnchor(fixture, queuedStore);
+		queuedStore.failNextAtomicReplace(new Error("queued ambiguity"));
+		const failingAdmission = queuedPoison.ingest(
+			entryBytes(fixture.chain[0].entry),
+		);
+		const queuedLease = queuedPoison.withAcceptedPolicyLease(
+			{ sequence: 0n, digest: fixture.chain[0].digest },
+			callback,
+		);
+		await rejection(failingAdmission);
+		expect((await queuedLease).status).to.equal("halted");
+		expect(callbackCalls).to.equal(0);
+	});
+
+	it("captures hostile references without iterator or caller aliasing", async () => {
+		const fixture = await createChain();
+		const anchor = await openAnchor(fixture, new ControlledPolicyAnchorStore());
+		await anchor.ingest(entryBytes(fixture.chain[0].entry));
+		const blockerEntered = deferred();
+		const blockerRelease = deferred();
+		const blocker = anchor.withAcceptedPolicyLease(
+			{ sequence: 0n, digest: fixture.chain[0].digest },
+			async () => {
+				blockerEntered.resolve();
+				await blockerRelease.promise;
+			},
+		);
+		await blockerEntered.promise;
+
+		const adversarialDigest = new AdversarialUint8Array(
+			fixture.chain[0].digest,
+			100_000,
+		);
+		const reference = { sequence: 0n, digest: adversarialDigest };
+		let callbackCalls = 0;
+		const aliased = anchor.withAcceptedPolicyLease(reference, ({ policy }) => {
+			callbackCalls += 1;
+			return hex(policy.digest);
+		});
+		reference.sequence = 99n;
+		adversarialDigest.fill(0xff);
+		blockerRelease.resolve();
+		await blocker;
+		expect(await aliased).to.deep.equal({
+			status: "completed",
+			value: hex(fixture.chain[0].digest),
+		});
+		expect(adversarialDigest.iteratorCalls).to.equal(0);
+		expect(callbackCalls).to.equal(1);
+
+		const invalidDigests: Uint8Array[] = [new Uint8Array(31)];
+		const detached = new Uint8Array(new ArrayBuffer(32));
+		structuredClone(detached.buffer, { transfer: [detached.buffer] });
+		invalidDigests.push(detached);
+		for (const digest of invalidDigests) {
+			expect(
+				(
+					await anchor.withAcceptedPolicyLease({ sequence: 0n, digest }, () => {
+						callbackCalls += 1;
+					})
+				).status,
+			).to.equal("rejected");
+		}
+		const proxiedDigest = new Proxy(new Uint8Array(32), {});
+		expect(
+			(
+				await anchor.withAcceptedPolicyLease(
+					{ sequence: 0n, digest: proxiedDigest as unknown as Uint8Array },
+					() => {
+						callbackCalls += 1;
+					},
+				)
+			).status,
+		).to.equal("rejected");
+		expect(
+			(
+				await anchor.withAcceptedPolicyLease(
+					{ sequence: -1n, digest: fixture.chain[0].digest },
+					() => {
+						callbackCalls += 1;
+					},
+				)
+			).status,
+		).to.equal("rejected");
+		expect(callbackCalls).to.equal(1);
+		expect(anchor.bufferedAdmissionCount).to.equal(0);
+		expect(anchor.bufferedAdmissionBytes).to.equal(0);
+	});
+
+	it("linearizes lifecycle cancellation at callback acquisition", async () => {
+		const fixture = await createChain();
+		const resolverEntered = deferred();
+		const resolverRelease = deferred();
+		const resolvingAnchor = await openAnchor(
+			fixture,
+			new ControlledPolicyAnchorStore(),
+			async (digest) => {
+				resolverEntered.resolve();
+				await resolverRelease.promise;
+				return hex(digest) === hex(fixture.chain[1].digest)
+					? entryBytes(fixture.chain[1].entry)
+					: entryBytes(fixture.chain[0].entry);
+			},
+		);
+		for (const policy of fixture.chain.slice(0, 3)) {
+			await resolvingAnchor.ingest(entryBytes(policy.entry));
+		}
+		let preAcquisitionCallbackCalls = 0;
+		const resolving = resolvingAnchor.withAcceptedPolicyLease(
+			{ sequence: 0n, digest: fixture.chain[0].digest },
+			() => {
+				preAcquisitionCallbackCalls += 1;
+			},
+		);
+		await resolverEntered.promise;
+		resolvingAnchor.abort();
+		expect((await resolving).status).to.equal("halted");
+		expect(preAcquisitionCallbackCalls).to.equal(0);
+		resolverRelease.resolve();
+
+		const callbackAnchor = await openAnchor(
+			fixture,
+			new ControlledPolicyAnchorStore(),
+		);
+		await callbackAnchor.ingest(entryBytes(fixture.chain[0].entry));
+		const callbackEntered = deferred();
+		const callbackRelease = deferred();
+		const acquired = callbackAnchor.withAcceptedPolicyLease(
+			{ sequence: 0n, digest: fixture.chain[0].digest },
+			async () => {
+				callbackEntered.resolve();
+				await callbackRelease.promise;
+				return "durable";
+			},
+		);
+		await callbackEntered.promise;
+		const queuedAdmission = callbackAnchor.ingest(
+			entryBytes(fixture.chain[1].entry),
+		);
+		callbackAnchor.abort();
+		callbackRelease.resolve();
+		expect(await acquired).to.deep.equal({
+			status: "completed",
+			value: "durable",
+		});
+		expect((await queuedAdmission).status).to.equal("halted");
+		expect(callbackAnchor.state).to.equal("HALTED");
+	});
+
+	it("orders leases on both sides of a durable fork transition", async () => {
+		const fixture = await createChain();
+		const resolver = createResolver();
+		resolver.add(fixture.chain[0]);
+		const store = new ControlledPolicyAnchorStore();
+		const anchor = await openAnchor(fixture, store, resolver.resolve);
+		const siblings = await Promise.all([
+			createDirectChild(fixture, TrustedNetworkRole.WRITER),
+			createDirectChild(fixture, TrustedNetworkRole.READER),
+		]);
+		await anchor.ingest(entryBytes(fixture.chain[0].entry));
+		await anchor.ingest(entryBytes(siblings[0].entry));
+
+		const replacementGate = store.gateNextAtomicReplace();
+		const fork = anchor.ingest(entryBytes(siblings[1].entry));
+		await replacementGate.entered;
+		let callbackCalls = 0;
+		const lease = anchor.withAcceptedPolicyLease(
+			{ sequence: 1n, digest: siblings[0].digest },
+			() => {
+				callbackCalls += 1;
+			},
+		);
+		replacementGate.release();
+
+		expect((await fork).status).to.equal("forked");
+		expect((await lease).status).to.equal("halted");
+		expect(callbackCalls).to.equal(0);
+		expect(anchor.bufferedAdmissionCount).to.equal(0);
+		expect(anchor.bufferedAdmissionBytes).to.equal(0);
+
+		const leaseFirstAnchor = await openAnchor(
+			fixture,
+			new ControlledPolicyAnchorStore(),
+			resolver.resolve,
+		);
+		await leaseFirstAnchor.ingest(entryBytes(fixture.chain[0].entry));
+		await leaseFirstAnchor.ingest(entryBytes(siblings[0].entry));
+		const leaseEntered = deferred();
+		const leaseRelease = deferred();
+		const acquiredLease = leaseFirstAnchor.withAcceptedPolicyLease(
+			{ sequence: 1n, digest: siblings[0].digest },
+			async () => {
+				leaseEntered.resolve();
+				await leaseRelease.promise;
+				return "checkpointed";
+			},
+		);
+		await leaseEntered.promise;
+		const laterFork = leaseFirstAnchor.ingest(entryBytes(siblings[1].entry));
+		leaseRelease.resolve();
+
+		expect(await acquiredLease).to.deep.equal({
+			status: "completed",
+			value: "checkpointed",
+		});
+		expect((await laterFork).status).to.equal("forked");
+		expect(leaseFirstAnchor.state).to.equal("FORKED");
+		expect(leaseFirstAnchor.bufferedAdmissionCount).to.equal(0);
+		expect(leaseFirstAnchor.bufferedAdmissionBytes).to.equal(0);
+	});
+
 	it("rejects incompatible views without iterator, species, or length hooks", async () => {
 		const fixture = await createChain();
 		const valid = entryBytes(fixture.chain[0].entry);
