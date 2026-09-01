@@ -1618,9 +1618,17 @@ export class SQLiteIndex<T extends Record<string, any>>
 
 export class SQLiteIndices implements types.Indices {
 	private _scope: string[];
-	private scopes: Map<string, SQLiteIndices>;
-	private indices: { schema: any; index: Index<any, any> }[];
-	private closed = true;
+	private scopes: Map<string, { scope: SQLiteIndices; ready: Promise<void> }>;
+	private indices: {
+		schema: any;
+		index: Index<any, any>;
+		ready: Promise<void>;
+	}[];
+	private state: "closed" | "open" | "closing" = "closed";
+	private startPromise?: Promise<void>;
+	private shutdownPromise?: Promise<void>;
+	private shutdownAction?: "stop" | "drop";
+	private readonly pendingAdmissions = new Set<Promise<void>>();
 
 	constructor(
 		readonly properties: {
@@ -1635,51 +1643,167 @@ export class SQLiteIndices implements types.Indices {
 		this.indices = [];
 	}
 
+	private assertAcceptingWork() {
+		let owner: SQLiteIndices | undefined = this;
+		while (owner) {
+			if (owner.state === "closing") {
+				throw new types.NotStartedError();
+			}
+			owner = owner.properties.parent;
+		}
+	}
+
+	private trackAdmission<T>(operation: Promise<T>): Promise<T> {
+		const settled = operation.then(
+			() => undefined,
+			() => undefined,
+		);
+		this.pendingAdmissions.add(settled);
+		void settled.then(() => this.pendingAdmissions.delete(settled));
+		return operation;
+	}
+
+	private async drainAdmissions(): Promise<void> {
+		while (this.pendingAdmissions.size > 0) {
+			await Promise.all([...this.pendingAdmissions]);
+		}
+	}
+
+	private snapshotStartIntent(): {
+		shouldStart: boolean;
+		startPromises: Promise<void>[];
+	} {
+		const startPromises: Promise<void>[] = [];
+		let owner: SQLiteIndices | undefined = this;
+		while (owner) {
+			if (owner.startPromise) {
+				startPromises.push(owner.startPromise);
+			}
+			owner = owner.properties.parent;
+		}
+		return {
+			shouldStart: this.state === "open" || startPromises.length > 0,
+			startPromises,
+		};
+	}
+
+	private async activateIndex(
+		index: Index<any, any>,
+		startPromises: Promise<void>[],
+	): Promise<void> {
+		if (startPromises.length > 0) {
+			await Promise.all(startPromises);
+		}
+		await index.start();
+	}
+
+	private async activateScope(
+		scope: SQLiteIndices,
+		startPromises: Promise<void>[],
+	): Promise<void> {
+		if (startPromises.length > 0) {
+			await Promise.all(startPromises);
+		}
+		await scope.start();
+	}
+
 	async init<T extends Record<string, any>, NestedType>(
 		properties: IndexEngineInitProperties<T, NestedType>,
 	): Promise<Index<T, NestedType>> {
+		this.assertAcceptingWork();
 		const existing = this.indices.find((x) => x.schema === properties.schema);
 		if (existing) {
-			return existing.index;
+			const { shouldStart, startPromises } = this.snapshotStartIntent();
+			const ready = this.trackAdmission(
+				existing.ready.then(() =>
+					shouldStart
+						? this.activateIndex(existing.index, startPromises)
+						: undefined,
+				),
+			);
+			existing.ready = ready;
+			try {
+				await ready;
+			} catch (error) {
+				if (existing.ready === ready) {
+					existing.ready = Promise.resolve();
+				}
+				throw error;
+			}
+			return existing.index as Index<T, NestedType>;
 		}
 
 		const index: types.Index<T, any> = new SQLiteIndex({
 			db: this.properties.db,
 			schema: properties.schema,
 			scope: this._scope,
-			persisted: await this.persisted(),
+			persisted: this.persisted(),
 		});
-		await index.init(properties);
-		this.indices.push({ schema: properties.schema, index });
+		index.init(properties);
 
-		if (!this.closed) {
-			await index.start();
+		const entry = {
+			schema: properties.schema,
+			index,
+			ready: Promise.resolve(),
+		};
+		this.indices.push(entry);
+		const { shouldStart, startPromises } = this.snapshotStartIntent();
+		const ready = this.trackAdmission(
+			shouldStart
+				? this.activateIndex(index, startPromises)
+				: Promise.resolve(),
+		);
+		entry.ready = ready;
+		try {
+			await ready;
+		} catch (error) {
+			const position = this.indices.indexOf(entry);
+			if (position !== -1) {
+				this.indices.splice(position, 1);
+			}
+			throw error;
 		}
 		return index;
 	}
 
 	async scope(name: string): Promise<types.Indices> {
-		if (!this.scopes.has(name)) {
+		this.assertAcceptingWork();
+		const existing = this.scopes.get(name);
+		if (!existing) {
 			const scope = new SQLiteIndices({
 				scope: [...this._scope, name],
 				db: this.properties.db,
 				parent: this,
 				directory: this.properties.directory,
 			});
-
-			if (!this.closed) {
-				await scope.start();
+			const entry = { scope, ready: Promise.resolve() };
+			this.scopes.set(name, entry);
+			const { shouldStart, startPromises } = this.snapshotStartIntent();
+			entry.ready = this.trackAdmission(
+				shouldStart
+					? this.activateScope(scope, startPromises)
+					: Promise.resolve(),
+			);
+			try {
+				await entry.ready;
+			} catch (error) {
+				if (this.scopes.get(name) === entry) {
+					this.scopes.delete(name);
+				}
+				throw error;
 			}
-			this.scopes.set(name, scope);
 			return scope;
 		}
 
-		const scope = this.scopes.get(name)!;
-		if (!this.closed) {
-			// TODO test this code path
-			await scope.start();
-		}
-		return scope;
+		const { shouldStart, startPromises } = this.snapshotStartIntent();
+		await this.trackAdmission(
+			existing.ready.then(() =>
+				shouldStart
+					? this.activateScope(existing.scope, startPromises)
+					: undefined,
+			),
+		);
+		return existing.scope;
 	}
 
 	persisted(): boolean {
@@ -1690,9 +1814,7 @@ export class SQLiteIndices implements types.Indices {
 		return this.properties.directory != null;
 	}
 
-	async start(): Promise<void> {
-		this.closed = false;
-
+	private async startAll(): Promise<void> {
 		if (!this.properties.parent) {
 			const status = await this.properties.db.status();
 			if (status !== "open") {
@@ -1700,7 +1822,7 @@ export class SQLiteIndices implements types.Indices {
 			}
 		}
 
-		for (const scope of this.scopes.values()) {
+		for (const { scope } of this.scopes.values()) {
 			await scope.start();
 		}
 
@@ -1709,9 +1831,44 @@ export class SQLiteIndices implements types.Indices {
 		}
 	}
 
-	async stop(): Promise<void> {
-		this.closed = true;
-		for (const scope of this.scopes.values()) {
+	start(): Promise<void> {
+		try {
+			this.assertAcceptingWork();
+		} catch (error) {
+			return Promise.reject(error);
+		}
+		if (this.state === "open") {
+			return this.startPromise ?? Promise.resolve();
+		}
+
+		this.state = "open";
+		const operation = this.startAll();
+		let tracked!: Promise<void>;
+		tracked = operation
+			.catch((error) => {
+				if (this.state === "open") {
+					this.state = "closed";
+				}
+				throw error;
+			})
+			.finally(() => {
+				if (this.startPromise === tracked) {
+					this.startPromise = undefined;
+				}
+			});
+		this.startPromise = tracked;
+		return tracked;
+	}
+
+	private markClosing(): void {
+		this.state = "closing";
+	}
+
+	private async stopAll(): Promise<void> {
+		await this.startPromise?.catch(() => undefined);
+		await this.drainAdmissions();
+
+		for (const { scope } of this.scopes.values()) {
 			await scope.stop();
 		}
 
@@ -1724,8 +1881,11 @@ export class SQLiteIndices implements types.Indices {
 		}
 	}
 
-	async drop(): Promise<void> {
-		for (const scope of this.scopes.values()) {
+	private async dropAll(): Promise<void> {
+		await this.startPromise?.catch(() => undefined);
+		await this.drainAdmissions();
+
+		for (const { scope } of this.scopes.values()) {
 			await scope.drop();
 		}
 
@@ -1740,6 +1900,39 @@ export class SQLiteIndices implements types.Indices {
 			}
 		}
 		this.scopes.clear();
+	}
+
+	private beginShutdown(action: "stop" | "drop"): Promise<void> {
+		if (this.shutdownPromise) {
+			if (action === "drop" && this.shutdownAction === "stop") {
+				// The native adapter can only unlink a persistent database while its
+				// handle is open. Do not report a successful drop after stop closes it.
+				return Promise.reject(new types.NotStartedError());
+			}
+			return this.shutdownPromise;
+		}
+
+		this.markClosing();
+		this.shutdownAction = action;
+		const operation = action === "stop" ? this.stopAll() : this.dropAll();
+		let tracked!: Promise<void>;
+		tracked = operation.finally(() => {
+			this.state = "closed";
+			if (this.shutdownPromise === tracked) {
+				this.shutdownPromise = undefined;
+				this.shutdownAction = undefined;
+			}
+		});
+		this.shutdownPromise = tracked;
+		return tracked;
+	}
+
+	stop(): Promise<void> {
+		return this.beginShutdown("stop");
+	}
+
+	drop(): Promise<void> {
+		return this.beginShutdown("drop");
 	}
 }
 
