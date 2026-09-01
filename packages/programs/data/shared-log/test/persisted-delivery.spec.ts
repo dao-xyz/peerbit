@@ -1,8 +1,22 @@
 import { createStore } from "@peerbit/any-store";
 import { calculateRawCid } from "@peerbit/blocks-interface";
-import { randomBytes } from "@peerbit/crypto";
+import {
+	Ed25519Keypair,
+	Ed25519PublicKey,
+	X25519Keypair,
+	X25519PublicKey,
+	X25519SecretKey,
+	randomBytes,
+} from "@peerbit/crypto";
 import { toId } from "@peerbit/indexer-interface";
 import { create as createSQLiteIndices } from "@peerbit/indexer-sqlite3";
+import {
+	EntryType,
+	LamportClock,
+	ShallowEntry,
+	ShallowMeta,
+	Timestamp,
+} from "@peerbit/log";
 import { SilentDelivery } from "@peerbit/stream-interface";
 import { TestSession } from "@peerbit/test-utils";
 import { waitForResolved } from "@peerbit/time";
@@ -25,6 +39,8 @@ import { EventStore } from "./utils/stores/index.js";
 
 describe("append delivery options — persisted receipts", function () {
 	this.timeout(60_000);
+	const planningRecords = (log: any, entries: any[]) =>
+		entries.map((entry) => log.snapshotPersistedDeliveryPlanningEntry(entry));
 
 	let session: TestSession | undefined;
 	let directory: string | undefined;
@@ -34,8 +50,7 @@ describe("append delivery options — persisted receipts", function () {
 		storage: {
 			storeFactory: (storeDirectory?: string) => createStore(storeDirectory),
 		},
-		indexer: (indexDirectory?: string) =>
-			createSQLiteIndices(indexDirectory),
+		indexer: (indexDirectory?: string) => createSQLiteIndices(indexDirectory),
 	});
 
 	afterEach(async () => {
@@ -437,6 +452,578 @@ describe("append delivery options — persisted receipts", function () {
 		expect(writer.log.log.length).to.equal(0);
 	});
 
+	it("snapshots persisted options before asynchronous append work", async () => {
+		session = await TestSession.disconnected(1);
+		const writer = await session.peers[0].open(new EventStore<string, any>());
+		const log = writer.log as any;
+		const process = sinon.stub(log, "processLocalAppend").resolves();
+		const settle = sinon.stub(log, "settlePersistedDelivery").resolves();
+		const originalAbort = new AbortController();
+		const replacementAbort = new AbortController();
+		const delivery: any = {
+			reliability: "persisted",
+			minAcks: 2,
+			requireRecipients: true,
+			priority: 7,
+			timeout: 5_000,
+			signal: originalAbort.signal,
+		};
+		const options: any = {
+			target: "replicators",
+			replicate: false,
+			replicas: 2,
+			delivery,
+		};
+
+		try {
+			const pending = writer.add("snapshot-options", options);
+			delivery.reliability = "ack";
+			delivery.minAcks = 0;
+			delivery.requireRecipients = false;
+			delivery.priority = -1;
+			delivery.timeout = 1;
+			delivery.signal = replacementAbort.signal;
+			options.target = "none";
+			options.replicate = true;
+			options.replicas = 1;
+			await pending;
+
+			expect(process.callCount).to.equal(1);
+			expect(process.firstCall.args[2]).to.include({
+				target: "replicators",
+				replicate: false,
+				replicas: 2,
+			});
+			expect(process.firstCall.args[3].minReplicasValue).to.equal(2);
+			expect(settle.callCount).to.equal(1);
+			const captured = settle.firstCall.args[2];
+			expect(captured).to.include({
+				reliability: "persisted",
+				minAcks: 2,
+				requireRecipients: true,
+				priority: 7,
+				timeout: 5_000,
+			});
+			expect(captured.signal).to.equal(originalAbort.signal);
+			originalAbort.abort();
+			expect(captured.signal.aborted).to.equal(true);
+		} finally {
+			settle.restore();
+			process.restore();
+		}
+	});
+
+	it("reads hostile persisted option getters exactly once", async () => {
+		session = await TestSession.disconnected(1);
+		const writer = await session.peers[0].open(new EventStore<string, any>());
+		const log = writer.log as any;
+		const process = sinon.stub(log, "processLocalAppend").resolves();
+		const settle = sinon.stub(log, "settlePersistedDelivery").resolves();
+		const deliveryReads = new Map<PropertyKey, number>();
+		const optionReads = new Map<PropertyKey, number>();
+		const deliveryTarget = {
+			reliability: "persisted",
+			minAcks: 1,
+			requireRecipients: true,
+			priority: 3,
+			timeout: 5_000,
+			signal: new AbortController().signal,
+		};
+		const delivery = new Proxy(deliveryTarget, {
+			get(target, property, receiver) {
+				const reads = (deliveryReads.get(property) ?? 0) + 1;
+				deliveryReads.set(property, reads);
+				if (reads > 1) throw new Error(`delivery.${String(property)} reread`);
+				return Reflect.get(target, property, receiver);
+			},
+		});
+		const optionTarget = {
+			target: "replicators" as const,
+			replicate: false,
+			replicas: 1,
+			delivery,
+		};
+		Object.defineProperty(optionTarget, "unrelated", {
+			enumerable: true,
+			get() {
+				throw new Error("unrelated option getter was evaluated");
+			},
+		});
+		const options = new Proxy(optionTarget, {
+			get(target, property, receiver) {
+				const reads = (optionReads.get(property) ?? 0) + 1;
+				optionReads.set(property, reads);
+				if (reads > 1) throw new Error(`options.${String(property)} reread`);
+				return Reflect.get(target, property, receiver);
+			},
+		});
+
+		try {
+			await writer.add("proxy-options", options as any);
+			expect(optionReads.get("delivery")).to.equal(1);
+			for (const property of Reflect.ownKeys(deliveryTarget)) {
+				expect(deliveryReads.get(property), String(property)).to.equal(1);
+			}
+			expect(settle.firstCall.args[2].minAcks).to.equal(1);
+		} finally {
+			settle.restore();
+			process.restore();
+		}
+	});
+
+	it("deep-snapshots finite nested append option containers", async () => {
+		session = await TestSession.disconnected(1);
+		const writer = await session.peers[0].open(new EventStore<string, any>());
+		const canTrim = () => true;
+		const cacheId = () => "trim-cache";
+		const trim: any = {
+			type: "length",
+			to: 7,
+			from: 9,
+			filter: { canTrim, cacheId },
+		};
+		const keypair = await X25519Keypair.create();
+		const metaRecipient = (await Ed25519Keypair.create()).publicKey;
+		const payloadRecipient = await X25519PublicKey.create();
+		const signatureRecipient = await X25519PublicKey.create();
+		const keypairPublicBytes = Uint8Array.from(keypair.publicKey.publicKey);
+		const keypairSecretBytes = Uint8Array.from(keypair.secretKey.secretKey);
+		const metaRecipientBytes = Uint8Array.from(metaRecipient.publicKey);
+		const payloadRecipientBytes = Uint8Array.from(payloadRecipient.publicKey);
+		const signatureRecipientBytes = Uint8Array.from(
+			signatureRecipient.publicKey,
+		);
+		const signatureRecipients = { signer: [signatureRecipient] };
+		const receiver: any = {
+			meta: [metaRecipient],
+			payload: [payloadRecipient],
+			signatures: signatureRecipients,
+		};
+		const next = new ShallowEntry({
+			hash: "original-parent",
+			payloadSize: 17,
+			head: false,
+			meta: new ShallowMeta({
+				gid: "original-gid",
+				next: ["grandparent"],
+				type: EntryType.APPEND,
+				data: new Uint8Array([4, 5]),
+				clock: new LamportClock({
+					id: new Uint8Array([1, 2]),
+					timestamp: new Timestamp({ wallTime: 11n, logical: 3 }),
+				}),
+			}),
+		});
+		const options: any = {
+			delivery: false,
+			trim,
+			encryption: { keypair, receiver },
+			meta: { next: [next] },
+		};
+
+		const captured = (writer.log as any).snapshotDocumentAppendOptions(options);
+		trim.type = "time";
+		trim.to = 1;
+		trim.from = 1;
+		trim.filter.canTrim = () => false;
+		receiver.meta.push(await X25519PublicKey.create());
+		receiver.payload[0] = await X25519PublicKey.create();
+		signatureRecipients.signer.push(await X25519PublicKey.create());
+		keypair.publicKey.publicKey.fill(99);
+		keypair.secretKey.secretKey.fill(99);
+		metaRecipient.publicKey.fill(99);
+		payloadRecipient.publicKey.fill(99);
+		signatureRecipient.publicKey.fill(99);
+		next.hash = "mutated-parent";
+		next.payloadSize = 1;
+		next.head = true;
+		next.meta.gid = "mutated-gid";
+		next.meta.next[0] = "mutated-grandparent";
+		next.meta.data![0] = 99;
+		next.meta.clock.id[0] = 99;
+		next.meta.clock.timestamp.wallTime = 99n;
+		next.meta.clock.timestamp.logical = 99;
+
+		expect(captured.trim).to.deep.include({
+			type: "length",
+			to: 7,
+			from: 9,
+		});
+		expect(captured.trim.filter.canTrim).equal(canTrim);
+		expect(captured.trim.filter.cacheId).equal(cacheId);
+		expect(Object.isFrozen(captured.trim)).equal(true);
+		expect(Object.isFrozen(captured.trim.filter)).equal(true);
+		expect(captured.encryption.keypair).to.not.equal(keypair);
+		expect(captured.encryption.keypair.publicKey.publicKey).to.deep.equal(
+			keypairPublicBytes,
+		);
+		expect(captured.encryption.keypair.secretKey.secretKey).to.deep.equal(
+			keypairSecretBytes,
+		);
+		expect(captured.encryption.receiver.meta[0]).to.not.equal(metaRecipient);
+		expect(captured.encryption.receiver.meta[0].publicKey).to.deep.equal(
+			metaRecipientBytes,
+		);
+		expect(captured.encryption.receiver.payload[0]).to.not.equal(
+			payloadRecipient,
+		);
+		expect(captured.encryption.receiver.payload[0].publicKey).to.deep.equal(
+			payloadRecipientBytes,
+		);
+		expect(captured.encryption.receiver.signatures.signer[0]).to.not.equal(
+			signatureRecipient,
+		);
+		expect(
+			captured.encryption.receiver.signatures.signer[0].publicKey,
+		).to.deep.equal(signatureRecipientBytes);
+		expect(captured.encryption.receiver.meta).to.have.length(1);
+		expect(captured.encryption.receiver.payload).to.have.length(1);
+		expect(captured.encryption.receiver.signatures.signer).to.have.length(1);
+		expect(Object.isFrozen(captured.encryption)).equal(true);
+		expect(Object.isFrozen(captured.encryption.receiver)).equal(true);
+		expect(Object.isFrozen(captured.encryption.receiver.meta)).equal(true);
+		expect(
+			Object.isFrozen(captured.encryption.receiver.signatures.signer),
+		).equal(true);
+		const capturedNext = captured.meta.next[0] as ShallowEntry;
+		expect(capturedNext).to.not.equal(next);
+		expect(capturedNext.hash).equal("original-parent");
+		expect(capturedNext.payloadSize).equal(17);
+		expect(capturedNext.head).equal(false);
+		expect(capturedNext.meta.gid).equal("original-gid");
+		expect(capturedNext.meta.next).to.deep.equal(["grandparent"]);
+		expect(capturedNext.meta.data).to.deep.equal(new Uint8Array([4, 5]));
+		expect(capturedNext.meta.clock.id).to.deep.equal(new Uint8Array([1, 2]));
+		expect(capturedNext.meta.clock.timestamp.wallTime).equal(11n);
+		expect(capturedNext.meta.clock.timestamp.logical).equal(3);
+		expect(Object.isFrozen(capturedNext)).equal(true);
+		expect(Object.isFrozen(capturedNext.meta)).equal(true);
+	});
+
+	it("normalizes split-module crypto shapes in the lower Log", async () => {
+		session = await TestSession.disconnected(1);
+		const writer = await session.peers[0].open(new EventStore<string, any>());
+		const sender = await X25519Keypair.create();
+		const xRecipient = await X25519PublicKey.create();
+		const edRecipient = (await Ed25519Keypair.create()).publicKey;
+		class ForeignXPublicKey {
+			constructor(readonly publicKey: Uint8Array) {}
+			equals() {
+				return false;
+			}
+			hashcode() {
+				return "foreign-x";
+			}
+			toString() {
+				return "foreign-x";
+			}
+		}
+		class ForeignEdPublicKey extends ForeignXPublicKey {
+			toPeerId() {
+				throw new Error("classification must not invoke provider methods");
+			}
+		}
+		let signaturePublicKeyReads = 0;
+		const signatureRecipients: Record<string, unknown> = {
+			signer: [new ForeignXPublicKey(xRecipient.publicKey)],
+		};
+		Object.defineProperty(signatureRecipients, "publicKey", {
+			enumerable: true,
+			get() {
+				signaturePublicKeyReads++;
+				if (signaturePublicKeyReads > 1) {
+					throw new Error("signature recipient map key reread");
+				}
+				return [new ForeignXPublicKey(xRecipient.publicKey)];
+			},
+		});
+		const encryption: any = {
+			keypair: {
+				publicKey: new ForeignXPublicKey(sender.publicKey.publicKey),
+				secretKey: { secretKey: sender.secretKey.secretKey },
+			},
+			receiver: {
+				meta: [new ForeignEdPublicKey(edRecipient.publicKey)],
+				payload: new ForeignXPublicKey(xRecipient.publicKey),
+				signatures: signatureRecipients,
+			},
+		};
+		const lowerLog = writer.log.log as any;
+		const sharedLog = writer.log as any;
+		const snapshot = sinon.spy(
+			lowerLog,
+			"snapshotAppendEncryptionForTrustedCaller",
+		);
+		const process = sinon.stub(sharedLog, "processLocalAppend").resolves();
+		const settle = sinon.stub(sharedLog, "settlePersistedDelivery").resolves();
+
+		try {
+			await writer.add("split-module-encryption", {
+				target: "replicators",
+				delivery: { reliability: "persisted", minAcks: 1 },
+				encryption,
+			});
+			const captured = snapshot.firstCall.returnValue;
+			expect(captured.keypair).to.be.instanceOf(X25519Keypair);
+			expect(captured.keypair.publicKey).to.be.instanceOf(X25519PublicKey);
+			expect(captured.keypair.secretKey).to.be.instanceOf(X25519SecretKey);
+			expect(captured.receiver.meta[0]).to.be.instanceOf(Ed25519PublicKey);
+			expect(captured.receiver.payload).to.be.instanceOf(X25519PublicKey);
+			expect(captured.receiver.signatures.signer[0]).to.be.instanceOf(
+				X25519PublicKey,
+			);
+			expect(captured.receiver.signatures.publicKey[0]).to.be.instanceOf(
+				X25519PublicKey,
+			);
+			expect(signaturePublicKeyReads).to.equal(1);
+			expect(process.callCount).to.equal(1);
+			expect(settle.callCount).to.equal(1);
+		} finally {
+			settle.restore();
+			process.restore();
+			snapshot.restore();
+		}
+	});
+
+	it("reads explicit shallow-parent getters once", async () => {
+		session = await TestSession.disconnected(1);
+		const writer = await session.peers[0].open(new EventStore<string, any>());
+		const reads = new Map<string, number>();
+		const once = <T extends object>(name: string, value: T): T =>
+			new Proxy(value, {
+				get(target, property, receiver) {
+					const key = `${name}.${String(property)}`;
+					const count = (reads.get(key) ?? 0) + 1;
+					reads.set(key, count);
+					if (count > 1) throw new Error(`${key} reread`);
+					return Reflect.get(target, property, receiver);
+				},
+			});
+		const timestamp = once(
+			"timestamp",
+			new Timestamp({ wallTime: 17n, logical: 2 }),
+		);
+		const clock = once(
+			"clock",
+			new LamportClock({ id: new Uint8Array([7]), timestamp }),
+		);
+		const meta = once(
+			"meta",
+			new ShallowMeta({
+				gid: "getter-gid",
+				next: ["getter-grandparent"],
+				type: EntryType.APPEND,
+				data: new Uint8Array([8]),
+				clock,
+			}),
+		);
+		const next = once(
+			"next",
+			new ShallowEntry({
+				hash: "getter-parent",
+				payloadSize: 23,
+				head: false,
+				meta,
+			}),
+		);
+
+		const captured = (writer.log as any).snapshotDocumentAppendOptions({
+			delivery: false,
+			meta: { next: [next] },
+		});
+		expect(captured.meta.next[0].hash).to.equal("getter-parent");
+		for (const [property, count] of reads) {
+			expect(count, property).to.equal(1);
+		}
+	});
+
+	it("captures a hollow full parent hash once through an actual append", async () => {
+		session = await TestSession.disconnected(1);
+		const writer = await session.peers[0].open(new EventStore<string, any>());
+		const seed = (
+			await writer.add("hollow-parent-seed", {
+				target: "none",
+				meta: { next: [] },
+			})
+		).entry;
+		const canonicalHash = seed.hash;
+		let hashReads = 0;
+		const hollowParent = {
+			get hash() {
+				hashReads++;
+				if (hashReads > 1) throw new Error("hollow parent hash reread");
+				return canonicalHash;
+			},
+			meta: seed.meta,
+			payloadSize: seed.toShallow(true).payloadSize,
+			head: true,
+			size: seed.size,
+			createdLocally: seed.createdLocally,
+			init() {
+				return this;
+			},
+			getNext() {
+				return this.meta.next;
+			},
+			getClock() {
+				return this.meta.clock;
+			},
+			getStorageBytes(): Uint8Array {
+				throw new Error("hollow parent has no JS storage bytes");
+			},
+			verifySignatures() {
+				return true;
+			},
+		};
+		const sharedLog = writer.log as any;
+		const process = sinon.stub(sharedLog, "processLocalAppend").resolves();
+		const settle = sinon.stub(sharedLog, "settlePersistedDelivery").resolves();
+
+		try {
+			const child = await writer.add("hollow-parent-child", {
+				target: "replicators",
+				delivery: { reliability: "persisted", minAcks: 1 },
+				meta: { next: [hollowParent as any] },
+			});
+
+			expect(hashReads).to.equal(1);
+			expect(child.entry.meta.next).to.deep.equal([canonicalHash]);
+		} finally {
+			process.restore();
+			settle.restore();
+		}
+	});
+
+	it("keeps a detached full explicit parent available for missing-parent join", async () => {
+		session = await TestSession.disconnected(2);
+		const source = await session.peers[0].open(new EventStore<string, any>());
+		const target = await session.peers[1].open(new EventStore<string, any>());
+		const parent = (
+			await source.add("detached-full-parent", {
+				target: "none",
+				meta: { next: [] },
+			})
+		).entry;
+		const parentHash = parent.hash;
+		const parentGid = parent.meta.gid;
+		const lowerLog = target.log.log as any;
+		const sharedLog = target.log as any;
+		let entered!: () => void;
+		let release!: () => void;
+		const enteredPromise = new Promise<void>((resolve) => (entered = resolve));
+		const releasePromise = new Promise<void>((resolve) => (release = resolve));
+		const originalGetNexts = lowerLog.getNextsForAppend.bind(lowerLog);
+		const nextGate = sinon
+			.stub(lowerLog, "getNextsForAppend")
+			.callsFake(async (...args: unknown[]) => {
+				entered();
+				await releasePromise;
+				return originalGetNexts(...args);
+			});
+		const process = sinon.stub(sharedLog, "processLocalAppend").resolves();
+		const settle = sinon.stub(sharedLog, "settlePersistedDelivery").resolves();
+
+		try {
+			const pending = target.add("detached-full-child", {
+				target: "replicators",
+				delivery: { reliability: "persisted", minAcks: 1 },
+				meta: { next: [parent] },
+			});
+			await enteredPromise;
+			parent.hash = "caller-mutated-parent";
+			parent.meta.gid = "caller-mutated-gid";
+			parent.meta.next.push("caller-mutated-next");
+			parent.meta.clock.timestamp.wallTime = 999n;
+			release();
+			const child = await pending;
+
+			expect(child.entry.meta.next).to.deep.equal([parentHash]);
+			expect(child.entry.meta.gid).equal(parentGid);
+			expect(await target.log.log.has(parentHash)).equal(true);
+			expect(target.log.log.length).equal(2);
+			expect(process.callCount).equal(1);
+			expect(settle.callCount).equal(1);
+		} finally {
+			release();
+			nextGate.restore();
+			process.restore();
+			settle.restore();
+		}
+	});
+
+	for (const nativeGraph of [false, true]) {
+		it(`binds ${nativeGraph ? "native" : "generic"} callback-mutated entries to the committed CID`, async () => {
+			session = await TestSession.disconnected(1);
+			const writer = await session.peers[0].open(
+				new EventStore<string, any>(),
+				{ args: { nativeGraph } },
+			);
+			const log = writer.log as any;
+			const process = sinon.stub(log, "processLocalAppend").resolves();
+			const settle = sinon.stub(log, "settlePersistedDelivery").resolves();
+			let committed:
+				| { hash: string; gid: string; next: string[]; wallTime: bigint }
+				| undefined;
+
+			try {
+				await writer.add(`callback-decoy-${nativeGraph}`, {
+					target: "replicators",
+					delivery: {
+						reliability: "persisted",
+						minAcks: 1,
+						timeout: 5_000,
+					},
+					onChange: (change) => {
+						const entry = change.added[0]!.entry;
+						committed = {
+							hash: entry.hash,
+							gid: entry.meta.gid,
+							next: [...entry.meta.next],
+							wallTime: entry.meta.clock.timestamp.wallTime,
+						};
+						entry.hash = "decoy-cid";
+						entry.meta.gid = "decoy-gid";
+						entry.meta.next.push("decoy-parent");
+						entry.meta.clock.timestamp.wallTime = 0n;
+					},
+				});
+
+				expect(committed).to.exist;
+				const record = settle.firstCall.args[0][0];
+				expect(record.canonicalHash).to.equal(committed!.hash);
+				const shallow = record.createDefaultPlanningSource();
+				expect(shallow.hash).to.equal(committed!.hash);
+				expect(shallow.meta.gid).to.equal(committed!.gid);
+				expect(shallow.meta.next).to.deep.equal(committed!.next);
+				expect(shallow.meta.clock.timestamp.wallTime).to.equal(
+					committed!.wallTime,
+				);
+				const full = record.createFullPlanningSource();
+				expect(full.hash).to.equal(committed!.hash);
+				expect(full.meta.gid).to.equal(committed!.gid);
+			} finally {
+				settle.restore();
+				process.restore();
+			}
+		});
+	}
+
+	it("does no committed-entry snapshot work for non-persisted appends", async () => {
+		session = await TestSession.disconnected(1);
+		const writer = await session.peers[0].open(new EventStore<string, any>());
+		const log = writer.log as any;
+		const capture = sinon.spy(log, "capturePersistedLocalAppendCommit");
+		try {
+			await writer.add("ordinary-ack", {
+				target: "none",
+				delivery: { reliability: "ack", minAcks: 1 },
+			});
+			expect(capture.callCount).to.equal(0);
+		} finally {
+			capture.restore();
+		}
+	});
+
 	it("classifies a callback failure after the local commit as retry-unsafe", async () => {
 		session = await TestSession.disconnected(1);
 		const writer = await session.peers[0].open(new EventStore<string, any>());
@@ -754,7 +1341,7 @@ describe("append delivery options — persisted receipts", function () {
 
 		try {
 			await expect(
-				log.settlePersistedDelivery([entry], 1, {
+				log.settlePersistedDelivery(planningRecords(log, [entry]), 1, {
 					reliability: "persisted",
 					minAcks: 1,
 					timeout: 150,
@@ -1406,7 +1993,7 @@ describe("append delivery options — persisted receipts", function () {
 
 		try {
 			const started = Date.now();
-			await log.settlePersistedDelivery([entry], 1, {
+			await log.settlePersistedDelivery(planningRecords(log, [entry]), 1, {
 				reliability: "persisted",
 				minAcks: 1,
 				timeout: 1_000,
@@ -1474,7 +2061,7 @@ describe("append delivery options — persisted receipts", function () {
 		let settled = false;
 		try {
 			const settlement = log
-				.settlePersistedDelivery([entry], 2, {
+				.settlePersistedDelivery(planningRecords(log, [entry]), 2, {
 					reliability: "persisted",
 					minAcks: 2,
 					timeout: 1_000,
@@ -1556,11 +2143,15 @@ describe("append delivery options — persisted receipts", function () {
 		let settled = false;
 		try {
 			const settlement = log
-				.settlePersistedDelivery([first.entry, second.entry], 1, {
-					reliability: "persisted",
-					minAcks: 1,
-					timeout: 1_000,
-				})
+				.settlePersistedDelivery(
+					planningRecords(log, [first.entry, second.entry]),
+					1,
+					{
+						reliability: "persisted",
+						minAcks: 1,
+						timeout: 1_000,
+					},
+				)
 				.then(() => {
 					settled = true;
 				});
@@ -1786,7 +2377,7 @@ describe("append delivery options — persisted receipts", function () {
 		let settled = false;
 		try {
 			const settlement = log
-				.settlePersistedDelivery([entry], 1, {
+				.settlePersistedDelivery(planningRecords(log, [entry]), 1, {
 					reliability: "persisted",
 					minAcks: 1,
 					timeout: 1_000,
@@ -1859,11 +2450,15 @@ describe("append delivery options — persisted receipts", function () {
 			});
 
 		try {
-			await log.settlePersistedDelivery([first.entry, second.entry], 1, {
-				reliability: "persisted",
-				minAcks: 1,
-				timeout: 5_000,
-			});
+			await log.settlePersistedDelivery(
+				planningRecords(log, [first.entry, second.entry]),
+				1,
+				{
+					reliability: "persisted",
+					minAcks: 1,
+					timeout: 5_000,
+				},
+			);
 			expect(
 				request.getCalls().map((call) => ({
 					hashes: call.args[0].hashes,
@@ -2026,11 +2621,13 @@ describe("append delivery options — persisted receipts", function () {
 		const planLeaders = sinon
 			.stub(log, "planPersistedDeliveryLeaders")
 			.callsFake(async (...args: unknown[]) => {
-				const plannedEntries = args[0] as Array<{ hash: string }>;
+				const plannedEntries = args[0] as Array<{ canonicalHash: string }>;
 				events.push("plan");
 				return plannedEntries.map(
 					(entry) =>
-						new Map([[peersByHash.get(entry.hash)!, { intersecting: true }]]),
+						new Map([
+							[peersByHash.get(entry.canonicalHash)!, { intersecting: true }],
+						]),
 				);
 			});
 		const peerSession = sinon
@@ -2123,7 +2720,7 @@ describe("append delivery options — persisted receipts", function () {
 		try {
 			const lifecycle = log.captureReplicationOwnershipLifecycle();
 			const planned = await log.planPersistedDeliveryLeaders(
-				entries,
+				planningRecords(log, entries),
 				1,
 				lifecycle,
 			);
@@ -2140,7 +2737,7 @@ describe("append delivery options — persisted receipts", function () {
 
 			nativePlan.returns([nativeLeaders[0]]);
 			const fallbackPlanned = await log.planPersistedDeliveryLeaders(
-				entries,
+				planningRecords(log, entries),
 				1,
 				lifecycle,
 			);
@@ -2183,7 +2780,7 @@ describe("append delivery options — persisted receipts", function () {
 		try {
 			const lifecycle = log.captureReplicationOwnershipLifecycle();
 			const planned = await log.planPersistedDeliveryLeaders(
-				entries,
+				planningRecords(log, entries),
 				1,
 				lifecycle,
 			);
@@ -2202,7 +2799,7 @@ describe("append delivery options — persisted receipts", function () {
 
 			fullReplicaPlan.returns(undefined);
 			const sampled = await log.planPersistedDeliveryLeaders(
-				entries,
+				planningRecords(log, entries),
 				1,
 				lifecycle,
 			);
@@ -2227,22 +2824,61 @@ describe("append delivery options — persisted receipts", function () {
 		let materializationCount = 0;
 
 		try {
-			const planningEntries = log.createPersistedDeliveryPlanningEntries(
-				[
-					{
-						hash: entry.hash,
-						coordinateFields: { hash: entry.hash },
-					},
-				],
+			const records = log.createPersistedDeliveryPlanningRecords(
+				[log.createPreparedLocalAppendCommit(entry)],
 				() => {
 					materializationCount++;
 					return [entry];
 				},
 			);
 			expect(materializationCount).equal(1);
-			expect(planningEntries).to.deep.equal([entry]);
+			expect(records).to.have.length(1);
+			const planned = records[0].createFullPlanningSource();
+			expect(planned).to.not.equal(entry);
+			expect(planned.hash).to.equal(entry.hash);
 		} finally {
 			customLeaderHook.restore();
+		}
+	});
+
+	it("gives a mutating custom planner a fresh canonical entry on every replan", async () => {
+		session = await TestSession.disconnected(1);
+		const writer = await session.peers[0].open(new EventStore<string, any>());
+		const { entry } = await writer.add("custom-planner-replan", {
+			target: "none",
+		});
+		const log = writer.log as any;
+		const record = log.snapshotPersistedDeliveryPlanningEntry(entry);
+		const observed: Array<{ source: object; hash: string; gid: string }> = [];
+		const planner = sinon
+			.stub(log, "findLeadersFromEntry")
+			.callsFake(async (source: any) => {
+				observed.push({
+					source,
+					hash: source.hash,
+					gid: source.meta.gid,
+				});
+				source.hash = "planner-decoy";
+				source.meta.gid = "planner-decoy-gid";
+				return new Map([["leader", { intersecting: true }]]);
+			});
+
+		try {
+			const lifecycle = log.captureReplicationOwnershipLifecycle();
+			await log.planPersistedDeliveryLeaders([record], 1, lifecycle);
+			await log.planPersistedDeliveryLeaders([record], 1, lifecycle);
+			expect(observed).to.have.length(2);
+			expect(observed[0]!.source).to.not.equal(observed[1]!.source);
+			expect(observed.map(({ hash }) => hash)).to.deep.equal([
+				entry.hash,
+				entry.hash,
+			]);
+			expect(observed.map(({ gid }) => gid)).to.deep.equal([
+				entry.meta.gid,
+				entry.meta.gid,
+			]);
+		} finally {
+			planner.restore();
 		}
 	});
 
@@ -2381,7 +3017,10 @@ describe("append delivery options — persisted receipts", function () {
 			peerSession: { peer },
 		};
 		const entries = Array.from({ length: 8_193 }, (_, index) => ({
-			hash: `synthetic-${index}`,
+			canonicalHash: `synthetic-${index}`,
+			createDefaultPlanningSource: () => {
+				throw new Error("leader planner is stubbed in this test");
+			},
 		}));
 		const leaders = new Map([[peer, {}]]);
 		const plan = sinon

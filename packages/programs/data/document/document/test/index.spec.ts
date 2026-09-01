@@ -9359,6 +9359,11 @@ describe("index", () => {
 								message: "per-call onChange",
 							},
 							{
+								name: "encryption",
+								options: { encryption: {} },
+								message: "encryption",
+							},
+							{
 								name: "replicas",
 								options: { replicas: 0 },
 								message: "per-call replicas",

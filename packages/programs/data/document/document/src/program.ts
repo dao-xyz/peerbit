@@ -837,9 +837,10 @@ const persistedDocumentAppendDelivery = new WeakMap<
 
 type TrustedDocumentSharedLog = {
 	finishNativeStrictDurableDocumentRecovery(): Promise<void>;
-	assertPersistedDeliveryOptions(
-		options?: SharedAppendOptions<Operation>,
-	): void;
+	snapshotDocumentAppendOptions(
+		options?: DocumentPutOptions,
+		validateCapturedOptions?: (options: DocumentPutOptions) => void,
+	): DocumentPutOptions | undefined;
 	deliverPersistedEntries(
 		entries: Entry<Operation>[],
 		options: SharedAppendOptions<Operation>,
@@ -3389,16 +3390,21 @@ export class Documents<
 		doc: T,
 		options?: DocumentPutOptions,
 	): Promise<DocumentPutResult> {
-		if (hasPersistedDelivery(options)) {
-			asTrustedDocumentSharedLog(this.log).assertPersistedDeliveryOptions(
-				options,
-			);
-		}
+		options = asTrustedDocumentSharedLog(
+			this.log,
+		).snapshotDocumentAppendOptions(
+			options,
+			this.isNativeMode()
+				? (capturedOptions) => {
+						if (capturedOptions.encryption) {
+							this.assertNativeModePlainPutSupported(doc, capturedOptions);
+						}
+					}
+				: undefined,
+		);
+		const persistedRequested = hasPersistedDelivery(options);
 		const result = await this._documentBackend.put(doc, options);
-		if (
-			!hasPersistedDelivery(options) ||
-			persistedDeliveryAlreadySettled.has(result)
-		) {
+		if (!persistedRequested || persistedDeliveryAlreadySettled.has(result)) {
 			return result;
 		}
 		const entry = result.entry;
@@ -3528,13 +3534,21 @@ export class Documents<
 		docs: T[],
 		options?: DocumentPutOptions,
 	): Promise<DocumentPutManyResult> {
-		if (hasPersistedDelivery(options)) {
-			asTrustedDocumentSharedLog(this.log).assertPersistedDeliveryOptions(
-				options,
-			);
-		}
+		options = asTrustedDocumentSharedLog(
+			this.log,
+		).snapshotDocumentAppendOptions(
+			options,
+			this.isNativeMode() && docs.length > 0
+				? (capturedOptions) => {
+						if (capturedOptions.encryption) {
+							this.assertNativeModePlainPutSupported(docs[0]!, capturedOptions);
+						}
+					}
+				: undefined,
+		);
+		const persistedRequested = hasPersistedDelivery(options);
 		const result = await this._documentBackend.putMany(docs, options);
-		if (!hasPersistedDelivery(options)) {
+		if (!persistedRequested) {
 			return result;
 		}
 		const appendDelivery = persistedDocumentAppendDelivery.get(result);
@@ -3620,7 +3634,10 @@ export class Documents<
 		const entries: Entry<Operation>[] = [];
 		const removed: ShallowOrFullEntry<Operation>[] = [];
 		for (const doc of docs) {
-			const appended = await this.put(doc, options);
+			// The public putMany boundary already owns this invocation snapshot. This
+			// fallback is non-persisted, so call the backend directly and reuse the one
+			// captured option set across every child rather than recapturing it per item.
+			const appended = await this._documentBackend.put(doc, options);
 			entries.push(appended.entry);
 			removed.push(...appended.removed);
 		}
