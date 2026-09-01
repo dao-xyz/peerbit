@@ -1,5 +1,11 @@
 # Changelog
 
+## 6.0.117
+
+### Patch Changes
+
+- [#1391](https://github.com/dao-xyz/peerbit/pull/1391) [`fd2e7dc`](https://github.com/dao-xyz/peerbit/commit/fd2e7dc1c2ce9ccb92c93c817a4397260235a9ac) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Add an internal callback-scoped lease for an authenticated accepted Trusted Network v2 policy prefix.
+
 ## 6.0.116
 
 ### Patch Changes
