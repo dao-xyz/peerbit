@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.0.108
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @peerbit/document@15.0.20
+  - @peerbit/document-interface@3.2.72
+  - @peerbit/shared-log-proxy@2.0.104
+
 ## 2.0.107
 
 ### Patch Changes
