@@ -1,5 +1,14 @@
 # Changelog
 
+## 15.0.20
+
+### Patch Changes
+
+- Updated dependencies [[`246da91`](https://github.com/dao-xyz/peerbit/commit/246da91ada8d1a27b36aabff7cf6bd5622932fc2)]:
+  - @peerbit/log@6.2.29
+  - @peerbit/document-interface@3.2.72
+  - @peerbit/shared-log@16.0.19
+
 ## 15.0.19
 
 ### Patch Changes

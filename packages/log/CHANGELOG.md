@@ -1,5 +1,12 @@
 # Changelog
 
+## 6.2.29
+
+### Patch Changes
+
+- [#1389](https://github.com/dao-xyz/peerbit/pull/1389) [`246da91`](https://github.com/dao-xyz/peerbit/commit/246da91ada8d1a27b36aabff7cf6bd5622932fc2) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Add a bounded, CID-verified raw EntryV0 causal-reachability primitive with
+  deterministic, scalable frontier traversal.
+
 ## 6.2.28
 
 ### Patch Changes
