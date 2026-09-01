@@ -479,41 +479,43 @@ revocation or fork. Restoring an older complete storage snapshot can still roll
 back that local anchor; preventing operator-level snapshot rollback requires an
 external monotonic anchor and is not claimed by this protocol.
 
-The initial internal policy-anchor implementation uses Peerbit's generic
-crash-safe store capability. It fails closed when that capability or its
-physical durability barrier is absent; `persisted()` alone is not sufficient.
-The reducer publishes a new authorization projection only after every
-immutable, checksummed state or direct-child-observation generation has crossed
-its durability barrier. Reopen crosses a fresh barrier, validates the complete
-contiguous generation chain, re-authenticates the exact retained policy-entry
-bytes, and restores `UNAVAILABLE` or `FORKED` without serving authorization in
-either state. Candidate-only missing-parent work remains intentionally
-ephemeral.
+The initial internal policy anchor uses Peerbit's generic crash-safe two-slot
+checkpoint over a dedicated descriptor-scoped store or sublevel. It fails
+closed unless the backend advertises atomic durable replacement; `persisted()`
+or a flush barrier alone is not sufficient. The reducer constructs and
+validates a complete replacement snapshot, then publishes its new authorization
+projection only after the atomic replacement resolves. Reopen crosses a fresh
+physical barrier, validates both present linked slots, re-authenticates the
+exact retained policy-entry bytes, and restores `UNAVAILABLE` or `FORKED`
+without serving authorization in either state. Candidate-only missing-parent
+work remains intentionally ephemeral.
 
-Anchor format 2 makes a `FORKED` state commit to the expected proof count and a
-descriptor-bound digest of the exact canonicalized proof bytes. A crash or
-failure after the state generation but before all promised observation
-generations therefore leaves a durable, explicitly incomplete prefix that
-reopen rejects. Commitment corruption, missing proofs, extra proofs, and
-duplicate proof generations all fail closed. This internal format deliberately
-rejects earlier anchor records; it has no migration fallback while v2 remains
+The application checkpoint scope binds the policy-anchor owner, payload-format
+version, and exact network descriptor. A `FORKED` payload contains its common
+parent plus the complete canonical set of at most 66 exact child observations
+in one atomic replacement. A crash can therefore expose only the complete
+previous payload or the complete fork payload, never a committed partial proof
+prefix. Malformed, mixed, unrelated, oversized, duplicate, reordered, or
+semantically invalid evidence fails closed. Earlier append-generation records
+are explicitly rejected; there is no migration fallback while v2 remains
 non-activatable.
 
-This first anchor format assumes one writer owns a descriptor-scoped store. It
-does not claim multi-process compare-and-swap, compaction, or protection from
-operator rollback of the whole storage snapshot. Backends that do not advertise
-the generic crash-safe barrier remain unsupported instead of receiving a weaker
+This checkpoint assumes one writer owns the dedicated store. It does not claim
+multi-process compare-and-swap, writer authentication, protection from replay
+of a coherent older whole-storage snapshot, or a protocol bound on physical
+LevelDB files before compaction. Backends that do not advertise atomic durable
+replacement remain unsupported instead of receiving a weaker
 TrustedNetwork-specific persistence fallback.
 
 The pending-policy ceiling is protocol-fixed at 64. The transition to `FORKED`
 can therefore retain at most those 64 children plus the accepted and triggering
-children: 66 exact child proofs in total. The state generation carries the
-canonical two and at most 64 self-contained observation generations retain the
-rest. After that complete transition crosses its barriers and publishes
-`FORKED`, the durable reducer returns a constant-size halted result before entry
-capture, head projection, authentication, resolution, core mutation, or store
-access. Reopen uses a temporary map of at most 66 proof hashes and exact bytes
-to verify the complete-set commitment, then discards it before returning the
+children: 66 exact child proofs in total. The common parent and complete proof
+set occupy one self-contained payload bounded at 8,782,137 bytes, including
+canonical framing. After that replacement is durable and `FORKED` publishes,
+the reducer returns a constant-size halted result before entry capture, head
+projection, authentication, resolution, core mutation, or store access. Reopen
+uses temporary bounded evidence to verify and derive the canonical two
+children, then releases the full checkpoint payload before returning the
 terminal reducer.
 
 Before `FORKED`, the durable wrapper also bounds admissions retained behind a
@@ -529,11 +531,12 @@ uses the intrinsic typed-array set operation, so subclasses, shadowed
 `byteLength`, custom iterators, proxies, and detached views cannot bypass either
 the 128 KiB entry ceiling or the wrapper accounting.
 
-This bounds the authority-equivocation side of the anchor, but ordinary ACTIVE
-and UNAVAILABLE state generations remain append-only until the generic
-authenticated checkpoint and truncation primitive exists. The implementation
-therefore remains internal and non-activatable while that and the other resource
-enforcement gates are incomplete.
+This bounds ordinary `ACTIVE` and `UNAVAILABLE` anchor history to two logical
+keys as well as bounding authority-equivocation evidence. It does not truncate
+resource logs, compact tombstones, or provide the wider authenticated
+projection checkpoint required by protected resources. The implementation
+therefore remains internal and non-activatable while those resource-enforcement
+gates are incomplete.
 
 ## Confidentiality boundary
 
@@ -595,9 +598,10 @@ The implementation target is:
 - reader rotation: `O(current readers for that resource)`;
 - direct publisher fanout: bounded, while total dissemination still scales
   with recipients;
-- policy-fork evidence: at most 66 exact child proofs and 65 fork-transition
-  generations, followed by constant-time, constant-size rejection with no entry,
-  projection, authentication, resolver, core, store, or retained-state work;
+- policy-fork evidence: at most 66 exact child proofs in one complete bounded
+  checkpoint payload, followed by constant-time, constant-size rejection with
+  no entry, projection, authentication, resolver, core, store, or retained-state
+  work;
 - durable policy admission buffering: at most 64 unsettled calls and 256 KiB of
   copied entry bytes;
 - fence creation: `O(current heads)` until a generic bounded merge/frontier
@@ -605,11 +609,12 @@ The implementation target is:
 - revalidation: entries since the last stable common fence, which is not a
   worst-case constant bound.
 
-Durable policy and resource history remains unbounded until generic checkpoint
-truncation exists. Older snapshots may be removed only after all retained
-fences and historical operations that reference them are covered by an
-authenticated projection checkpoint and the storage layer proves the prefix is
-safe to remove. V2 must use that generic primitive rather than add a
+The policy anchor is now logically bounded by the generic two-slot checkpoint,
+but durable resource history remains unbounded until safe log truncation exists.
+Older resource snapshots may be removed only after all retained fences and
+historical operations that reference them are covered by an authenticated
+projection checkpoint and the storage layer proves the prefix is safe to
+remove. V2 must use that generic primitive rather than add a
 TrustedNetwork-specific history store.
 
 ## Required implementation gates
@@ -682,8 +687,8 @@ TrustedNetwork-specific history store.
 4. Integrate one protected resource with causal fences and deterministic
    revalidation.
 5. Add epoch-key encryption and reader rotation.
-6. Add generic checkpoint truncation, bounded-state benchmarks, and wider
-   consumer integrations.
+6. Extend generic checkpoints and safe truncation to protected-resource
+   projections, add bounded-state benchmarks, and widen consumer integrations.
 
 Each implementation step should be independently reviewable and measured. No
 step should revive or merge the historical custody/rebalance stack wholesale.

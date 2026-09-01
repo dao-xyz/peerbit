@@ -10,7 +10,7 @@ type WireFixture = {
 	alice: string;
 	bob: string;
 	activeDigest: string;
-	childEntries: string[];
+	forkObservationEntries: string[];
 	canonicalChildDigests: string[];
 	roles: {
 		authority: number;
@@ -22,8 +22,8 @@ type WireFixture = {
 type WriterMessage = {
 	event:
 		| "acknowledged-active"
-		| "fenced-incomplete-fork"
-		| "acknowledged-complete-fork";
+		| "fork-replacement-entered"
+		| "fork-replacement-durable";
 	fixture: WireFixture;
 };
 
@@ -33,7 +33,7 @@ type ActiveRecoveryMessage = {
 	sequence?: string;
 	digest?: string;
 	resolverCalls: number;
-	generationCount: number;
+	checkpointKeyCount: number;
 	authorityRoles: number;
 	aliceRoles: number;
 	bobRoles: number;
@@ -49,13 +49,18 @@ type ForkRecoveryMessage = {
 	commonParentSequence?: string;
 	canonicalDigests?: string[];
 	resolverCalls: number;
-	generationCount: number;
+	checkpointKeyCount: number;
+	retainedObservationCount: number;
 };
 
-type IncompleteForkRecoveryMessage = {
-	event: "rejected-incomplete-fork";
-	message: string;
+type PriorForkRecoveryMessage = {
+	event: "reopened-prior-fork-state";
+	state: string;
+	sequence?: string;
+	digest?: string;
 	resolverCalls: number;
+	checkpointKeyCount: number;
+	aliceReader: boolean;
 };
 
 const waitForMessage = <T extends { event: string }>(
@@ -193,9 +198,12 @@ const terminate = async (child: ChildProcess | undefined): Promise<void> => {
 };
 
 const runScenario = async <T extends { event: string }>(properties: {
-	writeMode: "write-active" | "write-incomplete-fork" | "write-complete-fork";
+	writeMode:
+		| "write-active"
+		| "write-before-fork-replacement"
+		| "write-after-fork-replacement";
 	writeEvent: WriterMessage["event"];
-	readMode: "read-active" | "read-incomplete-fork" | "read-complete-fork";
+	readMode: "read-active" | "read-prior-fork-state" | "read-complete-fork";
 	readEvent: T["event"];
 }): Promise<{ fixture: WireFixture; reopened: T }> => {
 	const directory = await fs.mkdtemp(
@@ -285,7 +293,7 @@ const runScenario = async <T extends { event: string }>(properties: {
 describe("TrustedNetwork v2 durable policy anchor hard-kill recovery", function () {
 	this.timeout(120_000);
 
-	it("reopens an acknowledged ACTIVE generation after SIGKILL", async function () {
+	it("reopens an acknowledged ACTIVE checkpoint after SIGKILL", async function () {
 		if (process.platform === "win32") this.skip();
 		const { fixture, reopened } = await runScenario<ActiveRecoveryMessage>({
 			writeMode: "write-active",
@@ -300,7 +308,7 @@ describe("TrustedNetwork v2 durable policy anchor hard-kill recovery", function 
 			sequence: "1",
 			digest: fixture.activeDigest,
 			resolverCalls: 0,
-			generationCount: 2,
+			checkpointKeyCount: 2,
 			authorityRoles: fixture.roles.authority,
 			aliceRoles: fixture.roles.alice,
 			bobRoles: fixture.roles.bob,
@@ -311,27 +319,31 @@ describe("TrustedNetwork v2 durable policy anchor hard-kill recovery", function 
 		});
 	});
 
-	it("rejects an incomplete committed FORKED set after SIGKILL", async function () {
+	it("reopens the complete prior state when killed before fork replacement", async function () {
 		if (process.platform === "win32") this.skip();
-		const { reopened } = await runScenario<IncompleteForkRecoveryMessage>({
-			writeMode: "write-incomplete-fork",
-			writeEvent: "fenced-incomplete-fork",
-			readMode: "read-incomplete-fork",
-			readEvent: "rejected-incomplete-fork",
+		const { fixture, reopened } = await runScenario<PriorForkRecoveryMessage>({
+			writeMode: "write-before-fork-replacement",
+			writeEvent: "fork-replacement-entered",
+			readMode: "read-prior-fork-state",
+			readEvent: "reopened-prior-fork-state",
 		});
 
-		expect(reopened.event).to.equal("rejected-incomplete-fork");
-		expect(reopened.message).to.match(
-			/Policy fork evidence is incomplete: expected 4, restored 3/,
-		);
-		expect(reopened.resolverCalls).to.equal(0);
+		expect(reopened).to.deep.equal({
+			event: "reopened-prior-fork-state",
+			state: "UNAVAILABLE",
+			sequence: "1",
+			digest: fixture.activeDigest,
+			resolverCalls: 0,
+			checkpointKeyCount: 2,
+			aliceReader: false,
+		});
 	});
 
-	it("reopens complete bounded FORKED evidence after SIGKILL", async function () {
+	it("reopens complete FORKED evidence when killed after durable replacement but before publication", async function () {
 		if (process.platform === "win32") this.skip();
 		const { fixture, reopened } = await runScenario<ForkRecoveryMessage>({
-			writeMode: "write-complete-fork",
-			writeEvent: "acknowledged-complete-fork",
+			writeMode: "write-after-fork-replacement",
+			writeEvent: "fork-replacement-durable",
 			readMode: "read-complete-fork",
 			readEvent: "reopened-complete-fork",
 		});
@@ -342,7 +354,8 @@ describe("TrustedNetwork v2 durable policy anchor hard-kill recovery", function 
 			commonParentSequence: "0",
 			canonicalDigests: fixture.canonicalChildDigests.slice(0, 2),
 			resolverCalls: 0,
-			generationCount: 3,
+			checkpointKeyCount: 2,
+			retainedObservationCount: 5,
 		});
 	});
 });
