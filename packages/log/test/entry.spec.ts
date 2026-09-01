@@ -1,6 +1,7 @@
 import { deserialize, field, serialize, variant } from "@dao-xyz/borsh";
 import { AnyBlockStore, type BlockStore } from "@peerbit/blocks";
 import {
+	DecryptedThing,
 	Ed25519PublicKey,
 	X25519Keypair,
 	sha256Base64Sync,
@@ -10,8 +11,12 @@ import { expect } from "chai";
 import sodium from "libsodium-wrappers";
 import { LamportClock, Timestamp } from "../src/clock.js";
 import { createEntry } from "../src/entry-create.js";
+import {
+	EntryV0,
+	Signatures,
+	verifyEntryV0Ed25519BatchFromEntries,
+} from "../src/entry-v0.js";
 import { Entry } from "../src/entry.js";
-import { EntryV0 } from "../src/entry-v0.js";
 import { Payload } from "../src/payload.js";
 import { signKey } from "./fixtures/privateKey.js";
 import { JSON_ENCODING } from "./utils/encoding.js";
@@ -73,6 +78,114 @@ describe("entry", function () {
 				Array.from(serialize(entry)),
 			);
 			entry.hash = hash;
+		});
+	});
+
+	describe("EntryV0 reserved bytes", () => {
+		const source = async (): Promise<EntryV0<any>> =>
+			(await createEntry({
+				store,
+				identity: signKey,
+				data: new Uint8Array([1]),
+			})) as EntryV0<any>;
+
+		const instantiate = (
+			entry: EntryV0<any>,
+			reserved?: unknown,
+		): EntryV0<any> =>
+			new EntryV0({
+				meta: entry._meta,
+				payload: entry._payload,
+				reserved: reserved as Uint8Array | undefined,
+			});
+
+		it("defaults every entry to fresh zeroed reserved bytes", async () => {
+			const entry = await source();
+			const first = instantiate(entry);
+			const second = instantiate(entry);
+
+			expect(Array.from(first._reserved!)).to.deep.equal([0, 0, 0, 0]);
+			expect(Array.from(second._reserved!)).to.deep.equal([0, 0, 0, 0]);
+			expect(first._reserved).not.to.equal(second._reserved);
+		});
+
+		it("preserves nonzero bytes without retaining the caller's view", async () => {
+			const entry = await source();
+			const backing = new Uint8Array([9, 1, 2, 3, 4, 9]);
+			const reserved = backing.subarray(1, 5);
+			const withReserved = instantiate(entry, reserved);
+
+			expect(Array.from(withReserved._reserved!)).to.deep.equal([1, 2, 3, 4]);
+			expect(withReserved._reserved).not.to.equal(reserved);
+			backing.fill(9);
+			expect(Array.from(withReserved._reserved!)).to.deep.equal([1, 2, 3, 4]);
+		});
+
+		it("copies cross-realm and hostile Uint8Array subclasses intrinsically", async () => {
+			const entry = await source();
+			let byteLengthCalls = 0;
+			let iteratorCalls = 0;
+			let speciesCalls = 0;
+			class HostileReserved extends Uint8Array {
+				static get [Symbol.species]() {
+					speciesCalls++;
+					throw new Error("species must not run");
+				}
+
+				override [Symbol.iterator](): ArrayIterator<number> {
+					iteratorCalls++;
+					throw new Error("iterator must not run");
+				}
+			}
+			const hostile = new HostileReserved([4, 3, 2, 1]);
+			Object.defineProperty(hostile, "byteLength", {
+				get: () => {
+					byteLengthCalls++;
+					return 1;
+				},
+			});
+			const hostileCopy = instantiate(entry, hostile);
+			expect(Array.from(hostileCopy._reserved!)).to.deep.equal([4, 3, 2, 1]);
+			expect(byteLengthCalls).to.equal(0);
+			expect(iteratorCalls).to.equal(0);
+			expect(speciesCalls).to.equal(0);
+
+			const { runInNewContext } = await import("node:vm");
+			const crossRealm = runInNewContext(
+				"new Uint8Array([5, 6, 7, 8])",
+			) as Uint8Array;
+			const crossRealmCopy = instantiate(entry, crossRealm);
+			crossRealm.fill(0);
+			expect(Array.from(crossRealmCopy._reserved!)).to.deep.equal([5, 6, 7, 8]);
+		});
+
+		it("rejects malformed, forged, proxied, and detached views", async () => {
+			const entry = await source();
+			for (const malformed of [
+				new Uint8Array(0),
+				new Uint8Array(3),
+				new Uint8Array(5),
+				new Uint16Array(2),
+				new DataView(new ArrayBuffer(4)),
+				{ byteLength: 4, 0: 0, 1: 0, 2: 0, 3: 0 },
+				new Proxy(new Uint8Array(4), {}),
+			]) {
+				expect(() => instantiate(entry, malformed)).to.throw();
+			}
+
+			const shadowed = new Uint8Array(3);
+			Object.defineProperty(shadowed, "byteLength", { value: 4 });
+			expect(() => instantiate(entry, shadowed)).to.throw(
+				RangeError,
+				"exactly 4 bytes",
+			);
+
+			const detached = new Uint8Array(4);
+			structuredClone(detached.buffer, { transfer: [detached.buffer] });
+			expect(() => instantiate(entry, detached)).to.throw(
+				TypeError,
+				"must not be detached",
+			);
 		});
 	});
 
@@ -694,6 +807,73 @@ describe("entry", function () {
 				entry1.signatures[0].signature.length,
 			);
 			expect(await entry1.verifySignatures()).to.be.false;
+		});
+
+		it("covers the reserved bytes", async () => {
+			const entry = (await createEntry({
+				store,
+				identity: signKey,
+				data: new Uint8Array([1]),
+			})) as EntryV0<Uint8Array>;
+
+			expect(await entry.verifySignatures()).to.be.true;
+			entry._reserved![0] ^= 1;
+			expect(await entry.verifySignatures()).to.be.false;
+		});
+
+		it("falls back when zero-only native fields cannot represent reserved bytes", async () => {
+			const zero = (await createEntry({
+				store,
+				identity: signKey,
+				data: new Uint8Array([1]),
+				deferStore: true,
+			})) as EntryV0<Uint8Array>;
+			expect(Entry.takePreparedBlock(zero)).to.exist;
+			expect(Entry.getPreparedStorageBytes(zero)).to.equal(undefined);
+			expect(await verifyEntryV0Ed25519BatchFromEntries([zero])).to.deep.equal([
+				true,
+			]);
+
+			zero._reserved![0] = 1;
+			expect(await zero.verifySignatures()).to.equal(false);
+			expect(await verifyEntryV0Ed25519BatchFromEntries([zero])).to.equal(
+				undefined,
+			);
+
+			const reserved = new EntryV0<Uint8Array>({
+				meta: zero._meta,
+				payload: zero._payload,
+				reserved: new Uint8Array([1, 2, 3, 4]),
+			});
+			const signature = await signKey.sign(reserved.getSignableBytes());
+			reserved._signatures = new Signatures({
+				signatures: [
+					new DecryptedThing({
+						data: serialize(signature),
+						value: signature,
+					}),
+				],
+			});
+			expect(await reserved.verifySignatures()).to.equal(true);
+			expect(Entry.getPreparedStorageBytes(reserved)).to.equal(undefined);
+			expect(await verifyEntryV0Ed25519BatchFromEntries([reserved])).to.equal(
+				undefined,
+			);
+
+			const detached = new Uint8Array(4);
+			structuredClone(detached.buffer, { transfer: [detached.buffer] });
+			for (const malformed of [
+				undefined,
+				new Uint8Array(3),
+				new DataView(new ArrayBuffer(4)),
+				new Proxy(new Uint8Array(4), {}),
+				detached,
+			]) {
+				(zero as any)._reserved = malformed;
+				expect(await verifyEntryV0Ed25519BatchFromEntries([zero])).to.equal(
+					undefined,
+				);
+			}
 		});
 	});
 });

@@ -1220,9 +1220,13 @@ const isNode = Boolean(
 
 type LiveTsLogModules = {
 	createEntry: (properties: any) => Promise<any>;
+	DecryptedThing: any;
+	Entry: any;
 	EntryV0: any;
+	Signatures: any;
 	LamportClock: new (properties: { id: Uint8Array; timestamp?: any }) => any;
 	Timestamp: new (properties: { wallTime: bigint; logical?: number }) => any;
+	deserialize: (bytes: Uint8Array, type: any) => any;
 	serialize: (value: unknown) => Uint8Array;
 	Ed25519Keypair: { create: () => Promise<any> };
 	calculateRawCid: (bytes: Uint8Array) => Promise<{ cid: string }>;
@@ -1249,9 +1253,13 @@ const loadLiveTsLog = async (): Promise<LiveTsLogModules> => {
 		]);
 		liveTsLog = {
 			createEntry: log.createEntry,
+			DecryptedThing: crypto.DecryptedThing,
+			Entry: log.Entry,
 			EntryV0: log.EntryV0,
+			Signatures: log.Signatures,
 			LamportClock: log.LamportClock,
 			Timestamp: log.Timestamp,
+			deserialize: borsh.deserialize,
 			serialize: borsh.serialize,
 			Ed25519Keypair: crypto.Ed25519Keypair,
 			calculateRawCid: blocks.calculateRawCid,
@@ -1343,6 +1351,71 @@ const expectLiveTsEntryParity = async (properties: {
 			gid: "live-gid-empty",
 			payloadData: new Uint8Array(0),
 		});
+	});
+
+	it("verifies the same reserved bytes in JS and native storage", async () => {
+		const mods = await loadLiveTsLog();
+		const identity = await mods.Ed25519Keypair.create();
+		const entry = await mods.createEntry({
+			store: {} as any,
+			data: new Uint8Array([7, 8, 9]),
+			meta: { gid: "reserved-parity" },
+			deferStore: true,
+			identity,
+		});
+		const zeroStorage = mods.serialize(
+			new mods.EntryV0({
+				meta: entry._meta,
+				payload: entry._payload,
+				signatures: entry._signatures,
+			}),
+		);
+
+		expect(await entry.verifySignatures()).to.equal(true);
+		expect(await verifyEntryV0Ed25519StorageBatch([zeroStorage])).to.deep.equal(
+			[true],
+		);
+
+		const reserved = new Uint8Array([1, 2, 3, 4]);
+		const nonzero = new mods.EntryV0({
+			meta: entry._meta,
+			payload: entry._payload,
+			reserved,
+		});
+		const replacement = await identity.sign(nonzero.getSignableBytes());
+		nonzero._signatures = new mods.Signatures({
+			signatures: [
+				new mods.DecryptedThing({
+					data: mods.serialize(replacement),
+					value: replacement,
+				}),
+			],
+		});
+		expect(await nonzero.verifySignatures()).to.equal(true);
+
+		const signable = nonzero.getSignableBytes();
+		const reservedOffset = signable.byteLength - 6;
+		expect([
+			...signable.subarray(reservedOffset, reservedOffset + 4),
+		]).to.deep.equal([...reserved]);
+		const storage = mods.serialize(nonzero);
+		expect(await verifyEntryV0Ed25519StorageBatch([storage])).to.deep.equal([
+			true,
+		]);
+
+		const tampered = new Uint8Array(storage);
+		const originalReservedByte = storage[reservedOffset + 2]!;
+		tampered[reservedOffset + 2]! ^= 0x80;
+		expect(tampered[reservedOffset + 2]).not.to.equal(originalReservedByte);
+		expect(storage[reservedOffset + 2]).to.equal(originalReservedByte);
+		const decoded = mods.deserialize(tampered, mods.Entry);
+		expect(await decoded.verifySignatures()).to.equal(false);
+		expect(await verifyEntryV0Ed25519StorageBatch([tampered])).to.deep.equal([
+			false,
+		]);
+		expect((await mods.calculateRawCid(tampered)).cid).not.to.equal(
+			(await mods.calculateRawCid(storage)).cid,
+		);
 	});
 
 	it("matches the live TS encoder with metadata and a logical clock", async () => {
