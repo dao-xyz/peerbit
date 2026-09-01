@@ -61,6 +61,8 @@
 	"dependencies": {
 		"@dao-xyz/borsh": "^6.0.0",
 		"@libp2p/interface": "^3.2.5",
+		"@peerbit/any-store": "workspace:*",
+		"@peerbit/any-store-interface": "workspace:*",
 		"@peerbit/crypto": "workspace:*",
 		"@peerbit/document": "workspace:*",
 		"@peerbit/log": "workspace:*",
@@ -69,7 +71,6 @@
 		"uint8arrays": "^5.1.0"
 	},
 	"devDependencies": {
-		"@peerbit/any-store": "workspace:*",
 		"@peerbit/test-utils": "workspace:*",
 		"@peerbit/time": "workspace:*",
 		"ethers": "^6.17.0"

@@ -1125,6 +1125,12 @@ importers:
       '@libp2p/interface':
         specifier: ^3.2.5
         version: 3.2.5
+      '@peerbit/any-store':
+        specifier: workspace:*
+        version: link:../../../utils/any-store/any-store
+      '@peerbit/any-store-interface':
+        specifier: workspace:*
+        version: link:../../../utils/any-store/interface
       '@peerbit/crypto':
         specifier: workspace:*
         version: link:../../../utils/crypto
@@ -1144,9 +1150,6 @@ importers:
         specifier: ^5.1.0
         version: 5.1.1
     devDependencies:
-      '@peerbit/any-store':
-        specifier: workspace:*
-        version: link:../../../utils/any-store/any-store
       '@peerbit/test-utils':
         specifier: workspace:*
         version: link:../../../clients/test-utils

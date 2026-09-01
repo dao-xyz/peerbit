@@ -1,18 +1,12 @@
-import {
-	deserialize,
-	field,
-	fixedArray,
-	serialize,
-	variant,
-} from "@dao-xyz/borsh";
+import { field, fixedArray, serialize, variant, vec } from "@dao-xyz/borsh";
+import { CrashSafeTwoSlotCheckpoint } from "@peerbit/any-store/checkpoint";
 import { Ed25519Keypair, PublicSignKey, sha256Sync } from "@peerbit/crypto";
 import { EntryV0 } from "@peerbit/log";
 import { expect } from "chai";
 import { compare, concat } from "uint8arrays";
 import {
 	type CrashSafePolicyAnchorStoreV2,
-	TRUSTED_NETWORK_V2_MAX_POLICY_ANCHOR_GENERATION_BYTES,
-	TRUSTED_NETWORK_V2_POLICY_ANCHOR_STORE_OWNER,
+	TRUSTED_NETWORK_V2_MAX_POLICY_ANCHOR_CHECKPOINT_PAYLOAD_BYTES,
 	TrustedNetworkV2DurablePolicyReducer,
 } from "../src/v2-policy-anchor.js";
 import type { PolicyAdmissionResultV2 } from "../src/v2-policy-engine.js";
@@ -30,22 +24,14 @@ import {
 } from "../src/v2.js";
 
 const ZERO_DIGEST = new Uint8Array(32);
-// Outer record variant (3), body variant (3), version (1), generation (8),
-// descriptor (32), and prior checksum (32) precede the generation-kind byte.
-const POLICY_ANCHOR_GENERATION_KIND_OFFSET = 3 + 3 + 1 + 8 + 32 + 32;
-const POLICY_ANCHOR_STATE_GENERATION_KIND = 1;
-const POLICY_ANCHOR_OBSERVATION_GENERATION_KIND = 2;
 const MAX_PENDING_POLICIES = 64;
 const MAX_FORK_CHILDREN = MAX_PENDING_POLICIES + 2;
-const POLICY_ANCHOR_FORMAT_VERSION = 2;
-const GENERATION_CHECKSUM_DOMAIN = new TextEncoder().encode(
-	"peerbit/trusted-network/v2/policy-anchor/generation/v1",
+const CHECKPOINT_SCOPE_DOMAIN = new TextEncoder().encode(
+	"peerbit/trusted-network/v2/policy-anchor/checkpoint/v1\0",
 );
 
-// Test-side mirrors let corruption tests construct checksummed records without
-// exposing the internal durable codec from the package.
-@variant([2, 16, 0])
-class TestPolicyAnchorCoreStateRecord {
+@variant([2, 16, 5])
+class TestPolicyAnchorCheckpointPayloadV2 {
 	@field({ type: "u8" })
 	state: number;
 
@@ -61,78 +47,16 @@ class TestPolicyAnchorCoreStateRecord {
 	@field({ type: "string" })
 	unavailableReason: string;
 
-	@field({ type: Uint8Array })
-	forkChildEntryBytes0: Uint8Array;
-
-	@field({ type: Uint8Array })
-	forkChildEntryBytes1: Uint8Array;
-}
-
-@variant([2, 16, 3])
-class TestPolicyAnchorStatePayload {
-	@field({ type: TestPolicyAnchorCoreStateRecord })
-	coreState: TestPolicyAnchorCoreStateRecord;
-
-	@field({ type: "u8" })
-	forkObservationCount: number;
-
-	@field({ type: fixedArray("u8", 32) })
-	forkObservationCommitment: Uint8Array;
-}
-
-@variant([2, 16, 4])
-class TestPolicyAnchorObservationPayload {
-	@field({ type: Uint8Array })
-	entryBytes: Uint8Array;
-
-	constructor(properties?: { entryBytes: Uint8Array }) {
-		if (properties) Object.assign(this, properties);
-	}
-}
-
-@variant([2, 16, 1])
-class TestPolicyAnchorGenerationBody {
-	@field({ type: "u8" })
-	formatVersion: number;
-
-	@field({ type: "u64" })
-	generation: bigint;
-
-	@field({ type: fixedArray("u8", 32) })
-	descriptorDigest: Uint8Array;
-
-	@field({ type: fixedArray("u8", 32) })
-	previousGenerationChecksum: Uint8Array;
-
-	@field({ type: "u8" })
-	kind: number;
-
-	@field({ type: Uint8Array })
-	payloadBytes: Uint8Array;
+	@field({ type: vec(Uint8Array, "u8") })
+	forkObservationEntryBytes: Uint8Array[];
 
 	constructor(properties?: {
-		formatVersion: number;
-		generation: bigint;
-		descriptorDigest: Uint8Array;
-		previousGenerationChecksum: Uint8Array;
-		kind: number;
-		payloadBytes: Uint8Array;
-	}) {
-		if (properties) Object.assign(this, properties);
-	}
-}
-
-@variant([2, 16, 2])
-class TestPolicyAnchorGenerationRecord {
-	@field({ type: TestPolicyAnchorGenerationBody })
-	body: TestPolicyAnchorGenerationBody;
-
-	@field({ type: fixedArray("u8", 32) })
-	checksum: Uint8Array;
-
-	constructor(properties?: {
-		body: TestPolicyAnchorGenerationBody;
-		checksum: Uint8Array;
+		state: number;
+		acceptedHeadEntryBytes: Uint8Array;
+		comparisonCandidateEntryBytes: Uint8Array;
+		acceptedAncestorDigest: Uint8Array;
+		unavailableReason: string;
+		forkObservationEntryBytes: Uint8Array[];
 	}) {
 		if (properties) Object.assign(this, properties);
 	}
@@ -140,7 +64,30 @@ class TestPolicyAnchorGenerationRecord {
 
 const hex = (bytes: Uint8Array): string => Buffer.from(bytes).toString("hex");
 
+const checkpointScope = (descriptor: NetworkDescriptorV2): Uint8Array => {
+	const descriptorBytes = serialize(descriptor);
+	const descriptorLength = new Uint8Array(4);
+	new DataView(descriptorLength.buffer).setUint32(
+		0,
+		descriptorBytes.byteLength,
+		false,
+	);
+	return concat([CHECKPOINT_SCOPE_DOMAIN, descriptorLength, descriptorBytes]);
+};
+
 const entryBytes = (entry: EntryV0<Uint8Array>): Uint8Array => serialize(entry);
+
+const canonicalObservationBytes = (entries: PolicyFixture[]): Uint8Array[] =>
+	entries
+		.map(({ entry }) => {
+			const bytes = entryBytes(entry);
+			return { bytes, hash: sha256Sync(bytes) };
+		})
+		.sort((left, right) => {
+			const hashOrder = compare(left.hash, right.hash);
+			return hashOrder === 0 ? compare(left.bytes, right.bytes) : hashOrder;
+		})
+		.map(({ bytes }) => bytes);
 
 class AdversarialUint8Array extends Uint8Array {
 	iteratorCalls = 0;
@@ -347,7 +294,6 @@ type Gate = {
 };
 
 type StoreAction =
-	| { kind: "pass" }
 	| {
 			kind: "gate";
 			entered: ReturnType<typeof deferred>;
@@ -358,13 +304,12 @@ type StoreAction =
 
 class ControlledPolicyAnchorStore implements CrashSafePolicyAnchorStoreV2 {
 	readonly values: Map<string, Uint8Array>;
-	readonly successfulPutKeys: string[] = [];
 	getCalls = 0;
-	putCalls = 0;
+	atomicReplaceCalls = 0;
 	barrierCalls = 0;
 	iteratorCalls = 0;
-	private readonly putActions: StoreAction[] = [];
-	private readonly barrierActions: StoreAction[] = [];
+	private opened = true;
+	private readonly atomicReplaceActions: StoreAction[] = [];
 
 	constructor(values?: Map<string, Uint8Array>) {
 		this.values = new Map(
@@ -375,7 +320,30 @@ class ControlledPolicyAnchorStore implements CrashSafePolicyAnchorStoreV2 {
 	readonly crashSafeDurability = {
 		crashSafe: true as const,
 		barrier: async (): Promise<void> => this.barrier(),
+		atomicReplace: async (key: string, value: Uint8Array): Promise<void> => {
+			this.atomicReplaceCalls += 1;
+			const action = this.atomicReplaceActions.shift();
+			if (action?.kind === "gate") {
+				action.entered.resolve();
+				await action.release;
+			}
+			if (action?.kind === "throw-before") throw action.error;
+			this.values.set(key, Uint8Array.from(value));
+			if (action?.kind === "commit-then-throw") throw action.error;
+		},
 	};
+
+	status(): "open" | "closed" {
+		return this.opened ? "open" : "closed";
+	}
+
+	open(): void {
+		this.opened = true;
+	}
+
+	close(): void {
+		this.opened = false;
+	}
 
 	get(key: string): Uint8Array | undefined {
 		this.getCalls += 1;
@@ -384,16 +352,15 @@ class ControlledPolicyAnchorStore implements CrashSafePolicyAnchorStoreV2 {
 	}
 
 	async put(key: string, value: Uint8Array): Promise<void> {
-		this.putCalls += 1;
-		const action = this.putActions.shift();
-		if (action?.kind === "gate") {
-			action.entered.resolve();
-			await action.release;
-		}
-		if (action?.kind === "throw-before") throw action.error;
 		this.values.set(key, Uint8Array.from(value));
-		this.successfulPutKeys.push(key);
-		if (action?.kind === "commit-then-throw") throw action.error;
+	}
+
+	del(key: string): void {
+		this.values.delete(key);
+	}
+
+	sublevel(): ControlledPolicyAnchorStore {
+		return this;
 	}
 
 	async *iterator(): AsyncGenerator<[string, Uint8Array], void, void> {
@@ -403,17 +370,24 @@ class ControlledPolicyAnchorStore implements CrashSafePolicyAnchorStoreV2 {
 		}
 	}
 
-	gateNextPut(): Gate {
-		const entered = deferred();
-		const release = deferred();
-		this.putActions.push({ kind: "gate", entered, release: release.promise });
-		return { entered: entered.promise, release: () => release.resolve() };
+	clear(): void {
+		this.values.clear();
 	}
 
-	gateNextBarrier(): Gate {
+	size(): number {
+		let size = 0;
+		for (const value of this.values.values()) size += value.byteLength;
+		return size;
+	}
+
+	persisted(): boolean {
+		return true;
+	}
+
+	gateNextAtomicReplace(): Gate {
 		const entered = deferred();
 		const release = deferred();
-		this.barrierActions.push({
+		this.atomicReplaceActions.push({
 			kind: "gate",
 			entered,
 			release: release.promise,
@@ -421,19 +395,11 @@ class ControlledPolicyAnchorStore implements CrashSafePolicyAnchorStoreV2 {
 		return { entered: entered.promise, release: () => release.resolve() };
 	}
 
-	failNextPut(error: Error, afterCommit = false): void {
-		this.putActions.push({
+	failNextAtomicReplace(error: Error, afterCommit = false): void {
+		this.atomicReplaceActions.push({
 			kind: afterCommit ? "commit-then-throw" : "throw-before",
 			error,
 		});
-	}
-
-	passNextPut(): void {
-		this.putActions.push({ kind: "pass" });
-	}
-
-	failNextBarrier(error: Error): void {
-		this.barrierActions.push({ kind: "throw-before", error });
 	}
 
 	clone(): ControlledPolicyAnchorStore {
@@ -442,110 +408,8 @@ class ControlledPolicyAnchorStore implements CrashSafePolicyAnchorStoreV2 {
 
 	private async barrier(): Promise<void> {
 		this.barrierCalls += 1;
-		const action = this.barrierActions.shift();
-		if (action?.kind === "gate") {
-			action.entered.resolve();
-			await action.release;
-		}
-		if (action?.kind === "throw-before") throw action.error;
-		if (action?.kind === "commit-then-throw") throw action.error;
 	}
 }
-
-const appendChecksummedObservationGeneration = (
-	store: ControlledPolicyAnchorStore,
-	observedEntryBytes: Uint8Array,
-): void => {
-	const generationPrefix = `${TRUSTED_NETWORK_V2_POLICY_ANCHOR_STORE_OWNER}/generation/`;
-	const keys = [...store.values.keys()]
-		.filter((key) => key.startsWith(generationPrefix))
-		.sort();
-	const previousBytes = store.values.get(keys.at(-1)!)!;
-	const previous = deserialize(previousBytes, TestPolicyAnchorGenerationRecord);
-	const generation = BigInt(keys.length + 1);
-	const body = new TestPolicyAnchorGenerationBody({
-		formatVersion: POLICY_ANCHOR_FORMAT_VERSION,
-		generation,
-		descriptorDigest: Uint8Array.from(previous.body.descriptorDigest),
-		previousGenerationChecksum: Uint8Array.from(previous.checksum),
-		kind: POLICY_ANCHOR_OBSERVATION_GENERATION_KIND,
-		payloadBytes: serialize(
-			new TestPolicyAnchorObservationPayload({
-				entryBytes: Uint8Array.from(observedEntryBytes),
-			}),
-		),
-	});
-	const record = new TestPolicyAnchorGenerationRecord({
-		body,
-		checksum: sha256Sync(concat([GENERATION_CHECKSUM_DOMAIN, serialize(body)])),
-	});
-	store.values.set(
-		`${generationPrefix}${generation.toString().padStart(20, "0")}`,
-		serialize(record),
-	);
-};
-
-const forkCommitmentMetadata = (
-	store: ControlledPolicyAnchorStore,
-): { count: number; commitment: Uint8Array; key: string } => {
-	const generationPrefix = `${TRUSTED_NETWORK_V2_POLICY_ANCHOR_STORE_OWNER}/generation/`;
-	for (const key of [...store.values.keys()].sort().reverse()) {
-		if (!key.startsWith(generationPrefix)) continue;
-		const record = deserialize(
-			store.values.get(key)!,
-			TestPolicyAnchorGenerationRecord,
-		);
-		if (record.body.kind !== POLICY_ANCHOR_STATE_GENERATION_KIND) continue;
-		const payload = deserialize(
-			record.body.payloadBytes,
-			TestPolicyAnchorStatePayload,
-		);
-		if (payload.coreState.state !== 3) continue;
-		return {
-			count: payload.forkObservationCount,
-			commitment: Uint8Array.from(payload.forkObservationCommitment),
-			key,
-		};
-	}
-	throw new Error("No forked state generation");
-};
-
-const corruptForkCommitment = (store: ControlledPolicyAnchorStore): void => {
-	const { key } = forkCommitmentMetadata(store);
-	const generationPrefix = `${TRUSTED_NETWORK_V2_POLICY_ANCHOR_STORE_OWNER}/generation/`;
-	const generationKeys = [...store.values.keys()]
-		.filter((candidate) => candidate.startsWith(generationPrefix))
-		.sort();
-	const record = deserialize(
-		store.values.get(key)!,
-		TestPolicyAnchorGenerationRecord,
-	);
-	const payload = deserialize(
-		record.body.payloadBytes,
-		TestPolicyAnchorStatePayload,
-	);
-	payload.forkObservationCommitment[0] ^= 0xff;
-	record.body.payloadBytes = serialize(payload);
-	record.checksum = sha256Sync(
-		concat([GENERATION_CHECKSUM_DOMAIN, serialize(record.body)]),
-	);
-	store.values.set(key, serialize(record));
-	let previousChecksum = Uint8Array.from(record.checksum);
-	for (const laterKey of generationKeys.slice(
-		generationKeys.indexOf(key) + 1,
-	)) {
-		const later = deserialize(
-			store.values.get(laterKey)!,
-			TestPolicyAnchorGenerationRecord,
-		);
-		later.body.previousGenerationChecksum = previousChecksum;
-		later.checksum = sha256Sync(
-			concat([GENERATION_CHECKSUM_DOMAIN, serialize(later.body)]),
-		);
-		store.values.set(laterKey, serialize(later));
-		previousChecksum = Uint8Array.from(later.checksum);
-	}
-};
 
 const createResolver = () => {
 	const entries = new Map<string, Uint8Array>();
@@ -579,6 +443,20 @@ const openAnchor = (
 		resolveTimeoutMs: 500,
 	});
 
+const commitTestCheckpointPayload = async (
+	fixture: ChainFixture,
+	store: ControlledPolicyAnchorStore,
+	payload: TestPolicyAnchorCheckpointPayloadV2,
+): Promise<void> => {
+	const checkpoint = await CrashSafeTwoSlotCheckpoint.open({
+		store,
+		scope: checkpointScope(fixture.descriptor),
+		maxPayloadBytes:
+			TRUSTED_NETWORK_V2_MAX_POLICY_ANCHOR_CHECKPOINT_PAYLOAD_BYTES,
+	});
+	await checkpoint.commit(serialize(payload));
+};
+
 const rejection = async (promise: Promise<unknown>): Promise<Error> => {
 	try {
 		await promise;
@@ -596,6 +474,13 @@ const expectHead = (
 	expect(hex(anchor.head!.digest)).to.equal(hex(policy.digest));
 };
 
+const CHECKPOINT_KEY_PREFIX = "\0peerbit:two-slot-checkpoint:v1:";
+
+const checkpointKeys = (store: ControlledPolicyAnchorStore): string[] =>
+	[...store.values.keys()]
+		.filter((key) => key.startsWith(CHECKPOINT_KEY_PREFIX))
+		.sort();
+
 describe("TrustedNetwork v2 durable policy anchor", () => {
 	it("requires an explicit crash-safe durability capability", async () => {
 		const fixture = await createChain();
@@ -609,6 +494,13 @@ describe("TrustedNetwork v2 durable policy anchor", () => {
 			...noCapability,
 			crashSafeDurability: {
 				crashSafe: false,
+				barrier: async (): Promise<void> => undefined,
+			},
+		};
+		const barrierOnly = {
+			...noCapability,
+			crashSafeDurability: {
+				crashSafe: true,
 				barrier: async (): Promise<void> => undefined,
 			},
 		};
@@ -633,9 +525,19 @@ describe("TrustedNetwork v2 durable policy anchor", () => {
 				)
 			).message,
 		).to.match(/crash.safe|durab/i);
+		expect(
+			(
+				await rejection(
+					openAnchor(
+						fixture,
+						barrierOnly as unknown as CrashSafePolicyAnchorStoreV2,
+					),
+				)
+			).message,
+		).to.match(/atomic.*replace/i);
 	});
 
-	it("fails authorization closed until put and barrier both complete", async () => {
+	it("fails authorization closed until an atomic checkpoint replacement completes", async () => {
 		const fixture = await createChain();
 		const store = new ControlledPolicyAnchorStore();
 		const anchor = await openAnchor(fixture, store);
@@ -646,31 +548,31 @@ describe("TrustedNetwork v2 durable policy anchor", () => {
 			anchor.isAuthorized(fixture.alice.publicKey, TrustedNetworkRole.WRITER),
 		).to.equal(true);
 
-		const putGate = store.gateNextPut();
+		const firstReplacementGate = store.gateNextAtomicReplace();
 		const acceptingOne = anchor.ingest(entryBytes(fixture.chain[1].entry));
-		await putGate.entered;
+		await firstReplacementGate.entered;
 		expect(
 			anchor.isAuthorized(fixture.alice.publicKey, TrustedNetworkRole.WRITER),
 		).to.equal(false);
 		expect(
 			anchor.isAuthorized(fixture.alice.publicKey, TrustedNetworkRole.READER),
 		).to.equal(false);
-		putGate.release();
+		firstReplacementGate.release();
 		expect((await acceptingOne).status).to.equal("accepted");
 		expect(
 			anchor.isAuthorized(fixture.alice.publicKey, TrustedNetworkRole.READER),
 		).to.equal(true);
 
-		const barrierGate = store.gateNextBarrier();
+		const secondReplacementGate = store.gateNextAtomicReplace();
 		const acceptingTwo = anchor.ingest(entryBytes(fixture.chain[2].entry));
-		await barrierGate.entered;
+		await secondReplacementGate.entered;
 		expect(
 			anchor.isAuthorized(fixture.bob.publicKey, TrustedNetworkRole.WRITER),
 		).to.equal(false);
 		expect(
 			anchor.isAuthorized(fixture.bob.publicKey, TrustedNetworkRole.REPLICATOR),
 		).to.equal(false);
-		barrierGate.release();
+		secondReplacementGate.release();
 		expect((await acceptingTwo).status).to.equal("accepted");
 		expect(
 			anchor.isAuthorized(fixture.bob.publicKey, TrustedNetworkRole.REPLICATOR),
@@ -703,14 +605,12 @@ describe("TrustedNetwork v2 durable policy anchor", () => {
 		const store = new ControlledPolicyAnchorStore();
 		const anchor = await openAnchor(fixture, store);
 		await anchor.ingest(entryBytes(fixture.chain[0].entry));
-		const putsBeforePending = store.putCalls;
-		const barriersBeforePending = store.barrierCalls;
+		const replacementsBeforePending = store.atomicReplaceCalls;
 
 		const pending = await anchor.ingest(entryBytes(fixture.chain[2].entry));
 		expect(pending.status).to.equal("pending");
 		expect(anchor.pendingCount).to.equal(1);
-		expect(store.putCalls).to.equal(putsBeforePending);
-		expect(store.barrierCalls).to.equal(barriersBeforePending);
+		expect(store.atomicReplaceCalls).to.equal(replacementsBeforePending);
 		anchor.abort();
 
 		const reopened = await openAnchor(fixture, store);
@@ -762,26 +662,25 @@ describe("TrustedNetwork v2 durable policy anchor", () => {
 		expect(reopened.state).to.equal("FORKED");
 	});
 
-	it("halts on definite and ambiguous persistence failures and reopens the valid prefix", async () => {
+	it("halts on checkpoint replacement failures and reopens the physically committed state", async () => {
 		const cases: Array<{
 			name: string;
 			arm: (store: ControlledPolicyAnchorStore) => void;
 			expectedHead: 0 | 1;
 		}> = [
 			{
-				name: "put before commit",
-				arm: (store) => store.failNextPut(new Error("put failed")),
+				name: "replacement before commit",
+				arm: (store) =>
+					store.failNextAtomicReplace(new Error("replacement failed")),
 				expectedHead: 0,
 			},
 			{
-				name: "put after an ambiguous commit",
+				name: "replacement after an ambiguous commit",
 				arm: (store) =>
-					store.failNextPut(new Error("put outcome ambiguous"), true),
-				expectedHead: 1,
-			},
-			{
-				name: "barrier after the generation put",
-				arm: (store) => store.failNextBarrier(new Error("barrier failed")),
+					store.failNextAtomicReplace(
+						new Error("replacement outcome ambiguous"),
+						true,
+					),
 				expectedHead: 1,
 			},
 		];
@@ -818,7 +717,7 @@ describe("TrustedNetwork v2 durable policy anchor", () => {
 		const fixture = await createChain();
 		const poisonedStore = new ControlledPolicyAnchorStore();
 		const poisoned = await openAnchor(fixture, poisonedStore);
-		poisonedStore.failNextPut(new Error("poison publication"));
+		poisonedStore.failNextAtomicReplace(new Error("poison publication"));
 		const terminal = await rejection(
 			poisoned.ingest(entryBytes(fixture.chain[0].entry)),
 		);
@@ -849,26 +748,24 @@ describe("TrustedNetwork v2 durable policy anchor", () => {
 		const store = new ControlledPolicyAnchorStore();
 		const anchor = await openAnchor(fixture, store);
 		await anchor.ingest(entryBytes(fixture.chain[0].entry));
-		const putsBeforeDuplicate = store.putCalls;
-		const barriersBeforeDuplicate = store.barrierCalls;
+		const replacementsBeforeDuplicate = store.atomicReplaceCalls;
 
 		expect(
 			(await anchor.ingest(entryBytes(fixture.chain[0].entry))).status,
 		).to.equal("duplicate");
-		expect(store.putCalls).to.equal(putsBeforeDuplicate);
-		expect(store.barrierCalls).to.equal(barriersBeforeDuplicate);
+		expect(store.atomicReplaceCalls).to.equal(replacementsBeforeDuplicate);
 
-		const putGate = store.gateNextPut();
+		const replacementGate = store.gateNextAtomicReplace();
 		const first = anchor.ingest(entryBytes(fixture.chain[1].entry));
 		const second = anchor.ingest(entryBytes(fixture.chain[2].entry));
-		await putGate.entered;
-		const putsWhileFirstIsBlocked = store.putCalls;
+		await replacementGate.entered;
+		const replacementsWhileFirstIsBlocked = store.atomicReplaceCalls;
 		await Promise.resolve();
-		expect(store.putCalls).to.equal(putsWhileFirstIsBlocked);
+		expect(store.atomicReplaceCalls).to.equal(replacementsWhileFirstIsBlocked);
 		expect(
 			anchor.isAuthorized(fixture.alice.publicKey, TrustedNetworkRole.READER),
 		).to.equal(false);
-		putGate.release();
+		replacementGate.release();
 
 		expect((await first).status).to.equal("accepted");
 		expect((await second).status).to.equal("accepted");
@@ -926,7 +823,7 @@ describe("TrustedNetwork v2 durable policy anchor", () => {
 		expect(incompatibleAnchor.bufferedAdmissionBytes).to.equal(0);
 	});
 
-	it("bounds copied admissions while a durability barrier is blocked", async () => {
+	it("bounds copied admissions while a checkpoint replacement is blocked", async () => {
 		const fixture = await createChain();
 		const store = new ControlledPolicyAnchorStore();
 		const anchor = await openAnchor(fixture, store);
@@ -939,8 +836,7 @@ describe("TrustedNetwork v2 durable policy anchor", () => {
 		);
 		const callsBeforeOversized = {
 			get: store.getCalls,
-			put: store.putCalls,
-			barrier: store.barrierCalls,
+			atomicReplace: store.atomicReplaceCalls,
 		};
 		const oversized = new Uint8Array(
 			TRUSTED_NETWORK_V2_MAX_POLICY_ENTRY_BYTES + 1,
@@ -955,14 +851,15 @@ describe("TrustedNetwork v2 durable policy anchor", () => {
 		expect(anchor.bufferedAdmissionCount).to.equal(0);
 		expect(anchor.bufferedAdmissionBytes).to.equal(0);
 		expect(store.getCalls).to.equal(callsBeforeOversized.get);
-		expect(store.putCalls).to.equal(callsBeforeOversized.put);
-		expect(store.barrierCalls).to.equal(callsBeforeOversized.barrier);
+		expect(store.atomicReplaceCalls).to.equal(
+			callsBeforeOversized.atomicReplace,
+		);
 
-		const barrierGate = store.gateNextBarrier();
+		const replacementGate = store.gateNextAtomicReplace();
 		const admitted: Array<Promise<PolicyAdmissionResultV2>> = [
 			anchor.ingest(validEntry),
 		];
-		await barrierGate.entered;
+		await replacementGate.entered;
 		for (let index = 1; index < MAX_PENDING_POLICIES; index++) {
 			admitted.push(anchor.ingest(validEntry));
 		}
@@ -972,8 +869,7 @@ describe("TrustedNetwork v2 durable policy anchor", () => {
 		);
 		const callsAtCapacity = {
 			get: store.getCalls,
-			put: store.putCalls,
-			barrier: store.barrierCalls,
+			atomicReplace: store.atomicReplaceCalls,
 		};
 		const capacity = await anchor.ingest(validEntry);
 		expect(capacity.status).to.equal("capacity");
@@ -991,10 +887,9 @@ describe("TrustedNetwork v2 durable policy anchor", () => {
 			MAX_PENDING_POLICIES * validEntryLength,
 		);
 		expect(store.getCalls).to.equal(callsAtCapacity.get);
-		expect(store.putCalls).to.equal(callsAtCapacity.put);
-		expect(store.barrierCalls).to.equal(callsAtCapacity.barrier);
+		expect(store.atomicReplaceCalls).to.equal(callsAtCapacity.atomicReplace);
 
-		barrierGate.release();
+		replacementGate.release();
 		const results = await Promise.all(admitted);
 		expect(results[0]!.status).to.equal("accepted");
 		expect(
@@ -1004,7 +899,7 @@ describe("TrustedNetwork v2 durable policy anchor", () => {
 		expect(anchor.bufferedAdmissionBytes).to.equal(0);
 		expect(validIteratorCalls()).to.equal(0);
 
-		const byteGate = store.gateNextBarrier();
+		const byteGate = store.gateNextAtomicReplace();
 		const advancingEntry = entryBytes(fixture.chain[1].entry);
 		const advancing = anchor.ingest(advancingEntry);
 		await byteGate.entered;
@@ -1031,13 +926,13 @@ describe("TrustedNetwork v2 durable policy anchor", () => {
 		);
 		const callsAtByteCapacity = {
 			get: store.getCalls,
-			put: store.putCalls,
-			barrier: store.barrierCalls,
+			atomicReplace: store.atomicReplaceCalls,
 		};
 		expect((await anchor.ingest(maximumEntry)).status).to.equal("capacity");
 		expect(store.getCalls).to.equal(callsAtByteCapacity.get);
-		expect(store.putCalls).to.equal(callsAtByteCapacity.put);
-		expect(store.barrierCalls).to.equal(callsAtByteCapacity.barrier);
+		expect(store.atomicReplaceCalls).to.equal(
+			callsAtByteCapacity.atomicReplace,
+		);
 		expect(anchor.bufferedAdmissionBytes).to.be.lessThanOrEqual(
 			TRUSTED_NETWORK_V2_MAX_POLICY_ENTRY_BYTES * 2,
 		);
@@ -1067,11 +962,6 @@ describe("TrustedNetwork v2 durable policy anchor", () => {
 		const deliveredChildren = [...children].sort((left, right) =>
 			compare(right.digest, left.digest),
 		);
-		const generationPrefix = `${TRUSTED_NETWORK_V2_POLICY_ANCHOR_STORE_OWNER}/generation/`;
-		const generationKeys = (): string[] =>
-			[...store.values.keys()]
-				.filter((key) => key.startsWith(generationPrefix))
-				.sort();
 		await anchor.ingest(entryBytes(fixture.chain[0].entry));
 		expect(
 			(await anchor.ingest(entryBytes(deliveredChildren[0].entry))).status,
@@ -1079,8 +969,7 @@ describe("TrustedNetwork v2 durable policy anchor", () => {
 		expect(
 			(await anchor.ingest(entryBytes(deliveredChildren[1].entry))).status,
 		).to.equal("forked");
-		expect(generationKeys()).to.have.length(3);
-		expect(forkCommitmentMetadata(store).count).to.equal(2);
+		expect(checkpointKeys(store)).to.have.length(2);
 		const durableCanonical = anchor.forkEvidence!.children.map(({ digest }) =>
 			hex(digest),
 		);
@@ -1089,8 +978,7 @@ describe("TrustedNetwork v2 durable policy anchor", () => {
 			hex(value),
 		]);
 		const getsAtFork = store.getCalls;
-		const putsAtFork = store.putCalls;
-		const barriersAtFork = store.barrierCalls;
+		const replacementsAtFork = store.atomicReplaceCalls;
 
 		// This child would displace a member of the canonical pair if it reached
 		// the core. Durable FORKED closes admission before capture/authentication,
@@ -1098,15 +986,10 @@ describe("TrustedNetwork v2 durable policy anchor", () => {
 		expect(
 			(await anchor.ingest(entryBytes(deliveredChildren[2].entry))).status,
 		).to.equal("halted");
-		expect(generationKeys()).to.have.length(3);
+		expect(checkpointKeys(store)).to.have.length(2);
 		expect(
 			anchor.forkEvidence!.children.map(({ digest }) => hex(digest)),
 		).to.deep.equal(durableCanonical);
-		expect(
-			store.values.get(generationKeys()[2]!)![
-				POLICY_ANCHOR_GENERATION_KIND_OFFSET
-			],
-		).to.equal(POLICY_ANCHOR_STATE_GENERATION_KIND);
 
 		expect(
 			(await anchor.ingest(entryBytes(deliveredChildren[3].entry))).status,
@@ -1115,15 +998,14 @@ describe("TrustedNetwork v2 durable policy anchor", () => {
 			"halted",
 		);
 		expect((await anchor.retryUnavailable()).status).to.equal("halted");
-		expect(generationKeys()).to.have.length(3);
+		expect(checkpointKeys(store)).to.have.length(2);
 		expect(anchor.state).to.equal("FORKED");
 		expect(anchor.forkEvidence?.children).to.have.length(2);
 		expect(
 			anchor.forkEvidence!.children.map(({ digest }) => hex(digest)),
 		).to.deep.equal(durableCanonical);
 		expect(store.getCalls).to.equal(getsAtFork);
-		expect(store.putCalls).to.equal(putsAtFork);
-		expect(store.barrierCalls).to.equal(barriersAtFork);
+		expect(store.atomicReplaceCalls).to.equal(replacementsAtFork);
 		expect(
 			[...store.values].map(([key, value]) => [key, hex(value)]),
 		).to.deep.equal(valuesAtFork);
@@ -1135,6 +1017,45 @@ describe("TrustedNetwork v2 durable policy anchor", () => {
 		expect(
 			reopened.forkEvidence!.children.map(({ digest }) => hex(digest)),
 		).to.deep.equal(durableCanonical);
+	});
+
+	it("releases the external lifecycle listener when a forked anchor is aborted", async () => {
+		const fixture = await createChain();
+		const children = await Promise.all([
+			createDirectChild(fixture, TrustedNetworkRole.WRITER),
+			createDirectChild(fixture, TrustedNetworkRole.READER),
+		]);
+		const resolver = createResolver();
+		resolver.add(fixture.chain[0]);
+		const controller = new AbortController();
+		const originalRemove = controller.signal.removeEventListener;
+		let removedAbortListeners = 0;
+		Object.defineProperty(controller.signal, "removeEventListener", {
+			configurable: true,
+			value: (...args: unknown[]): unknown => {
+				if (args[0] === "abort") removedAbortListeners += 1;
+				return Reflect.apply(originalRemove, controller.signal, args);
+			},
+		});
+		const anchor = await TrustedNetworkV2DurablePolicyReducer.open({
+			descriptor: fixture.descriptor,
+			resolvePolicyEntry: resolver.resolve,
+			store: new ControlledPolicyAnchorStore(),
+			signal: controller.signal,
+		});
+		await anchor.ingest(entryBytes(fixture.chain[0].entry));
+		await anchor.ingest(entryBytes(children[0]!.entry));
+		expect(
+			(await anchor.ingest(entryBytes(children[1]!.entry))).status,
+		).to.equal("forked");
+		expect(removedAbortListeners).to.equal(0);
+
+		anchor.abort();
+		expect(removedAbortListeners).to.equal(1);
+		expect(anchor.state).to.equal("FORKED");
+		expect((await anchor.ingest(Uint8Array.of(0xff))).status).to.equal(
+			"halted",
+		);
 	});
 
 	it("closes admissions that were queued before the fork became durable", async () => {
@@ -1151,23 +1072,21 @@ describe("TrustedNetwork v2 durable policy anchor", () => {
 		await anchor.ingest(entryBytes(fixture.chain[0].entry));
 		await anchor.ingest(entryBytes(children[0]!.entry));
 
-		const putGate = store.gateNextPut();
+		const replacementGate = store.gateNextAtomicReplace();
 		const fork = anchor.ingest(entryBytes(children[1]!.entry));
-		await putGate.entered;
+		await replacementGate.entered;
 		const queuedAfterFork = anchor.ingest(entryBytes(children[2]!.entry));
-		putGate.release();
+		replacementGate.release();
 		expect((await fork).status).to.equal("forked");
 		const callsAfterFork = {
 			get: store.getCalls,
-			put: store.putCalls,
-			barrier: store.barrierCalls,
+			atomicReplace: store.atomicReplaceCalls,
 		};
 
 		expect((await queuedAfterFork).status).to.equal("halted");
 		expect(anchor.state).to.equal("FORKED");
 		expect(store.getCalls).to.equal(callsAfterFork.get);
-		expect(store.putCalls).to.equal(callsAfterFork.put);
-		expect(store.barrierCalls).to.equal(callsAfterFork.barrier);
+		expect(store.atomicReplaceCalls).to.equal(callsAfterFork.atomicReplace);
 	});
 
 	it("retains the complete hard-bounded fork transition", async () => {
@@ -1195,7 +1114,7 @@ describe("TrustedNetwork v2 durable policy anchor", () => {
 			);
 		}
 		expect(anchor.pendingCount).to.equal(MAX_PENDING_POLICIES);
-		expect(store.putCalls).to.equal(0);
+		expect(store.atomicReplaceCalls).to.equal(0);
 
 		resolver.add(fixture.chain[0]);
 		const forked = await anchor.ingest(entryBytes(fixture.chain[0].entry));
@@ -1203,34 +1122,18 @@ describe("TrustedNetwork v2 durable policy anchor", () => {
 		expect(forked.forkObservations).to.have.length(MAX_PENDING_POLICIES);
 		expect(anchor.state).to.equal("FORKED");
 		expect(anchor.pendingCount).to.equal(0);
-		expect(forkCommitmentMetadata(store).count).to.equal(MAX_PENDING_POLICIES);
-
-		const generationPrefix = `${TRUSTED_NETWORK_V2_POLICY_ANCHOR_STORE_OWNER}/generation/`;
-		const generationValues = [...store.values]
-			.filter(([key]) => key.startsWith(generationPrefix))
-			.map(([, value]) => value);
-		// Two canonical children are carried by the state generation; every other
-		// authenticated pending child gets one observation generation.
-		expect(generationValues).to.have.length(MAX_PENDING_POLICIES - 1);
-		expect(generationValues[0]![POLICY_ANCHOR_GENERATION_KIND_OFFSET]).to.equal(
-			POLICY_ANCHOR_STATE_GENERATION_KIND,
+		expect(store.atomicReplaceCalls).to.equal(1);
+		expect(checkpointKeys(store)).to.have.length(1);
+		expect([...store.values.keys()]).to.deep.equal(checkpointKeys(store));
+		expect(
+			TRUSTED_NETWORK_V2_MAX_POLICY_ANCHOR_CHECKPOINT_PAYLOAD_BYTES,
+		).to.equal(
+			(MAX_FORK_CHILDREN + 1) * TRUSTED_NETWORK_V2_MAX_POLICY_ENTRY_BYTES + 313,
 		);
 		expect(
-			generationValues
-				.slice(1)
-				.every(
-					(value) =>
-						value[POLICY_ANCHOR_GENERATION_KIND_OFFSET] ===
-						POLICY_ANCHOR_OBSERVATION_GENERATION_KIND,
-				),
-		).to.equal(true);
-		const logicalGenerationBytes = generationValues.reduce(
-			(total, value) => total + value.byteLength,
-			0,
-		);
-		expect(logicalGenerationBytes).to.be.at.most(
-			(MAX_FORK_CHILDREN - 1) *
-				TRUSTED_NETWORK_V2_MAX_POLICY_ANCHOR_GENERATION_BYTES,
+			store.values.get(checkpointKeys(store)[0]!)!.byteLength,
+		).to.be.at.most(
+			TRUSTED_NETWORK_V2_MAX_POLICY_ANCHOR_CHECKPOINT_PAYLOAD_BYTES + 120,
 		);
 		const rawEvidenceBytes =
 			entryBytes(fixture.chain[0].entry).byteLength +
@@ -1301,66 +1204,12 @@ describe("TrustedNetwork v2 durable policy anchor", () => {
 		const forked = await anchor.retryUnavailable();
 		expect(forked.status).to.equal("forked");
 		expect(forked.forkObservations).to.have.length(MAX_PENDING_POLICIES + 1);
-		expect(forkCommitmentMetadata(store).count).to.equal(
-			MAX_PENDING_POLICIES + 1,
-		);
+		expect(checkpointKeys(store)).to.have.length(2);
 		anchor.abort();
 
 		const reopened = await openAnchor(fixture, store, resolver.resolve);
 		expect(reopened.state).to.equal("FORKED");
 		expect(reopened.forkEvidence?.children).to.have.length(2);
-	});
-
-	it("rejects duplicate observation generations and a valid 67th child", async () => {
-		const fixture = await createChain();
-		const initialChildren = await Promise.all([
-			createDirectChild(fixture, TrustedNetworkRole.WRITER),
-			createDirectChild(fixture, TrustedNetworkRole.READER),
-		]);
-		const store = new ControlledPolicyAnchorStore();
-		const resolver = createResolver();
-		resolver.add(fixture.chain[0]);
-		const anchor = await openAnchor(fixture, store, resolver.resolve);
-		await anchor.ingest(entryBytes(fixture.chain[0].entry));
-		await anchor.ingest(entryBytes(initialChildren[0]!.entry));
-		expect(
-			(await anchor.ingest(entryBytes(initialChildren[1]!.entry))).status,
-		).to.equal("forked");
-		anchor.abort();
-
-		const duplicate = store.clone();
-		appendChecksummedObservationGeneration(
-			duplicate,
-			entryBytes(initialChildren[0]!.entry),
-		);
-		expect((await rejection(openAnchor(fixture, duplicate))).message).to.match(
-			/duplicate.*fork.observation/i,
-		);
-
-		const overCapacity = store.clone();
-		const additionalSubjects = await Promise.all(
-			Array.from({ length: MAX_FORK_CHILDREN - 1 }, () =>
-				Ed25519Keypair.create(),
-			),
-		);
-		const additionalChildren = await Promise.all(
-			additionalSubjects.map((subject) =>
-				createDirectChild(
-					fixture,
-					TrustedNetworkRole.REPLICATOR,
-					subject.publicKey,
-				),
-			),
-		);
-		for (const child of additionalChildren) {
-			appendChecksummedObservationGeneration(
-				overCapacity,
-				entryBytes(child.entry),
-			);
-		}
-		expect(
-			(await rejection(openAnchor(fixture, overCapacity))).message,
-		).to.match(/fork evidence exceeds 66 children/i);
 	});
 
 	it("performs no store work across 100,000 post-FORK admissions", async () => {
@@ -1380,8 +1229,7 @@ describe("TrustedNetwork v2 durable policy anchor", () => {
 		).to.equal("forked");
 		const callsAtFork = {
 			get: store.getCalls,
-			put: store.putCalls,
-			barrier: store.barrierCalls,
+			atomicReplace: store.atomicReplaceCalls,
 		};
 		const logicalBytesAtFork = [...store.values.values()].reduce(
 			(total, value) => total + value.byteLength,
@@ -1416,8 +1264,7 @@ describe("TrustedNetwork v2 durable policy anchor", () => {
 		expect(retryResult.head).to.equal(undefined);
 		expect(anchor.state).to.equal("FORKED");
 		expect(store.getCalls).to.equal(callsAtFork.get);
-		expect(store.putCalls).to.equal(callsAtFork.put);
-		expect(store.barrierCalls).to.equal(callsAtFork.barrier);
+		expect(store.atomicReplaceCalls).to.equal(callsAtFork.atomicReplace);
 		expect(
 			[...store.values.values()].reduce(
 				(total, value) => total + value.byteLength,
@@ -1426,7 +1273,7 @@ describe("TrustedNetwork v2 durable policy anchor", () => {
 		).to.equal(logicalBytesAtFork);
 	});
 
-	it("fails closed on truncated, corrupt, wrong-version, wrong-descriptor, and gapped state", async () => {
+	it("binds every checkpoint to the exact canonical network descriptor", async () => {
 		const fixture = await createChain();
 		const store = new ControlledPolicyAnchorStore();
 		const anchor = await openAnchor(fixture, store);
@@ -1435,65 +1282,118 @@ describe("TrustedNetwork v2 durable policy anchor", () => {
 		}
 		anchor.abort();
 
-		const generationPrefix = `${TRUSTED_NETWORK_V2_POLICY_ANCHOR_STORE_OWNER}/generation/`;
-		const generationKeys = [...store.values.keys()]
-			.filter((key) => key.startsWith(generationPrefix))
-			.sort();
-		expect(generationKeys).to.have.length(3);
-		const latestKey = generationKeys[2]!;
-
-		const truncated = store.clone();
-		const fullRecord = truncated.values.get(latestKey)!;
-		truncated.values.set(latestKey, fullRecord.slice(0, -1));
-		expect((await rejection(openAnchor(fixture, truncated))).message).to.match(
-			/decode|deserialize|buffer|range|record/i,
-		);
-
-		const corrupt = store.clone();
-		const corruptRecord = Uint8Array.from(corrupt.values.get(latestKey)!);
-		corruptRecord[corruptRecord.byteLength - 1] ^= 1;
-		corrupt.values.set(latestKey, corruptRecord);
-		expect((await rejection(openAnchor(fixture, corrupt))).message).to.match(
-			/checksum|canonical|signature|decode/i,
-		);
-
-		const unsupported = store.clone();
-		const unsupportedRecord = Uint8Array.from(
-			unsupported.values.get(latestKey)!,
-		);
-		expect([...unsupportedRecord.slice(0, 7)]).to.deep.equal([
-			2,
-			16,
-			2,
-			2,
-			16,
-			1,
-			POLICY_ANCHOR_FORMAT_VERSION,
-		]);
-		unsupportedRecord[6] = POLICY_ANCHOR_FORMAT_VERSION + 1;
-		unsupported.values.set(latestKey, unsupportedRecord);
-		expect(
-			(await rejection(openAnchor(fixture, unsupported))).message,
-		).to.match(/unsupported.*format/i);
-
-		const downgraded = store.clone();
-		const downgradedRecord = Uint8Array.from(downgraded.values.get(latestKey)!);
-		downgradedRecord[6] = 1;
-		downgraded.values.set(latestKey, downgradedRecord);
-		expect((await rejection(openAnchor(fixture, downgraded))).message).to.match(
-			/unsupported.*format/i,
-		);
-
-		const gapped = store.clone();
-		gapped.values.delete(generationKeys[1]!);
-		expect((await rejection(openAnchor(fixture, gapped))).message).to.match(
-			/gapped/i,
-		);
-
 		const otherFixture = await createChain();
 		expect(
 			(await rejection(openAnchor(otherFixture, store.clone()))).message,
-		).to.match(/another descriptor/i);
+		).to.match(/different scope/i);
+	});
+
+	it("rejects semantically invalid application payloads inside a valid checkpoint envelope", async () => {
+		const fixture = await createChain();
+		const store = new ControlledPolicyAnchorStore();
+		await commitTestCheckpointPayload(
+			fixture,
+			store,
+			new TestPolicyAnchorCheckpointPayloadV2({
+				state: 1,
+				acceptedHeadEntryBytes: entryBytes(fixture.chain[0].entry),
+				comparisonCandidateEntryBytes: entryBytes(fixture.chain[1].entry),
+				acceptedAncestorDigest: ZERO_DIGEST,
+				unavailableReason: "",
+				forkObservationEntryBytes: [],
+			}),
+		);
+
+		expect(checkpointKeys(store)).to.have.length(1);
+		expect((await rejection(openAnchor(fixture, store))).message).to.match(
+			/active comparison candidate.*empty/i,
+		);
+	});
+
+	it("pins and commits the exact maximum checkpoint payload framing", async () => {
+		const maximumParent = new Uint8Array(
+			TRUSTED_NETWORK_V2_MAX_POLICY_ENTRY_BYTES,
+		);
+		const maximumObservations = Array.from(
+			{ length: MAX_FORK_CHILDREN },
+			(_, index) => {
+				const entry = new Uint8Array(TRUSTED_NETWORK_V2_MAX_POLICY_ENTRY_BYTES);
+				entry[0] = index;
+				return entry;
+			},
+		);
+		const encoded = serialize(
+			new TestPolicyAnchorCheckpointPayloadV2({
+				state: 3,
+				acceptedHeadEntryBytes: maximumParent,
+				comparisonCandidateEntryBytes: new Uint8Array(0),
+				acceptedAncestorDigest: ZERO_DIGEST,
+				unavailableReason: "",
+				forkObservationEntryBytes: maximumObservations,
+			}),
+		);
+
+		expect(encoded.byteLength).to.equal(
+			TRUSTED_NETWORK_V2_MAX_POLICY_ANCHOR_CHECKPOINT_PAYLOAD_BYTES,
+		);
+		expect(encoded.byteLength).to.equal(
+			(MAX_FORK_CHILDREN + 1) * TRUSTED_NETWORK_V2_MAX_POLICY_ENTRY_BYTES + 313,
+		);
+
+		const store = new ControlledPolicyAnchorStore();
+		const checkpoint = await CrashSafeTwoSlotCheckpoint.open({
+			store,
+			scope: Uint8Array.of(1),
+			maxPayloadBytes:
+				TRUSTED_NETWORK_V2_MAX_POLICY_ANCHOR_CHECKPOINT_PAYLOAD_BYTES,
+		});
+		await checkpoint.commit(encoded);
+		expect(store.values.get(checkpointKeys(store)[0]!)!.byteLength).to.equal(
+			TRUSTED_NETWORK_V2_MAX_POLICY_ANCHOR_CHECKPOINT_PAYLOAD_BYTES + 120,
+		);
+	});
+
+	it("restores the 66-observation ceiling and rejects a valid 67th observation", async () => {
+		const fixture = await createChain();
+		const subjects = await Promise.all(
+			Array.from({ length: MAX_FORK_CHILDREN + 1 }, () =>
+				Ed25519Keypair.create(),
+			),
+		);
+		const children = await Promise.all(
+			subjects.map((subject) =>
+				createDirectChild(
+					fixture,
+					TrustedNetworkRole.READER,
+					subject.publicKey,
+				),
+			),
+		);
+		const payload = (observations: PolicyFixture[]) =>
+			new TestPolicyAnchorCheckpointPayloadV2({
+				state: 3,
+				acceptedHeadEntryBytes: entryBytes(fixture.chain[0].entry),
+				comparisonCandidateEntryBytes: new Uint8Array(0),
+				acceptedAncestorDigest: ZERO_DIGEST,
+				unavailableReason: "",
+				forkObservationEntryBytes: canonicalObservationBytes(observations),
+			});
+
+		const atCeiling = new ControlledPolicyAnchorStore();
+		await commitTestCheckpointPayload(
+			fixture,
+			atCeiling,
+			payload(children.slice(0, MAX_FORK_CHILDREN)),
+		);
+		const restored = await openAnchor(fixture, atCeiling);
+		expect(restored.state).to.equal("FORKED");
+		expect(restored.forkEvidence?.children).to.have.length(2);
+
+		const overCeiling = new ControlledPolicyAnchorStore();
+		await commitTestCheckpointPayload(fixture, overCeiling, payload(children));
+		expect(
+			(await rejection(openAnchor(fixture, overCeiling))).message,
+		).to.match(/2-66 observations/i);
 	});
 
 	it("persists every sibling discovered when a pending set drains into a fork", async () => {
@@ -1522,7 +1422,7 @@ describe("TrustedNetwork v2 durable policy anchor", () => {
 			);
 		}
 		expect(anchor.pendingCount).to.equal(4);
-		expect(store.putCalls).to.equal(0);
+		expect(store.atomicReplaceCalls).to.equal(0);
 		resolver.add(fixture.chain[0]);
 		const drained = await anchor.ingest(entryBytes(fixture.chain[0].entry));
 		expect(drained.status).to.equal("forked");
@@ -1540,15 +1440,9 @@ describe("TrustedNetwork v2 durable policy anchor", () => {
 		);
 		expect(anchor.state).to.equal("FORKED");
 		expect(anchor.pendingCount).to.equal(0);
-
-		const generationPrefix = `${TRUSTED_NETWORK_V2_POLICY_ANCHOR_STORE_OWNER}/generation/`;
-		const generationKeys = [...store.values.keys()].filter((key) =>
-			key.startsWith(generationPrefix),
-		);
-		// One FORKED state generation, followed by one self-contained generation
-		// for each of the two non-canonical observations.
-		expect(generationKeys).to.have.length(3);
-		expect([...store.values.keys()]).to.deep.equal(generationKeys);
+		expect(store.atomicReplaceCalls).to.equal(1);
+		expect(checkpointKeys(store)).to.have.length(1);
+		expect([...store.values.keys()]).to.deep.equal(checkpointKeys(store));
 		const expectedCanonical = children
 			.map(({ digest }) => digest)
 			.sort(compare)
@@ -1566,25 +1460,6 @@ describe("TrustedNetwork v2 durable policy anchor", () => {
 			reopened.forkEvidence!.children.map(({ digest }) => hex(digest)),
 		).to.deep.equal(expectedCanonical);
 
-		// Every crash-equivalent proper prefix contains a checksummed FORKED state
-		// but not its full committed observation set, and must fail closed.
-		for (let retained = 1; retained < generationKeys.length; retained++) {
-			const partial = store.clone();
-			for (const key of generationKeys.slice(retained)) {
-				partial.values.delete(key);
-			}
-			expect(
-				(await rejection(openAnchor(fixture, partial, resolver.resolve)))
-					.message,
-			).to.match(/fork evidence is incomplete/i);
-		}
-
-		const corruptCommitment = store.clone();
-		corruptForkCommitment(corruptCommitment);
-		expect(
-			(await rejection(openAnchor(fixture, corruptCommitment))).message,
-		).to.match(/fork evidence commitment mismatch/i);
-
 		const reorderedStore = new ControlledPolicyAnchorStore();
 		const reorderedResolver = createResolver();
 		const reordered = await openAnchor(
@@ -1601,9 +1476,9 @@ describe("TrustedNetwork v2 durable policy anchor", () => {
 		expect(
 			(await reordered.ingest(entryBytes(fixture.chain[0].entry))).status,
 		).to.equal("forked");
-		expect(hex(forkCommitmentMetadata(reorderedStore).commitment)).to.equal(
-			hex(forkCommitmentMetadata(store).commitment),
-		);
+		expect(
+			[...reorderedStore.values].map(([key, value]) => [key, hex(value)]),
+		).to.deep.equal([...store.values].map(([key, value]) => [key, hex(value)]));
 	});
 
 	it("durably retains an evaluation child displaced by pending canonical selection", async () => {
@@ -1624,11 +1499,6 @@ describe("TrustedNetwork v2 durable policy anchor", () => {
 		const resolver = createResolver();
 		resolver.add(fixture.chain[0]);
 		const anchor = await openAnchor(fixture, store, resolver.resolve);
-		const generationPrefix = `${TRUSTED_NETWORK_V2_POLICY_ANCHOR_STORE_OWNER}/generation/`;
-		const generationKeys = (): string[] =>
-			[...store.values.keys()]
-				.filter((key) => key.startsWith(generationPrefix))
-				.sort();
 
 		expect(
 			(await anchor.ingest(entryBytes(fixture.chain[0].entry))).status,
@@ -1643,13 +1513,15 @@ describe("TrustedNetwork v2 durable policy anchor", () => {
 			"unavailable",
 		);
 		expect(anchor.state).to.equal("UNAVAILABLE");
-		expect(generationKeys()).to.have.length(3);
+		expect(checkpointKeys(store)).to.have.length(2);
+		const replacementsAtUnavailable = store.atomicReplaceCalls;
 		expect((await anchor.ingest(entryBytes(low.entry))).status).to.equal(
 			"unavailable",
 		);
 		expect(anchor.pendingCount).to.equal(2);
 		// Candidate-only pending growth does not create another durable state.
-		expect(generationKeys()).to.have.length(3);
+		expect(checkpointKeys(store)).to.have.length(2);
+		expect(store.atomicReplaceCalls).to.equal(replacementsAtUnavailable);
 
 		resolver.add(fixture.chain[0]);
 		const forked = await anchor.retryUnavailable();
@@ -1665,25 +1537,23 @@ describe("TrustedNetwork v2 durable policy anchor", () => {
 			anchor.forkEvidence!.children.map(({ digest }) => hex(digest)),
 		).to.deep.equal([hex(low.digest), hex(middle.digest)]);
 
-		// The transition appends a FORKED state carrying low+middle, then one
-		// observation delta retaining the displaced high evaluation child.
-		expect(generationKeys()).to.have.length(5);
-		expect([...store.values.keys()]).to.deep.equal(generationKeys());
-		expect(
-			store.values.get(generationKeys()[3]!)![
-				POLICY_ANCHOR_GENERATION_KIND_OFFSET
-			],
-		).to.equal(POLICY_ANCHOR_STATE_GENERATION_KIND);
-		expect(
-			store.values.get(generationKeys()[4]!)![
-				POLICY_ANCHOR_GENERATION_KIND_OFFSET
-			],
-		).to.equal(POLICY_ANCHOR_OBSERVATION_GENERATION_KIND);
-		expect(
-			Buffer.from(store.values.get(generationKeys()[4]!)!).indexOf(
-				Buffer.from(entryBytes(high.entry)),
-			),
-		).to.be.greaterThan(-1);
+		// One replacement publishes the complete fork, including the displaced
+		// evaluation child, in the next fixed checkpoint slot.
+		expect(store.atomicReplaceCalls).to.equal(replacementsAtUnavailable + 1);
+		expect(checkpointKeys(store)).to.have.length(2);
+		expect([...store.values.keys()].sort()).to.deep.equal(
+			checkpointKeys(store),
+		);
+		const latestRecord = store.values.get(
+			checkpointKeys(store).find((key) => key.endsWith(":b"))!,
+		)!;
+		for (const sibling of siblings) {
+			expect(
+				Buffer.from(latestRecord).indexOf(
+					Buffer.from(entryBytes(sibling.entry)),
+				),
+			).to.be.greaterThan(-1);
+		}
 		anchor.abort();
 
 		const reopened = await openAnchor(fixture, store);
@@ -1693,56 +1563,30 @@ describe("TrustedNetwork v2 durable policy anchor", () => {
 		).to.deep.equal([hex(low.digest), hex(middle.digest)]);
 	});
 
-	it("rejects a partial committed fork after a later plural generation fails", async () => {
+	it("rejects every legacy append namespace and a pre-aborted open before storage access", async () => {
 		const fixture = await createChain();
-		const children = await Promise.all([
-			createDirectChild(fixture, TrustedNetworkRole.WRITER),
-			createDirectChild(fixture, TrustedNetworkRole.READER),
-			createDirectChild(fixture, TrustedNetworkRole.REPLICATOR),
-			createDirectChild(
-				fixture,
-				TrustedNetworkRole.WRITER | TrustedNetworkRole.READER,
-			),
-		]);
-		const store = new ControlledPolicyAnchorStore();
-		const resolver = createResolver();
-		const anchor = await openAnchor(fixture, store, resolver.resolve);
-		for (const child of children) {
-			await anchor.ingest(entryBytes(child.entry));
+		const legacyOwner = "peerbit/trusted-network/v2/policy-anchor/v1";
+		for (const key of [
+			legacyOwner,
+			`${legacyOwner}/generation/00000000000000000001`,
+		]) {
+			const legacy = new ControlledPolicyAnchorStore();
+			legacy.values.set(key, Uint8Array.of(1));
+			expect((await rejection(openAnchor(fixture, legacy))).message).to.match(
+				/legacy|append|unsupported/i,
+			);
 		}
-		resolver.add(fixture.chain[0]);
-		store.passNextPut();
-		store.passNextPut();
-		store.failNextPut(new Error("second plural generation failed"));
 
-		expect(
-			(await rejection(anchor.ingest(entryBytes(fixture.chain[0].entry))))
-				.message,
-		).to.match(/ambiguous.*halted/i);
-		expect(anchor.state).to.equal("HALTED");
-		const generationPrefix = `${TRUSTED_NETWORK_V2_POLICY_ANCHOR_STORE_OWNER}/generation/`;
-		const generationKeys = [...store.values.keys()].filter((key) =>
-			key.startsWith(generationPrefix),
-		);
-		// The FORKED state and first extra observation were both fenced before
-		// the second extra observation failed.
-		expect(generationKeys).to.have.length(2);
-		expect([...store.values.keys()]).to.deep.equal(generationKeys);
-
-		expect(
-			(await rejection(openAnchor(fixture, store, resolver.resolve))).message,
-		).to.match(/fork evidence is incomplete/i);
-	});
-
-	it("rejects unknown owned keys and a pre-aborted open before storage access", async () => {
-		const fixture = await createChain();
-		const unknown = new ControlledPolicyAnchorStore();
-		unknown.values.set(
-			`${TRUSTED_NETWORK_V2_POLICY_ANCHOR_STORE_OWNER}/unknown`,
+		const mixed = new ControlledPolicyAnchorStore();
+		const anchor = await openAnchor(fixture, mixed);
+		await anchor.ingest(entryBytes(fixture.chain[0].entry));
+		anchor.abort();
+		mixed.values.set(
+			`${legacyOwner}/generation/00000000000000000001`,
 			Uint8Array.of(1),
 		);
-		expect((await rejection(openAnchor(fixture, unknown))).message).to.match(
-			/unknown|unrecognized|owned namespace/i,
+		expect((await rejection(openAnchor(fixture, mixed))).message).to.match(
+			/legacy|append|unsupported/i,
 		);
 
 		const aborted = new ControlledPolicyAnchorStore();
@@ -1759,5 +1603,6 @@ describe("TrustedNetwork v2 durable policy anchor", () => {
 		expect(error.message).to.match(/aborted/i);
 		expect(aborted.barrierCalls).to.equal(0);
 		expect(aborted.iteratorCalls).to.equal(0);
+		expect(aborted.getCalls).to.equal(0);
 	});
 });
