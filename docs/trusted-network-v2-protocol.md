@@ -213,6 +213,11 @@ copying, decoding, or verifying the entry. The ceiling is a consensus rule,
 not a replica-local resource setting; changing it requires a new signature
 profile or protocol version.
 
+The resource-fence envelope uses a separate fixed ceiling of 8,192 bytes and at
+most 64 direct predecessors. Both bounds are checked from captured raw storage
+before generic entry decoding; they are likewise protocol constants rather than
+resource-adapter settings.
+
 The top-level program uses a new variant such as `trusted_network_v2`.
 `"trusted_network"`, `"relations"`, `IdentityRelation`, and existing v1
 addresses retain their present meaning.
@@ -266,16 +271,26 @@ entry's CIDv1 using SHA-256. `resourceId` is a 32-byte value whose derivation
 must be fixed by the future protected-resource adapter from its canonical
 manifest. No second signature is embedded in the payload.
 
-The future signed EntryV0 envelope will limit `meta.next` to 64 direct
-predecessors and fail closed rather than truncate them. The previous fence must
-be a causal ancestor, but it need not consume a direct `meta.next` slot when an
-intervening resource entry already proves that ancestry. Lifting the limit
-requires a separately specified generic bounded merge or authenticated-frontier
-primitive. Constructing a fence may inspect `O(current heads)` at a policy
-transition, but ordinary writes must not carry that cost. Canonical `[2, 2]`
-resource-fence bodies are exactly 186 bytes and any other length fails before
-decode. This slice pins only that body codec; it does not yet authenticate its
-EntryV0 envelope or validate its causal frontier.
+The signed EntryV0 envelope must be a canonical raw APPEND block with public
+metadata, payload, and sole authority signature, four zero reserved bytes, and
+no embedded hash. Its `meta.clock.id` is the canonical authority key. It limits
+`meta.next` to 64 unique canonical CIDv1/raw/SHA-256 direct predecessors and
+fails closed rather than truncating them. Canonical `[2, 2]` resource-fence
+bodies are exactly 186 bytes and any other length fails before generic decode.
+For secp256k1, signature data is the signer-produced 132-byte ASCII form: `0x`,
+128 lowercase hex digits, and recovery byte `1b` or `1c`; `s` must be low
+(`<= 0x7fffffffffffffffffffffffffffffff5d576e7357a4501ddfe92f46681b20a0`).
+This removes textual, recovery-byte, and high-S signature malleability from raw
+fence identity.
+
+The previous fence must be a causal ancestor, but it need not consume a direct
+`meta.next` slot when an intervening resource entry already proves that
+ancestry. Lifting the limit requires a separately specified generic bounded
+merge or authenticated-frontier primitive. Constructing a fence may inspect
+`O(current heads)` at a policy transition, but ordinary writes must not carry
+that cost. This slice authenticates and binds the bounded EntryV0 envelope; it
+does not validate the causal frontier, accepted policy provenance, freshness,
+or durability.
 
 ### `OperationPolicyProofV2`
 

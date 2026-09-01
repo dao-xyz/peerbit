@@ -42,6 +42,13 @@ export const TRUSTED_NETWORK_V2_ENTRY_V0_AUTHORITY_ONLY_SIGNATURE_PROFILE = 1;
  */
 export const TRUSTED_NETWORK_V2_MAX_POLICY_ENTRY_BYTES = 128 * 1024;
 
+/**
+ * Consensus bounds for a canonical signed resource-fence EntryV0. These are
+ * protocol constants, not resource-adapter configuration.
+ */
+export const TRUSTED_NETWORK_V2_MAX_RESOURCE_FENCE_ENTRY_BYTES = 8 * 1024;
+export const TRUSTED_NETWORK_V2_MAX_RESOURCE_FENCE_DIRECT_PARENTS = 64;
+
 export const TRUSTED_NETWORK_V2_NETWORK_ID_DOMAIN =
 	"peerbit/trusted-network/v2/network-id/v1";
 export const TRUSTED_NETWORK_V2_POLICY_DIGEST_DOMAIN =
@@ -76,7 +83,7 @@ const TYPED_ARRAY_TAG = Object.getOwnPropertyDescriptor(
 	Symbol.toStringTag,
 )!.get!;
 
-const exactUint8ArrayByteLength = (value: unknown): number => {
+export const exactUint8ArrayByteLengthV2 = (value: unknown): number => {
 	if (
 		!ArrayBuffer.isView(value) ||
 		TYPED_ARRAY_TAG.call(value) !== "Uint8Array"
@@ -88,6 +95,20 @@ const exactUint8ArrayByteLength = (value: unknown): number => {
 		Uint8Array.prototype.set.call(new Uint8Array(0), value as Uint8Array);
 	}
 	return byteLength;
+};
+
+export const copyUint8ArrayWithLengthV2 = (
+	value: Uint8Array,
+	byteLength: number,
+): Uint8Array => {
+	const copy = new Uint8Array(byteLength);
+	Uint8Array.prototype.set.call(copy, value);
+	return copy;
+};
+
+export const copyUint8ArrayV2 = (value: Uint8Array): Uint8Array => {
+	const byteLength = exactUint8ArrayByteLengthV2(value);
+	return copyUint8ArrayWithLengthV2(value, byteLength);
 };
 
 const assertByte = (value: number, label: string): void => {
@@ -111,7 +132,7 @@ const assertU64 = (value: bigint, label: string): void => {
 const assertBytes32 = (value: Uint8Array, label: string): void => {
 	let byteLength: number;
 	try {
-		byteLength = exactUint8ArrayByteLength(value);
+		byteLength = exactUint8ArrayByteLengthV2(value);
 	} catch {
 		throw new Error(`${label} must contain exactly 32 bytes`);
 	}
@@ -513,7 +534,7 @@ const decodeExactCanonicalV2 = <T>(
 ): T => {
 	let byteLength: number;
 	try {
-		byteLength = exactUint8ArrayByteLength(bytes);
+		byteLength = exactUint8ArrayByteLengthV2(bytes);
 	} catch {
 		throw new Error(
 			`TrustedNetwork v2 record must contain ${exactLength} bytes`,
@@ -524,8 +545,7 @@ const decodeExactCanonicalV2 = <T>(
 			`TrustedNetwork v2 record must contain ${exactLength} bytes`,
 		);
 	}
-	const captured = new Uint8Array(byteLength);
-	Uint8Array.prototype.set.call(captured, bytes);
+	const captured = copyUint8ArrayWithLengthV2(bytes, byteLength);
 	const value = deserialize(captured, type);
 	assertCanonicalEncoding(captured, value);
 	return value;
