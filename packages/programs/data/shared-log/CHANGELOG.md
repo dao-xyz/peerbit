@@ -1,5 +1,24 @@
 # Changelog
 
+## 16.0.24
+
+### Patch Changes
+
+- [#1407](https://github.com/dao-xyz/peerbit/pull/1407) [`0e4aee8`](https://github.com/dao-xyz/peerbit/commit/0e4aee893e19858ec7814efeb845797fb587ac8b) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Prefer live fanout join candidates, bound cold-open dial, join, and topic-root
+  query waits by overall deadlines, keep proactive shard-host scans local and
+  bounded, suppress a directly departed origin's current signed auto-root claim,
+  and expose aggregate fanout-open profile diagnostics.
+
+- [#1407](https://github.com/dao-xyz/peerbit/pull/1407) [`a5305c4`](https://github.com/dao-xyz/peerbit/commit/a5305c43146e417446de51cad3c83dff55c56e87) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Widen refreshed SharedLog provider lookups past stale bounded candidates and expose structured open and provider-resolution profile spans.
+
+- Updated dependencies [[`23fc76a`](https://github.com/dao-xyz/peerbit/commit/23fc76a489297ed8fc258e22b957cff215067015), [`0e4aee8`](https://github.com/dao-xyz/peerbit/commit/0e4aee893e19858ec7814efeb845797fb587ac8b)]:
+  - @peerbit/blocks-interface@2.1.8
+  - @peerbit/blocks@4.2.16
+  - @peerbit/pubsub@5.4.5
+  - @peerbit/log@6.2.31
+  - @peerbit/program@6.0.58
+  - @peerbit/rpc@6.1.26
+
 ## 16.0.23
 
 ### Patch Changes
