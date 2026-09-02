@@ -3818,6 +3818,12 @@ export class SharedLog<
 	// parallel map so existing capability-number consumers remain unchanged.
 	private _peerSyncCapabilitySessions!: Map<string, bigint>;
 	private _peerSyncCapabilityTimestamps!: Map<string, bigint>;
+	// design-note: these fields cache a stable, public diagnostics token for the
+	// composite of PeerSession identity, receive epoch, and signed capability
+	// session. They are not consulted to admit or fence asynchronous work. A
+	// separate opaque token is necessary because exposing any of those internal
+	// identities would leak protocol/session values, while PeerSession alone does
+	// not change when receive or capability state is replaced.
 	private _persistedReceiptReadinessGenerations!: WeakMap<
 		PeerSession,
 		{

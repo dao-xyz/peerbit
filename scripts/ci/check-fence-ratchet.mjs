@@ -33,7 +33,15 @@ import path from "node:path";
 // modules stay ratcheted in their new homes; TARGETS grows when an
 // extraction creates a module holding fence-pattern fields.
 const TARGETS = new Map([
-	["packages/programs/data/shared-log/src/index.ts", ["_instanceLifecycle"]],
+	[
+		"packages/programs/data/shared-log/src/index.ts",
+		[
+			"_instanceLifecycle",
+			"_persistedReceiptReadinessGenerationCounter",
+			"_persistedReceiptReadinessGenerationPrefix",
+			"_persistedReceiptReadinessGenerations",
+		],
+	],
 	[
 		"packages/programs/data/shared-log/src/coordinate-persistence.ts",
 		// The index.ts _nativeCoordinateMutationGenerations entry moved
