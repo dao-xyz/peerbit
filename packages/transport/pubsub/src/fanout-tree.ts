@@ -4200,7 +4200,14 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		}
 	}
 
-	private async _sendControl(to: string, bytes: Uint8Array) {
+	private async _sendControl(
+		to: string,
+		bytes: Uint8Array,
+		signal?: AbortSignal,
+	) {
+		if (signal?.aborted) {
+			throw signal.reason ?? new AbortError("fanout control send aborted");
+		}
 		const stream = this.peers.get(to);
 		if (!stream) return;
 		this.recordControlSend(bytes, 1);
@@ -4208,7 +4215,16 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 			mode: new AnyWhere(),
 			priority: CONTROL_PRIORITY,
 		} as any);
-		await this.publishMessageMaybe(this.publicKey, message, [stream]);
+		if (signal?.aborted) {
+			throw signal.reason ?? new AbortError("fanout control send aborted");
+		}
+		await this.publishMessageMaybe(
+			this.publicKey,
+			message,
+			[stream],
+			undefined,
+			signal,
+		);
 	}
 
 	private async _sendControlMany(to: string[], bytes: Uint8Array) {
@@ -7882,13 +7898,50 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 	): Promise<JoinAttemptResult> {
 		if (ch.parent && options?.allowReplace !== true) return { ok: true };
 		if (!this.peers.get(parentHash)) return { ok: false, timedOut: true };
-		const p = new Promise<JoinAttemptResult>((resolve) => {
-			ch.pendingJoin.set(reqId, {
-				resolve,
-				shadowAttach: options?.shadowAttach === true,
-			});
+		const attemptController = new AbortController();
+		let settled = false;
+		let resolveAttempt!: (result: JoinAttemptResult) => void;
+		let rejectAttempt!: (error: unknown) => void;
+		const attempt = new Promise<JoinAttemptResult>((resolve, reject) => {
+			resolveAttempt = resolve;
+			rejectAttempt = reject;
 		});
-		const request = this._sendControl(
+		const settleResult = (result: JoinAttemptResult) => {
+			if (settled) return;
+			settled = true;
+			resolveAttempt(result);
+		};
+		const settleError = (error: unknown) => {
+			if (settled) return;
+			settled = true;
+			rejectAttempt(error);
+		};
+		ch.pendingJoin.set(reqId, {
+			resolve: settleResult,
+			shadowAttach: options?.shadowAttach === true,
+		});
+
+		const onAbort = () => {
+			const reason = signal.reason ?? new AbortError("fanout join aborted");
+			if (!attemptController.signal.aborted) {
+				attemptController.abort(reason);
+			}
+			settleError(reason);
+		};
+		signal.addEventListener("abort", onAbort, { once: true });
+		if (signal.aborted) onAbort();
+
+		const timer = setTimeout(() => {
+			if (!attemptController.signal.aborted) {
+				attemptController.abort(
+					new AbortError("fanout join attempt timed out"),
+				);
+			}
+			settleResult({ ok: false, timedOut: true });
+		}, Math.max(1, timeoutMs));
+		timer.unref?.();
+
+		const send = this._sendControl(
 			parentHash,
 			this.codec.encodeJoinReq(
 				ch.id.key,
@@ -7896,18 +7949,29 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 				ch.bidPerByte,
 				options?.parentUpgradeReservationToken,
 			),
-		).then(() => p);
-		const res = await Promise.race([
-			request,
-			delay(Math.max(1, timeoutMs), { signal }).then(
-				(): JoinAttemptResult => ({
-					ok: false,
-					timedOut: true,
-				}),
-			),
-		]);
-		if (res.timedOut) ch.pendingJoin.delete(reqId);
-		return res;
+			attemptController.signal,
+		).catch((error) => {
+			if (settled) return;
+			if (signal.aborted) {
+				settleError(signal.reason ?? error);
+				return;
+			}
+			if (!attemptController.signal.aborted) settleError(error);
+		});
+
+		try {
+			return await attempt;
+		} finally {
+			clearTimeout(timer);
+			signal.removeEventListener("abort", onAbort);
+			ch.pendingJoin.delete(reqId);
+			if (!attemptController.signal.aborted) {
+				attemptController.abort(
+					new AbortError("fanout join attempt settled"),
+				);
+			}
+			void send;
+		}
 	}
 
 	private async kickChildHashes(

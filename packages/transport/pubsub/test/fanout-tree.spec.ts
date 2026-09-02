@@ -2057,6 +2057,114 @@ describe("fanout-tree", () => {
 		}
 	});
 
+	it("cancels an unsent join request when its attempt settles", async function () {
+		this.timeout(5_000);
+		const session = await createFanoutTestSession(2);
+
+		try {
+			await session.connect([[session.peers[0], session.peers[1]]]);
+			const root = session.peers[0].services.fanout;
+			const leaf = session.peers[1].services.fanout;
+			const topic = "cancel-unsent-join-request";
+			const rootHash = root.publicKeyHash;
+			const channelOptions = {
+				msgRate: 1,
+				msgSize: 8,
+				uploadLimitBps: 0,
+				maxChildren: 0,
+				repair: false,
+			};
+			root.openChannel(topic, rootHash, {
+				...channelOptions,
+				role: "root",
+				uploadLimitBps: 1_000_000,
+				maxChildren: 1,
+			});
+			const channelId = leaf.openChannel(topic, rootHash, {
+				...channelOptions,
+				role: "node",
+			});
+			const internals = leaf as any;
+			const channel = internals.channelsBySuffixKey.get(channelId.suffixKey);
+			await waitForResolved(() =>
+				expect(internals.peers.get(rootHash)).to.exist,
+			);
+			const rootStream = internals.peers.get(rootHash);
+			const originalWaitForWrite = rootStream.waitForWrite.bind(rootStream);
+			let markWriteStarted!: () => void;
+			const writeStarted = new Promise<void>((resolve) => {
+				markWriteStarted = resolve;
+			});
+			let releaseBlockedWrite = () => {};
+			let writeCalls = 0;
+			rootStream.waitForWrite = async (
+				bytes: Uint8Array,
+				priority: number,
+				signal?: AbortSignal,
+			) => {
+				writeCalls += 1;
+				markWriteStarted();
+				await new Promise<void>((resolve, reject) => {
+					let finished = false;
+					const finish = (callback: () => void) => {
+						if (finished) return;
+						finished = true;
+						signal?.removeEventListener("abort", onAbort);
+						callback();
+					};
+					const onAbort = () =>
+						finish(() => reject(signal?.reason ?? new Error("write aborted")));
+					releaseBlockedWrite = () => finish(resolve);
+					if (signal?.aborted) onAbort();
+					else signal?.addEventListener("abort", onAbort, { once: true });
+				});
+				await originalWaitForWrite(bytes, priority, signal);
+			};
+
+			try {
+				const resultPromise = internals.tryJoinOnce(
+					channel,
+					rootHash,
+					0x12345678,
+					30,
+					new AbortController().signal,
+				);
+				await writeStarted;
+				expect(await resultPromise).to.deep.equal({
+					ok: false,
+					timedOut: true,
+				});
+				expect(channel.pendingJoin.size).to.equal(0);
+
+				releaseBlockedWrite();
+				await delay(100);
+				expect(root.getChannelMetrics(topic, rootHash).joinReqReceived).to.equal(
+					0,
+				);
+				expect(root.getChannelStats(topic, rootHash)?.children).to.equal(0);
+
+				const abortController = new AbortController();
+				const abortReason = new Error("cancel join attempt");
+				abortController.abort(abortReason);
+				await expect(
+					internals.tryJoinOnce(
+						channel,
+						rootHash,
+						0x12345679,
+						1_000,
+						abortController.signal,
+					),
+				).to.be.rejectedWith("cancel join attempt");
+				expect(channel.pendingJoin.size).to.equal(0);
+				expect(writeCalls).to.equal(1);
+			} finally {
+				rootStream.waitForWrite = originalWaitForWrite;
+			}
+		} finally {
+			await session.stop();
+		}
+	});
+
 	it("does not gate a successful join on tracker feedback", async function () {
 		this.timeout(5_000);
 		const session = await createFanoutTestSession(2);
