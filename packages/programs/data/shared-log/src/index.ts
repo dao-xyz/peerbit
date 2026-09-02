@@ -471,6 +471,18 @@ export const logger = loggerFn("peerbit:shared-log");
 const warn = logger.newScope("warn");
 const traceLogger = logger.trace as typeof logger.trace & { enabled?: boolean };
 
+const emitAdvisorySyncProfileDuration = (
+	profile: SyncProfileFn | undefined,
+	startedAt: number,
+	event: Parameters<typeof emitSyncProfileDuration>[2],
+): void => {
+	try {
+		emitSyncProfileDuration(profile, startedAt, event);
+	} catch {
+		// Diagnostics must not change open or provider-resolution correctness.
+	}
+};
+
 const canUseOptionalNativeModuleImports = (): boolean => {
 	const scope = globalThis as {
 		ServiceWorkerGlobalScope?: unknown;
@@ -17088,6 +17100,8 @@ export class SharedLog<
 			(this.node as unknown as NodeWithSharedLogNativeDefaults)
 				.sharedLogNativeDefaults,
 		);
+		const openProfile = options?.sync?.profile;
+		const openStartedAt = syncProfileStart(openProfile);
 		this.replicas = {
 			min:
 				options?.replicas?.min != null
@@ -17318,6 +17332,7 @@ export class SharedLog<
 		this.keep = options?.keep;
 		this.pendingMaturity = new Map();
 
+		const localStateStartedAt = syncProfileStart(openProfile);
 		const id = sha256Base64Sync(this.log.id);
 		const [storage, logScope] = await Promise.all([
 			this.node.storage.sublevel(id),
@@ -17373,6 +17388,11 @@ export class SharedLog<
 		this._entryCoordinatesIndex = await replicationIndex.init({
 			schema: this.indexableDomain.constructorEntry,
 		});
+		emitAdvisorySyncProfileDuration(openProfile, localStateStartedAt, {
+			name: "sharedLog.open.localState",
+			component: "shared-log",
+		});
+		const blockStoreStartedAt = syncProfileStart(openProfile);
 		const deferStandaloneNativeRangePlanner =
 			!!options?.nativeBackbone && options.nativeRangePlanner == null;
 		await this.openNativeRangePlanner(
@@ -17423,6 +17443,14 @@ export class SharedLog<
 				storage as unknown as DurableBlockSublevelStore,
 			);
 		}
+		emitAdvisorySyncProfileDuration(openProfile, blockStoreStartedAt, {
+			name: "sharedLog.open.blockStore",
+			component: "shared-log",
+			details: {
+				nativeBackbone: this._nativeBackbone != null,
+				directoryConfigured: this.node.directory != null,
+			},
+		});
 		this.remoteBlocks = new RemoteBlocks({
 			local: localBlocks,
 			publish: (message, options) =>
@@ -17433,38 +17461,76 @@ export class SharedLog<
 			// compatible eager path with bounded validation and storage budgets.
 			eagerBlocks: options?.eagerBlocks ?? false,
 			resolveProviders: async (cid, opts) => {
+				const profile = this._logProperties?.sync?.profile;
 				const maxPeers = 8;
+				const excluded = new Set((opts?.exclude ?? []).slice(0, maxPeers));
+				const lookupPeers = opts?.refresh
+					? Math.min(maxPeers * 2, maxPeers + excluded.size)
+					: maxPeers;
+				const resolutionStartedAt = syncProfileStart(profile);
 				const localCandidates =
 					(await this.resolveCandidatePeersForHash(cid, {
 						signal: opts?.signal,
-						maxPeers,
+						maxPeers: lookupPeers,
 					})) ?? [];
-				if (opts?.signal?.aborted) return [];
+				const emitResolution = profile
+					? (
+							status: "aborted" | "local" | "directory",
+							targets: number,
+							directoryCandidates = 0,
+							reachableCandidates = 0,
+						) =>
+							emitAdvisorySyncProfileDuration(profile, resolutionStartedAt, {
+								name: "sharedLog.blocks.resolveProviders",
+								component: "shared-log",
+								count: targets,
+								targets,
+								details: {
+									status,
+									refresh: opts?.refresh === true,
+									excluded: excluded.size,
+									lookupPeers,
+									localCandidates: localCandidates.length,
+									directoryCandidates,
+									reachableCandidates,
+								},
+							})
+					: undefined;
+				if (opts?.signal?.aborted) {
+					emitResolution?.("aborted", 0);
+					return [];
+				}
 				const locallyReachable = new Set(
 					await this._getLocalReachablePeerHashes(this.topic),
 				);
+				if (opts?.signal?.aborted) {
+					emitResolution?.("aborted", 0, 0, locallyReachable.size);
+					return [];
+				}
 				const confirmed = this._checkedPrune.getConfirmedReplicators(cid);
 				const contacted = this._checkedPrune.getContactedReplicators(cid);
+				const hasProviderEvidence = (peer: string) =>
+					confirmed?.has(peer) === true ||
+					contacted?.has(peer) ||
+					this.uniqueReplicators.has(peer);
 				const hasLiveCandidate = localCandidates.some(
-					(peer) =>
-						locallyReachable.has(peer) &&
-						(confirmed?.has(peer) ||
-							contacted?.has(peer) ||
-							this.uniqueReplicators.has(peer)),
+					(peer) => locallyReachable.has(peer) && hasProviderEvidence(peer),
 				);
 
 				// Only reachability corroborated by provider/replicator evidence may
 				// bypass the initial CID lookup. Arbitrary bootstrap connections are
 				// useful fallbacks, but are not evidence that they hold this block.
 				if (hasLiveCandidate && !opts?.refresh) {
-					return localCandidates;
+					const selected = localCandidates.slice(0, maxPeers);
+					emitResolution?.("local", selected.length, 0, locallyReachable.size);
+					return selected;
 				}
 
 				let directoryProviders: string[] = [];
 				try {
 					const query = (namespace: string) =>
 						fanoutService?.queryProviders(namespace, {
-							want: maxPeers,
+							want: lookupPeers,
 							timeoutMs: 2_000,
 							queryTimeoutMs: 500,
 							bootstrapMaxPeers: 2,
@@ -17476,11 +17542,20 @@ export class SharedLog<
 					]);
 					for (const result of results) {
 						if (result.status === "fulfilled") {
-							directoryProviders.push(...result.value);
+							directoryProviders.push(...result.value.slice(0, lookupPeers));
 						}
 					}
 				} catch {
 					// Ignore discovery failures; local evidence remains usable.
+				}
+				if (opts?.signal?.aborted) {
+					emitResolution?.(
+						"aborted",
+						0,
+						directoryProviders.length,
+						locallyReachable.size,
+					);
+					return [];
 				}
 
 				const selected: string[] = [];
@@ -17492,15 +17567,62 @@ export class SharedLog<
 					selectedSet.add(peer);
 					selected.push(peer);
 				};
-				for (
-					let index = 0;
-					selected.length < maxPeers &&
-					(index < localCandidates.length || index < directoryProviders.length);
-					index++
-				) {
-					add(localCandidates[index]);
-					add(directoryProviders[index]);
+				const append = (
+					providers: readonly string[],
+					includeExcluded: boolean,
+					predicate?: (provider: string) => boolean,
+				) => {
+					for (const provider of providers) {
+						if (selected.length >= maxPeers) return;
+						if (
+							excluded.has(provider) === includeExcluded &&
+							(!predicate || predicate(provider))
+						) {
+							add(provider);
+						}
+					}
+				};
+				const appendInterleaved = (includeExcluded: boolean) => {
+					for (
+						let index = 0;
+						selected.length < maxPeers &&
+						(index < localCandidates.length ||
+							index < directoryProviders.length);
+						index++
+					) {
+						const local = localCandidates[index];
+						if (local && excluded.has(local) === includeExcluded) add(local);
+						const directory = directoryProviders[index];
+						if (directory && excluded.has(directory) === includeExcluded) {
+							add(directory);
+						}
+					}
+				};
+				if (opts?.refresh) {
+					// Retry results are wider than the regular eight-peer window. Prefer
+					// untried reachable holders, then the remaining fresh directory
+					// evidence, without discarding attempted peers as bounded transient-
+					// failure fallbacks.
+					append(directoryProviders, false, (peer) =>
+						locallyReachable.has(peer),
+					);
+					append(
+						localCandidates,
+						false,
+						(peer) => locallyReachable.has(peer) && hasProviderEvidence(peer),
+					);
+					append(directoryProviders, false);
+					append(localCandidates, false);
+				} else {
+					appendInterleaved(false);
 				}
+				appendInterleaved(true);
+				emitResolution?.(
+					"directory",
+					selected.length,
+					directoryProviders.length,
+					locallyReachable.size,
+				);
 				return selected;
 			},
 			watchProviders: fanoutService
@@ -17548,7 +17670,13 @@ export class SharedLog<
 				: undefined,
 		});
 
-		const remoteBlocksStartPromise = this.remoteBlocks.start();
+		const remoteBlocksStartedAt = syncProfileStart(openProfile);
+		const remoteBlocksStartPromise = this.remoteBlocks.start().then(() => {
+			emitAdvisorySyncProfileDuration(openProfile, remoteBlocksStartedAt, {
+				name: "sharedLog.open.remoteBlocks",
+				component: "shared-log",
+			});
+		});
 		const hasIndexedReplicationInfo =
 			(await this.replicationIndex.count({
 				query: [
@@ -17764,6 +17892,7 @@ export class SharedLog<
 		// joins rely on: a replicate:false observer syncing a head whose parents
 		// are not local would fail block resolution, and Log.join treats that as
 		// recoverable and skips the entry without persisting anything.
+		const lowerLogStartedAt = syncProfileStart(openProfile);
 		await this.log.open(this.remoteBlocks, this.node.identity, {
 			keychain: this.node.services.keychain,
 			resolveRemotePeers: (hash, options) =>
@@ -17794,6 +17923,10 @@ export class SharedLog<
 				...this._logProperties?.trim,
 			},
 			indexer: logIndex,
+		});
+		emitAdvisorySyncProfileDuration(openProfile, lowerLogStartedAt, {
+			name: "sharedLog.open.lowerLog",
+			component: "shared-log",
 		});
 		this._persistedReceiptStorage = this.resolvePersistedReceiptStorage();
 		try {
@@ -17859,6 +17992,7 @@ export class SharedLog<
 					this._onUnsubscription(event),
 				);
 			});
+		const communicationStartedAt = syncProfileStart(openProfile);
 		await Promise.all([
 			this.rpc.open({
 				queryType: TransportMessage,
@@ -17877,7 +18011,12 @@ export class SharedLog<
 				this._onUnsubscriptionFn,
 			),
 		]);
+		emitAdvisorySyncProfileDuration(openProfile, communicationStartedAt, {
+			name: "sharedLog.open.rpcSubscriptions",
+			component: "shared-log",
+		});
 
+		const providerChannelStartedAt = syncProfileStart(openProfile);
 		const fanoutOpenPromise = this._openFanoutChannel(options?.fanout);
 		// Mark previously-owned replication ranges as "new" only when they already exist.
 		// Fresh opens have nothing to touch here, so skip the extra scan/write entirely.
@@ -17885,6 +18024,11 @@ export class SharedLog<
 			? this.updateTimestampOfOwnedReplicationRanges()
 			: Promise.resolve();
 		await Promise.all([fanoutOpenPromise, updateOwnedReplicationPromise]);
+		emitAdvisorySyncProfileDuration(openProfile, providerChannelStartedAt, {
+			name: "sharedLog.open.providerAndOwnership",
+			component: "shared-log",
+			details: { indexedReplicationInfo: hasIndexedReplicationInfo },
+		});
 
 		// if we had a previous session with replication info, and new replication info dictates that we unreplicate
 		// we should do that. Otherwise if options is a unreplication we dont need to do anything because
@@ -17902,17 +18046,35 @@ export class SharedLog<
 				this.node.identity.publicKey,
 			));
 
+		const replicationStartedAt = syncProfileStart(openProfile);
+		let replicationAction: "replace" | "resume" | "reset";
 		if (hasIndexedReplicationInfo && isUnreplicationOptionsDefined) {
+			replicationAction = "replace";
 			await this.replicate(options?.replicate, { checkDuplicates: true });
 		} else if (canResumeReplication) {
+			replicationAction = "resume";
 			// dont do anthing since we are alread replicating stuff
 		} else {
+			replicationAction = "reset";
 			await this.replicate(options?.replicate, {
 				checkDuplicates: true,
 				reset: true,
 			});
 		}
+		emitAdvisorySyncProfileDuration(openProfile, replicationStartedAt, {
+			name: "sharedLog.open.replication",
+			component: "shared-log",
+			details: {
+				hadIndexedState: hasIndexedReplicationInfo,
+				action: replicationAction,
+			},
+		});
+		const synchronizerStartedAt = syncProfileStart(openProfile);
 		await this.syncronizer.open();
+		emitAdvisorySyncProfileDuration(openProfile, synchronizerStartedAt, {
+			name: "sharedLog.open.synchronizer",
+			component: "shared-log",
+		});
 
 		this.interval = setInterval(() => {
 			void this.rebalanceParticipationDebounced?.call();
@@ -17920,6 +18082,10 @@ export class SharedLog<
 
 		this._instanceLifecycle!.markOpenComplete();
 		this.scheduleReplicationStatusRefresh();
+		emitAdvisorySyncProfileDuration(openProfile, openStartedAt, {
+			name: "sharedLog.open.total",
+			component: "shared-log",
+		});
 	}
 
 	private toNativeReplicationRange(
