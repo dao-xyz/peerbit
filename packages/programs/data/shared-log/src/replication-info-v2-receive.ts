@@ -948,6 +948,20 @@ export class ReplicationInfoV2ReceiveCoordinator {
 	}
 
 	/**
+	 * Ensure an exact current request generation has a worker. In addition to
+	 * resuming a bounded cycle that parked normally, this repairs a request whose
+	 * timer fired while the host's receive gate was temporarily closed: that
+	 * generation is neither parked nor active, but has no timer or send in flight.
+	 */
+	ensureRequestProgress(properties: {
+		peerHash: string;
+		peerSession: object;
+		receiveEpoch: object | null;
+	}): boolean {
+		return this.nudgeRequest(properties, false);
+	}
+
+	/**
 	 * Resume only a request generation that exhausted its bounded retries.
 	 * Wait/liveness callers may nudge recovery without invalidating an active,
 	 * timed or in-flight request and without advancing the receive epoch.
@@ -957,18 +971,25 @@ export class ReplicationInfoV2ReceiveCoordinator {
 		peerSession: object;
 		receiveEpoch: object | null;
 	}): boolean {
+		return this.nudgeRequest(properties, true);
+	}
+
+	private nudgeRequest(
+		properties: {
+			peerHash: string;
+			peerSession: object;
+			receiveEpoch: object | null;
+		},
+		parkedOnly: boolean,
+	): boolean {
 		const state = this._receiveStates.get(properties.peerHash);
 		if (
 			!state ||
 			state.peerSession !== properties.peerSession ||
 			state.receiveEpoch !== properties.receiveEpoch ||
-			!this.deps.isPeerStateCurrent(
-				properties.peerHash,
-				properties.peerSession,
-				properties.receiveEpoch,
-			) ||
+			!this.isStateCurrent(state) ||
 			state.phase === "active" ||
-			!state.requestParked ||
+			(parkedOnly && !state.requestParked) ||
 			state.requestTimer !== undefined ||
 			state.requestInFlight !== undefined ||
 			this._reservedAdmissionsByPeer.has(properties.peerHash) ||
@@ -977,9 +998,13 @@ export class ReplicationInfoV2ReceiveCoordinator {
 		) {
 			return false;
 		}
-		state.requestAttempts = 0;
-		state.requestsSinceCapabilityRefresh = 0;
-		if (!state.capabilityRefreshRequired) {
+		const restartBoundedCycle =
+			state.requestParked || state.requestAttempts >= this.requestMaxAttempts;
+		if (restartBoundedCycle) {
+			state.requestAttempts = 0;
+			state.requestsSinceCapabilityRefresh = 0;
+		}
+		if (restartBoundedCycle && !state.capabilityRefreshRequired) {
 			// Only rotate the grant when it is genuinely stale: the peer's
 			// capability rotation paths already flagged a refresh, and a missing
 			// or transport-outdated local grant cannot authorize a request. A

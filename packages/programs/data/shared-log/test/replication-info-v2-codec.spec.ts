@@ -609,4 +609,85 @@ describe("receive admission replication-info V2 decode-only codec", () => {
 			resume.restore();
 		}
 	});
+
+	it("repairs a request whose timer fires behind the receive cleanup gate", async () => {
+		session = await TestSession.disconnected(2);
+		const db = await session.peers[0].open(new EventStore(), {
+			args: {
+				replicate: false,
+				timeUntilRoleMaturity: 0,
+				waitForReplicatorRequestIntervalMs: 50,
+			},
+		});
+		const log = db.log as any;
+		const remote = session.peers[1].identity.publicKey;
+		const remoteHash = remote.hashcode();
+		const peerSession = log._peerSessions.rotate(remoteHash, "opening");
+		log._peerSessions.unblockReplicationInfo(remoteHash);
+		log._peerSessions.markOpen(remoteHash, peerSession);
+		const receiveEpoch = log._peerSessions.receiveEpoch(remoteHash);
+		const clock = sinon.useFakeTimers({ now: Date.now() });
+		const sentRequests: RequestReplicationInfoV2Message[] = [];
+		const send = sinon
+			.stub(log.rpc, "send")
+			.callsFake(async (message: unknown) => {
+				if (message instanceof RequestReplicationInfoV2Message) {
+					sentRequests.push(message);
+				}
+			});
+		let releaseReceiveGate: (() => void) | undefined;
+
+		try {
+			expect(
+				log.observePeerSyncCapabilities({
+					peerHash: remoteHash,
+					capabilities:
+						SYNC_CAPABILITY_REPLICATION_INFO_V2_DECODE |
+						SYNC_CAPABILITY_REPLICATION_INFO_V2_SEND,
+					transportSession: 91n,
+					timestamp: 1n,
+				}),
+			).to.be.true;
+			expect(
+				log._v2Receive.markLocalCapabilityReady({
+					peerHash: remoteHash,
+					peerSession,
+					receiveEpoch,
+					receiverTransportSession: BigInt(log.node.services.pubsub.session),
+					requestNotBeforeMs: Date.now() - 1,
+				}),
+			).to.be.true;
+			expect(log.promoteReplicationInfoV2ReceiveCapability(remote, peerSession))
+				.to.be.true;
+
+			const state = log._v2Receive._receiveStates.get(remoteHash)!;
+			expect(state.requestTimer).to.exist;
+			const release = log._peerSessions.acquireReceiveCleanupGate(remoteHash);
+			releaseReceiveGate = release;
+			log.cancelReplicationInfoRequests(remoteHash);
+			log.scheduleReplicationInfoV2Recovery(
+				remote,
+				log._instanceLifecycle.membershipLifecycleController,
+			);
+
+			await clock.tickAsync(1);
+			expect(sentRequests).to.be.empty;
+			expect(state.phase).to.equal("awaiting-full");
+			expect(state.requestParked).to.be.false;
+			expect(state.requestTimer).to.be.undefined;
+			expect(state.requestInFlight).to.be.undefined;
+
+			release();
+			releaseReceiveGate = undefined;
+			await clock.tickAsync(50);
+			expect(sentRequests).to.have.length(1);
+			expect(state.requestAttempts).to.equal(1);
+		} finally {
+			log.cancelReplicationInfoRequests(remoteHash);
+			log._v2Receive.revokePeerCapability(remoteHash);
+			releaseReceiveGate?.();
+			send.restore();
+			clock.restore();
+		}
+	});
 });

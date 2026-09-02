@@ -76,7 +76,7 @@ describe("waitForReplicator", () => {
 		await session?.stop();
 	});
 
-	it("nudges parked V2 recovery without sending legacy requests by default", async () => {
+	it("nudges exact V2 request progress without sending legacy requests by default", async () => {
 		session = await TestSession.connected(2);
 		db = await session.peers[0].open(new EventStore<string, any>(), {
 			args: {
@@ -118,7 +118,7 @@ describe("waitForReplicator", () => {
 		const scheduleRecovery = sinon
 			.stub(log, "scheduleReplicationInfoV2Recovery")
 			.callsFake(() => {});
-		const resumed: Array<{
+		const nudged: Array<{
 			properties: {
 				peerHash: string;
 				peerSession: object;
@@ -128,11 +128,11 @@ describe("waitForReplicator", () => {
 			currentPhase: string | undefined;
 			currentReceiveEpoch: object | null;
 		}> = [];
-		const resume = sinon
-			.stub(log._v2Receive, "resumeParkedRequest")
+		const nudge = sinon
+			.stub(log._v2Receive, "ensureRequestProgress")
 			.callsFake((properties: unknown) => {
-				resumed.push({
-					properties: properties as (typeof resumed)[number]["properties"],
+				nudged.push({
+					properties: properties as (typeof nudged)[number]["properties"],
 					currentPeerSession: log._peerSessions.current(remoteHash),
 					currentPhase: log._peerSessions.current(remoteHash)?.phase,
 					currentReceiveEpoch: log._peerSessions.receiveEpoch(remoteHash),
@@ -148,8 +148,8 @@ describe("waitForReplicator", () => {
 				}),
 			).to.be.rejectedWith(TimeoutError);
 			expect(legacyRequests).to.equal(0);
-			expect(resume.callCount).to.equal(2);
-			for (const observation of resumed) {
+			expect(nudge.callCount).to.equal(2);
+			for (const observation of nudged) {
 				expect(observation.properties.peerHash).to.equal(remoteHash);
 				expect(observation.properties.peerSession).to.equal(
 					observation.currentPeerSession,
@@ -160,7 +160,7 @@ describe("waitForReplicator", () => {
 				);
 			}
 		} finally {
-			resume.restore();
+			nudge.restore();
 			scheduleRecovery.restore();
 			log.rpc.send = originalSend;
 		}
@@ -184,7 +184,7 @@ describe("waitForReplicator", () => {
 		const requestSubscribers = sinon
 			.stub(session.peers[0].services.pubsub, "requestSubscribers")
 			.resolves();
-		const resume = sinon.stub(log._v2Receive, "resumeParkedRequest");
+		const nudge = sinon.stub(log._v2Receive, "ensureRequestProgress");
 
 		try {
 			await expect(
@@ -197,9 +197,9 @@ describe("waitForReplicator", () => {
 			for (const call of requestSubscribers.getCalls()) {
 				expect(call.args).to.deep.equal([log.topic, remote]);
 			}
-			expect(resume.notCalled).to.be.true;
+			expect(nudge.notCalled).to.be.true;
 		} finally {
-			resume.restore();
+			nudge.restore();
 			requestSubscribers.restore();
 		}
 	});
@@ -223,7 +223,7 @@ describe("waitForReplicator", () => {
 		const requestSubscribers = sinon
 			.stub(session.peers[0].services.pubsub, "requestSubscribers")
 			.resolves();
-		const resume = sinon.stub(log._v2Receive, "resumeParkedRequest");
+		const nudge = sinon.stub(log._v2Receive, "ensureRequestProgress");
 
 		try {
 			await expect(
@@ -235,9 +235,9 @@ describe("waitForReplicator", () => {
 			expect(requestSubscribers.callCount).to.equal(2);
 			expect(requestSubscribers.alwaysCalledWithExactly(log.topic, remote)).to
 				.be.true;
-			expect(resume.notCalled).to.be.true;
+			expect(nudge.notCalled).to.be.true;
 		} finally {
-			resume.restore();
+			nudge.restore();
 			requestSubscribers.restore();
 		}
 	});
@@ -299,7 +299,7 @@ describe("waitForReplicator", () => {
 			session.peers[0].services.pubsub,
 			"requestSubscribers",
 		);
-		const resume = sinon.stub(log._v2Receive, "resumeParkedRequest");
+		const nudge = sinon.stub(log._v2Receive, "ensureRequestProgress");
 
 		try {
 			await expect(
@@ -309,9 +309,9 @@ describe("waitForReplicator", () => {
 				}),
 			).to.be.rejectedWith(TimeoutError);
 			expect(requestSubscribers.notCalled).to.be.true;
-			expect(resume.notCalled).to.be.true;
+			expect(nudge.notCalled).to.be.true;
 		} finally {
-			resume.restore();
+			nudge.restore();
 			requestSubscribers.restore();
 		}
 	});

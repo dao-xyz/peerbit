@@ -1324,6 +1324,43 @@ describe("receive admission replication-info V2 receiver state", () => {
 		expect(sendRequest.callCount).to.equal(2);
 	});
 
+	it("re-arms a request whose timer fires behind a temporary receive gate", async () => {
+		const clock = sinon.useFakeTimers({ now: 1_000 });
+		expect(markLocalReady(999)).to.be.true;
+		expect(observeSender()).to.be.true;
+		const state = coordinator._receiveStates.get(peerHash)!;
+		expect(state.requestTimer).to.exist;
+
+		peerStateReady = false;
+		await clock.tickAsync(1);
+		expect(sendRequest.notCalled).to.be.true;
+		expect(state.phase).to.equal("awaiting-full");
+		expect(state.requestParked).to.be.false;
+		expect(state.requestTimer).to.be.undefined;
+		expect(state.requestInFlight).to.be.undefined;
+
+		peerStateReady = true;
+		expect(
+			coordinator.ensureRequestProgress({
+				peerHash,
+				peerSession: currentSession,
+				receiveEpoch: currentReceiveEpoch,
+			}),
+		).to.be.true;
+		expect(state.requestTimer).to.exist;
+		expect(
+			coordinator.ensureRequestProgress({
+				peerHash,
+				peerSession: currentSession,
+				receiveEpoch: currentReceiveEpoch,
+			}),
+		).to.be.false;
+
+		await clock.tickAsync(1);
+		expect(sendRequest.calledOnce).to.be.true;
+		expect(state.requestAttempts).to.equal(1);
+	});
+
 	it("resumes only an exact parked request without invalidating live work", async () => {
 		const clock = sinon.useFakeTimers({ now: 1_000 });
 		coordinator = createCoordinator({
