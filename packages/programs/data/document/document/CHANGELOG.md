@@ -1,5 +1,12 @@
 # Changelog
 
+## 15.0.22
+
+### Patch Changes
+
+- [#1396](https://github.com/dao-xyz/peerbit/pull/1396) [`3288640`](https://github.com/dao-xyz/peerbit/commit/32886400a48b092e06eb34874ca7d0ee63055ef5) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Support persisted remote delivery receipts for single document deletes while
+  preserving their canonical CUT type and predecessor metadata.
+
 ## 15.0.21
 
 ### Patch Changes
