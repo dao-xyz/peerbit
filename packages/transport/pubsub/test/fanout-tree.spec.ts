@@ -2100,6 +2100,73 @@ describe("fanout-tree", () => {
 		}
 	});
 
+	it("keeps an excluded bootstrap excluded after transient readiness", async function () {
+		this.timeout(5_000);
+		const session = await TestSession.disconnected<FanoutServices>(3, {
+			services: {
+				fanout: (components) =>
+					new FanoutTree(components, {
+						connectionManager: false,
+						random: () => 0.999_999,
+					}),
+			},
+		});
+
+		try {
+			const targetNode = session.peers[0];
+			const leafNode = session.peers[1];
+			const excludedNode = session.peers[2];
+			await session.connect([[leafNode, excludedNode]]);
+			const leaf = leafNode.services.fanout;
+			const targetHash = targetNode.services.fanout.publicKeyHash;
+			const excludedHash = excludedNode.services.fanout.publicKeyHash;
+			const targetAddress = targetNode.getMultiaddrs()[0];
+			const excludedAddress = excludedNode.getMultiaddrs()[0];
+			expect(targetAddress).to.exist;
+			expect(excludedAddress).to.exist;
+
+			const internals = leaf as any;
+			const channelId = leaf.openChannel("transient-bootstrap-exclusion", targetHash, {
+				role: "node",
+				msgRate: 1,
+				msgSize: 8,
+				uploadLimitBps: 0,
+				maxChildren: 0,
+				repair: false,
+			});
+			const channel = internals.channelsBySuffixKey.get(channelId.suffixKey);
+			const originalConnectedHash =
+				internals.connectedPeerHashForBootstrap.bind(internals);
+			internals.connectedPeerHashForBootstrap = (address: {
+				toString(): string;
+			}) =>
+				address.toString() === excludedAddress!.toString()
+					? undefined
+					: originalConnectedHash(address);
+
+			try {
+				const peers = await internals.ensureBootstrapPeers(
+					[excludedAddress!, targetAddress!],
+					500,
+					new AbortController().signal,
+					1,
+					{
+						metrics: channel.metrics,
+						preferConnected: true,
+						excludeReadyPeerHashes: new Set([excludedHash]),
+					},
+				);
+				expect(peers).to.deep.equal([targetHash]);
+				expect(channel.metrics.joinBootstrapDialAttempts).to.equal(2);
+				expect(channel.metrics.joinBootstrapDialFailures).to.equal(0);
+			} finally {
+				internals.connectedPeerHashForBootstrap = originalConnectedHash;
+			}
+		} finally {
+			await session.stop();
+		}
+	});
+
 	it("clamps a silent connected parent to the initial join deadline", async function () {
 		this.timeout(5_000);
 		const session: TestSession<{ fanout: FanoutTree }> =

@@ -5069,6 +5069,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 			if (diagnostics && !attempt) break;
 			if (diagnostics) diagnostics.metrics.joinBootstrapDialAttempts += 1;
 			let ready = false;
+			let skippedExcluded = false;
 			try {
 				const conn = attempt
 					? await this.components.connectionManager.openConnection(a, {
@@ -5081,13 +5082,17 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 					timeout: attempt?.timeoutMs ?? timeoutMs,
 					signal: attempt?.signal ?? signal,
 				});
-				ready = diagnostics ? this.isPeerReadyForJoin(h) : true;
+				skippedExcluded =
+					diagnostics?.excludeReadyPeerHashes?.has(h) === true;
+				ready =
+					!skippedExcluded &&
+					(diagnostics ? this.isPeerReadyForJoin(h) : true);
 				if (ready) out.push(h);
 			} catch {
 				// ignore dial failures
 			} finally {
 				attempt?.clear();
-				if (!ready && diagnostics) {
+				if (!ready && !skippedExcluded && diagnostics) {
 					diagnostics.metrics.joinBootstrapDialFailures += 1;
 				}
 			}
@@ -6335,7 +6340,16 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 							diagnostics,
 						);
 						if (peers.length > 0) {
+							const cohortChanged =
+								peers.length !== ch.cachedBootstrapPeers.length ||
+								peers.some(
+									(hash, index) => ch.cachedBootstrapPeers[index] !== hash,
+								);
 							ch.cachedBootstrapPeers = peers;
+							if (cohortChanged) {
+								ch.lastTrackerQueryAt = 0;
+								ch.cachedTrackerCandidates = [];
+							}
 						} else if (wasFallbackPass) {
 							bootstrapFallbackRetryAt =
 								Date.now() + Math.max(1, bootstrapEnsureIntervalMs);
