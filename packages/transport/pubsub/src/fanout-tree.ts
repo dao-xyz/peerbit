@@ -586,8 +586,9 @@ export type FanoutTreeJoinOptions = {
 	/**
 	 * Candidate scoring mode for selecting parent join targets.
 	 *
-	 * - `ranked-shuffle` (default): rank by (level, freeSlots, bid, source) and
-	 *   shuffle within `candidateShuffleTopK` to spread load.
+	 * - `ranked-shuffle` (default): rank by (level, freeSlots, bid, source),
+	 *   shuffle within `candidateShuffleTopK` to spread load, then promote at
+	 *   most one already-usable peer for a low-latency first attempt.
 	 * - `ranked-strict`: try ranked candidates in order (no shuffle).
 	 * - `weighted`: weighted shuffle within `candidateShuffleTopK` using
 	 *   `candidateScoringWeights` (defaults bias low level + free slots).
@@ -730,14 +731,18 @@ export type FanoutTreeChannelMetrics = {
 	joinRejectSent: number;
 	joinRejectReceived: number;
 	joinPeerResets: number;
-	joinBootstrapDialAttempts: number;
-	joinBootstrapDialFailures: number;
-	joinCandidateDialAttempts: number;
-	joinCandidateDialFailures: number;
-	joinConnectedCandidateAttempts: number;
-	joinUnconnectedCandidateAttempts: number;
-	joinReqTimeouts: number;
-	joinDeadlineExpirations: number;
+	/**
+	 * Cold-join diagnostics. Implementations populate every counter, while the
+	 * optional boundary keeps older external metrics fixtures source-compatible.
+	 */
+	joinBootstrapDialAttempts?: number;
+	joinBootstrapDialFailures?: number;
+	joinCandidateDialAttempts?: number;
+	joinCandidateDialFailures?: number;
+	joinConnectedCandidateAttempts?: number;
+	joinUnconnectedCandidateAttempts?: number;
+	joinReqTimeouts?: number;
+	joinDeadlineExpirations?: number;
 	kickSent: number;
 	kickReceived: number;
 	reparentDisconnect: number;
@@ -814,6 +819,17 @@ export type FanoutTreeChannelMetrics = {
 	routeProxyFanout: number;
 	routeProxyCoalesced: number;
 	routeProxyRejected: number;
+};
+
+type InternalFanoutTreeChannelMetrics = FanoutTreeChannelMetrics & {
+	joinBootstrapDialAttempts: number;
+	joinBootstrapDialFailures: number;
+	joinCandidateDialAttempts: number;
+	joinCandidateDialFailures: number;
+	joinConnectedCandidateAttempts: number;
+	joinUnconnectedCandidateAttempts: number;
+	joinReqTimeouts: number;
+	joinDeadlineExpirations: number;
 };
 
 export interface FanoutTreeEvents extends StreamEvents {
@@ -999,7 +1015,7 @@ type JoinAttemptResult = {
 };
 
 type JoinDialDiagnostics = {
-	metrics: FanoutTreeChannelMetrics;
+	metrics: InternalFanoutTreeChannelMetrics;
 	deadlineAt?: number;
 	preferConnected?: boolean;
 };
@@ -1015,7 +1031,7 @@ type PendingUnicastAck = {
 
 type ChannelState = {
 	id: FanoutTreeChannelId;
-	metrics: FanoutTreeChannelMetrics;
+	metrics: InternalFanoutTreeChannelMetrics;
 	level: number;
 	isRoot: boolean;
 	closeController: AbortController;
@@ -1226,7 +1242,7 @@ const createDeferred = (): {
 	return { resolve, reject, promise };
 };
 
-const createEmptyMetrics = (): FanoutTreeChannelMetrics => ({
+const createEmptyMetrics = (): InternalFanoutTreeChannelMetrics => ({
 	controlSends: 0,
 	controlBytesSent: 0,
 	controlReceives: 0,
@@ -1346,7 +1362,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 	private readonly cachedSuffixKey = new WeakMap<Uint8Array, string>();
 	private readonly metricsBySuffixKey = new Map<
 		string,
-		FanoutTreeChannelMetrics
+		InternalFanoutTreeChannelMetrics
 	>();
 	private readonly joinTimeoutStreakByPeer = new Map<string, number>();
 	private readonly joinResetCooldownUntilByPeer = new Map<string, number>();
@@ -3965,7 +3981,9 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		return key;
 	}
 
-	private getMetricsForSuffixKey(suffixKey: string): FanoutTreeChannelMetrics {
+	private getMetricsForSuffixKey(
+		suffixKey: string,
+	): InternalFanoutTreeChannelMetrics {
 		let m = this.metricsBySuffixKey.get(suffixKey);
 		if (!m) {
 			m = createEmptyMetrics();
@@ -5049,6 +5067,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 					diagnostics.metrics.joinBootstrapDialFailures += 1;
 				}
 			}
+			if (ready && diagnostics?.preferConnected) break;
 		}
 		return [...new Set(out)];
 	}
@@ -5651,6 +5670,22 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 			trackerPeers,
 			this.codec.encodeTrackerFeedback(ch.id.key, candidateHash, event, reason),
 		);
+	}
+
+	private sendTrackerFeedbackBestEffort(
+		ch: ChannelState,
+		trackerPeers: string[],
+		candidateHash: string,
+		event: number,
+		reason = 0,
+	): void {
+		void this.sendTrackerFeedback(
+			ch,
+			trackerPeers,
+			candidateHash,
+			event,
+			reason,
+		).catch(() => {});
 	}
 
 	private pruneParentUpgradeReservations(ch: ChannelState, now = Date.now()) {
@@ -6452,6 +6487,16 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 							ordered[j] = tmp;
 						}
 					}
+
+					// Give one usable peer a latency advantage without moving every
+					// connected fallback ahead of better-ranked dialable candidates.
+					const firstReadyIndex = ordered.findIndex((candidate) =>
+						this.isPeerReadyForJoin(candidate.hash),
+					);
+					if (firstReadyIndex > 0) {
+						const [firstReady] = ordered.splice(firstReadyIndex, 1);
+						ordered.unshift(firstReady!);
+					}
 				} else if (candidateScoringMode === "weighted") {
 					const wLevel = Number.isFinite(candidateScoringWeights.level)
 						? Math.max(0, candidateScoringWeights.level)
@@ -6524,15 +6569,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 					}
 				}
 
-				const connectedOrdered: typeof ordered = [];
-				const unconnectedOrdered: typeof ordered = [];
-				for (const candidate of ordered) {
-					(this.isPeerReadyForJoin(candidate.hash)
-						? connectedOrdered
-						: unconnectedOrdered
-					).push(candidate);
-				}
-				const queue = connectedOrdered.concat(unconnectedOrdered);
+				const queue = ordered;
 				const queued = new Set<string>(queue.map((c) => c.hash));
 				const dialedNew = new Set<string>();
 				let attempts = 0;
@@ -6565,16 +6602,12 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 						);
 					}
 					if (!dialOk) {
-						try {
-							await this.sendTrackerFeedback(
-								ch,
-								bootstrapPeers,
-								c.hash,
-								TRACKER_FEEDBACK_DIAL_FAILED,
-							);
-						} catch {
-							// ignore
-						}
+						this.sendTrackerFeedbackBestEffort(
+							ch,
+							bootstrapPeers,
+							c.hash,
+							TRACKER_FEEDBACK_DIAL_FAILED,
+						);
 						if (candidateCooldownMs > 0) {
 							cooldownUntilByHash.set(
 								c.hash,
@@ -6618,16 +6651,12 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 					}
 
 					if (res.ok) {
-						try {
-							await this.sendTrackerFeedback(
-								ch,
-								bootstrapPeers,
-								c.hash,
-								TRACKER_FEEDBACK_JOINED,
-							);
-						} catch {
-							// ignore
-						}
+						this.sendTrackerFeedbackBestEffort(
+							ch,
+							bootstrapPeers,
+							c.hash,
+							TRACKER_FEEDBACK_JOINED,
+						);
 						cooldownUntilByHash.delete(c.hash);
 						break;
 					}
@@ -6647,16 +6676,12 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 					if (res.timedOut) {
 						ch.metrics.joinReqTimeouts += 1;
 						this.noteJoinTimeout(ch, c.hash);
-						try {
-							await this.sendTrackerFeedback(
-								ch,
-								bootstrapPeers,
-								c.hash,
-								TRACKER_FEEDBACK_JOIN_TIMEOUT,
-							);
-						} catch {
-							// ignore
-						}
+						this.sendTrackerFeedbackBestEffort(
+							ch,
+							bootstrapPeers,
+							c.hash,
+							TRACKER_FEEDBACK_JOIN_TIMEOUT,
+						);
 						if (candidateCooldownMs > 0) {
 							cooldownUntilByHash.set(
 								c.hash,
@@ -6681,17 +6706,13 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 							Date.now() + candidateCooldownMs * factor,
 						);
 					}
-					try {
-						await this.sendTrackerFeedback(
-							ch,
-							bootstrapPeers,
-							c.hash,
-							TRACKER_FEEDBACK_JOIN_REJECT,
-							rejectReason,
-						);
-					} catch {
-						// ignore
-					}
+					this.sendTrackerFeedbackBestEffort(
+						ch,
+						bootstrapPeers,
+						c.hash,
+						TRACKER_FEEDBACK_JOIN_REJECT,
+						rejectReason,
+					);
 				}
 
 				if (ch.parent) {

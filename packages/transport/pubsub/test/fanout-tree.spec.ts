@@ -1,7 +1,11 @@
 import { TestSession } from "@peerbit/libp2p-test-utils";
 import { TimeoutError, delay, waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
-import { FanoutChannel, FanoutTree } from "../src/index.js";
+import {
+	FanoutChannel,
+	FanoutTree,
+	type FanoutTreeChannelMetrics,
+} from "../src/index.js";
 
 type FanoutServices = { fanout: FanoutTree };
 
@@ -16,6 +20,36 @@ const createFanoutTestSession = (n: number) =>
 	});
 
 describe("fanout-tree", () => {
+	it("keeps cold-join counters additive at the exported metrics boundary", async () => {
+		const session = await createFanoutTestSession(1);
+
+		try {
+			const fanout = session.peers[0].services.fanout;
+			const metrics = fanout.getChannelMetrics(
+				"metrics-source-compatibility",
+				fanout.publicKeyHash,
+			);
+			type NewColdJoinMetric =
+				| "joinBootstrapDialAttempts"
+				| "joinBootstrapDialFailures"
+				| "joinCandidateDialAttempts"
+				| "joinCandidateDialFailures"
+				| "joinConnectedCandidateAttempts"
+				| "joinUnconnectedCandidateAttempts"
+				| "joinReqTimeouts"
+				| "joinDeadlineExpirations";
+			const legacyMetrics: Omit<
+				FanoutTreeChannelMetrics,
+				NewColdJoinMetric
+			> = metrics;
+			const acceptsPublicMetrics = (value: FanoutTreeChannelMetrics) => value;
+
+			expect(acceptsPublicMetrics(legacyMetrics)).to.equal(legacyMetrics);
+		} finally {
+			await session.stop();
+		}
+	});
+
 	it("bounds per-channel route token cache (LRU + TTL)", async () => {
 		const session: TestSession<{ fanout: FanoutTree }> =
 			await createFanoutTestSession(1);
@@ -1866,6 +1900,106 @@ describe("fanout-tree", () => {
 		}
 	});
 
+	it("uses the first newly ready bootstrap without dialing a stale follower", async function () {
+		this.timeout(10_000);
+		const session = await TestSession.disconnected<FanoutServices>(3, {
+			services: {
+				fanout: (components) =>
+					new FanoutTree(components, {
+						connectionManager: false,
+						random: () => 0.999_999,
+					}),
+			},
+		});
+
+		try {
+			const rootNode = session.peers[0];
+			const root = rootNode.services.fanout;
+			const leaf = session.peers[1].services.fanout;
+			const staleNode = session.peers[2];
+			const liveAddress = rootNode.getMultiaddrs()[0];
+			const staleAddress = staleNode.getMultiaddrs()[0];
+			expect(liveAddress).to.exist;
+			expect(staleAddress).to.exist;
+
+			const topic = "initial-join-live-bootstrap-before-stale";
+			const rootHash = root.publicKeyHash;
+			root.openChannel(topic, rootHash, {
+				role: "root",
+				msgRate: 1,
+				msgSize: 8,
+				uploadLimitBps: 1_000_000,
+				maxChildren: 1,
+				repair: false,
+			});
+
+			const internals = leaf as any;
+			const connectionManager = internals.components.connectionManager as any;
+			const originalOpenConnection =
+				connectionManager.openConnection.bind(connectionManager);
+			const dialedAddresses: string[] = [];
+			connectionManager.openConnection = (
+				address: { toString(): string },
+				options?: { signal?: AbortSignal },
+			) => {
+				const value = address.toString();
+				dialedAddresses.push(value);
+				if (value !== staleAddress!.toString()) {
+					return originalOpenConnection(address, options);
+				}
+				return new Promise<never>((_resolve, reject) => {
+					const signal = options?.signal;
+					if (!signal) {
+						reject(new Error("stale bootstrap dial was not bounded"));
+						return;
+					}
+					const rejectOnAbort = () =>
+						reject(signal.reason ?? new Error("stale bootstrap dial aborted"));
+					if (signal.aborted) rejectOnAbort();
+					else signal.addEventListener("abort", rejectOnAbort, { once: true });
+				});
+			};
+
+			try {
+				await Promise.race([
+					leaf.joinChannel(
+						topic,
+						rootHash,
+						{
+							msgRate: 1,
+							msgSize: 8,
+							uploadLimitBps: 0,
+							maxChildren: 0,
+							repair: false,
+						},
+						{
+							timeoutMs: 500,
+							bootstrap: [liveAddress!, staleAddress!],
+							bootstrapDialTimeoutMs: 5_000,
+							bootstrapMaxPeers: 0,
+							trackerCandidates: 0,
+							retryMs: 1,
+						},
+					),
+					delay(1_000).then(() => {
+						throw new Error("join did not use the newly ready bootstrap");
+					}),
+				]);
+			} finally {
+				connectionManager.openConnection = originalOpenConnection;
+			}
+
+			expect(leaf.getChannelStats(topic, rootHash)?.parent).to.equal(rootHash);
+			expect(dialedAddresses[0]).to.equal(liveAddress!.toString());
+			expect(dialedAddresses).not.to.include(staleAddress!.toString());
+			const metrics = leaf.getChannelMetrics(topic, rootHash);
+			expect(metrics.joinBootstrapDialAttempts).to.equal(1);
+			expect(metrics.joinBootstrapDialFailures).to.equal(0);
+		} finally {
+			await session.stop();
+		}
+	});
+
 	it("clamps a silent connected parent to the initial join deadline", async function () {
 		this.timeout(5_000);
 		const session: TestSession<{ fanout: FanoutTree }> =
@@ -1918,6 +2052,72 @@ describe("fanout-tree", () => {
 			expect(metrics.joinConnectedCandidateAttempts).to.equal(1);
 			expect(metrics.joinReqTimeouts).to.equal(1);
 			expect(metrics.joinDeadlineExpirations).to.equal(1);
+		} finally {
+			await session.stop();
+		}
+	});
+
+	it("does not gate a successful join on tracker feedback", async function () {
+		this.timeout(5_000);
+		const session = await createFanoutTestSession(2);
+
+		try {
+			await session.connect([[session.peers[0], session.peers[1]]]);
+			const rootNode = session.peers[0];
+			const root = rootNode.services.fanout;
+			const leaf = session.peers[1].services.fanout;
+			const topic = "initial-join-non-gating-feedback";
+			const rootHash = root.publicKeyHash;
+			root.openChannel(topic, rootHash, {
+				role: "root",
+				msgRate: 1,
+				msgSize: 8,
+				uploadLimitBps: 1_000_000,
+				maxChildren: 1,
+				repair: false,
+			});
+
+			const internals = leaf as any;
+			const originalSendTrackerFeedback = internals.sendTrackerFeedback;
+			let releaseFeedback!: () => void;
+			const feedbackRelease = new Promise<void>((resolve) => {
+				releaseFeedback = resolve;
+			});
+			let feedbackCalls = 0;
+			internals.sendTrackerFeedback = async () => {
+				feedbackCalls += 1;
+				await feedbackRelease;
+			};
+
+			try {
+				await Promise.race([
+					leaf.joinChannel(
+						topic,
+						rootHash,
+						{
+							msgRate: 1,
+							msgSize: 8,
+							uploadLimitBps: 0,
+							maxChildren: 0,
+							repair: false,
+						},
+						{
+							timeoutMs: 250,
+							bootstrap: rootNode.getMultiaddrs(),
+							trackerCandidates: 0,
+							retryMs: 1,
+						},
+					),
+					delay(500).then(() => {
+						throw new Error("tracker feedback gated the successful join");
+					}),
+				]);
+				expect(feedbackCalls).to.equal(1);
+				expect(leaf.getChannelStats(topic, rootHash)?.parent).to.equal(rootHash);
+			} finally {
+				releaseFeedback();
+				internals.sendTrackerFeedback = originalSendTrackerFeedback;
+			}
 		} finally {
 			await session.stop();
 		}
@@ -1995,6 +2195,118 @@ describe("fanout-tree", () => {
 			expect(metrics.joinUnconnectedCandidateAttempts).to.equal(0);
 			expect(metrics.joinBootstrapDialAttempts).to.equal(0);
 			expect(metrics.joinCandidateDialAttempts).to.equal(0);
+		} finally {
+			await session.stop();
+		}
+	});
+
+	it("promotes only one connected candidate ahead of a ranked unconnected root", async function () {
+		this.timeout(10_000);
+		const session = await createFanoutTestSession(5);
+
+		try {
+			const rootNode = session.peers[0];
+			const leafNode = session.peers[1];
+			const bystanderNodes = session.peers.slice(2);
+			await session.connect(
+				bystanderNodes.map((bystander) => [leafNode, bystander]),
+			);
+
+			const root = rootNode.services.fanout;
+			const leaf = leafNode.services.fanout;
+			const topic = "initial-join-connected-budget-fairness";
+			const rootHash = root.publicKeyHash;
+			const rootAddress = rootNode.getMultiaddrs()[0];
+			const bootstrapAddress = bystanderNodes[0]!.getMultiaddrs()[0];
+			expect(rootAddress).to.exist;
+			expect(bootstrapAddress).to.exist;
+			root.openChannel(topic, rootHash, {
+				role: "root",
+				msgRate: 1,
+				msgSize: 8,
+				uploadLimitBps: 1_000_000,
+				maxChildren: 1,
+				repair: false,
+			});
+
+			const internals = leaf as any;
+			expect(internals.peers.has(rootHash)).to.equal(false);
+			const bystanderHashes = new Set(
+				bystanderNodes.map((node) => node.services.fanout.publicKeyHash),
+			);
+			const connectionManager = internals.components.connectionManager as any;
+			const originalCloseConnections =
+				connectionManager.closeConnections.bind(connectionManager);
+			const originalQueryTrackers = internals.queryTrackers;
+			const originalSendControl = internals._sendControl;
+			const originalSendTrackerFeedback = internals.sendTrackerFeedback;
+			const originalTryJoinOnce = internals.tryJoinOnce;
+			const attemptedParents: string[] = [];
+			internals.queryTrackers = async () => [
+				{
+					hash: rootHash,
+					addrs: [rootAddress!],
+					level: 0,
+					freeSlots: 1,
+					bidPerByte: 0,
+				},
+			];
+			internals._sendControl = async (to: string, bytes: Uint8Array) => {
+				if (bystanderHashes.has(to)) return;
+				return originalSendControl.call(leaf, to, bytes);
+			};
+			internals.sendTrackerFeedback = async () => {};
+			internals.tryJoinOnce = async (...args: any[]) => {
+				attemptedParents.push(args[1]);
+				return originalTryJoinOnce.apply(leaf, args);
+			};
+			connectionManager.closeConnections = async (...args: any[]) => {
+				const peerId = args[0];
+				const peer = [...internals.peers.entries()].find(
+					([, stream]: any[]) => stream.peerId.toString() === peerId.toString(),
+				);
+				if (peer && bystanderHashes.has(peer[0])) return;
+				return originalCloseConnections(...args);
+			};
+
+			try {
+				await leaf.joinChannel(
+					topic,
+					rootHash,
+					{
+						msgRate: 1,
+						msgSize: 8,
+						uploadLimitBps: 0,
+						maxChildren: 0,
+						repair: false,
+					},
+					{
+						timeoutMs: 500,
+						bootstrap: [bootstrapAddress!],
+						bootstrapMaxPeers: 1,
+						trackerCandidates: 1,
+						joinAttemptsPerRound: 2,
+						joinReqTimeoutMs: 50,
+						candidateCooldownMs: 0,
+						candidateScoringMode: "ranked-shuffle",
+						candidateShuffleTopK: 0,
+						retryMs: 1,
+					},
+				);
+			} finally {
+				connectionManager.closeConnections = originalCloseConnections;
+				internals.queryTrackers = originalQueryTrackers;
+				internals._sendControl = originalSendControl;
+				internals.sendTrackerFeedback = originalSendTrackerFeedback;
+				internals.tryJoinOnce = originalTryJoinOnce;
+			}
+
+			expect(leaf.getChannelStats(topic, rootHash)?.parent).to.equal(rootHash);
+			expect(bystanderHashes.has(attemptedParents[0]!)).to.equal(true);
+			expect(attemptedParents[1]).to.equal(rootHash);
+			const metrics = leaf.getChannelMetrics(topic, rootHash);
+			expect(metrics.joinConnectedCandidateAttempts).to.equal(1);
+			expect(metrics.joinUnconnectedCandidateAttempts).to.equal(1);
 		} finally {
 			await session.stop();
 		}
