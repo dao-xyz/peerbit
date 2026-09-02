@@ -2333,6 +2333,7 @@ export class TopicControlPlane
 	private async sendDirectControlMessage(
 		peer: PeerStreams,
 		pubsubMessage: PubSubMessage,
+		signal?: AbortSignal,
 	) {
 		const embedded = await this.createMessage(
 			this.encodePubSubMessage(pubsubMessage),
@@ -2345,7 +2346,13 @@ export class TopicControlPlane
 				skipRecipientValidation: true,
 			} as any,
 		);
-		await this.publishMessage(this.publicKey, embedded, [peer]);
+		await this.publishMessage(
+			this.publicKey,
+			embedded,
+			[peer],
+			undefined,
+			signal,
+		);
 	}
 
 	private resolvePendingTopicRootQuery(
@@ -2377,6 +2384,9 @@ export class TopicControlPlane
 
 		const expectedPeerHash = peer.publicKey.hashcode();
 		const requestId = this.nextTopicRootRequestIdValue();
+		const queryController = new AbortController();
+		const querySignals = linkAbortSignals([signal, queryController.signal]);
+		let timedOut = false;
 		const responsePromise = new Promise<string | undefined>((resolve) => {
 			let settled = false;
 			const settle = (root: string | undefined) => {
@@ -2387,14 +2397,16 @@ export class TopicControlPlane
 					this.pendingTopicRootQueries.delete(requestId);
 				}
 				clearTimeout(timer);
-				if (signal && onAbort) {
-					signal.removeEventListener("abort", onAbort);
-				}
+				querySignals.signal.removeEventListener("abort", onAbort);
 				resolve(root);
 			};
-			const onAbort = signal ? () => settle(undefined) : undefined;
+			const onAbort = () => settle(undefined);
 			const timer = setTimeout(
-				() => settle(undefined),
+				() => {
+					timedOut = true;
+					settle(undefined);
+					queryController.abort(new AbortError("topic root query timed out"));
+				},
 				Math.max(1, Math.floor(timeoutMs)),
 			);
 			timer.unref?.();
@@ -2404,31 +2416,45 @@ export class TopicControlPlane
 				resolve: settle,
 				timer,
 			});
-			if (signal && onAbort) {
-				signal.addEventListener("abort", onAbort, { once: true });
-				if (signal.aborted) onAbort();
-			}
+			querySignals.signal.addEventListener("abort", onAbort, { once: true });
+			if (querySignals.signal.aborted) onAbort();
 		});
 
 		try {
-			await withAbort(
-				this.sendDirectControlMessage(
-					peer,
-					new TopicRootQuery({ requestId, topic }),
-				),
-				signal,
-			);
-		} catch (error) {
-			const pending = this.pendingTopicRootQueries.get(requestId);
-			if (pending) {
-				this.pendingTopicRootQueries.delete(requestId);
-				clearTimeout(pending.timer);
-				pending.resolve(undefined);
+			try {
+				const sending = withAbort(
+					this.sendDirectControlMessage(
+						peer,
+						new TopicRootQuery({ requestId, topic }),
+						querySignals.signal,
+					),
+					querySignals.signal,
+				);
+				// A write can finish after the request is already on the wire (or stall
+				// while opening the reverse stream). Let either a response or the same
+				// query timeout release this await instead of extending the timeout around
+				// the outbound send.
+				await Promise.race([
+					sending,
+					responsePromise.then((): undefined => undefined),
+				]);
+			} catch (error) {
+				const pending = this.pendingTopicRootQueries.get(requestId);
+				if (pending && !timedOut) {
+					this.pendingTopicRootQueries.delete(requestId);
+					clearTimeout(pending.timer);
+					pending.resolve(undefined);
+				}
+				if (signal?.aborted) {
+					throw signal.reason ?? error;
+				}
 			}
-			if (signal?.aborted) throw error;
-		}
 
-		return withAbort(responsePromise, signal);
+			return await withAbort(responsePromise, signal);
+		} finally {
+			queryController.abort(new AbortError("topic root query settled"));
+			querySignals.clear();
+		}
 	}
 
 	private async confirmDirectShardRoot(
@@ -2531,6 +2557,16 @@ export class TopicControlPlane
 		}
 
 		const roundController = new AbortController();
+		const roundTimeoutMs = Math.max(
+			1,
+			Math.floor(options?.timeoutMs ?? DEFAULT_TOPIC_ROOT_QUERY_TIMEOUT_MS),
+		);
+		let roundTimedOut = false;
+		const roundTimer = setTimeout(() => {
+			roundTimedOut = true;
+			roundController.abort(new AbortError("topic root query round timed out"));
+		}, roundTimeoutMs);
+		roundTimer.unref?.();
 		const roundSignals = linkAbortSignals([
 			options?.signal,
 			roundController.signal,
@@ -2539,7 +2575,7 @@ export class TopicControlPlane
 			this.queryTopicRootFromPeer(
 				peer,
 				topic,
-				options?.timeoutMs ?? DEFAULT_TOPIC_ROOT_QUERY_TIMEOUT_MS,
+				roundTimeoutMs,
 				roundSignals.signal,
 			),
 		);
@@ -2574,6 +2610,11 @@ export class TopicControlPlane
 						},
 						(error) => {
 							if (settled) return;
+							if (roundTimedOut && !options?.signal?.aborted) {
+								results[index] = undefined;
+								resolveInPeerOrder();
+								return;
+							}
 							settled = true;
 							reject(error);
 						},
@@ -2584,6 +2625,7 @@ export class TopicControlPlane
 		try {
 			return await prioritizedResult;
 		} finally {
+			clearTimeout(roundTimer);
 			// Cancel response timers and in-flight sends for every losing query before
 			// the winning root (or an abort) can leave this round.
 			roundController.abort(new AbortError("topic root query round settled"));

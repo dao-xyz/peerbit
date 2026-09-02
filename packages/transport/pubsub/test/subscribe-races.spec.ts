@@ -2915,6 +2915,81 @@ describe("pubsub (subscribe race regressions)", function () {
 		expect(internals.pendingTopicRootQueries.size).to.equal(0);
 	});
 
+	it("bounds a stalled earlier send before using a later live reply", async () => {
+		session = await createDisconnectedSessionWithPerPeerRoots(3);
+		const pubsub = session.peers[0]!.services.pubsub;
+		const ordered = session.peers
+			.slice(1)
+			.map((node) => node.services.pubsub)
+			.sort((left, right) =>
+				left.publicKeyHash < right.publicKeyHash
+					? -1
+					: left.publicKeyHash > right.publicKeyHash
+						? 1
+						: 0,
+			);
+		const earlier = ordered[0]!;
+		const later = ordered[1]!;
+		const internals = pubsub as any;
+		internals.clearTopicRootCandidateClaimTimer();
+		internals.clearAutoTopicRootCandidateUpdateSchedule();
+		const topic = "stalled-send-ordered-topic-root";
+		const clock = sinon.useFakeTimers({
+			now: Date.now(),
+			toFake: ["Date", "clearTimeout", "setTimeout"],
+		});
+		const startedAt = Date.now();
+		let stalledSendSignal: AbortSignal | undefined;
+		sinon
+			.stub(internals, "getConnectedTopicRootTrackers")
+			.returns([
+				{ publicKey: earlier.publicKey },
+				{ publicKey: later.publicKey },
+			]);
+		const send = sinon
+			.stub(internals, "sendDirectControlMessage")
+			.callsFake(async (...args: unknown[]) => {
+				const peer = args[0] as { publicKey: { hashcode(): string } };
+				const query = args[1] as TopicRootQuery;
+				if (peer.publicKey.hashcode() === earlier.publicKeyHash) {
+					stalledSendSignal = args[2] as AbortSignal;
+					return new Promise<void>(() => {});
+				}
+				expect(
+					internals.resolvePendingTopicRootQuery(
+						new TopicRootQueryResponse({
+							requestId: query.requestId,
+							root: later.publicKeyHash,
+							topic,
+						}),
+						later.publicKeyHash,
+					),
+				).to.equal(true);
+			});
+
+		try {
+			let settledAt: number | undefined;
+			const resolving = internals
+				.resolveTopicRootState(topic)
+				.then((state: unknown) => {
+					settledAt = Date.now();
+					return state;
+				});
+			await clock.tickAsync(3_001);
+
+			expect(await resolving).to.deep.equal({
+				authoritative: true,
+				root: later.publicKeyHash,
+			});
+			expect(settledAt! - startedAt).to.be.at.most(3_001);
+			expect(send.callCount).to.equal(2);
+			expect(stalledSendSignal?.aborted).to.equal(true);
+			expect(internals.pendingTopicRootQueries.size).to.equal(0);
+		} finally {
+			clock.restore();
+		}
+	});
+
 	it("bounds all-silent root retries with one peer-query deadline", async () => {
 		session = await createDisconnectedSessionWithPerPeerRoots(3);
 		const pubsub = session.peers[0]!.services.pubsub;
