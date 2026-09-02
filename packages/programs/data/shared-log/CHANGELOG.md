@@ -1,5 +1,11 @@
 # Changelog
 
+## 16.0.21
+
+### Patch Changes
+
+- [#1399](https://github.com/dao-xyz/peerbit/pull/1399) [`671bd32`](https://github.com/dao-xyz/peerbit/commit/671bd321f157d9af67c353c741daa87123920017) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Re-arm replication-info V2 requests after a temporary receive gate consumes a scheduled attempt, preventing reconnect recovery from stalling without a timer or in-flight request.
+
 ## 16.0.20
 
 ### Patch Changes
