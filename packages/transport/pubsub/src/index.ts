@@ -241,7 +241,8 @@ const DEFAULT_TOPIC_ROOT_QUERY_TIMEOUT_MS = 12_000;
 // Bounded rounds leave enough time for that setup while still allowing a lost
 // request or a newly-ready stream to be retried within the phase deadline.
 const TOPIC_ROOT_QUERY_ROUND_TIMEOUT_MS = 3_000;
-const TOPIC_ROOT_QUERY_HOST_SCAN_ATTEMPTS = 3;
+const TOPIC_ROOT_HOST_SCAN_TIMEOUT_MS = DEFAULT_TOPIC_ROOT_QUERY_TIMEOUT_MS;
+const TOPIC_ROOT_HOST_SCAN_CONCURRENCY = 8;
 const DIRECT_SHARD_ROOT_CONFIRM_TIMEOUT_MS = 2_000;
 
 const DEFAULT_PUBSUB_FANOUT_CHANNEL_OPTIONS: Omit<
@@ -2148,7 +2149,7 @@ export class TopicControlPlane
 	private async resolveTopicRootState(
 		topic: string,
 		options?: TopicRootResolutionOptions & {
-			retryPeerQueriesUntilDeadline?: boolean;
+			queryConnectedPeers?: boolean;
 		},
 	): Promise<{ root?: string; authoritative: boolean }> {
 		throwIfAborted(options?.signal);
@@ -2158,6 +2159,12 @@ export class TopicControlPlane
 		);
 		if (tracked) {
 			return { root: tracked, authoritative: true };
+		}
+		if (options?.queryConnectedPeers === false) {
+			return {
+				root: this.topicRootControlPlane.resolveDeterministicTopicRoot(topic),
+				authoritative: false,
+			};
 		}
 
 		const deadlineController = new AbortController();
@@ -2177,12 +2184,6 @@ export class TopicControlPlane
 			let attempt = 0;
 			for (;;) {
 				throwIfAborted(querySignals.signal);
-				if (
-					options?.retryPeerQueriesUntilDeadline === false &&
-					attempt >= TOPIC_ROOT_QUERY_HOST_SCAN_ATTEMPTS
-				) {
-					break;
-				}
 				// Preserve the immediate deterministic fallback when no queryable stream
 				// exists at entry. Once a peer was queryable, keep the bounded readiness
 				// window alive: later rounds re-snapshot streams that can become writable
@@ -2259,7 +2260,7 @@ export class TopicControlPlane
 	private async resolveShardRootState(
 		shardTopic: string,
 		options?: TopicRootResolutionOptions & {
-			retryPeerQueriesUntilDeadline?: boolean;
+			queryConnectedPeers?: boolean;
 		},
 	): Promise<{ root: string; candidateGeneration: string }> {
 		const lifecycleRevision = this.topicControlPlaneLifecycleRevision;
@@ -2275,8 +2276,14 @@ export class TopicControlPlane
 
 			const candidateGeneration = this.getTopicRootCandidateGeneration();
 			const hasConnectedTrackers =
+				options?.queryConnectedPeers !== false &&
 				this.getConnectedTopicRootTrackers().length > 0;
-			const cached = this.shardRootCache.get(shardTopic);
+			// A proactive local scan must not inherit an authoritative cache entry that
+			// originated from a connected-peer reply under the same candidate generation.
+			const cached =
+				options?.queryConnectedPeers === false
+					? undefined
+					: this.shardRootCache.get(shardTopic);
 			if (cached && (cached.authoritative || !hasConnectedTrackers)) {
 				return { root: cached.root, candidateGeneration };
 			}
@@ -3049,30 +3056,77 @@ export class TopicControlPlane
 		if (!this.started) throw new NotStartedError();
 		const lifecycleSignal = this.topicRootResolutionAbortController.signal;
 		return this.withTopicRootCandidateResolution(
-			async ({ candidateGeneration, signal }) => {
+			async ({ signal }) => {
 				const joins: Promise<void>[] = [];
-				try {
-					for (let i = 0; i < this.shardCount; i++) {
-						throwIfAborted(signal);
-						const shardTopic = `${this.shardTopicPrefix}${i}`;
-						const resolved = await this.resolveShardRootState(shardTopic, {
-							signal,
-							// This proactive scan already retries on candidate changes, and a
-							// later direct query lazily hosts a missing root. Retaining the
-							// historical three paced attempts avoids spending the full
-							// readiness window independently for every shard.
-							retryPeerQueriesUntilDeadline: false,
-						});
-						if (resolved.root !== this.publicKeyHash) continue;
-						const joining = this.ensureFanoutChannel(shardTopic, {
-							pin: true,
-							root: resolved.root,
-							rootCandidateGeneration: resolved.candidateGeneration,
-							signal,
-						});
-						void joining.catch(() => {});
-						joins.push(joining);
+				const scanController = new AbortController();
+				const scanTimer = setTimeout(() => {
+					scanController.abort(
+						new AbortError(
+							`topic root host scan timed out after ${TOPIC_ROOT_HOST_SCAN_TIMEOUT_MS}ms`,
+						),
+					);
+				}, TOPIC_ROOT_HOST_SCAN_TIMEOUT_MS);
+				scanTimer.unref?.();
+				const scanSignals = linkAbortSignals([signal, scanController.signal]);
+				let nextShard = 0;
+				let scanFailure: { error: unknown } | undefined;
+				const scanWorker = async () => {
+					try {
+						for (;;) {
+							if (scanFailure) return;
+							throwIfAborted(scanSignals.signal);
+							const shard = nextShard++;
+							if (shard >= this.shardCount) return;
+							const shardTopic = `${this.shardTopicPrefix}${shard}`;
+							const resolved = await this.resolveShardRootState(shardTopic, {
+								signal: scanSignals.signal,
+								// Proactive hosting follows the generation-bound local control
+								// plane. Connected-peer queries remain on the lazy open path;
+								// asking every peer for every shard multiplies one stale-peer
+								// timeout by the complete shard count.
+								queryConnectedPeers: false,
+							});
+							throwIfAborted(scanSignals.signal);
+							if (scanFailure || resolved.root !== this.publicKeyHash) continue;
+							const joining = this.ensureFanoutChannel(shardTopic, {
+								pin: true,
+								root: resolved.root,
+								rootCandidateGeneration: resolved.candidateGeneration,
+								// The shared deadline bounds root discovery only. Preserve the
+								// existing contract that joins already started are drained.
+								signal,
+							});
+							void joining.catch(() => {});
+							joins.push(joining);
+						}
+					} catch (error) {
+						if (!scanFailure) {
+							scanFailure = { error };
+							// Do not make a sibling resolver consume the rest of the shared
+							// deadline after this scan already has a terminal failure. Joins use
+							// the outer signal and are intentionally drained below.
+							scanController.abort(error);
+						}
 					}
+				};
+				try {
+					try {
+						await Promise.all(
+							Array.from(
+								{
+									length: Math.min(
+										TOPIC_ROOT_HOST_SCAN_CONCURRENCY,
+										this.shardCount,
+									),
+								},
+								() => scanWorker(),
+							),
+						);
+					} finally {
+						clearTimeout(scanTimer);
+						scanSignals.clear();
+					}
+					if (scanFailure) throw scanFailure.error;
 					await Promise.all(joins);
 				} catch (error) {
 					await Promise.allSettled(joins);

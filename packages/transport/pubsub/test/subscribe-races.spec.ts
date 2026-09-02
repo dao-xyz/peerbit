@@ -3328,27 +3328,191 @@ describe("pubsub (subscribe race regressions)", function () {
 		expect(ensure.calledOnce).to.equal(true);
 	});
 
-	it("drains started host joins when a later shard resolution fails", async () => {
+	it("does not multiply proactive host scans by silent connected peers", async function () {
+		this.timeout(5_000);
+		const shardCount = 4;
+		session = await createDisconnectedSessionWithPerPeerRoots(3, {
+			pubsub: { shardCount },
+		});
+		const pubsub = session.peers[0]!.services.pubsub;
+		const internals = pubsub as any;
+		internals.clearTopicRootCandidateClaimTimer();
+		internals.clearAutoTopicRootCandidateUpdateSchedule();
+		const orderedTrackers = session.peers
+			.slice(1)
+			.map((peer) => ({ publicKey: peer.services.pubsub.publicKey }))
+			.sort((left, right) =>
+				left.publicKey.hashcode() < right.publicKey.hashcode()
+					? -1
+					: left.publicKey.hashcode() > right.publicKey.hashcode()
+						? 1
+						: 0,
+			);
+		const liveLaterHash = orderedTrackers[1]!.publicKey.hashcode();
+		internals.shardRootCache.set("/peerbit/pubsub-shard/1/0", {
+			root: liveLaterHash,
+			authoritative: true,
+		});
+		const connectedTrackers = sinon
+			.stub(internals, "getConnectedTopicRootTrackers")
+			.returns(orderedTrackers);
+		const send = sinon
+			.stub(internals, "sendDirectControlMessage")
+			.callsFake(async (...args: unknown[]) => {
+				const peer = args[0] as { publicKey: { hashcode(): string } };
+				if (peer.publicKey.hashcode() !== liveLaterHash) return;
+				const query = args[1] as TopicRootQuery;
+				internals.resolvePendingTopicRootQuery(
+					new TopicRootQueryResponse({
+						requestId: query.requestId,
+						root: pubsub.publicKeyHash,
+						topic: query.topic,
+					}),
+					liveLaterHash,
+				);
+			});
+		const ensure = sinon.stub(internals, "ensureFanoutChannel").resolves();
+		const clock = sinon.useFakeTimers({
+			now: Date.now(),
+			toFake: ["Date", "clearTimeout", "setTimeout"],
+		});
+
+		try {
+			let settled = false;
+			let rejection: unknown;
+			const hosting = pubsub.hostShardRootsNow().then(
+				() => {
+					settled = true;
+				},
+				(error) => {
+					settled = true;
+					rejection = error;
+				},
+			);
+			await clock.tickAsync(1);
+			const settledWithoutPeerRound = settled;
+			if (!settled) {
+				// Let the pre-fix serial 3s-per-shard behavior drain before asserting.
+				await clock.tickAsync(20_000);
+			}
+			await hosting;
+			if (rejection) throw rejection;
+
+			expect(settledWithoutPeerRound).to.equal(true);
+			expect(connectedTrackers.callCount).to.equal(0);
+			expect(send.callCount).to.equal(0);
+			expect(ensure.callCount).to.equal(shardCount);
+			expect(internals.pendingTopicRootQueries.size).to.equal(0);
+		} finally {
+			clock.restore();
+		}
+	});
+
+	it("shares one deadline across concurrent proactive resolver scans", async function () {
+		this.timeout(5_000);
+		const shardCount = 16;
 		session = await createDisconnectedSessionWithPerPeerRoots(1, {
-			pubsub: { shardCount: 2 },
+			pubsub: { shardCount },
+		});
+		const pubsub = session.peers[0]!.services.pubsub;
+		const internals = pubsub as any;
+		internals.clearTopicRootCandidateClaimTimer();
+		internals.clearAutoTopicRootCandidateUpdateSchedule();
+		const resolverSignals: AbortSignal[] = [];
+		pubsub.topicRootControlPlane.setTopicRootResolver((_topic, options) => {
+			if (options?.signal) resolverSignals.push(options.signal);
+			return new Promise<string | undefined>(() => {});
+		});
+		const ensure = sinon.stub(internals, "ensureFanoutChannel").resolves();
+		const clock = sinon.useFakeTimers({
+			now: Date.now(),
+			toFake: ["Date", "clearTimeout", "setTimeout"],
+		});
+
+		try {
+			const startedAt = Date.now();
+			let settledAt: number | undefined;
+			const outcome = pubsub.hostShardRootsNow().then(
+				(): { error: unknown } => ({ error: undefined }),
+				(error: unknown) => {
+					settledAt = Date.now();
+					return { error };
+				},
+			);
+			await clock.tickAsync(12_001);
+			const { error } = await outcome;
+
+			expect(error).to.be.instanceOf(AbortError);
+			expect((error as Error).message).to.equal(
+				"topic root host scan timed out after 12000ms",
+			);
+			expect(settledAt! - startedAt).to.be.at.most(12_001);
+			expect(resolverSignals.length).to.be.greaterThan(1);
+			expect(resolverSignals.length).to.be.lessThan(shardCount);
+			expect(resolverSignals.every((signal) => signal.aborted)).to.equal(true);
+			expect(ensure.callCount).to.equal(0);
+		} finally {
+			clock.restore();
+		}
+	});
+
+	it("cancels sibling host scans and drains started joins on failure", async () => {
+		session = await createDisconnectedSessionWithPerPeerRoots(1, {
+			pubsub: { shardCount: 3 },
 		});
 		const pubsub = session.peers[0]!.services.pubsub;
 		const internals = pubsub as any;
 		const candidateGeneration = internals.getTopicRootCandidateGeneration();
 		const scanError = new Error("later shard resolution failed");
 		const joinError = new Error("earlier shard join failed");
-		let resolutions = 0;
-		sinon.stub(internals, "resolveShardRootState").callsFake(async () => {
-			resolutions += 1;
-			if (resolutions === 2) throw scanError;
-			return { root: pubsub.publicKeyHash, candidateGeneration };
+		const siblingEntered = deferred();
+		const siblingCancelled = deferred();
+		const joinStarted = deferred();
+		let siblingAbortReason: unknown;
+		let rejectJoin!: (error: unknown) => void;
+		const join = new Promise<void>((_resolve, reject) => {
+			rejectJoin = reject;
 		});
 		sinon
-			.stub(internals, "ensureFanoutChannel")
-			.returns(Promise.reject(joinError));
+			.stub(internals, "resolveShardRootState")
+			.callsFake(async (...args: unknown[]) => {
+				const shardTopic = args[0] as string;
+				const options = args[1] as { signal?: AbortSignal } | undefined;
+				if (shardTopic.endsWith("/0")) {
+					return { root: pubsub.publicKeyHash, candidateGeneration };
+				}
+				if (shardTopic.endsWith("/1")) {
+					const signal = options?.signal;
+					siblingEntered.resolve();
+					return new Promise((_resolve, reject) => {
+						const onAbort = () => {
+							siblingAbortReason = signal?.reason;
+							siblingCancelled.resolve();
+							reject(signal?.reason);
+						};
+						if (signal?.aborted) onAbort();
+						else signal?.addEventListener("abort", onAbort, { once: true });
+					});
+				}
+				await joinStarted.promise;
+				throw scanError;
+			});
+		sinon.stub(internals, "ensureFanoutChannel").callsFake(() => {
+			joinStarted.resolve();
+			return join;
+		});
 
-		await expect(pubsub.hostShardRootsNow()).to.be.rejectedWith(scanError);
-		expect(resolutions).to.equal(2);
+		let settled = false;
+		const hosting = pubsub.hostShardRootsNow().finally(() => {
+			settled = true;
+		});
+		await siblingEntered.promise;
+		await siblingCancelled.promise;
+		expect(siblingAbortReason).to.equal(scanError);
+		await delay(0);
+		expect(settled).to.equal(false);
+		rejectJoin(joinError);
+		await expect(hosting).to.be.rejectedWith(scanError);
 	});
 
 	it("does not install a channel after the control plane stops", async () => {
