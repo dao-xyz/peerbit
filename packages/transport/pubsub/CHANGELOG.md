@@ -1,5 +1,14 @@
 # Changelog
 
+## 5.4.5
+
+### Patch Changes
+
+- [#1407](https://github.com/dao-xyz/peerbit/pull/1407) [`0e4aee8`](https://github.com/dao-xyz/peerbit/commit/0e4aee893e19858ec7814efeb845797fb587ac8b) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Prefer live fanout join candidates, bound cold-open dial, join, and topic-root
+  query waits by overall deadlines, keep proactive shard-host scans local and
+  bounded, suppress a directly departed origin's current signed auto-root claim,
+  and expose aggregate fanout-open profile diagnostics.
+
 ## 5.4.4
 
 ### Patch Changes

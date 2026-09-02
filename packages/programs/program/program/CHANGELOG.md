@@ -1,5 +1,14 @@
 # Changelog
 
+## 6.0.58
+
+### Patch Changes
+
+- Updated dependencies [[`23fc76a`](https://github.com/dao-xyz/peerbit/commit/23fc76a489297ed8fc258e22b957cff215067015), [`0e4aee8`](https://github.com/dao-xyz/peerbit/commit/0e4aee893e19858ec7814efeb845797fb587ac8b)]:
+  - @peerbit/blocks-interface@2.1.8
+  - @peerbit/blocks@4.2.16
+  - @peerbit/pubsub@5.4.5
+
 ## 6.0.57
 
 ### Patch Changes

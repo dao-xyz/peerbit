@@ -1,5 +1,16 @@
 # Changelog
 
+## 4.2.16
+
+### Patch Changes
+
+- [#1405](https://github.com/dao-xyz/peerbit/pull/1405) [`23fc76a`](https://github.com/dao-xyz/peerbit/commit/23fc76a489297ed8fc258e22b957cff215067015) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Expose immutable local block-store ownership and reclamation metadata through
+  `peer.services.blocks`. Built-in stores identify their node-wide block-service
+  reference domain, while custom stores fail closed as unknown unless their
+  caller supplies an explicit truthful declaration.
+- Updated dependencies [[`23fc76a`](https://github.com/dao-xyz/peerbit/commit/23fc76a489297ed8fc258e22b957cff215067015)]:
+  - @peerbit/blocks-interface@2.1.8
+
 ## 4.2.15
 
 ### Patch Changes

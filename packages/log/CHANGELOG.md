@@ -1,5 +1,13 @@
 # Changelog
 
+## 6.2.31
+
+### Patch Changes
+
+- Updated dependencies [[`23fc76a`](https://github.com/dao-xyz/peerbit/commit/23fc76a489297ed8fc258e22b957cff215067015)]:
+  - @peerbit/blocks-interface@2.1.8
+  - @peerbit/blocks@4.2.16
+
 ## 6.2.30
 
 ### Patch Changes
