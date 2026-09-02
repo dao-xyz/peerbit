@@ -1,5 +1,11 @@
 # Changelog
 
+## 16.0.22
+
+### Patch Changes
+
+- [#1401](https://github.com/dao-xyz/peerbit/pull/1401) [`8198131`](https://github.com/dao-xyz/peerbit/commit/81981317ecc06c163fa2e3f64c702a52a6f9c9b3) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Require each persisted-receipt target's exact active peer generation to confirm applying the writer's latest V2 replication-role revision before the receipt-carrying transfer, bypass stale leader-selection context for receipt plans, and retain revision-fenced background dissemination to fresh entry leaders, full replicas, and cross-GID owners. Only entry leaders remain eligible for persisted quorum evidence; receipt-capable peers without V2 application confirmation fail closed.
+
 ## 16.0.21
 
 ### Patch Changes
