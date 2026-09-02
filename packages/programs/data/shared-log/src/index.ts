@@ -322,6 +322,86 @@ type SharedLogServicesWithFanout = {
 const getSharedLogFanoutService = (services: unknown): FanoutTree | undefined =>
 	(services as SharedLogServicesWithFanout).fanout;
 
+const FANOUT_OPEN_METRICS = [
+	["joinReqSent", "joinReqSent"],
+	["joinAcceptReceived", "joinAcceptReceived"],
+	["joinRejectReceived", "joinRejectReceived"],
+	["bootstrapDialAttempts", "joinBootstrapDialAttempts"],
+	["bootstrapDialFailures", "joinBootstrapDialFailures"],
+	["candidateDialAttempts", "joinCandidateDialAttempts"],
+	["candidateDialFailures", "joinCandidateDialFailures"],
+	["connectedCandidateAttempts", "joinConnectedCandidateAttempts"],
+	["unconnectedCandidateAttempts", "joinUnconnectedCandidateAttempts"],
+	["joinReqTimeouts", "joinReqTimeouts"],
+	["deadlineExpirations", "joinDeadlineExpirations"],
+] as const;
+
+type FanoutOpenMetric = (typeof FANOUT_OPEN_METRICS)[number][0];
+type FanoutOpenMetricSnapshot = Record<FanoutOpenMetric, number>;
+
+const snapshotFanoutOpenMetrics = (
+	service: FanoutTree,
+	topic: string,
+	root: string,
+): FanoutOpenMetricSnapshot | undefined => {
+	try {
+		const metrics = (
+			service as FanoutTree & {
+				getChannelMetrics: (
+					topic: string,
+					root: string,
+				) => Record<string, number>;
+			}
+		).getChannelMetrics(topic, root);
+		return Object.fromEntries(
+			FANOUT_OPEN_METRICS.map(([name, source]) => [name, metrics[source] ?? 0]),
+		) as FanoutOpenMetricSnapshot;
+	} catch {
+		return;
+	}
+};
+
+const emitFanoutOpenProfile = (properties: {
+	profile?: SyncProfileFn;
+	startedAt: number;
+	service: FanoutTree;
+	topic: string;
+	root: string;
+	mode: "root" | "node";
+	outcome: "error" | "opened" | "joined";
+	timeoutMs?: number;
+	before?: FanoutOpenMetricSnapshot;
+}) => {
+	if (!properties.profile) return;
+	try {
+		const after = snapshotFanoutOpenMetrics(
+			properties.service,
+			properties.topic,
+			properties.root,
+		);
+		const deltas = Object.fromEntries(
+			FANOUT_OPEN_METRICS.map(([name]) => [
+				name,
+				(after?.[name] ?? 0) - (properties.before?.[name] ?? 0),
+			]),
+		) as FanoutOpenMetricSnapshot;
+		emitSyncProfileDuration(properties.profile, properties.startedAt, {
+			name: "sharedLog.open.fanout",
+			component: "shared-log",
+			messages: deltas.joinReqSent,
+			details: {
+				configured: true,
+				mode: properties.mode,
+				outcome: properties.outcome,
+				configuredTimeoutMs: properties.timeoutMs,
+				...deltas,
+			},
+		});
+	} catch {
+		// Diagnostics must not affect open correctness.
+	}
+};
+
 type PendingIHave<T> = {
 	resetTimeout: () => void;
 	requesting: Map<string, Uint8Array>;
@@ -4353,16 +4433,38 @@ export class SharedLog<
 			});
 		channel.addEventListener("unicast", this._onFanoutUnicastFn);
 
+		const profile = this._logProperties?.sync?.profile;
+		const startedAt = syncProfileStart(profile);
+		const mode =
+			resolvedRoot === fanoutService.publicKeyHash ? "root" : "node";
+		const before = profile
+			? snapshotFanoutOpenMetrics(fanoutService, this.topic, resolvedRoot)
+			: undefined;
+		let outcome: "error" | "opened" | "joined" = "error";
 		try {
 			const channelOptions = this.getFanoutChannelOptions(options);
-			if (resolvedRoot === fanoutService.publicKeyHash) {
+			if (mode === "root") {
 				await channel.openAsRoot(channelOptions);
+				outcome = "opened";
 				return;
 			}
 			await channel.join(channelOptions, options.join);
+			outcome = "joined";
 		} catch (error) {
 			this._closeFanoutChannel();
 			throw error;
+		} finally {
+			emitFanoutOpenProfile({
+				profile,
+				startedAt,
+				service: fanoutService,
+				topic: this.topic,
+				root: resolvedRoot,
+				mode,
+				outcome,
+				timeoutMs: options.join?.timeoutMs,
+				before,
+			});
 		}
 	}
 

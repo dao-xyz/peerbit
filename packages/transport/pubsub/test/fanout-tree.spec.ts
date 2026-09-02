@@ -1794,6 +1794,212 @@ describe("fanout-tree", () => {
 		}
 	});
 
+	it("clamps a stalled bootstrap dial to the initial join deadline", async function () {
+		this.timeout(5_000);
+		const session: TestSession<{ fanout: FanoutTree }> =
+			await createFanoutTestSession(1);
+
+		try {
+			const fanout = session.peers[0].services.fanout;
+			const internals = fanout as any;
+			const connectionManager = internals.components.connectionManager as any;
+			const originalOpenConnection =
+				connectionManager.openConnection.bind(connectionManager);
+			const bootstrap = session.peers[0].getMultiaddrs()[0];
+			expect(bootstrap).to.exist;
+			connectionManager.openConnection = (
+				_address: unknown,
+				options?: { signal?: AbortSignal },
+			) =>
+				new Promise<never>((_resolve, reject) => {
+					const signal = options?.signal;
+					if (!signal) {
+						reject(new Error("bootstrap dial was not given a bounded signal"));
+						return;
+					}
+					const rejectOnAbort = () =>
+						reject(signal.reason ?? new Error("bootstrap dial aborted"));
+					if (signal.aborted) rejectOnAbort();
+					else signal.addEventListener("abort", rejectOnAbort, { once: true });
+				});
+
+			const topic = "initial-join-bootstrap-deadline";
+			const root = "unavailable-root";
+			const startedAt = Date.now();
+			try {
+				const joining = fanout.joinChannel(
+					topic,
+					root,
+					{
+						msgRate: 1,
+						msgSize: 8,
+						uploadLimitBps: 0,
+						maxChildren: 0,
+						repair: false,
+					},
+					{
+						timeoutMs: 40,
+						bootstrap: [bootstrap!],
+						bootstrapDialTimeoutMs: 5_000,
+						retryMs: 1,
+					},
+				);
+				await Promise.race([
+					expect(joining).to.be.rejectedWith(
+						"fanout join timed out after 40ms",
+					),
+					delay(500).then(() => {
+						throw new Error("bootstrap join exceeded its deadline backstop");
+					}),
+				]);
+			} finally {
+				connectionManager.openConnection = originalOpenConnection;
+			}
+
+			expect(Date.now() - startedAt).to.be.lessThan(250);
+			const metrics = fanout.getChannelMetrics(topic, root);
+			expect(metrics.joinBootstrapDialAttempts).to.equal(1);
+			expect(metrics.joinBootstrapDialFailures).to.equal(1);
+			expect(metrics.joinDeadlineExpirations).to.equal(1);
+		} finally {
+			await session.stop();
+		}
+	});
+
+	it("clamps a silent connected parent to the initial join deadline", async function () {
+		this.timeout(5_000);
+		const session: TestSession<{ fanout: FanoutTree }> =
+			await createFanoutTestSession(2);
+
+		try {
+			await session.connect([[session.peers[0], session.peers[1]]]);
+			const root = session.peers[0].services.fanout;
+			const leaf = session.peers[1].services.fanout;
+			const internals = leaf as any;
+			const originalSendControl = internals._sendControl;
+			internals._sendControl = async () => {
+				// Model a recently stopped channel host on a still-live stream.
+			};
+
+			const topic = "initial-join-request-deadline";
+			const rootHash = root.publicKeyHash;
+			const startedAt = Date.now();
+			try {
+				const joining = leaf.joinChannel(
+					topic,
+					rootHash,
+					{
+						msgRate: 1,
+						msgSize: 8,
+						uploadLimitBps: 0,
+						maxChildren: 0,
+						repair: false,
+					},
+					{
+						timeoutMs: 40,
+						joinReqTimeoutMs: 5_000,
+						retryMs: 1,
+					},
+				);
+				await Promise.race([
+					expect(joining).to.be.rejectedWith(
+						"fanout join timed out after 40ms",
+					),
+					delay(500).then(() => {
+						throw new Error("join request exceeded its deadline backstop");
+					}),
+				]);
+			} finally {
+				internals._sendControl = originalSendControl;
+			}
+
+			expect(Date.now() - startedAt).to.be.lessThan(250);
+			const metrics = leaf.getChannelMetrics(topic, rootHash);
+			expect(metrics.joinConnectedCandidateAttempts).to.equal(1);
+			expect(metrics.joinReqTimeouts).to.equal(1);
+			expect(metrics.joinDeadlineExpirations).to.equal(1);
+		} finally {
+			await session.stop();
+		}
+	});
+
+	it("tries a connected donor before shuffled stale tracker candidates", async function () {
+		this.timeout(10_000);
+		const session = await TestSession.disconnected<FanoutServices>(3, {
+			services: {
+				fanout: (components) =>
+					new FanoutTree(components, {
+						connectionManager: false,
+						random: () => 0.999_999,
+					}),
+			},
+		});
+
+		try {
+			await session.connect([
+				[session.peers[0], session.peers[1]],
+				[session.peers[1], session.peers[2]],
+			]);
+			const root = session.peers[0].services.fanout;
+			const relayNode = session.peers[1];
+			const relay = relayNode.services.fanout;
+			const leaf = session.peers[2].services.fanout;
+			const topic = "initial-join-connected-donor-first";
+			const rootHash = root.publicKeyHash;
+			const channelOptions = {
+				msgRate: 1,
+				msgSize: 8,
+				uploadLimitBps: 1_000_000,
+				maxChildren: 8,
+				repair: false,
+			};
+
+			root.openChannel(topic, rootHash, { ...channelOptions, role: "root" });
+			await relay.joinChannel(topic, rootHash, channelOptions, {
+				timeoutMs: 2_000,
+				joinReqTimeoutMs: 100,
+				retryMs: 5,
+			});
+
+			const internals = leaf as any;
+			const originalQueryTrackers = internals.queryTrackers;
+			const staleAddresses = relayNode.getMultiaddrs();
+			internals.queryTrackers = async () =>
+				Array.from({ length: 6 }, (_, index) => ({
+					hash: `stale-parent-${index}`,
+					addrs: staleAddresses,
+					level: 0,
+					freeSlots: 8,
+					bidPerByte: 0,
+				}));
+			try {
+				await leaf.joinChannel(topic, rootHash, channelOptions, {
+					timeoutMs: 500,
+					bootstrap: staleAddresses,
+					bootstrapMaxPeers: 1,
+					bootstrapDialTimeoutMs: 100,
+					joinReqTimeoutMs: 100,
+					retryMs: 5,
+					candidateScoringMode: "ranked-shuffle",
+					candidateShuffleTopK: 8,
+				});
+			} finally {
+				internals.queryTrackers = originalQueryTrackers;
+			}
+
+			expect(leaf.getChannelStats(topic, rootHash)?.parent).to.equal(
+				relay.publicKeyHash,
+			);
+			const metrics = leaf.getChannelMetrics(topic, rootHash);
+			expect(metrics.joinConnectedCandidateAttempts).to.equal(1);
+			expect(metrics.joinUnconnectedCandidateAttempts).to.equal(0);
+			expect(metrics.joinBootstrapDialAttempts).to.equal(0);
+			expect(metrics.joinCandidateDialAttempts).to.equal(0);
+		} finally {
+			await session.stop();
+		}
+	});
+
 	it("keeps rejoining after the initial join timeout has elapsed", async function () {
 		this.timeout(30_000);
 		const session: TestSession<{ fanout: FanoutTree }> =

@@ -730,6 +730,14 @@ export type FanoutTreeChannelMetrics = {
 	joinRejectSent: number;
 	joinRejectReceived: number;
 	joinPeerResets: number;
+	joinBootstrapDialAttempts: number;
+	joinBootstrapDialFailures: number;
+	joinCandidateDialAttempts: number;
+	joinCandidateDialFailures: number;
+	joinConnectedCandidateAttempts: number;
+	joinUnconnectedCandidateAttempts: number;
+	joinReqTimeouts: number;
+	joinDeadlineExpirations: number;
 	kickSent: number;
 	kickReceived: number;
 	reparentDisconnect: number;
@@ -990,6 +998,12 @@ type JoinAttemptResult = {
 	redirects?: Array<{ hash: string; addrs: Multiaddr[] }>;
 };
 
+type JoinDialDiagnostics = {
+	metrics: FanoutTreeChannelMetrics;
+	deadlineAt?: number;
+	preferConnected?: boolean;
+};
+
 type PendingUnicastAck = {
 	expectedOrigin: string;
 	resolve: () => void;
@@ -1238,6 +1252,14 @@ const createEmptyMetrics = (): FanoutTreeChannelMetrics => ({
 	joinRejectSent: 0,
 	joinRejectReceived: 0,
 	joinPeerResets: 0,
+	joinBootstrapDialAttempts: 0,
+	joinBootstrapDialFailures: 0,
+	joinCandidateDialAttempts: 0,
+	joinCandidateDialFailures: 0,
+	joinConnectedCandidateAttempts: 0,
+	joinUnconnectedCandidateAttempts: 0,
+	joinReqTimeouts: 0,
+	joinDeadlineExpirations: 0,
 	kickSent: 0,
 	kickReceived: 0,
 	reparentDisconnect: 0,
@@ -4894,33 +4916,138 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		return out;
 	}
 
+	private isPeerReadyForJoin(hash: string): boolean {
+		const stream = this.peers.get(hash);
+		if (!stream || !stream.isReadable || !stream.isWritable) return false;
+		try {
+			return (
+				this.components.connectionManager.getConnections(stream.peerId).length > 0
+			);
+		} catch {
+			// Test/mocked connection managers may not expose peer-scoped snapshots.
+			return true;
+		}
+	}
+
+	private connectedPeerHashForBootstrap(
+		address: Multiaddr,
+	): string | undefined {
+		const peerId = address
+			.getComponents()
+			.filter((component) => component.name === "p2p")
+			.at(-1)?.value;
+		if (!peerId) return;
+		for (const [hash, stream] of this.peers) {
+			if (stream.peerId.toString() !== peerId) continue;
+			if (this.isPeerReadyForJoin(hash)) return hash;
+		}
+		return;
+	}
+
+	private createBoundedDialAttempt(
+		signal: AbortSignal,
+		timeoutMs: number,
+		deadlineAt?: number,
+	):
+		| {
+				signal: AbortSignal;
+				timeoutMs: number;
+				clear: () => void;
+		  }
+		| undefined {
+		if (signal.aborted) return;
+		const remainingMs =
+			deadlineAt == null
+				? Number.POSITIVE_INFINITY
+				: Math.max(0, deadlineAt - Date.now());
+		if (remainingMs <= 0) return;
+		const boundedTimeoutMs = Math.max(
+			1,
+			Math.min(Math.max(1, Math.floor(timeoutMs)), remainingMs),
+		);
+		const timeoutSignal = AbortSignal.timeout(boundedTimeoutMs);
+		const combined = anySignal([signal, timeoutSignal]) as AbortSignal & {
+			clear?: () => void;
+		};
+		return {
+			signal: combined,
+			timeoutMs: boundedTimeoutMs,
+			clear: () => combined.clear?.(),
+		};
+	}
+
 	private async ensureBootstrapPeers(
 		addrs: Multiaddr[],
 		timeoutMs: number,
 		signal: AbortSignal,
 		maxPeers = 0,
+		diagnostics?: JoinDialDiagnostics,
 	): Promise<string[]> {
 		if (addrs.length === 0) return [];
 		const max = Math.max(0, Math.floor(maxPeers));
-		const shuffled = addrs.slice();
+		const connected: string[] = [];
+		const disconnected: Multiaddr[] = [];
+		const connectedSeen = new Set<string>();
+		for (const address of addrs) {
+			const hash = diagnostics?.preferConnected
+				? this.connectedPeerHashForBootstrap(address)
+				: undefined;
+			if (!hash) {
+				disconnected.push(address);
+				continue;
+			}
+			if (!connectedSeen.has(hash)) {
+				connectedSeen.add(hash);
+				connected.push(hash);
+			}
+		}
+		const connectedLimit =
+			max > 0 ? Math.min(max, connected.length) : connected.length;
+		const out = connected.slice(0, connectedLimit);
+		if (diagnostics?.preferConnected && out.length > 0) return out;
+
+		const shuffled = disconnected.slice();
 		for (let i = shuffled.length - 1; i > 0; i--) {
 			const j = Math.floor(this.random() * (i + 1));
 			const tmp = shuffled[i]!;
 			shuffled[i] = shuffled[j]!;
 			shuffled[j] = tmp;
 		}
-		const target = max > 0 ? Math.min(max, shuffled.length) : shuffled.length;
-		const out: string[] = [];
+		const target = max > 0 ? Math.min(max, addrs.length) : addrs.length;
 		for (const a of shuffled) {
 			if (signal.aborted) break;
 			if (target > 0 && out.length >= target) break;
+			const attempt = diagnostics
+				? this.createBoundedDialAttempt(
+						signal,
+						timeoutMs,
+						diagnostics.deadlineAt,
+					)
+				: undefined;
+			if (diagnostics && !attempt) break;
+			if (diagnostics) diagnostics.metrics.joinBootstrapDialAttempts += 1;
+			let ready = false;
 			try {
-				const conn = await this.components.connectionManager.openConnection(a);
+				const conn = attempt
+					? await this.components.connectionManager.openConnection(a, {
+							signal: attempt.signal,
+						})
+					: await this.components.connectionManager.openConnection(a);
 				const h = getPublicKeyFromPeerId(conn.remotePeer).hashcode();
-				await this.waitFor(h, { seek: "present", timeout: timeoutMs, signal });
-				out.push(h);
+				await this.waitFor(h, {
+					seek: "present",
+					timeout: attempt?.timeoutMs ?? timeoutMs,
+					signal: attempt?.signal ?? signal,
+				});
+				ready = diagnostics ? this.isPeerReadyForJoin(h) : true;
+				if (ready) out.push(h);
 			} catch {
 				// ignore dial failures
+			} finally {
+				attempt?.clear();
+				if (!ready && diagnostics) {
+					diagnostics.metrics.joinBootstrapDialFailures += 1;
+				}
 			}
 		}
 		return [...new Set(out)];
@@ -5351,21 +5478,44 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		addrs: Multiaddr[],
 		timeoutMs: number,
 		signal: AbortSignal,
+		diagnostics?: JoinDialDiagnostics,
 	): Promise<boolean> {
-		if (this.peers.get(hash)) return true;
+		if (this.isPeerReadyForJoin(hash)) return true;
 		for (const a of addrs) {
 			if (signal.aborted) return false;
+			const attempt = diagnostics
+				? this.createBoundedDialAttempt(
+						signal,
+						timeoutMs,
+						diagnostics.deadlineAt,
+					)
+				: undefined;
+			if (diagnostics && !attempt) return false;
+			if (diagnostics) diagnostics.metrics.joinCandidateDialAttempts += 1;
+			let ready = false;
 			try {
-				await this.components.connectionManager.openConnection(a);
+				if (attempt) {
+					await this.components.connectionManager.openConnection(a, {
+						signal: attempt.signal,
+					});
+				} else {
+					await this.components.connectionManager.openConnection(a);
+				}
 				await this.waitFor(hash, {
 					seek: "present",
-					timeout: timeoutMs,
-					signal,
+					timeout: attempt?.timeoutMs ?? timeoutMs,
+					signal: attempt?.signal ?? signal,
 				});
-				return true;
+				ready = diagnostics ? this.isPeerReadyForJoin(hash) : true;
 			} catch {
 				// ignore and try next
+			} finally {
+				attempt?.clear();
+				if (!ready && diagnostics) {
+					diagnostics.metrics.joinCandidateDialFailures += 1;
+				}
 			}
+			if (ready) return true;
 		}
 		return false;
 	}
@@ -5767,11 +5917,40 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 			source: Number(joinOpts.candidateScoringWeights?.source ?? 0.25),
 		};
 		const start = Date.now();
+		const initialJoinDeadlineAt = timeoutMs > 0 ? start + timeoutMs : undefined;
 		const cooldownUntilByHash = new Map<string, number>();
 		const combinedSignal = joinOpts.signal
 			? anySignal([ch.closeController.signal, joinOpts.signal])
 			: ch.closeController.signal;
 		const signal = combinedSignal as AbortSignal & { clear?: () => void };
+		const initialJoinRemainingMs = () =>
+			!ch.joinedAtLeastOnce && initialJoinDeadlineAt != null
+				? Math.max(0, initialJoinDeadlineAt - Date.now())
+				: undefined;
+		const clampInitialJoinWait = (requestedMs: number) => {
+			const remainingMs = initialJoinRemainingMs();
+			return remainingMs == null
+				? requestedMs
+				: Math.min(requestedMs, remainingMs);
+		};
+		const throwInitialJoinTimeout = (): never => {
+			ch.metrics.joinDeadlineExpirations += 1;
+			const bootstrapsCount = this.getBootstrapsForChannel(ch).length;
+			const rootPeer = this.peers.get(ch.id.root);
+			const rootNeighbor = Boolean(
+				rootPeer && rootPeer.isReadable && rootPeer.isWritable,
+			);
+			const bootstrapHint =
+				bootstrapsCount === 0 && !rootNeighbor
+					? " No fanout bootstraps are configured for this channel, and the root is not a direct neighbor. If this peer reached the network via a bootstrap or relay node, initialize it with Peerbit.bootstrap(...) instead of Peerbit.dial(...), or configure FanoutTree.setBootstraps(...) before joining sharded topics."
+					: "";
+			throw new Error(
+				`fanout join timed out after ${timeoutMs}ms (topic=${ch.id.topic} root=${ch.id.root} self=${this.publicKeyHash} rootNeighbor=${rootNeighbor} peers=${this.peers.size} bootstraps=${bootstrapsCount} joinReqSent=${ch.metrics.joinReqSent} joinAcceptReceived=${ch.metrics.joinAcceptReceived} joinRejectReceived=${ch.metrics.joinRejectReceived} peerResets=${ch.metrics.joinPeerResets}).${bootstrapHint}`,
+			);
+		};
+		const throwIfInitialJoinTimedOut = () => {
+			if (initialJoinRemainingMs() === 0) throwInitialJoinTimeout();
+		};
 		let nextParentUpgradeCheckAt = 0;
 		let parentUpgradeCheckSeq = 0;
 		let parentUpgradeActiveGuardBackoffMs = 0;
@@ -6036,30 +6215,16 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 					continue;
 				}
 
-				// `timeoutMs` is meant to bound the initial `joinChannel()` await, not to
-				// stop re-parenting attempts for long-running nodes.
-				if (
-					!ch.joinedAtLeastOnce &&
-					timeoutMs > 0 &&
-					Date.now() - start > timeoutMs
-				) {
-					const bootstrapsCount = this.getBootstrapsForChannel(ch).length;
-					const rootPeer = this.peers.get(ch.id.root);
-					const rootNeighbor = Boolean(
-						rootPeer && rootPeer.isReadable && rootPeer.isWritable,
-					);
-					const bootstrapHint =
-						bootstrapsCount === 0 && !rootNeighbor
-							? " No fanout bootstraps are configured for this channel, and the root is not a direct neighbor. If this peer reached the network via a bootstrap or relay node, initialize it with Peerbit.bootstrap(...) instead of Peerbit.dial(...), or configure FanoutTree.setBootstraps(...) before joining sharded topics."
-							: "";
-					throw new Error(
-						`fanout join timed out after ${timeoutMs}ms (topic=${ch.id.topic} root=${ch.id.root} self=${this.publicKeyHash} rootNeighbor=${rootNeighbor} peers=${this.peers.size} bootstraps=${bootstrapsCount} joinReqSent=${ch.metrics.joinReqSent} joinAcceptReceived=${ch.metrics.joinAcceptReceived} joinRejectReceived=${ch.metrics.joinRejectReceived} peerResets=${ch.metrics.joinPeerResets}).${bootstrapHint}`,
-					);
-				}
+				// `timeoutMs` bounds only the initial `joinChannel()` await. Re-parenting
+				// remains unbounded after the first attachment, while every cold-open wait
+				// below is clamped to this same absolute deadline.
+				throwIfInitialJoinTimedOut();
 
 				const cooldownMs = ch.rejoinCooldownUntil - Date.now();
 				if (cooldownMs > 0) {
-					await delay(cooldownMs, { signal });
+					const waitMs = clampInitialJoinWait(cooldownMs);
+					if (waitMs <= 0) throwInitialJoinTimeout();
+					await delay(waitMs, { signal });
 					continue;
 				}
 
@@ -6068,7 +6233,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 				if (bootstraps.length > 0) {
 					const now = Date.now();
 					const connectedCached = ch.cachedBootstrapPeers.filter((h) =>
-						Boolean(this.peers.get(h)),
+						this.isPeerReadyForJoin(h),
 					);
 					const due =
 						ch.lastBootstrapEnsureAt === 0 ||
@@ -6080,18 +6245,27 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 							: false;
 					if (due && !haveEnough) {
 						ch.lastBootstrapEnsureAt = now;
+						const diagnostics = !ch.joinedAtLeastOnce
+							? {
+									metrics: ch.metrics,
+									deadlineAt: initialJoinDeadlineAt,
+									preferConnected: true,
+								}
+							: undefined;
 						const peers = await this.ensureBootstrapPeers(
 							bootstraps,
 							bootstrapDialTimeoutMs,
 							signal,
 							bootstrapMaxPeers,
+							diagnostics,
 						);
 						if (peers.length > 0) ch.cachedBootstrapPeers = peers;
 					}
 					bootstrapPeers = ch.cachedBootstrapPeers.filter((h) =>
-						Boolean(this.peers.get(h)),
+						this.isPeerReadyForJoin(h),
 					);
 				}
+				throwIfInitialJoinTimedOut();
 
 				let tracker: TrackerCandidate[] = [];
 				if (bootstrapPeers.length > 0 && trackerCandidates > 0) {
@@ -6102,17 +6276,20 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 						now - ch.lastTrackerQueryAt >= trackerQueryIntervalMs;
 					if (due) {
 						ch.lastTrackerQueryAt = now;
+						const queryTimeoutMs = clampInitialJoinWait(trackerQueryTimeoutMs);
+						if (queryTimeoutMs <= 0) throwInitialJoinTimeout();
 						const res = await this.queryTrackers(
 							ch,
 							bootstrapPeers,
 							trackerCandidates,
-							trackerQueryTimeoutMs,
+							queryTimeoutMs,
 							signal,
 						);
 						if (res.length > 0) ch.cachedTrackerCandidates = res;
 					}
 					tracker = ch.cachedTrackerCandidates;
 				}
+				throwIfInitialJoinTimedOut();
 
 				const candidatesByHash = new Map<
 					string,
@@ -6150,7 +6327,10 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 				// Fast path: if the designated root is already a direct neighbor, try it first.
 				// Without this, large join storms can repeatedly time out on arbitrary peers
 				// that don't host the channel yet, starving the real root candidate.
-				if (ch.id.root !== this.publicKeyHash && this.peers.has(ch.id.root)) {
+				if (
+					ch.id.root !== this.publicKeyHash &&
+					this.isPeerReadyForJoin(ch.id.root)
+				) {
 					upsertCandidate({
 						hash: ch.id.root,
 						addrs: [],
@@ -6198,6 +6378,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 				const connectedFallbackMax = 64;
 				for (const h of this.peers.keys()) {
 					if (h === this.publicKeyHash) continue;
+					if (!this.isPeerReadyForJoin(h)) continue;
 					if (bootstrapPeerSet.has(h) && candidatesByHash.has(h)) continue;
 					upsertCandidate({
 						hash: h,
@@ -6245,10 +6426,16 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 							retryMs,
 							trackerQueryIntervalMs > 0 ? trackerQueryIntervalMs : retryMs,
 						);
-						await delay(Math.max(1, Math.min(waitMs, capMs)), { signal });
+						const boundedWaitMs = clampInitialJoinWait(
+							Math.max(1, Math.min(waitMs, capMs)),
+						);
+						if (boundedWaitMs <= 0) throwInitialJoinTimeout();
+						await delay(boundedWaitMs, { signal });
 						continue;
 					}
-					await delay(retryMs, { signal });
+					const waitMs = clampInitialJoinWait(retryMs);
+					if (waitMs <= 0) throwInitialJoinTimeout();
+					await delay(waitMs, { signal });
 					continue;
 				}
 
@@ -6337,7 +6524,15 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 					}
 				}
 
-				const queue = ordered;
+				const connectedOrdered: typeof ordered = [];
+				const unconnectedOrdered: typeof ordered = [];
+				for (const candidate of ordered) {
+					(this.isPeerReadyForJoin(candidate.hash)
+						? connectedOrdered
+						: unconnectedOrdered
+					).push(candidate);
+				}
+				const queue = connectedOrdered.concat(unconnectedOrdered);
 				const queued = new Set<string>(queue.map((c) => c.hash));
 				const dialedNew = new Set<string>();
 				let attempts = 0;
@@ -6348,9 +6543,15 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 				) {
 					if (signal.aborted) break;
 					if (attempts >= joinAttemptsPerRound) break;
+					throwIfInitialJoinTimedOut();
 					const c = queue[i]!;
 					attempts += 1;
-					const wasConnected = Boolean(this.peers.get(c.hash));
+					const wasConnected = this.isPeerReadyForJoin(c.hash);
+					if (wasConnected) {
+						ch.metrics.joinConnectedCandidateAttempts += 1;
+					} else {
+						ch.metrics.joinUnconnectedCandidateAttempts += 1;
+					}
 					let dialOk = wasConnected;
 					if (!dialOk && c.addrs.length > 0) {
 						dialOk = await this.ensurePeerConnection(
@@ -6358,6 +6559,9 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 							c.addrs,
 							bootstrapDialTimeoutMs,
 							signal,
+							!ch.joinedAtLeastOnce
+								? { metrics: ch.metrics, deadlineAt: initialJoinDeadlineAt }
+								: undefined,
 						);
 					}
 					if (!dialOk) {
@@ -6383,11 +6587,13 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 						dialedNew.add(c.hash);
 					}
 					const reqId = (this.random() * 0xffffffff) >>> 0;
+					const requestTimeoutMs = clampInitialJoinWait(joinReqTimeoutMs);
+					if (requestTimeoutMs <= 0) throwInitialJoinTimeout();
 					const res = await this.tryJoinOnce(
 						ch,
 						c.hash,
 						reqId,
-						joinReqTimeoutMs,
+						requestTimeoutMs,
 						signal,
 					);
 
@@ -6439,6 +6645,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 					}
 
 					if (res.timedOut) {
+						ch.metrics.joinReqTimeouts += 1;
 						this.noteJoinTimeout(ch, c.hash);
 						try {
 							await this.sendTrackerFeedback(
@@ -6501,7 +6708,9 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 					}
 					continue;
 				}
-				await delay(retryMs, { signal });
+				const waitMs = clampInitialJoinWait(retryMs);
+				if (waitMs <= 0) throwInitialJoinTimeout();
+				await delay(waitMs, { signal });
 			}
 		} finally {
 			signal.clear?.();
@@ -7658,7 +7867,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 				shadowAttach: options?.shadowAttach === true,
 			});
 		});
-		await this._sendControl(
+		const request = this._sendControl(
 			parentHash,
 			this.codec.encodeJoinReq(
 				ch.id.key,
@@ -7666,9 +7875,9 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 				ch.bidPerByte,
 				options?.parentUpgradeReservationToken,
 			),
-		);
+		).then(() => p);
 		const res = await Promise.race([
-			p,
+			request,
 			delay(Math.max(1, timeoutMs), { signal }).then(
 				(): JoinAttemptResult => ({
 					ok: false,
