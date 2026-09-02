@@ -2167,6 +2167,111 @@ describe("fanout-tree", () => {
 		}
 	});
 
+	it("rotates from a responsive tracker with stale candidates", async function () {
+		this.timeout(5_000);
+		const session = await TestSession.disconnected<FanoutServices>(3, {
+			services: {
+				fanout: (components) =>
+					new FanoutTree(components, {
+						connectionManager: false,
+						random: () => 0.999_999,
+					}),
+			},
+		});
+
+		try {
+			const rootNode = session.peers[0];
+			const leafNode = session.peers[1];
+			const staleTrackerNode = session.peers[2];
+			await session.connect([[leafNode, staleTrackerNode]]);
+			const root = rootNode.services.fanout;
+			const leaf = leafNode.services.fanout;
+			const rootHash = root.publicKeyHash;
+			const staleTrackerHash = staleTrackerNode.services.fanout.publicKeyHash;
+			const rootAddress = rootNode.getMultiaddrs()[0];
+			const staleTrackerAddress = staleTrackerNode.getMultiaddrs()[0];
+			expect(rootAddress).to.exist;
+			expect(staleTrackerAddress).to.exist;
+
+			const topic = "responsive-stale-bootstrap-rotation";
+			root.openChannel(topic, rootHash, {
+				role: "root",
+				msgRate: 1,
+				msgSize: 8,
+				uploadLimitBps: 1_000_000,
+				maxChildren: 1,
+				repair: false,
+			});
+
+			const internals = leaf as any;
+			const originalQueryTrackers = internals.queryTrackers.bind(internals);
+			const originalTryJoinOnce = internals.tryJoinOnce.bind(internals);
+			const queriedCohorts: string[][] = [];
+			const attemptedParents: string[] = [];
+			internals.queryTrackers = async (
+				_channel: unknown,
+				peers: string[],
+			) => {
+				queriedCohorts.push([...peers]);
+				if (peers.includes(staleTrackerHash)) {
+					return [
+						{
+							hash: staleTrackerHash,
+							addrs: [] as any[],
+							level: 0,
+							freeSlots: 1,
+							bidPerByte: 0,
+						},
+					];
+				}
+				return [];
+			};
+			internals.tryJoinOnce = (...args: any[]) => {
+				attemptedParents.push(args[1]);
+				return originalTryJoinOnce(...args);
+			};
+
+			try {
+				await leaf.joinChannel(
+					topic,
+					rootHash,
+					{
+						msgRate: 1,
+						msgSize: 8,
+						uploadLimitBps: 0,
+						maxChildren: 0,
+						repair: false,
+					},
+					{
+						timeoutMs: 1_000,
+						bootstrap: [staleTrackerAddress!, rootAddress!],
+						bootstrapDialTimeoutMs: 200,
+						bootstrapMaxPeers: 1,
+						bootstrapEnsureIntervalMs: 10_000,
+						trackerCandidates: 1,
+						joinReqTimeoutMs: 50,
+						retryMs: 1,
+					},
+				);
+			} finally {
+				internals.queryTrackers = originalQueryTrackers;
+				internals.tryJoinOnce = originalTryJoinOnce;
+			}
+
+			expect(queriedCohorts.slice(0, 2)).to.deep.equal([
+				[staleTrackerHash],
+				[rootHash],
+			]);
+			expect(attemptedParents.slice(0, 2)).to.deep.equal([
+				staleTrackerHash,
+				rootHash,
+			]);
+			expect(leaf.getChannelStats(topic, rootHash)?.parent).to.equal(rootHash);
+		} finally {
+			await session.stop();
+		}
+	});
+
 	it("clamps a silent connected parent to the initial join deadline", async function () {
 		this.timeout(5_000);
 		const session: TestSession<{ fanout: FanoutTree }> =
