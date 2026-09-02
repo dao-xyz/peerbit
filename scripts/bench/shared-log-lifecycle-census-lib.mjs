@@ -1,63 +1,17 @@
 import { parseArgs } from "node:util";
+import {
+	LIFECYCLE_PARSE_OPTIONS,
+	buildLifecycleResourceComparison,
+	classifyLifecycleCensusFile,
+	parseLifecycleExecutionOptions,
+	parsePositiveInteger,
+	reportProgress,
+} from "./shared-log-lifecycle-census-common.mjs";
+
+export { classifyLifecycleCensusFile };
 
 export const LIFECYCLE_CENSUS_NAME = "shared-log-lifecycle-census";
 export const LIFECYCLE_CENSUS_SCENARIOS = Object.freeze(["fresh", "history"]);
-
-export const classifyLifecycleCensusFile = (path) => {
-	if (
-		/^coordinate-wal\/coordinates\.bin\.checkpoint-(?:state|a|b)$/.test(path)
-	) {
-		return "coordinateCheckpoint";
-	}
-	if (
-		/^coordinate-wal\/coordinates\.(?:bin|wal(?:\.checkpoint-[ab])?)$/.test(
-			path,
-		)
-	) {
-		return "coordinateWal";
-	}
-	if (
-		/^coordinate-wal\/document-values\.(?:bin|wal(?:\.checkpoint-[ab])?)$/.test(
-			path,
-		)
-	) {
-		return "documentValueWal";
-	}
-	if (
-		/^coordinate-wal\/document-signers\.(?:bin|wal(?:\.checkpoint-[ab])?)$/.test(
-			path,
-		)
-	) {
-		return "documentSignerWal";
-	}
-	if (path.includes("/sublevels/blocks/")) return "entryBlockStore";
-	if (path.includes("/log/heads/")) return "headIndex";
-	if (path.includes("/replication/")) return "replicationIndex";
-	if (path.startsWith("libp2p/")) return "libp2p";
-	return "fixedAndOther";
-};
-
-const parsePositiveInteger = (value, label) => {
-	const normalized = String(value).replaceAll("_", "");
-	if (!/^[1-9][0-9]*$/.test(normalized)) {
-		throw new Error(`${label} must be a positive integer, got '${value}'`);
-	}
-	const parsed = Number(normalized);
-	if (!Number.isSafeInteger(parsed)) {
-		throw new Error(`${label} exceeds JavaScript's safe integer range`);
-	}
-	return parsed;
-};
-
-const parseScenario = (value) => {
-	if (!LIFECYCLE_CENSUS_SCENARIOS.includes(value)) {
-		throw new Error(`Unknown lifecycle-census scenario '${value}'`);
-	}
-	return value;
-};
-
-const nonemptyEnvironmentValue = (value) =>
-	typeof value === "string" && value.trim() === "" ? undefined : value;
 
 const validateWorkload = ({ historyCount, retain, batchSize }) => {
 	if (historyCount <= retain) {
@@ -77,22 +31,12 @@ export const parseLifecycleCensusArgs = (args, env = {}) => {
 		strict: true,
 		allowPositionals: false,
 		options: {
+			...LIFECYCLE_PARSE_OPTIONS,
 			"history-count": { type: "string" },
 			retain: { type: "string" },
 			"batch-size": { type: "string" },
-			runs: { type: "string" },
-			output: { type: "string" },
-			json: { type: "boolean" },
-			help: { type: "boolean" },
-			worker: { type: "boolean" },
-			scenario: { type: "string" },
-			phase: { type: "string" },
-			run: { type: "string" },
-			directory: { type: "string" },
 			"probe-hash": { type: "string" },
 			"retained-probe-hash": { type: "string" },
-			"compact-max-journal-bytes": { type: "string" },
-			"compact-max-journal-records": { type: "string" },
 		},
 	});
 
@@ -112,108 +56,35 @@ export const parseLifecycleCensusArgs = (args, env = {}) => {
 		values["batch-size"] ?? env.SHARED_LOG_LIFECYCLE_BATCH_SIZE ?? "256",
 		"batch-size",
 	);
-	const compactMaxJournalBytesValue =
-		values["compact-max-journal-bytes"] ??
-		nonemptyEnvironmentValue(
-			env.SHARED_LOG_LIFECYCLE_COMPACT_MAX_JOURNAL_BYTES,
-		);
-	const compactMaxJournalRecordsValue =
-		values["compact-max-journal-records"] ??
-		nonemptyEnvironmentValue(
-			env.SHARED_LOG_LIFECYCLE_COMPACT_MAX_JOURNAL_RECORDS,
-		);
-	const compactionOptions = {
-		...(compactMaxJournalBytesValue != null
-			? {
-					compactMaxJournalBytes: parsePositiveInteger(
-						compactMaxJournalBytesValue,
-						"compact-max-journal-bytes",
-					),
-				}
-			: {}),
-		...(compactMaxJournalRecordsValue != null
-			? {
-					compactMaxJournalRecords: parsePositiveInteger(
-						compactMaxJournalRecordsValue,
-						"compact-max-journal-records",
-					),
-				}
-			: {}),
-	};
 	validateWorkload({ historyCount, retain, batchSize });
-
-	if (values.worker) {
-		if (values.output) {
-			throw new Error("worker mode does not accept --output");
-		}
-		if (!values.scenario || !values.phase || !values.run || !values.directory) {
-			throw new Error(
-				"worker mode requires --scenario, --phase, --run, and --directory",
-			);
-		}
-		const scenario = parseScenario(values.scenario);
-		if (values.phase !== "seed" && values.phase !== "reopen") {
-			throw new Error("worker phase must be seed or reopen");
-		}
-		if (
-			values.phase === "reopen" &&
-			(!values["probe-hash"] || !values["retained-probe-hash"])
-		) {
-			throw new Error(
-				"reopen worker mode requires --probe-hash and --retained-probe-hash",
-			);
-		}
-		if (
-			values.phase === "seed" &&
-			(values["probe-hash"] || values["retained-probe-hash"])
-		) {
-			throw new Error("seed worker mode does not accept probe-hash options");
-		}
-		return {
-			mode: "worker",
-			scenario,
-			phase: values.phase,
-			run: parsePositiveInteger(values.run, "run"),
-			directory: values.directory,
-			historyCount,
-			retain,
-			batchSize,
-			...compactionOptions,
-			...(values["probe-hash"] ? { probeHash: values["probe-hash"] } : {}),
-			...(values["retained-probe-hash"]
-				? { retainedProbeHash: values["retained-probe-hash"] }
-				: {}),
-		};
-	}
-
-	if (
-		values.scenario ||
-		values.phase ||
-		values.run ||
-		values.directory ||
-		values["probe-hash"] ||
-		values["retained-probe-hash"]
-	) {
-		throw new Error(
-			"--scenario, --phase, --run, --directory, and probe-hash options are worker-only",
-		);
-	}
-
-	return {
-		mode: "parent",
-		historyCount,
-		retain,
-		batchSize,
-		...compactionOptions,
-		runs: parsePositiveInteger(
-			values.runs ?? env.SHARED_LOG_LIFECYCLE_RUNS ?? "1",
-			"runs",
-		),
-		...((values.output ?? env.SHARED_LOG_LIFECYCLE_OUTPUT)
-			? { output: values.output ?? env.SHARED_LOG_LIFECYCLE_OUTPUT }
-			: {}),
-		json: values.json === true || env.BENCH_JSON === "1",
-	};
+	return parseLifecycleExecutionOptions({
+		values,
+		env,
+		envPrefix: "SHARED_LOG_LIFECYCLE",
+		scenarios: LIFECYCLE_CENSUS_SCENARIOS,
+		scenarioLabel: "lifecycle-census",
+		workload: { historyCount, retain, batchSize },
+		workerOnly: ["probe-hash", "retained-probe-hash"],
+		workerExtras: (workerValues) => {
+			const probeHash = workerValues["probe-hash"];
+			const retainedProbeHash = workerValues["retained-probe-hash"];
+			if (
+				workerValues.phase === "reopen" &&
+				(!probeHash || !retainedProbeHash)
+			) {
+				throw new Error(
+					"reopen worker mode requires --probe-hash and --retained-probe-hash",
+				);
+			}
+			if (workerValues.phase === "seed" && (probeHash || retainedProbeHash)) {
+				throw new Error("seed worker mode does not accept probe-hash options");
+			}
+			return {
+				...(probeHash ? { probeHash } : {}),
+				...(retainedProbeHash ? { retainedProbeHash } : {}),
+			};
+		},
+	});
 };
 
 export const LIFECYCLE_LIVE_VALUE_FIELDS = Object.freeze([
@@ -242,14 +113,6 @@ export const LIFECYCLE_LIVE_FINGERPRINT_FIELDS = Object.freeze([
 	"documentsFingerprint",
 ]);
 
-const subtract = (left, right) => left - right;
-const ratio = (numerator, denominator) =>
-	numerator == null || denominator == null || denominator === 0
-		? null
-		: numerator / denominator;
-const nullableSubtract = (left, right) =>
-	left == null || right == null ? null : subtract(left, right);
-
 export const buildLifecycleComparison = (fresh, history, historicalEntries) => {
 	const freshState = fresh.reopen.state;
 	const historyState = history.reopen.state;
@@ -259,29 +122,7 @@ export const buildLifecycleComparison = (fresh, history, historicalEntries) => {
 	const unequalLiveFingerprints = LIFECYCLE_LIVE_FINGERPRINT_FIELDS.filter(
 		(field) => freshState[field] !== historyState[field],
 	);
-	const freshDisk = fresh.reopen.disk;
-	const historyDisk = history.reopen.disk;
-	const logicalDiskOverheadBytes = subtract(
-		historyDisk.logicalBytes,
-		freshDisk.logicalBytes,
-	);
-	const allocatedDiskOverheadBytes = nullableSubtract(
-		historyDisk.allocatedBytes,
-		freshDisk.allocatedBytes,
-	);
-	const reopenMsDelta = subtract(history.reopen.openMs, fresh.reopen.openMs);
-	const reopenRssDeltaBytes = subtract(
-		history.reopen.memory.afterValidation.rss,
-		fresh.reopen.memory.afterValidation.rss,
-	);
-	const freshMeasuredRssBytes = subtract(
-		fresh.reopen.memory.afterValidation.rss,
-		fresh.reopen.memory.beforeOpen.rss,
-	);
-	const historyMeasuredRssBytes = subtract(
-		history.reopen.memory.afterValidation.rss,
-		history.reopen.memory.beforeOpen.rss,
-	);
+	const resources = buildLifecycleResourceComparison(fresh, history);
 	return {
 		historicalEntries,
 		liveStateMatchesFresh:
@@ -289,54 +130,19 @@ export const buildLifecycleComparison = (fresh, history, historicalEntries) => {
 		unequalLiveValues,
 		unequalLiveFingerprints,
 		disk: {
-			freshLogicalBytes: freshDisk.logicalBytes,
-			historyLogicalBytes: historyDisk.logicalBytes,
-			logicalDiskOverheadBytes,
+			...resources.disk,
 			logicalBytesPerHistoricalEntry:
 				historicalEntries === 0
 					? 0
-					: logicalDiskOverheadBytes / historicalEntries,
-			freshAllocatedBytes: freshDisk.allocatedBytes,
-			historyAllocatedBytes: historyDisk.allocatedBytes,
-			allocatedDiskOverheadBytes,
+					: resources.disk.logicalDiskOverheadBytes / historicalEntries,
 			allocatedBytesPerHistoricalEntry:
-				allocatedDiskOverheadBytes == null
+				resources.disk.allocatedDiskOverheadBytes == null
 					? null
 					: historicalEntries === 0
 						? 0
-						: allocatedDiskOverheadBytes / historicalEntries,
-			logicalGrowthRatio: ratio(
-				historyDisk.logicalBytes,
-				freshDisk.logicalBytes,
-			),
-			allocatedGrowthRatio: ratio(
-				historyDisk.allocatedBytes,
-				freshDisk.allocatedBytes,
-			),
+						: resources.disk.allocatedDiskOverheadBytes / historicalEntries,
 		},
-		reopen: {
-			freshMs: fresh.reopen.openMs,
-			historyMs: history.reopen.openMs,
-			reopenMsDelta,
-			growthRatio: ratio(history.reopen.openMs, fresh.reopen.openMs),
-			freshRssBytes: fresh.reopen.memory.afterValidation.rss,
-			historyRssBytes: history.reopen.memory.afterValidation.rss,
-			reopenRssDeltaBytes,
-			rssGrowthRatio: ratio(
-				history.reopen.memory.afterValidation.rss,
-				fresh.reopen.memory.afterValidation.rss,
-			),
-			freshMeasuredRssBytes,
-			historyMeasuredRssBytes,
-			measuredRssDeltaBytes: subtract(
-				historyMeasuredRssBytes,
-				freshMeasuredRssBytes,
-			),
-			measuredRssGrowthRatio: ratio(
-				historyMeasuredRssBytes,
-				freshMeasuredRssBytes,
-			),
-		},
+		reopen: resources.reopen,
 	};
 };
 
@@ -369,12 +175,6 @@ export const buildLifecycleCensusReport = ({
 			"real durable Peerbit document append, bounded trim, clean close, cold reopen, live state, memory, and filesystem footprint",
 		...host,
 	},
-	progress: {
-		expectedRows: runs,
-		completedRows: rows.length,
-		complete: rows.length === runs && activeRow === null && failure === null,
-		activeRow,
-		...(failure ? { failure } : {}),
-	},
+	progress: reportProgress({ expectedRows: runs, rows, activeRow, failure }),
 	rows,
 });
