@@ -123,6 +123,7 @@
 		"bench:file-ingest": "TS_NODE_PROJECT=./tsconfig.json node --loader ts-node/esm ./packages/programs/data/document/document/benchmark/file-ingest.ts",
 		"bench:chunk-transfer": "pnpm --filter @peerbit/stream run bench:chunk-transfer",
 		"bench:payload-path": "TS_NODE_PROJECT=./tsconfig.json node --loader ts-node/esm ./packages/log/benchmark/payload-path.ts",
+		"bench:shared-log-cut-lifecycle-census": "node ./scripts/bench/shared-log-cut-lifecycle-census.mjs",
 		"bench:shared-log-lifecycle-census": "node ./scripts/bench/shared-log-lifecycle-census.mjs",
 		"bench:shared-log-scale-census": "node ./scripts/bench/shared-log-scale-census.mjs",
 		"bench:file-share:prepare": "node ./scripts/file-share/prepare-peerbit-examples.mjs",
