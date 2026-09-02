@@ -3,6 +3,7 @@ import {
 	createStore as createRustStore,
 	type RustAnyStoreOptions,
 } from "@peerbit/any-store-rust";
+import { BLOCK_SERVICE_BLOCK_STORE_SAFETY } from "@peerbit/blocks";
 import {
 	create as createRustIndexer,
 	type RustIndexerOptions,
@@ -20,6 +21,7 @@ import type {
 	StorageCreateOptions,
 	StoreFactory,
 } from "./peer.js";
+import { bindBlockStoreFactorySafety } from "./storage-safety.js";
 
 export type PeerbitRustStorageOptions = {
 	default?: RustAnyStoreOptions;
@@ -177,21 +179,24 @@ const createRustBlocksStoreFactory =
 		options: RustAnyStoreOptions | undefined,
 		nativeLogBlocks: boolean | undefined,
 	): StoreFactory =>
-	(directory) => {
-		if (nativeLogBlocks) {
-			if (directory != null) {
-				// The native log block store keeps blocks in wasm memory only
-				// (no on-disk persistence), so the client `directory` is
-				// ignored for blocks. Blocks — including program manifests
-				// written via the client blocks service — are lost on restart.
-				logger.error(
-					`storage.nativeLogBlocks is set: blocks are stored in memory only and the directory '${directory}' is not persisted. Program manifests and cached blocks will not survive a restart.`,
-				);
-			}
-			return new LazyNativeLogBlockStore();
-		}
-		return createRustStore(directory, options);
-	};
+		bindBlockStoreFactorySafety(
+			(directory) => {
+				if (nativeLogBlocks) {
+					if (directory != null) {
+						// The native log block store keeps blocks in wasm memory only
+						// (no on-disk persistence), so the client `directory` is
+						// ignored for blocks. Blocks — including program manifests
+						// written via the client blocks service — are lost on restart.
+						logger.error(
+							`storage.nativeLogBlocks is set: blocks are stored in memory only and the directory '${directory}' is not persisted. Program manifests and cached blocks will not survive a restart.`,
+						);
+					}
+					return new LazyNativeLogBlockStore();
+				}
+				return createRustStore(directory, options);
+			},
+			BLOCK_SERVICE_BLOCK_STORE_SAFETY,
+		);
 
 export const createRustStorageOptions = (
 	options: PeerbitRustStorageOptions = {},

@@ -1,5 +1,9 @@
 import { serialize } from "@dao-xyz/borsh";
+import { createStore } from "@peerbit/any-store";
 import {
+	BLOCK_SERVICE_BLOCK_STORE_SAFETY,
+	type BlockStoreSafety,
+	UNKNOWN_BLOCK_STORE_SAFETY,
 	calculateRawCid,
 	createBlock,
 	stringifyCid,
@@ -47,6 +51,79 @@ describe("transport", function () {
 		await store(session, 1).start();
 		await waitForPeers(store(session, 0), store(session, 1));
 	}); */
+
+	it("exposes immutable fail-closed local-store safety metadata", async () => {
+		const explicitSafety: BlockStoreSafety = {
+			referenceDomain: "caller-exclusive",
+			enforcedReclamation: "none",
+		};
+		const created: DirectBlock[] = [];
+		session = await TestSession.disconnected(3, {
+			services: {
+				blocks: (components) => {
+					const index = created.length;
+					const blocks = new DirectBlock(
+						components,
+						index === 0
+							? undefined
+							: index === 1
+								? { localStore: createStore() }
+								: {
+										localStore: createStore(),
+										localStoreSafety: explicitSafety,
+									},
+					);
+					created.push(blocks);
+					return blocks;
+				},
+			},
+		});
+
+		expect(created).to.have.length(3);
+		expect(created[0]!.localStoreSafety).to.equal(
+			BLOCK_SERVICE_BLOCK_STORE_SAFETY,
+		);
+		expect(created[1]!.localStoreSafety).to.equal(UNKNOWN_BLOCK_STORE_SAFETY);
+		expect(created[2]!.localStoreSafety).to.deep.equal(explicitSafety);
+		expect(created[2]!.localStoreSafety).not.to.equal(explicitSafety);
+		expect(Object.isFrozen(created[2]!.localStoreSafety)).to.equal(true);
+		expect(
+			Reflect.set(created[2]!, "localStoreSafety", UNKNOWN_BLOCK_STORE_SAFETY),
+		).to.equal(false);
+		expect(Reflect.deleteProperty(created[2]!, "localStoreSafety")).to.equal(
+			false,
+		);
+
+		(explicitSafety as { referenceDomain: string }).referenceDomain = "shared";
+		expect(created[2]!.localStoreSafety.referenceDomain).to.equal(
+			"caller-exclusive",
+		);
+	});
+
+	it("rejects safety metadata without an explicit local store", async () => {
+		let rejectionObserved = false;
+		session = await TestSession.disconnected(1, {
+			services: {
+				blocks: (components) => {
+					expect(
+						() =>
+							new DirectBlock(components, {
+								localStoreSafety: {
+									referenceDomain: "caller-exclusive",
+									enforcedReclamation: "none",
+								},
+							}),
+					).to.throw(
+						Error,
+						"DirectBlock localStoreSafety requires an explicitly supplied localStore",
+					);
+					rejectionObserved = true;
+					return new DirectBlock(components);
+				},
+			},
+		});
+		expect(rejectionObserved).to.equal(true);
+	});
 
 	it("write then read over relay", async () => {
 		session = await TestSession.disconnected(3, {
