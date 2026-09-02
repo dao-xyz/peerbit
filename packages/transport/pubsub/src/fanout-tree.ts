@@ -6651,6 +6651,13 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 						);
 					}
 					if (!dialOk) {
+						if (
+							bootstraps.length > 1 &&
+							tracker.length === 0 &&
+							bootstrapPeerSet.has(c.hash)
+						) {
+							unsuccessfulColdBootstrapPeers.add(c.hash);
+						}
 						this.sendTrackerFeedbackBestEffort(
 							ch,
 							bootstrapPeers,
@@ -6725,6 +6732,13 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 					}
 
 					if (res.timedOut) {
+						if (
+							bootstraps.length > 1 &&
+							tracker.length === 0 &&
+							bootstrapPeerSet.has(c.hash)
+						) {
+							unsuccessfulColdBootstrapPeers.add(c.hash);
+						}
 						ch.metrics.joinReqTimeouts += 1;
 						this.noteJoinTimeout(ch, c.hash);
 						this.sendTrackerFeedbackBestEffort(
@@ -6779,14 +6793,6 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 							.catch(() => {});
 					}
 					continue;
-				}
-				if (
-					bootstraps.length > 1 &&
-					Date.now() >= bootstrapFallbackRetryAt
-				) {
-					for (const hash of bootstrapPeers) {
-						unsuccessfulColdBootstrapPeers.add(hash);
-					}
 				}
 				const waitMs = clampInitialJoinWait(retryMs);
 				if (waitMs <= 0) throwInitialJoinTimeout();

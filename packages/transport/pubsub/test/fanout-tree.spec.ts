@@ -2041,6 +2041,7 @@ describe("fanout-tree", () => {
 			const originalOpenConnection =
 				connectionManager.openConnection.bind(connectionManager);
 			const originalTryJoinOnce = internals.tryJoinOnce.bind(internals);
+			const originalSendControl = internals._sendControl.bind(internals);
 			const dialedAddresses: string[] = [];
 			let triedReadyBootstrapBeforeRootDial = false;
 			connectionManager.openConnection = (
@@ -2057,6 +2058,10 @@ describe("fanout-tree", () => {
 					);
 				}
 				return originalTryJoinOnce(...args);
+			};
+			internals._sendControl = (to: string, ...args: any[]) => {
+				if (to === unhelpfulHash) return Promise.resolve();
+				return originalSendControl(to, ...args);
 			};
 
 			try {
@@ -2084,6 +2089,7 @@ describe("fanout-tree", () => {
 			} finally {
 				connectionManager.openConnection = originalOpenConnection;
 				internals.tryJoinOnce = originalTryJoinOnce;
+				internals._sendControl = originalSendControl;
 			}
 
 			expect(triedReadyBootstrapBeforeRootDial).to.equal(true);
