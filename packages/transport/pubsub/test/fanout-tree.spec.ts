@@ -2000,6 +2000,100 @@ describe("fanout-tree", () => {
 		}
 	});
 
+	it("falls back from a ready unhelpful bootstrap to a later bootstrap", async function () {
+		this.timeout(10_000);
+		const session = await TestSession.disconnected<FanoutServices>(3, {
+			services: {
+				fanout: (components) =>
+					new FanoutTree(components, {
+						connectionManager: false,
+						random: () => 0.999_999,
+					}),
+			},
+		});
+
+		try {
+			const rootNode = session.peers[0];
+			const leafNode = session.peers[1];
+			const unhelpfulNode = session.peers[2];
+			await session.connect([[leafNode, unhelpfulNode]]);
+			const root = rootNode.services.fanout;
+			const leaf = leafNode.services.fanout;
+			const rootAddress = rootNode.getMultiaddrs()[0];
+			const unhelpfulAddress = unhelpfulNode.getMultiaddrs()[0];
+			expect(rootAddress).to.exist;
+			expect(unhelpfulAddress).to.exist;
+
+			const topic = "initial-join-unhelpful-bootstrap-fallback";
+			const rootHash = root.publicKeyHash;
+			const unhelpfulHash = unhelpfulNode.services.fanout.publicKeyHash;
+			root.openChannel(topic, rootHash, {
+				role: "root",
+				msgRate: 1,
+				msgSize: 8,
+				uploadLimitBps: 1_000_000,
+				maxChildren: 1,
+				repair: false,
+			});
+
+			const internals = leaf as any;
+			const connectionManager = internals.components.connectionManager as any;
+			const originalOpenConnection =
+				connectionManager.openConnection.bind(connectionManager);
+			const originalTryJoinOnce = internals.tryJoinOnce.bind(internals);
+			const dialedAddresses: string[] = [];
+			let triedReadyBootstrapBeforeRootDial = false;
+			connectionManager.openConnection = (
+				address: { toString(): string },
+				options?: { signal?: AbortSignal },
+			) => {
+				dialedAddresses.push(address.toString());
+				return originalOpenConnection(address, options);
+			};
+			internals.tryJoinOnce = (...args: any[]) => {
+				if (args[1] === unhelpfulHash) {
+					triedReadyBootstrapBeforeRootDial = !dialedAddresses.includes(
+						rootAddress!.toString(),
+					);
+				}
+				return originalTryJoinOnce(...args);
+			};
+
+			try {
+				await leaf.joinChannel(
+					topic,
+					rootHash,
+					{
+						msgRate: 1,
+						msgSize: 8,
+						uploadLimitBps: 0,
+						maxChildren: 0,
+						repair: false,
+					},
+					{
+						timeoutMs: 1_000,
+						bootstrap: [unhelpfulAddress!, rootAddress!],
+						bootstrapDialTimeoutMs: 200,
+						bootstrapMaxPeers: 1,
+						bootstrapEnsureIntervalMs: 10_000,
+						trackerCandidates: 0,
+						joinReqTimeoutMs: 30,
+						retryMs: 1,
+					},
+				);
+			} finally {
+				connectionManager.openConnection = originalOpenConnection;
+				internals.tryJoinOnce = originalTryJoinOnce;
+			}
+
+			expect(triedReadyBootstrapBeforeRootDial).to.equal(true);
+			expect(dialedAddresses).to.include(rootAddress!.toString());
+			expect(leaf.getChannelStats(topic, rootHash)?.parent).to.equal(rootHash);
+		} finally {
+			await session.stop();
+		}
+	});
+
 	it("clamps a silent connected parent to the initial join deadline", async function () {
 		this.timeout(5_000);
 		const session: TestSession<{ fanout: FanoutTree }> =

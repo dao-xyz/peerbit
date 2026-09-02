@@ -1018,6 +1018,7 @@ type JoinDialDiagnostics = {
 	metrics: InternalFanoutTreeChannelMetrics;
 	deadlineAt?: number;
 	preferConnected?: boolean;
+	excludeReadyPeerHashes?: Set<string>;
 };
 
 type PendingUnicastAck = {
@@ -5023,9 +5024,16 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		const disconnected: Multiaddr[] = [];
 		const connectedSeen = new Set<string>();
 		for (const address of addrs) {
-			const hash = diagnostics?.preferConnected
+			const readyHash = diagnostics
 				? this.connectedPeerHashForBootstrap(address)
 				: undefined;
+			if (
+				readyHash &&
+				diagnostics?.excludeReadyPeerHashes?.has(readyHash)
+			) {
+				continue;
+			}
+			const hash = diagnostics?.preferConnected ? readyHash : undefined;
 			if (!hash) {
 				disconnected.push(address);
 				continue;
@@ -5085,6 +5093,10 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 			}
 			if (ready && diagnostics?.preferConnected) break;
 		}
+		// Exhaustion completes one bounded pass over the configured bootstrap set.
+		// Allow a later round to revisit ready trackers because their candidate view
+		// may have changed while this cold join was progressing.
+		if (out.length === 0) diagnostics?.excludeReadyPeerHashes?.clear();
 		return [...new Set(out)];
 	}
 
@@ -6005,6 +6017,8 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		let nextParentUpgradeCheckAt = 0;
 		let parentUpgradeCheckSeq = 0;
 		let parentUpgradeActiveGuardBackoffMs = 0;
+		const unsuccessfulColdBootstrapPeers = new Set<string>();
+		let bootstrapFallbackRetryAt = 0;
 		const scheduleNextParentUpgradeCheck = (
 			now: number,
 			first = false,
@@ -6283,10 +6297,18 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 				let bootstrapPeers: string[] = [];
 				if (bootstraps.length > 0) {
 					const now = Date.now();
-					const connectedCached = ch.cachedBootstrapPeers.filter((h) =>
-						this.isPeerReadyForJoin(h),
+					const connectedCached = ch.cachedBootstrapPeers.filter(
+						(h) =>
+							this.isPeerReadyForJoin(h) &&
+							!unsuccessfulColdBootstrapPeers.has(h),
+					);
+					const hasExcludedReadyCached = ch.cachedBootstrapPeers.some(
+						(h) =>
+							this.isPeerReadyForJoin(h) &&
+							unsuccessfulColdBootstrapPeers.has(h),
 					);
 					const due =
+						(hasExcludedReadyCached && now >= bootstrapFallbackRetryAt) ||
 						ch.lastBootstrapEnsureAt === 0 ||
 						bootstrapEnsureIntervalMs === 0 ||
 						now - ch.lastBootstrapEnsureAt >= bootstrapEnsureIntervalMs;
@@ -6296,11 +6318,13 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 							: false;
 					if (due && !haveEnough) {
 						ch.lastBootstrapEnsureAt = now;
+						const wasFallbackPass = unsuccessfulColdBootstrapPeers.size > 0;
 						const diagnostics = !ch.joinedAtLeastOnce
 							? {
 									metrics: ch.metrics,
 									deadlineAt: initialJoinDeadlineAt,
 									preferConnected: true,
+									excludeReadyPeerHashes: unsuccessfulColdBootstrapPeers,
 								}
 							: undefined;
 						const peers = await this.ensureBootstrapPeers(
@@ -6310,10 +6334,17 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 							bootstrapMaxPeers,
 							diagnostics,
 						);
-						if (peers.length > 0) ch.cachedBootstrapPeers = peers;
+						if (peers.length > 0) {
+							ch.cachedBootstrapPeers = peers;
+						} else if (wasFallbackPass) {
+							bootstrapFallbackRetryAt =
+								Date.now() + Math.max(1, bootstrapEnsureIntervalMs);
+						}
 					}
-					bootstrapPeers = ch.cachedBootstrapPeers.filter((h) =>
-						this.isPeerReadyForJoin(h),
+					bootstrapPeers = ch.cachedBootstrapPeers.filter(
+						(h) =>
+							this.isPeerReadyForJoin(h) &&
+							!unsuccessfulColdBootstrapPeers.has(h),
 					);
 				}
 				throwIfInitialJoinTimedOut();
@@ -6748,6 +6779,14 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 							.catch(() => {});
 					}
 					continue;
+				}
+				if (
+					bootstraps.length > 1 &&
+					Date.now() >= bootstrapFallbackRetryAt
+				) {
+					for (const hash of bootstrapPeers) {
+						unsuccessfulColdBootstrapPeers.add(hash);
+					}
 				}
 				const waitMs = clampInitialJoinWait(retryMs);
 				if (waitMs <= 0) throwInitialJoinTimeout();
