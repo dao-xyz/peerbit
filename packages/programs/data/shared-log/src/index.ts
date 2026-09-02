@@ -23604,7 +23604,7 @@ export class SharedLog<
 			const peerHash = key.hashcode();
 			const peerSession = this._peerSessions.current(peerHash);
 			if (peerSession?.phase === "open") {
-				this._v2Receive.resumeParkedRequest({
+				this._v2Receive.ensureRequestProgress({
 					peerHash,
 					peerSession,
 					receiveEpoch: this._peerSessions.receiveEpoch(peerHash),
@@ -26447,8 +26447,14 @@ export class SharedLog<
 					receiveEpoch,
 				})
 			) {
-				// Active, or a bounded request cycle is still running its own
-				// exponential retries. Keep polling for the next park.
+				// Active and timed/in-flight cycles are no-ops. An unparked,
+				// non-active generation with no worker can occur when its timer fires
+				// behind a temporary receive gate; repair that exact session here.
+				this._v2Receive.ensureRequestProgress({
+					peerHash,
+					peerSession,
+					receiveEpoch,
+				});
 				state.parkedSinceMs = undefined;
 				arm(intervalMs);
 				return;
