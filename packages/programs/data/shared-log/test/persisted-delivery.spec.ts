@@ -17,12 +17,14 @@ import {
 	ShallowMeta,
 	Timestamp,
 } from "@peerbit/log";
+import { ClosedError } from "@peerbit/program";
 import { SilentDelivery } from "@peerbit/stream-interface";
 import { TestSession } from "@peerbit/test-utils";
-import { waitForResolved } from "@peerbit/time";
+import { AbortError, TimeoutError, waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
 import fs from "fs/promises";
 import os from "os";
+import pDefer from "p-defer";
 import path from "path";
 import sinon from "sinon";
 import { PersistedDeliveryError } from "../src/errors.js";
@@ -150,6 +152,586 @@ describe("append delivery options — persisted receipts", function () {
 			{ timeout: 15_000 },
 		);
 	};
+
+	it("exposes capability stages and wakes when the current session becomes capable", async () => {
+		const { writer, receiver } = await openPair(true);
+		await waitForPersistedCapability(writer, receiver);
+		const log = writer.log as any;
+		const receiverKey = receiver.node.identity.publicKey;
+		const receiverHash = receiverKey.hashcode();
+		const capabilities = log._peerSyncCapabilities.get(receiverHash);
+		const transportSession = log._peerSyncCapabilitySessions.get(receiverHash);
+		const capabilityTimestamp =
+			log._peerSyncCapabilityTimestamps.get(receiverHash);
+		expect(capabilities).to.be.a("number");
+		expect(transportSession).to.be.a("bigint");
+		expect(capabilityTimestamp).to.be.a("bigint");
+
+		const active = sinon.stub(log._v2Receive, "isCurrentActive").returns(true);
+		const confirmed = sinon
+			.stub(log._v2Send, "isLatestConfirmedForPeer")
+			.returns(true);
+		const readinessEvents: string[] = [];
+		const readinessDetailsFrozen: boolean[] = [];
+		const onReadiness = (event: any) => {
+			readinessEvents.push(event.detail.peerHash);
+			readinessDetailsFrozen.push(Object.isFrozen(event.detail));
+		};
+		log.events.addEventListener("persisted-receipt:readiness", onReadiness);
+		try {
+			const ready = await log.getPersistedReceiptPeerReadiness(receiverKey);
+			expect(ready.status).to.equal("ready");
+			expect(Object.isFrozen(ready)).to.equal(true);
+
+			log._peerSyncCapabilities.set(
+				receiverHash,
+				capabilities & ~SYNC_CAPABILITY_PERSISTED_ENTRY_RECEIPTS,
+			);
+			const oldPeer = await log.getPersistedReceiptPeerReadiness(receiverKey);
+			expect(oldPeer).to.deep.include({
+				status: "unsupported",
+				reason: "persisted-receipts-unsupported",
+			});
+			expect(Object.isFrozen(oldPeer)).to.equal(true);
+
+			log._peerSyncCapabilities.set(
+				receiverHash,
+				(capabilities | SYNC_CAPABILITY_PERSISTED_ENTRY_RECEIPTS) &
+					~SYNC_CAPABILITY_REPLICATION_INFO_V2_CONFIRM,
+			);
+			expect(
+				await log.getPersistedReceiptPeerReadiness(receiverKey),
+			).to.deep.include({
+				status: "unsupported",
+				reason: "replication-confirmation-unsupported",
+			});
+
+			log._peerSyncCapabilities.set(receiverHash, capabilities);
+			log._peerSyncCapabilitySessions.delete(receiverHash);
+			log._peerSyncCapabilityTimestamps.delete(receiverHash);
+			expect(
+				await log.getPersistedReceiptPeerReadiness(receiverKey),
+			).to.deep.include({
+				status: "pending",
+				reason: "capability-pending",
+			});
+
+			const wait = log.waitForPersistedReceiptPeerReadiness(receiverKey, {
+				timeout: 5_000,
+			});
+			expect(
+				log.observePeerSyncCapabilities({
+					peerHash: receiverHash,
+					capabilities,
+					transportSession,
+					timestamp: capabilityTimestamp + 1n,
+				}),
+			).to.equal(true);
+			const restored = await wait;
+			expect(restored.status).to.equal("ready");
+			expect(Object.isFrozen(restored)).to.equal(true);
+			expect(readinessEvents).to.include(receiverHash);
+			expect(readinessDetailsFrozen.every(Boolean)).to.equal(true);
+		} finally {
+			log.events.removeEventListener(
+				"persisted-receipt:readiness",
+				onReadiness,
+			);
+			confirmed.restore();
+			active.restore();
+		}
+	});
+
+	it("rebinds a readiness waiter to a same-key replacement generation", async () => {
+		const { writer, receiver } = await openPair(true);
+		await waitForPersistedCapability(writer, receiver);
+		const log = writer.log as any;
+		const receiverKey = receiver.node.identity.publicKey;
+		const receiverHash = receiverKey.hashcode();
+		const oldSession = log._peerSessions.current(receiverHash);
+		const oldReceiveEpoch = log._peerSessions.receiveEpoch(receiverHash);
+		const oldTransportSession =
+			log._peerSyncCapabilitySessions.get(receiverHash);
+		const oldCapabilityTimestamp =
+			log._peerSyncCapabilityTimestamps.get(receiverHash);
+		const capabilities = log._peerSyncCapabilities.get(receiverHash);
+		expect(oldSession).to.exist;
+		expect(oldTransportSession).to.be.a("bigint");
+		expect(oldCapabilityTimestamp).to.be.a("bigint");
+
+		const newSession = { phase: "open", isActive: () => true };
+		const newReceiveEpoch = {};
+		const newTransportSession = oldTransportSession + 1n;
+		let currentSession = oldSession;
+		let currentReceiveEpoch = oldReceiveEpoch;
+		const originalCurrent = log._peerSessions.current.bind(log._peerSessions);
+		const originalReceiveEpoch = log._peerSessions.receiveEpoch.bind(
+			log._peerSessions,
+		);
+		const current = sinon
+			.stub(log._peerSessions, "current")
+			.callsFake((...args: unknown[]) => {
+				const peerHash = args[0] as string;
+				return peerHash === receiverHash
+					? currentSession
+					: originalCurrent(peerHash);
+			});
+		const receiveEpoch = sinon
+			.stub(log._peerSessions, "receiveEpoch")
+			.callsFake((...args: unknown[]) => {
+				const peerHash = args[0] as string;
+				return peerHash === receiverHash
+					? currentReceiveEpoch
+					: originalReceiveEpoch(peerHash);
+			});
+		const advanceEpoch = sinon
+			.stub(log._peerSessions, "advanceReceiveEpoch")
+			.returns(newReceiveEpoch);
+		const active = sinon
+			.stub(log._v2Receive, "isCurrentActive")
+			.callsFake(
+				(properties: any) =>
+					properties.peerSession === currentSession &&
+					properties.receiveEpoch === currentReceiveEpoch,
+			);
+		const advanceRecovery = sinon.stub(log._v2Receive, "advanceRecovery");
+		const latest = sinon
+			.stub(log._v2Send, "isLatestConfirmedForPeer")
+			.callsFake(
+				(target: any) =>
+					target.peerSession === newSession &&
+					target.receiverTransportSession === newTransportSession,
+			);
+		const oldConfirmationEntered = pDefer<AbortSignal>();
+		const confirm = sinon
+			.stub(log._v2Send, "confirmLatestForPeer")
+			.callsFake(async (...args: unknown[]) => {
+				const target = args[0] as any;
+				const options = args[1] as { signal: AbortSignal };
+				if (target.peerSession === oldSession) {
+					const { signal } = options;
+					oldConfirmationEntered.resolve(signal);
+					await new Promise<void>((resolve, reject) => {
+						const onAbort = () => reject(signal.reason ?? new AbortError());
+						if (signal.aborted) {
+							onAbort();
+							return;
+						}
+						signal.addEventListener("abort", onAbort, { once: true });
+					});
+					return;
+				}
+				if (target.peerSession === newSession) return;
+				throw new Error("unexpected receipt generation");
+			});
+		try {
+			const oldSnapshot =
+				await log.getPersistedReceiptPeerReadiness(receiverKey);
+			expect(oldSnapshot).to.deep.include({
+				status: "pending",
+				reason: "replication-confirmation-pending",
+			});
+
+			const wait = log.waitForPersistedReceiptPeerReadiness(receiverKey, {
+				timeout: 5_000,
+			});
+			const oldConfirmationSignal = await oldConfirmationEntered.promise;
+			expect(log._persistedReceiptReadinessWaiters.size).to.equal(1);
+			expect(
+				log.observePeerSyncCapabilities({
+					peerHash: receiverHash,
+					capabilities,
+					transportSession: oldTransportSession,
+					timestamp: oldCapabilityTimestamp,
+				}),
+			).to.equal(true);
+			expect(oldConfirmationSignal.aborted).to.equal(false);
+			const unrelatedKey = (await Ed25519Keypair.create()).publicKey;
+			log.events.dispatchEvent(
+				new CustomEvent("replication:change", {
+					detail: { publicKey: unrelatedKey },
+				}),
+			);
+			expect(oldConfirmationSignal.aborted).to.equal(false);
+
+			currentSession = newSession;
+			currentReceiveEpoch = newReceiveEpoch;
+			log._peerSyncCapabilitySessions.set(receiverHash, newTransportSession);
+			log.advanceReplicationInfoRecoveryEpoch(receiverHash);
+			expect(oldConfirmationSignal.aborted).to.equal(true);
+
+			const replacement = await wait;
+			expect(replacement.status).to.equal("ready");
+			expect(replacement.generation).not.to.equal(oldSnapshot.generation);
+			expect(confirm.firstCall.args[0].peerSession).to.equal(oldSession);
+			expect(
+				latest
+					.getCalls()
+					.some((call) => call.args[0].peerSession === newSession),
+			).to.equal(true);
+			expect(log._persistedReceiptReadinessWaiters.size).to.equal(0);
+		} finally {
+			confirm.restore();
+			latest.restore();
+			advanceRecovery.restore();
+			active.restore();
+			advanceEpoch.restore();
+			receiveEpoch.restore();
+			current.restore();
+			log._peerSyncCapabilitySessions.set(receiverHash, oldTransportSession);
+		}
+	});
+
+	it("recovers a failed opening barrier through a fresh subscriber snapshot", async () => {
+		session = await TestSession.disconnected(1);
+		const writer = await session.peers[0].open(new EventStore<string, any>(), {
+			args: { replicate: false, timeUntilRoleMaturity: 0 },
+		});
+		const log = writer.log as any;
+		const remote = (await Ed25519Keypair.create()).publicKey;
+		const remoteHash = remote.hashcode();
+		const firstTransportSession = 41n;
+		const replacementTransportSession = 42n;
+		const subscribeEvent = (transportSession: bigint) =>
+			({
+				detail: {
+					from: remote,
+					topics: [log.topic],
+					session: transportSession,
+				},
+			}) as any;
+		const drain = sinon.stub(log, "drainPeerReceiveHandlers");
+		drain.onFirstCall().rejects(new Error("forced opening-barrier failure"));
+		drain.onSecondCall().resolves();
+		const send = sinon.stub(log.rpc, "send").resolves([] as any);
+
+		await expect(
+			log._onSubscription(subscribeEvent(firstTransportSession)),
+		).to.be.rejectedWith("forced opening-barrier failure");
+		const failedSession = log._peerSessions.current(remoteHash);
+		expect(failedSession?.phase).to.equal("opening");
+		expect(failedSession?.openingBarrierActive).to.equal(false);
+		expect(log._peerSessions.isReplicationInfoBlocked(remoteHash)).to.equal(
+			true,
+		);
+
+		log.uniqueReplicators.add(remoteHash);
+		const active = sinon.stub(log._v2Receive, "isCurrentActive").returns(true);
+		const confirmed = sinon
+			.stub(log._v2Send, "isLatestConfirmedForPeer")
+			.returns(true);
+		let replacementSession: any;
+		const requestSubscribers = sinon
+			.stub(log.node.services.pubsub, "requestSubscribers")
+			.callsFake(async () => {
+				await log._onSubscription(
+					subscribeEvent(replacementTransportSession),
+				);
+				replacementSession = log._peerSessions.current(remoteHash);
+				log._peerSyncCapabilities.set(
+					remoteHash,
+					SYNC_CAPABILITY_PERSISTED_ENTRY_RECEIPTS |
+						SYNC_CAPABILITY_REPLICATION_INFO_V2_CONFIRM,
+				);
+				log._peerSyncCapabilitySessions.set(
+					remoteHash,
+					replacementTransportSession,
+				);
+				log._peerSyncCapabilityTimestamps.set(remoteHash, 1n);
+				log.dispatchPersistedReceiptReadinessChange(remoteHash);
+			});
+		try {
+			const ready = await log.waitForPersistedReceiptPeerReadiness(remote, {
+				timeout: 2_000,
+			});
+			expect(ready.status).to.equal("ready");
+			expect(requestSubscribers.calledOnceWith(log.topic, remote)).to.equal(
+				true,
+			);
+			expect(replacementSession).not.to.equal(failedSession);
+			expect(replacementSession?.phase).to.equal("open");
+			expect(log._peerSessions.isReplicationInfoBlocked(remoteHash)).to.equal(
+				false,
+			);
+		} finally {
+			requestSubscribers.restore();
+			confirmed.restore();
+			active.restore();
+			send.restore();
+			drain.restore();
+		}
+	});
+
+	it("rechecks a fresh per-entry leader plan after a coalesced role change", async () => {
+		const { writer, receiver } = await openPair(true);
+		await waitForPersistedCapability(writer, receiver);
+		const { entry } = await writer.add("readiness-leader-replacement", {
+			target: "none",
+		});
+		const log = writer.log as any;
+		const receiverKey = receiver.node.identity.publicKey;
+		const receiverHash = receiverKey.hashcode();
+		const firstPlanEntered = pDefer<void>();
+		const releaseFirstPlan = pDefer<void>();
+		let planningCalls = 0;
+		const leaders = sinon
+			.stub(log, "findLeadersFromEntry")
+			.callsFake(async () => {
+				planningCalls++;
+				if (planningCalls === 1) {
+					firstPlanEntered.resolve();
+					await releaseFirstPlan.promise;
+					return new Map([[receiverHash, {}]]);
+				}
+				return new Map([[receiverHash, {}]]);
+			});
+		const confirmed = sinon
+			.stub(log._v2Send, "isLatestConfirmedForPeer")
+			.returns(true);
+		try {
+			const wait = log.waitForPersistedReceiptPeerReadiness(receiverKey, {
+				entries: [entry],
+				replicas: 1,
+				timeout: 5_000,
+			});
+			await firstPlanEntered.promise;
+			log.events.dispatchEvent(
+				new CustomEvent("replication:change", {
+					detail: { publicKey: receiverKey },
+				}),
+			);
+			releaseFirstPlan.resolve();
+
+			const ready = await wait;
+			expect(ready.status).to.equal("ready");
+			expect(leaders.callCount).to.be.greaterThanOrEqual(2);
+			expect(
+				leaders
+					.getCalls()
+					.every((call) => call.args[2]?.freshLeaderPlan === true),
+			).to.equal(true);
+		} finally {
+			confirmed.restore();
+			leaders.restore();
+		}
+	});
+
+	it("skips stale confirmation work after a wake during inspection", async () => {
+		const { writer, receiver } = await openPair(true);
+		await waitForPersistedCapability(writer, receiver);
+		const { entry } = await writer.add("readiness-confirmation-recheck", {
+			target: "none",
+		});
+		const log = writer.log as any;
+		const receiverKey = receiver.node.identity.publicKey;
+		const receiverHash = receiverKey.hashcode();
+		const firstPlanEntered = pDefer<void>();
+		const releaseFirstPlan = pDefer<void>();
+		let planningCalls = 0;
+		const leaders = sinon
+			.stub(log, "findLeadersFromEntry")
+			.callsFake(async () => {
+				planningCalls++;
+				if (planningCalls === 1) {
+					firstPlanEntered.resolve();
+					await releaseFirstPlan.promise;
+				}
+				return new Map([[receiverHash, {}]]);
+			});
+		const confirmed = sinon
+			.stub(log._v2Send, "isLatestConfirmedForPeer")
+			.callsFake(() => planningCalls >= 2);
+		const confirm = sinon.stub(log._v2Send, "confirmLatestForPeer").resolves();
+		try {
+			const wait = log.waitForPersistedReceiptPeerReadiness(receiverKey, {
+				entries: [entry],
+				replicas: 1,
+				timeout: 5_000,
+			});
+			await firstPlanEntered.promise;
+			log.dispatchPersistedReceiptReadinessChange(receiverHash);
+			releaseFirstPlan.resolve();
+
+			const ready = await wait;
+			expect(ready.status).to.equal("ready");
+			expect(leaders.callCount).to.equal(2);
+			expect(confirm.called).to.equal(false);
+		} finally {
+			releaseFirstPlan.resolve();
+			confirm.restore();
+			confirmed.restore();
+			leaders.restore();
+		}
+	});
+
+	it("stops an in-flight readiness inspection after caller cancellation", async () => {
+		const { writer, receiver } = await openPair(true);
+		await waitForPersistedCapability(writer, receiver);
+		const { entry } = await writer.add("cancel-readiness-planner", {
+			target: "none",
+		});
+		const log = writer.log as any;
+		const receiverKey = receiver.node.identity.publicKey;
+		const receiverHash = receiverKey.hashcode();
+		const plannerEntered = pDefer<void>();
+		const releasePlanner = pDefer<void>();
+		const leaders = sinon
+			.stub(log, "findLeadersFromEntry")
+			.callsFake(async () => {
+				plannerEntered.resolve();
+				await releasePlanner.promise;
+				return new Map([[receiverHash, {}]]);
+			});
+		const nudge = sinon.stub(log, "nudgePersistedReceiptPeerReadiness");
+		const controller = new AbortController();
+		try {
+			const wait = log.waitForPersistedReceiptPeerReadiness(receiverKey, {
+				entries: [entry, entry],
+				replicas: 1,
+				signal: controller.signal,
+				timeout: 5_000,
+			});
+			await plannerEntered.promise;
+			controller.abort(new Error("cancel in-flight readiness"));
+			await expect(wait).to.be.rejectedWith("cancel in-flight readiness");
+			expect(log._persistedReceiptReadinessWaiters.size).to.equal(0);
+
+			releasePlanner.resolve();
+			await new Promise((resolve) => setTimeout(resolve, 0));
+			expect(leaders.callCount).to.equal(1);
+			expect(nudge.called).to.equal(false);
+		} finally {
+			releasePlanner.resolve();
+			nudge.restore();
+			leaders.restore();
+		}
+	});
+
+	it("does not publish readiness after the deadline elapses inside planning", async () => {
+		const { writer, receiver } = await openPair(true);
+		await waitForPersistedCapability(writer, receiver);
+		const { entry } = await writer.add("deadline-readiness-planner", {
+			target: "none",
+		});
+		const log = writer.log as any;
+		const receiverKey = receiver.node.identity.publicKey;
+		const receiverHash = receiverKey.hashcode();
+		const baseNow = Date.now();
+		let now = baseNow;
+		const dateNow = sinon.stub(Date, "now").callsFake(() => now);
+		const leaders = sinon
+			.stub(log, "findLeadersFromEntry")
+			.callsFake(async () => {
+				now = baseNow + 10;
+				return new Map([[receiverHash, {}]]);
+			});
+		const confirmed = sinon
+			.stub(log._v2Send, "isLatestConfirmedForPeer")
+			.returns(true);
+		try {
+			await expect(
+				log.waitForPersistedReceiptPeerReadiness(receiverKey, {
+					entries: [entry],
+					replicas: 1,
+					timeout: 5,
+				}),
+			).to.be.rejectedWith(
+				TimeoutError,
+				"Timeout waiting for persisted-receipt readiness",
+			);
+			expect(log._persistedReceiptReadinessWaiters.size).to.equal(0);
+		} finally {
+			confirmed.restore();
+			leaders.restore();
+			dateNow.restore();
+		}
+	});
+
+	it("validates replica bounds before consulting an absent peer", async () => {
+		session = await TestSession.disconnected(1);
+		const writer = await session.peers[0].open(new EventStore<string, any>());
+		const log = writer.log as any;
+		const unknownKey = (await Ed25519Keypair.create()).publicKey;
+		const candidate = sinon.spy(log, "persistedReceiptReadinessCandidate");
+		const nudge = sinon.stub(log, "nudgePersistedReceiptPeerReadiness");
+		try {
+			await expect(
+				log.getPersistedReceiptPeerReadiness(unknownKey, { replicas: 101 }),
+			).to.be.rejectedWith("Higher replication degree than 100");
+			expect(candidate.called).to.equal(false);
+
+			await expect(
+				log.waitForPersistedReceiptPeerReadiness(unknownKey, {
+					replicas: 101,
+					timeout: 1_000,
+				}),
+			).to.be.rejectedWith("Higher replication degree than 100");
+			expect(candidate.called).to.equal(false);
+			expect(nudge.called).to.equal(false);
+			expect(log._persistedReceiptReadinessWaiters.size).to.equal(0);
+		} finally {
+			nudge.restore();
+			candidate.restore();
+		}
+	});
+
+	it("makes a quiet one-entry log receipt-ready before persisted delivery", async () => {
+		const { writer, receiver } = await openPair(true);
+		const receiverKey = receiver.node.identity.publicKey;
+		await writer.log.waitForPersistedReceiptPeerReadiness(receiverKey, {
+			timeout: 15_000,
+		});
+		const { entry } = await writer.add("quiet-log-entry", { target: "none" });
+		const ready = await writer.log.waitForPersistedReceiptPeerReadiness(
+			receiverKey,
+			{ entries: [entry], replicas: 2, timeout: 15_000 },
+		);
+		expect(ready.status).to.equal("ready");
+
+		await writer.log.deliverPersistedEntries([entry], {
+			target: "replicators",
+			delivery: {
+				reliability: "persisted",
+				minAcks: 1,
+				timeout: 15_000,
+			},
+		});
+		expect(await receiver.log.log.has(entry.hash)).to.equal(true);
+	});
+
+	it("cleans readiness waiters on cancellation, timeout, and close", async () => {
+		session = await TestSession.disconnected(1);
+		const writer = await session.peers[0].open(new EventStore<string, any>());
+		const log = writer.log as any;
+		const unknownKey = (await Ed25519Keypair.create()).publicKey;
+
+		const controller = new AbortController();
+		const cancelled = log.waitForPersistedReceiptPeerReadiness(unknownKey, {
+			signal: controller.signal,
+			timeout: 5_000,
+		});
+		expect(log._persistedReceiptReadinessWaiters.size).to.equal(1);
+		controller.abort(new Error("cancel receipt readiness"));
+		await expect(cancelled).to.be.rejectedWith("cancel receipt readiness");
+		expect(log._persistedReceiptReadinessWaiters.size).to.equal(0);
+
+		await expect(
+			log.waitForPersistedReceiptPeerReadiness(unknownKey, { timeout: 5 }),
+		).to.be.rejectedWith(
+			TimeoutError,
+			"Timeout waiting for persisted-receipt readiness",
+		);
+		expect(log._persistedReceiptReadinessWaiters.size).to.equal(0);
+
+		const closed = log.waitForPersistedReceiptPeerReadiness(unknownKey, {
+			timeout: 5_000,
+		});
+		expect(log._persistedReceiptReadinessWaiters.size).to.equal(1);
+		const rejectedOnClose = expect(closed).to.be.rejectedWith(ClosedError);
+		await writer.close();
+		await rejectedOnClose;
+		expect(log._persistedReceiptReadinessWaiters.size).to.equal(0);
+	});
 
 	it("rejects a non-positive minAcks before committing", async () => {
 		session = await TestSession.disconnected(1);

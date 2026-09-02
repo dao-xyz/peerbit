@@ -1752,6 +1752,71 @@ export type DeliveryOptions = {
 	signal?: AbortSignal;
 };
 
+export type PersistedReceiptPeerReadinessPendingReason =
+	| "closed"
+	| "no-current-session"
+	| "session-opening"
+	| "capability-pending"
+	| "replication-state-pending"
+	| "replication-confirmation-pending"
+	| "not-replicating"
+	| "not-entry-leader"
+	| "ownership-changing";
+
+export type PersistedReceiptPeerReadinessUnsupportedReason =
+	| "persisted-receipts-unsupported"
+	| "replication-confirmation-unsupported";
+
+/**
+ * Detached view of one public key's current persisted-receipt generation.
+ * `generation` is opaque: callers may compare it for equality, but must not
+ * interpret its contents or use it as a future-session capability. Equal
+ * generations mean the connection/receive/capability binding is unchanged;
+ * leadership and outbound confirmation can still change within a generation.
+ */
+export type PersistedReceiptPeerReadiness =
+	| Readonly<{
+			status: "ready";
+			generation: string;
+	  }>
+	| Readonly<{
+			status: "pending";
+			reason: PersistedReceiptPeerReadinessPendingReason;
+			generation?: string;
+	  }>
+	| Readonly<{
+			status: "unsupported";
+			reason: PersistedReceiptPeerReadinessUnsupportedReason;
+			generation: string;
+	  }>;
+
+export type PersistedReceiptPeerReady = Extract<
+	PersistedReceiptPeerReadiness,
+	{ status: "ready" }
+>;
+
+export type PersistedReceiptPeerReadinessOptions<
+	T,
+	R extends "u32" | "u64",
+> = Readonly<{
+	/** Require this peer to be a freshly planned leader for every entry. */
+	entries?: readonly (ShallowOrFullEntry<T> | EntryReplicated<R>)[];
+	/**
+	 * Total leader-plan replica degree used for `entries`; defaults to this log's
+	 * configured minimum. This is not the persisted delivery `minAcks` count.
+	 */
+	replicas?: number;
+}>;
+
+export type WaitForPersistedReceiptPeerReadinessOptions<
+	T,
+	R extends "u32" | "u64",
+> = PersistedReceiptPeerReadinessOptions<T, R> &
+	Readonly<{
+		timeout?: number;
+		signal?: AbortSignal;
+	}>;
+
 type PersistedDeliveryOptions = Readonly<{
 	reliability: "persisted";
 	minAcks: number;
@@ -1793,6 +1858,7 @@ const PERSISTED_RECEIPT_RETRY_MS = 50;
 const MAX_PERSISTED_RECEIPT_ATTEMPT_MS = 2_000;
 const MAX_PERSISTED_RECEIPT_REQUESTS_GLOBAL = 8;
 const MAX_PERSISTED_RECEIPT_REQUESTS_PER_PEER = 2;
+const MAX_PERSISTED_RECEIPT_READINESS_WAITERS = 1_024;
 const PERSISTED_RECEIPT_INGRESS_PEER_REQUEST_CAPACITY = 16;
 const PERSISTED_RECEIPT_INGRESS_PEER_HASH_CAPACITY = 8_192;
 const PERSISTED_RECEIPT_INGRESS_PEER_REQUESTS_PER_SECOND = 8;
@@ -2167,6 +2233,10 @@ export type ReplicatorLeaveEvent = { publicKey: PublicSignKey };
 export type ReplicationChangeEvent = { publicKey: PublicSignKey };
 export type ReplicatorMatureEvent = { publicKey: PublicSignKey };
 export type ReplicationStatusEvent = ReplicationStatus;
+/** `peerHash` is the result of `PublicSignKey.hashcode()`. */
+export type PersistedReceiptPeerReadinessEvent = Readonly<{
+	peerHash: string;
+}>;
 
 class ReplicationStatusSnapshotChangedError extends Error {
 	constructor() {
@@ -2189,6 +2259,12 @@ export interface SharedLogEvents extends ProgramEvents {
 	"replication:change": CustomEvent<ReplicationChangeEvent>;
 	"replicator:mature": CustomEvent<ReplicatorMatureEvent>;
 	"replication:status": CustomEvent<ReplicationStatusEvent>;
+	/**
+	 * Non-exhaustive wake hint that a peer may now produce a new readiness
+	 * snapshot. Consumers must re-read the snapshot; this event is deliberately
+	 * not a durable transition log and a `ready` result remains advisory.
+	 */
+	"persisted-receipt:readiness": CustomEvent<PersistedReceiptPeerReadinessEvent>;
 }
 
 export type SharedLogRuntimeSnapshot = Readonly<{
@@ -3742,6 +3818,17 @@ export class SharedLog<
 	// parallel map so existing capability-number consumers remain unchanged.
 	private _peerSyncCapabilitySessions!: Map<string, bigint>;
 	private _peerSyncCapabilityTimestamps!: Map<string, bigint>;
+	private _persistedReceiptReadinessGenerations!: WeakMap<
+		PeerSession,
+		{
+			receiveEpoch: object | null;
+			capabilitySession?: bigint;
+			generation: string;
+		}
+	>;
+	private _persistedReceiptReadinessGenerationPrefix!: string;
+	private _persistedReceiptReadinessGenerationCounter!: number;
+	private _persistedReceiptReadinessWaiters!: Set<object>;
 	private _persistedReceiptStorage?: PersistedReceiptStorage;
 	private _persistedReceiptRequestsInFlight!: Map<string, number>;
 	private _persistedReceiptRequestsInFlightTotal!: number;
@@ -4099,6 +4186,12 @@ export class SharedLog<
 		this._peerSyncCapabilities = new Map();
 		this._peerSyncCapabilitySessions = new Map();
 		this._peerSyncCapabilityTimestamps = new Map();
+		this._persistedReceiptReadinessGenerations = new WeakMap();
+		this._persistedReceiptReadinessGenerationPrefix = toHexString(
+			randomBytes(8),
+		);
+		this._persistedReceiptReadinessGenerationCounter = 0;
+		this._persistedReceiptReadinessWaiters = new Set();
 		this._persistedReceiptStorage = undefined;
 		this._persistedReceiptRequestsInFlight = new Map();
 		this._persistedReceiptRequestsInFlightTotal = 0;
@@ -5061,15 +5154,23 @@ export class SharedLog<
 				) {
 					return false;
 				}
+				const nextCapabilities = previous.capabilities | capabilities;
+				const nextTimestamp =
+					previous.timestamp === undefined || timestamp > previous.timestamp
+						? timestamp
+						: previous.timestamp;
 				this._openingSyncCapabilitiesByPeer.set(peerHash, {
 					epoch: openingSession,
-					capabilities: previous.capabilities | capabilities,
+					capabilities: nextCapabilities,
 					transportSession,
-					timestamp:
-						previous.timestamp === undefined || timestamp > previous.timestamp
-							? timestamp
-							: previous.timestamp,
+					timestamp: nextTimestamp,
 				});
+				if (
+					previous.capabilities !== nextCapabilities ||
+					previous.timestamp === undefined
+				) {
+					this.dispatchPersistedReceiptReadinessChange(peerHash);
+				}
 				return true;
 			}
 			this._openingSyncCapabilitiesByPeer.set(peerHash, {
@@ -5078,17 +5179,25 @@ export class SharedLog<
 				transportSession,
 				timestamp,
 			});
+			this.dispatchPersistedReceiptReadinessChange(peerHash);
 			return true;
 		}
 
 		if (transportSession === undefined || timestamp === undefined) {
 			// Test/in-process synthetic contexts predate signed envelope captures.
 			// They may exercise capability-number behavior, but can never authorize V2.
+			const readinessChanged =
+				this._peerSyncCapabilities.get(peerHash) !== capabilities ||
+				this._peerSyncCapabilitySessions.has(peerHash) ||
+				this._peerSyncCapabilityTimestamps.has(peerHash);
 			this._peerSyncCapabilities.set(peerHash, capabilities);
 			this._peerSyncCapabilitySessions.delete(peerHash);
 			this._peerSyncCapabilityTimestamps.delete(peerHash);
 			this._v2Send.advancePeerCapability(peerHash);
 			this._v2Receive.revokePeerCapability(peerHash);
+			if (readinessChanged) {
+				this.dispatchPersistedReceiptReadinessChange(peerHash);
+			}
 			return true;
 		}
 
@@ -5113,6 +5222,10 @@ export class SharedLog<
 			!sameTransportSession ||
 			(previousCapabilities & senderGrantCapabilityMask) !==
 				(nextCapabilities & senderGrantCapabilityMask);
+		const readinessChanged =
+			!sameTransportSession ||
+			previousTimestamp === undefined ||
+			previousCapabilities !== nextCapabilities;
 		this._peerSyncCapabilities.set(peerHash, nextCapabilities);
 		this._peerSyncCapabilitySessions.set(peerHash, transportSession);
 		this._peerSyncCapabilityTimestamps.set(
@@ -5128,6 +5241,9 @@ export class SharedLog<
 			// A fresh signed capability generation is V2 progress from the peer:
 			// recovery re-solicitation may restart from the base interval.
 			this.resetReplicationInfoV2RecoveryEscalation(peerHash);
+		}
+		if (readinessChanged) {
+			this.dispatchPersistedReceiptReadinessChange(peerHash);
 		}
 		return true;
 	}
@@ -5478,9 +5594,148 @@ export class SharedLog<
 		return this.sendFusedRawExchangeHeadsPlan(plan, to, options);
 	}
 
+	private persistedReceiptReadinessGeneration(
+		peerSession: PeerSession,
+		receiveEpoch: object | null,
+		capabilitySession: bigint | undefined,
+	): string {
+		const current = this._persistedReceiptReadinessGenerations.get(peerSession);
+		if (
+			current?.receiveEpoch === receiveEpoch &&
+			current.capabilitySession === capabilitySession
+		) {
+			return current.generation;
+		}
+		const generation = `${this._persistedReceiptReadinessGenerationPrefix}:${(++this
+			._persistedReceiptReadinessGenerationCounter).toString(36)}`;
+		this._persistedReceiptReadinessGenerations.set(peerSession, {
+			receiveEpoch,
+			capabilitySession,
+			generation,
+		});
+		return generation;
+	}
+
+	private pendingPersistedReceiptReadiness(
+		reason: PersistedReceiptPeerReadinessPendingReason,
+		generation?: string,
+	): PersistedReceiptPeerReadiness {
+		return Object.freeze({
+			status: "pending" as const,
+			reason,
+			...(generation === undefined ? {} : { generation }),
+		});
+	}
+
+	private unsupportedPersistedReceiptReadiness(
+		reason: PersistedReceiptPeerReadinessUnsupportedReason,
+		generation: string,
+	): PersistedReceiptPeerReadiness {
+		return Object.freeze({
+			status: "unsupported" as const,
+			reason,
+			generation,
+		});
+	}
+
+	private dispatchPersistedReceiptReadinessChange(peerHash: string): void {
+		this.events.dispatchEvent(
+			new CustomEvent<PersistedReceiptPeerReadinessEvent>(
+				"persisted-receipt:readiness",
+				{ detail: Object.freeze({ peerHash }) },
+			),
+		);
+	}
+
+	private persistedReceiptReadinessCandidate(peerHash: string):
+		| {
+				capabilitySession: bigint;
+				peerSession: PeerSession;
+				receiveEpoch: object | null;
+				generation: string;
+		  }
+		| PersistedReceiptPeerReadiness {
+		if (this.closed) {
+			return this.pendingPersistedReceiptReadiness("closed");
+		}
+		const peerSession = this._peerSessions.current(peerHash);
+		if (!peerSession) {
+			return this.pendingPersistedReceiptReadiness("no-current-session");
+		}
+		const receiveEpoch = this._peerSessions.receiveEpoch(peerHash);
+		const capabilitySession = this._peerSyncCapabilitySessions.get(peerHash);
+		const generation = this.persistedReceiptReadinessGeneration(
+			peerSession,
+			receiveEpoch,
+			capabilitySession,
+		);
+		if (
+			peerSession.phase !== "open" ||
+			!peerSession.isActive() ||
+			this._peerSessions.isReplicationInfoBlocked(peerHash) ||
+			!this._peerSessions.isReceiveCleanupGateOpen(peerHash)
+		) {
+			return this.pendingPersistedReceiptReadiness(
+				"session-opening",
+				generation,
+			);
+		}
+		if (
+			capabilitySession === undefined ||
+			!this._peerSyncCapabilityTimestamps.has(peerHash)
+		) {
+			return this.pendingPersistedReceiptReadiness(
+				"capability-pending",
+				generation,
+			);
+		}
+		const capabilities = this._peerSyncCapabilities.get(peerHash) ?? 0;
+		if ((capabilities & SYNC_CAPABILITY_PERSISTED_ENTRY_RECEIPTS) === 0) {
+			return this.unsupportedPersistedReceiptReadiness(
+				"persisted-receipts-unsupported",
+				generation,
+			);
+		}
+		if ((capabilities & SYNC_CAPABILITY_REPLICATION_INFO_V2_CONFIRM) === 0) {
+			return this.unsupportedPersistedReceiptReadiness(
+				"replication-confirmation-unsupported",
+				generation,
+			);
+		}
+		if (
+			!this._v2Receive.isCurrentActive({
+				peerHash,
+				peerSession,
+				receiveEpoch,
+				senderTransportSession: capabilitySession,
+			})
+		) {
+			return this.pendingPersistedReceiptReadiness(
+				"replication-state-pending",
+				generation,
+			);
+		}
+		if (!this.uniqueReplicators.has(peerHash)) {
+			return this.pendingPersistedReceiptReadiness(
+				"not-replicating",
+				generation,
+			);
+		}
+		return {
+			capabilitySession,
+			peerSession,
+			receiveEpoch,
+			generation,
+		};
+	}
+
 	private persistedReceiptPeerSession(
 		peerHash: string,
 	): { capabilitySession: bigint; peerSession: PeerSession } | undefined {
+		// This is a hot receipt/transfer-loop predicate. Keep it allocation-light,
+		// while mirroring every exact-session gate in
+		// persistedReceiptReadinessCandidate (which additionally creates public
+		// reason/generation snapshots).
 		const capabilitySession = this._peerSyncCapabilitySessions.get(peerHash);
 		const peerSession = this._peerSessions.current(peerHash);
 		const receiveEpoch = this._peerSessions.receiveEpoch(peerHash);
@@ -5488,10 +5743,14 @@ export class SharedLog<
 			SYNC_CAPABILITY_PERSISTED_ENTRY_RECEIPTS |
 			SYNC_CAPABILITY_REPLICATION_INFO_V2_CONFIRM;
 		if (
+			this.closed ||
 			capabilitySession == null ||
 			!peerSession ||
 			peerSession.phase !== "open" ||
-			!this._peerSessions.isCurrent(peerHash, peerSession) ||
+			!peerSession.isActive() ||
+			this._peerSessions.isReplicationInfoBlocked(peerHash) ||
+			!this._peerSessions.isReceiveCleanupGateOpen(peerHash) ||
+			!this.uniqueReplicators.has(peerHash) ||
 			!this._peerSyncCapabilityTimestamps.has(peerHash) ||
 			((this._peerSyncCapabilities.get(peerHash) ?? 0) &
 				requiredCapabilities) !==
@@ -8181,8 +8440,11 @@ export class SharedLog<
 			? checkedPruneCoordinator.fencePeerRemoval(keyHash)
 			: undefined;
 		const blockPeerReceiveAdmission = () => {
-			releaseReceiveCleanupGate ??=
-				this._peerSessions.acquireReceiveCleanupGate(keyHash);
+			if (!releaseReceiveCleanupGate) {
+				releaseReceiveCleanupGate =
+					this._peerSessions.acquireReceiveCleanupGate(keyHash);
+				this.dispatchPersistedReceiptReadinessChange(keyHash);
+			}
 		};
 		if (!isMe && !isSpeculativePeerRemoval) {
 			// Revoke this peer's receipts synchronously, before this removal can
@@ -8423,7 +8685,10 @@ export class SharedLog<
 			});
 			removalCallCompleted = true;
 		} finally {
-			releaseReceiveCleanupGate?.();
+			if (releaseReceiveCleanupGate) {
+				releaseReceiveCleanupGate();
+				this.dispatchPersistedReceiptReadinessChange(keyHash);
+			}
 			if (
 				replicationInfoRecoveryEpochAdvanced &&
 				ownsReplicationOwnershipLifecycle() &&
@@ -16904,6 +17169,12 @@ export class SharedLog<
 		this._peerSyncCapabilities = new Map();
 		this._peerSyncCapabilitySessions = new Map();
 		this._peerSyncCapabilityTimestamps = new Map();
+		this._persistedReceiptReadinessGenerations = new WeakMap();
+		this._persistedReceiptReadinessGenerationPrefix = toHexString(
+			randomBytes(8),
+		);
+		this._persistedReceiptReadinessGenerationCounter = 0;
+		this._persistedReceiptReadinessWaiters = new Set();
 		this._persistedReceiptStorage = undefined;
 		this._persistedReceiptRequestsInFlight = new Map();
 		this._persistedReceiptRequestsInFlightTotal = 0;
@@ -18580,6 +18851,7 @@ export class SharedLog<
 			ownershipLifecycleController,
 			this._checkedPrune,
 		);
+		this.dispatchPersistedReceiptReadinessChange(peerHash);
 	}
 
 	private cleanupPendingIHavePeer(peerHash: string) {
@@ -18604,6 +18876,7 @@ export class SharedLog<
 				receiveEpoch,
 			});
 		}
+		this.dispatchPersistedReceiptReadinessChange(peerHash);
 	}
 
 	private async resolveCandidatePeersForHash(
@@ -20045,6 +20318,7 @@ export class SharedLog<
 			this._peerSyncCapabilities?.clear();
 			this._peerSyncCapabilitySessions?.clear();
 			this._peerSyncCapabilityTimestamps?.clear();
+			this._persistedReceiptReadinessGenerations = new WeakMap();
 			this._persistedReceiptStorage = undefined;
 			this._persistedReceiptRequestsInFlight?.clear();
 			this._persistedReceiptRequestsInFlightTotal = 0;
@@ -22601,10 +22875,14 @@ export class SharedLog<
 					}
 					return;
 				} else if (msg instanceof ReplicationInfoV2AppliedMessage) {
-					this._v2Send.acceptApplied(msg, {
-						from: context.from,
-						receiverTransportSession: context.message.header.session,
-					});
+					if (
+						this._v2Send.acceptApplied(msg, {
+							from: context.from,
+							receiverTransportSession: context.message.header.session,
+						})
+					) {
+						this.dispatchPersistedReceiptReadinessChange(receiveFromHash);
+					}
 					return;
 				} else if (isReplicationInfoV2Message(msg)) {
 					await this.handleReplicationInfoV2Announcement(
@@ -23420,6 +23698,7 @@ export class SharedLog<
 				// A committed V2 announcement is applied progress: the peer answers,
 				// so recovery re-solicitation may restart from the base interval.
 				this.resetReplicationInfoV2RecoveryEscalation(fromHash);
+				this.dispatchPersistedReceiptReadinessChange(fromHash);
 			});
 		} finally {
 			this._v2Receive.release(admission);
@@ -23774,6 +24053,465 @@ export class SharedLog<
 		throwIfInactive();
 	}
 
+	private nudgePersistedReceiptPeerReadiness(publicKey: PublicSignKey): void {
+		if (this.closed) return;
+		const peerHash = publicKey.hashcode();
+		const peerSession = this._peerSessions.current(peerHash);
+		if (
+			!peerSession ||
+			peerSession.phase === "departing" ||
+			(peerSession.phase === "opening" &&
+				!peerSession.openingBarrierActive)
+		) {
+			// A barrier rejection deliberately leaves the current session in its
+			// fail-closed opening phase after the barrier window has settled. Ask the
+			// authenticated peer for a fresh subscriber snapshot so the replacement
+			// session can recover; never rotate a barrier that is still in flight.
+			this.requestSubscriberSnapshotForCapability(publicKey);
+			return;
+		}
+		if (peerSession.phase !== "open" || !peerSession.isActive()) {
+			return;
+		}
+		const receiveEpoch = this._peerSessions.receiveEpoch(peerHash);
+		this.promoteReplicationInfoV2ReceiveCapability(publicKey, peerSession);
+		this._v2Receive.reAdvertiseLocalCapabilityForRecovery({
+			peerHash,
+			peerSession,
+			receiveEpoch,
+		});
+		this._v2Receive.ensureRequestProgress({
+			peerHash,
+			peerSession,
+			receiveEpoch,
+		});
+		this.scheduleReplicationInfoV2Recovery(publicKey);
+	}
+
+	/**
+	 * Inspect whether one public key's exact current connection generation can
+	 * supply persisted-receipt evidence. The returned object is frozen and never
+	 * exposes the internal PeerSession token. When `entries` are supplied, the
+	 * peer must also be present in a fresh leader plan for every entry.
+	 *
+	 * This is advisory preflight state. Persisted delivery repeats every
+	 * generation, leadership, ownership and storage check at receipt time; a
+	 * `ready` snapshot is never itself authority to dispose a source copy.
+	 */
+	async getPersistedReceiptPeerReadiness(
+		key: PublicSignKey,
+		options: PersistedReceiptPeerReadinessOptions<T, R> = {},
+	): Promise<PersistedReceiptPeerReadiness> {
+		return this.inspectPersistedReceiptPeerReadiness(key, options);
+	}
+
+	private async inspectPersistedReceiptPeerReadiness(
+		key: PublicSignKey,
+		options: PersistedReceiptPeerReadinessOptions<T, R>,
+		assertContinue?: () => void,
+	): Promise<PersistedReceiptPeerReadiness> {
+		// Capture and validate caller-owned planning input before consulting live
+		// peer state. Invalid options must not appear to work merely because the
+		// peer is currently absent, then fail later when the same session connects.
+		const entries = options.entries ? [...options.entries] : [];
+		const replicas =
+			options.replicas ??
+			(entries.length > 0 ? this.replicas.min.getValue(this) : undefined);
+		if (replicas !== undefined) {
+			if (!Number.isSafeInteger(replicas) || replicas <= 0) {
+				throw new RangeError(
+					"Persisted-receipt readiness replicas must be a positive integer",
+				);
+			}
+			checkMinReplicasLimit(replicas);
+		}
+
+		const peerHash = key.hashcode();
+		const captured = this.persistedReceiptReadinessCandidate(peerHash);
+		if ("status" in captured) {
+			return captured;
+		}
+		assertContinue?.();
+
+		if (entries.length > 0) {
+			const ownershipLifecycleController =
+				this.captureReplicationOwnershipLifecycle();
+			const ownershipRevision =
+				this._instanceLifecycle?._receiveOwnershipRevision ?? 0;
+			if (!this.isReceiveOwnershipSnapshotStable(ownershipRevision)) {
+				return this.pendingPersistedReceiptReadiness(
+					"ownership-changing",
+					captured.generation,
+				);
+			}
+			for (const entry of entries) {
+				assertContinue?.();
+				const leaders = await this.findLeadersFromEntry(
+					entry,
+					replicas!,
+					{ freshLeaderPlan: true },
+					ownershipLifecycleController,
+				);
+				assertContinue?.();
+				if (!this.isReceiveOwnershipSnapshotStable(ownershipRevision)) {
+					return this.pendingPersistedReceiptReadiness(
+						"ownership-changing",
+						captured.generation,
+					);
+				}
+				const current = this.persistedReceiptReadinessCandidate(peerHash);
+				if ("status" in current) {
+					return current;
+				}
+				if (
+					current.peerSession !== captured.peerSession ||
+					current.receiveEpoch !== captured.receiveEpoch ||
+					current.capabilitySession !== captured.capabilitySession
+				) {
+					return this.pendingPersistedReceiptReadiness(
+						"replication-state-pending",
+						current.generation,
+					);
+				}
+				if (!leaders.has(peerHash)) {
+					return this.pendingPersistedReceiptReadiness(
+						"not-entry-leader",
+						captured.generation,
+					);
+				}
+			}
+		}
+
+		assertContinue?.();
+		const current = this.persistedReceiptReadinessCandidate(peerHash);
+		if ("status" in current) {
+			return current;
+		}
+		if (
+			current.peerSession !== captured.peerSession ||
+			current.receiveEpoch !== captured.receiveEpoch ||
+			current.capabilitySession !== captured.capabilitySession
+		) {
+			return this.pendingPersistedReceiptReadiness(
+				"replication-state-pending",
+				current.generation,
+			);
+		}
+		if (
+			!this._v2Send.isLatestConfirmedForPeer({
+				peerHash,
+				peerSession: captured.peerSession,
+				receiverTransportSession: captured.capabilitySession,
+			})
+		) {
+			return this.pendingPersistedReceiptReadiness(
+				"replication-confirmation-pending",
+				captured.generation,
+			);
+		}
+		return Object.freeze({
+			status: "ready" as const,
+			generation: captured.generation,
+		});
+	}
+
+	/**
+	 * Wait for a public key's current (or replacement) connection generation to
+	 * become persisted-receipt ready. Transition listeners are installed before
+	 * the first asynchronous inspection, and a bounded recovery tick repairs
+	 * missed subscriber/capability wakes without retaining stale PeerSessions.
+	 * This waiter is advisory only; the following persisted delivery remains the
+	 * operation that proves the requested remote durability quorum.
+	 */
+	async waitForPersistedReceiptPeerReadiness(
+		key: PublicSignKey,
+		options: WaitForPersistedReceiptPeerReadinessOptions<T, R> = {},
+	): Promise<PersistedReceiptPeerReady> {
+		if (this.closed) {
+			throw new ClosedError();
+		}
+		const timeoutMs = options.timeout ?? this.waitForReplicatorTimeout;
+		if (
+			!Number.isSafeInteger(timeoutMs) ||
+			timeoutMs <= 0 ||
+			timeoutMs > MAX_PERSISTED_DELIVERY_TIMEOUT_MS
+		) {
+			throw new RangeError(
+				`Persisted-receipt readiness timeout must be an integer from 1 to ${MAX_PERSISTED_DELIVERY_TIMEOUT_MS} milliseconds`,
+			);
+		}
+		if (options.signal?.aborted) {
+			throw options.signal.reason instanceof Error
+				? options.signal.reason
+				: new AbortError("Persisted-receipt readiness wait aborted");
+		}
+
+		// Capture caller-owned inputs before reserving a waiter slot. A throwing
+		// iterator/key implementation must not strand capacity permanently.
+		const entries = options.entries ? [...options.entries] : undefined;
+		const inspectOptions: PersistedReceiptPeerReadinessOptions<T, R> = {
+			...(entries ? { entries } : {}),
+			...(options.replicas === undefined ? {} : { replicas: options.replicas }),
+		};
+		const peerHash = key.hashcode();
+		const waiterSet = this._persistedReceiptReadinessWaiters;
+		if (waiterSet.size >= MAX_PERSISTED_RECEIPT_READINESS_WAITERS) {
+			throw new RangeError(
+				`Too many pending persisted-receipt readiness waits (maximum ${MAX_PERSISTED_RECEIPT_READINESS_WAITERS})`,
+			);
+		}
+		const waiterToken = {};
+		waiterSet.add(waiterToken);
+		const deadline = Date.now() + timeoutMs;
+		const closeSignal = this._closeController.signal;
+		const operationController = new AbortController();
+		const operationSignal = AbortSignal.any(
+			[options.signal, closeSignal, operationController.signal].filter(
+				(value): value is AbortSignal => value !== undefined,
+			),
+		);
+		const deferred = pDefer<PersistedReceiptPeerReady>();
+		let settled = false;
+		let checkScheduled = false;
+		let checkInFlight = false;
+		let rerun = false;
+		let recoveryTimer: ReturnType<typeof setTimeout> | undefined;
+		let confirmationController: AbortController | undefined;
+		let lastSnapshot: PersistedReceiptPeerReadiness | undefined;
+		const createTimeoutError = () => {
+			const suffix = lastSnapshot
+				? ` (last status: ${lastSnapshot.status}${
+						"reason" in lastSnapshot ? `/${lastSnapshot.reason}` : ""
+					})`
+				: "";
+			return new TimeoutError(
+				`Timeout waiting for persisted-receipt readiness from ${peerHash}${suffix}`,
+			);
+		};
+
+		const cleanup = () => {
+			waiterSet.delete(waiterToken);
+			this.events.removeEventListener(
+				"persisted-receipt:readiness",
+				onReadinessChange,
+			);
+			this.events.removeEventListener("replication:change", onRoleChange);
+			this.events.removeEventListener("replicator:mature", onRoleChange);
+			options.signal?.removeEventListener("abort", onCallerAbort);
+			closeSignal.removeEventListener("abort", onClose);
+			if (recoveryTimer) {
+				clearTimeout(recoveryTimer);
+				recoveryTimer = undefined;
+			}
+			confirmationController?.abort(
+				new AbortError("Persisted-receipt readiness generation changed"),
+			);
+			confirmationController = undefined;
+			operationController.abort(
+				new AbortError("Persisted-receipt readiness wait settled"),
+			);
+		};
+		const resolve = (snapshot: PersistedReceiptPeerReady) => {
+			if (settled) return;
+			settled = true;
+			cleanup();
+			deferred.resolve(snapshot);
+		};
+		const reject = (error: unknown) => {
+			if (settled) return;
+			settled = true;
+			cleanup();
+			deferred.reject(
+				error instanceof Error ? error : new Error(String(error)),
+			);
+		};
+		const onCallerAbort = () =>
+			reject(
+				options.signal?.reason instanceof Error
+					? options.signal.reason
+					: new AbortError("Persisted-receipt readiness wait aborted"),
+			);
+		const onClose = () => reject(new ClosedError());
+		const continueWait = () => {
+			if (settled) return false;
+			if (closeSignal.aborted) {
+				onClose();
+				return false;
+			}
+			if (options.signal?.aborted) {
+				onCallerAbort();
+				return false;
+			}
+			if (Date.now() >= deadline) {
+				reject(createTimeoutError());
+				return false;
+			}
+			return true;
+		};
+		const assertInspectionCurrent = () => {
+			if (!continueWait()) {
+				throw new AbortError("Persisted-receipt readiness wait settled");
+			}
+		};
+		const armRecoveryTick = () => {
+			if (settled || recoveryTimer) return;
+			const delayMs = Math.max(
+				50,
+				Math.min(1_000, this.waitForReplicatorRequestIntervalMs),
+			);
+			recoveryTimer = setTimeout(() => {
+				recoveryTimer = undefined;
+				if (!continueWait()) return;
+				this.nudgePersistedReceiptPeerReadiness(key);
+				scheduleCheck();
+			}, delayMs);
+			recoveryTimer.unref?.();
+		};
+		const runCheck = async () => {
+			checkScheduled = false;
+			if (!continueWait()) return;
+			if (checkInFlight) {
+				rerun = true;
+				return;
+			}
+			checkInFlight = true;
+			try {
+				let snapshot = await this.inspectPersistedReceiptPeerReadiness(
+					key,
+					inspectOptions,
+					assertInspectionCurrent,
+				);
+				lastSnapshot = snapshot;
+				if (!continueWait()) return;
+				if (rerun) return;
+				if (snapshot.status === "ready") {
+					// A wake observed while the asynchronous inspection was running may
+					// already have invalidated this snapshot. Drain that coalesced wake
+					// before publishing readiness.
+					resolve(snapshot);
+					return;
+				}
+				if (
+					snapshot.status === "pending" &&
+					snapshot.reason === "replication-confirmation-pending"
+				) {
+					const target = this.persistedReceiptPeerSession(peerHash);
+					if (target) {
+						const currentConfirmationController = new AbortController();
+						confirmationController = currentConfirmationController;
+						try {
+							await this._v2Send.confirmLatestForPeer(
+								{
+									peerHash,
+									peerSession: target.peerSession,
+									receiverTransportSession: target.capabilitySession,
+								},
+								{
+									timeout: Math.max(1, deadline - Date.now()),
+									signal: AbortSignal.any([
+										operationSignal,
+										currentConfirmationController.signal,
+									]),
+								},
+							);
+						} catch (error) {
+							if (!continueWait()) return;
+							if (!(error instanceof AbortError)) {
+								throw error;
+							}
+							rerun = true;
+						} finally {
+							if (confirmationController === currentConfirmationController) {
+								confirmationController = undefined;
+							}
+						}
+						if (!continueWait()) return;
+						snapshot = await this.inspectPersistedReceiptPeerReadiness(
+							key,
+							inspectOptions,
+							assertInspectionCurrent,
+						);
+						lastSnapshot = snapshot;
+						if (!continueWait()) return;
+						if (rerun) return;
+						if (snapshot.status === "ready") {
+							resolve(snapshot);
+							return;
+						}
+					}
+				}
+				if (!continueWait()) return;
+				this.nudgePersistedReceiptPeerReadiness(key);
+			} catch (error) {
+				if (!settled) reject(error);
+			} finally {
+				checkInFlight = false;
+				if (!settled && rerun) {
+					rerun = false;
+					scheduleCheck();
+				} else {
+					armRecoveryTick();
+				}
+			}
+		};
+		const scheduleCheck = (interruptConfirmation = false) => {
+			if (settled) return;
+			if (recoveryTimer) {
+				clearTimeout(recoveryTimer);
+				recoveryTimer = undefined;
+			}
+			if (checkInFlight) {
+				rerun = true;
+				if (interruptConfirmation) {
+					confirmationController?.abort(
+						new AbortError(
+							"Persisted-receipt readiness changed during confirmation",
+						),
+					);
+				}
+				return;
+			}
+			if (checkScheduled) return;
+			checkScheduled = true;
+			void Promise.resolve().then(runCheck);
+		};
+		const onReadinessChange = (
+			event: CustomEvent<PersistedReceiptPeerReadinessEvent>,
+		) => {
+			if (event.detail.peerHash === peerHash) scheduleCheck(true);
+		};
+		const onRoleChange = (event: CustomEvent<ReplicationChangeEvent>) => {
+			if (
+				(entries?.length ?? 0) > 0 ||
+				event.detail.publicKey.hashcode() === peerHash
+			) {
+				scheduleCheck(true);
+			}
+		};
+
+		// Register wake sources before the first state inspection. EventTarget does
+		// not replay a transition that fired between an async check and registration.
+		this.events.addEventListener(
+			"persisted-receipt:readiness",
+			onReadinessChange,
+		);
+		this.events.addEventListener("replication:change", onRoleChange);
+		this.events.addEventListener("replicator:mature", onRoleChange);
+		options.signal?.addEventListener("abort", onCallerAbort, { once: true });
+		closeSignal.addEventListener("abort", onClose, { once: true });
+		if (options.signal?.aborted) {
+			onCallerAbort();
+		} else if (closeSignal.aborted) {
+			onClose();
+		} else {
+			scheduleCheck();
+		}
+
+		const timeout = setTimeout(() => reject(createTimeoutError()), timeoutMs);
+		timeout.unref?.();
+		return deferred.promise.finally(() => clearTimeout(timeout));
+	}
+
 	async waitForReplicator(
 		key: PublicSignKey,
 		options?: {
@@ -23783,19 +24521,28 @@ export class SharedLog<
 			timeout?: number;
 		},
 	) {
+		if (options?.signal?.aborted) {
+			throw new AbortError();
+		}
 		const deferred = pDefer<void>();
 		const timeoutMs = options?.timeout ?? this.waitForReplicatorTimeout;
 		const resolvedRoleAge = options?.eager
 			? undefined
 			: (options?.roleAge ?? (await this.getDefaultMinRoleAge()));
+		if (options?.signal?.aborted) {
+			throw new AbortError();
+		}
 
 		let settled = false;
 		let timer: ReturnType<typeof setTimeout> | undefined;
 		let requestTimer: ReturnType<typeof setTimeout> | undefined;
+		let checkInFlight = false;
+		let checkAgain = false;
 
 		const clear = () => {
-			this.events.removeEventListener("replicator:mature", check);
-			this.events.removeEventListener("replication:change", check);
+			checkAgain = false;
+			this.events.removeEventListener("replicator:mature", runCheck);
+			this.events.removeEventListener("replication:change", runCheck);
 			options?.signal?.removeEventListener("abort", onAbort);
 			if (timer != null) {
 				clearTimeout(timer);
@@ -23931,11 +24678,34 @@ export class SharedLog<
 				await iterator?.close();
 			}
 		};
+		const runCheck = () => {
+			if (settled) return;
+			if (checkInFlight) {
+				checkAgain = true;
+				return;
+			}
+			// Reserve synchronously before `check()` can dispatch/re-enter from an
+			// index implementation's first `next()` call.
+			checkInFlight = true;
+			void check()
+				.catch((error) =>
+					reject(error instanceof Error ? error : new Error(String(error))),
+				)
+				.finally(() => {
+					checkInFlight = false;
+					if (!settled && checkAgain) {
+						checkAgain = false;
+						runCheck();
+					}
+				});
+		};
 
+		// Register before the first asynchronous index read. EventTarget does not
+		// replay a maturity/change event that fires while that read is in flight.
+		this.events.addEventListener("replicator:mature", runCheck);
+		this.events.addEventListener("replication:change", runCheck);
 		requestReplicationInfo();
-		check();
-		this.events.addEventListener("replicator:mature", check);
-		this.events.addEventListener("replication:change", check);
+		runCheck();
 
 		return deferred.promise.finally(clear);
 	}
@@ -26825,6 +27595,7 @@ export class SharedLog<
 		if (!ownsSubscriptionEpoch()) {
 			return;
 		}
+		this.dispatchPersistedReceiptReadinessChange(peerHash);
 		// A reconnect can arrive before the previous exact-session recovery tick
 		// observes its stale session. Retire that job synchronously so it cannot
 		// suppress the replacement session's scheduler in the shared peer slot.
@@ -26997,6 +27768,7 @@ export class SharedLog<
 			publicKey,
 			replicationLifecycleController,
 		);
+		this.dispatchPersistedReceiptReadinessChange(peerHash);
 	}
 
 	private getClampedReplicas(customValue?: MinReplicas) {

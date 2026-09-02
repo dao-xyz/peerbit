@@ -1,4 +1,8 @@
-import { type PublicSignKey, randomBytes } from "@peerbit/crypto";
+import {
+	Ed25519Keypair,
+	type PublicSignKey,
+	randomBytes,
+} from "@peerbit/crypto";
 import { TestSession } from "@peerbit/test-utils";
 import { delay, waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
@@ -4848,6 +4852,65 @@ describe("events", () => {
 	});
 
 	describe("waitForReplicators", async () => {
+		it("registers before checking and coalesces a transition during the check", async () => {
+			session = await TestSession.disconnected(1);
+			const store = await session.peers[0].open(new EventStore(), {
+				args: { replicate: false, timeUntilRoleMaturity: 0 },
+			});
+			const log = store.log as any;
+			const key = (await Ed25519Keypair.create()).publicKey;
+			const firstCheckEntered = pDefer<void>();
+			const releaseFirstCheck = pDefer<void>();
+			let iterateCalls = 0;
+			let activeChecks = 0;
+			let maxActiveChecks = 0;
+			const iterate = sinon
+				.stub(log.replicationIndex, "iterate")
+				.callsFake(() => {
+					const call = ++iterateCalls;
+					return {
+						next: async () => {
+							activeChecks++;
+							maxActiveChecks = Math.max(maxActiveChecks, activeChecks);
+							try {
+								if (call === 1) {
+									firstCheckEntered.resolve();
+									log.events.dispatchEvent(
+										new CustomEvent("replication:change", {
+											detail: { publicKey: key },
+										}),
+									);
+									await releaseFirstCheck.promise;
+									return [];
+								}
+								return [{ value: {} }];
+							} finally {
+								activeChecks--;
+							}
+						},
+						close: async () => {},
+					};
+				});
+			const requestSubscribers = sinon
+				.stub(log.node.services.pubsub, "requestSubscribers")
+				.resolves();
+			try {
+				const wait = log.waitForReplicator(key, {
+					eager: true,
+					timeout: 1_000,
+				});
+				await firstCheckEntered.promise;
+				releaseFirstCheck.resolve();
+				await wait;
+
+				expect(iterate.callCount).to.equal(2);
+				expect(maxActiveChecks).to.equal(1);
+			} finally {
+				requestSubscribers.restore();
+				iterate.restore();
+			}
+		});
+
 		it("resolves immediately is offline and replicating and mature", async () => {
 			session = await TestSession.connected(1);
 			const store = new EventStore();

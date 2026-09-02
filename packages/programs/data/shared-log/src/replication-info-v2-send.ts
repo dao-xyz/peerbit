@@ -543,6 +543,24 @@ export class ReplicationInfoV2SendCoordinator<R extends "u32" | "u64"> {
 		});
 	}
 
+	/**
+	 * Read-only counterpart to {@link confirmLatestForPeer}. The target must be
+	 * the exact current peer/transport generation and its latest local role
+	 * revision must already have crossed the receiver's durable V2 apply lane.
+	 */
+	isLatestConfirmedForPeer(target: ApplicationConfirmationTarget): boolean {
+		const state = this._sendStates.get(target.peerHash);
+		return (
+			state !== undefined &&
+			state.peerSession === target.peerSession &&
+			state.receiverTransportSession === target.receiverTransportSession &&
+			state.appliedRevision !== undefined &&
+			state.appliedRevision >= this._revision &&
+			this.isCurrent(state) &&
+			this.supportsApplicationConfirmation(state)
+		);
+	}
+
 	private trackRetiringWorker(state: ReplicationInfoV2SendState): void {
 		const worker = state.worker;
 		if (!worker) {
