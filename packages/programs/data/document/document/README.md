@@ -28,8 +28,10 @@ receipt instant, not permanent custody or Byzantine correctness. The local
 commit happens first, so a later delivery failure reports the exact committed
 hashes in a `PersistedDeliveryError` with `retrySafe === false`.
 
-Persisted delivery currently supports `put` and independent, distinct-key
-`putMany` operations. Deletes do not yet support persisted receipts.
+Persisted delivery supports `put`, independent distinct-key `putMany`, and a
+single `del` operation. For a delete, the receipt covers the exact `CUT`
+tombstone entry. It does not wait for remote document-index or change-event
+side effects, prove permanent tombstone retention, or compact prior history.
 
 
 
