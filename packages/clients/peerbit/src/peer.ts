@@ -8,7 +8,11 @@ import {
 	multiaddr,
 } from "@multiformats/multiaddr";
 import { type AnyStore, createStore } from "@peerbit/any-store";
-import { DirectBlock } from "@peerbit/blocks";
+import {
+	type BlockStoreSafety,
+	DirectBlock,
+	normalizeBlockStoreSafety,
+} from "@peerbit/blocks";
 import {
 	Ed25519Keypair,
 	Ed25519PublicKey,
@@ -54,6 +58,7 @@ import {
 	type PartialLibp2pCreateOptions,
 	createLibp2pExtended,
 } from "./libp2p.js";
+import { getBlockStoreFactorySafety } from "./storage-safety.js";
 
 export const logger = loggerFn("peerbit:client");
 
@@ -80,6 +85,14 @@ export type StoreFactory = (directory?: string) => AnyStore;
 export type StorageCreateOptions = {
 	storeFactory?: StoreFactory;
 	blocksStoreFactory?: StoreFactory;
+	/**
+	 * Explicit safety declaration for the store backing Peerbit's default
+	 * blocks service. It is accepted only with a custom store factory. Custom
+	 * factories default to unknown; `persisted()` and backend identity are never
+	 * used to infer ownership. This option does not configure a custom or
+	 * external libp2p blocks service.
+	 */
+	blocksStoreSafety?: BlockStoreSafety;
 	keychainStoreFactory?: StoreFactory;
 };
 /**
@@ -402,7 +415,41 @@ export class Peerbit implements ProgramClient {
 			storageOptions?.blocksStoreFactory ?? storageOptions?.storeFactory;
 		const keychainStoreFactory =
 			storageOptions?.keychainStoreFactory ?? storageOptions?.storeFactory;
-
+		const blocksDirectory = hasDir
+			? path.join(directory, "/blocks").toString()
+			: undefined;
+		const configuredServices = (
+			libp2pExtended as unknown as ClientCreateOptions | undefined
+		)?.services;
+		const hasConfiguredBlocksService =
+			!suppliedExternalLibp2p &&
+			configuredServices !== undefined &&
+			Object.prototype.hasOwnProperty.call(configuredServices, "blocks");
+		const explicitBlocksStoreSafety = storageOptions?.blocksStoreSafety;
+		if (
+			explicitBlocksStoreSafety !== undefined &&
+			(suppliedExternalLibp2p || hasConfiguredBlocksService)
+		) {
+			throw new Error(
+				"'storage.blocksStoreSafety' applies only to Peerbit's default blocks service; configure safety metadata on the custom or external blocks service instead.",
+			);
+		}
+		if (
+			explicitBlocksStoreSafety !== undefined &&
+			blocksStoreFactory === undefined
+		) {
+			throw new Error(
+				"'storage.blocksStoreSafety' requires a custom blocks store factory; Peerbit's built-in store reports its fixed block-service reference domain.",
+			);
+		}
+		const normalizedBlocksStoreSafety =
+			explicitBlocksStoreSafety !== undefined
+				? normalizeBlockStoreSafety(explicitBlocksStoreSafety)
+				: !suppliedExternalLibp2p &&
+					  !hasConfiguredBlocksService &&
+					  blocksStoreFactory
+					? getBlockStoreFactorySafety(blocksStoreFactory)
+					: undefined;
 		const storage = await createCache(
 			directory != null ? path.join(directory, "/cache") : undefined,
 			{ storeFactory },
@@ -420,10 +467,6 @@ export class Peerbit implements ProgramClient {
 				: await indexerFn();
 
 		await indexer.start();
-
-		const blocksDirectory = hasDir
-			? path.join(directory, "/blocks").toString()
-			: undefined;
 
 		const keychainDirectory = hasDir
 			? path.join(directory, "/keychain").toString()
@@ -701,10 +744,17 @@ export class Peerbit implements ProgramClient {
 							return candidates;
 						};
 
+						const blocksStore = blocksStoreFactory?.(blocksDirectory);
+						if (blocksStoreFactory && blocksStore == null) {
+							throw new TypeError(
+								"The custom blocks store factory must return a block store",
+							);
+						}
 						blocksService = new DirectBlock(c, {
 							canRelayMessage: asRelay,
 							directory: blocksStoreFactory ? undefined : blocksDirectory,
-							localStore: blocksStoreFactory?.(blocksDirectory),
+							localStore: blocksStore,
+							localStoreSafety: normalizedBlocksStoreSafety,
 							rustCore: nativeNetwork?.rustCore,
 							resolveProviders,
 							onPut: async (cid) => {

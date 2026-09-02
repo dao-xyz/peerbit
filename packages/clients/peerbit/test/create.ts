@@ -2,6 +2,11 @@
 import { keys } from "@libp2p/crypto";
 import { createStore } from "@peerbit/any-store";
 import { RustAnyStore } from "@peerbit/any-store-rust";
+import {
+	BLOCK_SERVICE_BLOCK_STORE_SAFETY,
+	type BlockStoreSafety,
+	UNKNOWN_BLOCK_STORE_SAFETY,
+} from "@peerbit/blocks";
 import { Ed25519Keypair } from "@peerbit/crypto";
 import { RustIndices } from "@peerbit/indexer-rust";
 import { expect } from "chai";
@@ -36,7 +41,25 @@ describe("Create", function () {
 
 		it("block storage exist at path", async () => {
 			expect(await client.libp2p.services.blocks.persisted()).to.be.true;
+			expect(client.services.blocks.localStoreSafety).to.equal(
+				BLOCK_SERVICE_BLOCK_STORE_SAFETY,
+			);
 		});
+	});
+
+	it("reports the built-in memory store's block-service reference domain", async () => {
+		const client = await Peerbit.create();
+		try {
+			expect(await client.services.blocks.persisted()).to.equal(false);
+			expect(client.services.blocks.localStoreSafety).to.equal(
+				BLOCK_SERVICE_BLOCK_STORE_SAFETY,
+			);
+			expect(Object.isFrozen(client.services.blocks.localStoreSafety)).to.equal(
+				true,
+			);
+		} finally {
+			await client.stop();
+		}
 	});
 
 	it("can create with a local store factory", async () => {
@@ -60,7 +83,117 @@ describe("Create", function () {
 		expect(directories).to.include(path.join(clientDirectory, "/cache"));
 		expect(directories).to.include(path.join(clientDirectory, "/keychain"));
 		expect(directories).to.include(path.join(clientDirectory, "/blocks"));
+		expect(client.services.blocks.localStoreSafety).to.equal(
+			UNKNOWN_BLOCK_STORE_SAFETY,
+		);
 		await client.stop();
+	});
+
+	it("defaults a custom blocks factory to unknown", async () => {
+		const client = await Peerbit.create({
+			storage: { blocksStoreFactory: () => createStore() },
+		});
+		try {
+			expect(client.services.blocks.localStoreSafety).to.equal(
+				UNKNOWN_BLOCK_STORE_SAFETY,
+			);
+		} finally {
+			await client.stop();
+		}
+	});
+
+	it("copies and freezes an explicit custom blocks-store declaration", async () => {
+		const declaration: BlockStoreSafety = {
+			referenceDomain: "caller-exclusive",
+			enforcedReclamation: "none",
+		};
+		const client = await Peerbit.create({
+			storage: {
+				blocksStoreFactory: () => createStore(),
+				blocksStoreSafety: declaration,
+			},
+		});
+		try {
+			const observed = client.services.blocks.localStoreSafety;
+			expect(observed).to.deep.equal(declaration);
+			expect(observed).not.to.equal(declaration);
+			expect(Object.isFrozen(observed)).to.equal(true);
+			(declaration as { referenceDomain: string }).referenceDomain = "shared";
+			expect(observed?.referenceDomain).to.equal("caller-exclusive");
+		} finally {
+			await client.stop();
+		}
+	});
+
+	it("rejects unsafe declarations before acquiring resources", async () => {
+		let indexerCalls = 0;
+		await expect(
+			Peerbit.create({
+				storage: {
+					blocksStoreSafety: {
+						referenceDomain: "caller-exclusive",
+						enforcedReclamation: "none",
+					},
+				},
+				indexer: async () => {
+					indexerCalls += 1;
+					throw new Error("indexer must not be acquired");
+				},
+			}),
+		).to.be.rejectedWith(
+			Error,
+			"'storage.blocksStoreSafety' requires a custom blocks store factory",
+		);
+		expect(indexerCalls).to.equal(0);
+
+		for (const blocksStoreSafety of [
+			null,
+			{},
+			{ referenceDomain: "invalid", enforcedReclamation: "none" },
+			{ referenceDomain: "unknown", enforcedReclamation: "unsupported" },
+		]) {
+			let blocksStoreFactoryCalls = 0;
+			let genericStoreFactoryCalls = 0;
+			indexerCalls = 0;
+			await expect(
+				Peerbit.create({
+					storage: {
+						blocksStoreFactory: () => {
+							blocksStoreFactoryCalls += 1;
+							return createStore();
+						},
+						blocksStoreSafety: blocksStoreSafety as any,
+						storeFactory: (directory) => {
+							genericStoreFactoryCalls += 1;
+							return createStore(directory);
+						},
+					},
+					indexer: async () => {
+						indexerCalls += 1;
+						throw new Error("indexer must not be acquired");
+					},
+				}),
+			).to.be.rejectedWith(Error);
+			expect(blocksStoreFactoryCalls).to.equal(0);
+			expect(genericStoreFactoryCalls).to.equal(0);
+			expect(indexerCalls).to.equal(0);
+		}
+	});
+
+	it("rejects a nullish custom blocks-store result", async () => {
+		const nullishResults: readonly (null | undefined)[] = [null, undefined];
+		for (const result of nullishResults) {
+			await expect(
+				Peerbit.create({
+					storage: {
+						blocksStoreFactory: (() => result) as any,
+					},
+				}),
+			).to.be.rejectedWith(
+				TypeError,
+				"The custom blocks store factory must return a block store",
+			);
+		}
 	});
 
 	it("can create with the rust storage preset", async () => {
@@ -80,7 +213,72 @@ describe("Create", function () {
 		expect(await client.storage.persisted()).to.be.true;
 		expect(await client.indexer.persisted()).to.be.true;
 		expect(await client.libp2p.services.blocks.persisted()).to.be.true;
+		expect(client.services.blocks.localStoreSafety).to.deep.equal(
+			BLOCK_SERVICE_BLOCK_STORE_SAFETY,
+		);
 		await client.stop();
+	});
+
+	it("rejects safety declarations a custom blocks service would ignore", async () => {
+		const declaration: BlockStoreSafety = {
+			referenceDomain: "caller-exclusive",
+			enforcedReclamation: "none",
+		};
+		for (const blocks of [undefined, (): undefined => undefined]) {
+			await expect(
+				Peerbit.create({
+					libp2p: { services: { blocks } as any },
+					storage: {
+						blocksStoreFactory: () => createStore(),
+						blocksStoreSafety: declaration,
+					},
+				}),
+			).to.be.rejectedWith(
+				Error,
+				"'storage.blocksStoreSafety' applies only to Peerbit's default blocks service",
+			);
+		}
+	});
+
+	it("rejects safety declarations an external libp2p would ignore", async () => {
+		const external = await Peerbit.create();
+		try {
+			await expect(
+				Peerbit.create({
+					libp2p: external.libp2p,
+					storage: {
+						blocksStoreFactory: () => createStore(),
+						blocksStoreSafety: {
+							referenceDomain: "caller-exclusive",
+							enforcedReclamation: "none",
+						},
+					},
+				}),
+			).to.be.rejectedWith(
+				Error,
+				"'storage.blocksStoreSafety' applies only to Peerbit's default blocks service",
+			);
+		} finally {
+			await external.stop();
+		}
+	});
+
+	it("ignores a Rust preset factory declaration when libp2p is external", async () => {
+		const external = await Peerbit.create();
+		let wrapper: Peerbit | undefined;
+		try {
+			wrapper = await Peerbit.create({
+				...createRustPeerbitOptions({ network: false }),
+				libp2p: external.libp2p,
+			});
+			expect(wrapper.services.blocks).to.equal(external.services.blocks);
+			expect(wrapper.services.blocks.localStoreSafety).to.equal(
+				BLOCK_SERVICE_BLOCK_STORE_SAFETY,
+			);
+		} finally {
+			await wrapper?.stop();
+			await external.stop();
+		}
 	});
 
 	it("rust preset wires the native network chain", async () => {

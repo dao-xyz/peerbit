@@ -1,7 +1,14 @@
 import { deserialize, serialize } from "@dao-xyz/borsh";
 import { createStore } from "@peerbit/any-store";
 import type { AnyStore } from "@peerbit/any-store-interface";
-import type { GetOptions, Blocks as IBlocks } from "@peerbit/blocks-interface";
+import {
+	BLOCK_SERVICE_BLOCK_STORE_SAFETY,
+	type BlockStoreSafety,
+	type GetOptions,
+	type Blocks as IBlocks,
+	UNKNOWN_BLOCK_STORE_SAFETY,
+	normalizeBlockStoreSafety,
+} from "@peerbit/blocks-interface";
 import { getPublicKeyFromPeerId, type PublicSignKey } from "@peerbit/crypto";
 import { DirectStream } from "@peerbit/stream";
 import {
@@ -24,6 +31,7 @@ export class DirectBlock extends DirectStream implements IBlocks {
 	private remoteBlocks: RemoteBlocks;
 	private onDataFn: any;
 	private onPeerConnectedFn: any;
+	readonly localStoreSafety!: BlockStoreSafety;
 
 	constructor(
 		components: DirectBlockComponents,
@@ -63,11 +71,28 @@ export class DirectBlock extends DirectStream implements IBlocks {
 			 * as the underlying DirectStream.
 			 */
 			rustCore?: RustCoreStream | false;
+			/**
+			 * Explicit facts about `localStore`. Supplied objects are validated,
+			 * defensively copied, and frozen. A custom `localStore` without this
+			 * declaration is always unknown, regardless of `persisted()` or class.
+			 */
+			localStoreSafety?: BlockStoreSafety;
 		},
 	) {
 		if (options?.directory && options.localStore) {
 			throw new Error("DirectBlock options cannot include both directory and localStore");
 		}
+		if (options?.localStoreSafety !== undefined && options.localStore == null) {
+			throw new Error(
+				"DirectBlock localStoreSafety requires an explicitly supplied localStore",
+			);
+		}
+		const localStoreSafety =
+			options?.localStoreSafety === undefined
+				? options?.localStore == null
+					? BLOCK_SERVICE_BLOCK_STORE_SAFETY
+					: UNKNOWN_BLOCK_STORE_SAFETY
+				: normalizeBlockStoreSafety(options.localStoreSafety);
 
 		super(components, ["/peerbit/direct-block/1.0.0"], {
 			messageProcessingConcurrency: options?.messageProcessingConcurrency || 10,
@@ -77,6 +102,12 @@ export class DirectBlock extends DirectStream implements IBlocks {
 				pruner: false,
 			},
 			rustCore: options?.rustCore,
+		});
+		Object.defineProperty(this, "localStoreSafety", {
+			value: localStoreSafety,
+			enumerable: true,
+			writable: false,
+			configurable: false,
 		});
 
 		const blockExchange = this.rustCore?.blockExchange;
