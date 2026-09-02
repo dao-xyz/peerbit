@@ -250,6 +250,15 @@ const hasPersistedDelivery = (
 	typeof options?.delivery === "object" &&
 	options.delivery.reliability === "persisted";
 
+const snapshotPersistedDeleteId = (
+	id: indexerTypes.Ideable | indexerTypes.IdKey,
+): indexerTypes.IdKey => {
+	const value = indexerTypes.toIdeable(id);
+	return indexerTypes.toId(
+		value instanceof Uint8Array ? new Uint8Array(value) : value,
+	);
+};
+
 const withoutPersistedDelivery = (
 	options: DocumentPutOptions | undefined,
 ): DocumentPutOptions | undefined => {
@@ -831,6 +840,10 @@ type PersistedDocumentAppendDelivery = {
 // commit/coordinate facts to the internal persisted-delivery seam. The result
 // remains the lifetime owner of the lazy full-entry materializer.
 const persistedDocumentAppendDelivery = new WeakMap<
+	object,
+	PersistedDocumentAppendDelivery
+>();
+const persistedDocumentDeleteDelivery = new WeakMap<
 	object,
 	PersistedDocumentAppendDelivery
 >();
@@ -1612,7 +1625,7 @@ export class Documents<
 		if (options?.deferIndexWrite !== undefined) {
 			unsupported.push("per-call index write deferral");
 		}
-		if (options?.meta?.type) {
+		if (options?.meta?.type !== undefined) {
 			unsupported.push("custom entry type");
 		}
 		if (options?.meta && "data" in options.meta) {
@@ -2030,9 +2043,6 @@ export class Documents<
 			return;
 		}
 		const unsupported = this.unsupportedNativePutOptions(options);
-		if (options && hasPersistedDelivery(options)) {
-			unsupported.push("delivery");
-		}
 		if (options?.unique !== undefined) {
 			unsupported.push("unique delete");
 		}
@@ -5684,12 +5694,29 @@ export class Documents<
 		id: indexerTypes.Ideable | indexerTypes.IdKey,
 		options?: SharedAppendOptions<Operation>,
 	) {
-		if (hasPersistedDelivery(options)) {
-			throw new Error(
-				"persisted delivery is not supported for document deletes",
-			);
+		const capturedOptions = asTrustedDocumentSharedLog(
+			this.log,
+		).snapshotDocumentAppendOptions(options);
+		const persistedRequested = hasPersistedDelivery(capturedOptions);
+		const capturedId = persistedRequested ? snapshotPersistedDeleteId(id) : id;
+		const result = await this._documentBackend.del(capturedId, capturedOptions);
+		if (!persistedRequested || persistedDeliveryAlreadySettled.has(result)) {
+			return result;
 		}
-		return this._documentBackend.del(id, options);
+		const appendDelivery = persistedDocumentDeleteDelivery.get(result);
+		if (!appendDelivery) {
+			await this.deliverPersistedDocumentEntries(
+				[result.entry],
+				capturedOptions!,
+			);
+			return result;
+		}
+		persistedDocumentDeleteDelivery.delete(result);
+		await this.deliverPersistedDocumentAppendCommits(
+			appendDelivery,
+			capturedOptions!,
+		);
+		return result;
 	}
 
 	private async delCompatDocumentBackend(
@@ -5716,19 +5743,23 @@ export class Documents<
 			remote: true,
 		});
 
-		return this.log.append(
+		const appended = await this.log.append(
 			new DeleteOperation({
 				key,
 			}),
 			{
 				...options,
 				meta: {
+					...options?.meta,
 					next: [entry],
 					type: EntryType.CUT,
-					...options?.meta,
 				},
 			}, //
 		);
+		if (hasPersistedDelivery(options)) {
+			persistedDeliveryAlreadySettled.add(appended);
+		}
+		return appended;
 	}
 
 	private async delNativeDocumentBackend(
@@ -5737,6 +5768,31 @@ export class Documents<
 	): Promise<DocumentDeleteResult> {
 		const deleteOptions = this.normalizeNativeModePutOptions(options);
 		this.assertNativeModeDeleteSupported(deleteOptions);
+		if (!hasPersistedDelivery(deleteOptions)) {
+			return this.delNativeDocumentBackendWithEvidence(
+				id,
+				deleteOptions,
+				undefined,
+			);
+		}
+		const localCommitEvidence = { committedHashes: new Set<string>() };
+		return await runWithTrustedLocalCommitEvidence(
+			deleteOptions,
+			localCommitEvidence,
+			() =>
+				this.delNativeDocumentBackendWithEvidence(
+					id,
+					deleteOptions,
+					localCommitEvidence,
+				),
+		);
+	}
+
+	private async delNativeDocumentBackendWithEvidence(
+		id: indexerTypes.Ideable | indexerTypes.IdKey,
+		deleteOptions: DocumentPutOptions | undefined,
+		localCommitEvidence: TrustedLocalCommitEvidence | undefined,
+	): Promise<DocumentDeleteResult> {
 		const key = id instanceof indexerTypes.IdKey ? id : indexerTypes.toId(id);
 		if (!this.hasNativeDocumentContextLookup()) {
 			throw this.nativeModeError("requires native document context lookup");
@@ -5806,21 +5862,23 @@ export class Documents<
 			this.nextFromIndexedContext(existingContext.head, existing) ??
 			(await getPreviousEntry());
 		const trustedLog = asTrustedDocumentSharedLog(this.log);
+		const localAppendOptions = withoutPersistedDelivery(deleteOptions);
 		const appended =
 			await trustedLog.appendStrictNativeDocumentPayloadCommitOnly(
 				operationPayloadBytes,
 				{
-					...deleteOptions,
+					...localAppendOptions,
 					meta: {
+						...localAppendOptions?.meta,
 						next: [previousForAppend as Entry<Operation>],
 						type: EntryType.CUT,
-						...deleteOptions?.meta,
 					},
 				},
 				{
 					skipMissingNextJoin: true,
 					resolveTrimmedEntries: false,
 					nativeBackboneDocumentDeleteKey: documentIndexStoreKey(key),
+					...(localCommitEvidence ? { localCommitEvidence } : undefined),
 				},
 			);
 		if (!appended) {
@@ -5840,6 +5898,12 @@ export class Documents<
 		if (documentsChanged && removedDocument) {
 			documentsChanged.removed.push(removedDocument);
 			this.dispatchDocumentChangeIfObserved(documentsChanged);
+		}
+		if (hasPersistedDelivery(deleteOptions)) {
+			persistedDocumentDeleteDelivery.set(result, {
+				appendCommits: [appended.appendCommit],
+				materializeEntries: () => [appended.entry],
+			});
 		}
 		return result;
 	}

@@ -1,4 +1,5 @@
-import { toId } from "@peerbit/indexer-interface";
+import { toId, toIdeable } from "@peerbit/indexer-interface";
+import { EntryType } from "@peerbit/log";
 import { NativeBackboneMemoryCoordinatePersistenceStore } from "@peerbit/native-backbone";
 import { PersistedDeliveryError } from "@peerbit/shared-log";
 import { TestSession } from "@peerbit/test-utils";
@@ -119,6 +120,164 @@ describe("document persisted delivery", function () {
 			expect(readableAtReceipt).equal(true);
 		});
 	}
+
+	it("lets the compat append settle one persisted delete receipt", async () => {
+		const opened = await openStore("auto");
+		const doc = new Document({ id: uuid(), name: "compat-delete" });
+		const put = await opened.docs.put(doc, { unique: true });
+		let absentAtReceipt = false;
+		sinon
+			.stub(opened.docs.log as any, "_appendDeliverToReplicators")
+			.resolves();
+		const settlement = sinon
+			.stub(opened.docs.log as any, "settlePersistedDelivery")
+			.callsFake(async () => {
+				absentAtReceipt = (await opened.docs.get(doc.id)) == null;
+			});
+		const publicEntryDelivery = sinon.spy(
+			opened.docs.log as any,
+			"deliverPersistedEntries",
+		);
+		const publicCommitDelivery = sinon.spy(
+			opened.docs.log as any,
+			"deliverPersistedAppendCommits",
+		);
+
+		const deleted = await opened.docs.del(doc.id, {
+			delivery: persistedDelivery,
+			meta: { type: EntryType.APPEND, next: [] },
+		});
+
+		expect(deleted.entry.meta.type).equal(EntryType.CUT);
+		expect(deleted.entry.meta.next).to.deep.equal([put.entry.hash]);
+		expect(settlement.callCount).equal(1);
+		expect(publicEntryDelivery.callCount).equal(0);
+		expect(publicCommitDelivery.callCount).equal(0);
+		expect(absentAtReceipt).equal(true);
+		expect(await opened.docs.get(doc.id)).equal(undefined);
+	});
+
+	it("settles one strict-native delete receipt after its local commit", async () => {
+		const opened = await openStore("native");
+		const doc = new Document({ id: uuid(), name: "native-delete" });
+		await opened.docs.put(doc, { unique: true });
+		let absentAtReceipt = false;
+		let deliveredHashes: string[] = [];
+		const delivery = sinon
+			.stub(opened.docs.log as any, "deliverPersistedAppendCommits")
+			.callsFake(async (...args: unknown[]) => {
+				const appendCommits = args[0] as Array<{ hash: string }>;
+				deliveredHashes = appendCommits.map((commit) => commit.hash);
+				absentAtReceipt = (await opened.docs.get(doc.id)) == null;
+			});
+		const localAppend = sinon.spy(
+			opened.docs.log as any,
+			"appendStrictNativeDocumentPayloadCommitOnly",
+		);
+
+		const deleted = await opened.docs.del(doc.id, {
+			delivery: persistedDelivery,
+		});
+
+		expect(localAppend.callCount).equal(1);
+		expect(localAppend.firstCall.args[1]).to.include({
+			target: "none",
+			delivery: false,
+			replicate: false,
+		});
+		expect(delivery.callCount).equal(1);
+		expect(delivery.firstCall.args[0]).to.have.length(1);
+		expect(delivery.firstCall.args[2].delivery).to.deep.include(
+			persistedDelivery,
+		);
+		expect(absentAtReceipt).equal(true);
+		expect(deleted.entry.meta.type).equal(EntryType.CUT);
+		expect(deliveredHashes).to.deep.equal([deleted.entry.hash]);
+	});
+
+	it("rejects an enum-zero custom delete type in strict-native mode", async () => {
+		const opened = await openStore("native");
+		const doc = new Document({ id: uuid(), name: "native-delete-type" });
+		await opened.docs.put(doc, { unique: true });
+
+		await expect(
+			opened.docs.del(doc.id, {
+				delivery: persistedDelivery,
+				meta: { type: EntryType.APPEND },
+			}),
+		).to.be.rejectedWith("does not support custom entry type");
+		expect((await opened.docs.get(doc.id))?.name).equal(doc.name);
+		expect(opened.docs.log.log.length).equal(1);
+	});
+
+	it("snapshots persisted delete options and mutable byte ids at invocation", async () => {
+		const opened = await openStore("auto");
+		const seed = await opened.docs.put(
+			new Document({ id: uuid(), name: "delete-snapshot-seed" }),
+			{ unique: true },
+		);
+		const backend = (opened.docs as any)._documentBackend;
+		let entered!: () => void;
+		let release!: () => void;
+		const enteredPromise = new Promise<void>((resolve) => (entered = resolve));
+		const releasePromise = new Promise<void>((resolve) => (release = resolve));
+		let capturedId: unknown;
+		let capturedOptions: any;
+		const deliver = sinon
+			.stub(opened.docs.log as any, "deliverPersistedEntries")
+			.resolves();
+		const backendStub = sinon
+			.stub(backend, "del")
+			.callsFake(async (...args: unknown[]) => {
+				capturedId = args[0];
+				capturedOptions = args[1];
+				entered();
+				await releasePromise;
+				return { entry: seed.entry, removed: [] };
+			});
+		const id = new Uint8Array([4, 5, 6]);
+		const delivery: any = {
+			reliability: "persisted",
+			minAcks: 2,
+			timeout: 5_000,
+		};
+		const options: any = {
+			target: "replicators",
+			replicate: false,
+			delivery,
+		};
+
+		try {
+			const pending = opened.docs.del(toId(id), options);
+			await enteredPromise;
+			id[0] = 99;
+			delivery.reliability = "ack";
+			delivery.minAcks = 0;
+			delivery.timeout = 1;
+			options.target = "none";
+			options.replicate = true;
+			release();
+			await pending;
+
+			expect(toIdeable(capturedId as any)).to.deep.equal(
+				new Uint8Array([4, 5, 6]),
+			);
+			expect(capturedOptions).to.include({
+				target: "replicators",
+				replicate: false,
+			});
+			expect(capturedOptions.delivery).to.include({
+				reliability: "persisted",
+				minAcks: 2,
+				timeout: 5_000,
+			});
+			expect(deliver.callCount).equal(1);
+			expect(deliver.firstCall.args[1]).equal(capturedOptions);
+		} finally {
+			release();
+			backendStub.restore();
+		}
+	});
 
 	it("keeps persisted put and putMany settlement after caller downgrade", async () => {
 		const opened = await openStore("native");
@@ -480,7 +639,7 @@ describe("document persisted delivery", function () {
 		expect(materializationCount).equal(docs.length);
 	});
 
-	it("persists every independent putMany entry on a durable remote replica", async () => {
+	it("persists document puts and a CUT on a durable remote replica", async () => {
 		const directory = await fs.mkdtemp(
 			path.join(os.tmpdir(), "peerbit-persisted-put-many-"),
 		);
@@ -573,6 +732,38 @@ describe("document persisted delivery", function () {
 				expect(lower).to.exist;
 				expect(coordinate).to.exist;
 				expect(document?.name).equal(docs[index]!.name);
+			}
+
+			const deleted = await writerStore.docs.del(docs[0]!.id, {
+				delivery: { ...persistedDelivery, timeout: 15_000 },
+			});
+			expect(deleted.entry.meta.type).equal(EntryType.CUT);
+			const [cutBlock, cutLower, cutCoordinate] = await Promise.all([
+				(receiverStore.docs.log as any).remoteBlocks.localStore.has(
+					deleted.entry.hash,
+				),
+				receiverStore.docs.log.log.entryIndex.properties.index.get(
+					toId(deleted.entry.hash),
+				),
+				receiverStore.docs.log.entryCoordinatesIndex.get(
+					toId(deleted.entry.hash),
+				),
+			]);
+			expect(cutBlock).equal(true);
+			expect(cutLower).to.exist;
+			expect(cutCoordinate).to.exist;
+
+			const deleteVisibilityDeadline = Date.now() + 15_000;
+			while (
+				(await receiverStore.docs.get(docs[0]!.id, {
+					local: true,
+					remote: false,
+				})) != null
+			) {
+				if (Date.now() >= deleteVisibilityDeadline) {
+					throw new Error("Timed out waiting for remote delete visibility");
+				}
+				await new Promise((resolve) => setTimeout(resolve, 25));
 			}
 		} finally {
 			await Promise.allSettled([writerStore?.close(), receiverStore?.close()]);
@@ -957,6 +1148,114 @@ describe("document persisted delivery", function () {
 		expect(batchCommitSpy.callCount).equal(0);
 		expect(opened.docs.log.log.length).equal(0);
 		expect(await opened.docs.index.getSize()).equal(0);
+	});
+
+	it("rejects invalid persisted delete options before mutation", async () => {
+		const opened = await openStore("auto");
+		const doc = new Document({ id: uuid(), name: "invalid-delete" });
+		await opened.docs.put(doc, { unique: true });
+		const deleteSpy = sinon.spy((opened.docs as any)._documentBackend, "del");
+
+		await expect(
+			opened.docs.del(doc.id, {
+				delivery: { reliability: "persisted", minAcks: 0 },
+			}),
+		).to.be.rejectedWith(
+			'persisted delivery requires a positive explicit "minAcks"',
+		);
+		await expect(
+			opened.docs.del(doc.id, {
+				target: "none",
+				delivery: persistedDelivery,
+			}),
+		).to.be.rejectedWith(
+			'persisted delivery requires target="replicators" (or an omitted target)',
+		);
+		await expect(
+			opened.docs.del(doc.id, {
+				delivery: { ...persistedDelivery, timeout: 0 },
+			}),
+		).to.be.rejectedWith(
+			"persisted delivery timeout must be a positive number no greater than 2147483647",
+		);
+		const cancellation = new Error("cancelled before delete");
+		const abortController = new AbortController();
+		abortController.abort(cancellation);
+		let abortedFailure: unknown;
+		try {
+			await opened.docs.del(doc.id, {
+				delivery: {
+					...persistedDelivery,
+					signal: abortController.signal,
+				},
+			});
+		} catch (error) {
+			abortedFailure = error;
+		}
+
+		expect(abortedFailure).equal(cancellation);
+		expect(deleteSpy.callCount).equal(0);
+		expect(opened.docs.log.log.length).equal(1);
+		expect((await opened.docs.get(doc.id))?.name).equal(doc.name);
+	});
+
+	for (const mode of ["auto", "native"] as const) {
+		it(`reports the committed ${mode} CUT when receipt settlement fails`, async () => {
+			const opened = await openStore(mode);
+			const doc = new Document({ id: uuid(), name: `${mode}-failed-delete` });
+			await opened.docs.put(doc, { unique: true });
+			let failure: unknown;
+
+			try {
+				await opened.docs.del(doc.id, {
+					delivery: { ...persistedDelivery, timeout: 250 },
+				});
+			} catch (error) {
+				failure = error;
+			}
+
+			expect(failure).instanceOf(PersistedDeliveryError);
+			const persistedFailure = failure as PersistedDeliveryError;
+			expect(persistedFailure.localCommitSucceeded).equal(true);
+			expect(persistedFailure.retrySafe).equal(false);
+			expect(persistedFailure.committedHashes).to.have.length(1);
+			const committedHash = persistedFailure.committedHashes[0]!;
+			expect(await opened.docs.log.log.has(committedHash)).equal(true);
+			expect((await opened.docs.log.log.get(committedHash))?.meta.type).equal(
+				EntryType.CUT,
+			);
+			expect(await opened.docs.get(doc.id)).equal(undefined);
+		});
+	}
+
+	it("classifies a strict-native delete failure after the CUT commit", async () => {
+		const opened = await openStore("native");
+		const doc = new Document({ id: uuid(), name: "native-post-cut-failure" });
+		await opened.docs.put(doc, { unique: true });
+		opened.docs.events.addEventListener("change", () => undefined);
+		const injectedFailure = new Error("injected delete change failure");
+		const dispatch = sinon
+			.stub(opened.docs as any, "dispatchDocumentChangeIfObserved")
+			.throws(injectedFailure);
+		let failure: unknown;
+
+		try {
+			await opened.docs.del(doc.id, { delivery: persistedDelivery });
+		} catch (error) {
+			failure = error;
+		}
+
+		expect(dispatch.callCount).equal(1);
+		expect(failure).instanceOf(PersistedDeliveryError);
+		const persistedFailure = failure as PersistedDeliveryError;
+		expect(persistedFailure.cause).equal(injectedFailure);
+		expect(persistedFailure.committedHashes).to.have.length(1);
+		const committedHash = persistedFailure.committedHashes[0]!;
+		expect(await opened.docs.log.log.has(committedHash)).equal(true);
+		expect((await opened.docs.log.log.get(committedHash))?.meta.type).equal(
+			EntryType.CUT,
+		);
+		expect(await opened.docs.get(doc.id)).equal(undefined);
 	});
 
 	it("keeps locally committed documents readable when receipt settlement fails", async () => {
