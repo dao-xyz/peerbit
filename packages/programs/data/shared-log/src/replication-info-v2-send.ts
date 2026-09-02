@@ -46,9 +46,16 @@ type ApplicationConfirmationRequest = {
 	controller: AbortController;
 };
 
+type ApplicationConfirmationTarget = {
+	peerHash: string;
+	peerSession: object;
+	receiverTransportSession: bigint;
+};
+
 type ApplicationConfirmationWaiter = {
 	revision: bigint;
 	minPeers: number;
+	target?: ApplicationConfirmationTarget;
 	resolve: () => void;
 	reject: (error: unknown) => void;
 	timer?: ReturnType<typeof setTimeout>;
@@ -193,6 +200,10 @@ export class ReplicationInfoV2SendCoordinator<R extends "u32" | "u64"> {
 	}
 
 	clearPeer(peerHash: string, expectedSession?: object): void {
+		this.rejectTargetConfirmations(
+			{ peerHash, peerSession: expectedSession },
+			new AbortError("Replication confirmation destination changed"),
+		);
 		const state = this._sendStates.get(peerHash);
 		if (!state || (expectedSession && state.peerSession !== expectedSession)) {
 			return;
@@ -201,6 +212,10 @@ export class ReplicationInfoV2SendCoordinator<R extends "u32" | "u64"> {
 	}
 
 	advancePeerCapability(peerHash: string): void {
+		this.rejectTargetConfirmations(
+			{ peerHash },
+			new AbortError("Replication confirmation destination changed"),
+		);
 		const state = this._sendStates.get(peerHash);
 		if (state) {
 			this.clearState(state);
@@ -209,6 +224,14 @@ export class ReplicationInfoV2SendCoordinator<R extends "u32" | "u64"> {
 
 	private clearState(state: ReplicationInfoV2SendState): void {
 		this.trackRetiringWorker(state);
+		this.rejectTargetConfirmations(
+			{
+				peerHash: state.peerHash,
+				peerSession: state.peerSession,
+				receiverTransportSession: state.receiverTransportSession,
+			},
+			new AbortError("Replication confirmation destination changed"),
+		);
 		if (state.retryTimer) {
 			clearTimeout(state.retryTimer);
 			state.retryTimer = undefined;
@@ -251,7 +274,7 @@ export class ReplicationInfoV2SendCoordinator<R extends "u32" | "u64"> {
 		waiter.onAbort = undefined;
 		for (const state of this._sendStates.values()) {
 			const requested = state.applicationConfirmationRequest;
-			if (requested && !this.hasConfirmationFor(requested.revision)) {
+			if (requested && !this.hasConfirmationFor(state, requested.revision)) {
 				state.applicationConfirmationRequest = undefined;
 				requested.controller.abort(
 					new AbortError("Replication confirmation no longer pending"),
@@ -275,12 +298,50 @@ export class ReplicationInfoV2SendCoordinator<R extends "u32" | "u64"> {
 		}
 	}
 
-	private countAppliedPeers(revision: bigint): number {
+	private rejectTargetConfirmations(
+		target: {
+			peerHash: string;
+			peerSession?: object;
+			receiverTransportSession?: bigint;
+		},
+		error: unknown,
+	): void {
+		for (const waiter of [...this._confirmations]) {
+			if (
+				waiter.target === undefined ||
+				waiter.target.peerHash !== target.peerHash ||
+				(target.peerSession !== undefined &&
+					waiter.target.peerSession !== target.peerSession) ||
+				(target.receiverTransportSession !== undefined &&
+					waiter.target.receiverTransportSession !==
+						target.receiverTransportSession)
+			) {
+				continue;
+			}
+			this.clearConfirmationWaiter(waiter);
+			waiter.reject(error);
+		}
+	}
+
+	private matchesConfirmationTarget(
+		state: ReplicationInfoV2SendState,
+		target: ApplicationConfirmationTarget | undefined,
+	): boolean {
+		return (
+			target === undefined ||
+			(state.peerHash === target.peerHash &&
+				state.peerSession === target.peerSession &&
+				state.receiverTransportSession === target.receiverTransportSession)
+		);
+	}
+
+	private countAppliedPeers(waiter: ApplicationConfirmationWaiter): number {
 		let applied = 0;
 		for (const state of this._sendStates.values()) {
 			if (
 				state.appliedRevision !== undefined &&
-				state.appliedRevision >= revision &&
+				state.appliedRevision >= waiter.revision &&
+				this.matchesConfirmationTarget(state, waiter.target) &&
 				this.isDestinationReady(state) &&
 				this.supportsApplicationConfirmation(state)
 			) {
@@ -292,16 +353,22 @@ export class ReplicationInfoV2SendCoordinator<R extends "u32" | "u64"> {
 
 	private settleConfirmations(): void {
 		for (const waiter of [...this._confirmations]) {
-			if (this.countAppliedPeers(waiter.revision) >= waiter.minPeers) {
+			if (this.countAppliedPeers(waiter) >= waiter.minPeers) {
 				this.clearConfirmationWaiter(waiter);
 				waiter.resolve();
 			}
 		}
 	}
 
-	private hasConfirmationFor(revision: bigint): boolean {
+	private hasConfirmationFor(
+		state: ReplicationInfoV2SendState,
+		revision: bigint,
+	): boolean {
 		for (const waiter of this._confirmations) {
-			if (waiter.revision <= revision) {
+			if (
+				waiter.revision <= revision &&
+				this.matchesConfirmationTarget(state, waiter.target)
+			) {
 				return true;
 			}
 		}
@@ -327,7 +394,8 @@ export class ReplicationInfoV2SendCoordinator<R extends "u32" | "u64"> {
 		for (const state of [...this._sendStates.values()]) {
 			if (
 				this.isCurrent(state) &&
-				this.supportsApplicationConfirmation(state)
+				this.supportsApplicationConfirmation(state) &&
+				this.hasConfirmationFor(state, this._revision)
 			) {
 				const revision = this._revision;
 				if (
@@ -351,22 +419,14 @@ export class ReplicationInfoV2SendCoordinator<R extends "u32" | "u64"> {
 		this.scheduleConfirmationRetry();
 	}
 
-	/**
-	 * Wait until the latest committed local replication revision is reported as
-	 * durably applied by the configured number of current peers. Revisions newer
-	 * than this call satisfy it, so rapid updates coalesce to one authoritative
-	 * snapshot without weakening older callers' guarantees.
-	 */
-	confirmLatest(
-		options: ReplicationInfoV2ConfirmationOptions = {},
-	): Promise<void> {
-		const minPeers = options.minPeers ?? 1;
-		const timeout = options.timeout ?? DEFAULT_CONFIRM_TIMEOUT_MS;
-		if (!Number.isSafeInteger(minPeers) || minPeers <= 0) {
-			return Promise.reject(
-				new RangeError("Replication confirmation minPeers must be positive"),
-			);
-		}
+	private waitForConfirmation(properties: {
+		minPeers: number;
+		target?: ApplicationConfirmationTarget;
+		timeout?: number;
+		signal?: AbortSignal;
+		timeoutMessage: (revision: bigint) => string;
+	}): Promise<void> {
+		const timeout = properties.timeout ?? DEFAULT_CONFIRM_TIMEOUT_MS;
 		if (
 			!Number.isSafeInteger(timeout) ||
 			timeout <= 0 ||
@@ -381,10 +441,10 @@ export class ReplicationInfoV2SendCoordinator<R extends "u32" | "u64"> {
 		if (this.deps.isClosed()) {
 			return Promise.reject(new AbortError("Replication-info sender closed"));
 		}
-		if (options.signal?.aborted) {
+		if (properties.signal?.aborted) {
 			return Promise.reject(
-				options.signal.reason instanceof Error
-					? options.signal.reason
+				properties.signal.reason instanceof Error
+					? properties.signal.reason
 					: new AbortError("Replication confirmation aborted"),
 			);
 		}
@@ -399,35 +459,87 @@ export class ReplicationInfoV2SendCoordinator<R extends "u32" | "u64"> {
 		return new Promise<void>((resolve, reject) => {
 			const waiter: ApplicationConfirmationWaiter = {
 				revision: this._revision,
-				minPeers,
+				minPeers: properties.minPeers,
+				target: properties.target ? { ...properties.target } : undefined,
 				resolve,
 				reject,
-				signal: options.signal,
+				signal: properties.signal,
 			};
 			waiter.timer = setTimeout(() => {
 				this.clearConfirmationWaiter(waiter);
-				reject(
-					new TimeoutError(
-						`Timed out waiting for ${minPeers} peer${minPeers === 1 ? "" : "s"} to apply replication revision ${waiter.revision}`,
-					),
-				);
+				reject(new TimeoutError(properties.timeoutMessage(waiter.revision)));
 			}, timeout);
 			waiter.timer.unref?.();
-			if (options.signal) {
+			if (properties.signal) {
 				waiter.onAbort = () => {
 					this.clearConfirmationWaiter(waiter);
 					reject(
-						options.signal!.reason instanceof Error
-							? options.signal!.reason
+						properties.signal!.reason instanceof Error
+							? properties.signal!.reason
 							: new AbortError("Replication confirmation aborted"),
 					);
 				};
-				options.signal.addEventListener("abort", waiter.onAbort, {
+				properties.signal.addEventListener("abort", waiter.onAbort, {
 					once: true,
 				});
 			}
 			this._confirmations.add(waiter);
 			this.nudgeConfirmations();
+		});
+	}
+
+	/**
+	 * Wait until the latest committed local replication revision is reported as
+	 * durably applied by the configured number of current peers. Revisions newer
+	 * than this call satisfy it, so rapid updates coalesce to one authoritative
+	 * snapshot without weakening older callers' guarantees.
+	 */
+	confirmLatest(
+		options: ReplicationInfoV2ConfirmationOptions = {},
+	): Promise<void> {
+		const minPeers = options.minPeers ?? 1;
+		if (!Number.isSafeInteger(minPeers) || minPeers <= 0) {
+			return Promise.reject(
+				new RangeError("Replication confirmation minPeers must be positive"),
+			);
+		}
+		return this.waitForConfirmation({
+			minPeers,
+			timeout: options.timeout,
+			signal: options.signal,
+			timeoutMessage: (revision) =>
+				`Timed out waiting for ${minPeers} peer${minPeers === 1 ? "" : "s"} to apply replication revision ${revision}`,
+		});
+	}
+
+	/**
+	 * Confirm the latest revision on one exact destination generation. Multiple
+	 * callers for that peer share the state's single snapshot/query worker, so
+	 * persisted batches remain bounded by peers rather than entries.
+	 */
+	confirmLatestForPeer(
+		target: ApplicationConfirmationTarget,
+		options: Omit<ReplicationInfoV2ConfirmationOptions, "minPeers"> = {},
+	): Promise<void> {
+		if (
+			!this.deps.isPeerSessionCurrent(target.peerHash, target.peerSession) ||
+			!this.deps.isPeerSessionOpen(target.peerHash, target.peerSession) ||
+			this.deps.supportsApplicationConfirmation?.(
+				target.peerHash,
+				target.receiverTransportSession,
+			) !== true
+		) {
+			return Promise.reject(
+				new AbortError("Replication confirmation destination is not current"),
+			);
+		}
+		return this.waitForConfirmation({
+			minPeers: 1,
+			target,
+			timeout: options.timeout,
+			signal: options.signal,
+			timeoutMessage: (revision) =>
+				`Timed out waiting for peer ${target.peerHash} to apply replication revision ${revision}`,
 		});
 	}
 
@@ -973,7 +1085,7 @@ export class ReplicationInfoV2SendCoordinator<R extends "u32" | "u64"> {
 			});
 			state.inFlightSequence = undefined;
 			if (
-				this.hasConfirmationFor(request.revision) &&
+				this.hasConfirmationFor(state, request.revision) &&
 				this.supportsApplicationConfirmation(state) &&
 				this.isCurrent(state)
 			) {

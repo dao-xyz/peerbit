@@ -30,6 +30,7 @@ import {
 	EXCHANGE_HEADS_REPAIR_HINT,
 	ExchangeHeadsMessage,
 	SYNC_CAPABILITY_PERSISTED_ENTRY_RECEIPTS,
+	SYNC_CAPABILITY_REPLICATION_INFO_V2_CONFIRM,
 } from "../src/exchange-heads.js";
 import {
 	ConfirmEntriesMessage,
@@ -41,6 +42,8 @@ describe("append delivery options — persisted receipts", function () {
 	this.timeout(60_000);
 	const planningRecords = (log: any, entries: any[]) =>
 		entries.map((entry) => log.snapshotPersistedDeliveryPlanningEntry(entry));
+	const allowPersistedReceiptFreshness = (log: any) =>
+		sinon.stub(log._v2Send, "confirmLatestForPeer").resolves();
 
 	let session: TestSession | undefined;
 	let directory: string | undefined;
@@ -54,6 +57,7 @@ describe("append delivery options — persisted receipts", function () {
 	});
 
 	afterEach(async () => {
+		sinon.restore();
 		await session?.stop();
 		session = undefined;
 		if (directory) {
@@ -117,12 +121,31 @@ describe("append delivery options — persisted receipts", function () {
 		const receiverHash = receiver.node.identity.publicKey.hashcode();
 		await waitForResolved(
 			() => {
-				const capabilities = (writer.log as any)._peerSyncCapabilities.get(
-					receiverHash,
-				);
+				const writerLog = writer.log as any;
+				const receiverLog = receiver.log as any;
+				const capabilities = writerLog._peerSyncCapabilities.get(receiverHash);
 				expect(
 					capabilities & SYNC_CAPABILITY_PERSISTED_ENTRY_RECEIPTS,
 				).to.equal(SYNC_CAPABILITY_PERSISTED_ENTRY_RECEIPTS);
+				for (const [hostLog, remote] of [
+					[writerLog, receiver],
+					[receiverLog, writer],
+				] as const) {
+					const peerHash = remote.node.identity.publicKey.hashcode();
+					const peerSession = hostLog._peerSessions.current(peerHash);
+					const senderTransportSession =
+						hostLog._peerSyncCapabilitySessions.get(peerHash);
+					expect(peerSession).to.exist;
+					expect(senderTransportSession).to.not.equal(undefined);
+					expect(
+						hostLog._v2Receive.isCurrentActive({
+							peerHash,
+							peerSession,
+							receiveEpoch: hostLog._peerSessions.receiveEpoch(peerHash),
+							senderTransportSession,
+						}),
+					).to.equal(true);
+				}
 			},
 			{ timeout: 15_000 },
 		);
@@ -1166,6 +1189,31 @@ describe("append delivery options — persisted receipts", function () {
 		const { writer, receiver } = await openPair(true);
 		await waitForPersistedCapability(writer, receiver);
 
+		const log = writer.log as any;
+		const originalConfirm = log._v2Send.confirmLatestForPeer.bind(log._v2Send);
+		let freshnessConfirmed = false;
+		const confirmation = sinon
+			.stub(log._v2Send, "confirmLatestForPeer")
+			.callsFake(async (...args: any[]) => {
+				await originalConfirm(...args);
+				freshnessConfirmed = true;
+			});
+		const originalPush = log.pushEntryHashes.bind(log);
+		const transferAttempts: Array<{
+			hashes: string[];
+			freshnessConfirmed: boolean;
+		}> = [];
+		const push = sinon
+			.stub(log, "pushEntryHashes")
+			.callsFake(async (...args: any[]) => {
+				transferAttempts.push({
+					hashes: [...args[1]],
+					freshnessConfirmed,
+				});
+				return originalPush(...args);
+			});
+		const optimisticDelivery = sinon.spy(log, "_appendDeliverToReplicators");
+		const backfill = sinon.spy(log, "queueAppendBackfill");
 		const request = sinon.spy(writer.log.rpc, "request");
 		try {
 			const { entry } = await writer.add("durable", {
@@ -1178,6 +1226,24 @@ describe("append delivery options — persisted receipts", function () {
 			});
 
 			expect(await receiver.log.log.has(entry.hash)).to.equal(true);
+			expect(optimisticDelivery.notCalled).to.equal(true);
+			expect(confirmation.called).to.equal(true);
+			const entryTransfers = transferAttempts.filter(({ hashes }) =>
+				hashes.includes(entry.hash),
+			);
+			expect(entryTransfers).not.to.be.empty;
+			expect(
+				entryTransfers.every(({ freshnessConfirmed }) => freshnessConfirmed),
+			).to.equal(true);
+			expect(
+				backfill
+					.getCalls()
+					.some(
+						(call) =>
+							call.args[0] === receiver.node.identity.publicKey.hashcode() &&
+							call.args[1].hash === entry.hash,
+					),
+			).to.equal(true);
 			expect(
 				request
 					.getCalls()
@@ -1185,7 +1251,333 @@ describe("append delivery options — persisted receipts", function () {
 			).to.equal(true);
 		} finally {
 			request.restore();
+			backfill.restore();
+			optimisticDelivery.restore();
+			push.restore();
+			confirmation.restore();
 		}
+	});
+
+	it("requires an exact active V2 generation for receipt candidates and ingress", async () => {
+		const { writer, receiver } = await openPair(true);
+		await waitForPersistedCapability(writer, receiver);
+		const writerLog = writer.log as any;
+		const receiverLog = receiver.log as any;
+		const writerHash = writer.node.identity.publicKey.hashcode();
+		const receiverHash = receiver.node.identity.publicKey.hashcode();
+
+		expect(writerLog.persistedReceiptPeerSession(receiverHash)).to.exist;
+		const capabilities = writerLog._peerSyncCapabilities.get(receiverHash);
+		writerLog._peerSyncCapabilities.set(
+			receiverHash,
+			capabilities & ~SYNC_CAPABILITY_REPLICATION_INFO_V2_CONFIRM,
+		);
+		expect(writerLog.persistedReceiptPeerSession(receiverHash)).to.equal(
+			undefined,
+		);
+		writerLog._peerSyncCapabilities.set(receiverHash, capabilities);
+		expect(writerLog.persistedReceiptPeerSession(receiverHash)).to.exist;
+		const candidateActive = sinon
+			.stub(writerLog._v2Receive, "isCurrentActive")
+			.returns(false);
+		expect(writerLog.persistedReceiptPeerSession(receiverHash)).to.equal(
+			undefined,
+		);
+		expect(candidateActive.calledOnce).to.equal(true);
+		candidateActive.restore();
+
+		const writerSession = receiverLog._peerSessions.current(writerHash);
+		const senderTransportSession = writerLog.ownTransportSession();
+		const missingHash = (await calculateRawCid(randomBytes(32))).cid;
+		const request = new RequestPersistedEntriesV1({
+			expectedReceiverSession: receiverLog.ownTransportSession(),
+			hashes: [missingHash],
+		});
+		const context = {
+			from: writer.node.identity.publicKey,
+			message: { header: { session: senderTransportSession } },
+		};
+		const lane = {
+			fromHash: writerHash,
+			session: writerSession,
+			receiveEpoch: receiverLog._peerSessions.receiveEpoch(writerHash),
+			ownershipLifecycleController:
+				receiverLog.captureReplicationOwnershipLifecycle(),
+		};
+		expect(
+			receiverLog.isPersistedReceiptRequestSessionCurrent(
+				request,
+				context,
+				lane,
+			),
+		).to.equal(true);
+		const ingressActive = sinon
+			.stub(receiverLog._v2Receive, "isCurrentActive")
+			.returns(false);
+		expect(
+			receiverLog.isPersistedReceiptRequestSessionCurrent(
+				request,
+				context,
+				lane,
+			),
+		).to.equal(false);
+		expect(ingressActive.calledOnce).to.equal(true);
+		const ingressAdmission = sinon.spy(
+			receiverLog,
+			"admitPersistedReceiptIngress",
+		);
+		expect(
+			await receiverLog.handleRequestPersistedEntriesV1(request, context, lane),
+		).to.equal(undefined);
+		expect(ingressAdmission.notCalled).to.equal(true);
+		expect(ingressActive.callCount).to.equal(2);
+	});
+
+	it("backfills every freshly planned leader after a smaller persisted quorum", async () => {
+		session = await TestSession.disconnected(1);
+		const writer = await session.peers[0].open(new EventStore<string, any>());
+		const log = writer.log as any;
+		const selfHash = writer.node.identity.publicKey.hashcode();
+		const initiallyPlannedLeaders = ["planned-leader-a", "stale-leader-b"];
+		const freshlyPlannedLeaders = ["planned-leader-a", "fresh-leader-c"];
+		const fullReplicaExtra = "full-replica-d";
+		const crossGidExtra = "cross-gid-leader-e";
+		const initialLeaders = new Map([
+			[selfHash, { intersecting: true }],
+			...initiallyPlannedLeaders.map(
+				(peer) => [peer, { intersecting: true }] as const,
+			),
+		]);
+		const freshLeaders = new Map([
+			[selfHash, { intersecting: true }],
+			...freshlyPlannedLeaders.map(
+				(peer) => [peer, { intersecting: true }] as const,
+			),
+		]);
+		const nativePlan = sinon
+			.stub(log, "planNativeAppendFacts")
+			.resolves(undefined);
+		const plan = sinon.stub(log, "planEntryLeaders");
+		plan.resolves({
+			coordinates: [1],
+			leaders: initialLeaders,
+			isLeader: true,
+		});
+		const extras = sinon
+			.stub(log, "collectDeferredAppendBackfillExtras")
+			.callsFake(async () => ({
+				assignmentExtraLeaders: new Map([
+					[fullReplicaExtra, { intersecting: true }],
+				]),
+				deliveryExtraTargets: new Set([crossGidExtra]),
+				extrasOwnershipRevision:
+					log._instanceLifecycle._receiveOwnershipRevision,
+			}));
+		const settle = sinon
+			.stub(log, "settlePersistedDelivery")
+			.callsFake(async (...args: any[]) => {
+				args[6]?.(
+					[freshLeaders],
+					log._instanceLifecycle._receiveOwnershipRevision,
+				);
+			});
+		const optimisticDelivery = sinon.spy(log, "_appendDeliverToReplicators");
+		const repairEntry = sinon.spy(log, "createEntryReplicatedForRepair");
+		const backfill = sinon.stub(log, "queueAppendBackfill");
+		backfill.onFirstCall().throws(new Error("one backfill target failed"));
+		const lifecycle = log.captureReplicationOwnershipLifecycle();
+
+		try {
+			const { entry } = await writer.add("preserve-replication-degree", {
+				target: "replicators",
+				replicas: 3,
+				delivery: {
+					reliability: "persisted",
+					minAcks: 1,
+					timeout: 1_000,
+				},
+			});
+
+			expect(optimisticDelivery.notCalled).to.equal(true);
+			expect(settle.calledOnce).to.equal(true);
+			expect(settle.firstCall.args[5]).to.equal(true);
+			expect(plan.calledOnce).to.equal(true);
+			expect(extras.calledOnce).to.equal(true);
+			expect(backfill.callCount).to.equal(4);
+			expect(backfill.getCalls().map((call) => call.args[0])).to.have.members([
+				...freshlyPlannedLeaders,
+				fullReplicaExtra,
+				crossGidExtra,
+			]);
+			expect(
+				backfill
+					.getCalls()
+					.every(
+						(call) =>
+							call.args[1].hash === entry.hash && call.args[2] === lifecycle,
+					),
+			).to.equal(true);
+			expect(
+				backfill.getCalls().some((call) => call.args[0] === "stale-leader-b"),
+			).to.equal(false);
+			const repairLeaders = repairEntry.lastCall.args[0].leaders as Map<
+				string,
+				unknown
+			>;
+			expect([...repairLeaders.keys()]).to.have.members([
+				selfHash,
+				...freshlyPlannedLeaders,
+				fullReplicaExtra,
+			]);
+			expect(repairLeaders.has(crossGidExtra)).to.equal(false);
+			expect(repairLeaders.has("stale-leader-b")).to.equal(false);
+		} finally {
+			backfill.restore();
+			repairEntry.restore();
+			optimisticDelivery.restore();
+			settle.restore();
+			extras.restore();
+			plan.restore();
+			nativePlan.restore();
+		}
+	});
+
+	it("keeps full replicas and cross-GID owners in deferred dissemination", async () => {
+		session = await TestSession.disconnected(1);
+		const writer = await session.peers[0].open(new EventStore<string, any>());
+		const { entry } = await writer.add("deferred-dissemination", {
+			target: "none",
+		});
+		const log = writer.log as any;
+		const selfHash = writer.node.identity.publicKey.hashcode();
+		const lifecycle = log.captureReplicationOwnershipLifecycle();
+		const fullReplicas = sinon
+			.stub(log, "getNativeFullReplicaDeliveryCandidates")
+			.resolves(new Set([selfHash, "full-replica"]));
+		const references = sinon
+			.stub(log, "_mergeLeadersFromGidReferences")
+			.callsFake(async (...args: any[]) => {
+				(args[2] as Map<string, { intersecting: boolean }>).set(
+					"cross-gid-leader",
+					{ intersecting: true },
+				);
+			});
+
+		const extras = await log.collectDeferredAppendBackfillExtras(
+			entry,
+			2,
+			new Map([[selfHash, { intersecting: true }]]),
+			undefined,
+			lifecycle,
+		);
+
+		expect([...extras.assignmentExtraLeaders.keys()]).to.deep.equal([
+			"full-replica",
+		]);
+		expect([...extras.deliveryExtraTargets]).to.deep.equal([
+			"cross-gid-leader",
+		]);
+		expect(extras.extrasOwnershipRevision).to.equal(
+			log._instanceLifecycle._receiveOwnershipRevision,
+		);
+		expect(fullReplicas.calledOnceWith(2, selfHash)).to.equal(true);
+		expect(references.called).to.equal(true);
+		expect(references.lastCall.args[4]).to.deep.equal({
+			freshLeaderPlan: true,
+		});
+	});
+
+	it("does not let best-effort backfill mask the persisted-delivery failure", async () => {
+		session = await TestSession.disconnected(1);
+		const writer = await session.peers[0].open(new EventStore<string, any>());
+		const log = writer.log as any;
+		const selfHash = writer.node.identity.publicKey.hashcode();
+		const primaryFailure = new Error("receipt settlement failed");
+		const settle = sinon
+			.stub(log, "settlePersistedDelivery")
+			.callsFake(async (...args: any[]) => {
+				args[6]?.(
+					[
+						new Map([
+							[selfHash, { intersecting: true }],
+							["planned-repair-target", { intersecting: true }],
+						]),
+					],
+					log._instanceLifecycle._receiveOwnershipRevision,
+				);
+				throw primaryFailure;
+			});
+		const backfill = sinon
+			.stub(log, "queuePersistedAppendBackfill")
+			.throws(new Error("secondary best-effort failure"));
+		let failure: unknown;
+
+		try {
+			await writer.add("preserve-primary-failure", {
+				target: "replicators",
+				delivery: {
+					reliability: "persisted",
+					minAcks: 1,
+					timeout: 1_000,
+				},
+			});
+		} catch (error) {
+			failure = error;
+		}
+
+		expect(failure).to.be.instanceOf(PersistedDeliveryError);
+		expect((failure as PersistedDeliveryError).cause).to.equal(primaryFailure);
+		expect(settle.calledOnce).to.equal(true);
+		expect(backfill.calledOnce).to.equal(true);
+	});
+
+	it("rejects append backfill captured by stale lifecycle or ownership state", async () => {
+		session = await TestSession.disconnected(1);
+		const writer = await session.peers[0].open(new EventStore<string, any>());
+		const log = writer.log as any;
+		const { entry } = await writer.add("backfill-generation", {
+			target: "none",
+		});
+		const staleLifecycle = log.captureReplicationOwnershipLifecycle();
+
+		log.startRepairLifecycle();
+		log.queueAppendBackfill(
+			"stale-target",
+			{ hash: "stale-entry" },
+			staleLifecycle,
+		);
+
+		expect(log._appendBackfillPendingByTarget.size).to.equal(0);
+
+		const currentLifecycle = log.captureReplicationOwnershipLifecycle();
+		const staleOwnershipRevision =
+			log._instanceLifecycle._receiveOwnershipRevision;
+		log._instanceLifecycle._receiveOwnershipRevision++;
+		const currentOwnershipRevision =
+			log._instanceLifecycle._receiveOwnershipRevision;
+		const backfill = sinon.stub(log, "queueAppendBackfill");
+		log.queuePersistedAppendBackfill(
+			{
+				entry,
+				coordinates: [1],
+				assignmentExtraLeaders: new Map([
+					["stale-full-replica", { intersecting: true }],
+				]),
+				deliveryExtraTargets: new Set(["stale-cross-gid"]),
+				extrasOwnershipRevision: staleOwnershipRevision,
+			},
+			new Map([
+				[writer.node.identity.publicKey.hashcode(), { intersecting: true }],
+				["fresh-base-leader", { intersecting: true }],
+			]),
+			1,
+			currentLifecycle,
+			currentOwnershipRevision,
+		);
+
+		expect(backfill.calledOnceWith("fresh-base-leader")).to.equal(true);
+		expect(backfill.neverCalledWith("stale-full-replica")).to.equal(true);
+		expect(backfill.neverCalledWith("stale-cross-gid")).to.equal(true);
 	});
 
 	it("receipts a durable native receiver from its authoritative resident coordinates", async () => {
@@ -1328,6 +1720,7 @@ describe("append delivery options — persisted receipts", function () {
 		const peerSession = sinon
 			.stub(log, "persistedReceiptPeerSession")
 			.returns(receiptSession);
+		allowPersistedReceiptFreshness(log);
 		const stable = sinon
 			.stub(log, "isReceiveOwnershipSnapshotStable")
 			.returns(true);
@@ -1353,6 +1746,95 @@ describe("append delivery options — persisted receipts", function () {
 			expect(request.firstCall.args[1].mode.to).to.deep.equal([leader]);
 		} finally {
 			request.restore();
+			stable.restore();
+			peerSession.restore();
+			findLeaders.restore();
+		}
+	});
+
+	it("waits for exact receiver freshness before the first transfer", async () => {
+		session = await TestSession.disconnected(1);
+		const writer = await session.peers[0].open(new EventStore<string, any>());
+		const { entry } = await writer.add("receiver-freshness", {
+			target: "none",
+		});
+		const log = writer.log as any;
+		const peer = "fresh-receiver";
+		const receiptSession = {
+			capabilitySession: 1n,
+			peerSession: { peer },
+		};
+		const events: string[] = [];
+		const findLeaders = sinon
+			.stub(log, "findLeadersFromEntry")
+			.resolves(new Map([[peer, {}]]));
+		const peerSession = sinon
+			.stub(log, "persistedReceiptPeerSession")
+			.returns(receiptSession);
+		const stable = sinon
+			.stub(log, "isReceiveOwnershipSnapshotStable")
+			.returns(true);
+		const retry = sinon.stub(log, "waitPersistedReceiptRetry").resolves();
+		const confirmation = sinon
+			.stub(log._v2Send, "confirmLatestForPeer")
+			.onFirstCall()
+			.callsFake(async () => {
+				events.push("freshness:blocked");
+				throw new Error("receiver has not applied the role state");
+			});
+		confirmation.onSecondCall().callsFake(async () => {
+			events.push("freshness:applied");
+		});
+		const waitForAdmission = sinon
+			.stub(log, "waitForPersistedTransferAdmission")
+			.resolves(true);
+		const push = sinon
+			.stub(log, "pushEntryHashes")
+			.callsFake(async (...args: unknown[]) => {
+				const hashes = args[1] as string[];
+				const options = args[2] as any;
+				events.push("transfer");
+				options.onChunkAttempted(hashes);
+				await options.onChunkSent(hashes);
+			});
+		const request = sinon
+			.stub(log.rpc, "request")
+			.callsFake(async (...args: unknown[]) => {
+				events.push("receipt");
+				const message = args[0] as RequestPersistedEntriesV1;
+				return [
+					{
+						response: new ConfirmEntriesMessage({ hashes: message.hashes }),
+						from: { hashcode: () => peer },
+						message: { header: { session: 1n } },
+					},
+				];
+			});
+
+		try {
+			await log.deliverPersistedEntries([entry], {
+				target: "replicators",
+				delivery: {
+					reliability: "persisted",
+					minAcks: 1,
+					timeout: 1_000,
+				},
+			});
+			expect(events).to.deep.equal([
+				"freshness:blocked",
+				"freshness:applied",
+				"transfer",
+				"receipt",
+			]);
+			expect(confirmation.callCount).to.equal(2);
+			expect(push.calledOnce).to.be.true;
+			expect(request.calledOnce).to.be.true;
+		} finally {
+			request.restore();
+			push.restore();
+			waitForAdmission.restore();
+			confirmation.restore();
+			retry.restore();
 			stable.restore();
 			peerSession.restore();
 			findLeaders.restore();
@@ -1434,33 +1916,23 @@ describe("append delivery options — persisted receipts", function () {
 		const { writer, receiver } = await openPair(true);
 		await waitForPersistedCapability(writer, receiver);
 		const sharedLog = writer.log as any;
-		const rpc = sharedLog.rpc as any;
-		const originalSend = rpc.send.bind(rpc);
 		let droppedInitialEntry = false;
-		const send = sinon.stub(rpc, "send").callsFake(async (...args: any[]) => {
-			if (args[0] instanceof ExchangeHeadsMessage) {
-				for (const head of args[0].heads) {
-					const operation = await head.entry.getPayloadValue();
-					if (operation.value === "repair-before-receipt") {
-						if (!droppedInitialEntry) {
-							droppedInitialEntry = true;
-							return;
-						}
-					}
-				}
-			}
-			return originalSend(...args);
-		});
 		const originalPushEntryHashes = sharedLog.pushEntryHashes.bind(sharedLog);
 		const attemptedReceiptRepair = new Set<string>();
 		const presentAfterReceiptRepair = new Set<string>();
 		const pushEntryHashes = sinon
 			.stub(sharedLog, "pushEntryHashes")
 			.callsFake(async (...args: any[]) => {
+				const hashes = [...args[1]] as string[];
+				if (args[2]?.repairHint !== true && !droppedInitialEntry) {
+					droppedInitialEntry = true;
+					// Model a transport attempt whose entry never arrives. Settlement must
+					// probe it, observe the empty receipt, and schedule the repair round.
+					args[2]?.onChunkAttempted?.(hashes);
+					return;
+				}
 				const receiptRepairHashes =
-					args[2]?.repairHint === true && args[2]?.operationQueue
-						? ([...args[1]] as string[])
-						: [];
+					args[2]?.repairHint === true && args[2]?.operationQueue ? hashes : [];
 				for (const hash of receiptRepairHashes) {
 					// Background convergence can fill the entry after the missing
 					// receipt response but before this repair dispatch. The invariant
@@ -1493,7 +1965,6 @@ describe("append delivery options — persisted receipts", function () {
 			expect(await receiver.log.log.has(entry.hash)).to.equal(true);
 		} finally {
 			pushEntryHashes.restore();
-			send.restore();
 		}
 	});
 
@@ -1517,6 +1988,7 @@ describe("append delivery options — persisted receipts", function () {
 		const peerSession = sinon
 			.stub(log, "persistedReceiptPeerSession")
 			.returns(receiptSession);
+		allowPersistedReceiptFreshness(log);
 		const stable = sinon
 			.stub(log, "isReceiveOwnershipSnapshotStable")
 			.returns(true);
@@ -1619,6 +2091,7 @@ describe("append delivery options — persisted receipts", function () {
 		const peerSession = sinon
 			.stub(log, "persistedReceiptPeerSession")
 			.callsFake((...args: unknown[]) => sessions.get(args[0] as string));
+		allowPersistedReceiptFreshness(log);
 		const stable = sinon
 			.stub(log, "isReceiveOwnershipSnapshotStable")
 			.returns(true);
@@ -1952,6 +2425,7 @@ describe("append delivery options — persisted receipts", function () {
 		const peerSession = sinon
 			.stub(log, "persistedReceiptPeerSession")
 			.callsFake((...args: unknown[]) => sessions.get(args[0] as string));
+		allowPersistedReceiptFreshness(log);
 		const stable = sinon
 			.stub(log, "isReceiveOwnershipSnapshotStable")
 			.returns(true);
@@ -2031,6 +2505,7 @@ describe("append delivery options — persisted receipts", function () {
 		const peerSession = sinon
 			.stub(log, "persistedReceiptPeerSession")
 			.callsFake((...args: unknown[]) => sessions.get(args[0] as string));
+		allowPersistedReceiptFreshness(log);
 		const stable = sinon
 			.stub(log, "isReceiveOwnershipSnapshotStable")
 			.returns(true);
@@ -2114,6 +2589,7 @@ describe("append delivery options — persisted receipts", function () {
 		const peerSession = sinon
 			.stub(log, "persistedReceiptPeerSession")
 			.callsFake((...args: unknown[]) => sessions.get(args[0] as string));
+		allowPersistedReceiptFreshness(log);
 		const stable = sinon
 			.stub(log, "isReceiveOwnershipSnapshotStable")
 			.returns(true);
@@ -2194,6 +2670,7 @@ describe("append delivery options — persisted receipts", function () {
 		const peerSession = sinon
 			.stub(log, "persistedReceiptPeerSession")
 			.returns(receiptSession);
+		allowPersistedReceiptFreshness(log);
 		const stable = sinon
 			.stub(log, "isReceiveOwnershipSnapshotStable")
 			.returns(true);
@@ -2273,6 +2750,7 @@ describe("append delivery options — persisted receipts", function () {
 		const peerSession = sinon
 			.stub(log, "persistedReceiptPeerSession")
 			.returns(receiptSession);
+		allowPersistedReceiptFreshness(log);
 		const stable = sinon
 			.stub(log, "isReceiveOwnershipSnapshotStable")
 			.returns(true);
@@ -2349,6 +2827,7 @@ describe("append delivery options — persisted receipts", function () {
 		const peerSession = sinon
 			.stub(log, "persistedReceiptPeerSession")
 			.returns(receiptSession);
+		allowPersistedReceiptFreshness(log);
 		const waitForAdmission = sinon
 			.stub(log, "waitForPersistedTransferAdmission")
 			.resolves(true);
@@ -2419,6 +2898,7 @@ describe("append delivery options — persisted receipts", function () {
 		const peerSession = sinon
 			.stub(log, "persistedReceiptPeerSession")
 			.callsFake(() => receiptSession);
+		allowPersistedReceiptFreshness(log);
 		const stable = sinon
 			.stub(log, "isReceiveOwnershipSnapshotStable")
 			.returns(true);
@@ -2533,6 +3013,7 @@ describe("append delivery options — persisted receipts", function () {
 		const peerSession = sinon
 			.stub(log, "persistedReceiptPeerSession")
 			.callsFake((...args: unknown[]) => sessions.get(args[0] as string));
+		allowPersistedReceiptFreshness(log);
 		const stable = sinon
 			.stub(log, "isReceiveOwnershipSnapshotStable")
 			.returns(true);
@@ -2633,6 +3114,7 @@ describe("append delivery options — persisted receipts", function () {
 		const peerSession = sinon
 			.stub(log, "persistedReceiptPeerSession")
 			.callsFake((...args: unknown[]) => sessions.get(args[0] as string));
+		allowPersistedReceiptFreshness(log);
 		const stable = sinon
 			.stub(log, "isReceiveOwnershipSnapshotStable")
 			.returns(true);
@@ -2750,6 +3232,31 @@ describe("append delivery options — persisted receipts", function () {
 			log._nativeRangePlanner = originalRangePlanner;
 			log._nativeBackbone = originalBackbone;
 		}
+	});
+
+	it("bypasses the leader-selection context cache for a fresh receipt plan", async () => {
+		session = await TestSession.disconnected(1);
+		const writer = await session.peers[0].open(new EventStore<string, any>());
+		const log = writer.log as any;
+		const staleContext = {
+			roleAge: 123,
+			selfHash: "stale-self",
+			selfReplicating: false,
+			peerFilter: new Set(["stale-peer"]),
+			peerFilterArray: ["stale-peer"],
+		};
+		log._leaderSelectionContextCache = {
+			expiresAt: Date.now() + 1_000,
+			context: staleContext,
+		};
+
+		const cached = await log.createLeaderSelectionContext();
+		expect(cached.selfHash).to.equal("stale-self");
+		const fresh = await log.createLeaderSelectionContext({
+			freshLeaderPlan: true,
+		});
+		expect(fresh.selfHash).to.equal(writer.node.identity.publicKey.hashcode());
+		expect(fresh.selfHash).to.not.equal(cached.selfHash);
 	});
 
 	it("reuses one routing full-replica map for persisted delivery", async () => {
@@ -2943,6 +3450,7 @@ describe("append delivery options — persisted receipts", function () {
 		const peerSession = sinon
 			.stub(log, "persistedReceiptPeerSession")
 			.returns(receiptSession);
+		allowPersistedReceiptFreshness(log);
 		const stable = sinon
 			.stub(log, "isReceiveOwnershipSnapshotStable")
 			.returns(true);
@@ -3031,6 +3539,7 @@ describe("append delivery options — persisted receipts", function () {
 		const peerSession = sinon
 			.stub(log, "persistedReceiptPeerSession")
 			.returns(receiptSession);
+		allowPersistedReceiptFreshness(log);
 		const stable = sinon
 			.stub(log, "isReceiveOwnershipSnapshotStable")
 			.returns(true);

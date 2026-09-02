@@ -880,6 +880,87 @@ describe("receive admission replication-info V2 receiver state", () => {
 		expect(state.lastSequence).to.equal(5n);
 	});
 
+	it("reports only the exact current active receive generation", () => {
+		expect(markLocalReady()).to.be.true;
+		expect(observeSender()).to.be.true;
+		const state = coordinator._receiveStates.get(peerHash)!;
+		const properties = {
+			peerHash,
+			peerSession: currentSession,
+			receiveEpoch: currentReceiveEpoch,
+			senderTransportSession,
+		};
+		expect(coordinator.isCurrentActive(properties)).to.be.false;
+
+		const full = new FullReplicationInfoV2Message({
+			receiverChallenge: state.receiverBinding!.slice(),
+			senderEpoch: bytes(43),
+			sequence: 1n,
+			segments: [],
+		});
+		expect(coordinator.commit(prepare(full)!)).to.be.true;
+		expect(coordinator.isCurrentActive(properties)).to.be.true;
+		const pending = new AddedReplicationInfoV2Message({
+			receiverChallenge: state.receiverBinding!.slice(),
+			senderEpoch: bytes(43),
+			sequence: 2n,
+			segments: [],
+		});
+		const reserved = coordinator.reserve(pending, {
+			from: sender,
+			peerSession: currentSession,
+			receiveEpoch: currentReceiveEpoch,
+			senderTransportSession,
+			transportTimestamp: 2n,
+		});
+		expect(reserved).to.exist;
+		expect(coordinator.isCurrentActive(properties)).to.be.false;
+
+		// Lock both guards independently. A same-key replacement can leave an
+		// old generation in the peer-global apply lane while the current state's
+		// own reservation slot is empty.
+		coordinator._reservedAdmissionsByPeer.delete(peerHash);
+		expect(state.reservedAdmission).to.equal(reserved);
+		expect(coordinator.isCurrentActive(properties)).to.be.false;
+		coordinator._reservedAdmissionsByPeer.set(peerHash, reserved!);
+		state.reservedAdmission = undefined;
+		expect(coordinator.isCurrentActive(properties)).to.be.false;
+		state.reservedAdmission = reserved;
+
+		expect(coordinator.commit(reserved!)).to.be.true;
+		expect(coordinator.isCurrentActive(properties)).to.be.true;
+
+		expect(
+			coordinator.isCurrentActive({
+				...properties,
+				peerHash: key(9).hashcode(),
+			}),
+		).to.be.false;
+		expect(coordinator.isCurrentActive({ ...properties, peerSession: {} })).to
+			.be.false;
+		expect(coordinator.isCurrentActive({ ...properties, receiveEpoch: {} })).to
+			.be.false;
+		expect(
+			coordinator.isCurrentActive({
+				...properties,
+				senderTransportSession: senderTransportSession + 1n,
+			}),
+		).to.be.false;
+
+		peerStateReady = false;
+		expect(coordinator.isCurrentActive(properties)).to.be.false;
+		peerStateReady = true;
+		const gap = new StoppedReplicationInfoV2Message({
+			receiverChallenge: state.receiverBinding!.slice(),
+			senderEpoch: bytes(43),
+			sequence: 4n,
+			segmentIds: [],
+		});
+		expect(prepare(gap)).to.be.undefined;
+		expect(state.phase).to.equal("resync");
+		expect(coordinator.isCurrentActive(properties)).to.be.false;
+	});
+
 	it("drops a confirmation query before commit and answers its retry after commit", () => {
 		expect(markLocalReady()).to.be.true;
 		expect(observeSender()).to.be.true;

@@ -1235,6 +1235,31 @@ export class ReplicationInfoV2ReceiveCoordinator {
 		);
 	}
 
+	/**
+	 * Exact active receive generation used by durability-sensitive callers.
+	 * An open PeerSession alone is not evidence that its authoritative Full has
+	 * crossed the host apply lane, especially during a same-key reconnect.
+	 */
+	isCurrentActive(properties: {
+		peerHash: string;
+		peerSession: object;
+		receiveEpoch: object | null;
+		senderTransportSession: bigint;
+	}): boolean {
+		const state = this._receiveStates.get(properties.peerHash);
+		return (
+			state !== undefined &&
+			state.peerHash === properties.peerHash &&
+			state.peerSession === properties.peerSession &&
+			state.receiveEpoch === properties.receiveEpoch &&
+			state.senderTransportSession === properties.senderTransportSession &&
+			state.phase === "active" &&
+			state.reservedAdmission === undefined &&
+			!this._reservedAdmissionsByPeer.has(properties.peerHash) &&
+			this.isStateCurrent(state)
+		);
+	}
+
 	commit(admission: ReplicationInfoV2ReceiveAdmission): boolean {
 		if (admission.committed) {
 			return this.isAdmissionCurrent(admission);
@@ -1294,9 +1319,12 @@ export class ReplicationInfoV2ReceiveCoordinator {
 		const state = this._receiveStates.get(properties.from.hashcode());
 		if (
 			!state ||
-			state.peerSession !== properties.peerSession ||
-			state.receiveEpoch !== properties.receiveEpoch ||
-			state.senderTransportSession !== properties.senderTransportSession ||
+			!this.isCurrentActive({
+				peerHash: properties.from.hashcode(),
+				peerSession: properties.peerSession,
+				receiveEpoch: properties.receiveEpoch,
+				senderTransportSession: properties.senderTransportSession,
+			}) ||
 			!state.target.equals(properties.from) ||
 			!state.receiverBinding ||
 			!bytesEqual(request.receiverChallenge, state.receiverBinding) ||
@@ -1304,8 +1332,7 @@ export class ReplicationInfoV2ReceiveCoordinator {
 			!bytesEqual(request.senderEpoch, state.senderEpoch) ||
 			request.sequence <= 0n ||
 			state.lastSequence === undefined ||
-			state.lastSequence < request.sequence ||
-			!this.isStateCurrent(state)
+			state.lastSequence < request.sequence
 		) {
 			return undefined;
 		}
