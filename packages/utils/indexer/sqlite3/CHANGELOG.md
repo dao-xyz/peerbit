@@ -1,5 +1,13 @@
 # Changelog
 
+## 3.0.20
+
+### Patch Changes
+
+- [#1393](https://github.com/dao-xyz/peerbit/pull/1393) [`7e50719`](https://github.com/dao-xyz/peerbit/commit/7e50719f87b39ca10bb6fc6e66f1f0e68ff52c5e) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Prevent admitted scope and index initialization from racing SQLite shutdown by sealing lifecycle admission, binding nested work to ancestor startup, and draining registered startup before closing the database.
+
+  Work submitted after shutdown begins now rejects with `NotStartedError`. A `drop()` that conflicts with an already-running `stop()` rejects the same way because the native adapter cannot delete its database after the stop closes the handle.
+
 ## 3.0.19
 
 ### Patch Changes
