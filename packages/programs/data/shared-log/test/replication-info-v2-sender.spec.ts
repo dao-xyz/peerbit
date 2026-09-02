@@ -12,7 +12,10 @@ import {
 	SYNC_CAPABILITY_REPLICATION_INFO_V2_SEND,
 	SyncCapabilitiesMessage,
 } from "../src/exchange-heads.js";
-import { ReplicationIntent, ReplicationRangeMessageU32 } from "../src/ranges.js";
+import {
+	ReplicationIntent,
+	ReplicationRangeMessageU32,
+} from "../src/ranges.js";
 import {
 	ReplicationInfoV2SendCoordinator,
 	type ReplicationInfoV2SendState,
@@ -352,6 +355,192 @@ describe("receive admission replication-info V2 sender streams", () => {
 		expect(queries).to.have.length(1);
 		expect(queries[0].revision).to.equal(3n);
 		expect(coordinator._confirmations.size).to.equal(0);
+	});
+
+	it("coalesces an exact-peer barrier and cannot satisfy it from another peer", async () => {
+		const peerASession = {};
+		const peerBSession = {};
+		openSessions.add(peerASession);
+		openSessions.add(peerBSession);
+		expect(accept(peerA, peerASession, challenge(64))).to.be.true;
+		expect(accept(peerB, peerBSession, challenge(65))).to.be.true;
+		await coordinator.drain();
+		rpcSend.resetHistory();
+
+		let peerBQuery: RequestReplicationInfoV2AppliedMessage | undefined;
+		rpcSend.callsFake(async (message, options) => {
+			if (!(message instanceof RequestReplicationInfoV2AppliedMessage)) {
+				return [];
+			}
+			const target = options.mode.to[0];
+			if (target === peerA.hashcode()) {
+				expect(
+					coordinator.acceptApplied(
+						new ReplicationInfoV2AppliedMessage({
+							receiverChallenge: message.receiverChallenge.slice(),
+							senderEpoch: message.senderEpoch.slice(),
+							sequence: message.sequence,
+							revision: message.revision,
+						}),
+						{ from: peerA, receiverTransportSession: 2n },
+					),
+				).to.be.true;
+			} else if (target === peerB.hashcode()) {
+				peerBQuery = message;
+			}
+			return [];
+		});
+
+		coordinator.enqueue({ added: { segments: [] } });
+		const anyPeer = coordinator.confirmLatest({ timeout: 1_000 });
+		const target = {
+			peerHash: peerB.hashcode(),
+			peerSession: peerBSession,
+			receiverTransportSession: 3n,
+		};
+		let exactSettled = false;
+		const firstExact = coordinator
+			.confirmLatestForPeer(target, { timeout: 1_000 })
+			.then(() => {
+				exactSettled = true;
+			});
+		const secondExact = coordinator.confirmLatestForPeer(target, {
+			timeout: 1_000,
+		});
+		await coordinator.drain();
+		await anyPeer;
+
+		expect(peerBQuery).to.exist;
+		expect(exactSettled).to.be.false;
+		expect(
+			rpcSend.args.filter(
+				(args) =>
+					args[0] instanceof RequestReplicationInfoV2AppliedMessage &&
+					args[1].mode.to[0] === peerB.hashcode(),
+			),
+		).to.have.length(1);
+
+		expect(
+			coordinator.acceptApplied(
+				new ReplicationInfoV2AppliedMessage({
+					receiverChallenge: peerBQuery!.receiverChallenge.slice(),
+					senderEpoch: peerBQuery!.senderEpoch.slice(),
+					sequence: peerBQuery!.sequence,
+					revision: peerBQuery!.revision,
+				}),
+				{ from: peerB, receiverTransportSession: 3n },
+			),
+		).to.be.true;
+		await Promise.all([firstExact, secondExact]);
+		expect(coordinator._confirmations.size).to.equal(0);
+	});
+
+	it("rejects an exact barrier when its peer clears before a sender stream exists", async () => {
+		const peerSession = {};
+		openSessions.add(peerSession);
+		const confirmation = coordinator
+			.confirmLatestForPeer(
+				{
+					peerHash: peerA.hashcode(),
+					peerSession,
+					receiverTransportSession: 2n,
+				},
+				{ timeout: 1_000 },
+			)
+			.then(
+				() => undefined,
+				(error) => error,
+			);
+		expect(coordinator._sendStates.size).to.equal(0);
+		expect(coordinator._confirmations.size).to.equal(1);
+
+		openSessions.delete(peerSession);
+		coordinator.clearPeer(peerA.hashcode(), peerSession);
+		expect(await confirmation).to.be.instanceOf(AbortError);
+		expect(coordinator._confirmations.size).to.equal(0);
+	});
+
+	it("does not carry an exact-peer barrier across a same-key reconnect", async () => {
+		coordinator.clearForClose();
+		coordinator = createCoordinator({ confirmationRetryMs: 5 });
+		const oldSession = {};
+		const newSession = {};
+		openSessions.add(oldSession);
+		expect(accept(peerA, oldSession, challenge(66))).to.be.true;
+		await coordinator.drain();
+		rpcSend.resetHistory();
+
+		let answerNewSession = false;
+		rpcSend.callsFake(async (message) => {
+			if (
+				answerNewSession &&
+				message instanceof RequestReplicationInfoV2AppliedMessage
+			) {
+				expect(
+					coordinator.acceptApplied(
+						new ReplicationInfoV2AppliedMessage({
+							receiverChallenge: message.receiverChallenge.slice(),
+							senderEpoch: message.senderEpoch.slice(),
+							sequence: message.sequence,
+							revision: message.revision,
+						}),
+						{ from: peerA, receiverTransportSession: 2n },
+					),
+				).to.be.true;
+			}
+			return [];
+		});
+
+		coordinator.enqueue({ added: { segments: [] } });
+		let oldExactSettled = false;
+		const oldExact = coordinator
+			.confirmLatestForPeer(
+				{
+					peerHash: peerA.hashcode(),
+					peerSession: oldSession,
+					receiverTransportSession: 2n,
+				},
+				{ timeout: 1_000 },
+			)
+			.then(
+				() => {
+					oldExactSettled = true;
+				},
+				(error) => error,
+			);
+		const secondOldExact = coordinator
+			.confirmLatestForPeer(
+				{
+					peerHash: peerA.hashcode(),
+					peerSession: oldSession,
+					receiverTransportSession: 2n,
+				},
+				{ timeout: 1_000 },
+			)
+			.then(
+				() => undefined,
+				(error) => error,
+			);
+		const anyCurrentPeer = coordinator.confirmLatest({ timeout: 1_000 });
+		await coordinator.drain();
+
+		openSessions.delete(oldSession);
+		coordinator.clearPeer(peerA.hashcode(), oldSession);
+		expect(await oldExact).to.be.instanceOf(AbortError);
+		expect(await secondOldExact).to.be.instanceOf(AbortError);
+		expect(oldExactSettled).to.be.false;
+		// The untargeted quorum waiter remains eligible for the replacement.
+		expect(coordinator._confirmations.size).to.equal(1);
+		openSessions.add(newSession);
+		answerNewSession = true;
+		expect(accept(peerA, newSession, challenge(67), 2n)).to.be.true;
+		await coordinator.drain();
+		await anyCurrentPeer;
+		expect(coordinator._confirmations.size).to.equal(0);
+		expect(oldExactSettled).to.be.false;
+		expect(coordinator._sendStates.get(peerA.hashcode())?.peerSession).to.equal(
+			newSession,
+		);
 	});
 
 	it("resolves on an applied response that races ahead of transport settle", async () => {

@@ -719,6 +719,14 @@ type PersistedDeliveryPlanningRecord<T, R extends "u32" | "u64"> = Readonly<{
 	createFullPlanningSource?: () => Entry<T>;
 }>;
 
+type PersistedAppendBackfillSource<T, R extends "u32" | "u64"> = {
+	entry: Entry<T>;
+	coordinates: NumberFromType<R>[];
+	assignmentExtraLeaders: LeaderMap;
+	deliveryExtraTargets: Set<string>;
+	extrasOwnershipRevision?: number;
+};
+
 type NativeBackboneSimpleDocumentProjectionPlan = {
 	documentVariantType?: "u8" | "string";
 	documentVariantValue?: string;
@@ -5475,6 +5483,10 @@ export class SharedLog<
 	): { capabilitySession: bigint; peerSession: PeerSession } | undefined {
 		const capabilitySession = this._peerSyncCapabilitySessions.get(peerHash);
 		const peerSession = this._peerSessions.current(peerHash);
+		const receiveEpoch = this._peerSessions.receiveEpoch(peerHash);
+		const requiredCapabilities =
+			SYNC_CAPABILITY_PERSISTED_ENTRY_RECEIPTS |
+			SYNC_CAPABILITY_REPLICATION_INFO_V2_CONFIRM;
 		if (
 			capabilitySession == null ||
 			!peerSession ||
@@ -5482,8 +5494,14 @@ export class SharedLog<
 			!this._peerSessions.isCurrent(peerHash, peerSession) ||
 			!this._peerSyncCapabilityTimestamps.has(peerHash) ||
 			((this._peerSyncCapabilities.get(peerHash) ?? 0) &
-				SYNC_CAPABILITY_PERSISTED_ENTRY_RECEIPTS) ===
-				0
+				requiredCapabilities) !==
+				requiredCapabilities ||
+			!this._v2Receive.isCurrentActive({
+				peerHash,
+				peerSession,
+				receiveEpoch,
+				senderTransportSession: capabilitySession,
+			})
 		) {
 			return undefined;
 		}
@@ -5754,6 +5772,10 @@ export class SharedLog<
 		ownershipLifecycleController = this.captureReplicationOwnershipLifecycle(),
 		persistedDeadline?: PersistedDeliveryDeadline,
 		transferOnFirstRound = false,
+		onFreshLeaderPlan?: (
+			leadersByEntry: readonly LeaderMap[],
+			ownershipRevision: number,
+		) => void,
 	): Promise<void> {
 		const minAcks = Math.floor(delivery.minAcks!);
 		const records = new Map(
@@ -5843,6 +5865,8 @@ export class SharedLog<
 					replicas,
 					ownershipLifecycleController,
 				);
+				if (!isRoundOwnershipCurrent()) continue;
+				onFreshLeaderPlan?.(leadersByEntry, ownershipRevision);
 				if (!isRoundOwnershipCurrent()) continue;
 				const selfHash = this.node.identity.publicKey.hashcode();
 				if (needsInitialLeaderCheck) {
@@ -5946,6 +5970,32 @@ export class SharedLog<
 									current.peerSession === captured.peerSession
 								);
 							};
+							try {
+								await this._v2Send.confirmLatestForPeer(
+									{
+										peerHash: peer,
+										peerSession: captured.peerSession,
+										receiverTransportSession: captured.capabilitySession,
+									},
+									{
+										timeout: getAttemptTimeout(),
+										signal: roundSignal,
+									},
+								);
+							} catch {
+								// The exact receiver generation did not prove that it applied
+								// our latest role state. Replan instead of transferring to a
+								// peer that can still make a stale admission decision.
+								if (transferAllOnRound && isPeerRoundCurrent()) {
+									const state = ensureRepairState();
+									for (const hash of hashes) state.hashes.add(hash);
+								}
+								return;
+							}
+							if (!isPeerRoundCurrent()) {
+								purgePeerDeliveryState(peer);
+								return;
+							}
 							const repairs = repairsByPeer.get(peer)?.hashes;
 							const transferHashes = transferAllOnRound
 								? hashes
@@ -6122,6 +6172,9 @@ export class SharedLog<
 							replicas,
 							ownershipLifecycleController,
 						);
+						if (!isRoundOwnershipCurrent()) return false;
+						onFreshLeaderPlan?.(validatedLeaders, ownershipRevision);
+						if (!isRoundOwnershipCurrent()) return false;
 						for (let index = 0; index < entryArray.length; index++) {
 							if (signal.aborted || !isRoundOwnershipCurrent()) {
 								if (signal.aborted) {
@@ -6203,6 +6256,75 @@ export class SharedLog<
 		} finally {
 			if (ownedDeadline) deadline.dispose();
 		}
+	}
+
+	private async collectDeferredAppendBackfillExtras(
+		entry: Entry<T>,
+		replicas: number,
+		baseLeaders: LeaderMap,
+		nativeDeliveryPlan: AppendDeliveryPlan | undefined,
+		ownershipLifecycleController: AbortController,
+	): Promise<
+		Omit<PersistedAppendBackfillSource<T, R>, "entry" | "coordinates">
+	> {
+		const ownershipRevision =
+			this._instanceLifecycle?._receiveOwnershipRevision ?? 0;
+		const ownershipWasStable =
+			this.isReceiveOwnershipSnapshotStable(ownershipRevision);
+		const assignmentExtraLeaders: LeaderMap = new Map();
+		const deliveryExtraTargets = new Set<string>();
+		if (nativeDeliveryPlan) {
+			for (const peer of nativeDeliveryPlan.repairTargets) {
+				// The sampled entry leaders are replaced by settlement's fresh plan.
+				// Retain only native repair additions that were outside that base map.
+				if (!baseLeaders.has(peer)) deliveryExtraTargets.add(peer);
+			}
+		} else {
+			const selfHash = this.node.identity.publicKey.hashcode();
+			const fullReplicaDeliveryCandidates =
+				await this.getNativeFullReplicaDeliveryCandidates(replicas, selfHash);
+			this.throwIfReplicationOwnershipLifecycleInactive(
+				ownershipLifecycleController,
+			);
+			if (replicas >= Math.max(1, fullReplicaDeliveryCandidates.size)) {
+				for (const peer of fullReplicaDeliveryCandidates) {
+					if (!baseLeaders.has(peer)) {
+						assignmentExtraLeaders.set(peer, { intersecting: true });
+					}
+				}
+			}
+		}
+
+		const referenceLeaders: LeaderMap = new Map();
+		for await (const message of createExchangeHeadsMessages(this.log, [
+			entry,
+		])) {
+			this.throwIfReplicationOwnershipLifecycleInactive(
+				ownershipLifecycleController,
+			);
+			await this._mergeLeadersFromGidReferences(
+				message,
+				replicas,
+				referenceLeaders,
+				ownershipLifecycleController,
+				{ freshLeaderPlan: true },
+			);
+		}
+		this.throwIfReplicationOwnershipLifecycleInactive(
+			ownershipLifecycleController,
+		);
+		for (const peer of referenceLeaders.keys()) {
+			deliveryExtraTargets.add(peer);
+		}
+		return {
+			assignmentExtraLeaders,
+			deliveryExtraTargets,
+			extrasOwnershipRevision:
+				ownershipWasStable &&
+				this.isReceiveOwnershipSnapshotStable(ownershipRevision)
+					? ownershipRevision
+					: undefined,
+		};
 	}
 
 	private async _appendDeliverToReplicators(
@@ -6299,7 +6421,11 @@ export class SharedLog<
 				if (!delivery) {
 					for (const peer of nativeDeliveryPlan.repairTargets) {
 						throwIfInactive();
-						this.queueAppendBackfill(peer, entryReplicatedForRepair);
+						this.queueAppendBackfill(
+							peer,
+							entryReplicatedForRepair,
+							ownershipLifecycleController,
+						);
 					}
 					if (nativeDeliveryPlan.defaultSendSilent) {
 						const rawTargets = this.canUseLiveRawGossip(
@@ -6372,7 +6498,11 @@ export class SharedLog<
 				}
 				for (const peer of nativeDeliveryPlan.repairTargets) {
 					throwIfInactive();
-					this.queueAppendBackfill(peer, entryReplicatedForRepair);
+					this.queueAppendBackfill(
+						peer,
+						entryReplicatedForRepair,
+						ownershipLifecycleController,
+					);
 				}
 				continue;
 			}
@@ -6427,7 +6557,11 @@ export class SharedLog<
 					// delivery acks, we still need a targeted backfill source of truth for the
 					// authoritative recipients or one entry can get stuck at 2/3 replicas
 					// forever. Best-effort fallback subscribers are not repair-worthy.
-					this.queueAppendBackfill(peer, entryReplicatedForRepair);
+					this.queueAppendBackfill(
+						peer,
+						entryReplicatedForRepair,
+						ownershipLifecycleController,
+					);
 				}
 				if (isLeader) {
 					const rawTargets = this.canUseLiveRawGossip(set, selfHash);
@@ -6536,7 +6670,11 @@ export class SharedLog<
 				// Direct append delivery is intentionally optimistic. Queue one delayed,
 				// batched maybe-sync pass for the intended recipients so stable 3-peer
 				// append workloads do not depend on perfect first-try delivery ordering.
-				this.queueAppendBackfill(peer, entryReplicatedForRepair);
+				this.queueAppendBackfill(
+					peer,
+					entryReplicatedForRepair,
+					ownershipLifecycleController,
+				);
 			}
 		}
 
@@ -6551,6 +6689,7 @@ export class SharedLog<
 		minReplicasValue: number,
 		leaders: LeaderMap,
 		ownershipLifecycleController = this.captureReplicationOwnershipLifecycle(),
+		options?: { freshLeaderPlan?: boolean },
 	) {
 		const throwIfInactive = () =>
 			this.throwIfReplicationOwnershipLifecycleInactive(
@@ -6576,13 +6715,13 @@ export class SharedLog<
 					found = await this.findLeadersFromEntry(
 						gidEntry,
 						minReplicasValue,
-						undefined,
+						options?.freshLeaderPlan ? { freshLeaderPlan: true } : undefined,
 						ownershipLifecycleController,
 					);
 				} else {
 					found = await this._findLeaders(
 						coordinates,
-						undefined,
+						options?.freshLeaderPlan ? { freshLeaderPlan: true } : undefined,
 						ownershipLifecycleController,
 					);
 				}
@@ -6891,8 +7030,13 @@ export class SharedLog<
 	private canCacheLeaderSelectionContext(options?: {
 		roleAge?: number;
 		candidates?: Iterable<string>;
+		freshLeaderPlan?: boolean;
 	}) {
-		return options?.roleAge == null && options?.candidates == null;
+		return (
+			options?.roleAge == null &&
+			options?.candidates == null &&
+			options?.freshLeaderPlan !== true
+		);
 	}
 
 	private cloneLeaderSelectionContext(
@@ -6910,6 +7054,7 @@ export class SharedLog<
 	private getCachedLeaderSelectionContext(options?: {
 		roleAge?: number;
 		candidates?: Iterable<string>;
+		freshLeaderPlan?: boolean;
 	}): LeaderSelectionContext | undefined {
 		if (!this.canCacheLeaderSelectionContext(options)) {
 			return;
@@ -6926,6 +7071,7 @@ export class SharedLog<
 			| {
 					roleAge?: number;
 					candidates?: Iterable<string>;
+					freshLeaderPlan?: boolean;
 			  }
 			| undefined,
 		context: LeaderSelectionContext,
@@ -10191,10 +10337,7 @@ export class SharedLog<
 		});
 	}
 
-	private flushAppendBackfill(
-		repairLifecycleController: AbortController = this._instanceLifecycle
-			?.ownershipLifecycleController as AbortController,
-	) {
+	private flushAppendBackfill(repairLifecycleController: AbortController) {
 		if (
 			!this.isRepairLifecycleActive(repairLifecycleController) ||
 			this._appendBackfillPendingByTarget.size === 0
@@ -10215,9 +10358,11 @@ export class SharedLog<
 		}
 	}
 
-	private queueAppendBackfill(target: string, entry: EntryReplicated<R>) {
-		const repairLifecycleController = this._instanceLifecycle
-			?.ownershipLifecycleController as AbortController;
+	private queueAppendBackfill(
+		target: string,
+		entry: EntryReplicated<R>,
+		repairLifecycleController: AbortController,
+	) {
 		if (!this.isRepairLifecycleActive(repairLifecycleController)) {
 			return;
 		}
@@ -10247,6 +10392,62 @@ export class SharedLog<
 		timer.unref?.();
 		this._repairRetryTimers.add(timer);
 		this._appendBackfillTimer = timer;
+	}
+
+	private queuePersistedAppendBackfill(
+		source: PersistedAppendBackfillSource<T, R>,
+		leaders: LeaderMap,
+		replicas: number,
+		repairLifecycleController: AbortController,
+		ownershipRevision: number,
+	): void {
+		try {
+			if (
+				!this.isRepairLifecycleActive(repairLifecycleController) ||
+				!this.isReceiveOwnershipSnapshotStable(ownershipRevision)
+			) {
+				return;
+			}
+			const assignmentLeaders = new Map(leaders);
+			const deliveryTargets = new Set(leaders.keys());
+			if (source.extrasOwnershipRevision === ownershipRevision) {
+				for (const [peer, sample] of source.assignmentExtraLeaders) {
+					assignmentLeaders.set(peer, sample);
+				}
+				for (const peer of source.deliveryExtraTargets) {
+					deliveryTargets.add(peer);
+				}
+			}
+			const repairEntry = this.createEntryReplicatedForRepair({
+				entry: source.entry,
+				coordinates: source.coordinates,
+				leaders: assignmentLeaders,
+				replicas,
+			});
+			const selfHash = this.node.identity.publicKey.hashcode();
+			for (const peer of assignmentLeaders.keys()) {
+				deliveryTargets.add(peer);
+			}
+			for (const peer of deliveryTargets) {
+				if (peer === selfHash) continue;
+				if (!this.isReceiveOwnershipSnapshotStable(ownershipRevision)) return;
+				try {
+					this.queueAppendBackfill(
+						peer,
+						repairEntry,
+						repairLifecycleController,
+					);
+				} catch (error) {
+					if (this.isRepairLifecycleActive(repairLifecycleController)) {
+						logger.error(error);
+					}
+				}
+			}
+		} catch (error) {
+			if (this.isRepairLifecycleActive(repairLifecycleController)) {
+				logger.error(error);
+			}
+		}
 	}
 
 	private dispatchMaybeMissingEntries(
@@ -11894,6 +12095,12 @@ export class SharedLog<
 		let persistedPlanningRecord:
 			| PersistedDeliveryPlanningRecord<T, R>
 			| undefined;
+		let persistedBackfillSource:
+			| PersistedAppendBackfillSource<T, R>
+			| undefined;
+		let persistedBackfillLeaders: LeaderMap | undefined;
+		let persistedBackfillOwnershipRevision: number | undefined;
+		let localAppendProcessed = false;
 		if (persistedDelivery) {
 			(appendOptions as TrustedLogAppendOptions<T>).__peerbitOnLocalCommit = (
 				hashes,
@@ -11947,8 +12154,17 @@ export class SharedLog<
 			await this.processLocalAppend(processingEntry, result.removed, options, {
 				minReplicasValue,
 				appendFacts: persistedAppendCommit,
+				// Persisted settlement must confirm each exact receiver generation before
+				// using its transfer as receipt evidence. Keep the optimistic append path
+				// out of that ordering decision.
+				captureDeferredBackfillSource: persistedDelivery
+					? (source) => {
+							persistedBackfillSource = source;
+						}
+					: undefined,
 				ownershipLifecycleController,
 			});
+			localAppendProcessed = true;
 			throwIfDeliveryAborted();
 			if (persistedDelivery && persistedDeadline) {
 				await this.settlePersistedDelivery(
@@ -11957,6 +12173,12 @@ export class SharedLog<
 					persistedDelivery,
 					ownershipLifecycleController,
 					persistedDeadline,
+					true,
+					(leadersByEntry, ownershipRevision) => {
+						const leaders = leadersByEntry[0];
+						persistedBackfillLeaders = leaders ? new Map(leaders) : undefined;
+						persistedBackfillOwnershipRevision = ownershipRevision;
+					},
 				);
 			}
 			this.throwIfReplicationOwnershipLifecycleInactive(
@@ -11969,6 +12191,27 @@ export class SharedLog<
 			}
 			throw error;
 		} finally {
+			if (
+				persistedBackfillSource &&
+				persistedBackfillLeaders &&
+				persistedBackfillOwnershipRevision !== undefined &&
+				localAppendProcessed
+			) {
+				// A persisted quorum changes the return condition, not the configured
+				// replication degree. Reuse settlement's latest fresh leader plan rather
+				// than carrying an optimistic target or extending the receipt deadline
+				// with another plan. Fence best-effort repair to this append's ownership
+				// generation, and never let it mask the primary result.
+				try {
+					this.queuePersistedAppendBackfill(
+						persistedBackfillSource,
+						persistedBackfillLeaders,
+						minReplicasValue,
+						ownershipLifecycleController,
+						persistedBackfillOwnershipRevision,
+					);
+				} catch {}
+			}
 			persistedDeadline?.dispose();
 		}
 	}
@@ -16080,6 +16323,9 @@ export class SharedLog<
 			minReplicasValue: number;
 			appendFacts?: PreparedAppendFacts;
 			deferHeadCoordinatePersistence?: boolean;
+			captureDeferredBackfillSource?: (
+				source: PersistedAppendBackfillSource<T, R>,
+			) => void;
 			nativeAppendPlan?: NativeAppendEntryPlan<R>;
 			extraCoordinateDeleteHashes?: string[];
 			ownershipLifecycleController?: AbortController;
@@ -16223,7 +16469,41 @@ export class SharedLog<
 			ownershipLifecycleController,
 		);
 
-		if (options?.target !== "none") {
+		if (properties.captureDeferredBackfillSource) {
+			let extras: Omit<
+				PersistedAppendBackfillSource<T, R>,
+				"entry" | "coordinates"
+			> = {
+				assignmentExtraLeaders: new Map(),
+				deliveryExtraTargets: new Set(),
+			};
+			try {
+				extras = await this.collectDeferredAppendBackfillExtras(
+					entry,
+					properties.minReplicasValue,
+					leaders!,
+					nativeDeliveryPlan,
+					ownershipLifecycleController,
+				);
+			} catch (error) {
+				if (this.isRepairLifecycleActive(ownershipLifecycleController)) {
+					logger.error(error);
+				}
+			}
+			this.throwIfReplicationOwnershipLifecycleInactive(
+				ownershipLifecycleController,
+			);
+			properties.captureDeferredBackfillSource({
+				entry,
+				coordinates: [...coordinates],
+				...extras,
+			});
+		}
+
+		if (
+			options?.target !== "none" &&
+			!properties.captureDeferredBackfillSource
+		) {
 			const hasDelivery = !(deliveryArg === undefined || deliveryArg === false);
 
 			if (target === "all" && hasDelivery) {
@@ -22498,6 +22778,12 @@ export class SharedLog<
 			this._peerSyncCapabilitySessions.get(lane.fromHash) ===
 				context.message.header.session &&
 			this._peerSyncCapabilityTimestamps.has(lane.fromHash) &&
+			this._v2Receive.isCurrentActive({
+				peerHash: lane.fromHash,
+				peerSession: session,
+				receiveEpoch: lane.receiveEpoch,
+				senderTransportSession: context.message.header.session,
+			}) &&
 			this.isRepairLifecycleActive(lane.ownershipLifecycleController)
 		);
 	}
@@ -24866,6 +25152,7 @@ export class SharedLog<
 		options?: {
 			roleAge?: number;
 			candidates?: Iterable<string>;
+			freshLeaderPlan?: boolean;
 		},
 		ownershipLifecycleController = this.captureReplicationOwnershipLifecycle(),
 	): Promise<LeaderSelectionContext> {
@@ -25027,6 +25314,7 @@ export class SharedLog<
 		options?: {
 			roleAge?: number;
 			candidates?: Iterable<string>;
+			freshLeaderPlan?: boolean;
 		},
 		ownershipLifecycleController = this.captureReplicationOwnershipLifecycle(),
 	): Promise<Map<string, { intersecting: boolean }>> {
