@@ -2788,7 +2788,7 @@ describe("pubsub (subscribe race regressions)", function () {
 		expect(send.calledOnce).to.equal(true);
 	});
 
-	it("uses a live root responder without waiting for a silent peer", async function () {
+	it("uses an earlier live root responder without waiting for a silent peer", async function () {
 		this.timeout(3_000);
 		session = await createDisconnectedSessionWithPerPeerRoots(3);
 		const pubsub = session.peers[0]!.services.pubsub;
@@ -2798,8 +2798,8 @@ describe("pubsub (subscribe race regressions)", function () {
 		const topic = "concurrent-live-topic-root";
 		const resolvedRoot = live.publicKeyHash;
 		const trackers = [
-			{ publicKey: silent.publicKey },
 			{ publicKey: live.publicKey },
+			{ publicKey: silent.publicKey },
 		];
 		sinon.stub(internals, "getConnectedTopicRootTrackers").returns(trackers);
 		const send = sinon
@@ -2828,7 +2828,90 @@ describe("pubsub (subscribe race regressions)", function () {
 		expect(performance.now() - started).to.be.lessThan(500);
 		expect(
 			send.getCalls().map((call) => call.args[0].publicKey.hashcode()),
-		).to.deep.equal([silent.publicKeyHash, live.publicKeyHash]);
+		).to.deep.equal([live.publicKeyHash, silent.publicKeyHash]);
+		expect(internals.pendingTopicRootQueries.size).to.equal(0);
+	});
+
+	it("preserves sorted-peer precedence when a later conflicting reply is faster", async () => {
+		session = await createDisconnectedSessionWithPerPeerRoots(3);
+		const pubsub = session.peers[0]!.services.pubsub;
+		const ordered = session.peers
+			.slice(1)
+			.map((node) => node.services.pubsub)
+			.sort((left, right) =>
+				left.publicKeyHash < right.publicKeyHash
+					? -1
+					: left.publicKeyHash > right.publicKeyHash
+						? 1
+						: 0,
+			);
+		const earlier = ordered[0]!;
+		const later = ordered[1]!;
+		const internals = pubsub as any;
+		const topic = "ordered-conflicting-topic-root";
+		let earlierQuery: TopicRootQuery | undefined;
+		sinon
+			.stub(internals, "getConnectedTopicRootTrackers")
+			.returns([
+				{ publicKey: earlier.publicKey },
+				{ publicKey: later.publicKey },
+			]);
+		sinon
+			.stub(internals, "sendDirectControlMessage")
+			.callsFake(async (...args: unknown[]) => {
+				const peer = args[0] as { publicKey: { hashcode(): string } };
+				const query = args[1] as TopicRootQuery;
+				if (peer.publicKey.hashcode() === earlier.publicKeyHash) {
+					earlierQuery = query;
+					return;
+				}
+				expect(
+					internals.resolvePendingTopicRootQuery(
+						new TopicRootQueryResponse({
+							requestId: query.requestId,
+							root: later.publicKeyHash,
+							topic,
+						}),
+						later.publicKeyHash,
+					),
+				).to.equal(true);
+			});
+		let settled = false;
+		const resolving = internals.resolveTopicRootState(topic).then(
+			(state: unknown) => {
+				settled = true;
+				return state;
+			},
+			(error: unknown) => {
+				settled = true;
+				throw error;
+			},
+		);
+
+		await waitForResolved(
+			() => {
+				expect(earlierQuery).to.not.equal(undefined);
+				expect(internals.pendingTopicRootQueries.size).to.equal(1);
+			},
+			{ timeout: 1_000, delayInterval: 10 },
+		);
+		await delay(0);
+		expect(settled).to.equal(false);
+		expect(
+			internals.resolvePendingTopicRootQuery(
+				new TopicRootQueryResponse({
+					requestId: earlierQuery!.requestId,
+					root: earlier.publicKeyHash,
+					topic,
+				}),
+				earlier.publicKeyHash,
+			),
+		).to.equal(true);
+
+		expect(await resolving).to.deep.equal({
+			authoritative: true,
+			root: earlier.publicKeyHash,
+		});
 		expect(internals.pendingTopicRootQueries.size).to.equal(0);
 	});
 
@@ -2870,6 +2953,43 @@ describe("pubsub (subscribe race regressions)", function () {
 			expect(settledAt! - startedAt).to.be.at.most(12_001);
 			expect(send.callCount).to.equal(8);
 			expect(internals.pendingTopicRootQueries.size).to.equal(0);
+		} finally {
+			clock.restore();
+		}
+	});
+
+	it("keeps retrying when a peer becomes ready after 750ms", async () => {
+		session = await createDisconnectedSessionWithPerPeerRoots(2);
+		const pubsub = session.peers[0]!.services.pubsub;
+		const warming = session.peers[1]!.services.pubsub;
+		const internals = pubsub as any;
+		internals.clearTopicRootCandidateClaimTimer();
+		internals.clearAutoTopicRootCandidateUpdateSchedule();
+		const clock = sinon.useFakeTimers({
+			now: Date.now(),
+			toFake: ["Date", "clearTimeout", "setTimeout"],
+		});
+		const startedAt = Date.now();
+		const trackers = sinon
+			.stub(internals, "getConnectedTopicRootTrackers")
+			.returns([{ publicKey: warming.publicKey }]);
+		const query = sinon
+			.stub(internals, "queryTopicRootFromPeer")
+			.callsFake(async () =>
+				Date.now() - startedAt > 750 ? warming.publicKeyHash : undefined,
+			);
+
+		try {
+			const resolving = internals.resolveTopicRootState(
+				"late-ready-topic-root",
+			);
+			await clock.tickAsync(1_051);
+			expect(await resolving).to.deep.equal({
+				authoritative: true,
+				root: warming.publicKeyHash,
+			});
+			expect(query.callCount).to.equal(5);
+			expect(trackers.callCount).to.be.greaterThan(5);
 		} finally {
 			clock.restore();
 		}

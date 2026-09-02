@@ -241,8 +241,7 @@ const DEFAULT_TOPIC_ROOT_QUERY_TIMEOUT_MS = 12_000;
 // Bounded rounds leave enough time for that setup while still allowing a lost
 // request or a newly-ready stream to be retried within the phase deadline.
 const TOPIC_ROOT_QUERY_ROUND_TIMEOUT_MS = 3_000;
-const TOPIC_ROOT_QUERY_ATTEMPTS = 3;
-const TOPIC_ROOT_QUERY_SELF_ROOT_ATTEMPTS = 4;
+const TOPIC_ROOT_QUERY_HOST_SCAN_ATTEMPTS = 3;
 const DIRECT_SHARD_ROOT_CONFIRM_TIMEOUT_MS = 2_000;
 
 const DEFAULT_PUBSUB_FANOUT_CHANNEL_OPTIONS: Omit<
@@ -2148,7 +2147,9 @@ export class TopicControlPlane
 
 	private async resolveTopicRootState(
 		topic: string,
-		options?: TopicRootResolutionOptions,
+		options?: TopicRootResolutionOptions & {
+			retryPeerQueriesUntilDeadline?: boolean;
+		},
 	): Promise<{ root?: string; authoritative: boolean }> {
 		throwIfAborted(options?.signal);
 		const tracked = await this.topicRootControlPlane.resolveTrackedTopicRoot(
@@ -2159,12 +2160,6 @@ export class TopicControlPlane
 			return { root: tracked, authoritative: true };
 		}
 
-		const deterministic =
-			this.topicRootControlPlane.resolveDeterministicTopicRoot(topic);
-		const maxAttempts =
-			deterministic === this.publicKeyHash && this.autoTopicRootCandidates
-				? TOPIC_ROOT_QUERY_SELF_ROOT_ATTEMPTS
-				: TOPIC_ROOT_QUERY_ATTEMPTS;
 		const deadlineController = new AbortController();
 		const deadlineTimer = setTimeout(
 			() =>
@@ -2179,9 +2174,23 @@ export class TopicControlPlane
 			deadlineController.signal,
 		]);
 		try {
-			for (let attempt = 0; attempt < maxAttempts; attempt++) {
+			let attempt = 0;
+			for (;;) {
 				throwIfAborted(querySignals.signal);
-				if (this.getConnectedTopicRootTrackers().length === 0) {
+				if (
+					options?.retryPeerQueriesUntilDeadline === false &&
+					attempt >= TOPIC_ROOT_QUERY_HOST_SCAN_ATTEMPTS
+				) {
+					break;
+				}
+				// Preserve the immediate deterministic fallback when no queryable stream
+				// exists at entry. Once a peer was queryable, keep the bounded readiness
+				// window alive: later rounds re-snapshot streams that can become writable
+				// after an inbound-only dial.
+				if (
+					attempt === 0 &&
+					this.getConnectedTopicRootTrackers().length === 0
+				) {
 					break;
 				}
 				if (attempt > 0) {
@@ -2192,6 +2201,7 @@ export class TopicControlPlane
 						querySignals.signal,
 					);
 				}
+				attempt += 1;
 				const resolvedThroughPeers = await this.resolveTopicRootThroughPeers(
 					topic,
 					{
@@ -2248,7 +2258,9 @@ export class TopicControlPlane
 
 	private async resolveShardRootState(
 		shardTopic: string,
-		options?: TopicRootResolutionOptions,
+		options?: TopicRootResolutionOptions & {
+			retryPeerQueriesUntilDeadline?: boolean;
+		},
 	): Promise<{ root: string; candidateGeneration: string }> {
 		const lifecycleRevision = this.topicControlPlaneLifecycleRevision;
 		for (;;) {
@@ -2531,21 +2543,46 @@ export class TopicControlPlane
 				roundSignals.signal,
 			),
 		);
-		const pending = new Map(
-			queries.map((query, index) => [
-				index,
-				query.then((root) => ({ index, root })),
-			]),
+		const unresolved = Symbol("unresolved topic root query");
+		const results: Array<string | undefined | typeof unresolved> = peers.map(
+			() => unresolved,
+		);
+		// All requests start together, but the stable peer ordering remains the
+		// conflict-resolution policy: a later answer is usable only after every
+		// earlier peer has answered undefined or reached its round timeout.
+		const prioritizedResult = new Promise<string | undefined>(
+			(resolve, reject) => {
+				let settled = false;
+				const resolveInPeerOrder = () => {
+					for (const result of results) {
+						if (result === unresolved) return;
+						if (result !== undefined) {
+							settled = true;
+							resolve(result);
+							return;
+						}
+					}
+					settled = true;
+					resolve(undefined);
+				};
+				queries.forEach((query, index) => {
+					query.then(
+						(root) => {
+							if (settled) return;
+							results[index] = root;
+							resolveInPeerOrder();
+						},
+						(error) => {
+							if (settled) return;
+							settled = true;
+							reject(error);
+						},
+					);
+				});
+			},
 		);
 		try {
-			while (pending.size > 0) {
-				const { index, root } = await Promise.race(pending.values());
-				pending.delete(index);
-				if (root !== undefined) {
-					return root;
-				}
-			}
-			return undefined;
+			return await prioritizedResult;
 		} finally {
 			// Cancel response timers and in-flight sends for every losing query before
 			// the winning root (or an abort) can leave this round.
@@ -2978,6 +3015,11 @@ export class TopicControlPlane
 						const shardTopic = `${this.shardTopicPrefix}${i}`;
 						const resolved = await this.resolveShardRootState(shardTopic, {
 							signal,
+							// This proactive scan already retries on candidate changes, and a
+							// later direct query lazily hosts a missing root. Retaining the
+							// historical three paced attempts avoids spending the full
+							// readiness window independently for every shard.
+							retryPeerQueriesUntilDeadline: false,
 						});
 						if (resolved.root !== this.publicKeyHash) continue;
 						const joining = this.ensureFanoutChannel(shardTopic, {
