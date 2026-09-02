@@ -458,6 +458,15 @@ export class TopicControlPlane
 		string,
 		TopicRootCandidateClaimRecord
 	>();
+	// A directly observed departure makes only that origin's current lease
+	// ineffective locally. This is not a component-wide withdrawal: claims learned
+	// only through relays keep their existing lease semantics. Keeping the verified
+	// bytes + replay floor prevents a relay from resurrecting the departed lease;
+	// the map is bounded by the same retained-origin cap as the claim map.
+	private readonly suppressedDepartedTopicRootCandidateClaims = new Map<
+		string,
+		{ bytes: Uint8Array; timestamp: bigint }
+	>();
 	// Active claims expire, but their per-origin timestamp floors survive for the
 	// auto-mode lifecycle so a frozen wall clock cannot renew a replayed lease.
 	// Retaining only the deterministic lowest origins keeps this state hard-bounded.
@@ -873,6 +882,25 @@ export class TopicControlPlane
 			(peer) => peer.protocol === TOPIC_CONTROL_PLANE_PROTOCOL_V2_1,
 		);
 		const removed = await super._removePeer(publicKey);
+		let suppressedDepartedOrigin = false;
+		if (
+			removed &&
+			this.autoTopicRootCandidates &&
+			protocol === TOPIC_CONTROL_PLANE_PROTOCOL_V2_1 &&
+			this.signedTopicRootCandidateClaims.has(hash)
+		) {
+			const claim = this.signedTopicRootCandidateClaims.get(hash)!;
+			const suppressed =
+				this.suppressedDepartedTopicRootCandidateClaims.get(hash);
+			suppressedDepartedOrigin =
+				!suppressed ||
+				suppressed.timestamp !== claim.timestamp ||
+				!bytesEqual(suppressed.bytes, claim.bytes);
+			this.suppressedDepartedTopicRootCandidateClaims.set(hash, {
+				bytes: claim.bytes,
+				timestamp: claim.timestamp,
+			});
+		}
 		if (
 			this.autoTopicRootCandidates &&
 			(protocol === TOPIC_CONTROL_PLANE_PROTOCOL_V2_0 ||
@@ -882,7 +910,7 @@ export class TopicControlPlane
 				(peer) => peer.protocol === TOPIC_CONTROL_PLANE_PROTOCOL_V2_1,
 			);
 			this.rebuildAutoTopicRootCandidatesFromClaims(BigInt(Date.now()), {
-				immediate: hadSignedPeer !== hasSignedPeer,
+				immediate: suppressedDepartedOrigin || hadSignedPeer !== hasSignedPeer,
 			});
 		}
 		return removed;
@@ -926,6 +954,7 @@ export class TopicControlPlane
 	private clearSignedTopicRootCandidateState() {
 		this.clearTopicRootCandidateClaimTimer();
 		this.signedTopicRootCandidateClaims.clear();
+		this.suppressedDepartedTopicRootCandidateClaims.clear();
 		this.topicRootCandidateClaimReplayFloors.clear();
 		this.localSignedTopicRootCandidateClaim = undefined;
 		this.topicRootCandidateClaimRefreshNotBefore = undefined;
@@ -1199,6 +1228,7 @@ export class TopicControlPlane
 		for (const [origin, claim] of this.signedTopicRootCandidateClaims) {
 			if (claim.expires <= now || claim.acceptUntil <= monotonicNow) {
 				this.signedTopicRootCandidateClaims.delete(origin);
+				this.suppressedDepartedTopicRootCandidateClaims.delete(origin);
 				changed = true;
 			}
 		}
@@ -1223,7 +1253,12 @@ export class TopicControlPlane
 					? []
 					: [this.publicKeyHash]),
 				...legacyDirectCandidates,
-				...this.signedTopicRootCandidateClaims.keys(),
+				...[...this.signedTopicRootCandidateClaims.entries()]
+					.filter(
+						([origin, claim]) =>
+							!this.isDepartedTopicRootCandidateClaimSuppressed(origin, claim),
+					)
+					.map(([origin]) => origin),
 			]),
 		]
 			.filter(isCanonicalTopicRootCandidate)
@@ -1268,6 +1303,7 @@ export class TopicControlPlane
 				// because the retained maximum only decreases, it cannot re-enter.
 				this.topicRootCandidateClaimReplayFloors.delete(highest);
 				this.signedTopicRootCandidateClaims.delete(highest);
+				this.suppressedDepartedTopicRootCandidateClaims.delete(highest);
 				if (highest === this.publicKeyHash) {
 					this.localSignedTopicRootCandidateClaim = undefined;
 				}
@@ -1275,7 +1311,20 @@ export class TopicControlPlane
 		}
 		this.topicRootCandidateClaimReplayFloors.set(origin, claim.timestamp);
 		this.signedTopicRootCandidateClaims.set(origin, claim);
+		this.suppressedDepartedTopicRootCandidateClaims.delete(origin);
 		return true;
+	}
+
+	private isDepartedTopicRootCandidateClaimSuppressed(
+		origin: string,
+		claim: TopicRootCandidateClaimRecord,
+	): boolean {
+		const suppressed =
+			this.suppressedDepartedTopicRootCandidateClaims.get(origin);
+		return (
+			suppressed?.timestamp === claim.timestamp &&
+			bytesEqual(suppressed.bytes, claim.bytes)
+		);
 	}
 
 	private canAdvanceTopicRootCandidateClaimReplayFloor(
@@ -1354,6 +1403,7 @@ export class TopicControlPlane
 	private async importSignedTopicRootCandidateClaim(
 		rawClaim: Uint8Array,
 		outerPeerHash: string,
+		expectedPeer?: PeerStreams,
 	): Promise<boolean> {
 		const lifecycleRevision = this.topicControlPlaneLifecycleRevision;
 		if (
@@ -1398,11 +1448,35 @@ export class TopicControlPlane
 		if (acceptanceDeadline === undefined) {
 			return false;
 		}
+
+		this.rebuildAutoTopicRootCandidatesFromClaims(now);
+		const retained = this.signedTopicRootCandidateClaims.get(origin);
+		if (
+			outerPeerHash === origin &&
+			expectedPeer !== undefined &&
+			expectedPeer.protocol === TOPIC_CONTROL_PLANE_PROTOCOL_V2_1 &&
+			this.peers.get(outerPeerHash) === expectedPeer &&
+			lifecycleRevision === this.topicControlPlaneLifecycleRevision &&
+			this.autoTopicRootCandidates &&
+			this.started &&
+			!this.stopping &&
+			!this.topicControlPlaneStopping &&
+			retained?.timestamp === timestamp &&
+			bytesEqual(retained.bytes, rawClaim) &&
+			this.isDepartedTopicRootCandidateClaimSuppressed(origin, retained)
+		) {
+			// These exact bytes were already verified and remain under the original
+			// monotonic acceptance deadline. A current authenticated origin stream is
+			// sufficient liveness evidence; do not advance the floor or lease.
+			this.suppressedDepartedTopicRootCandidateClaims.delete(origin);
+			this.rebuildAutoTopicRootCandidatesFromClaims(now, { immediate: true });
+			return false;
+		}
+
 		if (!this.canAdvanceTopicRootCandidateClaimReplayFloor(origin, timestamp)) {
 			return false;
 		}
 
-		this.rebuildAutoTopicRootCandidatesFromClaims(now);
 		if (!this.consumeTopicRootCandidateClaimVerifyBudget(outerPeerHash)) {
 			return false;
 		}
@@ -1425,7 +1499,9 @@ export class TopicControlPlane
 			!this.autoTopicRootCandidates ||
 			!this.started ||
 			this.stopping ||
-			this.topicControlPlaneStopping
+			this.topicControlPlaneStopping ||
+			(expectedPeer !== undefined &&
+				this.peers.get(outerPeerHash) !== expectedPeer)
 		) {
 			return false;
 		}
@@ -1499,6 +1575,10 @@ export class TopicControlPlane
 			}
 		}
 		const claims = [...this.signedTopicRootCandidateClaims.entries()]
+			.filter(
+				([origin, claim]) =>
+					!this.isDepartedTopicRootCandidateClaimSuppressed(origin, claim),
+			)
 			.sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
 			.map(([, claim]) => claim.bytes);
 		await this.sendSignedTopicRootCandidateClaims(claims, signedStreams);
@@ -3808,7 +3888,11 @@ export class TopicControlPlane
 			const outerPeerHash = stream.publicKey.hashcode();
 			for (const claim of pubsubMessage.claims) {
 				if (
-					await this.importSignedTopicRootCandidateClaim(claim, outerPeerHash)
+					await this.importSignedTopicRootCandidateClaim(
+						claim,
+						outerPeerHash,
+						stream,
+					)
 				) {
 					imported.push(claim);
 				}
