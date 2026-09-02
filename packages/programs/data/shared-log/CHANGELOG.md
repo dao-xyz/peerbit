@@ -1,5 +1,11 @@
 # Changelog
 
+## 16.0.23
+
+### Patch Changes
+
+- [#1403](https://github.com/dao-xyz/peerbit/pull/1403) [`233e198`](https://github.com/dao-xyz/peerbit/commit/233e19813415ca594638aacc6ab00f2de3add42f) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Expose exact current-session persisted-receipt readiness snapshots and waits, recover missing subscriber and capability handshakes, and close a lost-wakeup window in replicator waits.
+
 ## 16.0.22
 
 ### Patch Changes
