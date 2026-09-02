@@ -2057,6 +2057,81 @@ describe("fanout-tree", () => {
 		}
 	});
 
+	it("preserves the 1ms sub-timeout floor for an unbounded join", async function () {
+		this.timeout(5_000);
+		const session = await createFanoutTestSession(2);
+
+		try {
+			await session.connect([[session.peers[0], session.peers[1]]]);
+			const rootNode = session.peers[0];
+			const root = rootNode.services.fanout;
+			const leaf = session.peers[1].services.fanout;
+			const topic = "unbounded-zero-sub-timeouts";
+			const rootHash = root.publicKeyHash;
+			const channelOptions = {
+				msgRate: 1,
+				msgSize: 8,
+				uploadLimitBps: 0,
+				maxChildren: 0,
+				repair: false,
+			};
+			root.openChannel(topic, rootHash, {
+				...channelOptions,
+				role: "root",
+				uploadLimitBps: 1_000_000,
+				maxChildren: 1,
+			});
+
+			const internals = leaf as any;
+			const originalQueryTrackers = internals.queryTrackers;
+			const originalTryJoinOnce = internals.tryJoinOnce;
+			const trackerTimeouts: number[] = [];
+			const joinTimeouts: number[] = [];
+			internals.queryTrackers = async (...args: any[]) => {
+				trackerTimeouts.push(args[3]);
+				return [
+					{
+						hash: rootHash,
+						addrs: [] as any[],
+						level: 0,
+						freeSlots: 1,
+						bidPerByte: 0,
+					},
+				];
+			};
+			internals.tryJoinOnce = async (...args: any[]) => {
+				const channel = args[0];
+				const parentHash = args[1];
+				joinTimeouts.push(args[3]);
+				channel.parent = parentHash;
+				channel.level = 1;
+				channel.routeFromRoot = [rootHash];
+				return { ok: true };
+			};
+
+			try {
+				await leaf.joinChannel(topic, rootHash, channelOptions, {
+					timeoutMs: 0,
+					bootstrap: rootNode.getMultiaddrs(),
+					bootstrapMaxPeers: 1,
+					trackerCandidates: 1,
+					trackerQueryTimeoutMs: 0,
+					joinReqTimeoutMs: 0,
+					retryMs: 1,
+				});
+			} finally {
+				internals.queryTrackers = originalQueryTrackers;
+				internals.tryJoinOnce = originalTryJoinOnce;
+			}
+
+			expect(trackerTimeouts).to.deep.equal([1]);
+			expect(joinTimeouts).to.deep.equal([1]);
+			expect(leaf.getChannelStats(topic, rootHash)?.parent).to.equal(rootHash);
+		} finally {
+			await session.stop();
+		}
+	});
+
 	it("cancels an unsent join request when its attempt settles", async function () {
 		this.timeout(5_000);
 		const session = await createFanoutTestSession(2);

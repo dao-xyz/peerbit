@@ -6327,7 +6327,9 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 						now - ch.lastTrackerQueryAt >= trackerQueryIntervalMs;
 					if (due) {
 						ch.lastTrackerQueryAt = now;
-						const queryTimeoutMs = clampInitialJoinWait(trackerQueryTimeoutMs);
+						const queryTimeoutMs = clampInitialJoinWait(
+							Math.max(1, trackerQueryTimeoutMs),
+						);
 						if (queryTimeoutMs <= 0) throwInitialJoinTimeout();
 						const res = await this.queryTrackers(
 							ch,
@@ -6636,7 +6638,9 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 						dialedNew.add(c.hash);
 					}
 					const reqId = (this.random() * 0xffffffff) >>> 0;
-					const requestTimeoutMs = clampInitialJoinWait(joinReqTimeoutMs);
+					const requestTimeoutMs = clampInitialJoinWait(
+						Math.max(1, joinReqTimeoutMs),
+					);
 					if (requestTimeoutMs <= 0) throwInitialJoinTimeout();
 					const res = await this.tryJoinOnce(
 						ch,
