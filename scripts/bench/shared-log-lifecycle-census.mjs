@@ -1,27 +1,27 @@
 #!/usr/bin/env node
 
-import { spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
-import {
-	lstat,
-	mkdir,
-	mkdtemp,
-	readdir,
-	rename,
-	rm,
-	writeFile,
-} from "node:fs/promises";
-import os from "node:os";
-import { dirname, join, relative, resolve, sep } from "node:path";
 import { performance } from "node:perf_hooks";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
+import {
+	collectLifecycleDebt,
+	elapsed,
+	fingerprint,
+	lifecycleWorkerArgs,
+	mapEdges,
+	optionalSize,
+	runCheckpointedCensus,
+	runJsonWorker,
+	runLifecycleScenario,
+	runOpenedLifecycleWorker,
+	waitForLifecycleQuiescence,
+	withMatchedScenarios,
+} from "./shared-log-lifecycle-census-common.mjs";
 import {
 	LIFECYCLE_CENSUS_NAME,
 	LIFECYCLE_CENSUS_SCENARIOS,
 	buildLifecycleCensusReport,
 	buildLifecycleComparison,
-	classifyLifecycleCensusFile,
 	parseLifecycleCensusArgs,
 } from "./shared-log-lifecycle-census-lib.mjs";
 
@@ -31,214 +31,8 @@ const STORE_ID = Uint8Array.from(
 	(_, index) => (index * 13 + 7) & 0xff,
 );
 
-const collectGarbage = () => {
-	if (typeof globalThis.gc !== "function") {
-		throw new Error("lifecycle-census workers require Node.js --expose-gc");
-	}
-	globalThis.gc();
-	globalThis.gc();
-};
-
-const memorySnapshot = () => {
-	const usage = process.memoryUsage();
-	return {
-		rss: usage.rss,
-		heapTotal: usage.heapTotal,
-		heapUsed: usage.heapUsed,
-		external: usage.external,
-		arrayBuffers: usage.arrayBuffers,
-	};
-};
-
-const elapsed = (started) =>
-	Math.round((performance.now() - started) * 1000) / 1000;
-
-const fingerprint = (values) => {
-	const digest = createHash("sha256");
-	for (const value of [...values].sort()) {
-		digest.update(String(value));
-		digest.update("\0");
-	}
-	return digest.digest("hex");
-};
-
 const documentFingerprintValue = ({ id, name }) =>
 	JSON.stringify([String(id), String(name)]);
-
-const collectionSize = (value) =>
-	value instanceof Map || value instanceof Set || Array.isArray(value)
-		? (value.size ?? value.length)
-		: 0;
-
-const optionalSize = (value) =>
-	value instanceof Map || value instanceof Set ? value.size : null;
-
-const mapEdges = (value) => {
-	if (!(value instanceof Map)) return null;
-	let count = 0;
-	for (const nested of value.values()) count += collectionSize(nested);
-	return count;
-};
-
-const diskFootprint = async (root) => {
-	const files = [];
-	const visit = async (directory) => {
-		for (const entry of await readdir(directory, { withFileTypes: true })) {
-			const path = join(directory, entry.name);
-			if (entry.isDirectory()) {
-				await visit(path);
-			} else if (entry.isFile()) {
-				const stats = await lstat(path);
-				const relativePath = relative(root, path).split(sep).join("/");
-				files.push({
-					path: relativePath,
-					category: classifyLifecycleCensusFile(relativePath),
-					logicalBytes: stats.size,
-					allocatedBytes:
-						typeof stats.blocks === "number" ? stats.blocks * 512 : null,
-				});
-			}
-		}
-	};
-	await visit(root);
-	files.sort((left, right) => left.path.localeCompare(right.path));
-	const categories = {};
-	for (const file of files) {
-		const category = (categories[file.category] ??= {
-			files: 0,
-			logicalBytes: 0,
-			allocatedBytes: 0,
-		});
-		category.files++;
-		category.logicalBytes += file.logicalBytes;
-		category.allocatedBytes =
-			category.allocatedBytes == null || file.allocatedBytes == null
-				? null
-				: category.allocatedBytes + file.allocatedBytes;
-	}
-	const allocatedValues = files.map((file) => file.allocatedBytes);
-	return {
-		fileCount: files.length,
-		logicalBytes: files.reduce((sum, file) => sum + file.logicalBytes, 0),
-		allocatedBytes: allocatedValues.every((value) => value != null)
-			? allocatedValues.reduce((sum, value) => sum + value, 0)
-			: null,
-		categories,
-		files,
-	};
-};
-
-const loadRuntime = async () => {
-	const [peerbit, rust, document, testData, nativeBackbone] = await Promise.all(
-		[
-			import(
-				new URL(
-					"../../packages/clients/peerbit/dist/src/index.js",
-					import.meta.url,
-				)
-			),
-			import(
-				new URL(
-					"../../packages/clients/peerbit/dist/src/rust.js",
-					import.meta.url,
-				)
-			),
-			import(
-				new URL(
-					"../../packages/programs/data/document/document/dist/src/index.js",
-					import.meta.url,
-				)
-			),
-			import(
-				new URL(
-					"../../packages/programs/data/document/document/dist/test/data.js",
-					import.meta.url,
-				)
-			),
-			import(
-				new URL(
-					"../../packages/utils/native-backbone/dist/src/index.js",
-					import.meta.url,
-				)
-			),
-		],
-	);
-	return {
-		Peerbit: peerbit.Peerbit,
-		createRustPeerbitOptions: rust.createRustPeerbitOptions,
-		Documents: document.Documents,
-		policy: document.policy,
-		transform: document.transform,
-		Document: testData.Document,
-		TestStore: testData.TestStore,
-		NativeBackboneNodeCoordinatePersistence:
-			nativeBackbone.NativeBackboneNodeCoordinatePersistence,
-	};
-};
-
-const createStore = ({ Documents, TestStore }) => {
-	const store = new TestStore({ docs: new Documents({ id: STORE_ID }) });
-	store.id = STORE_ID;
-	return store;
-};
-
-const openArgs = ({
-	directory,
-	retain,
-	Document,
-	policy,
-	transform,
-	NativeBackboneNodeCoordinatePersistence,
-	compactMaxJournalBytes,
-	compactMaxJournalRecords,
-}) => ({
-	mode: "native",
-	replicate: { factor: 1 },
-	timeUntilRoleMaturity: 0,
-	log: { trim: { type: "length", to: retain } },
-	nativeGraph: true,
-	nativeBackbone: {
-		optional: false,
-		documentIndex: true,
-		coordinatePersistence: new NativeBackboneNodeCoordinatePersistence(
-			join(directory, "coordinate-wal"),
-			{
-				flushOnAppend: true,
-				...(compactMaxJournalBytes != null ? { compactMaxJournalBytes } : {}),
-				...(compactMaxJournalRecords != null
-					? { compactMaxJournalRecords }
-					: {}),
-			},
-		),
-	},
-	canPerform: policy.allowAll(),
-	index: { type: Document, transform: transform.identity() },
-});
-
-const waitForCleanup = async (log) => {
-	const started = performance.now();
-	for (let attempt = 0; attempt < 100; attempt++) {
-		const cleanup = log._gidPeerHistoryCleanupState;
-		await cleanup?.tail;
-		await new Promise((resolve) => setImmediate(resolve));
-		if (
-			!cleanup ||
-			(cleanup.pending.size === 0 && cleanup.draining === false)
-		) {
-			return elapsed(started);
-		}
-	}
-	throw new Error("GID-history cleanup did not quiesce");
-};
-
-const waitForStorage = async (log) => {
-	await log._coordinates?.flushNativeBackboneCoordinateJournal?.();
-	await log.log.blocks.waitForDurableWrites?.();
-	const writeThrough = log.remoteBlocks?.localStore;
-	while (writeThrough?.nativeDeleteCleanupRunning) {
-		await writeThrough.nativeDeleteCleanupRunning;
-	}
-};
 
 const normalizeRange = (range) => ({
 	hash: range.hash,
@@ -262,7 +56,7 @@ const collectState = async ({
 	const log = store.docs.log;
 	const backbone = log._nativeBackbone;
 	if (!backbone) throw new Error("Lifecycle census requires a native backbone");
-	await waitForStorage(log);
+	await waitForLifecycleQuiescence(log, { cleanup: false });
 	const heads = await log.log
 		.getHeads({ type: "shape", shape: { hash: true } })
 		.all();
@@ -372,53 +166,8 @@ const collectState = async ({
 		knownPeerEdges: mapEdges(log._entryKnownPeers),
 		knownPeerObservedRows: optionalSize(log._entryKnownPeerObservedAt),
 		knownPeerObservedEdges: mapEdges(log._entryKnownPeerObservedAt),
-		pendingGidCleanup: cleanup?.pending.size ?? 0,
 		gidCleanupHighWater: cleanup?.highWater ?? 0,
-		pendingIHave: optionalSize(log._pendingIHave),
-		pendingIHaveCallbacks: optionalSize(log._pendingIHaveCallbacks),
-		pendingMaturityOwners: optionalSize(log.pendingMaturity),
-		pendingMaturityRanges: mapEdges(log.pendingMaturity),
-		repairRetryTimers: optionalSize(log._repairRetryTimers),
-		repairPendingModes: optionalSize(log._repairSweepPendingModes),
-		repairPendingPeers: mapEdges(log._repairSweepPendingPeersByMode),
-		repairFrontierTargets: mapEdges(log._repairFrontierByMode),
-		repairFrontierActiveTargets: mapEdges(
-			log._repairFrontierActiveTargetsByMode,
-		),
-		repairFrontierBypassKnownPeers: mapEdges(
-			log._repairFrontierBypassKnownPeersByMode,
-		),
-		repairOptimisticGids: optionalSize(
-			log._repairSweepOptimisticGidPeersPending,
-		),
-		repairOptimisticPeers: optionalSize(log._repairSweepOptimisticGidsByPeer),
-		appendBackfillTargets: optionalSize(log._appendBackfillPendingByTarget),
-		appendBackfillRows: mapEdges(log._appendBackfillPendingByTarget),
-		checkedPrunePendingDeletes: optionalSize(log._checkedPrune?.pendingDeletes),
-		checkedPruneRetries: optionalSize(log._checkedPrune?.retries),
-		writeThroughPendingDurableWrites: optionalSize(
-			log.remoteBlocks?.localStore?.pendingDurableWrites,
-		),
-		writeThroughDeleteTombstones: optionalSize(
-			log.remoteBlocks?.localStore?.nativeDeleteTombstones,
-		),
-		writeThroughPendingDeleteCleanup: optionalSize(
-			log.remoteBlocks?.localStore?.pendingNativeDeleteCleanup,
-		),
-		writeThroughStagedDeleteBatches: optionalSize(
-			log.remoteBlocks?.localStore?.stagedNativeDeleteCleanups,
-		),
-		writeThroughCommitOwnerships: optionalSize(
-			log.remoteBlocks?.localStore?.nativeCommitOwnerships,
-		),
-		coordinatePendingJournalRows: backbone.coordinatePendingJournalLength,
-		coordinatePendingJournalBytes: backbone.coordinatePendingJournalByteLength,
-		documentPendingJournalRows: backbone.documentPendingJournalLength,
-		documentPendingJournalBytes: backbone.documentPendingJournalByteLength,
-		documentSignerPendingJournalRows:
-			backbone.documentSignerPendingJournalLength,
-		documentSignerPendingJournalBytes:
-			backbone.documentSignerPendingJournalByteLength,
+		...collectLifecycleDebt(log, backbone).values,
 		probe: {
 			lowerShallow: (await log.log.getShallow(probeHash)) != null,
 			nativeLog: backbone.hasLogEntry(probeHash),
@@ -640,354 +389,198 @@ const validateState = ({
 	return { correct: true, exactRetainedRows: retain, probeShouldExist };
 };
 
-const closeRuntime = async (store, client) => {
-	const programStarted = performance.now();
-	await store.close();
-	const programMs = elapsed(programStarted);
-	const clientStarted = performance.now();
-	await client.stop();
-	return { programMs, clientMs: elapsed(clientStarted) };
-};
-
 const seedWorker = async (options) => {
-	const runtime = await loadRuntime();
 	const count =
 		options.scenario === "fresh" ? options.retain : options.historyCount;
 	const documentOffset =
 		options.scenario === "fresh" ? options.historyCount - options.retain : 0;
 	const oldestRetainedIndex = options.historyCount - options.retain;
 	const newestRetainedIndex = options.historyCount - 1;
-	const clientStarted = performance.now();
-	let client = await runtime.Peerbit.create({
-		directory: options.directory,
-		...runtime.createRustPeerbitOptions(),
-	});
-	const clientCreateMs = elapsed(clientStarted);
-	collectGarbage();
-	const beforeOpen = memorySnapshot();
-	const store = createStore(runtime);
-	let closed = false;
-	try {
-		const openStarted = performance.now();
-		await client.open(store, {
-			args: openArgs({
-				...runtime,
-				directory: options.directory,
+	return runOpenedLifecycleWorker({
+		options,
+		storeId: STORE_ID,
+		peakRssField: "maxRssBytes",
+		work: async ({ runtime, client, store }) => {
+			const historyPeer = client.identity.publicKey.hashcode();
+			let probeHash;
+			let retainedProbeHash;
+			const liveGidQueue = [];
+			const appendStarted = performance.now();
+			for (let start = 0; start < count; start += options.batchSize) {
+				const end = Math.min(count, start + options.batchSize);
+				const result = await store.docs.putMany(
+					Array.from({ length: end - start }, (_, offset) => {
+						const index = documentOffset + start + offset;
+						return new runtime.Document({
+							id: `doc-${index}`,
+							name: `value-${index}`,
+						});
+					}),
+					{ unique: true },
+				);
+				for (const entry of result.entries) {
+					probeHash ??= entry.hash;
+					retainedProbeHash = entry.hash;
+					store.docs.log.addPeersToGidPeerHistory(entry.meta.gid, [
+						historyPeer,
+					]);
+					liveGidQueue.push(entry.meta.gid);
+				}
+				if (liveGidQueue.length > options.retain) {
+					liveGidQueue.splice(0, liveGidQueue.length - options.retain);
+				}
+			}
+			const appendMs = elapsed(appendStarted);
+			const cleanupDrainMs = await waitForLifecycleQuiescence(store.docs.log, {
+				storage: false,
+				label: "GID-history cleanup",
+			});
+			const validationStarted = performance.now();
+			const state = await collectState({
+				store,
+				firstDocumentIndex: documentOffset,
+				oldestRetainedIndex,
+				newestRetainedIndex,
+				probeHash,
+				retainedProbeHash,
+				liveGids: new Set(liveGidQueue),
+			});
+			const validation = validateState({
+				state,
+				phase: "seed",
+				scenario: options.scenario,
 				retain: options.retain,
-				compactMaxJournalBytes: options.compactMaxJournalBytes,
-				compactMaxJournalRecords: options.compactMaxJournalRecords,
-			}),
-		});
-		const openMs = elapsed(openStarted);
-		collectGarbage();
-		const afterOpen = memorySnapshot();
-		const historyPeer = client.identity.publicKey.hashcode();
-		let probeHash;
-		let retainedProbeHash;
-		const liveGidQueue = [];
-		const appendStarted = performance.now();
-		for (let start = 0; start < count; start += options.batchSize) {
-			const end = Math.min(count, start + options.batchSize);
-			const result = await store.docs.putMany(
-				Array.from({ length: end - start }, (_, offset) => {
-					const index = documentOffset + start + offset;
-					return new runtime.Document({
-						id: `doc-${index}`,
-						name: `value-${index}`,
-					});
-				}),
-				{ unique: true },
-			);
-			for (const entry of result.entries) {
-				probeHash ??= entry.hash;
-				retainedProbeHash = entry.hash;
-				store.docs.log.addPeersToGidPeerHistory(entry.meta.gid, [historyPeer]);
-				liveGidQueue.push(entry.meta.gid);
-			}
-			if (liveGidQueue.length > options.retain) {
-				liveGidQueue.splice(0, liveGidQueue.length - options.retain);
-			}
-		}
-		const appendMs = elapsed(appendStarted);
-		const cleanupDrainMs = await waitForCleanup(store.docs.log);
-		const validationStarted = performance.now();
-		const state = await collectState({
-			store,
-			firstDocumentIndex: documentOffset,
-			oldestRetainedIndex,
-			newestRetainedIndex,
-			probeHash,
-			retainedProbeHash,
-			liveGids: new Set(liveGidQueue),
-		});
-		const validation = validateState({
-			state,
-			phase: "seed",
-			scenario: options.scenario,
-			retain: options.retain,
-			firstDocumentIndex: documentOffset,
-			oldestRetainedIndex,
-			newestRetainedIndex,
-		});
-		const validationMs = elapsed(validationStarted);
-		collectGarbage();
-		const afterValidation = memorySnapshot();
-		const close = await closeRuntime(store, client);
-		closed = true;
-		client = undefined;
-		return {
-			phase: "seed",
-			scenario: options.scenario,
-			run: options.run,
-			count,
-			documentOffset,
-			probeHash,
-			retainedProbeHash,
-			clientCreateMs,
-			openMs,
-			appendMs,
-			appendOpsPerSecond: Math.round((count / appendMs) * 1000),
-			cleanupDrainMs,
-			validationMs,
-			close,
-			memory: { beforeOpen, afterOpen, afterValidation },
-			maxRssBytes: process.resourceUsage().maxRSS * 1024,
-			state,
-			validation,
-			disk: await diskFootprint(options.directory),
-		};
-	} finally {
-		if (!closed) await client?.stop();
-	}
+				firstDocumentIndex: documentOffset,
+				oldestRetainedIndex,
+				newestRetainedIndex,
+			});
+			const validationMs = elapsed(validationStarted);
+			return {
+				count,
+				documentOffset,
+				probeHash,
+				retainedProbeHash,
+				appendMs,
+				appendOpsPerSecond: Math.round((count / appendMs) * 1000),
+				cleanupDrainMs,
+				validationMs,
+				state,
+				validation,
+			};
+		},
+	});
 };
 
 const reopenWorker = async (options) => {
-	const runtime = await loadRuntime();
 	const count =
 		options.scenario === "fresh" ? options.retain : options.historyCount;
 	const documentOffset =
 		options.scenario === "fresh" ? options.historyCount - options.retain : 0;
 	const oldestRetainedIndex = options.historyCount - options.retain;
 	const newestRetainedIndex = options.historyCount - 1;
-	const clientStarted = performance.now();
-	let client = await runtime.Peerbit.create({
-		directory: options.directory,
-		...runtime.createRustPeerbitOptions(),
-	});
-	const clientCreateMs = elapsed(clientStarted);
-	collectGarbage();
-	const beforeOpen = memorySnapshot();
-	const store = createStore(runtime);
-	let closed = false;
-	try {
-		const openStarted = performance.now();
-		await client.open(store, {
-			args: openArgs({
-				...runtime,
-				directory: options.directory,
+	return runOpenedLifecycleWorker({
+		options,
+		storeId: STORE_ID,
+		peakRssField: "maxRssBytes",
+		work: async ({ store }) => {
+			const validationStarted = performance.now();
+			const state = await collectState({
+				store,
+				firstDocumentIndex: documentOffset,
+				oldestRetainedIndex,
+				newestRetainedIndex,
+				probeHash: options.probeHash,
+				retainedProbeHash: options.retainedProbeHash,
+				liveGids: null,
+			});
+			const validation = validateState({
+				state,
+				phase: "reopen",
+				scenario: options.scenario,
 				retain: options.retain,
-				compactMaxJournalBytes: options.compactMaxJournalBytes,
-				compactMaxJournalRecords: options.compactMaxJournalRecords,
-			}),
-		});
-		const openMs = elapsed(openStarted);
-		collectGarbage();
-		const afterOpen = memorySnapshot();
-		const validationStarted = performance.now();
-		const state = await collectState({
-			store,
-			firstDocumentIndex: documentOffset,
-			oldestRetainedIndex,
-			newestRetainedIndex,
-			probeHash: options.probeHash,
-			retainedProbeHash: options.retainedProbeHash,
-			liveGids: null,
-		});
-		const validation = validateState({
-			state,
-			phase: "reopen",
-			scenario: options.scenario,
-			retain: options.retain,
-			firstDocumentIndex: documentOffset,
-			oldestRetainedIndex,
-			newestRetainedIndex,
-		});
-		const validationMs = elapsed(validationStarted);
-		collectGarbage();
-		const afterValidation = memorySnapshot();
-		const close = await closeRuntime(store, client);
-		closed = true;
-		client = undefined;
-		return {
-			phase: "reopen",
-			scenario: options.scenario,
-			run: options.run,
-			count,
-			documentOffset,
-			clientCreateMs,
-			openMs,
-			validationMs,
-			close,
-			memory: { beforeOpen, afterOpen, afterValidation },
-			maxRssBytes: process.resourceUsage().maxRSS * 1024,
-			state,
-			validation,
-			disk: await diskFootprint(options.directory),
-		};
-	} finally {
-		if (!closed) await client?.stop();
-	}
+				firstDocumentIndex: documentOffset,
+				oldestRetainedIndex,
+				newestRetainedIndex,
+			});
+			const validationMs = elapsed(validationStarted);
+			return {
+				count,
+				documentOffset,
+				validationMs,
+				state,
+				validation,
+			};
+		},
+	});
 };
 
 const runWorkerProcess = (options) => {
-	const args = [
-		"--expose-gc",
-		SCRIPT_PATH,
-		"--worker",
-		"--scenario",
-		options.scenario,
-		"--phase",
-		options.phase,
-		"--run",
-		String(options.run),
-		"--directory",
-		options.directory,
-		"--history-count",
-		String(options.historyCount),
-		"--retain",
-		String(options.retain),
-		"--batch-size",
-		String(options.batchSize),
-	];
-	if (options.compactMaxJournalBytes != null) {
-		args.push(
-			"--compact-max-journal-bytes",
-			String(options.compactMaxJournalBytes),
-		);
-	}
-	if (options.compactMaxJournalRecords != null) {
-		args.push(
-			"--compact-max-journal-records",
-			String(options.compactMaxJournalRecords),
-		);
-	}
+	const args = lifecycleWorkerArgs(options, [
+		["history-count", "historyCount"],
+		["retain", "retain"],
+		["batch-size", "batchSize"],
+	]);
 	if (options.probeHash) args.push("--probe-hash", options.probeHash);
 	if (options.retainedProbeHash) {
 		args.push("--retained-probe-hash", options.retainedProbeHash);
 	}
-	const child = spawnSync(process.execPath, args, {
-		encoding: "utf8",
-		env: process.env,
+	return runJsonWorker({
+		scriptPath: SCRIPT_PATH,
+		args,
+		description: `lifecycle-census worker failed (${options.scenario}, ${options.phase}, run=${options.run})`,
 		maxBuffer: 5 * 1024 * 1024,
 	});
-	if (child.status !== 0) {
-		throw new Error(
-			`lifecycle-census worker failed (${options.scenario}, ${options.phase}, run=${options.run})\n${child.stderr || child.stdout}`,
-		);
-	}
-	try {
-		return JSON.parse(child.stdout);
-	} catch (error) {
-		throw new Error(
-			`lifecycle-census worker produced invalid JSON: ${child.stdout}`,
-			{ cause: error },
-		);
-	}
 };
 
 const runScenario = async (options, scenario, run, root) => {
-	const directory = join(root, scenario);
-	await mkdir(directory, { recursive: true });
-	const common = { ...options, scenario, run, directory };
-	const seed = runWorkerProcess({ ...common, phase: "seed" });
-	const reopen = runWorkerProcess({
-		...common,
-		phase: "reopen",
-		probeHash: seed.probeHash,
-		retainedProbeHash: seed.retainedProbeHash,
-	});
-	const fingerprintFields = [
-		"entriesFingerprint",
-		"headsFingerprint",
-		"coordinatesFingerprint",
-		"rangesFingerprint",
-		"documentsFingerprint",
-	];
-	const changedFingerprints = fingerprintFields.filter(
-		(field) => seed.state[field] !== reopen.state[field],
-	);
-	const changedStableFields = ["durableBlockBytes"].filter(
-		(field) => seed.state[field] !== reopen.state[field],
-	);
-	if (changedFingerprints.length > 0 || changedStableFields.length > 0) {
-		throw new Error(
-			`${scenario} reopen changed ${changedFingerprints
-				.map(
-					(field) =>
-						`${field} (${seed.state[field]} -> ${reopen.state[field]})`,
-				)
-				.join(
-					", ",
-				)}${changedStableFields.length > 0 ? `; stable fields ${changedStableFields.join(", ")}` : ""}; ranges ${JSON.stringify(seed.state.rangeRows)} -> ${JSON.stringify(reopen.state.rangeRows)}`,
-		);
-	}
-	return {
+	return runLifecycleScenario({
+		options,
 		scenario,
-		seed,
-		reopen,
-		validation: {
+		run,
+		root,
+		runWorker: runWorkerProcess,
+		reopenOptions: (seed) => ({
+			probeHash: seed.probeHash,
+			retainedProbeHash: seed.retainedProbeHash,
+		}),
+		stableFields: [
+			"entriesFingerprint",
+			"headsFingerprint",
+			"coordinatesFingerprint",
+			"rangesFingerprint",
+			"documentsFingerprint",
+			"durableBlockBytes",
+		],
+		validation: () => ({
 			coldReopenMatchesSeed: true,
-			changedFingerprints,
-			changedStableFields,
-		},
-	};
+			changedFingerprints: [],
+			changedStableFields: [],
+		}),
+	});
 };
 
 const runMatchedRow = async (options, run) => {
-	const root = await mkdtemp(join(os.tmpdir(), "peerbit-lifecycle-census-"));
-	try {
-		const fresh = await runScenario(options, "fresh", run, root);
-		const history = await runScenario(options, "history", run, root);
-		const comparison = buildLifecycleComparison(
-			fresh,
-			history,
-			options.historyCount - options.retain,
+	const { fresh, history } = await withMatchedScenarios({
+		prefix: "peerbit-lifecycle-census-",
+		options,
+		run,
+		order: ["fresh", "history"],
+		runScenario,
+	});
+	const comparison = buildLifecycleComparison(
+		fresh,
+		history,
+		options.historyCount - options.retain,
+	);
+	if (!comparison.liveStateMatchesFresh) {
+		throw new Error(
+			`historical reopen differs from the matched fresh live state: ${[
+				...comparison.unequalLiveValues,
+				...comparison.unequalLiveFingerprints,
+			].join(", ")}`,
 		);
-		if (!comparison.liveStateMatchesFresh) {
-			throw new Error(
-				`historical reopen differs from the matched fresh live state: ${[
-					...comparison.unequalLiveValues,
-					...comparison.unequalLiveFingerprints,
-				].join(", ")}`,
-			);
-		}
-		return {
-			run,
-			fresh,
-			history,
-			comparison,
-		};
-	} finally {
-		await rm(root, { recursive: true, force: true });
 	}
-};
-
-const hostMetadata = () => ({
-	node: process.version,
-	v8: process.versions.v8,
-	platform: process.platform,
-	arch: process.arch,
-	cpu: os.cpus()[0]?.model ?? "unknown",
-	logicalCpus: os.cpus().length,
-	totalMemoryBytes: os.totalmem(),
-});
-
-const writeReport = async (path, report) => {
-	const destination = resolve(path);
-	await mkdir(dirname(destination), { recursive: true });
-	const temporary = `${destination}.${process.pid}.tmp`;
-	await writeFile(temporary, `${JSON.stringify(report, null, 2)}\n`);
-	await rename(temporary, destination);
+	return { run, fresh, history, comparison };
 };
 
 const renderHuman = (report) => {
@@ -1051,48 +644,22 @@ const main = async () => {
 		return;
 	}
 
-	const rows = [];
-	let activeRow = null;
-	let failure = null;
-	const host = hostMetadata();
-	const report = () =>
-		buildLifecycleCensusReport({
-			...options,
-			rows,
-			host,
-			activeRow,
-			failure,
-		});
-	const checkpoint = async () => {
-		if (options.output) await writeReport(options.output, report());
-	};
-	await checkpoint();
-	for (let run = 1; run <= options.runs; run++) {
-		activeRow = { run, scenarios: LIFECYCLE_CENSUS_SCENARIOS };
-		await checkpoint();
-		console.error(
-			`[lifecycle-census] run=${run}/${options.runs} fresh=${options.retain} history=${options.historyCount} retain=${options.retain}`,
-		);
-		try {
-			rows.push(await runMatchedRow(options, run));
-		} catch (error) {
-			failure = {
-				run,
-				message: error instanceof Error ? error.message : String(error),
-			};
-			activeRow = null;
-			await checkpoint();
-			throw error;
-		}
-		activeRow = null;
-		await checkpoint();
-	}
-	const completed = report();
-	if (options.json) console.log(JSON.stringify(completed, null, 2));
-	else renderHuman(completed);
+	await runCheckpointedCensus({
+		options,
+		scenarios: LIFECYCLE_CENSUS_SCENARIOS,
+		buildReport: buildLifecycleCensusReport,
+		runRow: runMatchedRow,
+		renderHuman,
+		logRun: (run) =>
+			console.error(
+				`[lifecycle-census] run=${run}/${options.runs} fresh=${options.retain} history=${options.historyCount} retain=${options.retain}`,
+			),
+	});
 };
 
-main().catch((error) => {
-	console.error(error instanceof Error ? error.stack : error);
-	process.exitCode = 1;
-});
+if (process.argv[1] === SCRIPT_PATH) {
+	main().catch((error) => {
+		console.error(error instanceof Error ? error.stack : error);
+		process.exitCode = 1;
+	});
+}
