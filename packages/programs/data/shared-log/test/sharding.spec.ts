@@ -1,5 +1,5 @@
 import { keys } from "@libp2p/crypto";
-import { randomBytes, toBase64 } from "@peerbit/crypto";
+import { type PublicSignKey, randomBytes, toBase64 } from "@peerbit/crypto";
 import type { Entry } from "@peerbit/log";
 // Include test utilities
 import { TestSession } from "@peerbit/test-utils";
@@ -2823,6 +2823,521 @@ testSetups.forEach((setup) => {
 				db1 = undefined as any;
 			});
 
+			type ReplicatorReadinessEdge = {
+				label: string;
+				observer: string;
+				db: EventStore<string, any>;
+				target: PublicSignKey;
+				roleAge?: number;
+			};
+			type SubscriberRequestTrace = {
+				calls: number;
+				fulfilled: number;
+				rejected: number;
+				inFlight: number;
+				lastSettledAtMs?: number;
+				lastError?: string;
+			};
+			let replicatorReadinessTraceActive = false;
+
+			const readinessError = (error: unknown) =>
+				error instanceof Error
+					? [error.name, error.message].join(": ")
+					: String(error);
+			const readinessFields = (value: any, names: string[]) =>
+				value
+					? Object.fromEntries(names.map((name) => [name, value[name]]))
+					: {};
+
+			const openThirdReplicatorAndWait = async (label: string) => {
+				const startedAt = Date.now();
+				const history: Record<string, unknown>[] = [];
+				const cleanup: (() => void)[] = [];
+				const restoreErrors: unknown[] = [];
+				const subscriberRequests = new Map<string, SubscriberRequestTrace>();
+				const resumeCounts = new Map<
+					string,
+					{ calls: number; resumed: number }
+				>();
+				let traceRestored = false;
+				const peer0 = session.peers[0].identity.publicKey;
+				const peer1 = session.peers[1].identity.publicKey;
+				const peer2 = session.peers[2].identity.publicKey;
+
+				const record = (
+					observer: string,
+					event: string,
+					target: string,
+					detail?: Record<string, unknown>,
+				) => {
+					history.push({
+						atMs: Date.now() - startedAt,
+						observer,
+						event,
+						target,
+						...detail,
+					});
+					if (history.length > 32) {
+						history.shift();
+					}
+				};
+				const edgeKey = (observer: string, target: string) =>
+					observer + "->" + target;
+				const restoreTrace = () => {
+					if (traceRestored) {
+						return;
+					}
+					traceRestored = true;
+					for (const dispose of cleanup.reverse()) {
+						try {
+							dispose();
+						} catch (error) {
+							restoreErrors.push(error);
+						}
+					}
+				};
+				const tracePubsub = (
+					observer: string,
+					pubsub: any,
+					topic: string,
+					targets: Set<string>,
+				) => {
+					for (const eventName of ["subscribe", "unsubscribe"] as const) {
+						const listener = (event: any) => {
+							const target = event.detail?.from?.hashcode?.();
+							if (
+								targets.has(target) &&
+								event.detail?.topics?.includes(topic)
+							) {
+								record(observer, "pubsub:" + eventName, target, {
+									session: event.detail.session,
+									reason: event.detail.reason,
+								});
+							}
+						};
+						pubsub.addEventListener(eventName, listener);
+						cleanup.push(() => pubsub.removeEventListener(eventName, listener));
+					}
+					const requestSubscribers = pubsub.requestSubscribers.bind(pubsub);
+					const stub = sinon
+						.stub(pubsub, "requestSubscribers")
+						.callsFake((...args: unknown[]) => {
+							const [topicsValue, targetValue] = args;
+							const topics = topicsValue as string | string[];
+							const target = targetValue as PublicSignKey | undefined;
+							const targetHash = target?.hashcode();
+							const topicList = typeof topics === "string" ? [topics] : topics;
+							let requestState: SubscriberRequestTrace | undefined;
+							if (
+								targetHash &&
+								targets.has(targetHash) &&
+								topicList.includes(topic)
+							) {
+								const key = edgeKey(observer, targetHash);
+								requestState = subscriberRequests.get(key) ?? {
+									calls: 0,
+									fulfilled: 0,
+									rejected: 0,
+									inFlight: 0,
+								};
+								requestState.calls++;
+								requestState.inFlight++;
+								subscriberRequests.set(key, requestState);
+							}
+
+							try {
+								const result = requestSubscribers(topics, target);
+								if (requestState) {
+									void Promise.resolve(result).then(
+										() => {
+											requestState.inFlight--;
+											requestState.fulfilled++;
+											requestState.lastSettledAtMs = Date.now() - startedAt;
+										},
+										(error) => {
+											requestState.inFlight--;
+											requestState.rejected++;
+											requestState.lastSettledAtMs = Date.now() - startedAt;
+											requestState.lastError = readinessError(error).slice(
+												0,
+												256,
+											);
+										},
+									);
+								}
+								return result;
+							} catch (error) {
+								if (requestState) {
+									requestState.inFlight--;
+									requestState.rejected++;
+									requestState.lastSettledAtMs = Date.now() - startedAt;
+									requestState.lastError = readinessError(error).slice(0, 256);
+								}
+								throw error;
+							}
+						});
+					cleanup.push(() => {
+						if (pubsub.requestSubscribers !== stub) {
+							throw new Error(
+								"Readiness trace requestSubscribers wrapper was replaced",
+							);
+						}
+						stub.restore();
+					});
+				};
+				const traceLog = (
+					observer: string,
+					db: EventStore<string, any>,
+					targets: Set<string>,
+				) => {
+					const log = db.log as any;
+					for (const eventName of [
+						"replication:change",
+						"replicator:join",
+						"replicator:mature",
+					] as const) {
+						const listener = (event: any) => {
+							const target = event.detail?.publicKey?.hashcode?.();
+							if (targets.has(target)) {
+								record(observer, "log:" + eventName, target);
+							}
+						};
+						log.events.addEventListener(eventName, listener);
+						cleanup.push(() =>
+							log.events.removeEventListener(eventName, listener),
+						);
+					}
+					const resumeParkedRequest = log._v2Receive.resumeParkedRequest.bind(
+						log._v2Receive,
+					);
+					const stub = sinon
+						.stub(log._v2Receive, "resumeParkedRequest")
+						.callsFake((...args: unknown[]) => {
+							const [propertiesValue] = args;
+							const properties = propertiesValue as {
+								peerHash: string;
+								peerSession: object;
+								receiveEpoch: object | null;
+							};
+							const resumed = resumeParkedRequest(properties);
+							if (targets.has(properties.peerHash)) {
+								const key = edgeKey(observer, properties.peerHash);
+								const counts = resumeCounts.get(key) ?? {
+									calls: 0,
+									resumed: 0,
+								};
+								counts.calls++;
+								counts.resumed += resumed ? 1 : 0;
+								resumeCounts.set(key, counts);
+							}
+							return resumed;
+						});
+					cleanup.push(() => {
+						if (log._v2Receive.resumeParkedRequest !== stub) {
+							throw new Error(
+								"Readiness trace resumeParkedRequest wrapper was replaced",
+							);
+						}
+						stub.restore();
+					});
+				};
+
+				const db1Targets = new Set([peer2.hashcode()]);
+				const db2Targets = new Set([peer2.hashcode()]);
+				const db3Targets = new Set([peer0.hashcode(), peer1.hashcode()]);
+				if (replicatorReadinessTraceActive) {
+					throw new Error("Replicator readiness traces must not overlap");
+				}
+				replicatorReadinessTraceActive = true;
+				let operationError: unknown;
+				let restoreFailure: AggregateError | undefined;
+				try {
+					tracePubsub(
+						"db1",
+						session.peers[0].services.pubsub,
+						db1.log.topic,
+						db1Targets,
+					);
+					tracePubsub(
+						"db2",
+						session.peers[1].services.pubsub,
+						db1.log.topic,
+						db2Targets,
+					);
+					tracePubsub(
+						"db3",
+						session.peers[2].services.pubsub,
+						db1.log.topic,
+						db3Targets,
+					);
+					traceLog("db1", db1, db1Targets);
+					traceLog("db2", db2, db2Targets);
+
+					db3 = await EventStore.open<EventStore<string, any>>(
+						db1.address!,
+						session.peers[2],
+						{
+							args: {
+								replicate: { factor: 1 },
+								setup,
+							},
+						},
+					);
+					traceLog("db3", db3, db3Targets);
+					const edges: ReplicatorReadinessEdge[] = [
+						{ label: "db1->db3", observer: "db1", db: db1, target: peer2 },
+						{ label: "db2->db3", observer: "db2", db: db2, target: peer2 },
+						{ label: "db3->db1", observer: "db3", db: db3, target: peer0 },
+						{ label: "db3->db2", observer: "db3", db: db3, target: peer1 },
+					];
+					const waits = Object.fromEntries(
+						edges.map((edge) => [
+							edge.label,
+							{ status: "pending", startedAtMs: Date.now() },
+						]),
+					) as Record<string, any>;
+
+					try {
+						await Promise.all(
+							edges.map(async (edge) => {
+								const state = waits[edge.label];
+								try {
+									edge.roleAge = await edge.db.log.getDefaultMinRoleAge();
+									await edge.db.log.waitForReplicator(edge.target, {
+										roleAge: edge.roleAge,
+										timeout: 30_000,
+									});
+									state.status = "fulfilled";
+								} catch (error) {
+									state.status = "rejected";
+									state.error = readinessError(error);
+									throw error;
+								} finally {
+									state.elapsedMs = Date.now() - state.startedAtMs;
+								}
+							}),
+						);
+					} catch (error) {
+						restoreTrace();
+						try {
+							const dbByHash = new Map(
+								[db1, db2, db3].map((db) => [
+									db.log.node.identity.publicKey.hashcode(),
+									db,
+								]),
+							);
+							const snapshots = edges.map((edge) => {
+								try {
+									const now = Date.now();
+									const log = edge.db.log as any;
+									const pubsub = log.node.services.pubsub as any;
+									const observerHash = log.node.identity.publicKey.hashcode();
+									const targetHash = edge.target.hashcode();
+									const peerSession = log._peerSessions.current(targetHash);
+									const receiveEpoch =
+										log._peerSessions.receiveEpoch(targetHash);
+									const receive = log._v2Receive._receiveStates.get(targetHash);
+									const localCapability =
+										log._v2Receive._localCapabilityAdvertisementsByPeer.get(
+											targetHash,
+										);
+									const recovery =
+										log._replicationInfoRequestByPeer.get(targetHash);
+									const subscription = pubsub.topics
+										?.get(log.topic)
+										?.get(targetHash);
+									const activeReceives =
+										log._activeReceiveHandlersByPeer.get(targetHash);
+									const key = edgeKey(edge.observer, targetHash);
+									const targetLog = dbByHash.get(targetHash)?.log as any;
+									const send = targetLog?._v2Send._sendStates.get(observerHash);
+									const pending: any[] = [];
+									for (const value of log.pendingMaturity
+										.get(targetHash)
+										?.values() ?? []) {
+										pending.push(value);
+										if (pending.length === 8) {
+											break;
+										}
+									}
+
+									return {
+										label: edge.label,
+										observerHash,
+										targetHash,
+										pubsub: {
+											connected: Boolean(pubsub.peers?.has(targetHash)),
+											visible: Boolean(subscription),
+											...readinessFields(subscription, [
+												"session",
+												"timestamp",
+											]),
+											subscriberRequests: subscriberRequests.get(key) ?? {
+												calls: 0,
+												fulfilled: 0,
+												rejected: 0,
+												inFlight: 0,
+											},
+										},
+										session: peerSession && {
+											...readinessFields(peerSession, [
+												"phase",
+												"kind",
+												"hasPredecessor",
+												"openingBarrierActive",
+											]),
+											ageMs: now - peerSession.createdAt,
+											blocked:
+												log._peerSessions.isReplicationInfoBlocked(targetHash),
+											cleanupGateOpen:
+												log._peerSessions.isReceiveCleanupGateOpen(targetHash),
+										},
+										queues: {
+											subscriptionCallbacks:
+												log._subscriptionChangeCallbacks?.size ?? 0,
+											activeReceiveCurrent:
+												activeReceives?.current?.active ?? 0,
+											activeReceiveTotal: [
+												...(activeReceives?.activeBuckets ?? []),
+											].reduce(
+												(total: number, bucket: { active: number }) =>
+													total + bucket.active,
+												0,
+											),
+											receiveDrains:
+												log._receiveHandlerDrainByPeer.get(targetHash)?.size ??
+												0,
+											applyQueued:
+												log._replicationInfoApplyQueueByPeer.has(targetHash),
+										},
+										capability: {
+											bits: log._peerSyncCapabilities.get(targetHash),
+											transportSession:
+												log._peerSyncCapabilitySessions.get(targetHash),
+											timestamp:
+												log._peerSyncCapabilityTimestamps.get(targetHash),
+											openingEpochCurrent:
+												log._openingSyncCapabilitiesByPeer.get(targetHash)
+													?.epoch === peerSession,
+										},
+										receive: receive && {
+											...readinessFields(receive, [
+												"phase",
+												"requestAttempts",
+												"requestParked",
+												"capabilityRefreshRequired",
+												"lastSequence",
+											]),
+											peerSessionCurrent: receive.peerSession === peerSession,
+											receiveEpochCurrent:
+												receive.receiveEpoch === receiveEpoch,
+											requestTimer: Boolean(receive.requestTimer),
+											requestInFlight: Boolean(receive.requestInFlight),
+											receiverBound: receive.receiverBinding !== undefined,
+										},
+										localCapability: localCapability && {
+											...readinessFields(localCapability, [
+												"attempts",
+												"ready",
+											]),
+											peerSessionCurrent:
+												localCapability.peerSession === peerSession,
+											acknowledged: Boolean(localCapability.acknowledgedReady),
+											timer: Boolean(localCapability.timer),
+											inFlight: Boolean(localCapability.inFlight),
+										},
+										recovery: recovery && {
+											attempts: recovery.attempts,
+											peerSessionCurrent: recovery.peerSession === peerSession,
+											timer: Boolean(recovery.timer),
+										},
+										resumeParkedRequest: resumeCounts.get(key) ?? {
+											calls: 0,
+											resumed: 0,
+										},
+										membership: {
+											unique: log.uniqueReplicators.has(targetHash),
+											joinEmitted: log._replicatorJoinEmitted.has(targetHash),
+											roleAge: edge.roleAge,
+											configuredRoleAge: log.timeUntilRoleMaturity,
+											openAgeMs: now - log.openTime,
+											oldestOpenAgeMs: now - log.oldestOpenTime,
+											pending: pending.map((value) => ({
+												id: value.range.range.idString,
+												rangeAgeMs: now - Number(value.range.range.timestamp),
+												expiresInMs: value.expiresAt - now,
+											})),
+										},
+										targetSend: send && {
+											...readinessFields(send, [
+												"established",
+												"suspended",
+												"retryAttempts",
+											]),
+											peerSessionCurrent:
+												targetLog._peerSessions.current(observerHash) ===
+												send.peerSession,
+											retryTimer: Boolean(send.retryTimer),
+											worker: Boolean(send.worker),
+											pendingKind: send.pending?.kind,
+										},
+									};
+								} catch (snapshotError) {
+									return {
+										label: edge.label,
+										error: readinessError(snapshotError),
+									};
+								}
+							});
+							console.error(
+								"[shared-log-replicator-readiness-diagnostics:" +
+									label +
+									"] " +
+									JSON.stringify(
+										{
+											elapsedMs: Date.now() - startedAt,
+											error: readinessError(error),
+											restoreErrors: restoreErrors.map(readinessError),
+											waits,
+											history,
+											snapshots,
+										},
+										(_key, value) =>
+											typeof value === "bigint" ? value.toString() : value,
+									),
+							);
+						} catch (diagnosticError) {
+							console.error(
+								"[shared-log-replicator-readiness-diagnostics] " +
+									readinessError(diagnosticError),
+							);
+						}
+						throw error;
+					}
+				} catch (error) {
+					operationError = error;
+					throw error;
+				} finally {
+					restoreTrace();
+					replicatorReadinessTraceActive = false;
+					if (restoreErrors.length > 0) {
+						restoreFailure = new AggregateError(
+							restoreErrors,
+							"Replicator readiness trace cleanup was contaminated",
+						);
+						if (operationError !== undefined) {
+							console.error(
+								"[shared-log-replicator-readiness-restore-error] " +
+									readinessError(restoreFailure),
+							);
+						}
+					}
+				}
+				if (restoreFailure) {
+					throw restoreFailure;
+				}
+			};
+
 			const openFullReplicatorTriad = async (count: number) => {
 				db1 = await session.peers[0].open(new EventStore<string, any>(), {
 					args: {
@@ -2852,33 +3367,7 @@ testSetups.forEach((setup) => {
 
 				await waitForResolved(() => expect(db2.log.log.length).equal(count));
 
-				db3 = await EventStore.open<EventStore<string, any>>(
-					db1.address!,
-					session.peers[2],
-					{
-						args: {
-							replicate: {
-								factor: 1,
-							},
-							setup,
-						},
-					},
-				);
-
-				await Promise.all([
-					db1.log.waitForReplicator(session.peers[2].identity.publicKey, {
-						timeout: 30_000,
-					}),
-					db2.log.waitForReplicator(session.peers[2].identity.publicKey, {
-						timeout: 30_000,
-					}),
-					db3.log.waitForReplicator(session.peers[0].identity.publicKey, {
-						timeout: 30_000,
-					}),
-					db3.log.waitForReplicator(session.peers[1].identity.publicKey, {
-						timeout: 30_000,
-					}),
-				]);
+				await openThirdReplicatorAndWait("observer-unreplicate-open");
 			};
 
 			it("drops when no longer replicating as observer", async () => {
@@ -3010,32 +3499,7 @@ testSetups.forEach((setup) => {
 
 				await waitForResolved(() => expect(db2.log.log.length).equal(COUNT));
 
-				db3 = await EventStore.open<EventStore<string, any>>(
-					db1.address!,
-					session.peers[2],
-					{
-						args: {
-							replicate: {
-								factor: 1,
-							},
-							setup,
-						},
-					},
-				);
-				await Promise.all([
-					db1.log.waitForReplicator(session.peers[2].identity.publicKey, {
-						timeout: 30_000,
-					}),
-					db2.log.waitForReplicator(session.peers[2].identity.publicKey, {
-						timeout: 30_000,
-					}),
-					db3.log.waitForReplicator(session.peers[0].identity.publicKey, {
-						timeout: 30_000,
-					}),
-					db3.log.waitForReplicator(session.peers[1].identity.publicKey, {
-						timeout: 30_000,
-					}),
-				]);
+				await openThirdReplicatorAndWait("factor-zero-open");
 				await db2.log.replicate({ factor: 0 });
 				await waitForResolved(() => expect(db3.log.log.length).equal(COUNT), {
 					timeout: 30_000,
