@@ -2788,6 +2788,129 @@ describe("pubsub (subscribe race regressions)", function () {
 		expect(send.calledOnce).to.equal(true);
 	});
 
+	it("uses a live root responder without waiting for a silent peer", async function () {
+		this.timeout(3_000);
+		session = await createDisconnectedSessionWithPerPeerRoots(3);
+		const pubsub = session.peers[0]!.services.pubsub;
+		const silent = session.peers[1]!.services.pubsub;
+		const live = session.peers[2]!.services.pubsub;
+		const internals = pubsub as any;
+		const topic = "concurrent-live-topic-root";
+		const resolvedRoot = live.publicKeyHash;
+		const trackers = [
+			{ publicKey: silent.publicKey },
+			{ publicKey: live.publicKey },
+		];
+		sinon.stub(internals, "getConnectedTopicRootTrackers").returns(trackers);
+		const send = sinon
+			.stub(internals, "sendDirectControlMessage")
+			.callsFake(async (...args: unknown[]) => {
+				const peer = args[0] as { publicKey: { hashcode(): string } };
+				const query = args[1] as TopicRootQuery;
+				if (peer.publicKey.hashcode() !== live.publicKeyHash) return;
+				expect(
+					internals.resolvePendingTopicRootQuery(
+						new TopicRootQueryResponse({
+							requestId: query.requestId,
+							root: resolvedRoot,
+							topic,
+						}),
+						live.publicKeyHash,
+					),
+				).to.equal(true);
+			});
+
+		const started = performance.now();
+		expect(await internals.resolveTopicRootState(topic)).to.deep.equal({
+			authoritative: true,
+			root: resolvedRoot,
+		});
+		expect(performance.now() - started).to.be.lessThan(500);
+		expect(
+			send.getCalls().map((call) => call.args[0].publicKey.hashcode()),
+		).to.deep.equal([silent.publicKeyHash, live.publicKeyHash]);
+		expect(internals.pendingTopicRootQueries.size).to.equal(0);
+	});
+
+	it("bounds all-silent root retries with one peer-query deadline", async () => {
+		session = await createDisconnectedSessionWithPerPeerRoots(3);
+		const pubsub = session.peers[0]!.services.pubsub;
+		const firstSilent = session.peers[1]!.services.pubsub;
+		const secondSilent = session.peers[2]!.services.pubsub;
+		const internals = pubsub as any;
+		internals.clearTopicRootCandidateClaimTimer();
+		internals.clearAutoTopicRootCandidateUpdateSchedule();
+		sinon
+			.stub(internals, "getConnectedTopicRootTrackers")
+			.returns([
+				{ publicKey: firstSilent.publicKey },
+				{ publicKey: secondSilent.publicKey },
+			]);
+		const send = sinon.stub(internals, "sendDirectControlMessage").resolves();
+		const clock = sinon.useFakeTimers({
+			now: Date.now(),
+			toFake: ["Date", "clearTimeout", "setTimeout"],
+		});
+
+		try {
+			const startedAt = Date.now();
+			let settledAt: number | undefined;
+			const resolving = internals
+				.resolveTopicRootState("all-silent-topic-root")
+				.then((state: unknown) => {
+					settledAt = Date.now();
+					return state;
+				});
+			await clock.tickAsync(12_001);
+
+			expect(await resolving).to.deep.equal({
+				authoritative: false,
+				root: pubsub.publicKeyHash,
+			});
+			expect(settledAt! - startedAt).to.be.at.most(12_001);
+			expect(send.callCount).to.equal(8);
+			expect(internals.pendingTopicRootQueries.size).to.equal(0);
+		} finally {
+			clock.restore();
+		}
+	});
+
+	it("preserves caller cancellation across a concurrent root-query round", async () => {
+		session = await createDisconnectedSessionWithPerPeerRoots(3);
+		const pubsub = session.peers[0]!.services.pubsub;
+		const firstSilent = session.peers[1]!.services.pubsub;
+		const secondSilent = session.peers[2]!.services.pubsub;
+		const internals = pubsub as any;
+		sinon
+			.stub(internals, "getConnectedTopicRootTrackers")
+			.returns([
+				{ publicKey: firstSilent.publicKey },
+				{ publicKey: secondSilent.publicKey },
+			]);
+		const send = sinon.stub(internals, "sendDirectControlMessage").resolves();
+		const abortController = new AbortController();
+		const reason = new Error("cancel concurrent root lookup");
+		const outcome = pubsub
+			.resolveTopicRoot("caller-cancelled-peer-round", {
+				signal: abortController.signal,
+			})
+			.then(
+				(value): { value: string | undefined; error?: never } => ({ value }),
+				(error: unknown): { value?: never; error: unknown } => ({ error }),
+			);
+
+		await waitForResolved(
+			() => expect(internals.pendingTopicRootQueries.size).to.equal(2),
+			{ timeout: 1_000, delayInterval: 10 },
+		);
+		abortController.abort(reason);
+		const result = await outcome;
+		expect(result.value).to.equal(undefined);
+		expect(result.error).to.equal(reason);
+		expect(send.callCount).to.equal(2);
+		expect(internals.pendingTopicRootQueries.size).to.equal(0);
+	});
+
 	it("aborts a hanging resolver when the control plane stops", async () => {
 		session = await createDisconnectedSessionWithPerPeerRoots(1);
 		const pubsub = session.peers[0]!.services.pubsub;

@@ -234,9 +234,15 @@ type TopicRootCandidateClaimRecord = {
 const sameCandidates = (left: string[], right: string[]) =>
 	left.length === right.length &&
 	left.every((candidate, index) => candidate === right[index]);
-// Topic-root queries may need to wait for the responder to finish opening an
-// outbound stream back to the requester after an inbound-only dial.
+// Retain the previous 12 second allowance as one deadline for the complete
+// peer-query phase. It must not multiply by peer count or retry count.
 const DEFAULT_TOPIC_ROOT_QUERY_TIMEOUT_MS = 12_000;
+// A responder may need to open an outbound stream after an inbound-only dial.
+// Bounded rounds leave enough time for that setup while still allowing a lost
+// request or a newly-ready stream to be retried within the phase deadline.
+const TOPIC_ROOT_QUERY_ROUND_TIMEOUT_MS = 3_000;
+const TOPIC_ROOT_QUERY_ATTEMPTS = 3;
+const TOPIC_ROOT_QUERY_SELF_ROOT_ATTEMPTS = 4;
 const DIRECT_SHARD_ROOT_CONFIRM_TIMEOUT_MS = 2_000;
 
 const DEFAULT_PUBSUB_FANOUT_CHANNEL_OPTIONS: Omit<
@@ -2153,36 +2159,70 @@ export class TopicControlPlane
 			return { root: tracked, authoritative: true };
 		}
 
-		const resolvedThroughPeers = await this.resolveTopicRootThroughPeers(
-			topic,
-			options,
-		);
-		if (resolvedThroughPeers) {
-			// Unconfigured peer-query replies cannot override the locally
-			// deterministic root for internal shards in auto mode. Roots, resolvers,
-			// and trackers explicitly configured on this control plane are resolved
-			// above and remain authoritative. A leaf relying on a queried gateway for
-			// shard roots must first disable auto mode with setTopicRootCandidates([]).
-			return this.normalizePeerTopicRootState(topic, resolvedThroughPeers);
-		}
-
 		const deterministic =
 			this.topicRootControlPlane.resolveDeterministicTopicRoot(topic);
-		if (
-			deterministic === this.publicKeyHash &&
-			this.autoTopicRootCandidates &&
-			this.getConnectedTopicRootTrackers().length > 0
-		) {
-			for (let attempt = 0; attempt < 8; attempt++) {
-				await withAbort(
-					delay(150 * (attempt < 4 ? 1 : 2), options),
-					options?.signal,
+		const maxAttempts =
+			deterministic === this.publicKeyHash && this.autoTopicRootCandidates
+				? TOPIC_ROOT_QUERY_SELF_ROOT_ATTEMPTS
+				: TOPIC_ROOT_QUERY_ATTEMPTS;
+		const deadlineController = new AbortController();
+		const deadlineTimer = setTimeout(
+			() =>
+				deadlineController.abort(
+					new AbortError("topic root peer-query deadline reached"),
+				),
+			DEFAULT_TOPIC_ROOT_QUERY_TIMEOUT_MS,
+		);
+		deadlineTimer.unref?.();
+		const querySignals = linkAbortSignals([
+			options?.signal,
+			deadlineController.signal,
+		]);
+		try {
+			for (let attempt = 0; attempt < maxAttempts; attempt++) {
+				throwIfAborted(querySignals.signal);
+				if (this.getConnectedTopicRootTrackers().length === 0) {
+					break;
+				}
+				if (attempt > 0) {
+					await withAbort(
+						delay(150 * Math.min(attempt, 2), {
+							signal: querySignals.signal,
+						}),
+						querySignals.signal,
+					);
+				}
+				const resolvedThroughPeers = await this.resolveTopicRootThroughPeers(
+					topic,
+					{
+						signal: querySignals.signal,
+						timeoutMs: TOPIC_ROOT_QUERY_ROUND_TIMEOUT_MS,
+					},
 				);
-				const retried = await this.resolveTopicRootThroughPeers(topic, options);
-				if (retried) {
-					return this.normalizePeerTopicRootState(topic, retried);
+				if (resolvedThroughPeers !== undefined) {
+					// Unconfigured peer-query replies cannot override the locally
+					// deterministic root for internal shards in auto mode. Roots,
+					// resolvers, and trackers explicitly configured on this control
+					// plane are resolved above and remain authoritative. A leaf relying
+					// on a queried gateway for shard roots must first disable auto mode
+					// with setTopicRootCandidates([]).
+					return this.normalizePeerTopicRootState(topic, resolvedThroughPeers);
 				}
 			}
+		} catch (error) {
+			// Candidate, lifecycle, and caller cancellation are terminal to this
+			// invocation and must retain their exact reason. Only the private phase
+			// deadline falls through to the same deterministic result as exhausted
+			// peer queries.
+			if (options?.signal?.aborted) {
+				throw options.signal.reason ?? error;
+			}
+			if (!deadlineController.signal.aborted) {
+				throw error;
+			}
+		} finally {
+			clearTimeout(deadlineTimer);
+			querySignals.clear();
 		}
 
 		return {
@@ -2470,7 +2510,7 @@ export class TopicControlPlane
 
 	private async resolveTopicRootThroughPeers(
 		topic: string,
-		options?: TopicRootResolutionOptions,
+		options?: TopicRootResolutionOptions & { timeoutMs?: number },
 	): Promise<string | undefined> {
 		throwIfAborted(options?.signal);
 		const peers = this.getConnectedTopicRootTrackers();
@@ -2478,24 +2518,41 @@ export class TopicControlPlane
 			return undefined;
 		}
 
-		for (let attempt = 0; attempt < 3; attempt++) {
-			for (const peer of peers) {
-				const resolved = await this.queryTopicRootFromPeer(
-					peer,
-					topic,
-					DEFAULT_TOPIC_ROOT_QUERY_TIMEOUT_MS,
-					options?.signal,
-				);
-				if (resolved) {
-					return resolved;
+		const roundController = new AbortController();
+		const roundSignals = linkAbortSignals([
+			options?.signal,
+			roundController.signal,
+		]);
+		const queries = peers.map((peer) =>
+			this.queryTopicRootFromPeer(
+				peer,
+				topic,
+				options?.timeoutMs ?? DEFAULT_TOPIC_ROOT_QUERY_TIMEOUT_MS,
+				roundSignals.signal,
+			),
+		);
+		const pending = new Map(
+			queries.map((query, index) => [
+				index,
+				query.then((root) => ({ index, root })),
+			]),
+		);
+		try {
+			while (pending.size > 0) {
+				const { index, root } = await Promise.race(pending.values());
+				pending.delete(index);
+				if (root !== undefined) {
+					return root;
 				}
 			}
-
-			if (attempt < 2) {
-				await withAbort(delay(150 * (attempt + 1), options), options?.signal);
-			}
+			return undefined;
+		} finally {
+			// Cancel response timers and in-flight sends for every losing query before
+			// the winning root (or an abort) can leave this round.
+			roundController.abort(new AbortError("topic root query round settled"));
+			await Promise.allSettled(queries);
+			roundSignals.clear();
 		}
-		return undefined;
 	}
 
 	private async ensureFanoutChannel(
