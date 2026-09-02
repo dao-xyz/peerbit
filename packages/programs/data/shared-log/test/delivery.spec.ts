@@ -15,7 +15,7 @@ import {
 	EXCHANGE_HEADS_REPAIR_HINT,
 	ExchangeHeadsMessage,
 } from "../src/exchange-heads.js";
-import { NoPeersError } from "../src/index.js";
+import { NoPeersError, type SyncProfileEvent } from "../src/index.js";
 import { EventStore } from "./utils/stores/index.js";
 
 // The ack gates below resolve only if the LOCAL publish interceptor recorded the
@@ -100,6 +100,50 @@ describe("append delivery options", () => {
 			expect(
 				fanout.getChannelStats(channel.topic, channel.root)?.uploadLimitBps,
 			).to.equal(20_000_000);
+		} finally {
+			await peer.stop();
+		}
+	});
+
+	it("profiles fanout open with aggregate diagnostics and no peer identifiers", async () => {
+		const peer = await Peerbit.create();
+		try {
+			const profileEvents: SyncProfileEvent[] = [];
+			const root = peer.services.fanout.publicKeyHash;
+			await peer.open(new EventStore<string, any>(), {
+				args: {
+					fanout: { root },
+					sync: {
+						profile: (event) => {
+							profileEvents.push(event);
+							if (event.name === "sharedLog.open.fanout") {
+								throw new Error("diagnostic sink failure");
+							}
+						},
+					},
+				},
+			});
+
+			const event = profileEvents.find(
+				(candidate) => candidate.name === "sharedLog.open.fanout",
+			);
+			expect(event).to.exist;
+			expect(event?.component).to.equal("shared-log");
+			expect(event?.durationMs).to.be.a("number");
+			expect(event?.details).to.include({
+				configured: true,
+				mode: "root",
+				outcome: "opened",
+				joinReqSent: 0,
+				bootstrapDialAttempts: 0,
+				candidateDialAttempts: 0,
+			});
+			expect(event).not.to.have.property("peer");
+			expect(
+				Object.keys(event?.details ?? {}).some((key) =>
+					/peer|topic|address/i.test(key),
+				),
+			).to.equal(false);
 		} finally {
 			await peer.stop();
 		}

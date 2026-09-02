@@ -234,9 +234,15 @@ type TopicRootCandidateClaimRecord = {
 const sameCandidates = (left: string[], right: string[]) =>
 	left.length === right.length &&
 	left.every((candidate, index) => candidate === right[index]);
-// Topic-root queries may need to wait for the responder to finish opening an
-// outbound stream back to the requester after an inbound-only dial.
+// Retain the previous 12 second allowance as one deadline for the complete
+// peer-query phase. It must not multiply by peer count or retry count.
 const DEFAULT_TOPIC_ROOT_QUERY_TIMEOUT_MS = 12_000;
+// A responder may need to open an outbound stream after an inbound-only dial.
+// Bounded rounds leave enough time for that setup while still allowing a lost
+// request or a newly-ready stream to be retried within the phase deadline.
+const TOPIC_ROOT_QUERY_ROUND_TIMEOUT_MS = 3_000;
+const TOPIC_ROOT_HOST_SCAN_TIMEOUT_MS = DEFAULT_TOPIC_ROOT_QUERY_TIMEOUT_MS;
+const TOPIC_ROOT_HOST_SCAN_CONCURRENCY = 8;
 const DIRECT_SHARD_ROOT_CONFIRM_TIMEOUT_MS = 2_000;
 
 const DEFAULT_PUBSUB_FANOUT_CHANNEL_OPTIONS: Omit<
@@ -457,6 +463,15 @@ export class TopicControlPlane
 	private readonly signedTopicRootCandidateClaims = new Map<
 		string,
 		TopicRootCandidateClaimRecord
+	>();
+	// A directly observed departure makes only that origin's current lease
+	// ineffective locally. This is not a component-wide withdrawal: claims learned
+	// only through relays keep their existing lease semantics. Keeping the verified
+	// bytes + replay floor prevents a relay from resurrecting the departed lease;
+	// the map is bounded by the same retained-origin cap as the claim map.
+	private readonly suppressedDepartedTopicRootCandidateClaims = new Map<
+		string,
+		{ bytes: Uint8Array; timestamp: bigint }
 	>();
 	// Active claims expire, but their per-origin timestamp floors survive for the
 	// auto-mode lifecycle so a frozen wall clock cannot renew a replayed lease.
@@ -873,6 +888,25 @@ export class TopicControlPlane
 			(peer) => peer.protocol === TOPIC_CONTROL_PLANE_PROTOCOL_V2_1,
 		);
 		const removed = await super._removePeer(publicKey);
+		let suppressedDepartedOrigin = false;
+		if (
+			removed &&
+			this.autoTopicRootCandidates &&
+			protocol === TOPIC_CONTROL_PLANE_PROTOCOL_V2_1 &&
+			this.signedTopicRootCandidateClaims.has(hash)
+		) {
+			const claim = this.signedTopicRootCandidateClaims.get(hash)!;
+			const suppressed =
+				this.suppressedDepartedTopicRootCandidateClaims.get(hash);
+			suppressedDepartedOrigin =
+				!suppressed ||
+				suppressed.timestamp !== claim.timestamp ||
+				!bytesEqual(suppressed.bytes, claim.bytes);
+			this.suppressedDepartedTopicRootCandidateClaims.set(hash, {
+				bytes: claim.bytes,
+				timestamp: claim.timestamp,
+			});
+		}
 		if (
 			this.autoTopicRootCandidates &&
 			(protocol === TOPIC_CONTROL_PLANE_PROTOCOL_V2_0 ||
@@ -882,7 +916,7 @@ export class TopicControlPlane
 				(peer) => peer.protocol === TOPIC_CONTROL_PLANE_PROTOCOL_V2_1,
 			);
 			this.rebuildAutoTopicRootCandidatesFromClaims(BigInt(Date.now()), {
-				immediate: hadSignedPeer !== hasSignedPeer,
+				immediate: suppressedDepartedOrigin || hadSignedPeer !== hasSignedPeer,
 			});
 		}
 		return removed;
@@ -926,6 +960,7 @@ export class TopicControlPlane
 	private clearSignedTopicRootCandidateState() {
 		this.clearTopicRootCandidateClaimTimer();
 		this.signedTopicRootCandidateClaims.clear();
+		this.suppressedDepartedTopicRootCandidateClaims.clear();
 		this.topicRootCandidateClaimReplayFloors.clear();
 		this.localSignedTopicRootCandidateClaim = undefined;
 		this.topicRootCandidateClaimRefreshNotBefore = undefined;
@@ -1199,6 +1234,7 @@ export class TopicControlPlane
 		for (const [origin, claim] of this.signedTopicRootCandidateClaims) {
 			if (claim.expires <= now || claim.acceptUntil <= monotonicNow) {
 				this.signedTopicRootCandidateClaims.delete(origin);
+				this.suppressedDepartedTopicRootCandidateClaims.delete(origin);
 				changed = true;
 			}
 		}
@@ -1223,7 +1259,12 @@ export class TopicControlPlane
 					? []
 					: [this.publicKeyHash]),
 				...legacyDirectCandidates,
-				...this.signedTopicRootCandidateClaims.keys(),
+				...[...this.signedTopicRootCandidateClaims.entries()]
+					.filter(
+						([origin, claim]) =>
+							!this.isDepartedTopicRootCandidateClaimSuppressed(origin, claim),
+					)
+					.map(([origin]) => origin),
 			]),
 		]
 			.filter(isCanonicalTopicRootCandidate)
@@ -1268,6 +1309,7 @@ export class TopicControlPlane
 				// because the retained maximum only decreases, it cannot re-enter.
 				this.topicRootCandidateClaimReplayFloors.delete(highest);
 				this.signedTopicRootCandidateClaims.delete(highest);
+				this.suppressedDepartedTopicRootCandidateClaims.delete(highest);
 				if (highest === this.publicKeyHash) {
 					this.localSignedTopicRootCandidateClaim = undefined;
 				}
@@ -1275,7 +1317,20 @@ export class TopicControlPlane
 		}
 		this.topicRootCandidateClaimReplayFloors.set(origin, claim.timestamp);
 		this.signedTopicRootCandidateClaims.set(origin, claim);
+		this.suppressedDepartedTopicRootCandidateClaims.delete(origin);
 		return true;
+	}
+
+	private isDepartedTopicRootCandidateClaimSuppressed(
+		origin: string,
+		claim: TopicRootCandidateClaimRecord,
+	): boolean {
+		const suppressed =
+			this.suppressedDepartedTopicRootCandidateClaims.get(origin);
+		return (
+			suppressed?.timestamp === claim.timestamp &&
+			bytesEqual(suppressed.bytes, claim.bytes)
+		);
 	}
 
 	private canAdvanceTopicRootCandidateClaimReplayFloor(
@@ -1354,6 +1409,7 @@ export class TopicControlPlane
 	private async importSignedTopicRootCandidateClaim(
 		rawClaim: Uint8Array,
 		outerPeerHash: string,
+		expectedPeer?: PeerStreams,
 	): Promise<boolean> {
 		const lifecycleRevision = this.topicControlPlaneLifecycleRevision;
 		if (
@@ -1398,11 +1454,35 @@ export class TopicControlPlane
 		if (acceptanceDeadline === undefined) {
 			return false;
 		}
+
+		this.rebuildAutoTopicRootCandidatesFromClaims(now);
+		const retained = this.signedTopicRootCandidateClaims.get(origin);
+		if (
+			outerPeerHash === origin &&
+			expectedPeer !== undefined &&
+			expectedPeer.protocol === TOPIC_CONTROL_PLANE_PROTOCOL_V2_1 &&
+			this.peers.get(outerPeerHash) === expectedPeer &&
+			lifecycleRevision === this.topicControlPlaneLifecycleRevision &&
+			this.autoTopicRootCandidates &&
+			this.started &&
+			!this.stopping &&
+			!this.topicControlPlaneStopping &&
+			retained?.timestamp === timestamp &&
+			bytesEqual(retained.bytes, rawClaim) &&
+			this.isDepartedTopicRootCandidateClaimSuppressed(origin, retained)
+		) {
+			// These exact bytes were already verified and remain under the original
+			// monotonic acceptance deadline. A current authenticated origin stream is
+			// sufficient liveness evidence; do not advance the floor or lease.
+			this.suppressedDepartedTopicRootCandidateClaims.delete(origin);
+			this.rebuildAutoTopicRootCandidatesFromClaims(now, { immediate: true });
+			return false;
+		}
+
 		if (!this.canAdvanceTopicRootCandidateClaimReplayFloor(origin, timestamp)) {
 			return false;
 		}
 
-		this.rebuildAutoTopicRootCandidatesFromClaims(now);
 		if (!this.consumeTopicRootCandidateClaimVerifyBudget(outerPeerHash)) {
 			return false;
 		}
@@ -1425,7 +1505,9 @@ export class TopicControlPlane
 			!this.autoTopicRootCandidates ||
 			!this.started ||
 			this.stopping ||
-			this.topicControlPlaneStopping
+			this.topicControlPlaneStopping ||
+			(expectedPeer !== undefined &&
+				this.peers.get(outerPeerHash) !== expectedPeer)
 		) {
 			return false;
 		}
@@ -1499,6 +1581,10 @@ export class TopicControlPlane
 			}
 		}
 		const claims = [...this.signedTopicRootCandidateClaims.entries()]
+			.filter(
+				([origin, claim]) =>
+					!this.isDepartedTopicRootCandidateClaimSuppressed(origin, claim),
+			)
 			.sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
 			.map(([, claim]) => claim.bytes);
 		await this.sendSignedTopicRootCandidateClaims(claims, signedStreams);
@@ -2062,7 +2148,9 @@ export class TopicControlPlane
 
 	private async resolveTopicRootState(
 		topic: string,
-		options?: TopicRootResolutionOptions,
+		options?: TopicRootResolutionOptions & {
+			queryConnectedPeers?: boolean;
+		},
 	): Promise<{ root?: string; authoritative: boolean }> {
 		throwIfAborted(options?.signal);
 		const tracked = await this.topicRootControlPlane.resolveTrackedTopicRoot(
@@ -2072,37 +2160,80 @@ export class TopicControlPlane
 		if (tracked) {
 			return { root: tracked, authoritative: true };
 		}
-
-		const resolvedThroughPeers = await this.resolveTopicRootThroughPeers(
-			topic,
-			options,
-		);
-		if (resolvedThroughPeers) {
-			// Unconfigured peer-query replies cannot override the locally
-			// deterministic root for internal shards in auto mode. Roots, resolvers,
-			// and trackers explicitly configured on this control plane are resolved
-			// above and remain authoritative. A leaf relying on a queried gateway for
-			// shard roots must first disable auto mode with setTopicRootCandidates([]).
-			return this.normalizePeerTopicRootState(topic, resolvedThroughPeers);
+		if (options?.queryConnectedPeers === false) {
+			return {
+				root: this.topicRootControlPlane.resolveDeterministicTopicRoot(topic),
+				authoritative: false,
+			};
 		}
 
-		const deterministic =
-			this.topicRootControlPlane.resolveDeterministicTopicRoot(topic);
-		if (
-			deterministic === this.publicKeyHash &&
-			this.autoTopicRootCandidates &&
-			this.getConnectedTopicRootTrackers().length > 0
-		) {
-			for (let attempt = 0; attempt < 8; attempt++) {
-				await withAbort(
-					delay(150 * (attempt < 4 ? 1 : 2), options),
-					options?.signal,
+		const deadlineController = new AbortController();
+		const deadlineTimer = setTimeout(
+			() =>
+				deadlineController.abort(
+					new AbortError("topic root peer-query deadline reached"),
+				),
+			DEFAULT_TOPIC_ROOT_QUERY_TIMEOUT_MS,
+		);
+		deadlineTimer.unref?.();
+		const querySignals = linkAbortSignals([
+			options?.signal,
+			deadlineController.signal,
+		]);
+		try {
+			let attempt = 0;
+			for (;;) {
+				throwIfAborted(querySignals.signal);
+				// Preserve the immediate deterministic fallback when no queryable stream
+				// exists at entry. Once a peer was queryable, keep the bounded readiness
+				// window alive: later rounds re-snapshot streams that can become writable
+				// after an inbound-only dial.
+				if (
+					attempt === 0 &&
+					this.getConnectedTopicRootTrackers().length === 0
+				) {
+					break;
+				}
+				if (attempt > 0) {
+					await withAbort(
+						delay(150 * Math.min(attempt, 2), {
+							signal: querySignals.signal,
+						}),
+						querySignals.signal,
+					);
+				}
+				attempt += 1;
+				const resolvedThroughPeers = await this.resolveTopicRootThroughPeers(
+					topic,
+					{
+						signal: querySignals.signal,
+						timeoutMs: TOPIC_ROOT_QUERY_ROUND_TIMEOUT_MS,
+					},
 				);
-				const retried = await this.resolveTopicRootThroughPeers(topic, options);
-				if (retried) {
-					return this.normalizePeerTopicRootState(topic, retried);
+				if (resolvedThroughPeers !== undefined) {
+					// Unconfigured peer-query replies cannot override the locally
+					// deterministic root for internal shards in auto mode. Roots,
+					// resolvers, and trackers explicitly configured on this control
+					// plane are resolved above and remain authoritative. A leaf relying
+					// on a queried gateway for shard roots must first disable auto mode
+					// with setTopicRootCandidates([]).
+					return this.normalizePeerTopicRootState(topic, resolvedThroughPeers);
 				}
 			}
+		} catch (error) {
+			// Candidate, lifecycle, and caller cancellation are terminal to this
+			// invocation and must retain their exact reason. Only the private phase
+			// deadline falls through to the same deterministic result as exhausted
+			// peer queries.
+			if (options?.signal?.aborted) {
+				throw options.signal.reason ?? error;
+			}
+			if (!deadlineController.signal.aborted) {
+				throw error;
+			}
+		} finally {
+			clearTimeout(deadlineTimer);
+			querySignals.clear();
 		}
 
 		return {
@@ -2128,7 +2259,9 @@ export class TopicControlPlane
 
 	private async resolveShardRootState(
 		shardTopic: string,
-		options?: TopicRootResolutionOptions,
+		options?: TopicRootResolutionOptions & {
+			queryConnectedPeers?: boolean;
+		},
 	): Promise<{ root: string; candidateGeneration: string }> {
 		const lifecycleRevision = this.topicControlPlaneLifecycleRevision;
 		for (;;) {
@@ -2143,8 +2276,14 @@ export class TopicControlPlane
 
 			const candidateGeneration = this.getTopicRootCandidateGeneration();
 			const hasConnectedTrackers =
+				options?.queryConnectedPeers !== false &&
 				this.getConnectedTopicRootTrackers().length > 0;
-			const cached = this.shardRootCache.get(shardTopic);
+			// A proactive local scan must not inherit an authoritative cache entry that
+			// originated from a connected-peer reply under the same candidate generation.
+			const cached =
+				options?.queryConnectedPeers === false
+					? undefined
+					: this.shardRootCache.get(shardTopic);
 			if (cached && (cached.authoritative || !hasConnectedTrackers)) {
 				return { root: cached.root, candidateGeneration };
 			}
@@ -2201,6 +2340,7 @@ export class TopicControlPlane
 	private async sendDirectControlMessage(
 		peer: PeerStreams,
 		pubsubMessage: PubSubMessage,
+		signal?: AbortSignal,
 	) {
 		const embedded = await this.createMessage(
 			this.encodePubSubMessage(pubsubMessage),
@@ -2213,7 +2353,13 @@ export class TopicControlPlane
 				skipRecipientValidation: true,
 			} as any,
 		);
-		await this.publishMessage(this.publicKey, embedded, [peer]);
+		await this.publishMessage(
+			this.publicKey,
+			embedded,
+			[peer],
+			undefined,
+			signal,
+		);
 	}
 
 	private resolvePendingTopicRootQuery(
@@ -2245,6 +2391,9 @@ export class TopicControlPlane
 
 		const expectedPeerHash = peer.publicKey.hashcode();
 		const requestId = this.nextTopicRootRequestIdValue();
+		const queryController = new AbortController();
+		const querySignals = linkAbortSignals([signal, queryController.signal]);
+		let timedOut = false;
 		const responsePromise = new Promise<string | undefined>((resolve) => {
 			let settled = false;
 			const settle = (root: string | undefined) => {
@@ -2255,14 +2404,16 @@ export class TopicControlPlane
 					this.pendingTopicRootQueries.delete(requestId);
 				}
 				clearTimeout(timer);
-				if (signal && onAbort) {
-					signal.removeEventListener("abort", onAbort);
-				}
+				querySignals.signal.removeEventListener("abort", onAbort);
 				resolve(root);
 			};
-			const onAbort = signal ? () => settle(undefined) : undefined;
+			const onAbort = () => settle(undefined);
 			const timer = setTimeout(
-				() => settle(undefined),
+				() => {
+					timedOut = true;
+					settle(undefined);
+					queryController.abort(new AbortError("topic root query timed out"));
+				},
 				Math.max(1, Math.floor(timeoutMs)),
 			);
 			timer.unref?.();
@@ -2272,31 +2423,45 @@ export class TopicControlPlane
 				resolve: settle,
 				timer,
 			});
-			if (signal && onAbort) {
-				signal.addEventListener("abort", onAbort, { once: true });
-				if (signal.aborted) onAbort();
-			}
+			querySignals.signal.addEventListener("abort", onAbort, { once: true });
+			if (querySignals.signal.aborted) onAbort();
 		});
 
 		try {
-			await withAbort(
-				this.sendDirectControlMessage(
-					peer,
-					new TopicRootQuery({ requestId, topic }),
-				),
-				signal,
-			);
-		} catch (error) {
-			const pending = this.pendingTopicRootQueries.get(requestId);
-			if (pending) {
-				this.pendingTopicRootQueries.delete(requestId);
-				clearTimeout(pending.timer);
-				pending.resolve(undefined);
+			try {
+				const sending = withAbort(
+					this.sendDirectControlMessage(
+						peer,
+						new TopicRootQuery({ requestId, topic }),
+						querySignals.signal,
+					),
+					querySignals.signal,
+				);
+				// A write can finish after the request is already on the wire (or stall
+				// while opening the reverse stream). Let either a response or the same
+				// query timeout release this await instead of extending the timeout around
+				// the outbound send.
+				await Promise.race([
+					sending,
+					responsePromise.then((): undefined => undefined),
+				]);
+			} catch (error) {
+				const pending = this.pendingTopicRootQueries.get(requestId);
+				if (pending && !timedOut) {
+					this.pendingTopicRootQueries.delete(requestId);
+					clearTimeout(pending.timer);
+					pending.resolve(undefined);
+				}
+				if (signal?.aborted) {
+					throw signal.reason ?? error;
+				}
 			}
-			if (signal?.aborted) throw error;
-		}
 
-		return withAbort(responsePromise, signal);
+			return await withAbort(responsePromise, signal);
+		} finally {
+			queryController.abort(new AbortError("topic root query settled"));
+			querySignals.clear();
+		}
 	}
 
 	private async confirmDirectShardRoot(
@@ -2390,7 +2555,7 @@ export class TopicControlPlane
 
 	private async resolveTopicRootThroughPeers(
 		topic: string,
-		options?: TopicRootResolutionOptions,
+		options?: TopicRootResolutionOptions & { timeoutMs?: number },
 	): Promise<string | undefined> {
 		throwIfAborted(options?.signal);
 		const peers = this.getConnectedTopicRootTrackers();
@@ -2398,24 +2563,82 @@ export class TopicControlPlane
 			return undefined;
 		}
 
-		for (let attempt = 0; attempt < 3; attempt++) {
-			for (const peer of peers) {
-				const resolved = await this.queryTopicRootFromPeer(
-					peer,
-					topic,
-					DEFAULT_TOPIC_ROOT_QUERY_TIMEOUT_MS,
-					options?.signal,
-				);
-				if (resolved) {
-					return resolved;
-				}
-			}
-
-			if (attempt < 2) {
-				await withAbort(delay(150 * (attempt + 1), options), options?.signal);
-			}
+		const roundController = new AbortController();
+		const roundTimeoutMs = Math.max(
+			1,
+			Math.floor(options?.timeoutMs ?? DEFAULT_TOPIC_ROOT_QUERY_TIMEOUT_MS),
+		);
+		let roundTimedOut = false;
+		const roundTimer = setTimeout(() => {
+			roundTimedOut = true;
+			roundController.abort(new AbortError("topic root query round timed out"));
+		}, roundTimeoutMs);
+		roundTimer.unref?.();
+		const roundSignals = linkAbortSignals([
+			options?.signal,
+			roundController.signal,
+		]);
+		const queries = peers.map((peer) =>
+			this.queryTopicRootFromPeer(
+				peer,
+				topic,
+				roundTimeoutMs,
+				roundSignals.signal,
+			),
+		);
+		const unresolved = Symbol("unresolved topic root query");
+		const results: Array<string | undefined | typeof unresolved> = peers.map(
+			() => unresolved,
+		);
+		// All requests start together, but the stable peer ordering remains the
+		// conflict-resolution policy: a later answer is usable only after every
+		// earlier peer has answered undefined or reached its round timeout.
+		const prioritizedResult = new Promise<string | undefined>(
+			(resolve, reject) => {
+				let settled = false;
+				const resolveInPeerOrder = () => {
+					for (const result of results) {
+						if (result === unresolved) return;
+						if (result !== undefined) {
+							settled = true;
+							resolve(result);
+							return;
+						}
+					}
+					settled = true;
+					resolve(undefined);
+				};
+				queries.forEach((query, index) => {
+					query.then(
+						(root) => {
+							if (settled) return;
+							results[index] = root;
+							resolveInPeerOrder();
+						},
+						(error) => {
+							if (settled) return;
+							if (roundTimedOut && !options?.signal?.aborted) {
+								results[index] = undefined;
+								resolveInPeerOrder();
+								return;
+							}
+							settled = true;
+							reject(error);
+						},
+					);
+				});
+			},
+		);
+		try {
+			return await prioritizedResult;
+		} finally {
+			clearTimeout(roundTimer);
+			// Cancel response timers and in-flight sends for every losing query before
+			// the winning root (or an abort) can leave this round.
+			roundController.abort(new AbortError("topic root query round settled"));
+			await Promise.allSettled(queries);
+			roundSignals.clear();
 		}
-		return undefined;
 	}
 
 	private async ensureFanoutChannel(
@@ -2833,25 +3056,77 @@ export class TopicControlPlane
 		if (!this.started) throw new NotStartedError();
 		const lifecycleSignal = this.topicRootResolutionAbortController.signal;
 		return this.withTopicRootCandidateResolution(
-			async ({ candidateGeneration, signal }) => {
+			async ({ signal }) => {
 				const joins: Promise<void>[] = [];
-				try {
-					for (let i = 0; i < this.shardCount; i++) {
-						throwIfAborted(signal);
-						const shardTopic = `${this.shardTopicPrefix}${i}`;
-						const resolved = await this.resolveShardRootState(shardTopic, {
-							signal,
-						});
-						if (resolved.root !== this.publicKeyHash) continue;
-						const joining = this.ensureFanoutChannel(shardTopic, {
-							pin: true,
-							root: resolved.root,
-							rootCandidateGeneration: resolved.candidateGeneration,
-							signal,
-						});
-						void joining.catch(() => {});
-						joins.push(joining);
+				const scanController = new AbortController();
+				const scanTimer = setTimeout(() => {
+					scanController.abort(
+						new AbortError(
+							`topic root host scan timed out after ${TOPIC_ROOT_HOST_SCAN_TIMEOUT_MS}ms`,
+						),
+					);
+				}, TOPIC_ROOT_HOST_SCAN_TIMEOUT_MS);
+				scanTimer.unref?.();
+				const scanSignals = linkAbortSignals([signal, scanController.signal]);
+				let nextShard = 0;
+				let scanFailure: { error: unknown } | undefined;
+				const scanWorker = async () => {
+					try {
+						for (;;) {
+							if (scanFailure) return;
+							throwIfAborted(scanSignals.signal);
+							const shard = nextShard++;
+							if (shard >= this.shardCount) return;
+							const shardTopic = `${this.shardTopicPrefix}${shard}`;
+							const resolved = await this.resolveShardRootState(shardTopic, {
+								signal: scanSignals.signal,
+								// Proactive hosting follows the generation-bound local control
+								// plane. Connected-peer queries remain on the lazy open path;
+								// asking every peer for every shard multiplies one stale-peer
+								// timeout by the complete shard count.
+								queryConnectedPeers: false,
+							});
+							throwIfAborted(scanSignals.signal);
+							if (scanFailure || resolved.root !== this.publicKeyHash) continue;
+							const joining = this.ensureFanoutChannel(shardTopic, {
+								pin: true,
+								root: resolved.root,
+								rootCandidateGeneration: resolved.candidateGeneration,
+								// The shared deadline bounds root discovery only. Preserve the
+								// existing contract that joins already started are drained.
+								signal,
+							});
+							void joining.catch(() => {});
+							joins.push(joining);
+						}
+					} catch (error) {
+						if (!scanFailure) {
+							scanFailure = { error };
+							// Do not make a sibling resolver consume the rest of the shared
+							// deadline after this scan already has a terminal failure. Joins use
+							// the outer signal and are intentionally drained below.
+							scanController.abort(error);
+						}
 					}
+				};
+				try {
+					try {
+						await Promise.all(
+							Array.from(
+								{
+									length: Math.min(
+										TOPIC_ROOT_HOST_SCAN_CONCURRENCY,
+										this.shardCount,
+									),
+								},
+								() => scanWorker(),
+							),
+						);
+					} finally {
+						clearTimeout(scanTimer);
+						scanSignals.clear();
+					}
+					if (scanFailure) throw scanFailure.error;
 					await Promise.all(joins);
 				} catch (error) {
 					await Promise.allSettled(joins);
@@ -3808,7 +4083,11 @@ export class TopicControlPlane
 			const outerPeerHash = stream.publicKey.hashcode();
 			for (const claim of pubsubMessage.claims) {
 				if (
-					await this.importSignedTopicRootCandidateClaim(claim, outerPeerHash)
+					await this.importSignedTopicRootCandidateClaim(
+						claim,
+						outerPeerHash,
+						stream,
+					)
 				) {
 					imported.push(claim);
 				}

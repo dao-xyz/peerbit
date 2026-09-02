@@ -18,6 +18,7 @@ import {
 import { AbortError, delay, waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
 import sinon from "sinon";
+import { equals as bytesEqual } from "uint8arrays";
 import {
 	FanoutChannel,
 	FanoutTree,
@@ -232,15 +233,20 @@ describe("pubsub (subscribe race regressions)", function () {
 		pubsubMessage: TopicRootCandidateClaims | TopicRootCandidates,
 		directPeer: TopicControlPlane,
 		protocol: string,
-	) =>
-		(receiver as any).processDirectPubSubMessage({
+	) => {
+		const tracked = receiver.peers.get(directPeer.publicKeyHash);
+		return (receiver as any).processDirectPubSubMessage({
 			pubsubMessage,
 			message: {
 				header: { signatures: { publicKeys: [directPeer.publicKey] } },
 			},
 			from: directPeer.publicKey,
-			stream: { protocol, publicKey: directPeer.publicKey },
+			stream:
+				tracked?.protocol === protocol
+					? tracked
+					: { protocol, publicKey: directPeer.publicKey },
 		});
+	};
 	const nextAutoTopicRootCandidateSnapshot = (
 		pubsub: TopicControlPlane,
 		additions: readonly string[],
@@ -1227,6 +1233,12 @@ describe("pubsub (subscribe race regressions)", function () {
 		const relay = session.peers[2]!.services.pubsub;
 		const originInternals = origin as any;
 		const receiverInternals = receiver as any;
+		receiver.addPeer(
+			relay.peerId,
+			relay.publicKey,
+			"/peerbit/topic-control-plane/2.1.0",
+			"relayed-claim-test",
+		);
 		await originInternals.refreshLocalTopicRootCandidateClaim();
 		const originClaim = originInternals.signedTopicRootCandidateClaims.get(
 			origin.publicKeyHash,
@@ -1396,10 +1408,11 @@ describe("pubsub (subscribe race regressions)", function () {
 		).to.equal(false);
 	});
 
-	it("expires a departed signed root candidate and invalidates its cached root", async () => {
-		session = await createDisconnectedSessionWithPerPeerRoots(2);
+	it("suppresses a directly departed root without replaying or deleting its signed lease", async () => {
+		session = await createDisconnectedSessionWithPerPeerRoots(3);
 		const receiver = session.peers[0]!.services.pubsub;
 		const origin = session.peers[1]!.services.pubsub;
+		const relay = session.peers[2]!.services.pubsub;
 		const receiverInternals = receiver as any;
 		const protocol = "/peerbit/topic-control-plane/2.1.0";
 
@@ -1410,11 +1423,6 @@ describe("pubsub (subscribe race regressions)", function () {
 			"departed-root-expiry-test",
 		);
 		receiverInternals.clearTopicRootCandidateClaimTimer();
-		const clock = sinon.useFakeTimers({
-			now: Date.now(),
-			toFake: ["Date", "clearTimeout", "setTimeout"],
-		});
-
 		try {
 			const claim = await createCandidateClaim(origin);
 			const rawClaim = dataMessageBytes(claim);
@@ -1458,32 +1466,221 @@ describe("pubsub (subscribe race regressions)", function () {
 				receiverInternals.signedTopicRootCandidateClaims.has(
 					origin.publicKeyHash,
 				),
+				"the verified lease remains until its signed expiry",
 			).to.equal(true);
-			expect(receiverInternals.shardRootCache.get(shardTopic)?.root).to.equal(
-				origin.publicKeyHash,
-			);
-
 			expect(
-				receiverInternals.topicRootCandidateClaimMaintenanceTimer,
-			).to.not.equal(undefined);
-			await clock.tickAsync(90_001);
-
-			expect(
-				receiverInternals.signedTopicRootCandidateClaims.has(
+				receiverInternals.topicRootCandidateClaimReplayFloors.get(
 					origin.publicKeyHash,
 				),
-				"the departed origin claim should expire",
-			).to.equal(false);
+			).to.equal(claim.header.timestamp);
+			expect(
+				receiverInternals.suppressedDepartedTopicRootCandidateClaims.has(
+					origin.publicKeyHash,
+				),
+			).to.equal(true);
+			const suppressed =
+				receiverInternals.suppressedDepartedTopicRootCandidateClaims.get(
+					origin.publicKeyHash,
+				);
+			expect(suppressed.timestamp).to.equal(claim.header.timestamp);
+			expect(bytesEqual(suppressed.bytes, rawClaim)).to.equal(true);
 			expect(
 				receiver.topicRootControlPlane.getTopicRootCandidates(),
 			).to.deep.equal(afterCandidates);
 			expect(
 				receiverInternals.shardRootCache.get(shardTopic)?.root,
-				"candidate expiry must not retain the departed root",
+				"source departure must invalidate the cached departed root",
 			).not.to.equal(origin.publicKeyHash);
 			expect(
 				(await receiverInternals.resolveShardRootState(shardTopic)).root,
 			).to.equal(receiver.publicKeyHash);
+			const sendClaims = sinon
+				.stub(receiverInternals, "sendSignedTopicRootCandidateClaims")
+				.resolves();
+			try {
+				await receiverInternals.sendAutoTopicRootCandidates([
+					{ protocol } as any,
+				]);
+				const advertised = sendClaims
+					.getCalls()
+					.flatMap((call) => call.args[0] as Uint8Array[]);
+				expect(
+					advertised.some((candidate) => bytesEqual(candidate, rawClaim)),
+					"a suppressed lease must not be advertised to a newly connected peer",
+				).to.equal(false);
+			} finally {
+				sendClaims.restore();
+			}
+
+			const relayStream = receiver.addPeer(
+				relay.peerId,
+				relay.publicKey,
+				protocol,
+				"sourceless-claim-relay-test",
+			);
+			expect(
+				await receiverInternals.importSignedTopicRootCandidateClaim(
+					rawClaim,
+					relay.publicKeyHash,
+					relayStream,
+				),
+				"the same signed lease must not undo direct-departure suppression",
+			).to.equal(false);
+			expect(
+				receiver.topicRootControlPlane.getTopicRootCandidates(),
+			).to.deep.equal(afterCandidates);
+			expect(
+				receiverInternals.suppressedDepartedTopicRootCandidateClaims.has(
+					origin.publicKeyHash,
+				),
+			).to.equal(true);
+
+			const retained = receiverInternals.signedTopicRootCandidateClaims.get(
+				origin.publicKeyHash,
+			);
+			const replayFloor =
+				receiverInternals.topicRootCandidateClaimReplayFloors.get(
+					origin.publicKeyHash,
+				);
+			const originReconnectStream = receiver.addPeer(
+				origin.peerId,
+				origin.publicKey,
+				protocol,
+				"departed-root-reconnect-test",
+			);
+			expect(
+				await receiverInternals.importSignedTopicRootCandidateClaim(
+					rawClaim,
+					origin.publicKeyHash,
+					originReconnectStream,
+				),
+				"the exact claim is reactivated, not imported or re-relayed",
+			).to.equal(false);
+			expect(
+				receiverInternals.suppressedDepartedTopicRootCandidateClaims.has(
+					origin.publicKeyHash,
+				),
+			).to.equal(false);
+			expect(
+				receiverInternals.signedTopicRootCandidateClaims.get(
+					origin.publicKeyHash,
+				),
+				"direct reactivation must not replace or extend the retained record",
+			).to.equal(retained);
+			expect(
+				receiverInternals.topicRootCandidateClaimReplayFloors.get(
+					origin.publicKeyHash,
+				),
+			).to.equal(replayFloor);
+			expect(
+				receiver.topicRootControlPlane.getTopicRootCandidates(),
+			).to.deep.equal(beforeCandidates);
+
+			await receiverInternals._removePeer(origin.publicKey);
+			expect(
+				receiverInternals.suppressedDepartedTopicRootCandidateClaims.has(
+					origin.publicKeyHash,
+				),
+			).to.equal(true);
+
+			await delay(5);
+			const fresherClaim = await createCandidateClaim(origin);
+			expect(fresherClaim.header.timestamp > claim.header.timestamp).to.equal(
+				true,
+			);
+			expect(
+				await receiverInternals.importSignedTopicRootCandidateClaim(
+					dataMessageBytes(fresherClaim),
+					relay.publicKeyHash,
+					relayStream,
+				),
+			).to.equal(true);
+			receiverInternals.rebuildAutoTopicRootCandidatesFromClaims(undefined, {
+				immediate: true,
+			});
+			expect(
+				receiverInternals.suppressedDepartedTopicRootCandidateClaims.has(
+					origin.publicKeyHash,
+				),
+			).to.equal(false);
+			expect(
+				receiver.topicRootControlPlane.getTopicRootCandidates(),
+			).to.deep.equal(beforeCandidates);
+			expect(
+				(await receiverInternals.resolveShardRootState(shardTopic)).root,
+			).to.equal(origin.publicKeyHash);
+		} finally {
+			receiverInternals.clearTopicRootCandidateClaimTimer();
+			receiverInternals.clearAutoTopicRootCandidateUpdateSchedule();
+		}
+	});
+
+	it("does not withdraw a transitive claim when only its relay departs", async () => {
+		session = await createDisconnectedSessionWithPerPeerRoots(3);
+		const receiver = session.peers[0]!.services.pubsub;
+		const origin = session.peers[1]!.services.pubsub;
+		const relay = session.peers[2]!.services.pubsub;
+		const receiverInternals = receiver as any;
+		const protocol = "/peerbit/topic-control-plane/2.1.0";
+		const relayStream = receiver.addPeer(
+			relay.peerId,
+			relay.publicKey,
+			protocol,
+			"transitive-claim-relay-test",
+		);
+		receiverInternals.clearTopicRootCandidateClaimTimer();
+		const clock = sinon.useFakeTimers({
+			now: Date.now(),
+			toFake: ["Date"],
+		});
+
+		try {
+			const claim = await createCandidateClaim(origin);
+			const rawClaim = dataMessageBytes(claim);
+			expect(claim.header.expires - claim.header.timestamp).to.equal(90_000n);
+			expect(
+				await receiverInternals.importSignedTopicRootCandidateClaim(
+					rawClaim,
+					relay.publicKeyHash,
+					relayStream,
+				),
+			).to.equal(true);
+			receiverInternals.rebuildAutoTopicRootCandidatesFromClaims(undefined, {
+				immediate: true,
+			});
+			expect(
+				receiver.topicRootControlPlane.getTopicRootCandidates(),
+			).to.include(origin.publicKeyHash);
+
+			await receiverInternals._removePeer(relay.publicKey);
+			expect(
+				receiverInternals.signedTopicRootCandidateClaims.has(
+					origin.publicKeyHash,
+				),
+				"a relay departure must not invent evidence that the signed origin left",
+			).to.equal(true);
+			expect(
+				receiverInternals.suppressedDepartedTopicRootCandidateClaims.has(
+					origin.publicKeyHash,
+				),
+			).to.equal(false);
+			expect(
+				receiver.topicRootControlPlane.getTopicRootCandidates(),
+			).to.include(origin.publicKeyHash);
+
+			clock.tick(90_001);
+			receiverInternals.rebuildAutoTopicRootCandidatesFromClaims(undefined, {
+				immediate: true,
+			});
+			expect(
+				receiverInternals.signedTopicRootCandidateClaims.has(
+					origin.publicKeyHash,
+				),
+				"the transitive claim still expires under its original 90s lease",
+			).to.equal(false);
+			expect(
+				receiver.topicRootControlPlane.getTopicRootCandidates(),
+			).to.not.include(origin.publicKeyHash);
 		} finally {
 			receiverInternals.clearTopicRootCandidateClaimTimer();
 			receiverInternals.clearAutoTopicRootCandidateUpdateSchedule();
@@ -1615,6 +1812,58 @@ describe("pubsub (subscribe race regressions)", function () {
 			expect(peer.topicRootControlPlane.getTopicRootCandidates()).to.deep.equal(
 				expected,
 			);
+		}
+	});
+
+	it("does not retain a claim when its authenticated source stream leaves during verification", async () => {
+		session = await createDisconnectedSessionWithPerPeerRoots(2);
+		const receiver = session.peers[0]!.services.pubsub;
+		const origin = session.peers[1]!.services.pubsub;
+		const receiverInternals = receiver as any;
+		const sourceStream = receiver.addPeer(
+			origin.peerId,
+			origin.publicKey,
+			"/peerbit/topic-control-plane/2.1.0",
+			"claim-source-verification-race-test",
+		);
+		receiverInternals.clearTopicRootCandidateClaimTimer();
+		const rawClaim = dataMessageBytes(await createCandidateClaim(origin));
+		const verification = deferred();
+		const verify = sinon
+			.stub(DataMessage.prototype, "verify")
+			.callsFake(async () => {
+				await verification.promise;
+				return true;
+			});
+
+		try {
+			const importing = receiverInternals.importSignedTopicRootCandidateClaim(
+				rawClaim,
+				origin.publicKeyHash,
+				sourceStream,
+			);
+			await waitForResolved(() => expect(verify.calledOnce).to.equal(true), {
+				timeout: 1_000,
+				delayInterval: 10,
+			});
+			await receiverInternals._removePeer(origin.publicKey);
+			verification.resolve();
+
+			expect(await importing).to.equal(false);
+			expect(
+				receiverInternals.signedTopicRootCandidateClaims.has(
+					origin.publicKeyHash,
+				),
+			).to.equal(false);
+			expect(
+				receiverInternals.topicRootCandidateClaimReplayFloors.has(
+					origin.publicKeyHash,
+				),
+			).to.equal(false);
+		} finally {
+			verification.resolve();
+			verify.restore();
+			receiverInternals.clearTopicRootCandidateClaimTimer();
 		}
 	});
 
@@ -2539,6 +2788,324 @@ describe("pubsub (subscribe race regressions)", function () {
 		expect(send.calledOnce).to.equal(true);
 	});
 
+	it("uses an earlier live root responder without waiting for a silent peer", async function () {
+		this.timeout(3_000);
+		session = await createDisconnectedSessionWithPerPeerRoots(3);
+		const pubsub = session.peers[0]!.services.pubsub;
+		const silent = session.peers[1]!.services.pubsub;
+		const live = session.peers[2]!.services.pubsub;
+		const internals = pubsub as any;
+		const topic = "concurrent-live-topic-root";
+		const resolvedRoot = live.publicKeyHash;
+		const trackers = [
+			{ publicKey: live.publicKey },
+			{ publicKey: silent.publicKey },
+		];
+		sinon.stub(internals, "getConnectedTopicRootTrackers").returns(trackers);
+		const send = sinon
+			.stub(internals, "sendDirectControlMessage")
+			.callsFake(async (...args: unknown[]) => {
+				const peer = args[0] as { publicKey: { hashcode(): string } };
+				const query = args[1] as TopicRootQuery;
+				if (peer.publicKey.hashcode() !== live.publicKeyHash) return;
+				expect(
+					internals.resolvePendingTopicRootQuery(
+						new TopicRootQueryResponse({
+							requestId: query.requestId,
+							root: resolvedRoot,
+							topic,
+						}),
+						live.publicKeyHash,
+					),
+				).to.equal(true);
+			});
+
+		const started = performance.now();
+		expect(await internals.resolveTopicRootState(topic)).to.deep.equal({
+			authoritative: true,
+			root: resolvedRoot,
+		});
+		expect(performance.now() - started).to.be.lessThan(500);
+		expect(
+			send.getCalls().map((call) => call.args[0].publicKey.hashcode()),
+		).to.deep.equal([live.publicKeyHash, silent.publicKeyHash]);
+		expect(internals.pendingTopicRootQueries.size).to.equal(0);
+	});
+
+	it("preserves sorted-peer precedence when a later conflicting reply is faster", async () => {
+		session = await createDisconnectedSessionWithPerPeerRoots(3);
+		const pubsub = session.peers[0]!.services.pubsub;
+		const ordered = session.peers
+			.slice(1)
+			.map((node) => node.services.pubsub)
+			.sort((left, right) =>
+				left.publicKeyHash < right.publicKeyHash
+					? -1
+					: left.publicKeyHash > right.publicKeyHash
+						? 1
+						: 0,
+			);
+		const earlier = ordered[0]!;
+		const later = ordered[1]!;
+		const internals = pubsub as any;
+		const topic = "ordered-conflicting-topic-root";
+		let earlierQuery: TopicRootQuery | undefined;
+		sinon
+			.stub(internals, "getConnectedTopicRootTrackers")
+			.returns([
+				{ publicKey: earlier.publicKey },
+				{ publicKey: later.publicKey },
+			]);
+		sinon
+			.stub(internals, "sendDirectControlMessage")
+			.callsFake(async (...args: unknown[]) => {
+				const peer = args[0] as { publicKey: { hashcode(): string } };
+				const query = args[1] as TopicRootQuery;
+				if (peer.publicKey.hashcode() === earlier.publicKeyHash) {
+					earlierQuery = query;
+					return;
+				}
+				expect(
+					internals.resolvePendingTopicRootQuery(
+						new TopicRootQueryResponse({
+							requestId: query.requestId,
+							root: later.publicKeyHash,
+							topic,
+						}),
+						later.publicKeyHash,
+					),
+				).to.equal(true);
+			});
+		let settled = false;
+		const resolving = internals.resolveTopicRootState(topic).then(
+			(state: unknown) => {
+				settled = true;
+				return state;
+			},
+			(error: unknown) => {
+				settled = true;
+				throw error;
+			},
+		);
+
+		await waitForResolved(
+			() => {
+				expect(earlierQuery).to.not.equal(undefined);
+				expect(internals.pendingTopicRootQueries.size).to.equal(1);
+			},
+			{ timeout: 1_000, delayInterval: 10 },
+		);
+		await delay(0);
+		expect(settled).to.equal(false);
+		expect(
+			internals.resolvePendingTopicRootQuery(
+				new TopicRootQueryResponse({
+					requestId: earlierQuery!.requestId,
+					root: earlier.publicKeyHash,
+					topic,
+				}),
+				earlier.publicKeyHash,
+			),
+		).to.equal(true);
+
+		expect(await resolving).to.deep.equal({
+			authoritative: true,
+			root: earlier.publicKeyHash,
+		});
+		expect(internals.pendingTopicRootQueries.size).to.equal(0);
+	});
+
+	it("bounds a stalled earlier send before using a later live reply", async () => {
+		session = await createDisconnectedSessionWithPerPeerRoots(3);
+		const pubsub = session.peers[0]!.services.pubsub;
+		const ordered = session.peers
+			.slice(1)
+			.map((node) => node.services.pubsub)
+			.sort((left, right) =>
+				left.publicKeyHash < right.publicKeyHash
+					? -1
+					: left.publicKeyHash > right.publicKeyHash
+						? 1
+						: 0,
+			);
+		const earlier = ordered[0]!;
+		const later = ordered[1]!;
+		const internals = pubsub as any;
+		internals.clearTopicRootCandidateClaimTimer();
+		internals.clearAutoTopicRootCandidateUpdateSchedule();
+		const topic = "stalled-send-ordered-topic-root";
+		const clock = sinon.useFakeTimers({
+			now: Date.now(),
+			toFake: ["Date", "clearTimeout", "setTimeout"],
+		});
+		const startedAt = Date.now();
+		let stalledSendSignal: AbortSignal | undefined;
+		sinon
+			.stub(internals, "getConnectedTopicRootTrackers")
+			.returns([
+				{ publicKey: earlier.publicKey },
+				{ publicKey: later.publicKey },
+			]);
+		const send = sinon
+			.stub(internals, "sendDirectControlMessage")
+			.callsFake(async (...args: unknown[]) => {
+				const peer = args[0] as { publicKey: { hashcode(): string } };
+				const query = args[1] as TopicRootQuery;
+				if (peer.publicKey.hashcode() === earlier.publicKeyHash) {
+					stalledSendSignal = args[2] as AbortSignal;
+					return new Promise<void>(() => {});
+				}
+				expect(
+					internals.resolvePendingTopicRootQuery(
+						new TopicRootQueryResponse({
+							requestId: query.requestId,
+							root: later.publicKeyHash,
+							topic,
+						}),
+						later.publicKeyHash,
+					),
+				).to.equal(true);
+			});
+
+		try {
+			let settledAt: number | undefined;
+			const resolving = internals
+				.resolveTopicRootState(topic)
+				.then((state: unknown) => {
+					settledAt = Date.now();
+					return state;
+				});
+			await clock.tickAsync(3_001);
+
+			expect(await resolving).to.deep.equal({
+				authoritative: true,
+				root: later.publicKeyHash,
+			});
+			expect(settledAt! - startedAt).to.be.at.most(3_001);
+			expect(send.callCount).to.equal(2);
+			expect(stalledSendSignal?.aborted).to.equal(true);
+			expect(internals.pendingTopicRootQueries.size).to.equal(0);
+		} finally {
+			clock.restore();
+		}
+	});
+
+	it("bounds all-silent root retries with one peer-query deadline", async () => {
+		session = await createDisconnectedSessionWithPerPeerRoots(3);
+		const pubsub = session.peers[0]!.services.pubsub;
+		const firstSilent = session.peers[1]!.services.pubsub;
+		const secondSilent = session.peers[2]!.services.pubsub;
+		const internals = pubsub as any;
+		internals.clearTopicRootCandidateClaimTimer();
+		internals.clearAutoTopicRootCandidateUpdateSchedule();
+		sinon
+			.stub(internals, "getConnectedTopicRootTrackers")
+			.returns([
+				{ publicKey: firstSilent.publicKey },
+				{ publicKey: secondSilent.publicKey },
+			]);
+		const send = sinon.stub(internals, "sendDirectControlMessage").resolves();
+		const clock = sinon.useFakeTimers({
+			now: Date.now(),
+			toFake: ["Date", "clearTimeout", "setTimeout"],
+		});
+
+		try {
+			const startedAt = Date.now();
+			let settledAt: number | undefined;
+			const resolving = internals
+				.resolveTopicRootState("all-silent-topic-root")
+				.then((state: unknown) => {
+					settledAt = Date.now();
+					return state;
+				});
+			await clock.tickAsync(12_001);
+
+			expect(await resolving).to.deep.equal({
+				authoritative: false,
+				root: pubsub.publicKeyHash,
+			});
+			expect(settledAt! - startedAt).to.be.at.most(12_001);
+			expect(send.callCount).to.equal(8);
+			expect(internals.pendingTopicRootQueries.size).to.equal(0);
+		} finally {
+			clock.restore();
+		}
+	});
+
+	it("keeps retrying when a peer becomes ready after 750ms", async () => {
+		session = await createDisconnectedSessionWithPerPeerRoots(2);
+		const pubsub = session.peers[0]!.services.pubsub;
+		const warming = session.peers[1]!.services.pubsub;
+		const internals = pubsub as any;
+		internals.clearTopicRootCandidateClaimTimer();
+		internals.clearAutoTopicRootCandidateUpdateSchedule();
+		const clock = sinon.useFakeTimers({
+			now: Date.now(),
+			toFake: ["Date", "clearTimeout", "setTimeout"],
+		});
+		const startedAt = Date.now();
+		const trackers = sinon
+			.stub(internals, "getConnectedTopicRootTrackers")
+			.returns([{ publicKey: warming.publicKey }]);
+		const query = sinon
+			.stub(internals, "queryTopicRootFromPeer")
+			.callsFake(async () =>
+				Date.now() - startedAt > 750 ? warming.publicKeyHash : undefined,
+			);
+
+		try {
+			const resolving = internals.resolveTopicRootState(
+				"late-ready-topic-root",
+			);
+			await clock.tickAsync(1_051);
+			expect(await resolving).to.deep.equal({
+				authoritative: true,
+				root: warming.publicKeyHash,
+			});
+			expect(query.callCount).to.equal(5);
+			expect(trackers.callCount).to.be.greaterThan(5);
+		} finally {
+			clock.restore();
+		}
+	});
+
+	it("preserves caller cancellation across a concurrent root-query round", async () => {
+		session = await createDisconnectedSessionWithPerPeerRoots(3);
+		const pubsub = session.peers[0]!.services.pubsub;
+		const firstSilent = session.peers[1]!.services.pubsub;
+		const secondSilent = session.peers[2]!.services.pubsub;
+		const internals = pubsub as any;
+		sinon
+			.stub(internals, "getConnectedTopicRootTrackers")
+			.returns([
+				{ publicKey: firstSilent.publicKey },
+				{ publicKey: secondSilent.publicKey },
+			]);
+		const send = sinon.stub(internals, "sendDirectControlMessage").resolves();
+		const abortController = new AbortController();
+		const reason = new Error("cancel concurrent root lookup");
+		const outcome = pubsub
+			.resolveTopicRoot("caller-cancelled-peer-round", {
+				signal: abortController.signal,
+			})
+			.then(
+				(value): { value: string | undefined; error?: never } => ({ value }),
+				(error: unknown): { value?: never; error: unknown } => ({ error }),
+			);
+
+		await waitForResolved(
+			() => expect(internals.pendingTopicRootQueries.size).to.equal(2),
+			{ timeout: 1_000, delayInterval: 10 },
+		);
+		abortController.abort(reason);
+		const result = await outcome;
+		expect(result.value).to.equal(undefined);
+		expect(result.error).to.equal(reason);
+		expect(send.callCount).to.equal(2);
+		expect(internals.pendingTopicRootQueries.size).to.equal(0);
+	});
+
 	it("aborts a hanging resolver when the control plane stops", async () => {
 		session = await createDisconnectedSessionWithPerPeerRoots(1);
 		const pubsub = session.peers[0]!.services.pubsub;
@@ -2761,27 +3328,191 @@ describe("pubsub (subscribe race regressions)", function () {
 		expect(ensure.calledOnce).to.equal(true);
 	});
 
-	it("drains started host joins when a later shard resolution fails", async () => {
+	it("does not multiply proactive host scans by silent connected peers", async function () {
+		this.timeout(5_000);
+		const shardCount = 4;
+		session = await createDisconnectedSessionWithPerPeerRoots(3, {
+			pubsub: { shardCount },
+		});
+		const pubsub = session.peers[0]!.services.pubsub;
+		const internals = pubsub as any;
+		internals.clearTopicRootCandidateClaimTimer();
+		internals.clearAutoTopicRootCandidateUpdateSchedule();
+		const orderedTrackers = session.peers
+			.slice(1)
+			.map((peer) => ({ publicKey: peer.services.pubsub.publicKey }))
+			.sort((left, right) =>
+				left.publicKey.hashcode() < right.publicKey.hashcode()
+					? -1
+					: left.publicKey.hashcode() > right.publicKey.hashcode()
+						? 1
+						: 0,
+			);
+		const liveLaterHash = orderedTrackers[1]!.publicKey.hashcode();
+		internals.shardRootCache.set("/peerbit/pubsub-shard/1/0", {
+			root: liveLaterHash,
+			authoritative: true,
+		});
+		const connectedTrackers = sinon
+			.stub(internals, "getConnectedTopicRootTrackers")
+			.returns(orderedTrackers);
+		const send = sinon
+			.stub(internals, "sendDirectControlMessage")
+			.callsFake(async (...args: unknown[]) => {
+				const peer = args[0] as { publicKey: { hashcode(): string } };
+				if (peer.publicKey.hashcode() !== liveLaterHash) return;
+				const query = args[1] as TopicRootQuery;
+				internals.resolvePendingTopicRootQuery(
+					new TopicRootQueryResponse({
+						requestId: query.requestId,
+						root: pubsub.publicKeyHash,
+						topic: query.topic,
+					}),
+					liveLaterHash,
+				);
+			});
+		const ensure = sinon.stub(internals, "ensureFanoutChannel").resolves();
+		const clock = sinon.useFakeTimers({
+			now: Date.now(),
+			toFake: ["Date", "clearTimeout", "setTimeout"],
+		});
+
+		try {
+			let settled = false;
+			let rejection: unknown;
+			const hosting = pubsub.hostShardRootsNow().then(
+				() => {
+					settled = true;
+				},
+				(error) => {
+					settled = true;
+					rejection = error;
+				},
+			);
+			await clock.tickAsync(1);
+			const settledWithoutPeerRound = settled;
+			if (!settled) {
+				// Let the pre-fix serial 3s-per-shard behavior drain before asserting.
+				await clock.tickAsync(20_000);
+			}
+			await hosting;
+			if (rejection) throw rejection;
+
+			expect(settledWithoutPeerRound).to.equal(true);
+			expect(connectedTrackers.callCount).to.equal(0);
+			expect(send.callCount).to.equal(0);
+			expect(ensure.callCount).to.equal(shardCount);
+			expect(internals.pendingTopicRootQueries.size).to.equal(0);
+		} finally {
+			clock.restore();
+		}
+	});
+
+	it("shares one deadline across concurrent proactive resolver scans", async function () {
+		this.timeout(5_000);
+		const shardCount = 16;
 		session = await createDisconnectedSessionWithPerPeerRoots(1, {
-			pubsub: { shardCount: 2 },
+			pubsub: { shardCount },
+		});
+		const pubsub = session.peers[0]!.services.pubsub;
+		const internals = pubsub as any;
+		internals.clearTopicRootCandidateClaimTimer();
+		internals.clearAutoTopicRootCandidateUpdateSchedule();
+		const resolverSignals: AbortSignal[] = [];
+		pubsub.topicRootControlPlane.setTopicRootResolver((_topic, options) => {
+			if (options?.signal) resolverSignals.push(options.signal);
+			return new Promise<string | undefined>(() => {});
+		});
+		const ensure = sinon.stub(internals, "ensureFanoutChannel").resolves();
+		const clock = sinon.useFakeTimers({
+			now: Date.now(),
+			toFake: ["Date", "clearTimeout", "setTimeout"],
+		});
+
+		try {
+			const startedAt = Date.now();
+			let settledAt: number | undefined;
+			const outcome = pubsub.hostShardRootsNow().then(
+				(): { error: unknown } => ({ error: undefined }),
+				(error: unknown) => {
+					settledAt = Date.now();
+					return { error };
+				},
+			);
+			await clock.tickAsync(12_001);
+			const { error } = await outcome;
+
+			expect(error).to.be.instanceOf(AbortError);
+			expect((error as Error).message).to.equal(
+				"topic root host scan timed out after 12000ms",
+			);
+			expect(settledAt! - startedAt).to.be.at.most(12_001);
+			expect(resolverSignals.length).to.be.greaterThan(1);
+			expect(resolverSignals.length).to.be.lessThan(shardCount);
+			expect(resolverSignals.every((signal) => signal.aborted)).to.equal(true);
+			expect(ensure.callCount).to.equal(0);
+		} finally {
+			clock.restore();
+		}
+	});
+
+	it("cancels sibling host scans and drains started joins on failure", async () => {
+		session = await createDisconnectedSessionWithPerPeerRoots(1, {
+			pubsub: { shardCount: 3 },
 		});
 		const pubsub = session.peers[0]!.services.pubsub;
 		const internals = pubsub as any;
 		const candidateGeneration = internals.getTopicRootCandidateGeneration();
 		const scanError = new Error("later shard resolution failed");
 		const joinError = new Error("earlier shard join failed");
-		let resolutions = 0;
-		sinon.stub(internals, "resolveShardRootState").callsFake(async () => {
-			resolutions += 1;
-			if (resolutions === 2) throw scanError;
-			return { root: pubsub.publicKeyHash, candidateGeneration };
+		const siblingEntered = deferred();
+		const siblingCancelled = deferred();
+		const joinStarted = deferred();
+		let siblingAbortReason: unknown;
+		let rejectJoin!: (error: unknown) => void;
+		const join = new Promise<void>((_resolve, reject) => {
+			rejectJoin = reject;
 		});
 		sinon
-			.stub(internals, "ensureFanoutChannel")
-			.returns(Promise.reject(joinError));
+			.stub(internals, "resolveShardRootState")
+			.callsFake(async (...args: unknown[]) => {
+				const shardTopic = args[0] as string;
+				const options = args[1] as { signal?: AbortSignal } | undefined;
+				if (shardTopic.endsWith("/0")) {
+					return { root: pubsub.publicKeyHash, candidateGeneration };
+				}
+				if (shardTopic.endsWith("/1")) {
+					const signal = options?.signal;
+					siblingEntered.resolve();
+					return new Promise((_resolve, reject) => {
+						const onAbort = () => {
+							siblingAbortReason = signal?.reason;
+							siblingCancelled.resolve();
+							reject(signal?.reason);
+						};
+						if (signal?.aborted) onAbort();
+						else signal?.addEventListener("abort", onAbort, { once: true });
+					});
+				}
+				await joinStarted.promise;
+				throw scanError;
+			});
+		sinon.stub(internals, "ensureFanoutChannel").callsFake(() => {
+			joinStarted.resolve();
+			return join;
+		});
 
-		await expect(pubsub.hostShardRootsNow()).to.be.rejectedWith(scanError);
-		expect(resolutions).to.equal(2);
+		let settled = false;
+		const hosting = pubsub.hostShardRootsNow().finally(() => {
+			settled = true;
+		});
+		await siblingEntered.promise;
+		await siblingCancelled.promise;
+		expect(siblingAbortReason).to.equal(scanError);
+		await delay(0);
+		expect(settled).to.equal(false);
+		rejectJoin(joinError);
+		await expect(hosting).to.be.rejectedWith(scanError);
 	});
 
 	it("does not install a channel after the control plane stops", async () => {
@@ -2891,6 +3622,146 @@ describe("pubsub (subscribe race regressions)", function () {
 		const bTopics = b.topics.get(TOPIC);
 		expect(bTopics).to.not.equal(undefined);
 		expect(bTopics!.has(a.publicKeyHash)).to.equal(false);
+	});
+
+	it("opens through a live donor after its directly connected root departs", async function () {
+		this.timeout(20_000);
+		const shardCount = 64;
+		session = await createDisconnectedSessionWithPerPeerRoots(3, {
+			pubsub: { shardCount },
+		});
+		const ordered = session.peers
+			.map((node) => ({ node, pubsub: node.services.pubsub }))
+			.sort((left, right) =>
+				left.pubsub.publicKeyHash < right.pubsub.publicKeyHash
+					? -1
+					: left.pubsub.publicKeyHash > right.pubsub.publicKeyHash
+						? 1
+						: 0,
+			);
+		// With modulo candidate selection, the middle hash takes the same slot as
+		// the departed low hash before removal and as itself after the high hash joins.
+		const departed = ordered[0]!;
+		const donor = ordered[1]!;
+		const fresh = ordered[2]!;
+		const beforeCandidates = [
+			donor.pubsub.publicKeyHash,
+			departed.pubsub.publicKeyHash,
+		].sort();
+		const afterCandidates = [
+			donor.pubsub.publicKeyHash,
+			fresh.pubsub.publicKeyHash,
+		].sort();
+		const { index: shardIndex, topic: shardTopic } =
+			findCandidateTransitionTopic(
+				beforeCandidates,
+				afterCandidates,
+				departed.pubsub.publicKeyHash,
+				donor.pubsub.publicKeyHash,
+				shardCount,
+			);
+		let topic = "";
+		for (let index = 0; index < 10_000; index++) {
+			const candidate = `departed-direct-root-fresh-join-${index}`;
+			if (topicHash32(candidate) % shardCount === shardIndex) {
+				topic = candidate;
+				break;
+			}
+		}
+		expect(topic).to.not.equal("");
+
+		await departed.node.dial(donor.node.getMultiaddrs()[0]!);
+		await waitForNeighbour(departed.pubsub, donor.pubsub);
+		await waitForResolved(
+			() => {
+				expect(
+					donor.pubsub.topicRootControlPlane.getTopicRootCandidates(),
+				).to.deep.equal(beforeCandidates);
+				expect(
+					departed.pubsub.topicRootControlPlane.getTopicRootCandidates(),
+				).to.deep.equal(beforeCandidates);
+			},
+			{ timeout: 5_000, delayInterval: 25 },
+		);
+		await Promise.all([
+			donor.pubsub.subscribe(topic),
+			departed.pubsub.subscribe(topic),
+		]);
+		const donorInternals = donor.pubsub as any;
+		await waitForResolved(
+			() => {
+				expect(donorInternals.fanoutChannels.get(shardTopic)?.root).to.equal(
+					departed.pubsub.publicKeyHash,
+				);
+			},
+			{ timeout: 5_000, delayInterval: 25 },
+		);
+		expect(
+			(await donorInternals.resolveShardRootState(shardTopic)).root,
+		).to.equal(departed.pubsub.publicKeyHash);
+		const staleGeneration = donorInternals.getTopicRootCandidateGeneration();
+		const replayFloor = donorInternals.topicRootCandidateClaimReplayFloors.get(
+			departed.pubsub.publicKeyHash,
+		);
+
+		const departureStarted = performance.now();
+		await departed.node.stop();
+		await waitForResolved(
+			() => {
+				expect(
+					donor.pubsub.topicRootControlPlane.getTopicRootCandidates(),
+				).to.deep.equal([donor.pubsub.publicKeyHash]);
+			},
+			{ timeout: 5_000, delayInterval: 10 },
+		);
+		expect(performance.now() - departureStarted).to.be.lessThan(5_000);
+		expect(donorInternals.getTopicRootCandidateGeneration()).to.not.equal(
+			staleGeneration,
+		);
+		expect(donorInternals.shardRootCache.get(shardTopic)?.root).to.not.equal(
+			departed.pubsub.publicKeyHash,
+		);
+		expect(
+			(await donorInternals.resolveShardRootState(shardTopic)).root,
+		).to.equal(donor.pubsub.publicKeyHash);
+		expect(
+			donorInternals.topicRootCandidateClaimReplayFloors.get(
+				departed.pubsub.publicKeyHash,
+			),
+		).to.equal(replayFloor);
+		expect(
+			donorInternals.signedTopicRootCandidateClaims.has(
+				departed.pubsub.publicKeyHash,
+			),
+		).to.equal(true);
+
+		await fresh.node.dial(donor.node.getMultiaddrs()[0]!);
+		await waitForNeighbour(fresh.pubsub, donor.pubsub);
+		await waitForResolved(
+			() => {
+				for (const peer of [donor.pubsub, fresh.pubsub]) {
+					expect(
+						peer.topicRootControlPlane.getTopicRootCandidates(),
+					).to.deep.equal(afterCandidates);
+					expect(
+						peer.topicRootControlPlane.getTopicRootCandidates(),
+					).to.not.include(departed.pubsub.publicKeyHash);
+				}
+			},
+			{ timeout: 5_000, delayInterval: 25 },
+		);
+		const openStarted = performance.now();
+		await fresh.pubsub.subscribe(topic);
+		expect(performance.now() - openStarted).to.be.lessThan(5_000);
+		expect((fresh.pubsub as any).fanoutChannels.get(shardTopic)?.root).to.equal(
+			donor.pubsub.publicKeyHash,
+		);
+		expect(
+			fresh.node.services.fanout.getChannelStats(
+				shardTopic,
+				donor.pubsub.publicKeyHash,
+			)?.parent,
+		).to.equal(donor.pubsub.publicKeyHash);
 	});
 
 	it("converges a retained auto-root overlay after a late peer joins a star", async function () {
