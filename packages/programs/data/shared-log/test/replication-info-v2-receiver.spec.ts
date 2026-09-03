@@ -6,6 +6,7 @@ import pDefer from "p-defer";
 import sinon from "sinon";
 import {
 	SYNC_CAPABILITY_REPLICATION_INFO_V2_DECODE,
+	SYNC_CAPABILITY_REPLICATION_INFO_V2_REARM,
 	SYNC_CAPABILITY_REPLICATION_INFO_V2_SEND,
 	SyncCapabilitiesMessage,
 } from "../src/exchange-heads.js";
@@ -200,6 +201,133 @@ describe("receive admission replication-info V2 receiver state", () => {
 		).to.equal(ready);
 		expect(advertisement.ready).to.be.true;
 		expect(sendRequest.calledOnce).to.be.true;
+	});
+
+	it("sends a bounded remote-Full rearm from the current rebased grant", async () => {
+		const clock = sinon.useFakeTimers({ now: 1_050 });
+		coordinator = createCoordinator({ requestRetryMs: 5 });
+		const lifecycle = new AbortController();
+		const oldReceiveEpoch = currentReceiveEpoch;
+
+		await coordinator.advertiseLocalCapability({
+			target: sender,
+			peerSession: currentSession,
+			receiveEpoch: currentReceiveEpoch,
+			signal: lifecycle.signal,
+		}).firstAttempt;
+		const steadyAdvertisement =
+			coordinator._localCapabilityAdvertisementsByPeer.get(peerHash)!;
+		expect(steadyAdvertisement.ready).to.be.true;
+
+		// A same-session receive recovery rebases the ready grant without
+		// recreating the original steady advertisement object.
+		currentReceiveEpoch = {};
+		expect(markLocalReady(1_051)).to.be.true;
+		refreshLocalCapability.resetHistory();
+		const waiter = new AbortController();
+
+		expect(
+			coordinator.reAdvertiseLocalCapabilityForRemoteFull({
+				peerHash,
+				peerSession: currentSession,
+				receiveEpoch: oldReceiveEpoch,
+				signal: waiter.signal,
+			}),
+		).to.be.false;
+		expect(
+			coordinator.reAdvertiseLocalCapabilityForRemoteFull({
+				peerHash,
+				peerSession: currentSession,
+				receiveEpoch: currentReceiveEpoch,
+				signal: waiter.signal,
+			}),
+		).to.be.true;
+		await Promise.resolve();
+		expect(refreshLocalCapability.calledOnce).to.be.true;
+		expect(refreshLocalCapability.firstCall.args[0]).to.include({
+			peerHash,
+			peerSession: currentSession,
+			receiveEpoch: currentReceiveEpoch,
+			requestRemoteFullRearm: true,
+		});
+		expect(
+			coordinator._localCapabilityAdvertisementsByPeer.get(peerHash),
+		).to.equal(steadyAdvertisement);
+		expect(steadyAdvertisement.receiveEpoch).to.equal(oldReceiveEpoch);
+		expect(steadyAdvertisement.ready).to.be.true;
+
+		await Promise.resolve();
+		expect(
+			coordinator.reAdvertiseLocalCapabilityForRemoteFull({
+				peerHash,
+				peerSession: currentSession,
+				receiveEpoch: currentReceiveEpoch,
+				signal: waiter.signal,
+			}),
+		).to.be.true;
+		expect(refreshLocalCapability.calledOnce).to.be.true;
+		await clock.tickAsync(5);
+		expect(
+			coordinator.reAdvertiseLocalCapabilityForRemoteFull({
+				peerHash,
+				peerSession: currentSession,
+				receiveEpoch: currentReceiveEpoch,
+				signal: waiter.signal,
+			}),
+		).to.be.true;
+		await Promise.resolve();
+		expect(refreshLocalCapability.callCount).to.equal(2);
+	});
+
+	it("detaches a cancelled remote-Full rearm even if transport never settles", async () => {
+		const clock = sinon.useFakeTimers({ now: 1_075 });
+		coordinator = createCoordinator({ requestRetryMs: 5 });
+		const lifecycle = new AbortController();
+		await coordinator.advertiseLocalCapability({
+			target: sender,
+			peerSession: currentSession,
+			receiveEpoch: currentReceiveEpoch,
+			signal: lifecycle.signal,
+		}).firstAttempt;
+
+		refreshLocalCapability.resetHistory();
+		refreshLocalCapability.callsFake(
+			async () => await new Promise<never>(() => {}),
+		);
+		const firstWaiter = new AbortController();
+		expect(
+			coordinator.reAdvertiseLocalCapabilityForRemoteFull({
+				peerHash,
+				peerSession: currentSession,
+				receiveEpoch: currentReceiveEpoch,
+				signal: firstWaiter.signal,
+			}),
+		).to.be.true;
+		await Promise.resolve();
+		expect(refreshLocalCapability.calledOnce).to.be.true;
+		expect(coordinator._remoteFullRearmBySession.get(currentSession)?.inFlight)
+			.to.exist;
+
+		firstWaiter.abort();
+		expect(coordinator._remoteFullRearmBySession.get(currentSession)?.inFlight)
+			.to.be.undefined;
+		await clock.tickAsync(100);
+		expect(refreshLocalCapability.calledOnce).to.be.true;
+
+		const replacementWaiter = new AbortController();
+		expect(
+			coordinator.reAdvertiseLocalCapabilityForRemoteFull({
+				peerHash,
+				peerSession: currentSession,
+				receiveEpoch: currentReceiveEpoch,
+				signal: replacementWaiter.signal,
+			}),
+		).to.be.true;
+		await Promise.resolve();
+		expect(refreshLocalCapability.callCount).to.equal(2);
+		replacementWaiter.abort();
+		expect(coordinator._remoteFullRearmBySession.get(currentSession)?.inFlight)
+			.to.be.undefined;
 	});
 
 	it("promotes when a deferred ACK finally settles", async () => {
@@ -2217,6 +2345,100 @@ describe("receive admission replication-info V2 receiver integration", () => {
 		);
 		await log.onMessage(full, context(senderSessionA, 30n));
 		expect(log._v2Receive._receiveStates.has(remoteHash)).to.be.false;
+	});
+
+	it("honors only a fresh same-transport remote-Full rearm command", async () => {
+		session = await TestSession.disconnected(2);
+		const db = await session.peers[0].open(new EventStore(), {
+			args: { replicate: false, timeUntilRoleMaturity: 0 },
+		});
+		const log = db.log as any;
+		const remote = session.peers[1].identity.publicKey;
+		const remoteHash = remote.hashcode();
+		const peerSession = log._peerSessions.rotate(remoteHash, "opening");
+		log._peerSessions.unblockReplicationInfo(remoteHash);
+		log._peerSessions.markOpen(remoteHash, peerSession);
+		const receiveEpoch = log._peerSessions.receiveEpoch(remoteHash);
+		const receiverTransportSession = BigInt(log.node.services.pubsub.session);
+		const senderTransportSession = 4_050n;
+		const context = (transportSession: bigint, timestamp: bigint) =>
+			({
+				from: remote,
+				message: { header: { session: transportSession, timestamp } },
+			}) as any;
+		const send = sinon.stub(log.rpc, "send").resolves([] as any);
+
+		expect(
+			log._v2Receive.markLocalCapabilityReady({
+				peerHash: remoteHash,
+				peerSession,
+				receiveEpoch,
+				receiverTransportSession,
+				requestNotBeforeMs: Date.now(),
+			}),
+		).to.be.true;
+		await log.onMessage(
+			new SyncCapabilitiesMessage({ capabilities: senderCapabilities }),
+			context(senderTransportSession, 10n),
+		);
+		const state = log._v2Receive._receiveStates.get(remoteHash)!;
+		clearTimeout(state.requestTimer);
+		state.requestTimer = undefined;
+		await log.onMessage(
+			new FullReplicationInfoV2Message({
+				receiverChallenge: state.receiverBinding!.slice(),
+				senderEpoch: bytes(40),
+				sequence: 1n,
+				segments: [],
+			}),
+			context(senderTransportSession, 11n),
+		);
+		expect(state.phase).to.equal("active");
+
+		const advanceRecovery = sinon
+			.stub(log._v2Receive, "advanceRecovery")
+			.returns(true);
+		const rearmCapabilities =
+			senderCapabilities | SYNC_CAPABILITY_REPLICATION_INFO_V2_REARM;
+		await log.onMessage(
+			new SyncCapabilitiesMessage({ capabilities: rearmCapabilities }),
+			context(senderTransportSession, 10n),
+		);
+		await log.onMessage(
+			new SyncCapabilitiesMessage({ capabilities: rearmCapabilities }),
+			context(senderTransportSession, 9n),
+		);
+		expect(advanceRecovery.notCalled).to.be.true;
+
+		await log.onMessage(
+			new SyncCapabilitiesMessage({ capabilities: rearmCapabilities }),
+			context(senderTransportSession, 12n),
+		);
+		expect(advanceRecovery.calledOnce).to.be.true;
+		expect(advanceRecovery.firstCall.args[0]).to.deep.include({
+			peerHash: remoteHash,
+			peerSession,
+			receiveEpoch,
+		});
+		expect(
+			log._peerSyncCapabilities.get(remoteHash) &
+				SYNC_CAPABILITY_REPLICATION_INFO_V2_REARM,
+		).to.equal(0);
+
+		await log.onMessage(
+			new SyncCapabilitiesMessage({ capabilities: rearmCapabilities }),
+			context(senderTransportSession, 12n),
+		);
+		await log.onMessage(
+			new SyncCapabilitiesMessage({ capabilities: rearmCapabilities }),
+			context(senderTransportSession + 1n, 13n),
+		);
+		expect(advanceRecovery.calledOnce).to.be.true;
+		expect(
+			log._peerSyncCapabilities.get(remoteHash) &
+				SYNC_CAPABILITY_REPLICATION_INFO_V2_REARM,
+		).to.equal(0);
+		send.restore();
 	});
 
 	it("commits first-Full cutover before fallible local bookkeeping", async () => {

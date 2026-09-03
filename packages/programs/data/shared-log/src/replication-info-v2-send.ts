@@ -561,6 +561,22 @@ export class ReplicationInfoV2SendCoordinator<R extends "u32" | "u64"> {
 		);
 	}
 
+	/**
+	 * Whether the exact current destination generation already has an outbound
+	 * V2 stream. A missing/stale stream cannot be repaired by confirmation
+	 * retries alone: the remote receiver must issue another Full request first.
+	 */
+	hasCurrentStateForPeer(target: ApplicationConfirmationTarget): boolean {
+		const state = this._sendStates.get(target.peerHash);
+		return (
+			state !== undefined &&
+			state.peerSession === target.peerSession &&
+			state.receiverTransportSession === target.receiverTransportSession &&
+			this.isCurrent(state) &&
+			this.supportsApplicationConfirmation(state)
+		);
+	}
+
 	private trackRetiringWorker(state: ReplicationInfoV2SendState): void {
 		const worker = state.worker;
 		if (!worker) {

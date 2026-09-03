@@ -199,6 +199,48 @@ describe("receive admission replication-info V2 sender streams", () => {
 		expect(state.nextSequence).to.equal(2n);
 	});
 
+	it("reports only an exact current confirmation-capable sender state", async () => {
+		const peerSession = {};
+		const peerHash = peerA.hashcode();
+		const target = {
+			peerHash,
+			peerSession,
+			receiverTransportSession: 2n,
+		};
+		openSessions.add(peerSession);
+		expect(coordinator.hasCurrentStateForPeer(target)).to.be.false;
+
+		expect(accept(peerA, peerSession, challenge(6))).to.be.true;
+		expect(coordinator.hasCurrentStateForPeer(target)).to.be.true;
+		expect(
+			coordinator.hasCurrentStateForPeer({
+				...target,
+				peerSession: {},
+			}),
+		).to.be.false;
+		expect(
+			coordinator.hasCurrentStateForPeer({
+				...target,
+				receiverTransportSession: 3n,
+			}),
+		).to.be.false;
+
+		closedReadinessGates.add(peerSession);
+		expect(coordinator.hasCurrentStateForPeer(target)).to.be.false;
+		closedReadinessGates.delete(peerSession);
+		senderTransportSession++;
+		expect(coordinator.hasCurrentStateForPeer(target)).to.be.false;
+		senderTransportSession--;
+		confirmationSupported = false;
+		expect(coordinator.hasCurrentStateForPeer(target)).to.be.false;
+		confirmationSupported = true;
+		expect(coordinator.hasCurrentStateForPeer(target)).to.be.true;
+
+		coordinator.clearPeer(peerHash, peerSession);
+		expect(coordinator.hasCurrentStateForPeer(target)).to.be.false;
+		await coordinator.drain();
+	});
+
 	it("keeps default and old-capability egress free of confirmation frames", async () => {
 		const clock = sinon.useFakeTimers();
 		coordinator.clearForClose();

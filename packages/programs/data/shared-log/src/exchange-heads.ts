@@ -384,6 +384,15 @@ export const SYNC_CAPABILITY_REPLICATION_INFO_V2_CONFIRM = 1 << 4;
 export const SYNC_CAPABILITY_PERSISTED_ENTRY_RECEIPTS = 1 << 5;
 
 /**
+ * Transient authenticated recovery hint: the receiver of this exact
+ * `SyncCapabilitiesMessage` should re-arm its current replication-info V2
+ * receiver and issue a fresh Full request. This bit is deliberately omitted
+ * from steady capability advertisements and must never be retained as a
+ * negotiated capability. Older peers safely ignore the unknown bit.
+ */
+export const SYNC_CAPABILITY_REPLICATION_INFO_V2_REARM = 1 << 6;
+
+/**
  * One-shot capability advertisement, sent to a peer when it (or we) subscribe
  * to the program topic. Peers that do not know this message drop it as an
  * unknown variant. Each feature still requires its explicit bit.

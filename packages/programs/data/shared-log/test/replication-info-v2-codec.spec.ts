@@ -8,6 +8,7 @@ import {
 	SYNC_CAPABILITY_REPLICATION_INFO_V2_APPLY,
 	SYNC_CAPABILITY_REPLICATION_INFO_V2_CONFIRM,
 	SYNC_CAPABILITY_REPLICATION_INFO_V2_DECODE,
+	SYNC_CAPABILITY_REPLICATION_INFO_V2_REARM,
 	SYNC_CAPABILITY_REPLICATION_INFO_V2_SEND,
 	SyncCapabilitiesMessage,
 } from "../src/exchange-heads.js";
@@ -296,12 +297,13 @@ describe("receive admission replication-info V2 decode-only codec", () => {
 		}
 	});
 
-	it("pins the decode, send, apply and confirmation capability vocabulary", () => {
+	it("pins the replication-info V2 capability vocabulary", () => {
 		expect(SYNC_CAPABILITY_RAW_EXCHANGE_HEADS).to.equal(1);
 		expect(SYNC_CAPABILITY_REPLICATION_INFO_V2_DECODE).to.equal(2);
 		expect(SYNC_CAPABILITY_REPLICATION_INFO_V2_SEND).to.equal(4);
 		expect(SYNC_CAPABILITY_REPLICATION_INFO_V2_APPLY).to.equal(8);
 		expect(SYNC_CAPABILITY_REPLICATION_INFO_V2_CONFIRM).to.equal(16);
+		expect(SYNC_CAPABILITY_REPLICATION_INFO_V2_REARM).to.equal(64);
 		expect(hex(new SyncCapabilitiesMessage())).to.equal("00000a01000000");
 		expect(
 			hex(
@@ -317,6 +319,13 @@ describe("receive admission replication-info V2 decode-only codec", () => {
 				}),
 			),
 		).to.equal("00000a0f000000");
+		expect(
+			hex(
+				new SyncCapabilitiesMessage({
+					capabilities: SYNC_CAPABILITY_REPLICATION_INFO_V2_REARM,
+				}),
+			),
+		).to.equal("00000a40000000");
 	});
 
 	it("drops unsolicited V2 before state or mutation side effects", async () => {
