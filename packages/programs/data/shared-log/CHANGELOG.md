@@ -1,5 +1,11 @@
 # Changelog
 
+## 16.0.26
+
+### Patch Changes
+
+- [#1412](https://github.com/dao-xyz/peerbit/pull/1412) [`e48437e`](https://github.com/dao-xyz/peerbit/commit/e48437e520ae470bdac734e0bbbfa626e39d05d8) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Recover persisted-receipt readiness when a current replication-info V2 sender stops making application-confirmation progress.
+
 ## 16.0.25
 
 ### Patch Changes
