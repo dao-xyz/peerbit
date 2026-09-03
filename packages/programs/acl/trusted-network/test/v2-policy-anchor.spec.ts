@@ -3,6 +3,7 @@ import { CrashSafeTwoSlotCheckpoint } from "@peerbit/any-store/checkpoint";
 import { Ed25519Keypair, PublicSignKey, sha256Sync } from "@peerbit/crypto";
 import { EntryV0 } from "@peerbit/log";
 import { expect } from "chai";
+import sinon from "sinon";
 import { compare, concat } from "uint8arrays";
 import {
 	type CrashSafePolicyAnchorStoreV2,
@@ -26,6 +27,7 @@ import {
 const ZERO_DIGEST = new Uint8Array(32);
 const MAX_PENDING_POLICIES = 64;
 const MAX_FORK_CHILDREN = MAX_PENDING_POLICIES + 2;
+const MAX_TIMER_DELAY_MS = 0x7fffffff;
 const CHECKPOINT_SCOPE_DOMAIN = new TextEncoder().encode(
 	"peerbit/trusted-network/v2/policy-anchor/checkpoint/v1\0",
 );
@@ -552,6 +554,7 @@ describe("TrustedNetwork v2 durable policy anchor", () => {
 		expect(
 			(await anchor.ingest(entryBytes(fixture.chain[0].entry))).status,
 		).to.equal("accepted");
+		expect(anchor.isUsable()).to.equal(true);
 		expect(
 			anchor.isAuthorized(fixture.alice.publicKey, TrustedNetworkRole.WRITER),
 		).to.equal(true);
@@ -559,6 +562,7 @@ describe("TrustedNetwork v2 durable policy anchor", () => {
 		const firstReplacementGate = store.gateNextAtomicReplace();
 		const acceptingOne = anchor.ingest(entryBytes(fixture.chain[1].entry));
 		await firstReplacementGate.entered;
+		expect(anchor.isUsable()).to.equal(false);
 		expect(
 			anchor.isAuthorized(fixture.alice.publicKey, TrustedNetworkRole.WRITER),
 		).to.equal(false);
@@ -567,6 +571,7 @@ describe("TrustedNetwork v2 durable policy anchor", () => {
 		).to.equal(false);
 		firstReplacementGate.release();
 		expect((await acceptingOne).status).to.equal("accepted");
+		expect(anchor.isUsable()).to.equal(true);
 		expect(
 			anchor.isAuthorized(fixture.alice.publicKey, TrustedNetworkRole.READER),
 		).to.equal(true);
@@ -863,6 +868,382 @@ describe("TrustedNetwork v2 durable policy anchor", () => {
 		);
 		expect(current).to.deep.equal({ status: "completed", value: 3n });
 		expect(resolverCalls).to.equal(callsBeforeHeadLease);
+	});
+
+	it("enforces an exact parent-step cap and permits a zero-step head lease", async () => {
+		const fixture = await createChain();
+		const resolver = createResolver();
+		resolver.add(...fixture.chain);
+		let resolverCalls = 0;
+		const anchor = await openAnchor(
+			fixture,
+			new ControlledPolicyAnchorStore(),
+			(digest) => {
+				resolverCalls += 1;
+				return resolver.resolve(digest);
+			},
+		);
+		for (const policy of fixture.chain) {
+			await anchor.ingest(entryBytes(policy.entry));
+		}
+
+		const current = await anchor.withAcceptedPolicyLease(
+			{ sequence: 3n, digest: fixture.chain[3].digest, maxSteps: 0 },
+			({ policy }) => policy.sequence,
+		);
+		expect(current).to.deep.equal({ status: "completed", value: 3n });
+		expect(resolverCalls).to.equal(0);
+
+		let cappedCallbackCalls = 0;
+		const capped = await anchor.withAcceptedPolicyLease(
+			{ sequence: 1n, digest: fixture.chain[1].digest, maxSteps: 1 },
+			() => {
+				cappedCallbackCalls += 1;
+			},
+		);
+		expect(capped.status).to.equal("unavailable");
+		expect(cappedCallbackCalls).to.equal(0);
+		expect(resolverCalls).to.equal(1);
+
+		const exact = await anchor.withAcceptedPolicyLease(
+			{ sequence: 1n, digest: fixture.chain[1].digest, maxSteps: 2 },
+			({ policy }) => policy.sequence,
+		);
+		expect(exact).to.deep.equal({ status: "completed", value: 1n });
+		expect(resolverCalls).to.equal(3);
+	});
+
+	it("cancels an in-flight historical lease at its absolute deadline", async () => {
+		const fixture = await createChain();
+		const resolverStarted = deferred();
+		let attemptSignal: AbortSignal | undefined;
+		const anchor = await openAnchor(
+			fixture,
+			new ControlledPolicyAnchorStore(),
+			(_digest, { signal }) => {
+				attemptSignal = signal;
+				resolverStarted.resolve();
+				return new Promise<Uint8Array | undefined>(() => {});
+			},
+		);
+		for (const policy of fixture.chain) {
+			await anchor.ingest(entryBytes(policy.entry));
+		}
+
+		const clock = sinon.useFakeTimers({
+			now: 10_000,
+			toFake: ["Date", "setTimeout", "clearTimeout"],
+		});
+		try {
+			let callbackCalls = 0;
+			const lease = anchor.withAcceptedPolicyLease(
+				{
+					sequence: 2n,
+					digest: fixture.chain[2].digest,
+					deadline: Date.now() + 25,
+				},
+				() => {
+					callbackCalls += 1;
+				},
+			);
+			await resolverStarted.promise;
+			await clock.tickAsync(25);
+
+			expect((await lease).status).to.equal("unavailable");
+			expect(attemptSignal?.aborted).to.equal(true);
+			expect(callbackCalls).to.equal(0);
+			expect(anchor.bufferedAdmissionCount).to.equal(0);
+			expect(anchor.bufferedAdmissionBytes).to.equal(0);
+		} finally {
+			clock.restore();
+		}
+	});
+
+	it("cancels only the caller's lease and releases the queue for later work", async () => {
+		const fixture = await createChain();
+		const resolver = createResolver();
+		resolver.add(...fixture.chain);
+		const resolverStarted = deferred();
+		let stall = true;
+		let attemptSignal: AbortSignal | undefined;
+		const anchor = await openAnchor(
+			fixture,
+			new ControlledPolicyAnchorStore(),
+			(digest, { signal }) => {
+				if (!stall) return resolver.resolve(digest);
+				attemptSignal = signal;
+				resolverStarted.resolve();
+				return new Promise<Uint8Array | undefined>(() => {});
+			},
+		);
+		for (const policy of fixture.chain) {
+			await anchor.ingest(entryBytes(policy.entry));
+		}
+
+		const controller = new AbortController();
+		let cancelledCallbackCalls = 0;
+		const cancelled = anchor.withAcceptedPolicyLease(
+			{
+				sequence: 2n,
+				digest: fixture.chain[2].digest,
+				signal: controller.signal,
+			},
+			() => {
+				cancelledCallbackCalls += 1;
+			},
+		);
+		await resolverStarted.promise;
+		controller.abort();
+		expect((await cancelled).status).to.equal("unavailable");
+		expect(attemptSignal?.aborted).to.equal(true);
+		expect(cancelledCallbackCalls).to.equal(0);
+		expect(anchor.state).to.equal("ACTIVE");
+		expect(anchor.bufferedAdmissionCount).to.equal(0);
+
+		stall = false;
+		expect(
+			(
+				await anchor.withAcceptedPolicyLease(
+					{ sequence: 2n, digest: fixture.chain[2].digest },
+					({ policy }) => policy.sequence,
+				)
+			).status,
+		).to.equal("completed");
+	});
+
+	it("settles a queued lease timeout before its blocker releases", async () => {
+		const fixture = await createChain();
+		const anchor = await openAnchor(fixture, new ControlledPolicyAnchorStore());
+		await anchor.ingest(entryBytes(fixture.chain[0].entry));
+		const blockerEntered = deferred();
+		const blockerRelease = deferred();
+		const blocker = anchor.withAcceptedPolicyLease(
+			{ sequence: 0n, digest: fixture.chain[0].digest },
+			async () => {
+				blockerEntered.resolve();
+				await blockerRelease.promise;
+			},
+		);
+		await blockerEntered.promise;
+
+		const clock = sinon.useFakeTimers({
+			now: 20_000,
+			toFake: ["Date", "setTimeout", "clearTimeout"],
+		});
+		try {
+			let callbackCalls = 0;
+			const reference = {
+				sequence: 0n,
+				digest: fixture.chain[0].digest,
+				timeoutMs: 10,
+			};
+			const queued = anchor.withAcceptedPolicyLease(reference, () => {
+				callbackCalls += 1;
+			});
+			reference.timeoutMs = 10_000;
+			expect(anchor.bufferedAdmissionCount).to.equal(2);
+			expect(anchor.bufferedAdmissionBytes).to.equal(64);
+			await clock.tickAsync(10);
+
+			expect((await queued).status).to.equal("unavailable");
+			expect(callbackCalls).to.equal(0);
+			// Outward cancellation must not remove or release the still-queued
+			// closure. It remains bounded and preserves FIFO ordering until dequeue.
+			expect(anchor.bufferedAdmissionCount).to.equal(2);
+			expect(anchor.bufferedAdmissionBytes).to.equal(64);
+			expect(clock.countTimers()).to.equal(0);
+
+			blockerRelease.resolve();
+			expect((await blocker).status).to.equal("completed");
+			const afterDrain = await anchor.withAcceptedPolicyLease(
+				{ sequence: 0n, digest: fixture.chain[0].digest },
+				() => "after-drain",
+			);
+			expect(afterDrain).to.deep.equal({
+				status: "completed",
+				value: "after-drain",
+			});
+			expect(callbackCalls).to.equal(0);
+			expect(anchor.bufferedAdmissionCount).to.equal(0);
+			expect(anchor.bufferedAdmissionBytes).to.equal(0);
+		} finally {
+			clock.restore();
+		}
+	});
+
+	it("chunks queued deadlines beyond the platform timer limit", async () => {
+		const fixture = await createChain();
+		const anchor = await openAnchor(fixture, new ControlledPolicyAnchorStore());
+		await anchor.ingest(entryBytes(fixture.chain[0].entry));
+		const blockerEntered = deferred();
+		const blockerRelease = deferred();
+		const blocker = anchor.withAcceptedPolicyLease(
+			{ sequence: 0n, digest: fixture.chain[0].digest },
+			async () => {
+				blockerEntered.resolve();
+				await blockerRelease.promise;
+			},
+		);
+		await blockerEntered.promise;
+
+		const clock = sinon.useFakeTimers({
+			now: 25_000,
+			toFake: ["Date", "setTimeout", "clearTimeout"],
+		});
+		try {
+			let externallySettled = false;
+			let callbackCalls = 0;
+			const queued = anchor.withAcceptedPolicyLease(
+				{
+					sequence: 0n,
+					digest: fixture.chain[0].digest,
+					deadline: Date.now() + MAX_TIMER_DELAY_MS + 25,
+				},
+				() => {
+					callbackCalls += 1;
+				},
+			);
+			void queued.then(() => {
+				externallySettled = true;
+			});
+
+			await clock.tickAsync(MAX_TIMER_DELAY_MS);
+			expect(externallySettled).to.equal(false);
+			expect(clock.countTimers()).to.equal(1);
+			await clock.tickAsync(24);
+			expect(externallySettled).to.equal(false);
+			await clock.tickAsync(1);
+			expect((await queued).status).to.equal("unavailable");
+			expect(callbackCalls).to.equal(0);
+			expect(anchor.bufferedAdmissionCount).to.equal(2);
+			expect(anchor.bufferedAdmissionBytes).to.equal(64);
+			expect(clock.countTimers()).to.equal(0);
+
+			blockerRelease.resolve();
+			expect((await blocker).status).to.equal("completed");
+			expect(
+				(
+					await anchor.withAcceptedPolicyLease(
+						{ sequence: 0n, digest: fixture.chain[0].digest },
+						() => "after-drain",
+					)
+				).status,
+			).to.equal("completed");
+			expect(callbackCalls).to.equal(0);
+			expect(anchor.bufferedAdmissionCount).to.equal(0);
+			expect(anchor.bufferedAdmissionBytes).to.equal(0);
+		} finally {
+			blockerRelease.resolve();
+			clock.restore();
+		}
+	});
+
+	it("settles a queued lease cancellation before its blocker releases", async () => {
+		const fixture = await createChain();
+		const anchor = await openAnchor(fixture, new ControlledPolicyAnchorStore());
+		await anchor.ingest(entryBytes(fixture.chain[0].entry));
+		const blockerEntered = deferred();
+		const blockerRelease = deferred();
+		const blocker = anchor.withAcceptedPolicyLease(
+			{ sequence: 0n, digest: fixture.chain[0].digest },
+			async () => {
+				blockerEntered.resolve();
+				await blockerRelease.promise;
+			},
+		);
+		await blockerEntered.promise;
+
+		const controller = new AbortController();
+		const removeListener = sinon.spy(controller.signal, "removeEventListener");
+		let callbackCalls = 0;
+		try {
+			const queued = anchor.withAcceptedPolicyLease(
+				{
+					sequence: 0n,
+					digest: fixture.chain[0].digest,
+					signal: controller.signal,
+				},
+				() => {
+					callbackCalls += 1;
+				},
+			);
+			expect(anchor.bufferedAdmissionCount).to.equal(2);
+			expect(anchor.bufferedAdmissionBytes).to.equal(64);
+
+			controller.abort();
+			expect((await queued).status).to.equal("unavailable");
+			expect(callbackCalls).to.equal(0);
+			expect(removeListener.calledWith("abort")).to.equal(true);
+			expect(anchor.bufferedAdmissionCount).to.equal(2);
+			expect(anchor.bufferedAdmissionBytes).to.equal(64);
+
+			blockerRelease.resolve();
+			expect((await blocker).status).to.equal("completed");
+			const afterDrain = await anchor.withAcceptedPolicyLease(
+				{ sequence: 0n, digest: fixture.chain[0].digest },
+				() => "after-drain",
+			);
+			expect(afterDrain).to.deep.equal({
+				status: "completed",
+				value: "after-drain",
+			});
+			expect(callbackCalls).to.equal(0);
+			expect(anchor.bufferedAdmissionCount).to.equal(0);
+			expect(anchor.bufferedAdmissionBytes).to.equal(0);
+		} finally {
+			removeListener.restore();
+		}
+	});
+
+	it("does not revoke deadline or signal leases after callback acquisition", async () => {
+		const fixture = await createChain();
+		const anchor = await openAnchor(fixture, new ControlledPolicyAnchorStore());
+		await anchor.ingest(entryBytes(fixture.chain[0].entry));
+		const callbackEntered = deferred();
+		const callbackRelease = deferred();
+		const controller = new AbortController();
+		const clock = sinon.useFakeTimers({
+			now: 30_000,
+			toFake: ["Date", "setTimeout", "clearTimeout"],
+		});
+		try {
+			let externallySettled = false;
+			const acquired = anchor.withAcceptedPolicyLease(
+				{
+					sequence: 0n,
+					digest: fixture.chain[0].digest,
+					timeoutMs: 10,
+					signal: controller.signal,
+				},
+				async () => {
+					callbackEntered.resolve();
+					await callbackRelease.promise;
+					return "held";
+				},
+			);
+			void acquired.then(() => {
+				externallySettled = true;
+			});
+			await callbackEntered.promise;
+			expect(clock.countTimers()).to.equal(0);
+
+			controller.abort();
+			await clock.tickAsync(10);
+			await Promise.resolve();
+			expect(externallySettled).to.equal(false);
+			expect(anchor.bufferedAdmissionCount).to.equal(1);
+			expect(anchor.bufferedAdmissionBytes).to.equal(32);
+
+			callbackRelease.resolve();
+			expect(await acquired).to.deep.equal({
+				status: "completed",
+				value: "held",
+			});
+			expect(anchor.bufferedAdmissionCount).to.equal(0);
+			expect(anchor.bufferedAdmissionBytes).to.equal(0);
+		} finally {
+			clock.restore();
+		}
 	});
 
 	it("holds one queue slot through the callback and bounds queued leases", async () => {

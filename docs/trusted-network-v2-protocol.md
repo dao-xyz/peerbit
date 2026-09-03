@@ -288,9 +288,23 @@ The previous fence must be a causal ancestor, but it need not consume a direct
 ancestry. Lifting the limit requires a separately specified generic bounded
 merge or authenticated-frontier primitive. Constructing a fence may inspect
 `O(current heads)` at a policy transition, but ordinary writes must not carry
-that cost. This slice authenticates and binds the bounded EntryV0 envelope; it
-does not validate the causal frontier, accepted policy provenance, freshness,
-or durability.
+that cost.
+
+TrustedNetwork v2 now contains an internal resource-fence reducer for one
+immutable network, resource, and log scope. It authenticates
+policy-authority-signed EntryV0 fence bytes, enforces the exact predecessor and
+monotone fence, policy, and content-epoch transitions, verifies bounded
+CID-linked causal descent, preserves the exact signed `meta.next` projection
+(including an explicitly empty initial frontier), and records a canonically
+ordered pair of observed authority-fork proofs. Replicas converge on the same
+terminal state and common parent, but if the authority signs more than two
+siblings, the retained pair depends on which conflict is observed first and is
+not a complete equivocation set. Its durable wrapper ties every mutating
+admission to the fence's exact accepted-policy-prefix lease. This does not make
+either component a protected resource API: they do not yet authenticate
+application operations, revalidate their projections across a fence, prove
+that an offline peer has seen the newest fence, or provide encryption-epoch key
+rotation.
 
 ### `OperationPolicyProofV2`
 
@@ -553,10 +567,13 @@ blocked store barrier or callback. At most 64 calls and 256 KiB of captured
 queue-input bytes may be unsettled at once. Policy admissions account for their
 entry bytes, accepted-prefix leases account for their 32-byte reference digest,
 and zero-byte retry calls share the same count bound. Count and byte capacity
-are reserved synchronously before retaining caller bytes or callbacks and are
-released on every settlement path. Oversized or incompatible typed-array
-inputs return `rejected`; well-formed submissions over the wrapper limit return
-`capacity`. Neither path enters the core or retains the caller buffer, and
+are reserved synchronously before retaining caller bytes or callbacks. A lease
+that expires or is cancelled while queued settles outward immediately, but its
+internal queue slot and reservation remain until that closure reaches the head,
+skips the callback, and dequeues; every internal completion path then releases
+the reservation. Oversized or incompatible typed-array inputs return
+`rejected`; well-formed submissions over the wrapper limit return `capacity`.
+Neither path enters the core or retains the caller buffer, and
 `pendingCount`/`pendingBytes` continue to describe only the core pending-policy
 set.
 Boundary length checks use the intrinsic typed-array byte extent and copying
@@ -576,24 +593,49 @@ returns `unavailable`; a digest conclusively outside the accepted prefix returns
 Only a callback that fulfills returns `completed`; a callback rejection is
 propagated unchanged and does not halt or modify the anchor.
 
-Historical lookup work is linear in the distance from the accepted head, and
-this internal slice does not yet impose an aggregate step or wall-time fence on
-that walk. The protected-resource profile must add a fixed bound or an
-authenticated checkpoint proof before this lease becomes an activatable
-resource-admission path.
+Historical lookup work is linear in the distance from the accepted head. Each
+lease may now set an exact authenticated-parent step cap, an absolute deadline,
+a relative timeout that includes queue wait, and a caller cancellation signal.
+The resource-fence wrapper fixes those bounds for every acquisition. Exceeding
+one returns `unavailable` without invoking the callback; a conclusive prefix
+mismatch remains `rejected`.
 
-Lease acquisition linearizes immediately before callback invocation. Abort
-before or during historical lookup returns `halted` without invoking the
-callback. Abort after invocation does not revoke the durable fact already
-proved; the wrapper holds the queue until that callback fulfills or rejects,
-then later operations observe the halted lifecycle. A lease callback must not
-await another operation on the same anchor because it already owns that
+Lease acquisition linearizes immediately before callback invocation. Caller
+cancellation or deadline expiry before that point returns `unavailable` without
+invoking the callback; lifecycle abort or authority equivocation returns
+`halted`. Caller cancellation or deadline expiry after invocation does not
+revoke the lease or halt the anchor: the wrapper holds the queue until that
+callback fulfills or rejects. A lifecycle abort after invocation likewise does
+not revoke the durable fact already proved, but later operations observe the
+halted lifecycle after the callback releases the queue. A lease callback must
+not await another operation on the same anchor because it already owns that
 anchor's queue slot. The lease proves only the accepted prefix known to this
 anchor at acquisition; later authority-fork evidence can still require resource
-rollback. It neither makes the policy and resource stores atomically commit
-together nor supplies resource-checkpoint durability by itself. This API
-remains absent from the package root with the rest of the non-activatable v2
-implementation, and adds no checkpoint, wire, or schema field.
+rollback. It does not make the policy and resource stores atomically commit
+together.
+
+The internal resource-fence wrapper serializes each reducer mutation inside
+such a lease and publishes a changed fence head only after committing a
+scope-bound crash-safe two-slot checkpoint. It re-authenticates retained fence
+bytes, accepted-policy references, and immediate causal transitions on reopen;
+persists comparison unavailability and canonical two-child fork evidence; and
+uses fixed count, byte, ancestry, dependency-time, and admission-work bounds.
+The deadline does not cancel an atomic checkpoint replacement after mutation;
+the wrapper keeps the policy lease until that durable operation settles.
+After a successful admission it deterministically retries the bounded set of
+already policy-leased candidates, acquiring a separate exact lease for each so
+that a resolver-loaded unleased ancestor cannot become fork evidence.
+
+Pending candidates that have not reached a durable comparison remain replay
+work, not a durable authorization fact. A future protected-resource adapter
+must replay its complete retained log and resolve or fail closed on that work
+before serving policy-final reads. It must also bind signed application entries
+to the accepted fence, implement deterministic revalidation/retractions, and
+define the accepted-remote-entry/frontier callback. Consequently the resource
+reducer and wrapper remain absent from the package root and are omitted from
+the published npm artifact while non-activatable. They do not provide a public
+owner-revocation primitive, a cold-peer non-resurrection guarantee, physical
+block reclamation, tombstone compaction, or content-encryption key rotation.
 
 This bounds ordinary `ACTIVE` and `UNAVAILABLE` anchor history to two logical
 keys as well as bounding authority-equivocation evidence. It does not truncate
@@ -720,11 +762,15 @@ TrustedNetwork-specific history store.
 - Prove crash/reopen and long-offline catch-up preserve the same verdict.
 
 The internal `[2, 2]` fence-body and `[2, 3]` operation-proof codecs are pinned.
-Signed EntryV0 authentication, accepted policy provenance, causal ancestry,
-transition and fork reduction, pending-context storage and fetch, materialized
-projection revalidation, persistence, crash/reopen, and long-offline catch-up
-remain open. The codec slice does not complete this gate or provide a usable
-authorization path.
+Together, the internal reducer and durable wrapper now cover signed EntryV0
+authentication, exact accepted-policy provenance, bounded causal ancestry,
+monotone transition and fork reduction, bounded canonical dependency hints,
+and crash-safe persistence of accepted, unavailable-comparison, and fork states. The policy
+lease and fence-admission walks have aggregate bounds. Application-entry
+authentication, durable replay of all pending context, materialized projection
+revalidation and retractions, the public accepted-entry/frontier callback, and
+end-to-end long-offline catch-up remain open. This foundation does not complete
+the gate or provide a usable authorization path.
 
 ### 4. Role enforcement and encryption
 

@@ -47,6 +47,20 @@ const TYPED_ARRAY_TAG = Object.getOwnPropertyDescriptor(
 const ARRAY_BUFFER_IS_VIEW = ArrayBuffer.isView;
 const UINT8_ARRAY_SET = Uint8Array.prototype.set;
 
+const isAbortSignalV2 = (value: unknown): value is AbortSignal => {
+	if (value === null || typeof value !== "object") return false;
+	try {
+		const signal = value as AbortSignal;
+		return (
+			typeof signal.aborted === "boolean" &&
+			typeof signal.addEventListener === "function" &&
+			typeof signal.removeEventListener === "function"
+		);
+	} catch {
+		return false;
+	}
+};
+
 const exactUint8ArrayByteLength = (input: unknown): number => {
 	if (
 		!ARRAY_BUFFER_IS_VIEW(input) ||
@@ -161,6 +175,16 @@ export type AcceptedPolicyPrefixResolutionV2 =
 			status: "unavailable" | "rejected" | "halted";
 			reason: string;
 	  };
+
+/** Per-call bounds for the internal accepted-prefix history walk. */
+export type AcceptedPolicyPrefixTraversalV2 = {
+	/** Maximum number of authenticated parent edges that may be resolved. */
+	maxSteps?: number;
+	/** Absolute wall-clock deadline, in milliseconds since the Unix epoch. */
+	deadline?: number;
+	/** Cancels this resolution without halting the reducer. */
+	signal?: AbortSignal;
+};
 
 export type PolicyForkChildProofV2 = {
 	sequence: bigint;
@@ -751,12 +775,16 @@ export class TrustedNetworkV2PolicyReducer {
 	 * users of this internal class. Historical snapshots remain resolver-backed;
 	 * this walk retains only one authenticated cursor at a time.
 	 */
-	resolveAcceptedPolicyPrefix(reference: {
-		sequence: bigint;
-		digest: Uint8Array;
-	}): Promise<AcceptedPolicyPrefixResolutionV2> {
+	resolveAcceptedPolicyPrefix(
+		reference: {
+			sequence: bigint;
+			digest: Uint8Array;
+		},
+		traversal?: AcceptedPolicyPrefixTraversalV2,
+	): Promise<AcceptedPolicyPrefixResolutionV2> {
 		let capturedSequence: bigint;
 		let capturedDigest: Uint8Array;
+		let capturedTraversal: AcceptedPolicyPrefixTraversalV2;
 		try {
 			capturedSequence = reference.sequence;
 			if (
@@ -774,6 +802,34 @@ export class TrustedNetworkV2PolicyReducer {
 				throw new Error("invalid digest");
 			}
 			capturedDigest = copyBytes(suppliedDigest);
+			const maxSteps = traversal?.maxSteps;
+			if (
+				maxSteps !== undefined &&
+				(!Number.isSafeInteger(maxSteps) || maxSteps < 0)
+			) {
+				return Promise.resolve({
+					status: "rejected",
+					reason: "Policy prefix maxSteps must be a non-negative safe integer",
+				});
+			}
+			const deadline = traversal?.deadline;
+			if (
+				deadline !== undefined &&
+				(!Number.isSafeInteger(deadline) || deadline < 0)
+			) {
+				return Promise.resolve({
+					status: "rejected",
+					reason: "Policy prefix deadline must be a non-negative safe integer",
+				});
+			}
+			const signal = traversal?.signal;
+			if (signal !== undefined && !isAbortSignalV2(signal)) {
+				return Promise.resolve({
+					status: "rejected",
+					reason: "Policy prefix signal must be an AbortSignal",
+				});
+			}
+			capturedTraversal = { maxSteps, deadline, signal };
 		} catch {
 			return Promise.resolve({
 				status: "rejected",
@@ -781,10 +837,13 @@ export class TrustedNetworkV2PolicyReducer {
 			});
 		}
 		const result = this.admissionTail.then(() =>
-			this.resolveAcceptedPolicyPrefixOne({
-				sequence: capturedSequence,
-				digest: capturedDigest,
-			}),
+			this.resolveAcceptedPolicyPrefixOne(
+				{
+					sequence: capturedSequence,
+					digest: capturedDigest,
+				},
+				capturedTraversal,
+			),
 		);
 		this.admissionTail = result.then(
 			(): void => {},
@@ -808,19 +867,15 @@ export class TrustedNetworkV2PolicyReducer {
 		this.lifecycleController.abort();
 	}
 
-	private async resolveAcceptedPolicyPrefixOne(reference: {
-		sequence: bigint;
-		digest: Uint8Array;
-	}): Promise<AcceptedPolicyPrefixResolutionV2> {
-		if (this.lifecycleController.signal.aborted || this.fork !== undefined) {
-			return {
-				status: "halted",
-				reason:
-					this.fork === undefined
-						? "Policy reducer lifecycle is aborted"
-						: "Policy reducer is halted by authority equivocation",
-			};
-		}
+	private async resolveAcceptedPolicyPrefixOne(
+		reference: {
+			sequence: bigint;
+			digest: Uint8Array;
+		},
+		traversal: AcceptedPolicyPrefixTraversalV2,
+	): Promise<AcceptedPolicyPrefixResolutionV2> {
+		const interrupted = this.acceptedPrefixInterruption(traversal);
+		if (interrupted !== undefined) return interrupted;
 		if (this.unavailable !== undefined) {
 			return {
 				status: "unavailable",
@@ -843,7 +898,10 @@ export class TrustedNetworkV2PolicyReducer {
 		// The admission queue owns the core for this complete walk, so the internal
 		// accepted snapshot cannot change until the resolution settles.
 		let cursor = this.acceptedHead;
+		let steps = 0;
 		while (cursor.body.sequence > reference.sequence) {
+			const loopInterruption = this.acceptedPrefixInterruption(traversal);
+			if (loopInterruption !== undefined) return loopInterruption;
 			if (
 				cursor.body.sequence === reference.sequence + 1n &&
 				!equals(cursor.body.previousPolicyDigest, reference.digest)
@@ -853,13 +911,16 @@ export class TrustedNetworkV2PolicyReducer {
 					reason: "Policy reference is not an accepted prefix",
 				};
 			}
-			const parent = await this.parentOf(cursor);
-			if (this.lifecycleController.signal.aborted) {
+			if (traversal.maxSteps !== undefined && steps >= traversal.maxSteps) {
 				return {
-					status: "halted",
-					reason: "Policy reducer lifecycle is aborted",
+					status: "unavailable",
+					reason: "Accepted policy prefix traversal reached maxSteps",
 				};
 			}
+			steps += 1;
+			const parent = await this.parentOf(cursor, undefined, traversal);
+			const resolutionInterruption = this.acceptedPrefixInterruption(traversal);
+			if (resolutionInterruption !== undefined) return resolutionInterruption;
 			if (parent.status !== "found") {
 				return {
 					status: "unavailable",
@@ -868,6 +929,8 @@ export class TrustedNetworkV2PolicyReducer {
 			}
 			cursor = parent.parent;
 		}
+		const completedInterruption = this.acceptedPrefixInterruption(traversal);
+		if (completedInterruption !== undefined) return completedInterruption;
 
 		if (!equals(cursor.digest, reference.digest)) {
 			return {
@@ -880,6 +943,38 @@ export class TrustedNetworkV2PolicyReducer {
 			policy: projectionFromSnapshot(cursor),
 			acceptedHead: projectionFromSnapshot(this.acceptedHead),
 		};
+	}
+
+	private acceptedPrefixInterruption(
+		traversal: AcceptedPolicyPrefixTraversalV2,
+	):
+		| Exclude<AcceptedPolicyPrefixResolutionV2, { status: "resolved" }>
+		| undefined {
+		if (this.lifecycleController.signal.aborted) {
+			return {
+				status: "halted",
+				reason: "Policy reducer lifecycle is aborted",
+			};
+		}
+		if (this.fork !== undefined) {
+			return {
+				status: "halted",
+				reason: "Policy reducer is halted by authority equivocation",
+			};
+		}
+		if (traversal.signal?.aborted) {
+			return {
+				status: "unavailable",
+				reason: "Policy prefix resolution was aborted by the caller",
+			};
+		}
+		if (traversal.deadline !== undefined && Date.now() >= traversal.deadline) {
+			return {
+				status: "unavailable",
+				reason: "Policy prefix resolution deadline elapsed",
+			};
+		}
+		return undefined;
 	}
 
 	private fetchHints(): PolicyParentFetchHintV2[] {
@@ -994,69 +1089,111 @@ export class TrustedNetworkV2PolicyReducer {
 
 	private async resolveExternalSnapshot(
 		digest: Uint8Array,
+		traversal?: AcceptedPolicyPrefixTraversalV2,
 	): Promise<ValidatedPolicySnapshotV2 | undefined> {
 		if (this.lifecycleController.signal.aborted) {
 			throw new PolicyDependencyUnavailableErrorV2(
 				"Policy resolver lifecycle is aborted",
 			);
 		}
+		if (traversal?.signal?.aborted) {
+			throw new PolicyDependencyUnavailableErrorV2(
+				"Policy resolver attempt was aborted by the caller",
+			);
+		}
+		const deadlineRemaining =
+			traversal?.deadline === undefined
+				? undefined
+				: traversal.deadline - Date.now();
+		const deadlineLimitsAttempt =
+			deadlineRemaining !== undefined &&
+			deadlineRemaining <= this.resolveTimeoutMs;
+		const remaining =
+			deadlineRemaining === undefined
+				? this.resolveTimeoutMs
+				: Math.min(this.resolveTimeoutMs, deadlineRemaining);
+		if (remaining <= 0) {
+			throw new PolicyDependencyUnavailableErrorV2(
+				"Policy resolver deadline elapsed",
+			);
+		}
 
 		const attemptController = new AbortController();
 		let timedOut = false;
+		let callerAborted = false;
 		const abortFromLifecycle = (): void => attemptController.abort();
+		const abortFromCaller = (): void => {
+			callerAborted = true;
+			attemptController.abort();
+		};
 		this.lifecycleController.signal.addEventListener(
 			"abort",
 			abortFromLifecycle,
 			{ once: true },
 		);
+		traversal?.signal?.addEventListener("abort", abortFromCaller, {
+			once: true,
+		});
 		const timeout = setTimeout(() => {
 			timedOut = true;
 			attemptController.abort();
-		}, this.resolveTimeoutMs);
+		}, remaining);
 		const abortError = (): PolicyDependencyUnavailableErrorV2 =>
 			new PolicyDependencyUnavailableErrorV2(
-				timedOut
-					? `Policy resolver timed out after ${this.resolveTimeoutMs} ms`
-					: "Policy resolver attempt was aborted",
+				callerAborted
+					? "Policy resolver attempt was aborted by the caller"
+					: timedOut && deadlineLimitsAttempt
+						? "Policy resolver deadline elapsed"
+						: timedOut
+							? `Policy resolver timed out after ${this.resolveTimeoutMs} ms`
+							: "Policy resolver attempt was aborted",
 			);
 
 		let rejectOnAbort: (() => void) | undefined;
-		const abortPromise = new Promise<never>((_resolve, reject) => {
-			rejectOnAbort = (): void => {
-				reject(abortError());
-			};
-			attemptController.signal.addEventListener("abort", rejectOnAbort, {
-				once: true,
-			});
-		});
-
-		const resolution = Promise.resolve().then(async () => {
-			if (attemptController.signal.aborted) throw abortError();
-			const entryBytes = await this.resolvePolicyEntry(copyBytes(digest), {
-				signal: attemptController.signal,
-			});
-			// A resolver may ignore cancellation. Do not spend decode or signature
-			// verification work on bytes that arrive after this attempt expired.
-			if (attemptController.signal.aborted) throw abortError();
-			if (entryBytes === undefined) return undefined;
-			const snapshot = await authenticatePolicySnapshotEntryV2(
-				entryBytes,
-				this.descriptor,
-			);
-			if (!equals(snapshot.digest, digest)) {
-				throw new Error("Policy resolver returned the wrong body digest");
-			}
-			return snapshot;
-		});
-		// Promise.race installs handlers, but this explicit observer documents and
-		// preserves consumption if the resolver settles after its deadline.
-		void resolution.then(
-			(): void => undefined,
-			(): void => undefined,
-		);
 
 		try {
-			return await Promise.race([resolution, abortPromise]);
+			return await new Promise<ValidatedPolicySnapshotV2 | undefined>(
+				(resolve, reject) => {
+					let settled = false;
+					const settle = (complete: () => void): void => {
+						if (settled) return;
+						settled = true;
+						complete();
+					};
+					rejectOnAbort = (): void => settle(() => reject(abortError()));
+					attemptController.signal.addEventListener("abort", rejectOnAbort, {
+						once: true,
+					});
+					void Promise.resolve()
+						.then(async () => {
+							if (attemptController.signal.aborted) throw abortError();
+							const entryBytes = await this.resolvePolicyEntry(
+								copyBytes(digest),
+								{
+									signal: attemptController.signal,
+								},
+							);
+							// A resolver may ignore cancellation. Do not spend decode or signature
+							// verification work on bytes that arrive after this attempt expired.
+							if (attemptController.signal.aborted) throw abortError();
+							if (entryBytes === undefined) return undefined;
+							const snapshot = await authenticatePolicySnapshotEntryV2(
+								entryBytes,
+								this.descriptor,
+							);
+							if (!equals(snapshot.digest, digest)) {
+								throw new Error(
+									"Policy resolver returned the wrong body digest",
+								);
+							}
+							return snapshot;
+						})
+						.then(
+							(value) => settle(() => resolve(value)),
+							(error: unknown) => settle(() => reject(error)),
+						);
+				},
+			);
 		} catch (error) {
 			if (error instanceof PolicyDependencyUnavailableErrorV2) throw error;
 			throw new PolicyDependencyUnavailableErrorV2(
@@ -1068,6 +1205,7 @@ export class TrustedNetworkV2PolicyReducer {
 				"abort",
 				abortFromLifecycle,
 			);
+			traversal?.signal?.removeEventListener("abort", abortFromCaller);
 			if (rejectOnAbort !== undefined) {
 				attemptController.signal.removeEventListener("abort", rejectOnAbort);
 			}
@@ -1077,6 +1215,7 @@ export class TrustedNetworkV2PolicyReducer {
 	private async resolveSnapshot(
 		digest: Uint8Array,
 		cache?: SnapshotResolutionCacheV2,
+		traversal?: AcceptedPolicyPrefixTraversalV2,
 	): Promise<ValidatedPolicySnapshotV2 | undefined> {
 		const digestKey = bytesKey(digest);
 		if (this.acceptedHead?.digestKey === digestKey) {
@@ -1086,7 +1225,7 @@ export class TrustedNetworkV2PolicyReducer {
 		if (pending !== undefined) return copySnapshot(pending.snapshot);
 		let resolution = cache?.get(digestKey);
 		if (resolution === undefined) {
-			resolution = this.resolveExternalSnapshot(digest);
+			resolution = this.resolveExternalSnapshot(digest, traversal);
 			cache?.set(digestKey, resolution);
 		}
 		const snapshot = await resolution;
@@ -1096,6 +1235,7 @@ export class TrustedNetworkV2PolicyReducer {
 	private async parentOf(
 		child: ValidatedPolicySnapshotV2,
 		cache?: SnapshotResolutionCacheV2,
+		traversal?: AcceptedPolicyPrefixTraversalV2,
 	): Promise<ParentResolutionV2> {
 		if (child.body.sequence === 0n) {
 			return {
@@ -1109,6 +1249,7 @@ export class TrustedNetworkV2PolicyReducer {
 			parent = await this.resolveSnapshot(
 				child.body.previousPolicyDigest,
 				cache,
+				traversal,
 			);
 		} catch (error) {
 			return {

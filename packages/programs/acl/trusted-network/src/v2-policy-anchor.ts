@@ -58,6 +58,7 @@ export const TRUSTED_NETWORK_V2_MAX_POLICY_ANCHOR_CHECKPOINT_PAYLOAD_BYTES =
 	MAX_CHECKPOINT_PAYLOAD_FRAMING_BYTES_V2;
 const MAX_QUEUED_POLICY_INPUT_BYTES_V2 =
 	TRUSTED_NETWORK_V2_MAX_POLICY_ENTRY_BYTES * 2;
+const MAX_TIMER_DELAY_MS_V2 = 0x7fffffff;
 const ZERO_DIGEST = new Uint8Array(32);
 const textEncoder = new TextEncoder();
 const CHECKPOINT_SCOPE_DOMAIN = textEncoder.encode(
@@ -68,6 +69,20 @@ const ANCHOR_STATE = Object.freeze({
 	UNAVAILABLE: 2,
 	FORKED: 3,
 } as const);
+
+const isAbortSignalV2 = (value: unknown): value is AbortSignal => {
+	if (value === null || typeof value !== "object") return false;
+	try {
+		const signal = value as AbortSignal;
+		return (
+			typeof signal.aborted === "boolean" &&
+			typeof signal.addEventListener === "function" &&
+			typeof signal.removeEventListener === "function"
+		);
+	} catch {
+		return false;
+	}
+};
 
 export type CrashSafePolicyAnchorStoreV2 = CrashSafeAtomicReplaceStore;
 
@@ -88,6 +103,14 @@ export type TrustedNetworkV2DurablePolicyReducerOptions =
 export type PolicyLeaseReferenceV2 = {
 	sequence: bigint;
 	digest: Uint8Array;
+	/** Maximum number of authenticated parent edges traversed for this lease. */
+	maxSteps?: number;
+	/** Absolute wall-clock deadline, in milliseconds since the Unix epoch. */
+	deadline?: number;
+	/** Relative deadline measured from the call, including operation-queue wait. */
+	timeoutMs?: number;
+	/** Cancels acquisition of this lease without halting the durable reducer. */
+	signal?: AbortSignal;
 };
 
 export type AcceptedPolicyLeaseV2 = {
@@ -865,10 +888,23 @@ export class TrustedNetworkV2DurablePolicyReducer {
 		return this.published.roles.get(keyId(subject)) ?? 0;
 	}
 
+	/**
+	 * Whether the last durable policy projection is ACTIVE with no replacement
+	 * publication in flight.
+	 *
+	 * This is the subject-independent form of the publication fence used by
+	 * `isAuthorized()`. Internal resource reducers use it to stop serving an
+	 * otherwise ACTIVE resource while a policy replacement is in flight or the
+	 * policy anchor has failed closed. It does not prove complete external-log
+	 * replay or global freshness.
+	 */
+	isUsable(): boolean {
+		return this.authorizationFences === 0 && this.state === "ACTIVE";
+	}
+
 	isAuthorized(subject: PublicSignKey, roles: number): boolean {
 		if (
-			this.authorizationFences !== 0 ||
-			this.state !== "ACTIVE" ||
+			!this.isUsable() ||
 			!Number.isInteger(roles) ||
 			roles === 0 ||
 			(roles & ~TRUSTED_NETWORK_V2_KNOWN_ROLE_BITS) !== 0
@@ -991,6 +1027,9 @@ export class TrustedNetworkV2DurablePolicyReducer {
 
 		let sequence: bigint;
 		let suppliedDigest: Uint8Array;
+		let maxSteps: number | undefined;
+		let deadline: number | undefined;
+		let signal: AbortSignal | undefined;
 		try {
 			sequence = reference.sequence;
 			if (
@@ -1008,6 +1047,54 @@ export class TrustedNetworkV2DurablePolicyReducer {
 				return Promise.resolve({
 					status: "rejected",
 					reason: "Policy reference digest must contain exactly 32 bytes",
+				});
+			}
+			maxSteps = reference.maxSteps;
+			if (
+				maxSteps !== undefined &&
+				(!Number.isSafeInteger(maxSteps) || maxSteps < 0)
+			) {
+				return Promise.resolve({
+					status: "rejected",
+					reason: "Policy lease maxSteps must be a non-negative safe integer",
+				});
+			}
+			const suppliedDeadline = reference.deadline;
+			if (
+				suppliedDeadline !== undefined &&
+				(!Number.isSafeInteger(suppliedDeadline) || suppliedDeadline < 0)
+			) {
+				return Promise.resolve({
+					status: "rejected",
+					reason: "Policy lease deadline must be a non-negative safe integer",
+				});
+			}
+			const timeoutMs = reference.timeoutMs;
+			if (
+				timeoutMs !== undefined &&
+				(!Number.isSafeInteger(timeoutMs) || timeoutMs < 0)
+			) {
+				return Promise.resolve({
+					status: "rejected",
+					reason: "Policy lease timeoutMs must be a non-negative safe integer",
+				});
+			}
+			const requestedAt = Date.now();
+			const relativeDeadline =
+				timeoutMs === undefined
+					? undefined
+					: Math.min(Number.MAX_SAFE_INTEGER, requestedAt + timeoutMs);
+			deadline =
+				suppliedDeadline === undefined
+					? relativeDeadline
+					: relativeDeadline === undefined
+						? suppliedDeadline
+						: Math.min(suppliedDeadline, relativeDeadline);
+			signal = reference.signal;
+			if (signal !== undefined && !isAbortSignalV2(signal)) {
+				return Promise.resolve({
+					status: "rejected",
+					reason: "Policy lease signal must be an AbortSignal",
 				});
 			}
 		} catch {
@@ -1041,20 +1128,120 @@ export class TrustedNetworkV2DurablePolicyReducer {
 			});
 		}
 
-		const result: Promise<PolicyLeaseResultV2<T>> = this.operationTail.then(
-			async () => {
+		let queueAcquired = false;
+		let callbackAcquired = false;
+		let preAcquisitionResult: PolicyLeaseResultV2<T> | undefined;
+		let resolveEarly!: (result: PolicyLeaseResultV2<T>) => void;
+		const earlyResult = new Promise<PolicyLeaseResultV2<T>>((resolve) => {
+			resolveEarly = resolve;
+		});
+		let deadlineTimer: ReturnType<typeof setTimeout> | undefined;
+		let signalListenerInstalled = false;
+
+		const abortBeforeAcquisition = (): void => {
+			settleBeforeAcquisition({
+				status: "unavailable",
+				reason: "Policy lease acquisition was aborted by the caller",
+			});
+		};
+		const cleanupWakeups = (): void => {
+			if (deadlineTimer !== undefined) {
+				clearTimeout(deadlineTimer);
+				deadlineTimer = undefined;
+			}
+			if (signalListenerInstalled) {
+				signalListenerInstalled = false;
+				try {
+					signal?.removeEventListener("abort", abortBeforeAcquisition);
+				} catch {
+					// A structurally valid hostile signal must not break queue cleanup.
+				}
+			}
+		};
+		function settleBeforeAcquisition(result: PolicyLeaseResultV2<T>): void {
+			if (
+				queueAcquired ||
+				callbackAcquired ||
+				preAcquisitionResult !== undefined
+			) {
+				return;
+			}
+			preAcquisitionResult = result;
+			cleanupWakeups();
+			resolveEarly(result);
+		}
+		const armDeadlineWakeup = (): void => {
+			if (
+				deadline === undefined ||
+				queueAcquired ||
+				callbackAcquired ||
+				preAcquisitionResult !== undefined
+			) {
+				return;
+			}
+			const remaining = deadline - Date.now();
+			if (remaining <= 0) {
+				settleBeforeAcquisition({
+					status: "unavailable",
+					reason: "Policy lease acquisition deadline elapsed",
+				});
+				return;
+			}
+			try {
+				deadlineTimer = setTimeout(
+					() => {
+						deadlineTimer = undefined;
+						armDeadlineWakeup();
+					},
+					Math.min(remaining, MAX_TIMER_DELAY_MS_V2),
+				);
+			} catch {
+				settleBeforeAcquisition({
+					status: "unavailable",
+					reason: "Policy lease acquisition deadline could not be scheduled",
+				});
+			}
+		};
+
+		const queuedResult: Promise<PolicyLeaseResultV2<T>> =
+			this.operationTail.then(async () => {
+				if (preAcquisitionResult !== undefined) {
+					return preAcquisitionResult;
+				}
+				queueAcquired = true;
+				cleanupWakeups();
 				const queuedHalt = this.immediateLeaseHaltedResult();
 				if (queuedHalt !== undefined) return queuedHalt;
-				const resolution = await this.core.resolveAcceptedPolicyPrefix({
-					sequence,
-					digest,
-				});
+				const resolution = await this.core.resolveAcceptedPolicyPrefix(
+					{
+						sequence,
+						digest,
+					},
+					{ maxSteps, deadline, signal },
+				);
+				if (preAcquisitionResult !== undefined) {
+					return preAcquisitionResult;
+				}
 				if (resolution.status !== "resolved") return resolution;
 				// Lifecycle abort before callback invocation loses acquisition. There is
 				// no await between this check and invoking user code, which is the lease's
 				// linearization point.
 				const resolvedHalt = this.immediateLeaseHaltedResult();
 				if (resolvedHalt !== undefined) return resolvedHalt;
+				if (signal?.aborted) {
+					return {
+						status: "unavailable",
+						reason: "Policy lease acquisition was aborted by the caller",
+					};
+				}
+				if (deadline !== undefined && Date.now() >= deadline) {
+					return {
+						status: "unavailable",
+						reason: "Policy lease acquisition deadline elapsed",
+					};
+				}
+				callbackAcquired = true;
+				cleanupWakeups();
 				const value = await use({
 					// The core created these two projections independently and retains
 					// neither, including when the requested policy is the current head.
@@ -1062,15 +1249,32 @@ export class TrustedNetworkV2DurablePolicyReducer {
 					acceptedHead: resolution.acceptedHead,
 				});
 				return { status: "completed", value };
-			},
-		);
-		this.operationTail = result.then(
-			(): void => {},
-			(): void => {},
-		);
-		return result.finally(() => {
+			});
+		const retainedResult = queuedResult.finally(() => {
+			cleanupWakeups();
 			this.releaseOperation(retainedReferenceBytes);
 		});
+		this.operationTail = retainedResult.then(
+			(): void => {},
+			(): void => {},
+		);
+
+		if (signal !== undefined) {
+			signalListenerInstalled = true;
+			try {
+				signal.addEventListener("abort", abortBeforeAcquisition, {
+					once: true,
+				});
+			} catch {
+				settleBeforeAcquisition({
+					status: "rejected",
+					reason: "Policy lease signal could not be observed",
+				});
+			}
+			if (signal.aborted) abortBeforeAcquisition();
+		}
+		armDeadlineWakeup();
+		return Promise.race([retainedResult, earlyResult]);
 	}
 
 	private forkFailStopResult(): PolicyAdmissionResultV2 {
