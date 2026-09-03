@@ -47,6 +47,7 @@ describe("receive admission replication-info V2 receiver state", () => {
 	let currentSession: object;
 	let currentReceiveEpoch: object;
 	let currentSenderTransportSession: bigint;
+	let currentReceiverTransportSession: bigint;
 	let peerStateReady: boolean;
 	let sendRequest: sinon.SinonStub;
 	let refreshLocalCapability: sinon.SinonStub;
@@ -62,7 +63,7 @@ describe("receive admission replication-info V2 receiver state", () => {
 	}) =>
 		new ReplicationInfoV2ReceiveCoordinator({
 			getSelfKey: () => self,
-			getReceiverTransportSession: () => receiverTransportSession,
+			getReceiverTransportSession: () => currentReceiverTransportSession,
 			isClosed: () => closed,
 			isPeerSessionCurrent: (_peerHash, peerSession) =>
 				peerSession === currentSession,
@@ -92,7 +93,7 @@ describe("receive admission replication-info V2 receiver state", () => {
 			peerHash,
 			peerSession: currentSession,
 			receiveEpoch: currentReceiveEpoch,
-			receiverTransportSession,
+			receiverTransportSession: currentReceiverTransportSession,
 			requestNotBeforeMs,
 		});
 
@@ -130,10 +131,11 @@ describe("receive admission replication-info V2 receiver state", () => {
 		currentSession = {};
 		currentReceiveEpoch = {};
 		currentSenderTransportSession = senderTransportSession;
+		currentReceiverTransportSession = receiverTransportSession;
 		peerStateReady = true;
 		sendRequest = sinon.stub().resolves();
 		refreshLocalCapability = sinon.stub().callsFake(async () => ({
-			receiverTransportSession,
+			receiverTransportSession: currentReceiverTransportSession,
 			requestNotBeforeMs: Date.now(),
 		}));
 		coordinator = createCoordinator();
@@ -210,6 +212,66 @@ describe("receive admission replication-info V2 receiver state", () => {
 		).to.equal(ready);
 		expect(advertisement.ready).to.be.true;
 		expect(sendRequest.calledOnce).to.be.true;
+		expect(
+			coordinator.diagnosePeer({
+				peerHash,
+				peerSession: currentSession,
+				receiveEpoch: currentReceiveEpoch,
+				senderTransportSession,
+			}).capabilityAdvertisement,
+		).to.equal("ready");
+
+		// A ready grant is bound to the local transport generation that was
+		// advertised. Do not present it as current after that transport rotates.
+		currentReceiverTransportSession += 1n;
+		expect(
+			coordinator.diagnosePeer({
+				peerHash,
+				peerSession: currentSession,
+				receiveEpoch: currentReceiveEpoch,
+				senderTransportSession,
+			}).capabilityAdvertisement,
+		).to.equal("stale");
+	});
+
+	it("marks an in-flight capability advert stale after an epoch replacement", async () => {
+		const refresh = pDefer<{
+			receiverTransportSession: bigint;
+			requestNotBeforeMs: number;
+		}>();
+		refreshLocalCapability.callsFake(async () => refresh.promise);
+		const lifecycle = new AbortController();
+		const handle = coordinator.advertiseLocalCapability({
+			target: sender,
+			peerSession: currentSession,
+			receiveEpoch: currentReceiveEpoch,
+			signal: lifecycle.signal,
+		});
+
+		expect(
+			coordinator.diagnosePeer({
+				peerHash,
+				peerSession: currentSession,
+				receiveEpoch: currentReceiveEpoch,
+				senderTransportSession,
+			}).capabilityAdvertisement,
+		).to.equal("advertising");
+
+		currentReceiveEpoch = {};
+		expect(
+			coordinator.diagnosePeer({
+				peerHash,
+				peerSession: currentSession,
+				receiveEpoch: currentReceiveEpoch,
+				senderTransportSession,
+			}).capabilityAdvertisement,
+		).to.equal("stale");
+
+		refresh.resolve({
+			receiverTransportSession: currentReceiverTransportSession,
+			requestNotBeforeMs: Date.now(),
+		});
+		await handle.firstAttempt;
 	});
 
 	it("sends a bounded remote-Full rearm from the current rebased grant", async () => {
@@ -253,6 +315,18 @@ describe("receive admission replication-info V2 receiver state", () => {
 		).to.be.true;
 		await Promise.resolve();
 		expect(refreshLocalCapability.calledOnce).to.be.true;
+		expect(
+			coordinator.diagnosePeer({
+				peerHash,
+				peerSession: currentSession,
+				receiveEpoch: currentReceiveEpoch,
+				senderTransportSession,
+			}),
+		).to.deep.include({
+			remoteFullRearm: "in-flight",
+			remoteFullRearmAttempts: 1,
+			remoteFullRearmOutstanding: 1,
+		});
 		expect(refreshLocalCapability.firstCall.args[0]).to.include({
 			peerHash,
 			peerSession: currentSession,
@@ -286,6 +360,14 @@ describe("receive admission replication-info V2 receiver state", () => {
 		).to.be.true;
 		await Promise.resolve();
 		expect(refreshLocalCapability.callCount).to.equal(2);
+		expect(
+			coordinator.diagnosePeer({
+				peerHash,
+				peerSession: currentSession,
+				receiveEpoch: currentReceiveEpoch,
+				senderTransportSession,
+			}).remoteFullRearmAttempts,
+		).to.equal(2);
 	});
 
 	it("detaches a cancelled remote-Full rearm even if transport never settles", async () => {
