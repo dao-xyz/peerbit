@@ -480,6 +480,11 @@ assert.doesNotMatch(
 );
 const securityJob = workflowJob(ciWorkflow, "security_dependency_contracts");
 assert.match(securityJob, /needs: build_workspace/);
+assert.match(
+	securityJob,
+	/strategy:\n {6}fail-fast: false\n(?: {6}#[^\n]*\n {6}#[^\n]*\n)? {6}max-parallel: 1\n {6}matrix:/,
+	"supported-runtime release gates must run serially to avoid competing duplicate advisory-service requests",
+);
 // Both supported majors must stay in this matrix. Node 24 was dropped once
 // (#1239) on the incorrect premise that a consumer resolving our published
 // manifests lands on a prebuild-less node-datachannel; it does not (see the

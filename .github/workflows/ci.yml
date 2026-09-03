@@ -244,6 +244,9 @@ jobs:
     timeout-minutes: 25
     strategy:
       fail-fast: false
+      # Both lanes execute the same advisory-service-heavy release gate. Keep
+      # them serial so duplicate npm audit requests cannot throttle each other.
+      max-parallel: 1
       matrix:
         # Node 24 was dropped from this matrix in #1239 and restored here after
         # the reason given for dropping it turned out to be false. That reason
