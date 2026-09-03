@@ -1,5 +1,16 @@
 # Changelog
 
+## 6.0.127
+
+### Patch Changes
+
+- Updated dependencies [[`3ce2173`](https://github.com/dao-xyz/peerbit/commit/3ce2173486bb687aab22be6591aff4b33e21d49e), [`1437867`](https://github.com/dao-xyz/peerbit/commit/143786796733fe88ac55fd3fc78aee07a2dfc6d5)]:
+  - @peerbit/blocks-interface@2.2.0
+  - @peerbit/shared-log@16.0.27
+  - @peerbit/log@6.2.32
+  - @peerbit/program@6.0.59
+  - @peerbit/document@15.0.29
+
 ## 6.0.126
 
 ### Patch Changes

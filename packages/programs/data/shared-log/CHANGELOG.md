@@ -1,5 +1,18 @@
 # Changelog
 
+## 16.0.27
+
+### Patch Changes
+
+- [#1414](https://github.com/dao-xyz/peerbit/pull/1414) [`1437867`](https://github.com/dao-xyz/peerbit/commit/143786796733fe88ac55fd3fc78aee07a2dfc6d5) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Expose opt-in, bounded persisted-receipt readiness diagnostics and include a compact state summary in readiness timeout errors.
+
+- Updated dependencies [[`3ce2173`](https://github.com/dao-xyz/peerbit/commit/3ce2173486bb687aab22be6591aff4b33e21d49e)]:
+  - @peerbit/blocks-interface@2.2.0
+  - @peerbit/blocks@4.3.0
+  - @peerbit/log@6.2.32
+  - @peerbit/program@6.0.59
+  - @peerbit/rpc@6.1.27
+
 ## 16.0.26
 
 ### Patch Changes
