@@ -53,6 +53,76 @@ export type BlockStoreSafety = Readonly<{
 	enforcedReclamation: "none";
 }>;
 
+/** Explicit alias for APIs that accept caller-declared safety facts. */
+export type DeclaredBlockStoreSafety = BlockStoreSafety;
+
+/**
+ * Observed service safety. The enforced variant is valid only together with a
+ * matching, ready `Blocks.localReclamation` capability; metadata alone never
+ * grants deletion authority.
+ */
+export type ObservedBlockStoreSafety =
+	| BlockStoreSafety
+	| Readonly<{
+			referenceDomain: "block-service";
+			enforcedReclamation: "scoped-references-v1";
+	  }>;
+
+export type ScopedBlockReclamationLimits = Readonly<{
+	maxBlockBytes: number;
+	maxCidBytes: number;
+	scopeKeyBytes: number;
+	maxReferencesPerBlock: number;
+	maxPendingOperations: number;
+	maxPendingBytes: number;
+}>;
+
+export type ScopedBlockReclamationFaultCode =
+	| "ambiguous-mutation"
+	| "corrupt-state"
+	| "storage-failure";
+
+export type ScopedBlockReclamationHealth =
+	| Readonly<{ status: "opening" | "ready" | "closed" }>
+	| Readonly<{
+			status: "faulted";
+			reason: ScopedBlockReclamationFaultCode;
+	  }>;
+
+export type ScopedBlockReleaseResult =
+	| "not-retained"
+	| "retained"
+	| "reclaimed";
+
+/**
+ * One durable ownership scope inside a block-service managed namespace.
+ *
+ * A scope key is local authority, not a network identity. Callers must use a
+ * stable, collision-resistant value under their control; this mechanism does
+ * not isolate mutually hostile code that can invoke `openScope` with another
+ * caller's key. `retain` copies and CID-verifies bytes before publishing the
+ * reference. `release` can delete only managed bytes after the last durable
+ * scope reference is gone. Calls are idempotent and deliberately single-block
+ * so each unit of work is bounded.
+ */
+export interface ScopedBlockReclamationScopeV1 {
+	put(bytes: Uint8Array): MaybePromise<string>;
+	retain(cid: string, bytes: Uint8Array): MaybePromise<string>;
+	release(cid: string): MaybePromise<ScopedBlockReleaseResult>;
+}
+
+/**
+ * Opt-in, local-only reference enforcement for a block-service-owned managed
+ * namespace. It never adopts or deletes blocks written through the legacy/raw
+ * `Blocks.put`/`Blocks.rm` namespace.
+ */
+export interface ScopedBlockReclamationV1 {
+	readonly kind: "scoped-references-v1";
+	readonly limits: ScopedBlockReclamationLimits;
+	health(): ScopedBlockReclamationHealth;
+	openScope(scopeKey: Uint8Array): ScopedBlockReclamationScopeV1;
+}
+
 export const UNKNOWN_BLOCK_STORE_SAFETY: BlockStoreSafety = Object.freeze({
 	referenceDomain: "unknown",
 	enforcedReclamation: "none",
@@ -90,6 +160,8 @@ export const normalizeBlockStoreSafety = (
 	) {
 		throw new TypeError("Invalid block-store reference domain");
 	}
+	// Enforced reclamation is an operational capability, not a caller assertion.
+	// DirectBlock mints its scoped capability only for its own supported store.
 	if (enforcedReclamation !== "none") {
 		throw new TypeError("Unsupported block-store reclamation capability");
 	}
@@ -98,11 +170,26 @@ export const normalizeBlockStoreSafety = (
 
 export interface Blocks extends WaitForPeer {
 	/**
-	 * Safety metadata for this service's local physical block namespace.
-	 * Absence is equivalent to {@link UNKNOWN_BLOCK_STORE_SAFETY} so older and
-	 * custom implementations fail closed.
+	 * Legacy caller-declared safety metadata for this service's local physical
+	 * block namespace. Its type and values remain restricted to
+	 * `enforcedReclamation: "none"`.
 	 */
 	readonly localStoreSafety?: BlockStoreSafety;
+	/**
+	 * Optional service-observed safety metadata. Absence is equivalent to
+	 * `localStoreSafety` (or {@link UNKNOWN_BLOCK_STORE_SAFETY} when both are
+	 * absent), so older and custom implementations fail closed.
+	 *
+	 * The enforced variant is descriptive only; callers must also require the
+	 * matching, ready `localReclamation` capability.
+	 */
+	readonly observedLocalStoreSafety?: ObservedBlockStoreSafety;
+	/**
+	 * Present only when this exact service owns and enforces a separate managed
+	 * namespace. Callers must require `health().status === "ready"`; metadata
+	 * alone is not authority to delete.
+	 */
+	readonly localReclamation?: ScopedBlockReclamationV1;
 	put(
 		data: Uint8Array | { block: Block<any, any, any, any>; cid: string },
 	): MaybePromise<string>;

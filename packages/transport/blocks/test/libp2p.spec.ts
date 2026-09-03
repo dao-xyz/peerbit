@@ -17,6 +17,9 @@ import {
 } from "@peerbit/stream-interface";
 import { delay } from "@peerbit/time";
 import { expect } from "chai";
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import pDefer from "p-defer";
 import sinon from "sinon";
 import { DirectBlock } from "../src/libp2p.js";
@@ -87,6 +90,21 @@ describe("transport", function () {
 		expect(created[2]!.localStoreSafety).to.deep.equal(explicitSafety);
 		expect(created[2]!.localStoreSafety).not.to.equal(explicitSafety);
 		expect(Object.isFrozen(created[2]!.localStoreSafety)).to.equal(true);
+		expect(created[0]!.observedLocalStoreSafety).to.equal(
+			created[0]!.localStoreSafety,
+		);
+		expect(created[1]!.observedLocalStoreSafety).to.equal(
+			created[1]!.localStoreSafety,
+		);
+		expect(created[2]!.observedLocalStoreSafety).to.equal(
+			created[2]!.localStoreSafety,
+		);
+		expect(
+			Object.prototype.propertyIsEnumerable.call(
+				created[0],
+				"observedLocalStoreSafety",
+			),
+		).to.equal(false);
 		expect(
 			Reflect.set(created[2]!, "localStoreSafety", UNKNOWN_BLOCK_STORE_SAFETY),
 		).to.equal(false);
@@ -102,27 +120,73 @@ describe("transport", function () {
 
 	it("rejects safety metadata without an explicit local store", async () => {
 		let rejectionObserved = false;
-		session = await TestSession.disconnected(1, {
-			services: {
-				blocks: (components) => {
-					expect(
-						() =>
-							new DirectBlock(components, {
-								localStoreSafety: {
-									referenceDomain: "caller-exclusive",
-									enforcedReclamation: "none",
-								},
-							}),
-					).to.throw(
-						Error,
-						"DirectBlock localStoreSafety requires an explicitly supplied localStore",
-					);
-					rejectionObserved = true;
-					return new DirectBlock(components);
+		let accessorProbe: DirectBlock | undefined;
+		const accessorDirectory = await fs.mkdtemp(
+			path.join(os.tmpdir(), "peerbit-blocks-options-accessor-"),
+		);
+		try {
+			session = await TestSession.disconnected(1, {
+				services: {
+					blocks: (components) => {
+						const customStore = createStore();
+						let absentFirstReads = 0;
+						const snapshotted = new DirectBlock(components, {
+							directory: accessorDirectory,
+							scopedBlockReclamation: true,
+							get localStore() {
+								absentFirstReads += 1;
+								return absentFirstReads === 1 ? undefined : customStore;
+							},
+						});
+						accessorProbe = snapshotted;
+						expect(absentFirstReads).to.equal(1);
+						expect(snapshotted.localReclamation).not.to.equal(undefined);
+
+						let customFirstReads = 0;
+						expect(
+							() =>
+								new DirectBlock(components, {
+									scopedBlockReclamation: true,
+									get localStore() {
+										customFirstReads += 1;
+										return customFirstReads === 1
+											? customStore
+											: undefined;
+									},
+								}),
+						).to.throw(
+							Error,
+							"scopedBlockReclamation is available only with the built-in local store",
+						);
+						expect(customFirstReads).to.equal(1);
+						expect(
+							() =>
+								new DirectBlock(components, {
+									scopedBlockReclamation: "yes",
+								} as any),
+						).to.throw(TypeError, "scopedBlockReclamation must be a boolean");
+						expect(
+							() =>
+								new DirectBlock(components, {
+									localStoreSafety: {
+										referenceDomain: "caller-exclusive",
+										enforcedReclamation: "none",
+									},
+								}),
+						).to.throw(
+							Error,
+							"DirectBlock localStoreSafety requires an explicitly supplied localStore",
+						);
+						rejectionObserved = true;
+						return new DirectBlock(components);
+					},
 				},
-			},
-		});
-		expect(rejectionObserved).to.equal(true);
+			});
+			expect(rejectionObserved).to.equal(true);
+		} finally {
+			await accessorProbe?.stop();
+			await fs.rm(accessorDirectory, { recursive: true, force: true });
+		}
 	});
 
 	it("write then read over relay", async () => {

@@ -62,6 +62,85 @@ describe("Create", function () {
 		}
 	});
 
+	it("opts the built-in disk store into durable scoped block reclamation", async () => {
+		const clientDirectory = path.join(
+			"tmp",
+			"peerbit",
+			"tests",
+			"create-scoped-reclamation-" + uuid(),
+		);
+		const scopeKey = new Uint8Array(32);
+		scopeKey[31] = 1;
+		const bytes = new Uint8Array([1, 2, 3, 4]);
+		let client = await Peerbit.create({
+			directory: clientDirectory,
+			storage: { scopedBlockReclamation: true },
+		});
+		const reclamation = client.services.blocks.localReclamation!;
+		expect(client.services.blocks.localStoreSafety).to.equal(
+			BLOCK_SERVICE_BLOCK_STORE_SAFETY,
+		);
+		expect(client.services.blocks.observedLocalStoreSafety).to.deep.equal({
+			referenceDomain: "block-service",
+			enforcedReclamation: "scoped-references-v1",
+		});
+		expect(
+			Object.isFrozen(client.services.blocks.observedLocalStoreSafety),
+		).to.equal(true);
+		expect(reclamation.health()).to.deep.equal({ status: "ready" });
+		const cid = await reclamation.openScope(scopeKey).put(bytes);
+		await client.stop();
+
+		client = await Peerbit.create({
+			directory: clientDirectory,
+			storage: { scopedBlockReclamation: true },
+		});
+		try {
+			expect(await client.services.blocks.get(cid)).to.deep.equal(bytes);
+			expect(
+				await client.services.blocks
+					.localReclamation!.openScope(scopeKey)
+					.release(cid),
+			).to.equal("reclaimed");
+			expect(await client.services.blocks.get(cid)).to.equal(undefined);
+		} finally {
+			await client.stop();
+			const fs = await import("fs/promises");
+			await fs.rm(clientDirectory, { recursive: true, force: true });
+		}
+	});
+
+	it("keeps scoped reclamation unavailable on memory and custom stores", async () => {
+		const memory = await Peerbit.create({
+			storage: { scopedBlockReclamation: true },
+		});
+		try {
+			expect(memory.services.blocks.localReclamation).to.equal(undefined);
+			expect(memory.services.blocks.localStoreSafety).to.equal(
+				BLOCK_SERVICE_BLOCK_STORE_SAFETY,
+			);
+			expect(memory.services.blocks.observedLocalStoreSafety).to.equal(
+				BLOCK_SERVICE_BLOCK_STORE_SAFETY,
+			);
+		} finally {
+			await memory.stop();
+		}
+
+		let factoryCalls = 0;
+		await expect(
+			Peerbit.create({
+				storage: {
+					scopedBlockReclamation: true,
+					blocksStoreFactory: () => {
+						factoryCalls += 1;
+						return createStore();
+					},
+				},
+			}),
+		).to.be.rejectedWith("available only with Peerbit's built-in blocks store");
+		expect(factoryCalls).to.equal(0);
+	});
+
 	it("can create with a local store factory", async () => {
 		const clientDirectory = path.join(
 			"tmp",
@@ -151,6 +230,10 @@ describe("Create", function () {
 			{},
 			{ referenceDomain: "invalid", enforcedReclamation: "none" },
 			{ referenceDomain: "unknown", enforcedReclamation: "unsupported" },
+			{
+				referenceDomain: "block-service",
+				enforcedReclamation: "scoped-references-v1",
+			},
 		]) {
 			let blocksStoreFactoryCalls = 0;
 			let genericStoreFactoryCalls = 0;
@@ -216,6 +299,7 @@ describe("Create", function () {
 		expect(client.services.blocks.localStoreSafety).to.deep.equal(
 			BLOCK_SERVICE_BLOCK_STORE_SAFETY,
 		);
+		expect(client.services.blocks.localReclamation).to.equal(undefined);
 		await client.stop();
 	});
 

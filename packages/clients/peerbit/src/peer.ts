@@ -93,6 +93,12 @@ export type StorageCreateOptions = {
 	 * external libp2p blocks service.
 	 */
 	blocksStoreSafety?: BlockStoreSafety;
+	/**
+	 * Opt into Peerbit's local scoped-reference block namespace. It is enabled
+	 * only by the default persistent Node block store; unsupported stores expose
+	 * no capability and keep `enforcedReclamation: "none"`.
+	 */
+	scopedBlockReclamation?: boolean;
 	keychainStoreFactory?: StoreFactory;
 };
 /**
@@ -410,6 +416,13 @@ export class Peerbit implements ProgramClient {
 		const directory = options.directory;
 		const hasDir = directory != null;
 		const storageOptions = options.storage;
+		const scopedBlockReclamation = storageOptions?.scopedBlockReclamation;
+		if (
+			scopedBlockReclamation !== undefined &&
+			typeof scopedBlockReclamation !== "boolean"
+		) {
+			throw new TypeError("'storage.scopedBlockReclamation' must be a boolean");
+		}
 		const storeFactory = storageOptions?.storeFactory ?? createStore;
 		const blocksStoreFactory =
 			storageOptions?.blocksStoreFactory ?? storageOptions?.storeFactory;
@@ -426,6 +439,19 @@ export class Peerbit implements ProgramClient {
 			configuredServices !== undefined &&
 			Object.prototype.hasOwnProperty.call(configuredServices, "blocks");
 		const explicitBlocksStoreSafety = storageOptions?.blocksStoreSafety;
+		if (
+			scopedBlockReclamation === true &&
+			(suppliedExternalLibp2p || hasConfiguredBlocksService)
+		) {
+			throw new Error(
+				"'storage.scopedBlockReclamation' applies only to Peerbit's default blocks service",
+			);
+		}
+		if (scopedBlockReclamation === true && blocksStoreFactory !== undefined) {
+			throw new Error(
+				"'storage.scopedBlockReclamation' is available only with Peerbit's built-in blocks store",
+			);
+		}
 		if (
 			explicitBlocksStoreSafety !== undefined &&
 			(suppliedExternalLibp2p || hasConfiguredBlocksService)
@@ -755,6 +781,7 @@ export class Peerbit implements ProgramClient {
 							directory: blocksStoreFactory ? undefined : blocksDirectory,
 							localStore: blocksStore,
 							localStoreSafety: normalizedBlocksStoreSafety,
+							scopedBlockReclamation,
 							rustCore: nativeNetwork?.rustCore,
 							resolveProviders,
 							onPut: async (cid) => {
