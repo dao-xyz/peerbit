@@ -122,10 +122,45 @@ type ReplicationInfoV2RemoteFullRearm = {
 	receiveEpoch: object | null;
 	receiverTransportSession: bigint;
 	nextAttemptAt: number;
+	attemptsStarted: number;
 	outstandingAttempts: number;
 	inFlight?: Promise<void>;
 	controller?: AbortController;
 };
+
+export type ReplicationInfoV2ReceiveDiagnostic = Readonly<{
+	state: "absent" | "current" | "stale";
+	/** Current-state classification; no historical packet/drop log is retained. */
+	reason:
+		| "state-absent"
+		| "peer-session-mismatch"
+		| "receive-epoch-mismatch"
+		| "transport-session-mismatch"
+		| "state-not-current"
+		| "admission-pending"
+		| "active"
+		| "request-parked"
+		| "request-in-flight"
+		| "request-scheduled"
+		| "awaiting-full"
+		| "resync";
+	phase?: ReplicationInfoV2ReceivePhase;
+	requestState?:
+		| "idle"
+		| "scheduled"
+		| "in-flight"
+		| "parked"
+		| "admission-pending";
+	lastAppliedSequence?: string;
+	requestAttempts?: number;
+	capabilityAdvertisementAttempts: number;
+	capabilityAdvertisement: "absent" | "advertising" | "ready" | "stale";
+	remoteFullRearm: "idle" | "in-flight" | "cooldown" | "limited";
+	remoteFullRearmAttempts: number;
+	remoteFullRearmOutstanding: number;
+	remoteFullRearmGlobalOutstanding: number;
+	remoteFullRearmCooldownRemainingMs?: number;
+}>;
 
 export type ReplicationInfoV2LocalCapabilityRefresh = {
 	receiverTransportSession: bigint;
@@ -796,6 +831,7 @@ export class ReplicationInfoV2ReceiveCoordinator {
 				receiveEpoch: properties.receiveEpoch,
 				receiverTransportSession,
 				nextAttemptAt: now + this.remoteFullRearmCooldownMs,
+				attemptsStarted: 0,
 				outstandingAttempts: 0,
 			};
 			this._remoteFullRearmBySession.set(properties.peerSession, rearm);
@@ -804,6 +840,10 @@ export class ReplicationInfoV2ReceiveCoordinator {
 		}
 		const attemptState = rearm;
 		const outstandingReservation = {};
+		attemptState.attemptsStarted = Math.min(
+			MAX_REMOTE_FULL_REARM_OUTSTANDING_GLOBAL,
+			attemptState.attemptsStarted + 1,
+		);
 		attemptState.outstandingAttempts++;
 		this._remoteFullRearmOutstanding.add(outstandingReservation);
 
@@ -914,6 +954,175 @@ export class ReplicationInfoV2ReceiveCoordinator {
 		}
 		void operation;
 		return true;
+	}
+
+	/**
+	 * Bounded, read-only state for persisted-readiness troubleshooting. This
+	 * intentionally omits transport sessions, challenges, payloads, and maps.
+	 */
+	diagnosePeer(properties: {
+		peerHash: string;
+		peerSession?: object;
+		receiveEpoch?: object | null;
+		senderTransportSession?: bigint;
+	}): ReplicationInfoV2ReceiveDiagnostic {
+		const state = this._receiveStates.get(properties.peerHash);
+		const advertisement = this._localCapabilityAdvertisementsByPeer.get(
+			properties.peerHash,
+		);
+		const session =
+			properties.peerSession ??
+			state?.peerSession ??
+			advertisement?.peerSession;
+		const ready = session
+			? this._localCapabilityReadyBySession.get(session)
+			: undefined;
+		let capabilityAdvertisement: ReplicationInfoV2ReceiveDiagnostic["capabilityAdvertisement"] =
+			"absent";
+		if (ready && ready.peerHash === properties.peerHash) {
+			capabilityAdvertisement =
+				session !== undefined &&
+				this.deps.isPeerSessionCurrent(properties.peerHash, session) &&
+				this.deps.isReceiveEpochCurrent(
+					properties.peerHash,
+					ready.receiveEpoch,
+				) &&
+				ready.receiverTransportSession ===
+					this.deps.getReceiverTransportSession() &&
+				(properties.receiveEpoch === undefined ||
+					ready.receiveEpoch === properties.receiveEpoch)
+					? "ready"
+					: "stale";
+		} else if (advertisement) {
+			capabilityAdvertisement =
+				advertisement.peerHash === properties.peerHash &&
+				advertisement.peerSession === session &&
+				(properties.receiveEpoch === undefined ||
+					advertisement.receiveEpoch === properties.receiveEpoch) &&
+				this.isLocalCapabilityAdvertisementGenerationCurrent(advertisement)
+					? "advertising"
+					: "stale";
+		}
+
+		const rearm = session
+			? this._remoteFullRearmBySession.get(session)
+			: undefined;
+		const now = this.now();
+		const rearmLimited =
+			(rearm?.outstandingAttempts ?? 0) >=
+				MAX_REMOTE_FULL_REARM_OUTSTANDING_PER_SESSION ||
+			this._remoteFullRearmOutstanding.size >=
+				this.maxRemoteFullRearmOutstandingGlobal;
+		const rearmStatus: ReplicationInfoV2ReceiveDiagnostic["remoteFullRearm"] =
+			rearm?.inFlight
+				? "in-flight"
+				: rearmLimited
+					? "limited"
+					: rearm && now < rearm.nextAttemptAt
+						? "cooldown"
+						: "idle";
+		const common = {
+			capabilityAdvertisementAttempts: Math.min(
+				MAX_BACKOFF_EXPONENT + 1,
+				Math.max(0, advertisement?.attempts ?? 0),
+			),
+			capabilityAdvertisement,
+			remoteFullRearm: rearmStatus,
+			remoteFullRearmAttempts: Math.min(
+				MAX_REMOTE_FULL_REARM_OUTSTANDING_GLOBAL,
+				Math.max(0, rearm?.attemptsStarted ?? 0),
+			),
+			remoteFullRearmOutstanding: Math.min(
+				MAX_REMOTE_FULL_REARM_OUTSTANDING_PER_SESSION,
+				Math.max(0, rearm?.outstandingAttempts ?? 0),
+			),
+			remoteFullRearmGlobalOutstanding: Math.min(
+				this.maxRemoteFullRearmOutstandingGlobal,
+				this._remoteFullRearmOutstanding.size,
+			),
+			...(rearm && now < rearm.nextAttemptAt
+				? {
+						remoteFullRearmCooldownRemainingMs: Math.min(
+							MAX_TIMER_MS,
+							Math.max(0, rearm.nextAttemptAt - now),
+						),
+					}
+				: {}),
+		};
+		if (!state) {
+			return Object.freeze({
+				state: "absent" as const,
+				reason: "state-absent" as const,
+				...common,
+			});
+		}
+
+		let status: "current" | "stale" = "current";
+		let reason: ReplicationInfoV2ReceiveDiagnostic["reason"];
+		if (
+			properties.peerSession !== undefined &&
+			state.peerSession !== properties.peerSession
+		) {
+			status = "stale";
+			reason = "peer-session-mismatch";
+		} else if (
+			properties.receiveEpoch !== undefined &&
+			state.receiveEpoch !== properties.receiveEpoch
+		) {
+			status = "stale";
+			reason = "receive-epoch-mismatch";
+		} else if (
+			properties.senderTransportSession !== undefined &&
+			state.senderTransportSession !== properties.senderTransportSession
+		) {
+			status = "stale";
+			reason = "transport-session-mismatch";
+		} else if (!this.isStateCurrent(state)) {
+			status = "stale";
+			reason = "state-not-current";
+		} else if (
+			state.reservedAdmission !== undefined ||
+			this._reservedAdmissionsByPeer.has(properties.peerHash)
+		) {
+			reason = "admission-pending";
+		} else if (state.phase === "active") {
+			reason = "active";
+		} else if (state.requestParked) {
+			reason = "request-parked";
+		} else if (state.requestInFlight !== undefined) {
+			reason = "request-in-flight";
+		} else if (state.requestTimer !== undefined) {
+			reason = "request-scheduled";
+		} else {
+			reason = state.phase;
+		}
+		const requestState: NonNullable<
+			ReplicationInfoV2ReceiveDiagnostic["requestState"]
+		> =
+			state.reservedAdmission !== undefined ||
+			this._reservedAdmissionsByPeer.has(properties.peerHash)
+				? "admission-pending"
+				: state.requestParked
+					? "parked"
+					: state.requestInFlight !== undefined
+						? "in-flight"
+						: state.requestTimer !== undefined
+							? "scheduled"
+							: "idle";
+		return Object.freeze({
+			state: status,
+			reason,
+			phase: state.phase,
+			requestState,
+			...(state.lastSequence === undefined
+				? {}
+				: { lastAppliedSequence: state.lastSequence.toString() }),
+			requestAttempts: Math.min(
+				this.requestMaxAttempts,
+				Math.max(0, state.requestAttempts),
+			),
+			...common,
+		});
 	}
 
 	private promoteLocalCapabilityAdvertisement(

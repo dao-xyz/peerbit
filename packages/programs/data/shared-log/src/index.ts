@@ -260,10 +260,14 @@ import type {
 	AddedReplicationInfoMutation,
 	FullReplicationInfoMutation,
 } from "./replication-info-mutation.js";
-import { ReplicationInfoV2ReceiveCoordinator } from "./replication-info-v2-receive.js";
+import {
+	ReplicationInfoV2ReceiveCoordinator,
+	type ReplicationInfoV2ReceiveDiagnostic,
+} from "./replication-info-v2-receive.js";
 import {
 	type ReplicationInfoV2ConfirmationOptions,
 	ReplicationInfoV2SendCoordinator,
+	type ReplicationInfoV2SendDiagnostic,
 } from "./replication-info-v2-send.js";
 import {
 	type ReplicationStatus,
@@ -1861,6 +1865,39 @@ export type PersistedReceiptPeerReadinessUnsupportedReason =
 	| "replication-confirmation-unsupported";
 
 /**
+ * Bounded, payload-free diagnostics for one persisted-receipt readiness
+ * inspection. Session and transport identities remain opaque; revision and
+ * sequence values are decimal strings so the snapshot is JSON-safe. `reason`
+ * fields classify the current state; rejected-packet and disconnected-peer
+ * history is deliberately not retained.
+ */
+export type PersistedReceiptPeerReadinessDiagnostic = Readonly<{
+	version: 1;
+	log: "open" | "closed";
+	session: Readonly<{
+		state: "absent" | "current";
+		phase?: "opening" | "open" | "departing" | "superseded";
+		established: boolean;
+		suspended: boolean;
+		openingBarrierActive: boolean;
+		replicationInfoBlocked: boolean;
+		receiveCleanupGateOpen: boolean;
+	}>;
+	capability: Readonly<{
+		state: "absent" | "observed";
+		persistedReceipts: boolean;
+		replicationConfirmation: boolean;
+	}>;
+	sender: ReplicationInfoV2SendDiagnostic;
+	receiver: ReplicationInfoV2ReceiveDiagnostic;
+}>;
+
+type PersistedReceiptPeerReadinessDiagnosticAttachment = Readonly<{
+	/** Present only when `diagnostics: true` was requested. */
+	diagnostic?: PersistedReceiptPeerReadinessDiagnostic;
+}>;
+
+/**
  * Detached view of one public key's current persisted-receipt generation.
  * `generation` is opaque: callers may compare it for equality, but must not
  * interpret its contents or use it as a future-session capability. Equal
@@ -1868,20 +1905,23 @@ export type PersistedReceiptPeerReadinessUnsupportedReason =
  * leadership and outbound confirmation can still change within a generation.
  */
 export type PersistedReceiptPeerReadiness =
-	| Readonly<{
+	| (Readonly<{
 			status: "ready";
 			generation: string;
-	  }>
-	| Readonly<{
+	  }> &
+			PersistedReceiptPeerReadinessDiagnosticAttachment)
+	| (Readonly<{
 			status: "pending";
 			reason: PersistedReceiptPeerReadinessPendingReason;
 			generation?: string;
-	  }>
-	| Readonly<{
+	  }> &
+			PersistedReceiptPeerReadinessDiagnosticAttachment)
+	| (Readonly<{
 			status: "unsupported";
 			reason: PersistedReceiptPeerReadinessUnsupportedReason;
 			generation: string;
-	  }>;
+	  }> &
+			PersistedReceiptPeerReadinessDiagnosticAttachment);
 
 export type PersistedReceiptPeerReady = Extract<
 	PersistedReceiptPeerReadiness,
@@ -1892,6 +1932,8 @@ export type PersistedReceiptPeerReadinessOptions<
 	T,
 	R extends "u32" | "u64",
 > = Readonly<{
+	/** Include a bounded, JSON-safe diagnostic snapshot in the result. */
+	diagnostics?: boolean;
 	/** Require this peer to be a freshly planned leader for every entry. */
 	entries?: readonly (ShallowOrFullEntry<T> | EntryReplicated<R>)[];
 	/**
@@ -1952,6 +1994,7 @@ const MAX_PERSISTED_RECEIPT_ATTEMPT_MS = 2_000;
 const MAX_PERSISTED_RECEIPT_REQUESTS_GLOBAL = 8;
 const MAX_PERSISTED_RECEIPT_REQUESTS_PER_PEER = 2;
 const MAX_PERSISTED_RECEIPT_READINESS_WAITERS = 1_024;
+const MAX_PERSISTED_RECEIPT_READINESS_DIAGNOSTIC_SUMMARY_CHARS = 768;
 const PERSISTED_RECEIPT_INGRESS_PEER_REQUEST_CAPACITY = 16;
 const PERSISTED_RECEIPT_INGRESS_PEER_HASH_CAPACITY = 8_192;
 const PERSISTED_RECEIPT_INGRESS_PEER_REQUESTS_PER_SECOND = 8;
@@ -4447,8 +4490,7 @@ export class SharedLog<
 
 		const profile = this._logProperties?.sync?.profile;
 		const startedAt = syncProfileStart(profile);
-		const mode =
-			resolvedRoot === fanoutService.publicKeyHash ? "root" : "node";
+		const mode = resolvedRoot === fanoutService.publicKeyHash ? "root" : "node";
 		const before = profile
 			? snapshotFanoutOpenMetrics(fanoutService, this.topic, resolvedRoot)
 			: undefined;
@@ -5770,6 +5812,117 @@ export class SharedLog<
 		});
 	}
 
+	private persistedReceiptReadinessDiagnostic(
+		peerHash: string,
+	): PersistedReceiptPeerReadinessDiagnostic {
+		const peerSession = this._peerSessions.current(peerHash);
+		const receiveEpoch = this._peerSessions.receiveEpoch(peerHash);
+		const capabilitySession = this._peerSyncCapabilitySessions.get(peerHash);
+		const capabilities = this._peerSyncCapabilities.get(peerHash) ?? 0;
+		const replicationInfoBlocked =
+			this._peerSessions.isReplicationInfoBlocked(peerHash);
+		const receiveCleanupGateOpen =
+			this._peerSessions.isReceiveCleanupGateOpen(peerHash);
+		const active = peerSession?.isActive() ?? false;
+		const established =
+			!this.closed &&
+			peerSession?.phase === "open" &&
+			active &&
+			!replicationInfoBlocked &&
+			receiveCleanupGateOpen;
+		const session = Object.freeze({
+			state: peerSession ? ("current" as const) : ("absent" as const),
+			...(peerSession ? { phase: peerSession.phase } : {}),
+			established,
+			suspended: !established,
+			openingBarrierActive: peerSession?.openingBarrierActive ?? false,
+			replicationInfoBlocked,
+			receiveCleanupGateOpen,
+		});
+		const capabilityObserved =
+			capabilitySession !== undefined &&
+			this._peerSyncCapabilityTimestamps.has(peerHash);
+		const capability = Object.freeze({
+			state: capabilityObserved ? ("observed" as const) : ("absent" as const),
+			persistedReceipts:
+				(capabilities & SYNC_CAPABILITY_PERSISTED_ENTRY_RECEIPTS) !== 0,
+			replicationConfirmation:
+				(capabilities & SYNC_CAPABILITY_REPLICATION_INFO_V2_CONFIRM) !== 0,
+		});
+		return Object.freeze({
+			version: 1 as const,
+			log: this.closed ? ("closed" as const) : ("open" as const),
+			session,
+			capability,
+			sender: this._v2Send.diagnosePeer({
+				peerHash,
+				...(peerSession ? { peerSession } : {}),
+				...(capabilitySession === undefined
+					? {}
+					: { receiverTransportSession: capabilitySession }),
+			}),
+			receiver: this._v2Receive.diagnosePeer({
+				peerHash,
+				...(peerSession ? { peerSession } : {}),
+				receiveEpoch,
+				...(capabilitySession === undefined
+					? {}
+					: { senderTransportSession: capabilitySession }),
+			}),
+		});
+	}
+
+	private attachPersistedReceiptReadinessDiagnostic<
+		Snapshot extends PersistedReceiptPeerReadiness,
+	>(
+		peerHash: string,
+		snapshot: Snapshot,
+		enabled: boolean | undefined,
+	): Snapshot {
+		if (enabled !== true) return snapshot;
+		return Object.freeze({
+			...snapshot,
+			diagnostic: this.persistedReceiptReadinessDiagnostic(peerHash),
+		}) as Snapshot;
+	}
+
+	private formatPersistedReceiptReadinessDiagnostic(peerHash: string): string {
+		const diagnostic = this.persistedReceiptReadinessDiagnostic(peerHash);
+		const { session, capability, sender, receiver } = diagnostic;
+		const summary = [
+			`session=${session.state}/${session.phase ?? "none"}/${
+				session.established ? "established" : "suspended"
+			}`,
+			`capability=${capability.state}/persisted:${
+				capability.persistedReceipts ? 1 : 0
+			}/confirm:${capability.replicationConfirmation ? 1 : 0}`,
+			`sender=${sender.state}/${sender.reason}/revision:${
+				sender.currentRevision
+			}/pending:${sender.pendingRevision ?? "none"}/inflight:${
+				sender.inFlightSequence ?? "none"
+			}@${sender.inFlightRevision ?? "none"}/applied:${
+				sender.appliedRevision ?? "none"
+			}/confirmation:${sender.confirmationSequence ?? "none"}@${
+				sender.confirmationRevision ?? "none"
+			}/waiters:${sender.confirmationWaiters}/oldest-ms:${
+				sender.oldestConfirmationAgeMs ?? "none"
+			}/retries:${sender.retryAttempts ?? 0}`,
+			`receiver=${receiver.state}/${receiver.reason}/phase:${
+				receiver.phase ?? "none"
+			}/request:${receiver.requestState ?? "none"}/applied-sequence:${
+				receiver.lastAppliedSequence ?? "none"
+			}/retries:${receiver.requestAttempts ?? 0}/rearm:${
+				receiver.remoteFullRearm
+			}/rearm-attempts:${receiver.remoteFullRearmAttempts}/rearm-outstanding:${
+				receiver.remoteFullRearmOutstanding
+			}/rearm-global:${receiver.remoteFullRearmGlobalOutstanding}`,
+		].join(" ");
+		return summary.slice(
+			0,
+			MAX_PERSISTED_RECEIPT_READINESS_DIAGNOSTIC_SUMMARY_CHARS,
+		);
+	}
+
 	private dispatchPersistedReceiptReadinessChange(peerHash: string): void {
 		this.events.dispatchEvent(
 			new CustomEvent<PersistedReceiptPeerReadinessEvent>(
@@ -5861,9 +6014,7 @@ export class SharedLog<
 		};
 	}
 
-	private persistedReceiptPeerSession(
-		peerHash: string,
-	):
+	private persistedReceiptPeerSession(peerHash: string):
 		| {
 				capabilitySession: bigint;
 				peerSession: PeerSession;
@@ -24398,8 +24549,7 @@ export class SharedLog<
 		if (
 			!peerSession ||
 			peerSession.phase === "departing" ||
-			(peerSession.phase === "opening" &&
-				!peerSession.openingBarrierActive)
+			(peerSession.phase === "opening" && !peerSession.openingBarrierActive)
 		) {
 			// A barrier rejection deliberately leaves the current session in its
 			// fail-closed opening phase after the barrier window has settled. Ask the
@@ -24465,7 +24615,18 @@ export class SharedLog<
 		key: PublicSignKey,
 		options: PersistedReceiptPeerReadinessOptions<T, R> = {},
 	): Promise<PersistedReceiptPeerReadiness> {
-		return this.inspectPersistedReceiptPeerReadiness(key, options);
+		if (options.diagnostics !== true) {
+			return this.inspectPersistedReceiptPeerReadiness(key, options);
+		}
+		const snapshot = await this.inspectPersistedReceiptPeerReadiness(
+			key,
+			options,
+		);
+		return this.attachPersistedReceiptReadinessDiagnostic(
+			key.hashcode(),
+			snapshot,
+			options.diagnostics,
+		);
 	}
 
 	private async inspectPersistedReceiptPeerReadiness(
@@ -24657,8 +24818,10 @@ export class SharedLog<
 						"reason" in lastSnapshot ? `/${lastSnapshot.reason}` : ""
 					})`
 				: "";
+			const diagnostic =
+				this.formatPersistedReceiptReadinessDiagnostic(peerHash);
 			return new TimeoutError(
-				`Timeout waiting for persisted-receipt readiness from ${peerHash}${suffix}`,
+				`Timeout waiting for persisted-receipt readiness from ${peerHash}${suffix}; diagnostic: ${diagnostic}`,
 			);
 		};
 
@@ -24806,7 +24969,13 @@ export class SharedLog<
 					// A wake observed while the asynchronous inspection was running may
 					// already have invalidated this snapshot. Drain that coalesced wake
 					// before publishing readiness.
-					resolve(snapshot);
+					resolve(
+						this.attachPersistedReceiptReadinessDiagnostic(
+							peerHash,
+							snapshot,
+							options.diagnostics,
+						),
+					);
 					return;
 				}
 				if (
@@ -24868,7 +25037,13 @@ export class SharedLog<
 						if (snapshot.status === "ready") {
 							confirmationRecoveryTarget = undefined;
 							if (rerun) return;
-							resolve(snapshot);
+							resolve(
+								this.attachPersistedReceiptReadinessDiagnostic(
+									peerHash,
+									snapshot,
+									options.diagnostics,
+								),
+							);
 							return;
 						}
 						if (

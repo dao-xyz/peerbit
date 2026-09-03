@@ -55,6 +55,7 @@ type ApplicationConfirmationTarget = {
 type ApplicationConfirmationWaiter = {
 	revision: bigint;
 	minPeers: number;
+	startedAt: number;
 	target?: ApplicationConfirmationTarget;
 	resolve: () => void;
 	reject: (error: unknown) => void;
@@ -62,6 +63,37 @@ type ApplicationConfirmationWaiter = {
 	signal?: AbortSignal;
 	onAbort?: () => void;
 };
+
+export type ReplicationInfoV2SendDiagnostic = Readonly<{
+	state: "absent" | "current" | "stale";
+	/** Current-state classification; no historical packet/drop log is retained. */
+	reason:
+		| "state-absent"
+		| "state-retiring"
+		| "peer-session-mismatch"
+		| "transport-session-mismatch"
+		| "destination-not-current"
+		| "destination-not-open"
+		| "ownership-inactive"
+		| "retry-backoff"
+		| "send-in-flight"
+		| "send-pending"
+		| "confirmation-in-flight"
+		| "latest-applied"
+		| "latest-unconfirmed";
+	established?: boolean;
+	suspended?: boolean;
+	currentRevision: string;
+	pendingRevision?: string;
+	inFlightRevision?: string;
+	inFlightSequence?: string;
+	appliedRevision?: string;
+	confirmationRevision?: string;
+	confirmationSequence?: string;
+	retryAttempts?: number;
+	confirmationWaiters: number;
+	oldestConfirmationAgeMs?: number;
+}>;
 
 export type ReplicationInfoV2ConfirmationOptions = {
 	/** Distinct current peers that must report durable application. Defaults to 1. */
@@ -460,6 +492,7 @@ export class ReplicationInfoV2SendCoordinator<R extends "u32" | "u64"> {
 			const waiter: ApplicationConfirmationWaiter = {
 				revision: this._revision,
 				minPeers: properties.minPeers,
+				startedAt: Date.now(),
 				target: properties.target ? { ...properties.target } : undefined,
 				resolve,
 				reject,
@@ -485,6 +518,137 @@ export class ReplicationInfoV2SendCoordinator<R extends "u32" | "u64"> {
 			}
 			this._confirmations.add(waiter);
 			this.nudgeConfirmations();
+		});
+	}
+
+	/**
+	 * Bounded, read-only state for persisted-readiness troubleshooting. Opaque
+	 * session/challenge values and peer maps are intentionally excluded.
+	 */
+	diagnosePeer(target: {
+		peerHash: string;
+		peerSession?: object;
+		receiverTransportSession?: bigint;
+	}): ReplicationInfoV2SendDiagnostic {
+		const state = this._sendStates.get(target.peerHash);
+		let matchingConfirmationCount = 0;
+		let oldestStartedAt: number | undefined;
+		for (const waiter of this._confirmations) {
+			if (
+				waiter.target?.peerHash !== target.peerHash ||
+				(target.peerSession !== undefined &&
+					waiter.target.peerSession !== target.peerSession) ||
+				(target.receiverTransportSession !== undefined &&
+					waiter.target.receiverTransportSession !==
+						target.receiverTransportSession)
+			) {
+				continue;
+			}
+			matchingConfirmationCount++;
+			oldestStartedAt =
+				oldestStartedAt === undefined
+					? waiter.startedAt
+					: Math.min(oldestStartedAt, waiter.startedAt);
+		}
+		const common = {
+			currentRevision: this._revision.toString(),
+			confirmationWaiters: Math.min(
+				this.maxConfirmationWaiters,
+				matchingConfirmationCount,
+			),
+			...(oldestStartedAt === undefined
+				? {}
+				: {
+						oldestConfirmationAgeMs: Math.min(
+							MAX_TIMER_MS,
+							Math.max(0, Date.now() - oldestStartedAt),
+						),
+					}),
+		};
+		if (!state) {
+			return Object.freeze({
+				state: this._retiringWorkersByPeer.has(target.peerHash)
+					? ("stale" as const)
+					: ("absent" as const),
+				reason: this._retiringWorkersByPeer.has(target.peerHash)
+					? ("state-retiring" as const)
+					: ("state-absent" as const),
+				...common,
+			});
+		}
+
+		let status: "current" | "stale" = "current";
+		let reason: ReplicationInfoV2SendDiagnostic["reason"];
+		if (
+			target.peerSession !== undefined &&
+			state.peerSession !== target.peerSession
+		) {
+			status = "stale";
+			reason = "peer-session-mismatch";
+		} else if (
+			target.receiverTransportSession !== undefined &&
+			state.receiverTransportSession !== target.receiverTransportSession
+		) {
+			status = "stale";
+			reason = "transport-session-mismatch";
+		} else if (!this.isDestinationCurrent(state)) {
+			status = "stale";
+			reason = "destination-not-current";
+		} else if (!this.isDestinationReady(state)) {
+			reason = "destination-not-open";
+		} else if (
+			!this.deps.isReplicationOwnershipLifecycleActive(
+				state.ownershipLifecycleController,
+			)
+		) {
+			reason = "ownership-inactive";
+		} else if (state.suspended || state.retryTimer !== undefined) {
+			reason = "retry-backoff";
+		} else if (state.applicationConfirmationRequest !== undefined) {
+			reason = "confirmation-in-flight";
+		} else if (state.inFlightRevision !== undefined) {
+			reason = "send-in-flight";
+		} else if (state.pending !== undefined) {
+			reason = "send-pending";
+		} else if (
+			state.appliedRevision !== undefined &&
+			state.appliedRevision >= this._revision
+		) {
+			reason = "latest-applied";
+		} else {
+			reason = "latest-unconfirmed";
+		}
+
+		return Object.freeze({
+			state: status,
+			reason,
+			established: state.established,
+			suspended: state.suspended,
+			...common,
+			...(state.pending === undefined
+				? {}
+				: { pendingRevision: state.pending.revision.toString() }),
+			...(state.inFlightRevision === undefined
+				? {}
+				: { inFlightRevision: state.inFlightRevision.toString() }),
+			...(state.inFlightSequence === undefined
+				? {}
+				: { inFlightSequence: state.inFlightSequence.toString() }),
+			...(state.appliedRevision === undefined
+				? {}
+				: { appliedRevision: state.appliedRevision.toString() }),
+			...(state.applicationConfirmationRequest === undefined
+				? {}
+				: {
+						confirmationRevision:
+							state.applicationConfirmationRequest.revision.toString(),
+						confirmationSequence:
+							state.applicationConfirmationRequest.sequence.toString(),
+					}),
+			retryAttempts: Math.min(
+				MAX_BACKOFF_EXPONENT + 1,
+				Math.max(0, state.retryAttempts),
+			),
 		});
 	}
 

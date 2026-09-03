@@ -249,6 +249,187 @@ describe("append delivery options — persisted receipts", function () {
 		}
 	});
 
+	it("keeps readiness snapshots compatible while exposing bounded opt-in diagnostics", async () => {
+		session = await TestSession.disconnected(1);
+		const writer = await session.peers[0].open(new EventStore<string, any>());
+		const unknownKey = (await Ed25519Keypair.create()).publicKey;
+		const hashcode = sinon.spy(unknownKey, "hashcode");
+
+		const defaultSnapshot =
+			await writer.log.getPersistedReceiptPeerReadiness(unknownKey);
+		expect(hashcode.calledOnce).to.equal(true);
+		expect(defaultSnapshot).to.deep.equal({
+			status: "pending",
+			reason: "no-current-session",
+		});
+		expect("diagnostic" in defaultSnapshot).to.equal(false);
+
+		const snapshot = await writer.log.getPersistedReceiptPeerReadiness(
+			unknownKey,
+			{ diagnostics: true },
+		);
+		expect(snapshot).to.deep.include({
+			status: "pending",
+			reason: "no-current-session",
+		});
+		expect(snapshot.diagnostic).to.deep.include({ version: 1, log: "open" });
+		expect(snapshot.diagnostic?.session).to.deep.include({
+			state: "absent",
+			established: false,
+			suspended: true,
+		});
+		expect(snapshot.diagnostic?.sender).to.deep.include({
+			state: "absent",
+			reason: "state-absent",
+			confirmationWaiters: 0,
+		});
+		expect(snapshot.diagnostic?.receiver).to.deep.include({
+			state: "absent",
+			reason: "state-absent",
+		});
+		expect(Object.isFrozen(snapshot)).to.equal(true);
+		expect(Object.isFrozen(snapshot.diagnostic)).to.equal(true);
+		expect(Object.isFrozen(snapshot.diagnostic?.session)).to.equal(true);
+		expect(Object.isFrozen(snapshot.diagnostic?.sender)).to.equal(true);
+		expect(Object.isFrozen(snapshot.diagnostic?.receiver)).to.equal(true);
+		expect(JSON.stringify(snapshot.diagnostic).length).to.be.lessThanOrEqual(
+			2_048,
+		);
+
+		let timeoutError: Error | undefined;
+		try {
+			await writer.log.waitForPersistedReceiptPeerReadiness(unknownKey, {
+				timeout: 5,
+			});
+		} catch (error) {
+			timeoutError = error as Error;
+		}
+		expect(timeoutError).to.be.instanceOf(TimeoutError);
+		expect(timeoutError?.message).to.include(
+			"diagnostic: session=absent/none/suspended",
+		);
+		expect(timeoutError?.message.length).to.be.lessThanOrEqual(1_024);
+	});
+
+	it("diagnoses current unconfirmed state and a same-key replacement without exposing identities", async () => {
+		const { writer, receiver } = await openPair(true);
+		await waitForPersistedCapability(writer, receiver);
+		const log = writer.log as any;
+		const receiverKey = receiver.node.identity.publicKey;
+		const receiverHash = receiverKey.hashcode();
+		const peerSession = log._peerSessions.current(receiverHash);
+		const capabilitySession = log._peerSyncCapabilitySessions.get(receiverHash);
+		expect(peerSession).to.exist;
+		expect(capabilitySession).to.be.a("bigint");
+		await log._v2Send.drain();
+		const sendState = log._v2Send._sendStates.get(receiverHash);
+		expect(sendState).to.exist;
+		const previousAppliedRevision = sendState.appliedRevision;
+		sendState.appliedRevision = undefined;
+		const nudgeConfirmations = sinon.stub(log._v2Send, "nudgeConfirmations");
+		const confirmationController = new AbortController();
+		const confirmation = log._v2Send.confirmLatestForPeer(
+			{
+				peerHash: receiverHash,
+				peerSession,
+				receiverTransportSession: capabilitySession,
+			},
+			{ timeout: 5_000, signal: confirmationController.signal },
+		);
+		try {
+			const current = await log.getPersistedReceiptPeerReadiness(receiverKey, {
+				diagnostics: true,
+			});
+			expect(current).to.deep.include({
+				status: "pending",
+				reason: "replication-confirmation-pending",
+			});
+			expect(current.diagnostic.session).to.deep.include({
+				state: "current",
+				phase: "open",
+				established: true,
+			});
+			expect(current.diagnostic.sender).to.deep.include({
+				state: "current",
+				reason: "latest-unconfirmed",
+				confirmationWaiters: 1,
+				currentRevision: log._v2Send._revision.toString(),
+			});
+			expect(current.diagnostic.sender.oldestConfirmationAgeMs).to.be.within(
+				0,
+				5_000,
+			);
+			expect(current.diagnostic.receiver).to.deep.include({
+				state: "current",
+				reason: "active",
+				phase: "active",
+			});
+
+			const replacementSession = {
+				phase: "open",
+				openingBarrierActive: false,
+				isActive: () => true,
+			};
+			const replacementReceiveEpoch = {};
+			const originalCurrent = log._peerSessions.current.bind(log._peerSessions);
+			const originalReceiveEpoch = log._peerSessions.receiveEpoch.bind(
+				log._peerSessions,
+			);
+			const currentSession = sinon
+				.stub(log._peerSessions, "current")
+				.callsFake((...args: unknown[]) => {
+					const hash = args[0] as string;
+					return hash === receiverHash
+						? replacementSession
+						: originalCurrent(hash);
+				});
+			const currentReceiveEpoch = sinon
+				.stub(log._peerSessions, "receiveEpoch")
+				.callsFake((...args: unknown[]) => {
+					const hash = args[0] as string;
+					return hash === receiverHash
+						? replacementReceiveEpoch
+						: originalReceiveEpoch(hash);
+				});
+			const active = sinon
+				.stub(log._v2Receive, "isCurrentActive")
+				.returns(true);
+			try {
+				const replacement = await log.getPersistedReceiptPeerReadiness(
+					receiverKey,
+					{
+						diagnostics: true,
+					},
+				);
+				expect(replacement.diagnostic.sender).to.deep.include({
+					state: "stale",
+					reason: "peer-session-mismatch",
+				});
+				expect(replacement.diagnostic.receiver).to.deep.include({
+					state: "stale",
+					reason: "peer-session-mismatch",
+				});
+				expect(JSON.stringify(replacement.diagnostic)).not.to.include(
+					capabilitySession.toString(),
+				);
+				expect(
+					JSON.stringify(replacement.diagnostic).length,
+				).to.be.lessThanOrEqual(2_048);
+			} finally {
+				active.restore();
+				currentReceiveEpoch.restore();
+				currentSession.restore();
+			}
+		} finally {
+			confirmationController.abort(new Error("diagnostic confirmation done"));
+			await expect(confirmation).to.be.rejectedWith(
+				"diagnostic confirmation done",
+			);
+			nudgeConfirmations.restore();
+			sendState.appliedRevision = previousAppliedRevision;
+		}
+	});
+
 	it("rebinds a readiness waiter to a same-key replacement generation", async () => {
 		const { writer, receiver } = await openPair(true);
 		await waitForPersistedCapability(writer, receiver);
@@ -686,7 +867,7 @@ describe("append delivery options — persisted receipts", function () {
 		}
 	});
 
-	it("does not let sub-interval readiness events postpone current-sender rearm", async () => {
+	it("does not diagnose internal pending checks or postpone current-sender rearm", async () => {
 		const { writer, receiver } = await openPair(true);
 		await waitForPersistedCapability(writer, receiver);
 		const log = writer.log as any;
@@ -723,6 +904,8 @@ describe("append delivery options — persisted receipts", function () {
 				confirmed = true;
 				return true;
 			});
+		const diagnoseSender = sinon.spy(log._v2Send, "diagnosePeer");
+		const diagnoseReceiver = sinon.spy(log._v2Receive, "diagnosePeer");
 		const clock = sinon.useFakeTimers({
 			now: Date.now(),
 			shouldClearNativeTimers: true,
@@ -731,9 +914,12 @@ describe("append delivery options — persisted receipts", function () {
 		try {
 			const wait = log.waitForPersistedReceiptPeerReadiness(receiverKey, {
 				timeout: 1_000,
+				diagnostics: true,
 			});
 			await clock.tickAsync(0);
 			expect(confirm.calledOnce).to.equal(true);
+			expect(diagnoseSender.notCalled).to.equal(true);
+			expect(diagnoseReceiver.notCalled).to.equal(true);
 
 			// Every event aborts the current confirmation and moves the recovery
 			// timer. The exact-generation watchdog itself must keep its original
@@ -746,16 +932,25 @@ describe("append delivery options — persisted receipts", function () {
 					}),
 				);
 				await clock.tickAsync(0);
+				if (index < 4) {
+					expect(diagnoseSender.notCalled).to.equal(true);
+					expect(diagnoseReceiver.notCalled).to.equal(true);
+				}
 			}
 
 			const ready = await wait;
 			expect(ready.status).to.equal("ready");
+			expect(ready.diagnostic).to.exist;
+			expect(diagnoseSender.calledOnce).to.equal(true);
+			expect(diagnoseReceiver.calledOnce).to.equal(true);
 			expect(confirm.callCount).to.be.greaterThan(1);
 			expect(rearmTimes).to.deep.equal([startedAt + 50]);
 			expect(hasCurrent.called).to.equal(true);
 			expect(log._persistedReceiptReadinessWaiters.size).to.equal(0);
 		} finally {
 			clock.restore();
+			diagnoseReceiver.restore();
+			diagnoseSender.restore();
 			rearm.restore();
 			confirm.restore();
 			latest.restore();
