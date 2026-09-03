@@ -56,6 +56,9 @@ describe("receive admission replication-info V2 receiver state", () => {
 		requestRetryMs?: number;
 		maxRequestRetryMs?: number;
 		requestMaxAttempts?: number;
+		remoteFullRearmAttemptTimeoutMs?: number;
+		remoteFullRearmCooldownMs?: number;
+		maxRemoteFullRearmOutstandingGlobal?: number;
 	}) =>
 		new ReplicationInfoV2ReceiveCoordinator({
 			getSelfKey: () => self,
@@ -76,6 +79,12 @@ describe("receive admission replication-info V2 receiver state", () => {
 			requestRetryMs: options?.requestRetryMs ?? 5,
 			maxRequestRetryMs: options?.maxRequestRetryMs ?? 20,
 			requestMaxAttempts: options?.requestMaxAttempts ?? 7,
+			remoteFullRearmAttemptTimeoutMs:
+				options?.remoteFullRearmAttemptTimeoutMs ?? 10,
+			remoteFullRearmCooldownMs:
+				options?.remoteFullRearmCooldownMs ?? options?.requestRetryMs ?? 5,
+			maxRemoteFullRearmOutstandingGlobal:
+				options?.maxRemoteFullRearmOutstandingGlobal,
 		});
 
 	const markLocalReady = (requestNotBeforeMs = Date.now()) =>
@@ -328,6 +337,297 @@ describe("receive admission replication-info V2 receiver state", () => {
 		replacementWaiter.abort();
 		expect(coordinator._remoteFullRearmBySession.get(currentSession)?.inFlight)
 			.to.be.undefined;
+	});
+
+	it("bounds an abort-ignoring remote-Full rearm and retries on the same waiter", async () => {
+		const clock = sinon.useFakeTimers({ now: 1_090 });
+		coordinator = createCoordinator({
+			requestRetryMs: 5,
+			remoteFullRearmAttemptTimeoutMs: 10,
+			remoteFullRearmCooldownMs: 15,
+		});
+		const lifecycle = new AbortController();
+		await coordinator.advertiseLocalCapability({
+			target: sender,
+			peerSession: currentSession,
+			receiveEpoch: currentReceiveEpoch,
+			signal: lifecycle.signal,
+		}).firstAttempt;
+
+		const firstAttempt = pDefer<{
+			receiverTransportSession: bigint;
+			requestNotBeforeMs: number;
+		}>();
+		const secondAttempt = pDefer<{
+			receiverTransportSession: bigint;
+			requestNotBeforeMs: number;
+		}>();
+		refreshLocalCapability.resetHistory();
+		refreshLocalCapability.onFirstCall().returns(firstAttempt.promise);
+		refreshLocalCapability.onSecondCall().returns(secondAttempt.promise);
+		const waiter = new AbortController();
+
+		expect(
+			coordinator.reAdvertiseLocalCapabilityForRemoteFull({
+				peerHash,
+				peerSession: currentSession,
+				receiveEpoch: currentReceiveEpoch,
+				signal: waiter.signal,
+			}),
+		).to.be.true;
+		await clock.tickAsync(0);
+		expect(refreshLocalCapability.calledOnce).to.be.true;
+		const firstSignal = refreshLocalCapability.firstCall.args[0]
+			.signal as AbortSignal;
+		expect(firstSignal.aborted).to.be.false;
+
+		await clock.tickAsync(10);
+		expect(firstSignal.aborted).to.be.true;
+		expect(waiter.signal.aborted).to.be.false;
+		expect(coordinator._remoteFullRearmBySession.get(currentSession)?.inFlight)
+			.to.be.undefined;
+
+		await clock.tickAsync(4);
+		expect(
+			coordinator.reAdvertiseLocalCapabilityForRemoteFull({
+				peerHash,
+				peerSession: currentSession,
+				receiveEpoch: currentReceiveEpoch,
+				signal: waiter.signal,
+			}),
+		).to.be.true;
+		expect(refreshLocalCapability.calledOnce).to.be.true;
+
+		await clock.tickAsync(1);
+		expect(
+			coordinator.reAdvertiseLocalCapabilityForRemoteFull({
+				peerHash,
+				peerSession: currentSession,
+				receiveEpoch: currentReceiveEpoch,
+				signal: waiter.signal,
+			}),
+		).to.be.true;
+		await clock.tickAsync(0);
+		expect(refreshLocalCapability.callCount).to.equal(2);
+		expect(waiter.signal.aborted).to.be.false;
+		expect(coordinator._remoteFullRearmBySession.get(currentSession)?.inFlight)
+			.to.exist;
+
+		// A transport that disregarded the first attempt's abort may still settle.
+		// Its late completion must not detach or otherwise own the newer attempt.
+		firstAttempt.resolve({
+			receiverTransportSession,
+			requestNotBeforeMs: 1_105,
+		});
+		await clock.tickAsync(0);
+		expect(refreshLocalCapability.callCount).to.equal(2);
+		expect(coordinator._remoteFullRearmBySession.get(currentSession)?.inFlight)
+			.to.exist;
+		secondAttempt.resolve({
+			receiverTransportSession,
+			requestNotBeforeMs: 1_105,
+		});
+		await clock.tickAsync(0);
+		expect(coordinator._remoteFullRearmBySession.get(currentSession)?.inFlight)
+			.to.be.undefined;
+	});
+
+	it("caps abort-ignoring remote-Full publishes per exact session", async () => {
+		const clock = sinon.useFakeTimers({ now: 1_120 });
+		coordinator = createCoordinator({
+			requestRetryMs: 5,
+			remoteFullRearmAttemptTimeoutMs: 5,
+			remoteFullRearmCooldownMs: 5,
+		});
+		const lifecycle = new AbortController();
+		await coordinator.advertiseLocalCapability({
+			target: sender,
+			peerSession: currentSession,
+			receiveEpoch: currentReceiveEpoch,
+			signal: lifecycle.signal,
+		}).firstAttempt;
+
+		const attempts = [
+			pDefer<{
+				receiverTransportSession: bigint;
+				requestNotBeforeMs: number;
+			}>(),
+			pDefer<{
+				receiverTransportSession: bigint;
+				requestNotBeforeMs: number;
+			}>(),
+			pDefer<{
+				receiverTransportSession: bigint;
+				requestNotBeforeMs: number;
+			}>(),
+		];
+		refreshLocalCapability.resetHistory();
+		refreshLocalCapability.callsFake(
+			() => attempts[refreshLocalCapability.callCount - 1].promise,
+		);
+		const waiter = new AbortController();
+		const rearm = () =>
+			coordinator.reAdvertiseLocalCapabilityForRemoteFull({
+				peerHash,
+				peerSession: currentSession,
+				receiveEpoch: currentReceiveEpoch,
+				signal: waiter.signal,
+			});
+
+		expect(rearm()).to.be.true;
+		await clock.tickAsync(5);
+		expect(rearm()).to.be.true;
+		await clock.tickAsync(5);
+		expect(refreshLocalCapability.callCount).to.equal(2);
+		expect(
+			coordinator._remoteFullRearmBySession.get(currentSession)
+				?.outstandingAttempts,
+		).to.equal(2);
+
+		for (let index = 0; index < 20; index++) {
+			expect(rearm()).to.be.true;
+			await clock.tickAsync(5);
+		}
+		expect(refreshLocalCapability.callCount).to.equal(2);
+		expect(coordinator._remoteFullRearmOutstanding.size).to.equal(2);
+
+		attempts[0].resolve({
+			receiverTransportSession,
+			requestNotBeforeMs: 1_230,
+		});
+		await clock.tickAsync(0);
+		expect(rearm()).to.be.true;
+		await clock.tickAsync(0);
+		expect(refreshLocalCapability.callCount).to.equal(3);
+		expect(coordinator._remoteFullRearmOutstanding.size).to.equal(2);
+
+		attempts[1].resolve({
+			receiverTransportSession,
+			requestNotBeforeMs: 1_230,
+		});
+		attempts[2].resolve({
+			receiverTransportSession,
+			requestNotBeforeMs: 1_230,
+		});
+		await clock.tickAsync(0);
+		expect(coordinator._remoteFullRearmOutstanding.size).to.equal(0);
+	});
+
+	it("enforces the global abort-ignoring cap across replacement generations", async () => {
+		const clock = sinon.useFakeTimers({ now: 1_260 });
+		coordinator = createCoordinator({
+			requestRetryMs: 5,
+			remoteFullRearmAttemptTimeoutMs: 5,
+			remoteFullRearmCooldownMs: 5,
+			maxRemoteFullRearmOutstandingGlobal: 2,
+		});
+		const lifecycle = new AbortController();
+		const waiter = new AbortController();
+		const orphans = [
+			pDefer<{
+				receiverTransportSession: bigint;
+				requestNotBeforeMs: number;
+			}>(),
+			pDefer<{
+				receiverTransportSession: bigint;
+				requestNotBeforeMs: number;
+			}>(),
+			pDefer<{
+				receiverTransportSession: bigint;
+				requestNotBeforeMs: number;
+			}>(),
+		];
+
+		const openGeneration = async () => {
+			refreshLocalCapability.callsFake(async () => ({
+				receiverTransportSession,
+				requestNotBeforeMs: Date.now(),
+			}));
+			await coordinator.advertiseLocalCapability({
+				target: sender,
+				peerSession: currentSession,
+				receiveEpoch: currentReceiveEpoch,
+				signal: lifecycle.signal,
+			}).firstAttempt;
+		};
+		const startOrphan = async (orphan: (typeof orphans)[number]) => {
+			refreshLocalCapability.resetHistory();
+			refreshLocalCapability.returns(orphan.promise);
+			expect(
+				coordinator.reAdvertiseLocalCapabilityForRemoteFull({
+					peerHash,
+					peerSession: currentSession,
+					receiveEpoch: currentReceiveEpoch,
+					signal: waiter.signal,
+				}),
+			).to.be.true;
+			await clock.tickAsync(0);
+		};
+
+		await openGeneration();
+		await startOrphan(orphans[0]);
+		const firstAttemptSignal = refreshLocalCapability.firstCall.args[0]
+			.signal as AbortSignal;
+		coordinator.clearPeer(peerHash);
+		expect(firstAttemptSignal.aborted).to.equal(true);
+		expect(coordinator._remoteFullRearmsInFlight.size).to.equal(0);
+		expect(coordinator._remoteFullRearmOutstanding.size).to.equal(1);
+		coordinator.resetForOpen();
+		expect(coordinator._remoteFullRearmOutstanding.size).to.equal(1);
+
+		currentSession = {};
+		currentReceiveEpoch = {};
+		await openGeneration();
+		await startOrphan(orphans[1]);
+		coordinator.clearForClose();
+		expect(coordinator._remoteFullRearmsInFlight.size).to.equal(0);
+		expect(coordinator._remoteFullRearmOutstanding.size).to.equal(2);
+		coordinator.resetForOpen();
+
+		currentSession = {};
+		currentReceiveEpoch = {};
+		await openGeneration();
+		refreshLocalCapability.resetHistory();
+		refreshLocalCapability.returns(orphans[2].promise);
+		expect(
+			coordinator.reAdvertiseLocalCapabilityForRemoteFull({
+				peerHash,
+				peerSession: currentSession,
+				receiveEpoch: currentReceiveEpoch,
+				signal: waiter.signal,
+			}),
+		).to.be.true;
+		await clock.tickAsync(0);
+		expect(refreshLocalCapability.notCalled).to.equal(true);
+		expect(coordinator._remoteFullRearmOutstanding.size).to.equal(2);
+
+		orphans[0].resolve({
+			receiverTransportSession,
+			requestNotBeforeMs: 1_260,
+		});
+		await clock.tickAsync(0);
+		expect(
+			coordinator.reAdvertiseLocalCapabilityForRemoteFull({
+				peerHash,
+				peerSession: currentSession,
+				receiveEpoch: currentReceiveEpoch,
+				signal: waiter.signal,
+			}),
+		).to.be.true;
+		await clock.tickAsync(0);
+		expect(refreshLocalCapability.calledOnce).to.equal(true);
+		expect(coordinator._remoteFullRearmOutstanding.size).to.equal(2);
+
+		orphans[1].resolve({
+			receiverTransportSession,
+			requestNotBeforeMs: 1_260,
+		});
+		orphans[2].resolve({
+			receiverTransportSession,
+			requestNotBeforeMs: 1_260,
+		});
+		await clock.tickAsync(0);
+		expect(coordinator._remoteFullRearmOutstanding.size).to.equal(0);
 	});
 
 	it("promotes when a deferred ACK finally settles", async () => {

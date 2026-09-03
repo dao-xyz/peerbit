@@ -18,7 +18,7 @@ import {
 	Timestamp,
 } from "@peerbit/log";
 import { ClosedError } from "@peerbit/program";
-import { SilentDelivery } from "@peerbit/stream-interface";
+import { AcknowledgeDelivery, SilentDelivery } from "@peerbit/stream-interface";
 import { TestSession } from "@peerbit/test-utils";
 import { AbortError, TimeoutError, waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
@@ -36,6 +36,11 @@ import {
 	SYNC_CAPABILITY_REPLICATION_INFO_V2_REARM,
 	SyncCapabilitiesMessage,
 } from "../src/exchange-heads.js";
+import {
+	FullReplicationInfoV2Message,
+	ReplicationInfoV2AppliedMessage,
+	RequestReplicationInfoV2AppliedMessage,
+} from "../src/replication.js";
 import {
 	ConfirmEntriesMessage,
 	RequestPersistedEntriesV1,
@@ -389,18 +394,13 @@ describe("append delivery options — persisted receipts", function () {
 			expect(replacement.generation).not.to.equal(oldSnapshot.generation);
 			expect(confirm.firstCall.args[0].peerSession).to.equal(oldSession);
 			expect(
-				confirm
+				latest
 					.getCalls()
 					.some(
 						(call) =>
 							call.args[0].peerSession === newSession &&
 							call.args[0].receiverTransportSession === newTransportSession,
 					),
-			).to.equal(true);
-			expect(
-				latest
-					.getCalls()
-					.some((call) => call.args[0].peerSession === newSession),
 			).to.equal(true);
 			expect(
 				rearmRemoteFull
@@ -423,6 +423,109 @@ describe("append delivery options — persisted receipts", function () {
 			receiveEpoch.restore();
 			current.restore();
 			log._peerSyncCapabilitySessions.set(receiverHash, oldTransportSession);
+		}
+	});
+
+	it("follows a real same-key replacement while a quiet log waits", async () => {
+		const { writer, receiver } = await openPair(true);
+		await waitForPersistedCapability(writer, receiver);
+		const log = writer.log as any;
+		const receiverKey = receiver.node.identity.publicKey;
+		const receiverHash = receiverKey.hashcode();
+		const oldSession = log._peerSessions.current(receiverHash);
+		const oldCapabilitySession =
+			log._peerSyncCapabilitySessions.get(receiverHash);
+		expect(oldSession).to.exist;
+		expect(oldCapabilitySession).to.be.a("bigint");
+
+		const originalLatest = log._v2Send.isLatestConfirmedForPeer.bind(
+			log._v2Send,
+		);
+		const latest = sinon
+			.stub(log._v2Send, "isLatestConfirmedForPeer")
+			.callsFake((target: any) =>
+				target.peerSession === oldSession ? false : originalLatest(target),
+			);
+		const originalConfirm = log._v2Send.confirmLatestForPeer.bind(log._v2Send);
+		const oldConfirmationEntered = pDefer<AbortSignal>();
+		const confirm = sinon
+			.stub(log._v2Send, "confirmLatestForPeer")
+			.callsFake(async (target: any, options: any) => {
+				if (target.peerSession !== oldSession) {
+					return originalConfirm(target, options);
+				}
+				const signal = options.signal as AbortSignal;
+				oldConfirmationEntered.resolve(signal);
+				await new Promise<void>((resolve, reject) => {
+					const onAbort = () => reject(signal.reason ?? new AbortError());
+					if (signal.aborted) {
+						onAbort();
+						return;
+					}
+					signal.addEventListener("abort", onAbort, { once: true });
+				});
+			});
+		try {
+			const oldSnapshot =
+				await writer.log.getPersistedReceiptPeerReadiness(receiverKey);
+			expect(oldSnapshot).to.deep.include({
+				status: "pending",
+				reason: "replication-confirmation-pending",
+			});
+			const wait = writer.log.waitForPersistedReceiptPeerReadiness(
+				receiverKey,
+				{ timeout: 30_000 },
+			);
+			const oldConfirmationSignal = await oldConfirmationEntered.promise;
+
+			await session!.peers[1].stop();
+			await waitForResolved(
+				() => expect(oldConfirmationSignal.aborted).to.equal(true),
+				{ timeout: 5_000 },
+			);
+			await session!.peers[1].start();
+			const replacement = await EventStore.open<EventStore<string, any>>(
+				writer.address!,
+				session!.peers[1],
+				{
+					args: {
+						replicas: { min: 2 },
+						replicate: { offset: 0, factor: 1 },
+						timeUntilRoleMaturity: 0,
+					},
+				},
+			);
+			expect(replacement.node.identity.publicKey.equals(receiverKey)).to.equal(
+				true,
+			);
+			await Promise.all([
+				writer.waitFor(session!.peers[1].peerId),
+				replacement.waitFor(session!.peers[0].peerId),
+				writer.log.waitForReplicator(receiverKey, {
+					eager: true,
+					timeout: 15_000,
+				}),
+			]);
+			await waitForPersistedCapability(writer, replacement);
+
+			const ready = await wait;
+			const replacementSession = log._peerSessions.current(receiverHash);
+			const replacementCapabilitySession =
+				log._peerSyncCapabilitySessions.get(receiverHash);
+			expect(ready.status).to.equal("ready");
+			expect(ready.generation).not.to.equal(oldSnapshot.generation);
+			expect(replacementSession).to.exist.and.not.equal(oldSession);
+			expect(replacementCapabilitySession).to.be.a("bigint");
+			expect(replacementCapabilitySession).not.to.equal(oldCapabilitySession);
+			expect(
+				confirm
+					.getCalls()
+					.some((call) => call.args[0].peerSession === replacementSession),
+			).to.equal(true);
+			expect(log._persistedReceiptReadinessWaiters.size).to.equal(0);
+		} finally {
+			confirm.restore();
+			latest.restore();
 		}
 	});
 
@@ -463,7 +566,10 @@ describe("append delivery options — persisted receipts", function () {
 				});
 			});
 		const nudge = sinon.spy(log, "nudgePersistedReceiptPeerReadiness");
-		const clock = sinon.useFakeTimers({ now: Date.now() });
+		const clock = sinon.useFakeTimers({
+			now: Date.now(),
+			shouldClearNativeTimers: true,
+		});
 		try {
 			const wait = log.waitForPersistedReceiptPeerReadiness(receiverKey, {
 				timeout: 180,
@@ -502,6 +608,281 @@ describe("append delivery options — persisted receipts", function () {
 			rearm.restore();
 			hasCurrent.restore();
 			latest.restore();
+		}
+	});
+
+	it("rearms a current sender only after its confirmation watchdog expires", async () => {
+		const { writer, receiver } = await openPair(true);
+		await waitForPersistedCapability(writer, receiver);
+		const log = writer.log as any;
+		const receiverKey = receiver.node.identity.publicKey;
+		const receiverHash = receiverKey.hashcode();
+		const peerSession = log._peerSessions.current(receiverHash);
+		const receiveEpoch = log._peerSessions.receiveEpoch(receiverHash);
+		const capabilitySession = log._peerSyncCapabilitySessions.get(receiverHash);
+		expect(peerSession).to.exist;
+		expect(capabilitySession).to.be.a("bigint");
+		expect(
+			log._v2Receive.isCurrentActive({
+				peerHash: receiverHash,
+				peerSession,
+				receiveEpoch,
+				senderTransportSession: capabilitySession,
+			}),
+		).to.equal(true);
+		log.waitForReplicatorRequestIntervalMs = 50;
+
+		let confirmed = false;
+		const confirmation = pDefer<void>();
+		const hasCurrent = sinon
+			.stub(log._v2Send, "hasCurrentStateForPeer")
+			.returns(true);
+		const latest = sinon
+			.stub(log._v2Send, "isLatestConfirmedForPeer")
+			.callsFake(() => confirmed);
+		const confirm = sinon
+			.stub(log._v2Send, "confirmLatestForPeer")
+			.callsFake(async () => confirmation.promise);
+		const rearm = sinon
+			.stub(log._v2Receive, "reAdvertiseLocalCapabilityForRemoteFull")
+			.callsFake((properties: any) => {
+				expect(properties).to.include({
+					peerHash: receiverHash,
+					peerSession,
+					receiveEpoch,
+				});
+				expect(properties.signal.aborted).to.equal(false);
+				confirmed = true;
+				confirmation.resolve();
+				return true;
+			});
+		const clock = sinon.useFakeTimers({
+			now: Date.now(),
+			shouldClearNativeTimers: true,
+		});
+		try {
+			const wait = log.waitForPersistedReceiptPeerReadiness(receiverKey, {
+				timeout: 1_000,
+			});
+			await clock.tickAsync(0);
+			expect(confirm.calledOnce).to.equal(true);
+			expect(rearm.notCalled).to.equal(true);
+
+			await clock.tickAsync(49);
+			expect(rearm.notCalled).to.equal(true);
+			await clock.tickAsync(1);
+			const ready = await wait;
+			expect(ready.status).to.equal("ready");
+			expect(rearm.calledOnce).to.equal(true);
+			expect(confirm.calledOnce).to.equal(true);
+			expect(hasCurrent.called).to.equal(true);
+			expect(log._persistedReceiptReadinessWaiters.size).to.equal(0);
+		} finally {
+			clock.restore();
+			rearm.restore();
+			confirm.restore();
+			latest.restore();
+			hasCurrent.restore();
+		}
+	});
+
+	it("does not let sub-interval readiness events postpone current-sender rearm", async () => {
+		const { writer, receiver } = await openPair(true);
+		await waitForPersistedCapability(writer, receiver);
+		const log = writer.log as any;
+		const receiverKey = receiver.node.identity.publicKey;
+		const receiverHash = receiverKey.hashcode();
+		log.waitForReplicatorRequestIntervalMs = 50;
+
+		let confirmed = false;
+		const hasCurrent = sinon
+			.stub(log._v2Send, "hasCurrentStateForPeer")
+			.returns(true);
+		const latest = sinon
+			.stub(log._v2Send, "isLatestConfirmedForPeer")
+			.callsFake(() => confirmed);
+		const confirm = sinon
+			.stub(log._v2Send, "confirmLatestForPeer")
+			.callsFake(async (...args: unknown[]) => {
+				if (confirmed) return;
+				const signal = (args[1] as { signal: AbortSignal }).signal;
+				await new Promise<void>((resolve, reject) => {
+					const onAbort = () => reject(signal.reason ?? new AbortError());
+					if (signal.aborted) {
+						onAbort();
+						return;
+					}
+					signal.addEventListener("abort", onAbort, { once: true });
+				});
+			});
+		const rearmTimes: number[] = [];
+		const rearm = sinon
+			.stub(log._v2Receive, "reAdvertiseLocalCapabilityForRemoteFull")
+			.callsFake(() => {
+				rearmTimes.push(Date.now());
+				confirmed = true;
+				return true;
+			});
+		const clock = sinon.useFakeTimers({
+			now: Date.now(),
+			shouldClearNativeTimers: true,
+		});
+		const startedAt = Date.now();
+		try {
+			const wait = log.waitForPersistedReceiptPeerReadiness(receiverKey, {
+				timeout: 1_000,
+			});
+			await clock.tickAsync(0);
+			expect(confirm.calledOnce).to.equal(true);
+
+			// Every event aborts the current confirmation and moves the recovery
+			// timer. The exact-generation watchdog itself must keep its original
+			// deadline, so the fifth event drives the mature rearm at 50 ms.
+			for (let index = 0; index < 5; index++) {
+				await clock.tickAsync(10);
+				log.events.dispatchEvent(
+					new CustomEvent("persisted-receipt:readiness", {
+						detail: { peerHash: receiverHash },
+					}),
+				);
+				await clock.tickAsync(0);
+			}
+
+			const ready = await wait;
+			expect(ready.status).to.equal("ready");
+			expect(confirm.callCount).to.be.greaterThan(1);
+			expect(rearmTimes).to.deep.equal([startedAt + 50]);
+			expect(hasCurrent.called).to.equal(true);
+			expect(log._persistedReceiptReadinessWaiters.size).to.equal(0);
+		} finally {
+			clock.restore();
+			rearm.restore();
+			confirm.restore();
+			latest.restore();
+			hasCurrent.restore();
+		}
+	});
+
+	it("rebuilds a current but unconfirmed sender through the exact V2 wire path", async () => {
+		const { writer, receiver } = await openPair(true);
+		await waitForPersistedCapability(writer, receiver);
+		const { entry } = await writer.add("quiet-log-stale-confirmation", {
+			target: "none",
+		});
+		const writerLog = writer.log as any;
+		const receiverLog = receiver.log as any;
+		const receiverKey = receiver.node.identity.publicKey;
+		const receiverHash = receiverKey.hashcode();
+		const peerSession = writerLog._peerSessions.current(receiverHash);
+		const capabilitySession =
+			writerLog._peerSyncCapabilitySessions.get(receiverHash);
+		const initialState = writerLog._v2Send._sendStates.get(receiverHash);
+		expect(peerSession).to.exist;
+		expect(capabilitySession).to.be.a("bigint");
+		expect(initialState).to.exist;
+		expect(initialState.peerSession).to.equal(peerSession);
+		expect(
+			writerLog._v2Send.hasCurrentStateForPeer({
+				peerHash: receiverHash,
+				peerSession,
+				receiverTransportSession: capabilitySession,
+			}),
+		).to.equal(true);
+		writerLog.waitForReplicatorRequestIntervalMs = 50;
+
+		// Keep the exact current sender state but remove its observed application
+		// frontier. Its normal confirmation worker remains live; only responses for
+		// this old binding are withheld so the watchdog must perform the wire rearm.
+		initialState.appliedRevision = undefined;
+		const originalAcceptApplied = writerLog._v2Send.acceptApplied.bind(
+			writerLog._v2Send,
+		);
+		let withheldOldApplied = 0;
+		const acceptApplied = sinon
+			.stub(writerLog._v2Send, "acceptApplied")
+			.callsFake((message: any, properties: any) => {
+				if (writerLog._v2Send._sendStates.get(receiverHash) === initialState) {
+					withheldOldApplied++;
+					return false;
+				}
+				return originalAcceptApplied(message, properties);
+			});
+		const writerSend = sinon.spy(writerLog.rpc, "send");
+		const receiverSend = sinon.spy(receiverLog.rpc, "send");
+		const advanceRecovery = sinon.spy(
+			receiverLog._v2Receive,
+			"advanceRecovery",
+		);
+		const acceptRequest = sinon.spy(writerLog._v2Send, "acceptRequest");
+		try {
+			expect(
+				await writer.log.getPersistedReceiptPeerReadiness(receiverKey, {
+					entries: [entry],
+					replicas: 2,
+				}),
+			).to.deep.include({
+				status: "pending",
+				reason: "replication-confirmation-pending",
+			});
+
+			const ready = await writer.log.waitForPersistedReceiptPeerReadiness(
+				receiverKey,
+				{ entries: [entry], replicas: 2, timeout: 15_000 },
+			);
+			const replacementState = writerLog._v2Send._sendStates.get(receiverHash);
+			expect(ready.status).to.equal("ready");
+			expect(withheldOldApplied).to.be.greaterThan(0);
+			expect(advanceRecovery.called).to.equal(true);
+			expect(acceptRequest.called).to.equal(true);
+			expect(replacementState).to.exist.and.not.equal(initialState);
+			expect(initialState.controller.signal.aborted).to.equal(true);
+			expect(
+				writerSend.getCalls().some((call) => {
+					const message = call.args[0];
+					return (
+						message instanceof SyncCapabilitiesMessage &&
+						(message.capabilities &
+							SYNC_CAPABILITY_REPLICATION_INFO_V2_REARM) !==
+							0
+					);
+				}),
+			).to.equal(true);
+			expect(
+				writerSend
+					.getCalls()
+					.some((call) => call.args[0] instanceof FullReplicationInfoV2Message),
+			).to.equal(true);
+			expect(
+				writerSend
+					.getCalls()
+					.some(
+						(call) =>
+							call.args[0] instanceof RequestReplicationInfoV2AppliedMessage,
+					),
+			).to.equal(true);
+			expect(
+				receiverSend
+					.getCalls()
+					.some(
+						(call) => call.args[0] instanceof ReplicationInfoV2AppliedMessage,
+					),
+			).to.equal(true);
+
+			await writer.log.deliverPersistedEntries([entry], {
+				target: "replicators",
+				delivery: {
+					reliability: "persisted",
+					minAcks: 1,
+					timeout: 15_000,
+				},
+			});
+			expect(await receiver.log.log.has(entry.hash)).to.equal(true);
+		} finally {
+			acceptRequest.restore();
+			advanceRecovery.restore();
+			receiverSend.restore();
+			writerSend.restore();
+			acceptApplied.restore();
 		}
 	});
 
@@ -547,9 +928,7 @@ describe("append delivery options — persisted receipts", function () {
 		const requestSubscribers = sinon
 			.stub(log.node.services.pubsub, "requestSubscribers")
 			.callsFake(async () => {
-				await log._onSubscription(
-					subscribeEvent(replacementTransportSession),
-				);
+				await log._onSubscription(subscribeEvent(replacementTransportSession));
 				replacementSession = log._peerSessions.current(remoteHash);
 				log._peerSyncCapabilities.set(
 					remoteHash,
@@ -820,6 +1199,49 @@ describe("append delivery options — persisted receipts", function () {
 			},
 		});
 		expect(await receiver.log.log.has(entry.hash)).to.equal(true);
+	});
+
+	it("ACKs steady capability grants but sends transient rearm hints silently", async () => {
+		const { writer, receiver } = await openPair(true);
+		await waitForPersistedCapability(writer, receiver);
+		const log = writer.log as any;
+		const receiverKey = receiver.node.identity.publicKey;
+		const receiverHash = receiverKey.hashcode();
+		const peerSession = log._peerSessions.current(receiverHash);
+		const receiveEpoch = log._peerSessions.receiveEpoch(receiverHash);
+		expect(peerSession).to.exist;
+
+		const send = sinon.stub(log.rpc, "send").resolves();
+		const signal = new AbortController().signal;
+		try {
+			await log.advertiseReplicationInfoV2ReceiveCapability({
+				target: receiverKey,
+				peerSession,
+				receiveEpoch,
+				signal,
+			});
+			await log.advertiseReplicationInfoV2ReceiveCapability({
+				target: receiverKey,
+				peerSession,
+				receiveEpoch,
+				signal,
+				requestRemoteFullRearm: true,
+			});
+
+			expect(send.callCount).to.equal(2);
+			expect(send.firstCall.args[1].mode).to.be.instanceOf(AcknowledgeDelivery);
+			expect(send.secondCall.args[1].mode).to.be.instanceOf(SilentDelivery);
+			expect(
+				(send.firstCall.args[0] as SyncCapabilitiesMessage).capabilities &
+					SYNC_CAPABILITY_REPLICATION_INFO_V2_REARM,
+			).to.equal(0);
+			expect(
+				(send.secondCall.args[0] as SyncCapabilitiesMessage).capabilities &
+					SYNC_CAPABILITY_REPLICATION_INFO_V2_REARM,
+			).to.equal(SYNC_CAPABILITY_REPLICATION_INFO_V2_REARM);
+		} finally {
+			send.restore();
+		}
 	});
 
 	it("rebuilds missing outbound confirmation state from an active quiet peer", async () => {

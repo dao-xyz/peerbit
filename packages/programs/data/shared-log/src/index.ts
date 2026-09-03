@@ -4087,10 +4087,15 @@ export class SharedLog<
 						: 0),
 			}),
 			{
-				mode: new AcknowledgeDelivery({
-					redundancy: 1,
-					to: [properties.target],
-				}),
+				// The transient rearm is only a bounded recovery hint. The ensuing
+				// authenticated Full/Applied exchange is the readiness proof, so do not
+				// let an ACK-delivery promise park the recovery scheduler itself.
+				mode: properties.requestRemoteFullRearm
+					? new SilentDelivery({ redundancy: 1, to: [properties.target] })
+					: new AcknowledgeDelivery({
+							redundancy: 1,
+							to: [properties.target],
+						}),
 				priority: CONVERGENCE_MESSAGE_PRIORITY,
 				signal: properties.signal,
 			},
@@ -24381,6 +24386,11 @@ export class SharedLog<
 	private nudgePersistedReceiptPeerReadiness(
 		publicKey: PublicSignKey,
 		signal: AbortSignal,
+		rearmCurrentUnconfirmed?: {
+			peerSession: PeerSession;
+			receiveEpoch: object | null;
+			capabilitySession: bigint;
+		},
 	): void {
 		if (this.closed || signal.aborted) return;
 		const peerHash = publicKey.hashcode();
@@ -24416,11 +24426,20 @@ export class SharedLog<
 		const receiptTarget = this.persistedReceiptPeerSession(peerHash);
 		if (
 			receiptTarget &&
-			!this._v2Send.hasCurrentStateForPeer({
+			(!this._v2Send.hasCurrentStateForPeer({
 				peerHash,
 				peerSession: receiptTarget.peerSession,
 				receiverTransportSession: receiptTarget.capabilitySession,
-			})
+			}) ||
+				(rearmCurrentUnconfirmed?.peerSession === receiptTarget.peerSession &&
+					rearmCurrentUnconfirmed.receiveEpoch === receiptTarget.receiveEpoch &&
+					rearmCurrentUnconfirmed.capabilitySession ===
+						receiptTarget.capabilitySession &&
+					!this._v2Send.isLatestConfirmedForPeer({
+						peerHash,
+						peerSession: receiptTarget.peerSession,
+						receiverTransportSession: receiptTarget.capabilitySession,
+					})))
 		) {
 			this._v2Receive.reAdvertiseLocalCapabilityForRemoteFull({
 				peerHash,
@@ -24563,7 +24582,9 @@ export class SharedLog<
 	 * Wait for a public key's current (or replacement) connection generation to
 	 * become persisted-receipt ready. Transition listeners are installed before
 	 * the first asynchronous inspection, and a bounded recovery tick repairs
-	 * missed subscriber/capability wakes without retaining stale PeerSessions.
+	 * missed subscriber/capability wakes without retaining stale PeerSessions. A
+	 * current sender gets one normal confirmation interval before an exact-
+	 * generation watchdog requests a bounded Full rearm.
 	 * This waiter is advisory only; the following persisted delivery remains the
 	 * operation that proves the requested remote durability quorum.
 	 */
@@ -24621,6 +24642,14 @@ export class SharedLog<
 		let rerun = false;
 		let recoveryTimer: ReturnType<typeof setTimeout> | undefined;
 		let confirmationController: AbortController | undefined;
+		let confirmationRecoveryTarget:
+			| {
+					peerSession: PeerSession;
+					receiveEpoch: object | null;
+					capabilitySession: bigint;
+					notBefore: number;
+			  }
+			| undefined;
 		let lastSnapshot: PersistedReceiptPeerReadiness | undefined;
 		const createTimeoutError = () => {
 			const suffix = lastSnapshot
@@ -24651,6 +24680,7 @@ export class SharedLog<
 				new AbortError("Persisted-receipt readiness generation changed"),
 			);
 			confirmationController = undefined;
+			confirmationRecoveryTarget = undefined;
 			operationController.abort(
 				new AbortError("Persisted-receipt readiness wait settled"),
 			);
@@ -24706,7 +24736,14 @@ export class SharedLog<
 			recoveryTimer = setTimeout(() => {
 				recoveryTimer = undefined;
 				if (!continueWait()) return;
-				this.nudgePersistedReceiptPeerReadiness(key, operationSignal);
+				const recoveryTarget = confirmationRecoveryTarget;
+				this.nudgePersistedReceiptPeerReadiness(
+					key,
+					operationSignal,
+					recoveryTarget && Date.now() >= recoveryTarget.notBefore
+						? recoveryTarget
+						: undefined,
+				);
 				if (checkInFlight) {
 					// Confirmation can legitimately span several recovery intervals.
 					// Keep repairing the exact current generation without aborting its
@@ -24718,6 +24755,34 @@ export class SharedLog<
 				scheduleCheck();
 			}, recoveryDelayMs);
 			recoveryTimer.unref?.();
+		};
+		const prepareConfirmationRecovery = () => {
+			const target = this.persistedReceiptPeerSession(peerHash);
+			if (!target) {
+				confirmationRecoveryTarget = undefined;
+				return undefined;
+			}
+			const retained = confirmationRecoveryTarget;
+			if (
+				retained?.peerSession !== target.peerSession ||
+				retained.receiveEpoch !== target.receiveEpoch ||
+				retained.capabilitySession !== target.capabilitySession
+			) {
+				confirmationRecoveryTarget = {
+					peerSession: target.peerSession,
+					receiveEpoch: target.receiveEpoch,
+					capabilitySession: target.capabilitySession,
+					notBefore: Date.now() + recoveryDelayMs,
+				};
+			}
+			const recoveryTarget = confirmationRecoveryTarget!;
+			this.nudgePersistedReceiptPeerReadiness(
+				key,
+				operationSignal,
+				Date.now() >= recoveryTarget.notBefore ? recoveryTarget : undefined,
+			);
+			armRecoveryTick();
+			return target;
 		};
 		const runCheck = async () => {
 			checkScheduled = false;
@@ -24735,8 +24800,9 @@ export class SharedLog<
 				);
 				lastSnapshot = snapshot;
 				if (!continueWait()) return;
-				if (rerun) return;
 				if (snapshot.status === "ready") {
+					confirmationRecoveryTarget = undefined;
+					if (rerun) return;
 					// A wake observed while the asynchronous inspection was running may
 					// already have invalidated this snapshot. Drain that coalesced wake
 					// before publishing readiness.
@@ -24747,15 +24813,17 @@ export class SharedLog<
 					snapshot.status === "pending" &&
 					snapshot.reason === "replication-confirmation-pending"
 				) {
-					const target = this.persistedReceiptPeerSession(peerHash);
+					// Retain one watchdog deadline for the exact generation across
+					// coalesced inspection wakes. A sub-interval event stream must drive,
+					// rather than indefinitely postpone, the mature recovery nudge.
+					const target = prepareConfirmationRecovery();
+					if (rerun) return;
 					if (target) {
-						// A confirmation waiter cannot create an outbound V2 stream when
-						// that exact session state is missing. Nudge first, then keep the
-						// recovery tick alive while the single confirmation wait remains.
-						this.nudgePersistedReceiptPeerReadiness(key, operationSignal);
-						armRecoveryTick();
 						const currentConfirmationController = new AbortController();
 						confirmationController = currentConfirmationController;
+						const currentConfirmationRecoveryTarget =
+							confirmationRecoveryTarget;
+						let confirmationSucceeded = false;
 						try {
 							await this._v2Send.confirmLatestForPeer(
 								{
@@ -24771,6 +24839,7 @@ export class SharedLog<
 									]),
 								},
 							);
+							confirmationSucceeded = true;
 						} catch (error) {
 							if (!continueWait()) return;
 							if (!(error instanceof AbortError)) {
@@ -24781,6 +24850,12 @@ export class SharedLog<
 							if (confirmationController === currentConfirmationController) {
 								confirmationController = undefined;
 							}
+							if (
+								confirmationSucceeded &&
+								confirmationRecoveryTarget === currentConfirmationRecoveryTarget
+							) {
+								confirmationRecoveryTarget = undefined;
+							}
 						}
 						if (!continueWait()) return;
 						snapshot = await this.inspectPersistedReceiptPeerReadiness(
@@ -24790,13 +24865,26 @@ export class SharedLog<
 						);
 						lastSnapshot = snapshot;
 						if (!continueWait()) return;
-						if (rerun) return;
 						if (snapshot.status === "ready") {
+							confirmationRecoveryTarget = undefined;
+							if (rerun) return;
 							resolve(snapshot);
 							return;
 						}
+						if (
+							snapshot.status === "pending" &&
+							snapshot.reason === "replication-confirmation-pending"
+						) {
+							prepareConfirmationRecovery();
+						} else {
+							confirmationRecoveryTarget = undefined;
+						}
+						if (rerun) return;
 					}
+				} else {
+					confirmationRecoveryTarget = undefined;
 				}
+				if (rerun) return;
 				if (!continueWait()) return;
 				this.nudgePersistedReceiptPeerReadiness(key, operationSignal);
 			} catch (error) {
