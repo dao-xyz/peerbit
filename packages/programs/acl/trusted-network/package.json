@@ -24,6 +24,10 @@
 	"files": [
 		"src",
 		"dist",
+		"!src/v2-resource-fence-anchor.ts",
+		"!src/v2-resource-fence-engine.ts",
+		"!dist/src/v2-resource-fence-anchor.*",
+		"!dist/src/v2-resource-fence-engine.*",
 		"!dist/e2e",
 		"!dist/test",
 		"!**/*.tsbuildinfo"
