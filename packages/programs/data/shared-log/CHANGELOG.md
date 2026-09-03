@@ -1,5 +1,11 @@
 # Changelog
 
+## 16.0.25
+
+### Patch Changes
+
+- [#1408](https://github.com/dao-xyz/peerbit/pull/1408) [`e2b7339`](https://github.com/dao-xyz/peerbit/commit/e2b73391eae1634940dcbb37aa79246e20501ec7) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Keep persisted-receipt readiness recovery active while replication confirmation is pending, and rearm a missing current V2 sender stream through an authenticated, session-bound Full request.
+
 ## 16.0.24
 
 ### Patch Changes
