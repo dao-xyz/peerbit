@@ -1,5 +1,11 @@
 # Changelog
 
+## 6.0.125
+
+### Patch Changes
+
+- [#1410](https://github.com/dao-xyz/peerbit/pull/1410) [`b6b48ad`](https://github.com/dao-xyz/peerbit/commit/b6b48ad7fb8e839e449fb6b48595bd374aa71d21) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Bound the non-exported TrustedNetwork v2 accepted-policy-prefix lease by parent steps, queue-inclusive deadlines, and caller cancellation. Kept the new resource-fence reducer and crash-safe anchor out of the package root and npm tarball pending an activatable protected-resource API.
+
 ## 6.0.124
 
 ### Patch Changes
