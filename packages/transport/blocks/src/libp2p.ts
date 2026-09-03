@@ -6,6 +6,8 @@ import {
 	type BlockStoreSafety,
 	type GetOptions,
 	type Blocks as IBlocks,
+	type ObservedBlockStoreSafety,
+	type ScopedBlockReclamationV1,
 	UNKNOWN_BLOCK_STORE_SAFETY,
 	normalizeBlockStoreSafety,
 } from "@peerbit/blocks-interface";
@@ -24,14 +26,24 @@ import type { Block } from "multiformats/block";
 import { AnyBlockStore } from "./any-blockstore.js";
 import type { EagerBlocksSetting } from "./eager-cache.js";
 import { BlockMessage, BlockRequest, BlockResponse, RemoteBlocks } from "./remote.js";
+import { createBuiltInScopedReclamationBlockStore } from "./scoped-reclamation.js";
 
 export type DirectBlockComponents = DirectStreamComponents;
+
+// This value is deliberately private: DirectBlock derives it from the
+// built-in wrapper's capability instead of accepting an enforcement claim.
+const SCOPED_RECLAMATION_BLOCK_STORE_SAFETY: ObservedBlockStoreSafety =
+	Object.freeze({
+		referenceDomain: "block-service",
+		enforcedReclamation: "scoped-references-v1",
+	});
 
 export class DirectBlock extends DirectStream implements IBlocks {
 	private remoteBlocks: RemoteBlocks;
 	private onDataFn: any;
 	private onPeerConnectedFn: any;
 	readonly localStoreSafety!: BlockStoreSafety;
+	readonly observedLocalStoreSafety!: ObservedBlockStoreSafety;
 
 	constructor(
 		components: DirectBlockComponents,
@@ -64,6 +76,12 @@ export class DirectBlock extends DirectStream implements IBlocks {
 				  };
 			requeryOnReachable?: number;
 			/**
+			 * Opt into a separate, locally reference-enforced managed namespace.
+			 * Only Peerbit's built-in persistent Node store can enable it. Legacy
+			 * `put`/`rm` blocks remain outside that namespace.
+			 */
+			scopedBlockReclamation?: boolean;
+			/**
 			 * Run the block-exchange protocol on the native DirectStream core
 			 * (`@peerbit/network-rust`): codec, provider resolution and caches
 			 * execute in wasm, and natively stored blocks are served without
@@ -79,33 +97,82 @@ export class DirectBlock extends DirectStream implements IBlocks {
 			localStoreSafety?: BlockStoreSafety;
 		},
 	) {
-		if (options?.directory && options.localStore) {
+		const {
+			directory,
+			localStore: suppliedLocalStore,
+			canRelayMessage,
+			localTimeout,
+			messageProcessingConcurrency,
+			eagerBlocks,
+			resolveProviders,
+			watchProviders,
+			onPut,
+			onPutMany,
+			providerCache,
+			requeryOnReachable,
+			scopedBlockReclamation,
+			rustCore,
+			localStoreSafety: suppliedLocalStoreSafety,
+		} = options ?? {};
+		if (
+			scopedBlockReclamation !== undefined &&
+			typeof scopedBlockReclamation !== "boolean"
+		) {
+			throw new TypeError(
+				"DirectBlock scopedBlockReclamation must be a boolean",
+			);
+		}
+		if (directory && suppliedLocalStore) {
 			throw new Error("DirectBlock options cannot include both directory and localStore");
 		}
-		if (options?.localStoreSafety !== undefined && options.localStore == null) {
+		if (suppliedLocalStoreSafety !== undefined && suppliedLocalStore == null) {
 			throw new Error(
 				"DirectBlock localStoreSafety requires an explicitly supplied localStore",
 			);
 		}
-		const localStoreSafety =
-			options?.localStoreSafety === undefined
-				? options?.localStore == null
+		if (scopedBlockReclamation === true && suppliedLocalStore != null) {
+			throw new Error(
+				"DirectBlock scopedBlockReclamation is available only with the built-in local store",
+			);
+		}
+		const declaredLocalStoreSafety =
+			suppliedLocalStoreSafety === undefined
+				? suppliedLocalStore == null
 					? BLOCK_SERVICE_BLOCK_STORE_SAFETY
 					: UNKNOWN_BLOCK_STORE_SAFETY
-				: normalizeBlockStoreSafety(options.localStoreSafety);
+				: normalizeBlockStoreSafety(suppliedLocalStoreSafety);
+		const backingStore = suppliedLocalStore ?? createStore(directory);
+		const localStore =
+			scopedBlockReclamation === true &&
+			suppliedLocalStore == null &&
+			directory != null &&
+			!rustCore
+				? createBuiltInScopedReclamationBlockStore(backingStore)
+				: new AnyBlockStore(backingStore);
+		// Enforcement metadata is derived from the wrapper's live capability;
+		// neither the opt-in flag nor caller-supplied metadata can mint it.
+		const observedLocalStoreSafety = localStore.localReclamation
+			? SCOPED_RECLAMATION_BLOCK_STORE_SAFETY
+			: declaredLocalStoreSafety;
 
 		super(components, ["/peerbit/direct-block/1.0.0"], {
-			messageProcessingConcurrency: options?.messageProcessingConcurrency || 10,
-			canRelayMessage: options?.canRelayMessage ?? true,
+			messageProcessingConcurrency: messageProcessingConcurrency || 10,
+			canRelayMessage: canRelayMessage ?? true,
 			connectionManager: {
 				dialer: false,
 				pruner: false,
 			},
-			rustCore: options?.rustCore,
+			rustCore,
 		});
 		Object.defineProperty(this, "localStoreSafety", {
-			value: localStoreSafety,
+			value: declaredLocalStoreSafety,
 			enumerable: true,
+			writable: false,
+			configurable: false,
+		});
+		Object.defineProperty(this, "observedLocalStoreSafety", {
+			value: observedLocalStoreSafety,
+			enumerable: false,
 			writable: false,
 			configurable: false,
 		});
@@ -160,22 +227,20 @@ export class DirectBlock extends DirectStream implements IBlocks {
 			return out;
 		};
 		this.remoteBlocks = new RemoteBlocks({
-			local: new AnyBlockStore(
-				options?.localStore ?? createStore(options?.directory),
-			),
+			local: localStore,
 			publish: (message, options) =>
 				this.publish(this.encodeBlockMessage(message), options),
-			localTimeout: options?.localTimeout || 1000,
-			messageProcessingConcurrency: options?.messageProcessingConcurrency || 10,
+			localTimeout: localTimeout || 1000,
+			messageProcessingConcurrency: messageProcessingConcurrency || 10,
 			waitFor: this.waitFor.bind(this) as WaitForPeersFn,
 			publicKey: this.publicKey,
-			eagerBlocks: options?.eagerBlocks,
-			resolveProviders: options?.resolveProviders ?? defaultResolveProviders,
-			watchProviders: options?.watchProviders,
-			onPut: options?.onPut,
-			onPutMany: options?.onPutMany,
-			providerCache: options?.providerCache,
-			requeryOnReachable: options?.requeryOnReachable,
+			eagerBlocks,
+			resolveProviders: resolveProviders ?? defaultResolveProviders,
+			watchProviders,
+			onPut,
+			onPutMany,
+			providerCache,
+			requeryOnReachable,
 			rust: blockExchange
 				? {
 						exchange: blockExchange,
@@ -330,5 +395,9 @@ export class DirectBlock extends DirectStream implements IBlocks {
 
 	persisted(): boolean | Promise<boolean> {
 		return this.remoteBlocks.persisted();
+	}
+
+	get localReclamation(): ScopedBlockReclamationV1 | undefined {
+		return this.remoteBlocks.localReclamation;
 	}
 }

@@ -3,6 +3,7 @@ import { TypedEventEmitter } from "@libp2p/interface";
 import {
 	type GetOptions,
 	type Blocks as IBlocks,
+	type ScopedBlockReclamationV1,
 	cidifyString,
 	codecCodes,
 	codecMap,
@@ -1665,5 +1666,9 @@ export class RemoteBlocks implements IBlocks {
 
 	get crashSafeDurability() {
 		return this.localStore?.crashSafeDurability;
+	}
+
+	get localReclamation(): ScopedBlockReclamationV1 | undefined {
+		return this.localStore?.localReclamation;
 	}
 }

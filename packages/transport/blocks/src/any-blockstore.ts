@@ -3,6 +3,7 @@ import { type AnyStore } from "@peerbit/any-store-interface";
 import {
 	type Blocks,
 	type GetOptions,
+	type ScopedBlockReclamationV1,
 	calculateRawCid,
 	cidifyString,
 	codecCodes,
@@ -39,6 +40,7 @@ type BlockGetOptions = GetOptions & {
 };
 
 export class AnyBlockStore implements Blocks {
+	declare readonly localReclamation?: ScopedBlockReclamationV1;
 	private _store: AnyStore;
 	private _opening: Promise<any>;
 	private _onClose: (() => any) | undefined;
@@ -58,7 +60,7 @@ export class AnyBlockStore implements Blocks {
 		);
 	}
 
-	private async decodeStoredBytes(
+	protected async decodeStoredBytes(
 		cid: string,
 		bytes: Uint8Array,
 		options?: BlockGetOptions,
