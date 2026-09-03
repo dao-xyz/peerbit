@@ -275,6 +275,12 @@ jobs:
         node-version: [22.x, 24.x]
     steps:
       - uses: actions/checkout@v4
+      - name: Provision Node 18 compatibility runtime
+        uses: actions/setup-node@v4
+        with:
+          node-version: 18.20.8
+      - name: Record Node 18 compatibility runtime
+        run: echo "PEERBIT_NODE18_EXECUTABLE=$(command -v node)" >> "$GITHUB_ENV"
       - uses: pnpm/action-setup@v4
         with:
           run_install: false

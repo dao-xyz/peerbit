@@ -15,7 +15,13 @@ import {
 } from "./published-security-coverage.mjs";
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const npxCommand = process.platform === "win32" ? "npx.cmd" : "npx";
+const node18Executable = process.versions.node.startsWith("18.")
+	? process.execPath
+	: process.env.PEERBIT_NODE18_EXECUTABLE?.trim();
+assert(
+	node18Executable,
+	"PEERBIT_NODE18_EXECUTABLE must name a real Node 18 executable; CI and release workflows provision Node 18.20.8 explicitly",
+);
 const viteNodeEngine = "^20.19.0 || >=22.12.0";
 
 const run = (command, args, options = {}) => {
@@ -48,6 +54,15 @@ const run = (command, args, options = {}) => {
 	}
 	return result;
 };
+
+assert.match(
+	run(node18Executable, ["--version"], {
+		status: 0,
+		timeout: 30_000,
+	}).stdout.trim(),
+	/^v18\./,
+	"PEERBIT_NODE18_EXECUTABLE must run Node 18",
+);
 
 const publishablePackages = await discoverPublishableWorkspacePackages({
 	repositoryRoot,
@@ -421,8 +436,8 @@ try {
 		timeout: 120_000,
 	});
 	const node18 = run(
-		npxCommand,
-		["--yes", "node@18", join(consumerDirectory, "crypto-node18-smoke.mjs")],
+		node18Executable,
+		[join(consumerDirectory, "crypto-node18-smoke.mjs")],
 		{
 			cwd: consumerDirectory,
 			status: 0,

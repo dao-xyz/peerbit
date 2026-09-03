@@ -163,6 +163,11 @@ for (const [name, job] of [
 		/git config --local credential\.helper '!gh auth git-credential'/,
 		`${name} publication must resolve git credentials from the step-scoped bot token`,
 	);
+	assert.match(
+		job,
+		/name: Provision Node 18 compatibility runtime[\s\S]*?node-version: 18\.20\.8[\s\S]*?name: Record Node 18 compatibility runtime[\s\S]*?PEERBIT_NODE18_EXECUTABLE=\$\(command -v node\)" >> "\$GITHUB_ENV"[\s\S]*?name: Setup Node/,
+		`${name} publication must provision and record an exact Node 18 runtime before restoring the supported release runtime`,
+	);
 }
 const frozenInstalls = releaseWorkflow.match(
 	/pnpm install --frozen-lockfile(?:\s|$)/g,
@@ -483,6 +488,11 @@ assert.match(securityJob, /needs: build_workspace/);
 // it has to be a conscious edit here too.
 assert.match(securityJob, /node-version: \[22\.x, 24\.x\]/);
 assert.match(securityJob, /node-version: \$\{\{ matrix\.node-version \}\}/);
+assert.match(
+	securityJob,
+	/name: Provision Node 18 compatibility runtime[\s\S]*?node-version: 18\.20\.8[\s\S]*?name: Record Node 18 compatibility runtime[\s\S]*?PEERBIT_NODE18_EXECUTABLE=\$\(command -v node\)" >> "\$GITHUB_ENV"[\s\S]*?node-version: \$\{\{ matrix\.node-version \}\}/,
+	"CI must provision and record an exact Node 18 runtime before restoring each supported matrix runtime",
+);
 assert.match(securityJob, /pnpm install --frozen-lockfile/);
 const restoreIndex = securityJob.indexOf("Restore workspace build outputs");
 const gateIndex = securityJob.indexOf("pnpm run release:security-gate");
@@ -758,7 +768,18 @@ const publishedCryptoPackageSmoke = await readRepositoryFile(
 	"scripts/test-published-crypto-package-smoke.mjs",
 );
 assert.match(publishedCryptoPackageSmoke, /--install-strategy=nested/);
-assert.match(publishedCryptoPackageSmoke, /node@18/);
+assert.match(publishedCryptoPackageSmoke, /PEERBIT_NODE18_EXECUTABLE/);
+assert.match(publishedSecuritySmoke, /PEERBIT_NODE18_EXECUTABLE/);
+assert.doesNotMatch(
+	publishedCryptoPackageSmoke,
+	/\bnpx(?:Command)?\b|node@18/,
+	"the isolated crypto smoke must never bootstrap Node 18 from npm",
+);
+assert.doesNotMatch(
+	publishedSecuritySmoke,
+	/\bnpx(?:Command)?\b|node@18/,
+	"the full published-package smoke must never bootstrap Node 18 from npm",
+);
 assert.match(publishedCryptoPackageSmoke, /"multiformats", "uint8arrays"/);
 const publicPackagePublisher = await readRepositoryFile(
 	"scripts/publish-public-packages.mjs",
