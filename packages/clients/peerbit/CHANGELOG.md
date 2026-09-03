@@ -1,5 +1,20 @@
 # Changelog
 
+## 5.4.0
+
+### Minor Changes
+
+- [#1416](https://github.com/dao-xyz/peerbit/pull/1416) [`3ce2173`](https://github.com/dao-xyz/peerbit/commit/3ce2173486bb687aab22be6591aff4b33e21d49e) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Add an opt-in, crash-safe scoped-reference namespace for physical block
+  reclamation on Peerbit's built-in persistent Node store. Managed blocks remain
+  isolated from legacy raw blocks, unsupported stores fail closed, and public
+  health and limit metadata let callers verify the capability before use.
+
+### Patch Changes
+
+- Updated dependencies [[`3ce2173`](https://github.com/dao-xyz/peerbit/commit/3ce2173486bb687aab22be6591aff4b33e21d49e)]:
+  - @peerbit/blocks@4.3.0
+  - @peerbit/program@6.0.59
+
 ## 5.3.38
 
 ### Patch Changes

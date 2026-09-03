@@ -1,5 +1,14 @@
 # Changelog
 
+## 8.0.29
+
+### Patch Changes
+
+- Updated dependencies [[`3ce2173`](https://github.com/dao-xyz/peerbit/commit/3ce2173486bb687aab22be6591aff4b33e21d49e)]:
+  - @peerbit/blocks@4.3.0
+  - peerbit@5.4.0
+  - @peerbit/program@6.0.59
+
 ## 8.0.28
 
 ### Patch Changes
