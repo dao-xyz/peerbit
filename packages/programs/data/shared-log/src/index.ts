@@ -169,6 +169,7 @@ import {
 	SYNC_CAPABILITY_REPLICATION_INFO_V2_APPLY,
 	SYNC_CAPABILITY_REPLICATION_INFO_V2_CONFIRM,
 	SYNC_CAPABILITY_REPLICATION_INFO_V2_DECODE,
+	SYNC_CAPABILITY_REPLICATION_INFO_V2_REARM,
 	SYNC_CAPABILITY_REPLICATION_INFO_V2_SEND,
 	StashBackedRawExchangeHeadsMessage,
 	SyncCapabilitiesMessage,
@@ -4071,6 +4072,7 @@ export class SharedLog<
 		peerSession: PeerSession;
 		receiveEpoch: object | null;
 		signal: AbortSignal;
+		requestRemoteFullRearm?: boolean;
 	}): Promise<
 		{ receiverTransportSession: bigint; requestNotBeforeMs: number } | undefined
 	> {
@@ -4078,7 +4080,11 @@ export class SharedLog<
 		const receiverTransportSession = this.ownTransportSession();
 		await this.rpc.send(
 			new SyncCapabilitiesMessage({
-				capabilities: this.replicationInfoV2ReceiveCapabilities(),
+				capabilities:
+					this.replicationInfoV2ReceiveCapabilities() |
+					(properties.requestRemoteFullRearm
+						? SYNC_CAPABILITY_REPLICATION_INFO_V2_REARM
+						: 0),
 			}),
 			{
 				mode: new AcknowledgeDelivery({
@@ -4145,6 +4151,7 @@ export class SharedLog<
 					peerSession: properties.peerSession as PeerSession,
 					receiveEpoch: properties.receiveEpoch,
 					signal: properties.signal,
+					requestRemoteFullRearm: properties.requestRemoteFullRearm,
 				}),
 			onRequestError: (error) => {
 				if (
@@ -5851,7 +5858,13 @@ export class SharedLog<
 
 	private persistedReceiptPeerSession(
 		peerHash: string,
-	): { capabilitySession: bigint; peerSession: PeerSession } | undefined {
+	):
+		| {
+				capabilitySession: bigint;
+				peerSession: PeerSession;
+				receiveEpoch: object | null;
+		  }
+		| undefined {
 		// This is a hot receipt/transfer-loop predicate. Keep it allocation-light,
 		// while mirroring every exact-session gate in
 		// persistedReceiptReadinessCandidate (which additionally creates public
@@ -5884,7 +5897,7 @@ export class SharedLog<
 		) {
 			return undefined;
 		}
-		return { capabilitySession, peerSession };
+		return { capabilitySession, peerSession, receiveEpoch };
 	}
 
 	private async waitPersistedReceiptRetry(
@@ -23168,6 +23181,17 @@ export class SharedLog<
 					if (!context.from.equals(this.node.identity.publicKey)) {
 						const capabilityTransportSession = context.message?.header?.session;
 						const capabilityTimestamp = context.message?.header?.timestamp;
+						const previousCapabilitySession =
+							this._peerSyncCapabilitySessions.get(receiveFromHash);
+						const previousCapabilityTimestamp =
+							this._peerSyncCapabilityTimestamps.get(receiveFromHash);
+						const requestsRemoteFullRearm =
+							(msg.capabilities & SYNC_CAPABILITY_REPLICATION_INFO_V2_REARM) !==
+							0;
+						// The rearm bit is a one-shot authenticated command, not a sticky
+						// negotiated capability. Store and promote only the steady bits.
+						const steadyCapabilities =
+							msg.capabilities & ~SYNC_CAPABILITY_REPLICATION_INFO_V2_REARM;
 						// No await separates this from the capture above, so the captured
 						// window state is exact: the legacy re-read of the opening map here
 						// could never observe a different value.
@@ -23180,7 +23204,7 @@ export class SharedLog<
 							// cleanup cannot erase it before the opening transition commits.
 							this.observePeerSyncCapabilities({
 								peerHash: receiveFromHash,
-								capabilities: msg.capabilities,
+								capabilities: steadyCapabilities,
 								transportSession: capabilityTransportSession,
 								timestamp: capabilityTimestamp,
 								openingSession: receiveSession!,
@@ -23188,7 +23212,7 @@ export class SharedLog<
 						} else {
 							const observed = this.observePeerSyncCapabilities({
 								peerHash: receiveFromHash,
-								capabilities: msg.capabilities,
+								capabilities: steadyCapabilities,
 								transportSession: capabilityTransportSession,
 								timestamp: capabilityTimestamp,
 							});
@@ -23197,6 +23221,33 @@ export class SharedLog<
 									context.from,
 									receiveSession,
 								);
+								const freshExactRearm =
+									requestsRemoteFullRearm &&
+									capabilityTransportSession !== undefined &&
+									capabilityTimestamp !== undefined &&
+									previousCapabilitySession === capabilityTransportSession &&
+									previousCapabilityTimestamp !== undefined &&
+									capabilityTimestamp > previousCapabilityTimestamp;
+								if (
+									freshExactRearm &&
+									this._v2Receive.isCurrentActive({
+										peerHash: receiveFromHash,
+										peerSession: receiveSession,
+										receiveEpoch:
+											this._peerSessions.receiveEpoch(receiveFromHash),
+										senderTransportSession: capabilityTransportSession,
+									})
+								) {
+									// Rotate the receiver grant/challenge before requesting Full. A
+									// sender rebuilt from no state starts at sequence one, which an
+									// active receiver's old sequence fence must otherwise reject.
+									this._v2Receive.advanceRecovery({
+										peerHash: receiveFromHash,
+										peerSession: receiveSession,
+										receiveEpoch:
+											this._peerSessions.receiveEpoch(receiveFromHash),
+									});
+								}
 							} else if (observed && receiveSession === null) {
 								// A capability can arrive before the sender's topic Subscribe after
 								// reconnect. Ask that authenticated peer for its authoritative
@@ -24327,8 +24378,11 @@ export class SharedLog<
 		throwIfInactive();
 	}
 
-	private nudgePersistedReceiptPeerReadiness(publicKey: PublicSignKey): void {
-		if (this.closed) return;
+	private nudgePersistedReceiptPeerReadiness(
+		publicKey: PublicSignKey,
+		signal: AbortSignal,
+	): void {
+		if (this.closed || signal.aborted) return;
 		const peerHash = publicKey.hashcode();
 		const peerSession = this._peerSessions.current(peerHash);
 		if (
@@ -24359,6 +24413,22 @@ export class SharedLog<
 			peerSession,
 			receiveEpoch,
 		});
+		const receiptTarget = this.persistedReceiptPeerSession(peerHash);
+		if (
+			receiptTarget &&
+			!this._v2Send.hasCurrentStateForPeer({
+				peerHash,
+				peerSession: receiptTarget.peerSession,
+				receiverTransportSession: receiptTarget.capabilitySession,
+			})
+		) {
+			this._v2Receive.reAdvertiseLocalCapabilityForRemoteFull({
+				peerHash,
+				peerSession: receiptTarget.peerSession,
+				receiveEpoch: receiptTarget.receiveEpoch,
+				signal,
+			});
+		}
 		this.scheduleReplicationInfoV2Recovery(publicKey);
 	}
 
@@ -24627,18 +24697,26 @@ export class SharedLog<
 				throw new AbortError("Persisted-receipt readiness wait settled");
 			}
 		};
+		const recoveryDelayMs = Math.max(
+			50,
+			Math.min(1_000, this.waitForReplicatorRequestIntervalMs),
+		);
 		const armRecoveryTick = () => {
 			if (settled || recoveryTimer) return;
-			const delayMs = Math.max(
-				50,
-				Math.min(1_000, this.waitForReplicatorRequestIntervalMs),
-			);
 			recoveryTimer = setTimeout(() => {
 				recoveryTimer = undefined;
 				if (!continueWait()) return;
-				this.nudgePersistedReceiptPeerReadiness(key);
+				this.nudgePersistedReceiptPeerReadiness(key, operationSignal);
+				if (checkInFlight) {
+					// Confirmation can legitimately span several recovery intervals.
+					// Keep repairing the exact current generation without aborting its
+					// one application-confirmation waiter on every tick.
+					rerun = true;
+					armRecoveryTick();
+					return;
+				}
 				scheduleCheck();
-			}, delayMs);
+			}, recoveryDelayMs);
 			recoveryTimer.unref?.();
 		};
 		const runCheck = async () => {
@@ -24671,6 +24749,11 @@ export class SharedLog<
 				) {
 					const target = this.persistedReceiptPeerSession(peerHash);
 					if (target) {
+						// A confirmation waiter cannot create an outbound V2 stream when
+						// that exact session state is missing. Nudge first, then keep the
+						// recovery tick alive while the single confirmation wait remains.
+						this.nudgePersistedReceiptPeerReadiness(key, operationSignal);
+						armRecoveryTick();
 						const currentConfirmationController = new AbortController();
 						confirmationController = currentConfirmationController;
 						try {
@@ -24715,7 +24798,7 @@ export class SharedLog<
 					}
 				}
 				if (!continueWait()) return;
-				this.nudgePersistedReceiptPeerReadiness(key);
+				this.nudgePersistedReceiptPeerReadiness(key, operationSignal);
 			} catch (error) {
 				if (!settled) reject(error);
 			} finally {

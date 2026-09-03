@@ -33,6 +33,8 @@ import {
 	ExchangeHeadsMessage,
 	SYNC_CAPABILITY_PERSISTED_ENTRY_RECEIPTS,
 	SYNC_CAPABILITY_REPLICATION_INFO_V2_CONFIRM,
+	SYNC_CAPABILITY_REPLICATION_INFO_V2_REARM,
+	SyncCapabilitiesMessage,
 } from "../src/exchange-heads.js";
 import {
 	ConfirmEntriesMessage,
@@ -295,12 +297,34 @@ describe("append delivery options — persisted receipts", function () {
 					properties.receiveEpoch === currentReceiveEpoch,
 			);
 		const advanceRecovery = sinon.stub(log._v2Receive, "advanceRecovery");
+		let replacementRearmed = false;
+		const hasCurrentSendState = sinon
+			.stub(log._v2Send, "hasCurrentStateForPeer")
+			.callsFake(
+				(target: any) =>
+					target.peerSession === oldSession &&
+					target.receiverTransportSession === oldTransportSession,
+			);
+		const rearmRemoteFull = sinon
+			.stub(log._v2Receive, "reAdvertiseLocalCapabilityForRemoteFull")
+			.callsFake((properties: any) => {
+				if (
+					properties.peerSession === newSession &&
+					properties.receiveEpoch === newReceiveEpoch &&
+					!properties.signal.aborted
+				) {
+					replacementRearmed = true;
+					return true;
+				}
+				return false;
+			});
 		const latest = sinon
 			.stub(log._v2Send, "isLatestConfirmedForPeer")
 			.callsFake(
 				(target: any) =>
 					target.peerSession === newSession &&
-					target.receiverTransportSession === newTransportSession,
+					target.receiverTransportSession === newTransportSession &&
+					replacementRearmed,
 			);
 		const oldConfirmationEntered = pDefer<AbortSignal>();
 		const confirm = sinon
@@ -365,20 +389,119 @@ describe("append delivery options — persisted receipts", function () {
 			expect(replacement.generation).not.to.equal(oldSnapshot.generation);
 			expect(confirm.firstCall.args[0].peerSession).to.equal(oldSession);
 			expect(
+				confirm
+					.getCalls()
+					.some(
+						(call) =>
+							call.args[0].peerSession === newSession &&
+							call.args[0].receiverTransportSession === newTransportSession,
+					),
+			).to.equal(true);
+			expect(
 				latest
 					.getCalls()
 					.some((call) => call.args[0].peerSession === newSession),
+			).to.equal(true);
+			expect(
+				rearmRemoteFull
+					.getCalls()
+					.some(
+						(call) =>
+							call.args[0].peerSession === newSession &&
+							call.args[0].receiveEpoch === newReceiveEpoch,
+					),
 			).to.equal(true);
 			expect(log._persistedReceiptReadinessWaiters.size).to.equal(0);
 		} finally {
 			confirm.restore();
 			latest.restore();
+			rearmRemoteFull.restore();
+			hasCurrentSendState.restore();
 			advanceRecovery.restore();
 			active.restore();
 			advanceEpoch.restore();
 			receiveEpoch.restore();
 			current.restore();
 			log._peerSyncCapabilitySessions.set(receiverHash, oldTransportSession);
+		}
+	});
+
+	it("keeps bounded recovery running behind one pending confirmation", async () => {
+		const { writer, receiver } = await openPair(true);
+		await waitForPersistedCapability(writer, receiver);
+		const log = writer.log as any;
+		const receiverKey = receiver.node.identity.publicKey;
+		log.waitForReplicatorRequestIntervalMs = 50;
+		const latest = sinon
+			.stub(log._v2Send, "isLatestConfirmedForPeer")
+			.returns(false);
+		const hasCurrent = sinon
+			.stub(log._v2Send, "hasCurrentStateForPeer")
+			.returns(false);
+		const rearm = sinon
+			.stub(log._v2Receive, "reAdvertiseLocalCapabilityForRemoteFull")
+			.returns(true);
+		let confirmationSignal: AbortSignal | undefined;
+		const confirmationTimeouts: number[] = [];
+		const confirm = sinon
+			.stub(log._v2Send, "confirmLatestForPeer")
+			.callsFake(async (...args: unknown[]) => {
+				const options = args[1] as {
+					timeout: number;
+					signal: AbortSignal;
+				};
+				confirmationSignal = options.signal;
+				confirmationTimeouts.push(options.timeout);
+				await new Promise<void>((resolve, reject) => {
+					const onAbort = () =>
+						reject(options.signal.reason ?? new AbortError());
+					if (options.signal.aborted) {
+						onAbort();
+						return;
+					}
+					options.signal.addEventListener("abort", onAbort, { once: true });
+				});
+			});
+		const nudge = sinon.spy(log, "nudgePersistedReceiptPeerReadiness");
+		const clock = sinon.useFakeTimers({ now: Date.now() });
+		try {
+			const wait = log.waitForPersistedReceiptPeerReadiness(receiverKey, {
+				timeout: 180,
+			});
+			const rejected = expect(wait).to.be.rejectedWith(
+				TimeoutError,
+				"pending/replication-confirmation-pending",
+			);
+			await clock.tickAsync(0);
+			expect(confirm.calledOnce).to.be.true;
+			const initialNudges = nudge.callCount;
+			const initialRearms = rearm.callCount;
+
+			await clock.tickAsync(110);
+			expect(confirm.calledOnce).to.be.true;
+			expect(nudge.callCount).to.be.at.least(initialNudges + 2);
+			expect(rearm.callCount).to.be.at.least(initialRearms + 2);
+			expect(rearm.getCalls().every((call) => !call.args[0].signal.aborted)).to
+				.be.true;
+			expect(confirmationTimeouts).to.have.length(1);
+			expect(confirmationTimeouts[0]).to.be.within(1, 180);
+
+			await clock.tickAsync(70);
+			await rejected;
+			expect(confirmationSignal?.aborted).to.be.true;
+			expect(log._persistedReceiptReadinessWaiters.size).to.equal(0);
+			const settledNudges = nudge.callCount;
+			const settledRearms = rearm.callCount;
+			await clock.tickAsync(500);
+			expect(nudge.callCount).to.equal(settledNudges);
+			expect(rearm.callCount).to.equal(settledRearms);
+		} finally {
+			clock.restore();
+			nudge.restore();
+			confirm.restore();
+			rearm.restore();
+			hasCurrent.restore();
+			latest.restore();
 		}
 	});
 
@@ -697,6 +820,126 @@ describe("append delivery options — persisted receipts", function () {
 			},
 		});
 		expect(await receiver.log.log.has(entry.hash)).to.equal(true);
+	});
+
+	it("rebuilds missing outbound confirmation state from an active quiet peer", async () => {
+		const { writer, receiver } = await openPair(true);
+		await waitForPersistedCapability(writer, receiver);
+		const { entry } = await writer.add("quiet-log-missing-sender-state", {
+			target: "none",
+		});
+		const writerLog = writer.log as any;
+		const receiverLog = receiver.log as any;
+		const receiverKey = receiver.node.identity.publicKey;
+		const receiverHash = receiverKey.hashcode();
+		const writerHash = writer.node.identity.publicKey.hashcode();
+		const peerSession = writerLog._peerSessions.current(receiverHash);
+		const capabilitySession =
+			writerLog._peerSyncCapabilitySessions.get(receiverHash);
+		const writerReceiveState =
+			writerLog._v2Receive._receiveStates.get(receiverHash);
+		const receiverReceiveState =
+			receiverLog._v2Receive._receiveStates.get(writerHash);
+		expect(peerSession).to.exist;
+		expect(capabilitySession).to.be.a("bigint");
+		expect(writerReceiveState?.phase).to.equal("active");
+		expect(receiverReceiveState?.phase).to.equal("active");
+		const initialReceiveEpoch =
+			writerLog._peerSessions.receiveEpoch(receiverHash);
+		writerLog.advanceReplicationInfoRecoveryEpoch(receiverHash);
+		await waitForResolved(
+			async () => {
+				const receiveState =
+					writerLog._v2Receive._receiveStates.get(receiverHash);
+				expect(receiveState).to.equal(writerReceiveState);
+				expect(receiveState?.phase).to.equal("active");
+			},
+			{ timeout: 15_000 },
+		);
+		expect(writerLog._peerSessions.receiveEpoch(receiverHash)).not.to.equal(
+			initialReceiveEpoch,
+		);
+
+		await writerLog._v2Send.drain();
+		writerLog._v2Send.clearPeer(receiverHash, peerSession);
+		expect(
+			writerLog._v2Send.hasCurrentStateForPeer({
+				peerHash: receiverHash,
+				peerSession,
+				receiverTransportSession: capabilitySession,
+			}),
+		).to.equal(false);
+		expect(
+			await writer.log.getPersistedReceiptPeerReadiness(receiverKey, {
+				entries: [entry],
+				replicas: 2,
+			}),
+		).to.deep.include({
+			status: "pending",
+			reason: "replication-confirmation-pending",
+		});
+
+		const writerSend = sinon.spy(writerLog.rpc, "send");
+		const acceptRequest = sinon.spy(writerLog._v2Send, "acceptRequest");
+		try {
+			const ready = await writer.log.waitForPersistedReceiptPeerReadiness(
+				receiverKey,
+				{ entries: [entry], replicas: 2, timeout: 15_000 },
+			);
+			expect(ready.status).to.equal("ready");
+			expect(
+				writerSend.getCalls().some((call) => {
+					const message = call.args[0];
+					return (
+						message instanceof SyncCapabilitiesMessage &&
+						(message.capabilities &
+							SYNC_CAPABILITY_REPLICATION_INFO_V2_REARM) !==
+							0
+					);
+				}),
+			).to.equal(true);
+			expect(acceptRequest.called).to.equal(true);
+			expect(
+				receiverLog._peerSyncCapabilities.get(writerHash) &
+					SYNC_CAPABILITY_REPLICATION_INFO_V2_REARM,
+			).to.equal(0);
+			expect(
+				writerLog._v2Send.hasCurrentStateForPeer({
+					peerHash: receiverHash,
+					peerSession,
+					receiverTransportSession: capabilitySession,
+				}),
+			).to.equal(true);
+			expect(
+				writerLog._v2Send.isLatestConfirmedForPeer({
+					peerHash: receiverHash,
+					peerSession,
+					receiverTransportSession: capabilitySession,
+				}),
+			).to.equal(true);
+			expect(writerLog._v2Receive._receiveStates.get(receiverHash)).to.equal(
+				writerReceiveState,
+			);
+			expect(receiverLog._v2Receive._receiveStates.get(writerHash)).to.equal(
+				receiverReceiveState,
+			);
+			expect(writerReceiveState.phase).to.equal("active");
+			expect(receiverReceiveState.phase).to.equal("active");
+			expect(writerLog._persistedReceiptReadinessWaiters.size).to.equal(0);
+
+			await writer.log.deliverPersistedEntries([entry], {
+				target: "replicators",
+				delivery: {
+					reliability: "persisted",
+					minAcks: 1,
+					timeout: 15_000,
+				},
+			});
+			expect(await receiver.log.log.has(entry.hash)).to.equal(true);
+		} finally {
+			acceptRequest.restore();
+			writerSend.restore();
+		}
 	});
 
 	it("cleans readiness waiters on cancellation, timeout, and close", async () => {

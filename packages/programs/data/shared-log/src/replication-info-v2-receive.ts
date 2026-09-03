@@ -112,6 +112,11 @@ export type ReplicationInfoV2LocalCapabilityAdvertisement = {
 	firstAttempt?: Promise<void>;
 };
 
+type ReplicationInfoV2RemoteFullRearm = {
+	lastAttemptAt: number;
+	inFlight?: Promise<void>;
+};
+
 export type ReplicationInfoV2LocalCapabilityRefresh = {
 	receiverTransportSession: bigint;
 	requestNotBeforeMs: number;
@@ -183,6 +188,7 @@ export type ReplicationInfoV2ReceiveDeps = {
 		peerSession: object;
 		receiveEpoch: object | null;
 		signal: AbortSignal;
+		requestRemoteFullRearm?: boolean;
 	}) => Promise<ReplicationInfoV2LocalCapabilityRefresh | undefined>;
 	onRequestError?: (error: unknown) => void;
 	onLocalCapabilityError?: (error: unknown) => void;
@@ -217,6 +223,7 @@ export class ReplicationInfoV2ReceiveCoordinator {
 		string,
 		ReplicationInfoV2LocalCapabilityAdvertisement
 	>;
+	_remoteFullRearmBySession!: WeakMap<object, ReplicationInfoV2RemoteFullRearm>;
 	_reservedAdmissionsByPeer!: Map<string, ReplicationInfoV2ReceiveAdmission>;
 
 	private readonly now: () => number;
@@ -243,6 +250,7 @@ export class ReplicationInfoV2ReceiveCoordinator {
 		this._localCapabilityReadyBySession = new WeakMap();
 		this._localCapabilityContextBySession = new WeakMap();
 		this._localCapabilityAdvertisementsByPeer = new Map();
+		this._remoteFullRearmBySession = new WeakMap();
 		this._reservedAdmissionsByPeer = new Map();
 	}
 
@@ -253,6 +261,7 @@ export class ReplicationInfoV2ReceiveCoordinator {
 		this._localCapabilityReadyBySession = new WeakMap();
 		this._localCapabilityContextBySession = new WeakMap();
 		this._localCapabilityAdvertisementsByPeer = new Map();
+		this._remoteFullRearmBySession = new WeakMap();
 		this._reservedAdmissionsByPeer = new Map();
 	}
 
@@ -270,6 +279,7 @@ export class ReplicationInfoV2ReceiveCoordinator {
 		this._cutoverPeerSessions = new WeakSet();
 		this._localCapabilityReadyBySession = new WeakMap();
 		this._localCapabilityContextBySession = new WeakMap();
+		this._remoteFullRearmBySession = new WeakMap();
 	}
 
 	clearPeer(peerHash: string, expectedSession?: object): void {
@@ -291,6 +301,7 @@ export class ReplicationInfoV2ReceiveCoordinator {
 		if (expectedSession) {
 			this._localCapabilityReadyBySession.delete(expectedSession);
 			this._localCapabilityContextBySession.delete(expectedSession);
+			this._remoteFullRearmBySession.delete(expectedSession);
 			this._cutoverPeerSessions.delete(expectedSession);
 		}
 	}
@@ -623,6 +634,117 @@ export class ReplicationInfoV2ReceiveCoordinator {
 		return {
 			firstAttempt,
 		};
+	}
+
+	/**
+	 * Send one transient, authenticated rearm hint for the exact current local
+	 * receive grant. The hint asks a patched remote receiver to rotate its
+	 * challenge and issue another Full request, rebuilding an outbound sender
+	 * stream that was lost while both directions otherwise remained current.
+	 *
+	 * This deliberately does not mutate the steady advertisement worker. One
+	 * attempt is coalesced per PeerSession and bound to the caller's signal; the
+	 * readiness wait's bounded recovery tick decides whether another attempt is
+	 * needed.
+	 */
+	reAdvertiseLocalCapabilityForRemoteFull(properties: {
+		peerHash: string;
+		peerSession: object;
+		receiveEpoch: object | null;
+		signal: AbortSignal;
+	}): boolean {
+		const context = this._localCapabilityContextBySession.get(
+			properties.peerSession,
+		);
+		const ready = this._localCapabilityReadyBySession.get(
+			properties.peerSession,
+		);
+		if (
+			properties.signal.aborted ||
+			!context ||
+			context.peerHash !== properties.peerHash ||
+			context.lifecycleSignal.aborted ||
+			this.deps.isClosed() ||
+			!this.deps.isPeerStateCurrent(
+				properties.peerHash,
+				properties.peerSession,
+				properties.receiveEpoch,
+			) ||
+			!ready ||
+			ready.peerHash !== properties.peerHash ||
+			ready.receiveEpoch !== properties.receiveEpoch ||
+			ready.receiverTransportSession !== this.deps.getReceiverTransportSession()
+		) {
+			return false;
+		}
+
+		const now = this.now();
+		let rearm = this._remoteFullRearmBySession.get(properties.peerSession);
+		if (rearm?.inFlight) {
+			return true;
+		}
+		if (
+			rearm !== undefined &&
+			now - rearm.lastAttemptAt < this.requestRetryMs
+		) {
+			return true;
+		}
+		if (!rearm) {
+			rearm = { lastAttemptAt: now };
+			this._remoteFullRearmBySession.set(properties.peerSession, rearm);
+		} else {
+			rearm.lastAttemptAt = now;
+		}
+
+		const operationSignal = AbortSignal.any([
+			context.lifecycleSignal,
+			properties.signal,
+		]);
+		let operation: Promise<void>;
+		const detach = () => {
+			if (rearm?.inFlight === operation) {
+				rearm.inFlight = undefined;
+			}
+		};
+		operation = Promise.resolve()
+			.then(() => {
+				if (operationSignal.aborted) {
+					throw operationSignal.reason;
+				}
+				return this.deps.refreshLocalCapability({
+					peerHash: properties.peerHash,
+					target: context.target,
+					peerSession: properties.peerSession,
+					receiveEpoch: properties.receiveEpoch,
+					signal: operationSignal,
+					requestRemoteFullRearm: true,
+				});
+			})
+			.then(() => undefined)
+			.catch((error) => {
+				if (
+					!operationSignal.aborted &&
+					!this.deps.isClosed() &&
+					this.deps.isPeerStateCurrent(
+						properties.peerHash,
+						properties.peerSession,
+						properties.receiveEpoch,
+					)
+				) {
+					this.deps.onLocalCapabilityError?.(error);
+				}
+			})
+			.finally(() => {
+				operationSignal.removeEventListener("abort", detach);
+				detach();
+			});
+		rearm.inFlight = operation;
+		operationSignal.addEventListener("abort", detach, { once: true });
+		if (operationSignal.aborted) {
+			detach();
+		}
+		void operation;
+		return true;
 	}
 
 	private promoteLocalCapabilityAdvertisement(
