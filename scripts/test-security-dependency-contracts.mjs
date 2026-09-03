@@ -214,6 +214,13 @@ const testPatchPackage = async (temporaryRoot) => {
 		dirname(patchPackage),
 		patchPackageManifest.bin["patch-package"],
 	);
+	// patch-package creates a clean copy with a nested `npm install`. Keep that
+	// fixture focused on patch creation: npm audit/funding requests are unrelated
+	// to this contract and can otherwise consume the entire child-process deadline.
+	const patchPackageEnv = {
+		npm_config_audit: "false",
+		npm_config_fund: "false",
+	};
 	const install = () =>
 		run(
 			"npm",
@@ -242,6 +249,7 @@ const testPatchPackage = async (temporaryRoot) => {
 	await appendFile(fixtureModule, `\n${marker}\n`);
 	run(process.execPath, [patchPackageCli, "is-number"], {
 		cwd: fixtureDirectory,
+		env: patchPackageEnv,
 		status: 0,
 		timeout: 180_000,
 	});
@@ -255,6 +263,7 @@ const testPatchPackage = async (temporaryRoot) => {
 	install();
 	run(process.execPath, [patchPackageCli], {
 		cwd: fixtureDirectory,
+		env: patchPackageEnv,
 		status: 0,
 		timeout: 180_000,
 	});
