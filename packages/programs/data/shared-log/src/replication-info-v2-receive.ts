@@ -25,6 +25,11 @@ const REQUIRED_SENDER_CAPABILITIES =
 const DEFAULT_REQUEST_RETRY_MS = 1_000;
 const DEFAULT_MAX_REQUEST_RETRY_MS = 30_000;
 const DEFAULT_REQUEST_MAX_ATTEMPTS = 7;
+const DEFAULT_REMOTE_FULL_REARM_ATTEMPT_TIMEOUT_MS = 2_000;
+const DEFAULT_REMOTE_FULL_REARM_COOLDOWN_MS = 5_000;
+const MAX_REMOTE_FULL_REARM_OUTSTANDING_PER_SESSION = 2;
+const MAX_REMOTE_FULL_REARM_OUTSTANDING_GLOBAL = 64;
+const MAX_TIMER_MS = 2_147_483_647;
 const MAX_U64 = (1n << 64n) - 1n;
 const MAX_BACKOFF_EXPONENT = 20;
 
@@ -113,8 +118,13 @@ export type ReplicationInfoV2LocalCapabilityAdvertisement = {
 };
 
 type ReplicationInfoV2RemoteFullRearm = {
-	lastAttemptAt: number;
+	peerHash: string;
+	receiveEpoch: object | null;
+	receiverTransportSession: bigint;
+	nextAttemptAt: number;
+	outstandingAttempts: number;
 	inFlight?: Promise<void>;
+	controller?: AbortController;
 };
 
 export type ReplicationInfoV2LocalCapabilityRefresh = {
@@ -196,6 +206,9 @@ export type ReplicationInfoV2ReceiveDeps = {
 	requestRetryMs?: number;
 	maxRequestRetryMs?: number;
 	requestMaxAttempts?: number;
+	remoteFullRearmAttemptTimeoutMs?: number;
+	remoteFullRearmCooldownMs?: number;
+	maxRemoteFullRearmOutstandingGlobal?: number;
 };
 
 /**
@@ -224,12 +237,17 @@ export class ReplicationInfoV2ReceiveCoordinator {
 		ReplicationInfoV2LocalCapabilityAdvertisement
 	>;
 	_remoteFullRearmBySession!: WeakMap<object, ReplicationInfoV2RemoteFullRearm>;
+	_remoteFullRearmsInFlight!: Set<ReplicationInfoV2RemoteFullRearm>;
+	_remoteFullRearmOutstanding!: Set<object>;
 	_reservedAdmissionsByPeer!: Map<string, ReplicationInfoV2ReceiveAdmission>;
 
 	private readonly now: () => number;
 	private readonly requestRetryMs: number;
 	private readonly maxRequestRetryMs: number;
 	private readonly requestMaxAttempts: number;
+	private readonly remoteFullRearmAttemptTimeoutMs: number;
+	private readonly remoteFullRearmCooldownMs: number;
+	private readonly maxRemoteFullRearmOutstandingGlobal: number;
 
 	constructor(private readonly deps: ReplicationInfoV2ReceiveDeps) {
 		this.now = deps.now ?? Date.now;
@@ -245,12 +263,46 @@ export class ReplicationInfoV2ReceiveCoordinator {
 			1,
 			Math.floor(deps.requestMaxAttempts ?? DEFAULT_REQUEST_MAX_ATTEMPTS),
 		);
+		this.remoteFullRearmAttemptTimeoutMs = Math.max(
+			1,
+			Math.min(
+				MAX_TIMER_MS,
+				Math.floor(
+					deps.remoteFullRearmAttemptTimeoutMs ??
+						DEFAULT_REMOTE_FULL_REARM_ATTEMPT_TIMEOUT_MS,
+				),
+			),
+		);
+		this.remoteFullRearmCooldownMs = Math.max(
+			this.requestRetryMs,
+			Math.min(
+				MAX_TIMER_MS,
+				Math.floor(
+					deps.remoteFullRearmCooldownMs ??
+						DEFAULT_REMOTE_FULL_REARM_COOLDOWN_MS,
+				),
+			),
+		);
+		// The injected value is a test seam that may only tighten this lifetime
+		// resource bound, never widen it.
+		this.maxRemoteFullRearmOutstandingGlobal = Math.min(
+			MAX_REMOTE_FULL_REARM_OUTSTANDING_GLOBAL,
+			Math.max(
+				1,
+				Math.floor(
+					deps.maxRemoteFullRearmOutstandingGlobal ??
+						MAX_REMOTE_FULL_REARM_OUTSTANDING_GLOBAL,
+				),
+			),
+		);
 		this._receiveStates = new Map();
 		this._cutoverPeerSessions = new WeakSet();
 		this._localCapabilityReadyBySession = new WeakMap();
 		this._localCapabilityContextBySession = new WeakMap();
 		this._localCapabilityAdvertisementsByPeer = new Map();
 		this._remoteFullRearmBySession = new WeakMap();
+		this._remoteFullRearmsInFlight = new Set();
+		this._remoteFullRearmOutstanding = new Set();
 		this._reservedAdmissionsByPeer = new Map();
 	}
 
@@ -262,10 +314,19 @@ export class ReplicationInfoV2ReceiveCoordinator {
 		this._localCapabilityContextBySession = new WeakMap();
 		this._localCapabilityAdvertisementsByPeer = new Map();
 		this._remoteFullRearmBySession = new WeakMap();
+		this._remoteFullRearmsInFlight = new Set();
 		this._reservedAdmissionsByPeer = new Map();
 	}
 
 	clearForClose(): void {
+		for (const rearm of this._remoteFullRearmsInFlight ?? []) {
+			rearm.controller?.abort(
+				new Error(
+					"Replication-info V2 receiver closed during remote Full rearm",
+				),
+			);
+		}
+		this._remoteFullRearmsInFlight?.clear();
 		for (const advertisement of [
 			...(this._localCapabilityAdvertisementsByPeer?.values() ?? []),
 		]) {
@@ -298,10 +359,28 @@ export class ReplicationInfoV2ReceiveCoordinator {
 			this._localCapabilityContextBySession.delete(state.peerSession);
 			this._cutoverPeerSessions.delete(state.peerSession);
 		}
+		if (!expectedSession) {
+			for (const rearm of this._remoteFullRearmsInFlight) {
+				if (rearm.peerHash === peerHash) {
+					rearm.controller?.abort(
+						new Error("Replication-info V2 peer cleared during rearm"),
+					);
+				}
+			}
+		}
+		const rearmSession =
+			expectedSession ?? state?.peerSession ?? advertisement?.peerSession;
+		if (rearmSession) {
+			this._remoteFullRearmBySession
+				.get(rearmSession)
+				?.controller?.abort(
+					new Error("Replication-info V2 peer session cleared during rearm"),
+				);
+			this._remoteFullRearmBySession.delete(rearmSession);
+		}
 		if (expectedSession) {
 			this._localCapabilityReadyBySession.delete(expectedSession);
 			this._localCapabilityContextBySession.delete(expectedSession);
-			this._remoteFullRearmBySession.delete(expectedSession);
 			this._cutoverPeerSessions.delete(expectedSession);
 		}
 	}
@@ -643,9 +722,14 @@ export class ReplicationInfoV2ReceiveCoordinator {
 	 * stream that was lost while both directions otherwise remained current.
 	 *
 	 * This deliberately does not mutate the steady advertisement worker. One
-	 * attempt is coalesced per PeerSession and bound to the caller's signal; the
-	 * readiness wait's bounded recovery tick decides whether another attempt is
-	 * needed.
+	 * attempt is coalesced per exact PeerSession/receive generation and bound to
+	 * its own deadline as well as the caller's signal. A cooldown avoids rotating
+	 * a healthy in-flight challenge on every recovery tick. The remote rotates
+	 * only when its receive state is active; later hints during resync only nudge
+	 * that same bounded request generation. At most two transports that disregard
+	 * abort remain outstanding for one exact session (64 across this coordinator's
+	 * lifetime); reaching either cap stops new hints while the persisted-readiness
+	 * gate remains fail closed.
 	 */
 	reAdvertiseLocalCapabilityForRemoteFull(properties: {
 		peerHash: string;
@@ -679,47 +763,130 @@ export class ReplicationInfoV2ReceiveCoordinator {
 		}
 
 		const now = this.now();
+		const receiverTransportSession = ready.receiverTransportSession;
 		let rearm = this._remoteFullRearmBySession.get(properties.peerSession);
+		if (
+			rearm &&
+			(rearm.peerHash !== properties.peerHash ||
+				rearm.receiveEpoch !== properties.receiveEpoch ||
+				rearm.receiverTransportSession !== receiverTransportSession)
+		) {
+			rearm.controller?.abort(
+				new Error("Replication-info V2 remote Full rearm generation changed"),
+			);
+			rearm = undefined;
+		}
 		if (rearm?.inFlight) {
 			return true;
 		}
+		if (rearm !== undefined && now < rearm.nextAttemptAt) {
+			return true;
+		}
 		if (
-			rearm !== undefined &&
-			now - rearm.lastAttemptAt < this.requestRetryMs
+			(rearm?.outstandingAttempts ?? 0) >=
+				MAX_REMOTE_FULL_REARM_OUTSTANDING_PER_SESSION ||
+			this._remoteFullRearmOutstanding.size >=
+				this.maxRemoteFullRearmOutstandingGlobal
 		) {
 			return true;
 		}
 		if (!rearm) {
-			rearm = { lastAttemptAt: now };
+			rearm = {
+				peerHash: properties.peerHash,
+				receiveEpoch: properties.receiveEpoch,
+				receiverTransportSession,
+				nextAttemptAt: now + this.remoteFullRearmCooldownMs,
+				outstandingAttempts: 0,
+			};
 			this._remoteFullRearmBySession.set(properties.peerSession, rearm);
 		} else {
-			rearm.lastAttemptAt = now;
+			rearm.nextAttemptAt = now + this.remoteFullRearmCooldownMs;
 		}
+		const attemptState = rearm;
+		const outstandingReservation = {};
+		attemptState.outstandingAttempts++;
+		this._remoteFullRearmOutstanding.add(outstandingReservation);
 
-		const operationSignal = AbortSignal.any([
-			context.lifecycleSignal,
-			properties.signal,
-		]);
+		const attemptController = new AbortController();
+		const operationSignal = attemptController.signal;
+		attemptState.controller = attemptController;
+		this._remoteFullRearmsInFlight.add(attemptState);
+		const sourceSignals = Array.from(
+			new Set([context.lifecycleSignal, properties.signal]),
+		);
+		const onSourceAbort = (event: Event) => {
+			const source = event.currentTarget as AbortSignal;
+			attemptController.abort(source.reason);
+		};
+		for (const source of sourceSignals) {
+			source.addEventListener("abort", onSourceAbort, { once: true });
+		}
+		const attemptTimer = setTimeout(
+			() =>
+				attemptController.abort(
+					new Error("Replication-info V2 remote Full rearm attempt timed out"),
+				),
+			this.remoteFullRearmAttemptTimeoutMs,
+		);
+		attemptTimer.unref?.();
+		let releasedOutstanding = false;
+		const releaseOutstanding = () => {
+			if (releasedOutstanding) return;
+			releasedOutstanding = true;
+			this._remoteFullRearmOutstanding.delete(outstandingReservation);
+			attemptState.outstandingAttempts--;
+		};
+		const refresh = Promise.resolve().then(() => {
+			if (operationSignal.aborted) {
+				throw operationSignal.reason;
+			}
+			return this.deps.refreshLocalCapability({
+				peerHash: properties.peerHash,
+				target: context.target,
+				peerSession: properties.peerSession,
+				receiveEpoch: properties.receiveEpoch,
+				signal: operationSignal,
+				requestRemoteFullRearm: true,
+			});
+		});
+		void refresh.then(releaseOutstanding, releaseOutstanding);
+
 		let operation: Promise<void>;
 		const detach = () => {
-			if (rearm?.inFlight === operation) {
-				rearm.inFlight = undefined;
+			clearTimeout(attemptTimer);
+			operationSignal.removeEventListener("abort", detach);
+			for (const source of sourceSignals) {
+				source.removeEventListener("abort", onSourceAbort);
+			}
+			if (attemptState.inFlight === operation) {
+				this._remoteFullRearmsInFlight.delete(attemptState);
+				attemptState.inFlight = undefined;
+				attemptState.controller = undefined;
 			}
 		};
-		operation = Promise.resolve()
-			.then(() => {
+		const raceWithAttemptSignal = <T>(promise: Promise<T>): Promise<T> =>
+			new Promise<T>((resolve, reject) => {
+				const onAbort = () => {
+					operationSignal.removeEventListener("abort", onAbort);
+					reject(operationSignal.reason);
+				};
+				operationSignal.addEventListener("abort", onAbort, { once: true });
 				if (operationSignal.aborted) {
-					throw operationSignal.reason;
+					onAbort();
+					return;
 				}
-				return this.deps.refreshLocalCapability({
-					peerHash: properties.peerHash,
-					target: context.target,
-					peerSession: properties.peerSession,
-					receiveEpoch: properties.receiveEpoch,
-					signal: operationSignal,
-					requestRemoteFullRearm: true,
-				});
-			})
+				promise.then(
+					(value) => {
+						operationSignal.removeEventListener("abort", onAbort);
+						resolve(value);
+					},
+					(error) => {
+						operationSignal.removeEventListener("abort", onAbort);
+						reject(error);
+					},
+				);
+			});
+		operation = raceWithAttemptSignal(refresh)
 			.then(() => undefined)
 			.catch((error) => {
 				if (
@@ -735,13 +902,15 @@ export class ReplicationInfoV2ReceiveCoordinator {
 				}
 			})
 			.finally(() => {
-				operationSignal.removeEventListener("abort", detach);
 				detach();
 			});
-		rearm.inFlight = operation;
+		attemptState.inFlight = operation;
 		operationSignal.addEventListener("abort", detach, { once: true });
-		if (operationSignal.aborted) {
-			detach();
+		for (const source of sourceSignals) {
+			if (source.aborted) {
+				attemptController.abort(source.reason);
+				break;
+			}
 		}
 		void operation;
 		return true;
