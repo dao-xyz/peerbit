@@ -1,4 +1,11 @@
 import { deserialize, serialize } from "@dao-xyz/borsh";
+import {
+	calculateRawCid,
+	cidifyString,
+	codecMap,
+	defaultHasher,
+	stringifyCid,
+} from "@peerbit/blocks-interface";
 import { PublicSignKey } from "@peerbit/crypto";
 import { compare, equals } from "uint8arrays";
 import { authenticateCapturedAuthorityEntryV0V2 } from "./v2-authority-entry.js";
@@ -24,6 +31,8 @@ import {
 
 /** Internal protocol ceiling; this module is not part of the package root. */
 export const TRUSTED_NETWORK_V2_MAX_PENDING_POLICIES = 64;
+/** Internal ceiling for one canonical raw policy-entry CID. */
+export const TRUSTED_NETWORK_V2_MAX_POLICY_ENTRY_CID_CHARACTERS = 128;
 const DEFAULT_MAX_PENDING_POLICIES_V2 = TRUSTED_NETWORK_V2_MAX_PENDING_POLICIES;
 const PENDING_POLICY_ACCOUNTING_OVERHEAD_V2 = 64;
 const MAX_PENDING_POLICY_ACCOUNTED_BYTES_V2 =
@@ -162,6 +171,11 @@ export type PolicyHeadProjectionV2 = {
 	sequence: bigint;
 	digest: Uint8Array;
 	bindings: PolicySubjectBindingV2[];
+};
+
+export type AuthenticatedExactPolicyEntryV2 = {
+	policyEntryCid: string;
+	policy: PolicyHeadProjectionV2;
 };
 
 /** Internal read-only resolution used by the durable policy-prefix lease. */
@@ -368,6 +382,63 @@ export const authenticatePolicySnapshotEntryV2 = async (
 		capturePolicySnapshotEntryBytesV2(entryBytes),
 		descriptor,
 	);
+};
+
+export const captureCanonicalPolicyEntryCidV2 = (value: unknown): string => {
+	if (
+		typeof value !== "string" ||
+		value.length < 1 ||
+		value.length > TRUSTED_NETWORK_V2_MAX_POLICY_ENTRY_CID_CHARACTERS
+	) {
+		throw new Error("Policy entry CID must be a bounded canonical CID");
+	}
+	let parsed: ReturnType<typeof cidifyString>;
+	try {
+		parsed = cidifyString(value);
+	} catch {
+		throw new Error("Policy entry CID must be a canonical CID");
+	}
+	if (
+		parsed.version !== 1 ||
+		parsed.code !== codecMap.raw.code ||
+		parsed.multihash.code !== defaultHasher.code ||
+		parsed.multihash.digest.byteLength !== 32 ||
+		stringifyCid(parsed) !== value
+	) {
+		throw new Error("Policy entry CID must use canonical CIDv1/raw/sha2-256");
+	}
+	return value;
+};
+
+/**
+ * Authenticate one CID-addressed policy wrapper and project its policy-body
+ * identity. The wrapper CID is deliberately not the policy identity: distinct
+ * canonical EntryV0 storage wrappers may carry the same signed policy body.
+ */
+export const authenticateExactPolicyEntryV2 = async (properties: {
+	policyEntryCid: string;
+	entryBytes: Uint8Array;
+	descriptor: NetworkDescriptorV2;
+}): Promise<AuthenticatedExactPolicyEntryV2> => {
+	const policyEntryCid = captureCanonicalPolicyEntryCidV2(
+		properties.policyEntryCid,
+	);
+	assertNetworkDescriptorV2(properties.descriptor);
+	const entryBytes = capturePolicySnapshotEntryBytesV2(properties.entryBytes);
+	const prepared = await calculateRawCid(entryBytes);
+	if (prepared.cid !== policyEntryCid) {
+		throw new Error(
+			"Resolved policy entry bytes do not match the requested CID",
+		);
+	}
+	const authenticated = await authenticateCapturedPolicySnapshotEntryV2(
+		entryBytes,
+		properties.descriptor,
+	);
+	return {
+		policyEntryCid,
+		policy: projectionFromSnapshot(authenticated),
+	};
 };
 
 const projectionFromSnapshot = (
