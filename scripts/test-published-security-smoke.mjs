@@ -1,10 +1,18 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import {
+	appendFile,
+	mkdir,
+	mkdtemp,
+	readFile,
+	rm,
+	writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { classifyNpmAuditResult } from "./npm-audit-result.mjs";
 import {
 	discoverPublishableWorkspacePackages,
 	runtimeDependencyFields,
@@ -15,13 +23,24 @@ import {
 } from "./published-security-coverage.mjs";
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const node18Executable = process.versions.node.startsWith("18.")
-	? process.execPath
-	: process.env.PEERBIT_NODE18_EXECUTABLE?.trim();
+const cliArguments = process.argv.slice(2);
 assert(
-	node18Executable,
-	"PEERBIT_NODE18_EXECUTABLE must name a real Node 18 executable; CI and release workflows provision Node 18.20.8 explicitly",
+	cliArguments.length === 0 ||
+		(cliArguments.length === 1 && cliArguments[0] === "--advisory-only"),
+	"usage: node scripts/test-published-security-smoke.mjs [--advisory-only]",
 );
+const advisoryOnly = cliArguments[0] === "--advisory-only";
+const node18Executable = advisoryOnly
+	? undefined
+	: process.versions.node.startsWith("18.")
+		? process.execPath
+		: process.env.PEERBIT_NODE18_EXECUTABLE?.trim();
+if (!advisoryOnly) {
+	assert(
+		node18Executable,
+		"PEERBIT_NODE18_EXECUTABLE must name a real Node 18 executable; CI and release workflows provision Node 18.20.8 explicitly",
+	);
+}
 const viteNodeEngine = "^20.19.0 || >=22.12.0";
 
 const run = (command, args, options = {}) => {
@@ -55,14 +74,16 @@ const run = (command, args, options = {}) => {
 	return result;
 };
 
-assert.match(
-	run(node18Executable, ["--version"], {
-		status: 0,
-		timeout: 30_000,
-	}).stdout.trim(),
-	/^v18\./,
-	"PEERBIT_NODE18_EXECUTABLE must run Node 18",
-);
+if (!advisoryOnly) {
+	assert.match(
+		run(node18Executable, ["--version"], {
+			status: 0,
+			timeout: 30_000,
+		}).stdout.trim(),
+		/^v18\./,
+		"PEERBIT_NODE18_EXECUTABLE must run Node 18",
+	);
+}
 
 const publishablePackages = await discoverPublishableWorkspacePackages({
 	repositoryRoot,
@@ -198,27 +219,6 @@ try {
 		undefined,
 		"packed @peerbit/document must not hide @peerbit/time in devDependencies",
 	);
-	const isolatedCryptoSmoke = run(
-		process.execPath,
-		[
-			join(
-				repositoryRoot,
-				"scripts",
-				"test-published-crypto-package-smoke.mjs",
-			),
-		],
-		{ status: 0, timeout: 1_200_000 },
-	);
-	assert.match(isolatedCryptoSmoke.stdout, /isolated nested install/);
-	const cryptoSmokeFixture = await readFile(
-		join(
-			repositoryRoot,
-			"scripts",
-			"fixtures",
-			"published-crypto-node18-smoke.mjs",
-		),
-		"utf8",
-	);
 	await writeFile(
 		join(consumerDirectory, "package.json"),
 		JSON.stringify(
@@ -232,62 +232,86 @@ try {
 			2,
 		) + "\n",
 	);
-	await writeFile(
-		join(consumerDirectory, "smoke.mjs"),
-		[
-			'import assert from "node:assert/strict";',
-			'import { createRequire } from "node:module";',
-			'import { fileURLToPath, pathToFileURL } from "node:url";',
-			"",
-			"const { PreHash, Secp256k1Keypair, verify } = await import('@peerbit/crypto');",
-			"const keypair = await Secp256k1Keypair.create();",
-			"const digest = new Uint8Array(32);",
-			"digest[31] = 1;",
-			"const signature = await keypair.sign(digest, PreHash.NONE);",
-			"assert.equal(await verify(signature, digest), true);",
-			"await assert.rejects(keypair.sign(new Uint8Array(31), PreHash.NONE), /exactly 32-byte/);",
-			"",
-			"const { createStore } = await import('@peerbit/any-store');",
-			"const store = createStore();",
-			"await store.open();",
-			"await store.put('key', new Uint8Array([1, 2, 3]));",
-			"assert.deepEqual(await store.get('key'), new Uint8Array([1, 2, 3]));",
-			"await store.close();",
-			"",
-			"const { Documents } = await import('@peerbit/document');",
-			"assert.equal(typeof Documents, 'function');",
-			"",
-			"const { getPort } = await import('@peerbit/server');",
-			"assert.equal(getPort('http:'), 8082);",
-			"const { default: peerbitVite } = await import('@peerbit/vite');",
-			"assert.equal(typeof peerbitVite, 'function');",
-			"const peerbitViteEntry = fileURLToPath(import.meta.resolve('@peerbit/vite'));",
-			"const requireFromPeerbitVite = createRequire(peerbitViteEntry);",
-			"const vitePath = requireFromPeerbitVite.resolve('vite');",
-			"const vite = await import(pathToFileURL(vitePath).href);",
-			"const transformed = await vite.transformWithEsbuild('const answer: number = 42', 'probe.ts', { loader: 'ts' });",
-			"assert.match(transformed.code, /answer/);",
-			"for (const packageName of ['@peerbit/any-store-proxy', '@peerbit/document-react', '@peerbit/indexer-tests', '@peerbit/react']) {",
-			"  assert.match(import.meta.resolve(packageName), /dist\\/src\\/index\\.js$/);",
-			"}",
-			"console.log('Published package runtime smoke passed.');",
-			"",
-		].join("\n"),
-	);
-	await writeFile(
-		join(consumerDirectory, "crypto-node18-smoke.mjs"),
-		cryptoSmokeFixture,
-	);
+	if (!advisoryOnly) {
+		const isolatedCryptoSmoke = run(
+			process.execPath,
+			[
+				join(
+					repositoryRoot,
+					"scripts",
+					"test-published-crypto-package-smoke.mjs",
+				),
+			],
+			{ status: 0, timeout: 1_200_000 },
+		);
+		assert.match(isolatedCryptoSmoke.stdout, /isolated nested install/);
+		const cryptoSmokeFixture = await readFile(
+			join(
+				repositoryRoot,
+				"scripts",
+				"fixtures",
+				"published-crypto-node18-smoke.mjs",
+			),
+			"utf8",
+		);
+		await writeFile(
+			join(consumerDirectory, "smoke.mjs"),
+			[
+				'import assert from "node:assert/strict";',
+				'import { createRequire } from "node:module";',
+				'import { fileURLToPath, pathToFileURL } from "node:url";',
+				"",
+				"const { PreHash, Secp256k1Keypair, verify } = await import('@peerbit/crypto');",
+				"const keypair = await Secp256k1Keypair.create();",
+				"const digest = new Uint8Array(32);",
+				"digest[31] = 1;",
+				"const signature = await keypair.sign(digest, PreHash.NONE);",
+				"assert.equal(await verify(signature, digest), true);",
+				"await assert.rejects(keypair.sign(new Uint8Array(31), PreHash.NONE), /exactly 32-byte/);",
+				"",
+				"const { createStore } = await import('@peerbit/any-store');",
+				"const store = createStore();",
+				"await store.open();",
+				"await store.put('key', new Uint8Array([1, 2, 3]));",
+				"assert.deepEqual(await store.get('key'), new Uint8Array([1, 2, 3]));",
+				"await store.close();",
+				"",
+				"const { Documents } = await import('@peerbit/document');",
+				"assert.equal(typeof Documents, 'function');",
+				"",
+				"const { getPort } = await import('@peerbit/server');",
+				"assert.equal(getPort('http:'), 8082);",
+				"const { default: peerbitVite } = await import('@peerbit/vite');",
+				"assert.equal(typeof peerbitVite, 'function');",
+				"const peerbitViteEntry = fileURLToPath(import.meta.resolve('@peerbit/vite'));",
+				"const requireFromPeerbitVite = createRequire(peerbitViteEntry);",
+				"const vitePath = requireFromPeerbitVite.resolve('vite');",
+				"const vite = await import(pathToFileURL(vitePath).href);",
+				"const transformed = await vite.transformWithEsbuild('const answer: number = 42', 'probe.ts', { loader: 'ts' });",
+				"assert.match(transformed.code, /answer/);",
+				"for (const packageName of ['@peerbit/any-store-proxy', '@peerbit/document-react', '@peerbit/indexer-tests', '@peerbit/react']) {",
+				"  assert.match(import.meta.resolve(packageName), /dist\\/src\\/index\\.js$/);",
+				"}",
+				"console.log('Published package runtime smoke passed.');",
+				"",
+			].join("\n"),
+		);
+		await writeFile(
+			join(consumerDirectory, "crypto-node18-smoke.mjs"),
+			cryptoSmokeFixture,
+		);
+	}
 
 	// --legacy-peer-deps keeps npm from auto-installing peer dependencies, so
 	// react-native-webrtc's "react-native >=0.60.0" peer (and its metro /
-	// image-size subtree) never enters the audited published closure. The Node
+	// image-size subtree) never enters the published consumer closure. The Node
 	// implementation of @libp2p/webrtc uses node-datachannel; the subtree is
 	// react-native-only dead weight here.
 	run(
 		"npm",
 		[
 			"install",
+			...(advisoryOnly ? ["--package-lock-only", "--ignore-scripts"] : []),
 			"--legacy-peer-deps",
 			"--no-audit",
 			"--no-fund",
@@ -328,52 +352,85 @@ try {
 	assert.deepEqual(
 		forbiddenLockPaths,
 		[],
-		"the react-native peer subtree leaked into the audited consumer lock: " +
+		"the react-native peer subtree leaked into the consumer lock: " +
 			forbiddenLockPaths.join(", "),
 	);
-	const forbiddenInstalledPaths = [
-		...forbiddenPeerSubtreePackages,
-		"@react-native",
-	]
-		.map((packageName) => join(consumerDirectory, "node_modules", packageName))
-		.filter((packagePath) => existsSync(packagePath));
-	assert.deepEqual(
-		forbiddenInstalledPaths,
-		[],
-		"the react-native peer subtree leaked into the audited consumer node_modules: " +
-			forbiddenInstalledPaths.join(", "),
-	);
-	// npm's default five-minute fetch timeout equals our process timeout. If the
-	// bulk advisory POST stalls, the parent kills npm before Arborist can try its
-	// separate quick-audit endpoint. Bound the individual request so that
-	// built-in fail-closed fallback remains reachable inside the existing total
-	// deadline. npm's fetch retry flags intentionally are not used: its fetcher
-	// does not retry POST requests.
-	const audit = run(
-		"npm",
-		["audit", "--omit=dev", "--json", "--fetch-timeout=60000"],
-		{
-			cwd: consumerDirectory,
-			status: 0,
-			timeout: 300_000,
-		},
-	);
-	const auditReport = JSON.parse(audit.stdout);
-	assert.equal(
-		auditReport.auditReportVersion,
-		2,
-		"the published consumer audit must be an npm audit report v2",
-	);
-	assert.deepEqual(
-		auditReport.vulnerabilities,
-		{},
-		"the audited published closure must contain zero vulnerability nodes",
-	);
-	assert.equal(
-		auditReport.metadata?.vulnerabilities?.total,
-		0,
-		"the audited published closure must report a zero vulnerability total",
-	);
+	if (!advisoryOnly) {
+		const forbiddenInstalledPaths = [
+			...forbiddenPeerSubtreePackages,
+			"@react-native",
+		]
+			.map((packageName) =>
+				join(consumerDirectory, "node_modules", packageName),
+			)
+			.filter((packagePath) => existsSync(packagePath));
+		assert.deepEqual(
+			forbiddenInstalledPaths,
+			[],
+			"the react-native peer subtree leaked into the consumer node_modules: " +
+				forbiddenInstalledPaths.join(", "),
+		);
+	}
+	let advisorySummary;
+	if (advisoryOnly) {
+		const audit = spawnSync(
+			"npm",
+			[
+				"audit",
+				"--package-lock-only",
+				"--omit=dev",
+				"--json",
+				"--fetch-timeout=60000",
+			],
+			{
+				cwd: consumerDirectory,
+				encoding: "utf8",
+				env: {
+					...process.env,
+					FORCE_COLOR: "0",
+					NO_COLOR: "1",
+				},
+				timeout: 150_000,
+			},
+		);
+		const classification = classifyNpmAuditResult(audit);
+		if (classification.outcome === "findings") {
+			process.stderr.write(audit.stdout || "");
+			throw new Error(
+				"the packed production dependency graph contains npm advisory findings: " +
+					classification.reason,
+			);
+		}
+		if (classification.outcome === "invalid") {
+			throw new Error(
+				"npm audit returned an unrecognized or internally inconsistent result: " +
+					classification.reason,
+			);
+		}
+		if (classification.outcome === "unavailable") {
+			advisorySummary = "scanner unavailable: " + classification.reason;
+			const escapedWarning = advisorySummary
+				.replaceAll("%", "%25")
+				.replaceAll("\r", "%0D")
+				.replaceAll("\n", "%0A");
+			console.warn(
+				process.env.GITHUB_ACTIONS === "true"
+					? `::warning title=Published dependency scanner unavailable::${escapedWarning}`
+					: `Published dependency ${advisorySummary}`,
+			);
+			const stepSummary = process.env.GITHUB_STEP_SUMMARY?.trim();
+			if (stepSummary) {
+				await appendFile(
+					stepSummary,
+					"### Published dependency advisories\n\n⚠️ " +
+						advisorySummary.replaceAll("\n", " ") +
+						"\n",
+				);
+			}
+		} else {
+			advisorySummary = "zero production advisory findings";
+		}
+	}
 	assert.deepEqual(lockfile.packages[""].dependencies, dependencies);
 	const lockfilePackages = Object.entries(lockfile.packages);
 	const installedViteEntries = lockfilePackages.filter(([packagePath]) =>
@@ -440,31 +497,41 @@ try {
 		`expected Vite to install a compatible esbuild 0.27/0.28 line, got ${esbuildVersions.join(", ")}`,
 	);
 
-	run(process.execPath, [join(consumerDirectory, "smoke.mjs")], {
-		cwd: consumerDirectory,
-		status: 0,
-		timeout: 120_000,
-	});
-	const node18 = run(
-		node18Executable,
-		[join(consumerDirectory, "crypto-node18-smoke.mjs")],
-		{
+	if (!advisoryOnly) {
+		run(process.execPath, [join(consumerDirectory, "smoke.mjs")], {
 			cwd: consumerDirectory,
 			status: 0,
-			timeout: 300_000,
-		},
-	);
-	assert.match(node18.stdout, /Node 18\./);
-	console.log(
-		"Published-package consumer passed with " +
-			packageDirectories.length +
-			" security roots and all " +
-			publishablePackages.length +
-			" publishable workspace packages as exact local tarballs, " +
-			"a peer-free install with zero production audit findings, esbuild " +
-			esbuildVersions.join(", ") +
-			", the isolated nested crypto install, and the Node 18 crypto wire contract.",
-	);
+			timeout: 120_000,
+		});
+		const node18 = run(
+			node18Executable,
+			[join(consumerDirectory, "crypto-node18-smoke.mjs")],
+			{
+				cwd: consumerDirectory,
+				status: 0,
+				timeout: 300_000,
+			},
+		);
+		assert.match(node18.stdout, /Node 18\./);
+		console.log(
+			"Published-package consumer passed with " +
+				packageDirectories.length +
+				" security roots and all " +
+				publishablePackages.length +
+				" publishable workspace packages as exact local tarballs, " +
+				"a peer-free install, esbuild " +
+				esbuildVersions.join(", ") +
+				", the isolated nested crypto install, and the Node 18 crypto wire contract.",
+		);
+	} else {
+		console.log(
+			"Published-package advisory scan completed for all " +
+				publishablePackages.length +
+				" publishable workspace packages as exact local tarballs: " +
+				advisorySummary +
+				".",
+		);
+	}
 } finally {
 	await rm(temporaryRoot, { recursive: true, force: true });
 }

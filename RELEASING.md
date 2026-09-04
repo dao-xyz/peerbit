@@ -241,42 +241,35 @@ version before doing any package work and fails closed when it is absent or
 incorrect; it never downloads a runtime implicitly through npm.
 
 CI runs the packed-consumer, dependency-contract, and Node 18 crypto proofs on
-both supported Node majors. It runs the two workspace root audits once because
-both lanes install the same frozen lockfile; repeating those graph-independent
-advisory requests provides no additional runtime coverage. Stable and release
-candidate publication still run the complete gate, including both root audits,
-before publishing.
+both supported Node majors. Stable and release-candidate publication run those
+same compatibility proofs, but do not call a live vulnerability-advisory API.
+An advisory service outage therefore cannot turn an otherwise verified publish
+into a false security failure. The packed-consumer proof still performs a real
+npm installation, so registry package reads remain part of its installability
+check.
 
-## Workspace-only image-size audit ignores
+## Published dependency advisories
 
-The release security gate's two root pnpm audits ignore exactly
-CVE-2025-71330 and CVE-2025-71329, the unpatched `image-size` advisories.
-These are narrow, documented, non-expiring ignores that exist only because
-the committed workspace `pnpm-lock.yaml` resolves with `autoInstallPeers`,
-which materializes react-native-webrtc's `react-native >=0.60.0` peer and its
-`react-native -> @react-native/community-cli-plugin -> metro -> image-size`
-subtree inside the development workspace. That subtree is dead weight for
-every published package: react-native-webrtc reaches the workspace only as a
-dependency of `@libp2p/webrtc`, whose Node implementation uses
-node-datachannel, and no published Peerbit package imports react-native or
-metro.
+`.github/workflows/published-dependency-advisories.yml` performs the one live
+advisory scan: a production-only `npm audit` over a consumer composed from every
+publishable package as an exact local tarball. It runs when dependency surfaces
+change, after matching pushes to `master`, once per day, and on manual dispatch.
+It is deliberately separate from stable and release-candidate publication.
 
-The published closure is proven clean without any ignore. The packed-consumer
-smoke (`scripts/test-published-security-smoke.mjs`) installs every publishable
-package as an exact local tarball with `--legacy-peer-deps`, so npm never
-auto-installs the react-native peer subtree; it then asserts that
-react-native, metro, metro-config, metro-transform-worker, image-size, and
-every `@react-native/*` package are absent from the consumer lockfile and
-`node_modules`, and requires a strict zero-finding `npm audit --omit=dev`.
-The audit caps each advisory request below its existing five-minute process
-deadline so npm can fall back from a stalled bulk request to its separate quick
-audit endpoint. This does not retry or suppress a vulnerability result.
+The consumer is installed with `--legacy-peer-deps`, matching the release smoke,
+so npm does not auto-install react-native-webrtc's optional React Native peer
+toolchain. The scan asserts that react-native, metro, metro-config,
+metro-transform-worker, image-size, and every `@react-native/*` package are
+absent. It has no advisory ignores and does not scan workspace-only development
+tools that are never published to users.
 
-If either root pnpm audit reports anything beyond these two advisories, the
-gate fails closed. Remove both `--ignore` pairs and this section together once
-the workspace lockfile no longer resolves the subtree — for example after
-`image-size` ships a patched release or an upstream `@libp2p/webrtc` release
-drops its react-native-webrtc dependency.
+A structurally valid audit report containing any production vulnerability fails
+the workflow. A recognized timeout, network failure, rate limit, or server-side
+audit endpoint failure produces a visible `scanner unavailable` warning without
+blocking publication. Malformed reports, authentication/configuration failures,
+missing tooling, and internally inconsistent results still fail closed. This
+keeps a real finding actionable without making npm's advisory-service uptime a
+release dependency.
 
 ## Caveat: "no changeset" does not mean "no publish"
 
