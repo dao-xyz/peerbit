@@ -1,5 +1,12 @@
 # Changelog
 
+## 3.2.152
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @peerbit/trusted-network@6.0.128
+
 ## 3.2.151
 
 ### Patch Changes
