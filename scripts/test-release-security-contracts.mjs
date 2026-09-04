@@ -63,45 +63,60 @@ assert.equal(
 	"@peerbit/vite must declare the Node.js floor imposed by Vite 7",
 );
 for (const marker of [
-	"CVE-2025-71330",
-	"CVE-2025-71329",
-	"autoInstallPeers",
+	"Published dependency advisories",
+	"published-dependency-advisories.yml",
 	"--legacy-peer-deps",
-	"node-datachannel",
-	"strict zero-finding `npm audit --omit=dev`",
+	"scanner unavailable",
+	"do not call a live vulnerability-advisory API",
 ]) {
 	assert(
 		releasingGuide.includes(marker),
-		"RELEASING.md must document the workspace-only image-size ignore marker " +
-			marker,
+		"RELEASING.md must document the separated advisory policy marker " + marker,
 	);
 }
 
 assert.equal(
 	scripts["release:security-gate"],
-	"pnpm run release:security-gate:compatibility && pnpm run release:security-gate:root-audits",
-	"the shared release gate must fail closed on both the supported-runtime proofs and workspace root audits",
+	"pnpm run release:security-gate:compatibility",
+	"the shared release gate must contain only deterministic supported-runtime proofs",
 );
 assert.equal(
 	scripts["release:security-gate:compatibility"],
-	"pnpm run test:release-security-contracts && pnpm run test:security-dependencies && pnpm run test:security-published-closure && pnpm run test:security-published",
-	"the supported-runtime gate must fail closed on its contract tests, dependency probe, focused publication-closure proof, and full published-package smoke",
+	"pnpm run test:release-security-contracts && pnpm run test:security-advisory-policy && pnpm run test:security-dependencies && pnpm run test:security-published-closure && pnpm run test:security-published",
+	"the supported-runtime gate must fail closed on its contract tests, advisory classifier tests, dependency probe, focused publication-closure proof, and full published-package smoke",
 );
 assert.equal(
 	scripts["release:security-gate:root-audits"],
-	"pnpm dlx pnpm@11.13.0 with current audit --prod --ignore CVE-2025-71330 --ignore CVE-2025-71329 && pnpm dlx pnpm@11.13.0 with current audit --ignore CVE-2025-71330 --ignore CVE-2025-71329",
-	"the workspace root audit gate must run both production and full-graph audits, whose only ignores are the two documented workspace-only image-size CVEs",
+	undefined,
+	"workspace production and development audits must not gate publication",
+);
+assert.equal(
+	scripts["test:security-advisories"],
+	"node scripts/test-published-security-smoke.mjs --advisory-only",
+	"the live advisory scan must require an explicit packed-consumer mode",
+);
+assert.equal(
+	scripts["test:security-advisory-policy"],
+	"node --test scripts/npm-audit-result.test.mjs",
+	"the audit-result classifier must have a deterministic fixture suite",
 );
 assert.equal(
 	scripts["test:security-image-size-exception"],
 	undefined,
 	"the retired image-size audit exception must not return as a package script",
 );
-assert.doesNotMatch(
-	scripts["release:security-gate:root-audits"],
-	/--ignore-unfixable/,
-	"the release gate must never suppress all unfixable advisories",
-);
+for (const releaseScript of [
+	scripts.release,
+	scripts["release:rc"],
+	scripts["release:security-gate"],
+	scripts["release:security-gate:compatibility"],
+]) {
+	assert.doesNotMatch(
+		releaseScript,
+		/\bnpm audit\b|\bpnpm audit\b|test:security-advisories/,
+		"publication must not call a live advisory service",
+	);
+}
 assert.equal(
 	scripts.release,
 	"pnpm run build && pnpm run release:security-gate && node ./scripts/publish-public-packages.mjs",
@@ -490,10 +505,10 @@ assert.doesNotMatch(
 );
 const securityJob = workflowJob(ciWorkflow, "security_dependency_contracts");
 assert.match(securityJob, /needs: build_workspace/);
-assert.match(
+assert.doesNotMatch(
 	securityJob,
-	/strategy:\n {6}fail-fast: false\n(?: {6}#[^\n]*\n)* {6}max-parallel: 1\n {6}matrix:/,
-	"supported-runtime release gates must run serially to avoid competing duplicate advisory-service requests",
+	/max-parallel:/,
+	"supported-runtime proofs must not remain serialized after live audits move out of the matrix",
 );
 // Both supported majors must stay in this matrix. Node 24 was dropped once
 // (#1239) on the incorrect premise that a consumer resolving our published
@@ -513,24 +528,9 @@ const restoreIndex = securityJob.indexOf("Restore workspace build outputs");
 const runtimeGateIndex = securityJob.indexOf(
 	"pnpm run release:security-gate:compatibility",
 );
-const auditGateIndex = securityJob.indexOf(
-	"pnpm run release:security-gate:root-audits",
-);
 assert(
 	restoreIndex >= 0 && runtimeGateIndex > restoreIndex,
 	"CI must run the supported-runtime gate only after restoring built artifacts",
-);
-assert.match(
-	securityJob,
-	/name: Run workspace root audits once\n {8}if: matrix\.node-version == '22\.x'\n {8}run: pnpm run release:security-gate:root-audits/,
-	"CI must run the identical workspace root audits exactly once on the primary supported runtime",
-);
-assert.equal(
-	workflowSteps(securityJob).filter((step) =>
-		step.includes("pnpm run release:security-gate:root-audits"),
-	).length,
-	1,
-	"CI must not duplicate graph-independent workspace root audits across supported runtimes",
 );
 const compatibilitySteps = workflowSteps(securityJob).filter((step) =>
 	step.includes("pnpm run release:security-gate:compatibility"),
@@ -548,16 +548,70 @@ assert.doesNotMatch(
 assert.doesNotMatch(
 	securityJob,
 	/run: pnpm run release:security-gate(?:\s|$)/,
-	"CI must compose the compatibility and once-only root-audit steps explicitly instead of duplicating the aggregate release gate",
+	"CI must invoke the supported-runtime proof directly",
 );
 assert.doesNotMatch(
 	securityJob,
-	/with current audit/,
-	"CI must invoke workspace audits only through the contract-pinned once-only root-audit script",
+	/\baudit\b|test:security-advisories/,
+	"the supported-runtime matrix must not call a live advisory service",
 );
-assert(
-	auditGateIndex > runtimeGateIndex,
-	"CI must audit the workspace root only after its supported-runtime proofs pass",
+
+const advisoryWorkflow = await readRepositoryFile(
+	".github/workflows/published-dependency-advisories.yml",
+);
+assert.match(
+	advisoryWorkflow,
+	/^permissions:\n {2}contents: read$/m,
+	"the advisory workflow must use a read-only GITHUB_TOKEN",
+);
+for (const trigger of [
+	"push:",
+	"pull_request:",
+	"schedule:",
+	"workflow_dispatch:",
+]) {
+	assert(
+		advisoryWorkflow.includes(trigger),
+		`the advisory workflow must include its ${trigger} trigger`,
+	);
+}
+for (const dependencySurface of [
+	'".npmrc"',
+	'"package.json"',
+	'"pnpm-lock.yaml"',
+	'"pnpm-workspace.yaml"',
+	'"packages/**/package.json"',
+]) {
+	assert(
+		advisoryWorkflow.includes(dependencySurface),
+		`the advisory workflow must watch ${dependencySurface}`,
+	);
+}
+const advisoryJob = workflowJob(advisoryWorkflow, "scan");
+assert.match(advisoryJob, /runs-on: ubuntu-22\.04/);
+assert.match(advisoryJob, /node-version: 22\.x/);
+assert.match(
+	advisoryJob,
+	/pnpm install --filter '\.\/packages\/\*\*' --frozen-lockfile --ignore-scripts/,
+	"the advisory workflow must link only package workspaces, without lifecycle scripts, before packing",
+);
+assert.doesNotMatch(
+	advisoryJob,
+	/run: pnpm install --frozen-lockfile/,
+	"the advisory workflow must not install every root and application dependency",
+);
+assert.equal(
+	workflowSteps(advisoryJob).filter((step) =>
+		step.includes("pnpm run test:security-advisories"),
+	).length,
+	1,
+	"the advisory workflow must perform exactly one packed production scan",
+);
+assert.match(advisoryJob, /pnpm run test:security-advisory-policy/);
+assert.doesNotMatch(
+	advisoryWorkflow,
+	/continue-on-error|\$\{\{\s*secrets\.|id-token: write/,
+	"the advisory workflow must classify scanner failures itself and need no secrets or OIDC identity",
 );
 
 const nightlyWorkflow = await readRepositoryFile(
@@ -658,8 +712,8 @@ assert.match(
 );
 assert.match(
 	publishedSecuritySmoke,
-	/"install",\n\t{3}"--legacy-peer-deps",/,
-	"the audited consumer install must never auto-install npm peer dependencies",
+	/"install",[\s\S]*?"--legacy-peer-deps",/,
+	"the release consumer install must never auto-install npm peer dependencies",
 );
 for (const forbiddenPackage of [
 	"react-native",
@@ -670,54 +724,49 @@ for (const forbiddenPackage of [
 ]) {
 	assert(
 		publishedSecuritySmoke.includes(`\t\t"${forbiddenPackage}",`),
-		"the audited consumer must assert the absence of " + forbiddenPackage,
+		"the packed consumer must assert the absence of " + forbiddenPackage,
 	);
 }
 assert.match(
 	publishedSecuritySmoke,
 	/packageName\.startsWith\("@react-native\/"\)/,
-	"the audited consumer must assert the absence of every @react-native/* package",
+	"the packed consumer must assert the absence of every @react-native/* package",
 );
 const auditInvocationStart = publishedSecuritySmoke.indexOf(
-	'const audit = run(\n\t\t"npm",',
+	"\tif (advisoryOnly) {",
 );
-const auditReportStart = publishedSecuritySmoke.indexOf(
-	"const auditReport = JSON.parse(audit.stdout);",
+const auditInvocationEnd = publishedSecuritySmoke.indexOf(
+	"\tassert.deepEqual(lockfile.packages",
 	auditInvocationStart,
 );
 assert(
-	auditInvocationStart >= 0 && auditReportStart > auditInvocationStart,
-	"the published consumer must run npm audit before parsing its report",
+	auditInvocationStart >= 0 && auditInvocationEnd > auditInvocationStart,
+	"the packed consumer must isolate npm audit behind explicit advisory-only mode",
 );
 const auditInvocation = publishedSecuritySmoke.slice(
 	auditInvocationStart,
-	auditReportStart,
+	auditInvocationEnd,
 );
 assert.match(
 	auditInvocation,
-	/\["audit", "--omit=dev", "--json", "--fetch-timeout=60000"\],[\s\S]*?cwd: consumerDirectory,\n\t{3}status: 0,\n\t{3}timeout: 300_000,/,
-	"the published consumer npm audit must demand a zero-finding exit status",
+	/"audit",[\s\S]*?"--package-lock-only",[\s\S]*?"--omit=dev",[\s\S]*?"--json",[\s\S]*?"--fetch-timeout=60000"/,
+	"the advisory mode must scan only the packed production lock",
 );
 assert.doesNotMatch(
 	auditInvocation,
-	/--fetch-retries|--fetch-retry-factor|--fetch-retry-mintimeout|--fetch-retry-maxtimeout/,
-	"the audit smoke must not claim npm fetch-level retries that do not apply to advisory POST requests",
+	/status:\s*0/,
+	"the advisory command must not conflate npm's finding and process-failure exit statuses",
 );
-for (const zeroFindingAssertion of [
-	/auditReport\.auditReportVersion,\n\t{2}2,/,
-	/auditReport\.vulnerabilities,\n\t{2}\{\},/,
-	/auditReport\.metadata\?\.vulnerabilities\?\.total,\n\t{2}0,/,
-]) {
-	assert.match(
-		publishedSecuritySmoke,
-		zeroFindingAssertion,
-		"the published consumer audit must retain every parsed zero-finding assertion",
-	);
-}
+assert.match(
+	auditInvocation,
+	/classifyNpmAuditResult\(audit\)[\s\S]*?outcome === "findings"[\s\S]*?outcome === "invalid"[\s\S]*?outcome === "unavailable"/,
+	"the advisory mode must fail findings and invalid results before softening recognized service failures",
+);
+const defaultModePrefix = publishedSecuritySmoke.slice(0, auditInvocationStart);
 assert.doesNotMatch(
-	publishedSecuritySmoke,
-	/validateImageSizeAuditException|image-size-advisory-exception|exception/i,
-	"the published consumer audit must not carry an audit exception branch",
+	defaultModePrefix,
+	/"audit"|classifyNpmAuditResult\(audit\)/,
+	"the default release smoke must not call npm's live advisory API",
 );
 for (const packagePath of [
 	"packages/clients/peerbit/package.json",
