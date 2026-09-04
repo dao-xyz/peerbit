@@ -1,5 +1,17 @@
 # Changelog
 
+## 6.0.129
+
+### Patch Changes
+
+- [#1422](https://github.com/dao-xyz/peerbit/pull/1422) [`ecc5493`](https://github.com/dao-xyz/peerbit/commit/ecc549361ba4cbc3f20c609722db030fa61c1403) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Add an internal bounded lease that authenticates a policy entry by exact CID and runs a callback only while its sequence and body digest match an already-published durable current TrustedNetwork v2 policy head. This precondition slice does not ingest or checkpoint a newly fetched head.
+
+- [#1424](https://github.com/dao-xyz/peerbit/pull/1424) [`dd2c70b`](https://github.com/dao-xyz/peerbit/commit/dd2c70b0183eba3e9fe5b78bae7fa17759f65c45) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Admit an exact authenticated TrustedNetwork v2 policy head through the crash-safe checkpoint before its internal readiness callback.
+
+- Updated dependencies [[`7d48413`](https://github.com/dao-xyz/peerbit/commit/7d484131f87dda246f5e79ed21da94184c263d45), [`8f249d1`](https://github.com/dao-xyz/peerbit/commit/8f249d1cef6bffe51c07707093de9b01e7d3cb9b)]:
+  - @peerbit/shared-log@16.0.28
+  - @peerbit/document@15.0.31
+
 ## 6.0.128
 
 ### Patch Changes
