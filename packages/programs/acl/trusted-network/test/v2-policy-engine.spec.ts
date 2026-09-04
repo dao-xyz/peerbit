@@ -23,7 +23,10 @@ import {
 	authenticateExactPolicyEntryV2,
 	authenticatePolicySnapshotEntryV2,
 } from "../src/v2-policy-engine.js";
-import type { PolicyAdmissionResultV2 } from "../src/v2-policy-engine.js";
+import type {
+	PolicyAdmissionResultV2,
+	PreparedExactPolicyCandidateV2,
+} from "../src/v2-policy-engine.js";
 import {
 	NetworkDescriptorV2,
 	PolicySnapshotBodyV2,
@@ -1145,6 +1148,103 @@ describe("TrustedNetwork v2 policy reducer", () => {
 				descriptor: fixture.descriptor,
 			}),
 		).to.be.rejectedWith("do not match the requested CID");
+	});
+
+	it("binds prepared exact policy evidence to its reducer-owned authenticated snapshot", async () => {
+		const fixture = await createChain();
+		const bytes = entryBytes(fixture.chain[0]!.entry);
+		const cid = (await calculateRawCid(bytes)).cid;
+		let resolverCalls = 0;
+		const createReducer = (): TrustedNetworkV2PolicyReducer =>
+			new TrustedNetworkV2PolicyReducer({
+				descriptor: fixture.descriptor,
+				resolvePolicyEntry: () => {
+					resolverCalls += 1;
+					return undefined;
+				},
+			});
+		const owner = createReducer();
+		const other = createReducer();
+		const prepared = await owner.prepareExactPolicyEntry(cid, bytes);
+		prepared.policy.digest.fill(0xff);
+		prepared.policy.bindings[0]!.roles = 0;
+		const bounds = { maxParentEdges: 0, deadline: Date.now() + 1_000 };
+
+		const forged = {
+			policyEntryCid: cid,
+			policy: prepared.policy,
+		} as PreparedExactPolicyCandidateV2;
+		expect(
+			(await owner.ingestPreparedExactPolicy(forged, bounds)).status,
+		).to.equal("rejected");
+		expect(
+			(await other.ingestPreparedExactPolicy(prepared, bounds)).status,
+		).to.equal("rejected");
+		expect(owner.head).to.equal(undefined);
+		expect(other.head).to.equal(undefined);
+		expect(owner.pendingCount).to.equal(0);
+
+		const admission = owner.ingestPreparedExactPolicy(prepared, bounds);
+		bounds.maxParentEdges = -1;
+		bounds.deadline = 0;
+		expect((await admission).status).to.equal("accepted");
+		expect(hex(owner.head!.digest)).to.equal(hex(fixture.chain[0]!.digest));
+		expect(
+			owner.isAuthorized(fixture.alice.publicKey, TrustedNetworkRole.WRITER),
+		).to.equal(true);
+		expect(resolverCalls).to.equal(0);
+	});
+
+	it("rejects a stateful exact-admission signal without poisoning reducer state", async () => {
+		const fixture = await createChain();
+		const bytes = entryBytes(fixture.chain[0]!.entry);
+		const cid = (await calculateRawCid(bytes)).cid;
+		const reducer = new TrustedNetworkV2PolicyReducer({
+			descriptor: fixture.descriptor,
+			resolvePolicyEntry: () => undefined,
+		});
+		const prepared = await reducer.prepareExactPolicyEntry(cid, bytes);
+		let abortedReads = 0;
+		let addCalls = 0;
+		let removeCalls = 0;
+		const hostileSignal = {
+			get aborted(): boolean {
+				abortedReads += 1;
+				if (abortedReads > 1) throw new Error("stateful aborted getter");
+				return false;
+			},
+			addEventListener: (): void => {
+				addCalls += 1;
+			},
+			removeEventListener: (): void => {
+				removeCalls += 1;
+				throw new Error("hostile remove");
+			},
+		} as unknown as AbortSignal;
+
+		expect(
+			(
+				await reducer.ingestPreparedExactPolicy(prepared, {
+					maxParentEdges: 0,
+					deadline: Date.now() + 1_000,
+					signal: hostileSignal,
+				})
+			).status,
+		).to.equal("rejected");
+		expect({ addCalls, removeCalls }).to.deep.equal({
+			addCalls: 1,
+			removeCalls: 1,
+		});
+		expect(reducer.state).to.equal("EMPTY");
+		expect(reducer.pendingCount).to.equal(0);
+		expect(
+			(
+				await reducer.ingestPreparedExactPolicy(prepared, {
+					maxParentEdges: 0,
+					deadline: Date.now() + 1_000,
+				})
+			).status,
+		).to.equal("accepted");
 	});
 
 	it("uses exact hashless or hash-bearing bytes in the raw tie-break", async () => {
