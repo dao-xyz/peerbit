@@ -25141,6 +25141,11 @@ export class SharedLog<
 			timeout?: number;
 		},
 	) {
+		if (this.closed) {
+			throw new ClosedError();
+		}
+		const closeSignal = this._closeController.signal;
+		if (closeSignal.aborted) throw new ClosedError();
 		if (options?.signal?.aborted) {
 			throw new AbortError();
 		}
@@ -25149,6 +25154,9 @@ export class SharedLog<
 		const resolvedRoleAge = options?.eager
 			? undefined
 			: (options?.roleAge ?? (await this.getDefaultMinRoleAge()));
+		if (this.closed || closeSignal.aborted) {
+			throw new ClosedError();
+		}
 		if (options?.signal?.aborted) {
 			throw new AbortError();
 		}
@@ -25164,6 +25172,7 @@ export class SharedLog<
 			this.events.removeEventListener("replicator:mature", runCheck);
 			this.events.removeEventListener("replication:change", runCheck);
 			options?.signal?.removeEventListener("abort", onAbort);
+			closeSignal.removeEventListener("abort", onClose);
 			if (timer != null) {
 				clearTimeout(timer);
 				timer = undefined;
@@ -25203,9 +25212,11 @@ export class SharedLog<
 		};
 
 		const onAbort = () => reject(new AbortError());
+		const onClose = () => reject(new ClosedError());
 		if (options?.signal) {
-			options.signal.addEventListener("abort", onAbort);
+			options.signal.addEventListener("abort", onAbort, { once: true });
 		}
+		closeSignal.addEventListener("abort", onClose, { once: true });
 
 		timer = setTimeout(() => {
 			reject(
@@ -25248,31 +25259,32 @@ export class SharedLog<
 				return;
 			}
 
-			if (requestAttempts >= maxRequestAttempts) {
-				return;
-			}
-
-			requestAttempts++;
-
-			const peerHash = key.hashcode();
-			const peerSession = this._peerSessions.current(peerHash);
-			if (peerSession?.phase === "open") {
-				this._v2Receive.ensureRequestProgress({
-					peerHash,
-					peerSession,
-					receiveEpoch: this._peerSessions.receiveEpoch(peerHash),
-				});
-			} else if (peerSession === null || peerSession.phase === "departing") {
-				// A peer can be known to routing before its SharedLog topic
-				// subscription has been observed. Legacy requests used to bootstrap
-				// that case directly; V2 needs an authoritative Subscribe snapshot
-				// before it can create a fenced PeerSession and request a Full.
-				requestSubscriberSnapshot();
-			}
-
 			if (requestAttempts < maxRequestAttempts) {
-				requestTimer = setTimeout(requestReplicationInfo, requestIntervalMs);
+				requestAttempts++;
+
+				const peerHash = key.hashcode();
+				const peerSession = this._peerSessions.current(peerHash);
+				if (peerSession?.phase === "open") {
+					this._v2Receive.ensureRequestProgress({
+						peerHash,
+						peerSession,
+						receiveEpoch: this._peerSessions.receiveEpoch(peerHash),
+					});
+				} else if (peerSession === null || peerSession.phase === "departing") {
+					// A peer can be known to routing before its SharedLog topic
+					// subscription has been observed. Legacy requests used to bootstrap
+					// that case directly; V2 needs an authoritative Subscribe snapshot
+					// before it can create a fenced PeerSession and request a Full.
+					requestSubscriberSnapshot();
+				}
 			}
+
+			// Replication change events are wake hints, not replayable state. Keep
+			// checking the authoritative index after the bounded network recovery
+			// attempts are exhausted so a transiently empty transition read cannot
+			// strand an otherwise-ready waiter until its outer timeout.
+			runCheck();
+			requestTimer = setTimeout(requestReplicationInfo, requestIntervalMs);
 		};
 
 		const check = async () => {
@@ -25324,8 +25336,9 @@ export class SharedLog<
 		// replay a maturity/change event that fires while that read is in flight.
 		this.events.addEventListener("replicator:mature", runCheck);
 		this.events.addEventListener("replication:change", runCheck);
-		requestReplicationInfo();
-		runCheck();
+		if (closeSignal.aborted) onClose();
+		else if (options?.signal?.aborted) onAbort();
+		else requestReplicationInfo();
 
 		return deferred.promise.finally(clear);
 	}
