@@ -600,6 +600,28 @@ The resource-fence wrapper fixes those bounds for every acquisition. Exceeding
 one returns `unavailable` without invoking the callback; a conclusive prefix
 mismatch remains `rejected`.
 
+The anchor also has an internal `withExactPolicyHead` readiness lease for the
+next protected-operation slice. Its requirement names one canonical
+CIDv1/raw/SHA-256 policy-entry block. A dedicated CID resolver must return that
+exact bounded block; the anchor hashes it, re-authenticates its authority
+signature and network-bound policy body, proves accepted-prefix provenance,
+and requires the resulting sequence/body-digest identity to equal the durable
+current head before invoking the callback. Hashless and hash-bearing canonical
+EntryV0 wrappers may therefore have different CIDs while representing the same
+policy identity. Missing CID resolution fails `unavailable` with no fallback to
+the digest resolver. One fixed ten-second relative ceiling (which a caller may
+only shorten), cancellation signal, ancestry cap, operation-queue reservation,
+and single background-authentication slot cover the complete
+fetch/proof/acquisition path.
+
+This exact-head lease remains absent from the package root and is not an owner
+revocation API. It is only a precondition lease for a head already published in
+the crash-safe policy checkpoint: fetching the named block does not ingest or
+publish it. Consequently, it does not yet fulfill step 5 of the full exact-policy
+readiness contract, prove that an offline node has discovered a newer authority
+entry, bind an application mutation to the head, establish a resource fence, or
+provide the accepted-remote-entry/frontier callback.
+
 Lease acquisition linearizes immediately before callback invocation. Caller
 cancellation or deadline expiry before that point returns `unavailable` without
 invoking the callback; lifecycle abort or authority equivocation returns
