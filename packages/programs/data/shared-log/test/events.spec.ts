@@ -226,13 +226,16 @@ describe("events", () => {
 
 	// Open an authenticated V2 receive stream from `remote` so forged inbound
 	// V2 mutations can be applied through the full onMessage path.
-	const openV2ReceiveLane = async (log: any, remote: PublicSignKey) => {
+	const openV2ReceiveLane = async (
+		log: any,
+		remote: PublicSignKey,
+		senderTransportSession = 4_242n,
+	) => {
 		const remoteHash = remote.hashcode();
 		const peerSession = log._peerSessions.rotate(remoteHash, "opening");
 		log._peerSessions.unblockReplicationInfo(remoteHash);
 		log._peerSessions.markOpen(remoteHash, peerSession);
 		const receiveEpoch = log._peerSessions.receiveEpoch(remoteHash);
-		const senderTransportSession = 4_242n;
 		log._peerSyncCapabilities.set(remoteHash, remoteSenderCapabilities);
 		log._peerSyncCapabilitySessions.set(remoteHash, senderTransportSession);
 		log._peerSyncCapabilityTimestamps.set(remoteHash, 1n);
@@ -260,6 +263,7 @@ describe("events", () => {
 		clearTimeout(state.requestTimer);
 		state.requestTimer = undefined;
 		return {
+			peerSession,
 			state,
 			context: (timestamp: bigint) =>
 				({
@@ -268,6 +272,169 @@ describe("events", () => {
 				}) as any,
 		};
 	};
+
+	it("repairs a missing sibling head when a successor Full repeats unchanged ranges", async () => {
+		const { db, log } = await openDisconnectedLog(2);
+		const remoteKey = session.peers[1].identity.publicKey;
+		const remoteHash = remoteKey.hashcode();
+		const { entry: base } = await db.add("base", { meta: { next: [] } });
+		const siblings: (typeof base)[] = [];
+		for (const value of ["left", "middle", "right"]) {
+			siblings.push(
+				(
+					await db.add(value, {
+						meta: { next: [base] },
+					})
+				).entry,
+			);
+		}
+
+		const range = makeReplicationRange(log, {
+			id: randomBytes(32),
+			ownerHash: remoteHash,
+			offset: 0.1,
+			timestamp: 1n,
+		});
+		await log.addReplicationRange([range], remoteKey, {
+			checkDuplicates: false,
+			rebalance: false,
+		});
+		log.addPeersToGidPeerHistory(siblings[1]!.meta.gid, [remoteHash], true);
+		log.markEntriesKnownByPeer([siblings[1]!.hash], remoteHash);
+		expect(log.isEntryKnownByPeer(siblings[1]!.hash, remoteHash)).to.be.true;
+
+		const firstLane = await openV2ReceiveLane(log, remoteKey, 4_242n);
+		await db.log.onMessage(
+			new FullReplicationInfoV2Message({
+				receiverChallenge: firstLane.state.receiverBinding!.slice(),
+				senderEpoch: randomBytes(32),
+				sequence: 1n,
+				segments: [range.toReplicationRange()],
+			}),
+			firstLane.context(1n),
+		);
+		expect(firstLane.peerSession.hasPredecessor).to.be.false;
+
+		log._v2Receive.clearPeer(remoteHash);
+		log._v2Send.clearPeer(remoteHash);
+		const successorLane = await openV2ReceiveLane(log, remoteKey, 4_243n);
+		expect(successorLane.peerSession.hasPredecessor).to.be.true;
+
+		const repaired = new Set<string>();
+		let successorRepairDispatches = 0;
+		const publicChanges: string[] = [];
+		const onReplicationChange = () => publicChanges.push("change");
+		const onReplicatorJoin = () => publicChanges.push("join");
+		const maybeMissing = sinon
+			.stub(log.syncronizer, "onMaybeMissingEntries")
+			.callsFake(async (...args: unknown[]) => {
+				const [{ entries, targets }] = args as [
+					{
+						entries: ReadonlyMap<string, unknown>;
+						targets: string[];
+					},
+				];
+				if (targets.includes(remoteHash)) {
+					successorRepairDispatches += 1;
+					const hashes = [...entries.keys()];
+					for (const hash of hashes) repaired.add(hash);
+					// Model the remote receipt so the tracked frontier cannot retry while
+					// the replay/empty/stale assertions are measuring new scheduling.
+					log.clearRepairFrontierHashes(remoteHash, hashes);
+				}
+			});
+		const delayedRepair = sinon.stub(log, "scheduleJoinAuthoritativeRepair");
+		const findLeaders = sinon
+			.stub(log, "findEntryReplicatedLeaderBatch")
+			.callsFake(async (...args: unknown[]) =>
+				(args[0] as unknown[]).map(
+					() => new Map([[remoteHash, { intersecting: true }]]),
+				),
+			);
+
+		try {
+			const successorSenderEpoch = randomBytes(32);
+			log.events.addEventListener("replication:change", onReplicationChange);
+			log.events.addEventListener("replicator:join", onReplicatorJoin);
+			await db.log.onMessage(
+				new FullReplicationInfoV2Message({
+					receiverChallenge: successorLane.state.receiverBinding!.slice(),
+					senderEpoch: successorSenderEpoch,
+					sequence: 1n,
+					segments: [range.toReplicationRange()],
+				}),
+				successorLane.context(2n),
+			);
+
+			await waitForResolved(
+				() => expect(repaired.has(siblings[1]!.hash)).to.be.true,
+				{ timeout: 1_000, delayInterval: 10 },
+			);
+			expect(log._successorFullRepairSessions.has(successorLane.peerSession)).to
+				.be.true;
+			expect(delayedRepair.calledOnce).to.be.true;
+			expect(publicChanges).to.deep.equal([]);
+			expect(log.isEntryKnownByPeer(siblings[1]!.hash, remoteHash)).to.be.true;
+			expect(log._gidPeersHistory.get(siblings[1]!.meta.gid)?.has(remoteHash))
+				.to.be.true;
+
+			const repairDispatches = successorRepairDispatches;
+			await db.log.onMessage(
+				new FullReplicationInfoV2Message({
+					receiverChallenge: successorLane.state.receiverBinding!.slice(),
+					senderEpoch: successorSenderEpoch,
+					sequence: 2n,
+					segments: [range.toReplicationRange()],
+				}),
+				successorLane.context(3n),
+			);
+			await delay(25);
+			expect(successorRepairDispatches).to.equal(repairDispatches);
+			expect(delayedRepair.calledOnce).to.be.true;
+
+			log._v2Receive.clearPeer(remoteHash);
+			log._v2Send.clearPeer(remoteHash);
+			const emptyLane = await openV2ReceiveLane(log, remoteKey, 4_244n);
+			await db.log.onMessage(
+				new FullReplicationInfoV2Message({
+					receiverChallenge: emptyLane.state.receiverBinding!.slice(),
+					senderEpoch: randomBytes(32),
+					sequence: 1n,
+					segments: [],
+				}),
+				emptyLane.context(4n),
+			);
+			expect(log._successorFullRepairSessions.has(emptyLane.peerSession)).to.be
+				.false;
+			expect(successorRepairDispatches).to.equal(repairDispatches);
+			expect(delayedRepair.calledOnce).to.be.true;
+
+			log._v2Receive.clearPeer(remoteHash);
+			log._v2Send.clearPeer(remoteHash);
+			const staleLane = await openV2ReceiveLane(log, remoteKey, 4_245n);
+			const staleFull = new FullReplicationInfoV2Message({
+				receiverChallenge: staleLane.state.receiverBinding!.slice(),
+				senderEpoch: randomBytes(32),
+				sequence: 1n,
+				segments: [range.toReplicationRange()],
+			});
+			log._v2Receive.clearPeer(remoteHash);
+			log._v2Send.clearPeer(remoteHash);
+			await openV2ReceiveLane(log, remoteKey, 4_246n);
+			await db.log.onMessage(staleFull, staleLane.context(5n));
+			await delay(75);
+			expect(log._successorFullRepairSessions.has(staleLane.peerSession)).to.be
+				.false;
+			expect(successorRepairDispatches).to.equal(repairDispatches);
+			expect(delayedRepair.calledOnce).to.be.true;
+		} finally {
+			log.events.removeEventListener("replication:change", onReplicationChange);
+			log.events.removeEventListener("replicator:join", onReplicatorJoin);
+			findLeaders.restore();
+			delayedRepair.restore();
+			maybeMissing.restore();
+		}
+	});
 
 	it("announces the authoritative empty snapshot after a reset put commits then throws", async () => {
 		const { log, replicationIndex } = await openDisconnectedLog(1);
