@@ -604,23 +604,34 @@ The anchor also has an internal `withExactPolicyHead` readiness lease for the
 next protected-operation slice. Its requirement names one canonical
 CIDv1/raw/SHA-256 policy-entry block. A dedicated CID resolver must return that
 exact bounded block; the anchor hashes it, re-authenticates its authority
-signature and network-bound policy body, proves accepted-prefix provenance,
-and requires the resulting sequence/body-digest identity to equal the durable
-current head before invoking the callback. Hashless and hash-bearing canonical
-EntryV0 wrappers may therefore have different CIDs while representing the same
-policy identity. Missing CID resolution fails `unavailable` with no fallback to
-the digest resolver. One fixed ten-second relative ceiling (which a caller may
-only shorten), cancellation signal, ancestry cap, operation-queue reservation,
-and single background-authentication slot cover the complete
-fetch/proof/acquisition path.
+signature and network-bound policy body once, and binds the authenticated bytes
+to an opaque reducer-owned prepared token. Under one serialized authorization
+fence, the reducer evaluates only that named candidate with one aggregate
+64-parent-edge ceiling, admits it without draining later pending successors,
+and publishes any changed state through the crash-safe checkpoint. Only after
+commit does the anchor assert that the named sequence/body-digest identity is
+the durable current head and invoke the callback. A same-body alternate wrapper
+for an already-current head performs no checkpoint replacement. Hashless and
+hash-bearing canonical EntryV0 wrappers may therefore have different CIDs while
+representing the same policy identity. Missing CID resolution fails
+`unavailable` with no fallback to the digest resolver. One fixed ten-second
+relative ceiling (which a caller may only shorten), cancellation signal,
+operation-queue reservation, and single background-authentication slot cover
+the complete fetch/evaluate/checkpoint/acquisition path.
 
-This exact-head lease remains absent from the package root and is not an owner
-revocation API. It is only a precondition lease for a head already published in
-the crash-safe policy checkpoint: fetching the named block does not ingest or
-publish it. Consequently, it does not yet fulfill step 5 of the full exact-policy
-readiness contract, prove that an offline node has discovered a newer authority
-entry, bind an application mutation to the head, establish a resource fence, or
-provide the accepted-remote-entry/frontier callback.
+Cancellation, deadline, or ancestry-budget exhaustion before projection is
+transient and does not durably poison the reducer. An accepted-ancestry
+dependency failure can still enter durable fail-closed `UNAVAILABLE`. Once core
+admission may have mutated state, checkpoint replacement is indivisible: the
+caller may settle promptly, but the internal queue reservation and authorization
+fence remain until commit or terminal failure. No callback or in-memory
+publication occurs for a stale lifecycle. A successful commit may nevertheless
+be recovered by a fresh opener, and callbacks are not replayed.
+
+This exact-head promotion remains absent from the package root and is not a
+complete owner-revocation API. It does not establish a resource fence, operation
+replay, TrustedNetwork v2 activation, or the accepted-remote-entry/frontier
+callback, and it does not close the remaining work in issue #1417.
 
 Lease acquisition linearizes immediately before callback invocation. Caller
 cancellation or deadline expiry before that point returns `unavailable` without

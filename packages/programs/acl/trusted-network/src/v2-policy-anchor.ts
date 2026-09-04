@@ -11,19 +11,19 @@ import { CrashSafeTwoSlotCheckpoint } from "@peerbit/any-store/checkpoint";
 import { PublicSignKey, sha256Sync } from "@peerbit/crypto";
 import { compare, concat, equals } from "uint8arrays";
 import type {
-	AuthenticatedExactPolicyEntryV2,
 	PolicyAdmissionResultV2,
 	PolicyForkEvidenceV2,
 	PolicyHeadProjectionV2,
 	PolicyReducerDurableStateV2,
 	PolicySnapshotResolverV2,
+	PreparedExactPolicyCandidateV2,
 } from "./v2-policy-engine.js";
 import {
 	TRUSTED_NETWORK_V2_MAX_PENDING_POLICIES,
 	TrustedNetworkV2PolicyReducer,
-	authenticateExactPolicyEntryV2,
 	authenticatePolicySnapshotEntryV2,
 	captureCanonicalPolicyEntryCidV2,
+	observeAbortSignalV2,
 } from "./v2-policy-engine.js";
 import {
 	NetworkDescriptorV2,
@@ -783,11 +783,9 @@ export class TrustedNetworkV2DurablePolicyReducer {
 	private published: PublishedProjectionV2;
 	private readonly descriptor: NetworkDescriptorV2;
 	private readonly resolvePolicyEntryByCid?: PolicyEntryCidResolverV2;
-	private readonly lifecycleSignal?: AbortSignal;
-	private exactResolutionController?: AbortController;
-	private exactAuthenticationInFlight?: Promise<AuthenticatedExactPolicyEntryV2>;
-	private readonly authenticateExactPolicyEntry =
-		authenticateExactPolicyEntryV2;
+	private readonly leaseLifecycleController: AbortController;
+	private readonly disposeLifecycleObservation: () => void;
+	private exactAuthenticationInFlight?: Promise<PreparedExactPolicyCandidateV2>;
 	private durableCoreIdentityBytes?: Uint8Array;
 	private operationTail: Promise<void> = Promise.resolve();
 	private authorizationFences = 0;
@@ -800,7 +798,7 @@ export class TrustedNetworkV2DurablePolicyReducer {
 		core: TrustedNetworkV2PolicyReducer;
 		descriptor: NetworkDescriptorV2;
 		resolvePolicyEntryByCid?: PolicyEntryCidResolverV2;
-		lifecycleSignal?: AbortSignal;
+		lifecycle: ReturnType<typeof observeAbortSignalV2>;
 		durableCoreIdentityBytes?: Uint8Array;
 	}) {
 		this.checkpoint = properties.checkpoint;
@@ -808,7 +806,8 @@ export class TrustedNetworkV2DurablePolicyReducer {
 		this.published = publishedFromReducer(this.core);
 		this.descriptor = properties.descriptor;
 		this.resolvePolicyEntryByCid = properties.resolvePolicyEntryByCid;
-		this.lifecycleSignal = properties.lifecycleSignal;
+		this.leaseLifecycleController = properties.lifecycle[0];
+		this.disposeLifecycleObservation = properties.lifecycle[1];
 		this.durableCoreIdentityBytes =
 			properties.durableCoreIdentityBytes === undefined
 				? undefined
@@ -829,7 +828,8 @@ export class TrustedNetworkV2DurablePolicyReducer {
 			serialize(options.descriptor),
 			NetworkDescriptorV2,
 		);
-		const signal = options.signal;
+		const lifecycle = observeAbortSignalV2(options.signal);
+		const signal = lifecycle[0].signal;
 		const store = options.store;
 		const coreProperties: DurableReducerOptionsV2 = {
 			descriptor,
@@ -839,34 +839,33 @@ export class TrustedNetworkV2DurablePolicyReducer {
 			maxPending: options.maxPending,
 			maxPendingPolicyBytes: options.maxPendingPolicyBytes,
 		};
-		assertOpenNotAborted(signal);
-		const checkpoint = await CrashSafeTwoSlotCheckpoint.open({
-			store,
-			scope: checkpointScope(descriptor),
-			maxPayloadBytes:
-				TRUSTED_NETWORK_V2_MAX_POLICY_ANCHOR_CHECKPOINT_PAYLOAD_BYTES,
-		});
-		assertOpenNotAborted(signal);
-
-		// Never let the old append-only format look like an empty or newer
-		// checkpoint. It was internal and never activated, so migration or fallback
-		// would add rollback surface without preserving a public compatibility need.
-		for await (const [key] of store.iterator()) {
-			assertOpenNotAborted(signal);
-			if (
-				key === TRUSTED_NETWORK_V2_POLICY_ANCHOR_STORE_OWNER ||
-				key.startsWith(`${TRUSTED_NETWORK_V2_POLICY_ANCHOR_STORE_OWNER}/`)
-			) {
-				throw new Error(
-					"Legacy append-only policy-anchor records are not supported; reset the dedicated store",
-				);
-			}
-		}
-		assertOpenNotAborted(signal);
-
-		const current = checkpoint.current;
 		let core: TrustedNetworkV2PolicyReducer | undefined;
 		try {
+			assertOpenNotAborted(signal);
+			const checkpoint = await CrashSafeTwoSlotCheckpoint.open({
+				store,
+				scope: checkpointScope(descriptor),
+				maxPayloadBytes:
+					TRUSTED_NETWORK_V2_MAX_POLICY_ANCHOR_CHECKPOINT_PAYLOAD_BYTES,
+			});
+			assertOpenNotAborted(signal);
+
+			// Never let the old append-only format look like an empty or newer
+			// checkpoint. It was internal and never activated, so migration or fallback
+			// would add rollback surface without preserving a public compatibility need.
+			for await (const [key] of store.iterator()) {
+				assertOpenNotAborted(signal);
+				if (
+					key === TRUSTED_NETWORK_V2_POLICY_ANCHOR_STORE_OWNER ||
+					key.startsWith(`${TRUSTED_NETWORK_V2_POLICY_ANCHOR_STORE_OWNER}/`)
+				) {
+					throw new Error(
+						"Legacy append-only policy-anchor records are not supported; reset the dedicated store",
+					);
+				}
+			}
+			assertOpenNotAborted(signal);
+			const current = checkpoint.current;
 			if (current === undefined) {
 				core = new TrustedNetworkV2PolicyReducer(coreProperties);
 				return new TrustedNetworkV2DurablePolicyReducer({
@@ -874,7 +873,7 @@ export class TrustedNetworkV2DurablePolicyReducer {
 					core,
 					descriptor,
 					resolvePolicyEntryByCid: options.resolvePolicyEntryByCid,
-					lifecycleSignal: signal,
+					lifecycle,
 				});
 			}
 
@@ -899,11 +898,12 @@ export class TrustedNetworkV2DurablePolicyReducer {
 				core,
 				descriptor,
 				resolvePolicyEntryByCid: options.resolvePolicyEntryByCid,
-				lifecycleSignal: signal,
+				lifecycle,
 				durableCoreIdentityBytes: decoded.coreIdentityBytes,
 			});
 		} catch (error) {
 			core?.abort();
+			lifecycle[1]();
 			throw error;
 		}
 	}
@@ -981,8 +981,8 @@ export class TrustedNetworkV2DurablePolicyReducer {
 	}
 
 	abort(): void {
-		this.exactResolutionController?.abort();
 		this.core.abort();
+		this.disposeLifecycleObservation();
 	}
 
 	ingest(entryBytes: Uint8Array): Promise<PolicyAdmissionResultV2> {
@@ -1191,10 +1191,10 @@ export class TrustedNetworkV2DurablePolicyReducer {
 			32,
 			deadline,
 			signal,
-			async () => {
+			async (leaseSignal) => {
 				const resolution = await this.core.resolveAcceptedPolicyPrefix(
 					{ sequence, digest },
-					{ maxSteps, deadline, signal },
+					{ maxSteps, deadline, signal: leaseSignal },
 				);
 				return resolution.status === "resolved"
 					? {
@@ -1214,8 +1214,8 @@ export class TrustedNetworkV2DurablePolicyReducer {
 	 * Run one callback while a CID-addressed policy wrapper is authenticated and
 	 * its policy-body identity is the stable durable current head.
 	 *
-	 * The resolver, accepted-prefix proof, and callback share one bounded budget
-	 * and one serialized operation-queue slot. No digest resolver fallback is
+	 * Exact fetch, prepared admission, crash-safe publication, and callback share
+	 * one bounded budget and serialized queue slot. No digest-resolver fallback is
 	 * allowed when the CID resolver is absent or unavailable.
 	 */
 	withExactPolicyHead<T>(
@@ -1300,37 +1300,65 @@ export class TrustedNetworkV2DurablePolicyReducer {
 			textEncoder.encode(policyEntryCid).byteLength,
 			deadline,
 			signal,
-			async () => {
+			async (leaseSignal, mutationCompleted) => {
 				const exact = await this.resolveExactPolicyEntry(
 					policyEntryCid,
 					deadline,
-					signal,
+					leaseSignal,
 				);
 				if (exact.status !== "resolved") return exact;
-				const accepted = await this.core.resolveAcceptedPolicyPrefix(
-					{
-						sequence: exact.lease.policy.sequence,
-						digest: exact.lease.policy.digest,
-					},
-					{ maxSteps: maxAncestrySteps, deadline, signal },
-				);
-				if (accepted.status !== "resolved") return accepted;
-				if (
-					accepted.acceptedHead.sequence !== exact.lease.policy.sequence ||
-					!equals(accepted.acceptedHead.digest, exact.lease.policy.digest)
-				) {
+				this.authorizationFences += 1;
+				try {
+					const admission = await this.core.ingestPreparedExactPolicy(
+						exact.lease,
+						{
+							maxParentEdges: maxAncestrySteps,
+							deadline,
+							signal: leaseSignal,
+						},
+					);
+					// Core admission may now be mutated. From here through checkpoint
+					// settlement, cancellation may settle outward but cannot release the slot.
+					mutationCompleted();
+					await this.persistCorePublication(admission);
+					const halted = this.immediateLeaseHaltedResult();
+					if (halted !== undefined) return halted;
+					if (
+						admission.status !== "accepted" &&
+						admission.status !== "duplicate"
+					) {
+						return {
+							status:
+								admission.status === "rejected" ||
+								admission.status === "capacity"
+									? admission.status
+									: "unavailable",
+							reason:
+								admission.reason ?? "Exact policy admission is unavailable",
+						};
+					}
+					const head = this.published.head;
+					if (
+						this.published.state !== "ACTIVE" ||
+						head === undefined ||
+						head.sequence !== exact.lease.policy.sequence ||
+						!equals(head.digest, exact.lease.policy.digest)
+					) {
+						return {
+							status: "unavailable",
+							reason:
+								"Exact policy entry is not the durable current policy head",
+						};
+					}
 					return {
-						status: "unavailable",
-						reason: "Exact policy entry is not the durable current policy head",
+						status: "resolved",
+						lease: { policyEntryCid, policy: copyHead(head)! },
 					};
+				} catch (error) {
+					throw this.halt(error);
+				} finally {
+					this.authorizationFences -= 1;
 				}
-				return {
-					status: "resolved",
-					lease: {
-						policyEntryCid,
-						policy: accepted.acceptedHead,
-					},
-				};
 			},
 			use,
 		);
@@ -1340,7 +1368,10 @@ export class TrustedNetworkV2DurablePolicyReducer {
 		retainedInputBytes: number,
 		deadline: number | undefined,
 		signal: AbortSignal | undefined,
-		acquire: () => Promise<PolicyLeaseAcquisitionV2<Lease>>,
+		acquire: (
+			signal: AbortSignal,
+			mutationCompleted: () => void,
+		) => Promise<PolicyLeaseAcquisitionV2<Lease>>,
 		use: (lease: Lease) => T | Promise<T>,
 	): Promise<PolicyLeaseResultV2<T>> {
 		if (!this.reserveOperation(retainedInputBytes)) {
@@ -1349,21 +1380,39 @@ export class TrustedNetworkV2DurablePolicyReducer {
 				reason: "Durable policy operation queue is at its fixed capacity",
 			});
 		}
+		let observedSignal: ReturnType<typeof observeAbortSignalV2>;
+		try {
+			observedSignal = observeAbortSignalV2(signal);
+		} catch {
+			this.releaseOperation(retainedInputBytes);
+			return Promise.resolve({
+				status: "rejected",
+				reason: "Policy lease signal could not be observed",
+			});
+		}
 
 		let queueAcquired = false;
 		let callbackAcquired = false;
+		let mutationCompleted = false;
+		const acquisitionController = observedSignal[0];
+		const interruptionSignal = AbortSignal.any([
+			acquisitionController.signal,
+			this.leaseLifecycleController.signal,
+		]);
 		let preAcquisitionResult: PolicyLeaseResultV2<T> | undefined;
 		let resolveEarly!: (result: PolicyLeaseResultV2<T>) => void;
 		const earlyResult = new Promise<PolicyLeaseResultV2<T>>((resolve) => {
 			resolveEarly = resolve;
 		});
 		let deadlineTimer: ReturnType<typeof setTimeout> | undefined;
-		let signalListenerInstalled = false;
 
-		const abortBeforeAcquisition = (): void => {
+		const interruptBeforeAcquisition = (): void => {
+			const halted = this.leaseLifecycleController.signal.aborted;
 			settleBeforeAcquisition({
-				status: "unavailable",
-				reason: "Policy lease acquisition was aborted by the caller",
+				status: halted ? "halted" : "unavailable",
+				reason: halted
+					? "Policy reducer lifecycle is aborted"
+					: "Policy lease acquisition was aborted by the caller",
 			});
 		};
 		const cleanupWakeups = (): void => {
@@ -1371,31 +1420,29 @@ export class TrustedNetworkV2DurablePolicyReducer {
 				clearTimeout(deadlineTimer);
 				deadlineTimer = undefined;
 			}
-			if (signalListenerInstalled) {
-				signalListenerInstalled = false;
-				try {
-					signal?.removeEventListener("abort", abortBeforeAcquisition);
-				} catch {
-					// A structurally valid hostile signal must not break queue cleanup.
-				}
-			}
+			interruptionSignal.removeEventListener(
+				"abort",
+				interruptBeforeAcquisition,
+			);
+			observedSignal[1]();
 		};
 		function settleBeforeAcquisition(result: PolicyLeaseResultV2<T>): void {
-			if (
-				queueAcquired ||
-				callbackAcquired ||
-				preAcquisitionResult !== undefined
-			) {
+			if (callbackAcquired || preAcquisitionResult !== undefined) {
 				return;
 			}
 			preAcquisitionResult = result;
+			acquisitionController.abort();
 			cleanupWakeups();
-			resolveEarly(result);
+			if (!queueAcquired || mutationCompleted) resolveEarly(result);
 		}
+		const completeMutation = (): void => {
+			mutationCompleted = true;
+			if (preAcquisitionResult !== undefined)
+				resolveEarly(preAcquisitionResult);
+		};
 		const armDeadlineWakeup = (): void => {
 			if (
 				deadline === undefined ||
-				queueAcquired ||
 				callbackAcquired ||
 				preAcquisitionResult !== undefined
 			) {
@@ -1431,10 +1478,12 @@ export class TrustedNetworkV2DurablePolicyReducer {
 					return preAcquisitionResult;
 				}
 				queueAcquired = true;
-				cleanupWakeups();
 				const queuedHalt = this.immediateLeaseHaltedResult();
 				if (queuedHalt !== undefined) return queuedHalt;
-				const acquisition = await acquire();
+				const acquisition = await acquire(
+					acquisitionController.signal,
+					completeMutation,
+				);
 				if (preAcquisitionResult !== undefined) {
 					return preAcquisitionResult;
 				}
@@ -1444,7 +1493,7 @@ export class TrustedNetworkV2DurablePolicyReducer {
 				// linearization point.
 				const resolvedHalt = this.immediateLeaseHaltedResult();
 				if (resolvedHalt !== undefined) return resolvedHalt;
-				if (signal?.aborted) {
+				if (acquisitionController.signal.aborted) {
 					return {
 						status: "unavailable",
 						reason: "Policy lease acquisition was aborted by the caller",
@@ -1470,20 +1519,10 @@ export class TrustedNetworkV2DurablePolicyReducer {
 			(): void => {},
 		);
 
-		if (signal !== undefined) {
-			signalListenerInstalled = true;
-			try {
-				signal.addEventListener("abort", abortBeforeAcquisition, {
-					once: true,
-				});
-			} catch {
-				settleBeforeAcquisition({
-					status: "rejected",
-					reason: "Policy lease signal could not be observed",
-				});
-			}
-			if (signal.aborted) abortBeforeAcquisition();
-		}
+		interruptionSignal.addEventListener("abort", interruptBeforeAcquisition, {
+			once: true,
+		});
+		if (interruptionSignal.aborted) interruptBeforeAcquisition();
 		armDeadlineWakeup();
 		return Promise.race([retainedResult, earlyResult]);
 	}
@@ -1491,8 +1530,8 @@ export class TrustedNetworkV2DurablePolicyReducer {
 	private async resolveExactPolicyEntry(
 		policyEntryCid: string,
 		deadline: number,
-		callerSignal: AbortSignal | undefined,
-	): Promise<PolicyLeaseAcquisitionV2<ExactPolicyHeadLeaseV2>> {
+		callerSignal: AbortSignal,
+	): Promise<PolicyLeaseAcquisitionV2<PreparedExactPolicyCandidateV2>> {
 		const resolver = this.resolvePolicyEntryByCid;
 		if (resolver === undefined) {
 			return {
@@ -1506,40 +1545,21 @@ export class TrustedNetworkV2DurablePolicyReducer {
 				reason: "Policy reducer lifecycle is aborted",
 			};
 		}
-		if (callerSignal?.aborted) {
+		if (callerSignal.aborted) {
 			return {
 				status: "unavailable",
 				reason: "Exact policy-head acquisition was aborted by the caller",
 			};
 		}
-		const remaining = deadline - Date.now();
-		if (remaining <= 0) {
+		if (Date.now() >= deadline) {
 			return {
 				status: "unavailable",
 				reason: "Exact policy-head acquisition deadline elapsed",
 			};
 		}
 
-		const controller = new AbortController();
-		this.exactResolutionController = controller;
-		let deadlineElapsed = false;
-		const abortFromLifecycle = (): void => controller.abort();
-		const abortFromCaller = (): void => {
-			controller.abort();
-		};
-		this.lifecycleSignal?.addEventListener("abort", abortFromLifecycle, {
-			once: true,
-		});
-		callerSignal?.addEventListener("abort", abortFromCaller, { once: true });
-		const deadlineTimer = setTimeout(
-			() => {
-				deadlineElapsed = true;
-				controller.abort();
-			},
-			Math.min(remaining, MAX_TIMER_DELAY_MS_V2),
-		);
 		const interrupted = new Promise<never>((_resolve, reject) => {
-			controller.signal.addEventListener(
+			callerSignal.addEventListener(
 				"abort",
 				() => reject(new Error("Exact policy-head resolution interrupted")),
 				{ once: true },
@@ -1548,19 +1568,13 @@ export class TrustedNetworkV2DurablePolicyReducer {
 		const interruptionFailure = (): PolicyLeaseFailureV2 | undefined => {
 			const halted = this.immediateLeaseHaltedResult();
 			if (halted !== undefined) return halted;
-			if (this.lifecycleSignal?.aborted) {
-				return {
-					status: "halted",
-					reason: "Policy reducer lifecycle is aborted",
-				};
-			}
-			if (callerSignal?.aborted) {
+			if (callerSignal.aborted) {
 				return {
 					status: "unavailable",
 					reason: "Exact policy-head acquisition was aborted by the caller",
 				};
 			}
-			if (deadlineElapsed || Date.now() >= deadline) {
+			if (Date.now() >= deadline) {
 				return {
 					status: "unavailable",
 					reason: "Exact policy-head acquisition deadline elapsed",
@@ -1569,83 +1583,85 @@ export class TrustedNetworkV2DurablePolicyReducer {
 			return undefined;
 		};
 
-		try {
-			const priorAuthentication = this.exactAuthenticationInFlight;
-			if (priorAuthentication !== undefined) {
-				try {
-					await Promise.race([
-						priorAuthentication.catch((): void => {}),
-						interrupted,
-					]);
-				} catch {
-					return (
-						interruptionFailure() ?? {
-							status: "unavailable",
-							reason: "Exact policy authentication slot is unavailable",
-						}
-					);
-				}
-				const interruptedResult = interruptionFailure();
-				if (interruptedResult !== undefined) return interruptedResult;
-			}
-			let entryBytes: Uint8Array | undefined;
+		const priorAuthentication = this.exactAuthenticationInFlight;
+		if (priorAuthentication !== undefined) {
 			try {
-				entryBytes = await Promise.race([
-					Promise.resolve().then(() =>
-						resolver(policyEntryCid, { signal: controller.signal }),
-					),
+				await Promise.race([
+					priorAuthentication.catch((): void => {}),
 					interrupted,
 				]);
-			} catch (error) {
-				const interruptedResult = interruptionFailure();
-				if (interruptedResult !== undefined) return interruptedResult;
-				return {
-					status: "unavailable",
-					reason: `Policy CID resolver dependency is unavailable: ${boundedDependencyReasonV2(error)}`,
-				};
-			}
-			if (entryBytes === undefined) {
-				return {
-					status: "unavailable",
-					reason: "Exact policy entry is unavailable from its CID resolver",
-				};
-			}
-			const authentication = Promise.resolve().then(() =>
-				this.authenticateExactPolicyEntry({
-					policyEntryCid,
-					entryBytes,
-					descriptor: this.descriptor,
-				}),
-			);
-			this.exactAuthenticationInFlight = authentication;
-			const clearAuthentication = (): void => {
-				if (this.exactAuthenticationInFlight === authentication) {
-					this.exactAuthenticationInFlight = undefined;
-				}
-			};
-			void authentication.then(clearAuthentication, clearAuthentication);
-			try {
-				const authenticated = await Promise.race([authentication, interrupted]);
-				const completedInterruption = interruptionFailure();
+			} catch {
 				return (
-					completedInterruption ?? { status: "resolved", lease: authenticated }
+					interruptionFailure() ?? {
+						status: "unavailable",
+						reason: "Exact policy authentication slot is unavailable",
+					}
 				);
-			} catch (error) {
-				const interruptedResult = interruptionFailure();
-				if (interruptedResult !== undefined) return interruptedResult;
-				return {
-					status: "rejected",
-					reason: `Exact policy entry is invalid: ${boundedDependencyReasonV2(error)}`,
-				};
 			}
-		} finally {
-			clearTimeout(deadlineTimer);
-			this.lifecycleSignal?.removeEventListener("abort", abortFromLifecycle);
-			callerSignal?.removeEventListener("abort", abortFromCaller);
-			if (this.exactResolutionController === controller) {
-				this.exactResolutionController = undefined;
-			}
+			const interruptedResult = interruptionFailure();
+			if (interruptedResult !== undefined) return interruptedResult;
 		}
+		let entryBytes: Uint8Array | undefined;
+		try {
+			entryBytes = await Promise.race([
+				Promise.resolve().then(() =>
+					resolver(policyEntryCid, { signal: callerSignal }),
+				),
+				interrupted,
+			]);
+		} catch (error) {
+			const interruptedResult = interruptionFailure();
+			if (interruptedResult !== undefined) return interruptedResult;
+			return {
+				status: "unavailable",
+				reason: `Policy CID resolver dependency is unavailable: ${boundedDependencyReasonV2(error)}`,
+			};
+		}
+		if (entryBytes === undefined) {
+			return {
+				status: "unavailable",
+				reason: "Exact policy entry is unavailable from its CID resolver",
+			};
+		}
+		const authentication = Promise.resolve().then(() =>
+			this.authenticateExactPolicyEntry({
+				policyEntryCid,
+				entryBytes,
+				descriptor: this.descriptor,
+			}),
+		);
+		this.exactAuthenticationInFlight = authentication;
+		const clearAuthentication = (): void => {
+			if (this.exactAuthenticationInFlight === authentication) {
+				this.exactAuthenticationInFlight = undefined;
+			}
+		};
+		void authentication.then(clearAuthentication, clearAuthentication);
+		try {
+			const authenticated = await Promise.race([authentication, interrupted]);
+			const completedInterruption = interruptionFailure();
+			return (
+				completedInterruption ?? { status: "resolved", lease: authenticated }
+			);
+		} catch (error) {
+			const interruptedResult = interruptionFailure();
+			if (interruptedResult !== undefined) return interruptedResult;
+			return {
+				status: "rejected",
+				reason: `Exact policy entry is invalid: ${boundedDependencyReasonV2(error)}`,
+			};
+		}
+	}
+
+	private authenticateExactPolicyEntry(properties: {
+		policyEntryCid: string;
+		entryBytes: Uint8Array;
+		descriptor: NetworkDescriptorV2;
+	}): Promise<PreparedExactPolicyCandidateV2> {
+		return this.core.prepareExactPolicyEntry(
+			properties.policyEntryCid,
+			properties.entryBytes,
+		);
 	}
 
 	private forkFailStopResult(): PolicyAdmissionResultV2 {
@@ -1748,7 +1764,6 @@ export class TrustedNetworkV2DurablePolicyReducer {
 		);
 		terminal.cause = cause;
 		this.terminalError = terminal;
-		this.exactResolutionController?.abort();
 		this.core.abort();
 		return terminal;
 	}
@@ -1812,6 +1827,10 @@ export class TrustedNetworkV2DurablePolicyReducer {
 			throw new Error("Policy-anchor checkpoint is unavailable");
 		}
 		await checkpoint.commit(payloadBytes);
+		// Atomic replacement is not cancellable. A lifecycle that ended while it
+		// was in flight may leave durable recovery state, but cannot publish it into
+		// the stale in-memory instance.
+		if (this.core.state === "HALTED") return;
 
 		this.durableCoreIdentityBytes = nextDurableCoreIdentityBytes;
 		this.published = nextPublished;

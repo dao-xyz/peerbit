@@ -70,6 +70,33 @@ const isAbortSignalV2 = (value: unknown): value is AbortSignal => {
 	}
 };
 
+/** Capture a possibly structural signal behind a reducer-owned native signal. */
+export const observeAbortSignalV2 = (source?: AbortSignal) => {
+	const controller = new AbortController();
+	let installed = false;
+	const abort = (): void => controller.abort();
+	const dispose = (): void => {
+		controller.abort();
+		if (!installed) return;
+		installed = false;
+		try {
+			source!.removeEventListener("abort", abort);
+		} catch {}
+	};
+	try {
+		if (source !== undefined) {
+			if (!isAbortSignalV2(source)) throw new TypeError();
+			installed = true;
+			source.addEventListener("abort", abort, { once: true });
+			if (source.aborted) abort();
+		}
+	} catch {
+		dispose();
+		throw new TypeError("AbortSignal could not be observed");
+	}
+	return [controller, dispose] as const;
+};
+
 const exactUint8ArrayByteLength = (input: unknown): number => {
 	if (
 		!ARRAY_BUFFER_IS_VIEW(input) ||
@@ -176,6 +203,16 @@ export type PolicyHeadProjectionV2 = {
 export type AuthenticatedExactPolicyEntryV2 = {
 	policyEntryCid: string;
 	policy: PolicyHeadProjectionV2;
+};
+
+/** Opaque, reducer-owned result of exact CID and authority authentication. */
+export type PreparedExactPolicyCandidateV2 =
+	Readonly<AuthenticatedExactPolicyEntryV2>;
+
+export type ExactPolicyAdmissionOptionsV2 = {
+	maxParentEdges: number;
+	deadline: number;
+	signal?: AbortSignal;
 };
 
 /** Internal read-only resolution used by the durable policy-prefix lease. */
@@ -286,6 +323,12 @@ type ParentResolutionV2 =
 	| { status: "unavailable"; digest: Uint8Array; reason: string }
 	| { status: "reject"; digest: Uint8Array; reason: string };
 
+type ExactPolicyTraversalV2 = {
+	remainingParentEdges: number;
+	deadline: number;
+	signal: AbortSignal;
+};
+
 type SnapshotResolutionCacheV2 = Map<
 	string,
 	Promise<ValidatedPolicySnapshotV2 | undefined>
@@ -296,6 +339,7 @@ type EvaluationV2 =
 	| { status: "duplicate" }
 	| { status: "missing"; digest: Uint8Array; reason?: string }
 	| { status: "reject"; reason: string }
+	| { status: "interrupted"; reason: string }
 	| { status: "unavailable"; digest: Uint8Array; reason: string }
 	| {
 			status: "fork";
@@ -319,6 +363,11 @@ const validationMessage = (error: unknown): string =>
 
 const boundedUnavailableReason = (reason: string): string =>
 	reason.slice(0, MAX_UNAVAILABLE_REASON_LENGTH_V2);
+
+const PREPARED_EXACT_POLICIES = new WeakMap<
+	object,
+	[TrustedNetworkV2PolicyReducer, ValidatedPolicySnapshotV2]
+>();
 
 class PolicyDependencyUnavailableErrorV2 extends Error {
 	constructor(message: string) {
@@ -415,11 +464,14 @@ export const captureCanonicalPolicyEntryCidV2 = (value: unknown): string => {
  * identity. The wrapper CID is deliberately not the policy identity: distinct
  * canonical EntryV0 storage wrappers may carry the same signed policy body.
  */
-export const authenticateExactPolicyEntryV2 = async (properties: {
+const authenticateExactPolicySnapshotV2 = async (properties: {
 	policyEntryCid: string;
 	entryBytes: Uint8Array;
 	descriptor: NetworkDescriptorV2;
-}): Promise<AuthenticatedExactPolicyEntryV2> => {
+}): Promise<{
+	policyEntryCid: string;
+	snapshot: ValidatedPolicySnapshotV2;
+}> => {
 	const policyEntryCid = captureCanonicalPolicyEntryCidV2(
 		properties.policyEntryCid,
 	);
@@ -431,13 +483,23 @@ export const authenticateExactPolicyEntryV2 = async (properties: {
 			"Resolved policy entry bytes do not match the requested CID",
 		);
 	}
-	const authenticated = await authenticateCapturedPolicySnapshotEntryV2(
+	const snapshot = await authenticateCapturedPolicySnapshotEntryV2(
 		entryBytes,
 		properties.descriptor,
 	);
+	return { policyEntryCid, snapshot };
+};
+
+export const authenticateExactPolicyEntryV2 = async (properties: {
+	policyEntryCid: string;
+	entryBytes: Uint8Array;
+	descriptor: NetworkDescriptorV2;
+}): Promise<AuthenticatedExactPolicyEntryV2> => {
+	const { policyEntryCid, snapshot } =
+		await authenticateExactPolicySnapshotV2(properties);
 	return {
 		policyEntryCid,
-		policy: projectionFromSnapshot(authenticated),
+		policy: projectionFromSnapshot(snapshot),
 	};
 };
 
@@ -836,6 +898,76 @@ export class TrustedNetworkV2PolicyReducer {
 			return false;
 		}
 		return (this.rolesFor(subject) & roles) === roles;
+	}
+
+	async prepareExactPolicyEntry(
+		policyEntryCid: string,
+		entryBytes: Uint8Array,
+	): Promise<PreparedExactPolicyCandidateV2> {
+		if (this.lifecycleController.signal.aborted) {
+			throw new Error("Policy reducer lifecycle is aborted");
+		}
+		const prepared = await authenticateExactPolicySnapshotV2({
+			policyEntryCid,
+			entryBytes,
+			descriptor: this.descriptor,
+		});
+		if (this.lifecycleController.signal.aborted) {
+			throw new Error("Policy reducer lifecycle is aborted");
+		}
+		const candidate = Object.freeze({
+			policyEntryCid: prepared.policyEntryCid,
+			policy: projectionFromSnapshot(prepared.snapshot),
+		});
+		PREPARED_EXACT_POLICIES.set(candidate, [this, prepared.snapshot]);
+		return candidate;
+	}
+
+	async ingestPreparedExactPolicy(
+		candidate: PreparedExactPolicyCandidateV2,
+		options: ExactPolicyAdmissionOptionsV2,
+	): Promise<PolicyAdmissionResultV2> {
+		const prepared =
+			candidate !== null && typeof candidate === "object"
+				? PREPARED_EXACT_POLICIES.get(candidate)
+				: undefined;
+		if (prepared?.[0] !== this) {
+			return this.result(
+				"rejected",
+				"Prepared exact policy does not belong to this reducer",
+			);
+		}
+		let traversal: ExactPolicyTraversalV2;
+		let disposeSignal = (): void => {};
+		try {
+			const maxParentEdges = options.maxParentEdges;
+			const deadline = options.deadline;
+			const sourceSignal = options.signal;
+			if (
+				!Number.isSafeInteger(maxParentEdges) ||
+				maxParentEdges < 0 ||
+				maxParentEdges > TRUSTED_NETWORK_V2_MAX_PENDING_POLICIES ||
+				!Number.isSafeInteger(deadline) ||
+				deadline < 0
+			) {
+				throw new Error();
+			}
+			const observed = observeAbortSignalV2(sourceSignal);
+			disposeSignal = observed[1];
+			traversal = {
+				remainingParentEdges: maxParentEdges,
+				deadline,
+				signal: observed[0].signal,
+			};
+		} catch {
+			return this.result(
+				"rejected",
+				"Exact policy admission bounds are invalid",
+			);
+		}
+		return this.enqueueAdmission(() =>
+			this.ingestSnapshot(prepared[1], traversal),
+		).finally(disposeSignal);
 	}
 
 	/**
@@ -1372,14 +1504,34 @@ export class TrustedNetworkV2PolicyReducer {
 		};
 	}
 
+	private takeExactParentEdges(
+		traversal: ExactPolicyTraversalV2 | undefined,
+		count: number,
+	): Extract<EvaluationV2, { status: "interrupted" }> | undefined {
+		if (traversal === undefined) return undefined;
+		const reason = traversal.signal.aborted
+			? "Exact policy admission was aborted by the caller"
+			: Date.now() >= traversal.deadline
+				? "Exact policy admission deadline elapsed"
+				: traversal.remainingParentEdges < count
+					? "Exact policy admission reached its parent-edge budget"
+					: undefined;
+		if (reason !== undefined) return { status: "interrupted", reason };
+		traversal.remainingParentEdges -= count;
+		return undefined;
+	}
+
 	private async evaluate(
 		candidate: ValidatedPolicySnapshotV2,
+		traversal?: ExactPolicyTraversalV2,
 	): Promise<EvaluationV2> {
 		const resolutionCache: SnapshotResolutionCacheV2 = new Map();
 		if (this.acceptedHead === undefined) {
 			let cursor = candidate;
 			while (cursor.body.sequence !== 0n) {
-				const parent = await this.parentOf(cursor, resolutionCache);
+				const interrupted = this.takeExactParentEdges(traversal, 1);
+				if (interrupted !== undefined) return interrupted;
+				const parent = await this.parentOf(cursor, resolutionCache, traversal);
 				if (parent.status !== "found") {
 					return this.candidateAncestryResult(parent);
 				}
@@ -1395,7 +1547,13 @@ export class TrustedNetworkV2PolicyReducer {
 
 		while (candidateCursor.body.sequence > acceptedCursor.body.sequence) {
 			candidateChild = candidateCursor;
-			const parent = await this.parentOf(candidateCursor, resolutionCache);
+			const interrupted = this.takeExactParentEdges(traversal, 1);
+			if (interrupted !== undefined) return interrupted;
+			const parent = await this.parentOf(
+				candidateCursor,
+				resolutionCache,
+				traversal,
+			);
 			if (parent.status !== "found") {
 				return this.candidateAncestryResult(parent);
 			}
@@ -1403,7 +1561,13 @@ export class TrustedNetworkV2PolicyReducer {
 		}
 		while (acceptedCursor.body.sequence > candidateCursor.body.sequence) {
 			acceptedChild = acceptedCursor;
-			const parent = await this.parentOf(acceptedCursor, resolutionCache);
+			const interrupted = this.takeExactParentEdges(traversal, 1);
+			if (interrupted !== undefined) return interrupted;
+			const parent = await this.parentOf(
+				acceptedCursor,
+				resolutionCache,
+				traversal,
+			);
 			if (parent.status !== "found") {
 				return this.acceptedAncestryUnavailable(parent);
 			}
@@ -1422,9 +1586,11 @@ export class TrustedNetworkV2PolicyReducer {
 			}
 			candidateChild = candidateCursor;
 			acceptedChild = acceptedCursor;
+			const interrupted = this.takeExactParentEdges(traversal, 2);
+			if (interrupted !== undefined) return interrupted;
 			const [candidateParent, acceptedParent] = await Promise.all([
-				this.parentOf(candidateCursor, resolutionCache),
-				this.parentOf(acceptedCursor, resolutionCache),
+				this.parentOf(candidateCursor, resolutionCache, traversal),
+				this.parentOf(acceptedCursor, resolutionCache, traversal),
 			]);
 			if (acceptedParent.status !== "found") {
 				return this.acceptedAncestryUnavailable(acceptedParent);
@@ -1704,6 +1870,13 @@ export class TrustedNetworkV2PolicyReducer {
 		} catch (error) {
 			return this.result("rejected", validationMessage(error));
 		}
+		return this.ingestSnapshot(snapshot);
+	}
+
+	private async ingestSnapshot(
+		snapshot: ValidatedPolicySnapshotV2,
+		traversal?: ExactPolicyTraversalV2,
+	): Promise<PolicyAdmissionResultV2> {
 		if (this.lifecycleController.signal.aborted) return this.haltedResult();
 
 		if (this.fork !== undefined) {
@@ -1715,9 +1888,10 @@ export class TrustedNetworkV2PolicyReducer {
 				forkObservation === undefined ? undefined : [forkObservation],
 			);
 		}
-		this.retainCanonicalHeadEntry(snapshot);
+		if (traversal === undefined) this.retainCanonicalHeadEntry(snapshot);
 
 		if (this.unavailable !== undefined) {
+			if (traversal !== undefined) return this.unavailableResult();
 			if (this.acceptedHead?.digestKey === snapshot.digestKey) {
 				return this.result("unavailable", this.unavailable.reason);
 			}
@@ -1743,17 +1917,27 @@ export class TrustedNetworkV2PolicyReducer {
 		}
 
 		const existingPending = this.pending.get(snapshot.digestKey);
-		if (existingPending !== undefined) {
+		if (existingPending !== undefined && traversal === undefined) {
 			this.addPending(snapshot, existingPending.missingParentDigest);
 			return this.result("pending", "Policy snapshot is already pending");
 		}
 
-		const evaluation = await this.evaluate(snapshot);
+		const evaluation = await this.evaluate(snapshot, traversal);
 		if (this.lifecycleController.signal.aborted) return this.haltedResult();
+		const interrupted = this.takeExactParentEdges(traversal, 0);
+		if (evaluation.status === "interrupted" || interrupted !== undefined) {
+			return this.result(
+				"unavailable",
+				evaluation.status === "interrupted"
+					? evaluation.reason
+					: interrupted!.reason,
+			);
+		}
 		if (evaluation.status === "reject") {
 			return this.result("rejected", evaluation.reason);
 		}
 		if (evaluation.status === "duplicate") {
+			if (traversal !== undefined) this.pending.delete(snapshot.digestKey);
 			return this.result("duplicate");
 		}
 		if (evaluation.status === "fork") {
@@ -1774,6 +1958,11 @@ export class TrustedNetworkV2PolicyReducer {
 			);
 		}
 
+		if (traversal !== undefined) {
+			this.pending.delete(snapshot.digestKey);
+			this.project(snapshot);
+			return this.result("accepted");
+		}
 		this.project(snapshot);
 		return (
 			this.completedDrainResult(await this.drainPending()) ??

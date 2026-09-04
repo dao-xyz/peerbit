@@ -445,6 +445,7 @@ const openAnchor = (
 		policyEntryCid: string,
 		options: { signal: AbortSignal },
 	) => Uint8Array | undefined | Promise<Uint8Array | undefined>,
+	signal?: AbortSignal,
 ): Promise<TrustedNetworkV2DurablePolicyReducer> =>
 	TrustedNetworkV2DurablePolicyReducer.open({
 		descriptor: fixture.descriptor,
@@ -452,6 +453,7 @@ const openAnchor = (
 		resolvePolicyEntryByCid,
 		store,
 		resolveTimeoutMs: 500,
+		signal,
 	});
 
 const commitTestCheckpointPayload = async (
@@ -934,6 +936,401 @@ describe("TrustedNetwork v2 durable policy anchor", () => {
 			value: current.body.sequence,
 		});
 		expect(cidResolverCalls).to.equal(2);
+	});
+
+	it("fetches, checkpoints, and leases an exact policy that was not already ingested", async () => {
+		const fixture = await createChain();
+		const genesisBytes = entryBytes(fixture.chain[0].entry);
+		const genesisCid = (await calculateRawCid(genesisBytes)).cid;
+		const store = new ControlledPolicyAnchorStore();
+		const checkpointGate = store.gateNextAtomicReplace();
+		const anchor = await openAnchor(fixture, store, undefined, (cid) =>
+			cid === genesisCid ? genesisBytes : undefined,
+		);
+
+		let callbackCalls = 0;
+		const readiness = anchor.withExactPolicyHead(
+			{ policyEntryCid: genesisCid, maxAncestrySteps: 0 },
+			({ policy }) => {
+				callbackCalls += 1;
+				return policy.sequence;
+			},
+		);
+		await checkpointGate.entered;
+		expect(callbackCalls).to.equal(0);
+		expect(anchor.head).to.equal(undefined);
+		expect(anchor.isUsable()).to.equal(false);
+		checkpointGate.release();
+		const ready = await readiness;
+
+		expect(ready).to.deep.equal({ status: "completed", value: 0n });
+		expect(store.atomicReplaceCalls).to.be.greaterThan(0);
+		expectHead(anchor, fixture.chain[0]);
+
+		anchor.abort();
+		const reopened = await openAnchor(fixture, store, undefined, (cid) =>
+			cid === genesisCid ? genesisBytes : undefined,
+		);
+		const replacementsBeforeReacquire = store.atomicReplaceCalls;
+		const reacquired = await reopened.withExactPolicyHead(
+			{ policyEntryCid: genesisCid, maxAncestrySteps: 0 },
+			({ policy }) => policy.sequence,
+		);
+		expect(reacquired).to.deep.equal({ status: "completed", value: 0n });
+		expect(store.atomicReplaceCalls).to.equal(replacementsBeforeReacquire);
+	});
+
+	it("halts exact admission when its checkpoint replacement fails", async () => {
+		const fixture = await createChain();
+		const bytes = entryBytes(fixture.chain[0].entry);
+		const cid = (await calculateRawCid(bytes)).cid;
+		const store = new ControlledPolicyAnchorStore();
+		store.failNextAtomicReplace(new Error("exact checkpoint failed"));
+		const anchor = await openAnchor(fixture, store, undefined, (requested) =>
+			requested === cid ? bytes : undefined,
+		);
+		let callbackCalls = 0;
+		const error = await rejection(
+			anchor.withExactPolicyHead({ policyEntryCid: cid }, () => {
+				callbackCalls += 1;
+			}),
+		);
+		expect(error.message).to.contain("ambiguous and halted");
+		expect(anchor.state).to.equal("HALTED");
+		expect(anchor.isUsable()).to.equal(false);
+		expect(callbackCalls).to.equal(0);
+	});
+
+	it("fails authorization closed until an exact revocation policy is checkpointed", async () => {
+		const fixture = await createChain();
+		const revokedBytes = entryBytes(fixture.chain[1].entry);
+		const revokedCid = (await calculateRawCid(revokedBytes)).cid;
+		const store = new ControlledPolicyAnchorStore();
+		const resolveByCid = (cid: string): Uint8Array | undefined =>
+			cid === revokedCid ? revokedBytes : undefined;
+		const anchor = await openAnchor(fixture, store, undefined, resolveByCid);
+		await anchor.ingest(entryBytes(fixture.chain[0].entry));
+		expect(
+			anchor.isAuthorized(fixture.alice.publicKey, TrustedNetworkRole.WRITER),
+		).to.equal(true);
+		const gate = store.gateNextAtomicReplace();
+		let callbackCalls = 0;
+		const readiness = anchor.withExactPolicyHead(
+			{ policyEntryCid: revokedCid, maxAncestrySteps: 1 },
+			({ policy }) => {
+				callbackCalls += 1;
+				return policy.sequence;
+			},
+		);
+		await gate.entered;
+		expect(callbackCalls).to.equal(0);
+		expectHead(anchor, fixture.chain[0]);
+		expect(
+			anchor.isAuthorized(fixture.alice.publicKey, TrustedNetworkRole.WRITER),
+		).to.equal(false);
+		gate.release();
+		expect(await readiness).to.deep.equal({ status: "completed", value: 1n });
+		expectHead(anchor, fixture.chain[1]);
+		expect(
+			anchor.isAuthorized(fixture.alice.publicKey, TrustedNetworkRole.WRITER),
+		).to.equal(false);
+
+		anchor.abort();
+		const reopened = await openAnchor(fixture, store, undefined, resolveByCid);
+		expect(
+			await reopened.withExactPolicyHead(
+				{ policyEntryCid: revokedCid, maxAncestrySteps: 0 },
+				({ policy }) => policy.sequence,
+			),
+		).to.deep.equal({ status: "completed", value: 1n });
+	});
+
+	it("settles cancellation while retaining a blocked exact checkpoint operation", async () => {
+		const fixture = await createChain();
+		const bytes = entryBytes(fixture.chain[0].entry);
+		const cid = (await calculateRawCid(bytes)).cid;
+		const store = new ControlledPolicyAnchorStore();
+		const gate = store.gateNextAtomicReplace();
+		const anchor = await openAnchor(fixture, store, undefined, (requested) =>
+			requested === cid ? bytes : undefined,
+		);
+		const controller = new AbortController();
+		let callbackCalls = 0;
+		const readiness = anchor.withExactPolicyHead(
+			{ policyEntryCid: cid, signal: controller.signal },
+			() => {
+				callbackCalls += 1;
+			},
+		);
+		await gate.entered;
+		controller.abort();
+		expect(await readiness).to.deep.equal({
+			status: "unavailable",
+			reason: "Policy lease acquisition was aborted by the caller",
+		});
+		expect(callbackCalls).to.equal(0);
+		expect(anchor.bufferedAdmissionCount).to.equal(1);
+		expect(anchor.isUsable()).to.equal(false);
+
+		gate.release();
+		const recovered = await anchor.withExactPolicyHead(
+			{ policyEntryCid: cid },
+			({ policy }) => policy.sequence,
+		);
+		expect(recovered).to.deep.equal({ status: "completed", value: 0n });
+		expect(anchor.bufferedAdmissionCount).to.equal(0);
+	});
+
+	it("does not publish a checkpoint completion into an aborted lifecycle", async () => {
+		const fixture = await createChain();
+		const bytes = entryBytes(fixture.chain[0].entry);
+		const cid = (await calculateRawCid(bytes)).cid;
+		const store = new ControlledPolicyAnchorStore();
+		const gate = store.gateNextAtomicReplace();
+		const resolveByCid = (requested: string): Uint8Array | undefined =>
+			requested === cid ? bytes : undefined;
+		const anchor = await openAnchor(fixture, store, undefined, resolveByCid);
+		let callbackCalls = 0;
+		const readiness = anchor.withExactPolicyHead(
+			{ policyEntryCid: cid },
+			() => {
+				callbackCalls += 1;
+			},
+		);
+		await gate.entered;
+		anchor.abort();
+		expect((await readiness).status).to.equal("halted");
+		expect(anchor.head).to.equal(undefined);
+		expect(callbackCalls).to.equal(0);
+		expect(anchor.bufferedAdmissionCount).to.equal(1);
+		gate.release();
+		while (anchor.bufferedAdmissionCount !== 0) await Promise.resolve();
+
+		const reopened = await openAnchor(fixture, store, undefined, resolveByCid);
+		expectHead(reopened, fixture.chain[0]);
+		expect(
+			await reopened.withExactPolicyHead(
+				{ policyEntryCid: cid },
+				({ policy }) => policy.sequence,
+			),
+		).to.deep.equal({ status: "completed", value: 0n });
+	});
+
+	it("settles an external lifecycle abort while retaining the blocked checkpoint", async () => {
+		const fixture = await createChain();
+		const bytes = entryBytes(fixture.chain[0].entry);
+		const cid = (await calculateRawCid(bytes)).cid;
+		const store = new ControlledPolicyAnchorStore();
+		const gate = store.gateNextAtomicReplace();
+		const lifecycle = new AbortController();
+		const resolveByCid = (requested: string): Uint8Array | undefined =>
+			requested === cid ? bytes : undefined;
+		const anchor = await openAnchor(
+			fixture,
+			store,
+			undefined,
+			resolveByCid,
+			lifecycle.signal,
+		);
+		let callbackCalls = 0;
+		const readiness = anchor.withExactPolicyHead(
+			{ policyEntryCid: cid },
+			() => {
+				callbackCalls += 1;
+			},
+		);
+		await gate.entered;
+		lifecycle.abort();
+		expect((await readiness).status).to.equal("halted");
+		expect(callbackCalls).to.equal(0);
+		expect(anchor.head).to.equal(undefined);
+		expect(anchor.bufferedAdmissionCount).to.equal(1);
+		gate.release();
+		while (anchor.bufferedAdmissionCount !== 0) await Promise.resolve();
+
+		const reopened = await openAnchor(fixture, store, undefined, resolveByCid);
+		expectHead(reopened, fixture.chain[0]);
+	});
+
+	it("normalizes a stateful lifecycle signal before exact lease work", async () => {
+		const fixture = await createChain();
+		const bytes = entryBytes(fixture.chain[0].entry);
+		const cid = (await calculateRawCid(bytes)).cid;
+		let addCalls = 0;
+		let removeCalls = 0;
+		const lifecycle = {
+			aborted: false,
+			addEventListener: (): void => {
+				addCalls += 1;
+				if (addCalls > 1) throw new Error("second lifecycle observation");
+			},
+			removeEventListener: (): void => {
+				removeCalls += 1;
+				throw new Error("hostile lifecycle remove");
+			},
+		} as unknown as AbortSignal;
+		const anchor = await openAnchor(
+			fixture,
+			new ControlledPolicyAnchorStore(),
+			undefined,
+			(requested) => (requested === cid ? bytes : undefined),
+			lifecycle,
+		);
+		expect(addCalls).to.equal(1);
+		expect(
+			await anchor.withExactPolicyHead(
+				{ policyEntryCid: cid },
+				({ policy }) => policy.sequence,
+			),
+		).to.deep.equal({ status: "completed", value: 0n });
+		expect(addCalls).to.equal(1);
+
+		anchor.abort();
+		expect(removeCalls).to.equal(1);
+		expect(anchor.state).to.equal("HALTED");
+	});
+
+	it("rejects hostile caller-signal observation without retaining lease work", async () => {
+		const fixture = await createChain();
+		const bytes = entryBytes(fixture.chain[0].entry);
+		const cid = (await calculateRawCid(bytes)).cid;
+		let resolverCalls = 0;
+		const anchor = await openAnchor(
+			fixture,
+			new ControlledPolicyAnchorStore(),
+			undefined,
+			() => {
+				resolverCalls += 1;
+				return bytes;
+			},
+		);
+		let abortedReads = 0;
+		let addCalls = 0;
+		let removeCalls = 0;
+		const stateful = {
+			get aborted(): boolean {
+				abortedReads += 1;
+				if (abortedReads > 2) throw new Error("stateful caller signal");
+				return false;
+			},
+			addEventListener: (): void => {
+				addCalls += 1;
+			},
+			removeEventListener: (): void => {
+				removeCalls += 1;
+				throw new Error("hostile caller remove");
+			},
+		} as unknown as AbortSignal;
+		const result = await anchor.withExactPolicyHead(
+			{ policyEntryCid: cid, signal: stateful },
+			(): void => {},
+		);
+		expect(result).to.deep.equal({
+			status: "rejected",
+			reason: "Policy lease signal could not be observed",
+		});
+		while (anchor.bufferedAdmissionCount !== 0) await Promise.resolve();
+		expect({ addCalls, removeCalls, resolverCalls }).to.deep.equal({
+			addCalls: 1,
+			removeCalls: 1,
+			resolverCalls: 0,
+		});
+		expect(anchor.state).to.equal("EMPTY");
+
+		const throwingAdd = {
+			aborted: false,
+			addEventListener: (): void => {
+				throw new Error("hostile caller add");
+			},
+			removeEventListener: (): void => {
+				throw new Error("hostile caller remove");
+			},
+		} as unknown as AbortSignal;
+		expect(
+			await anchor.withExactPolicyHead(
+				{ policyEntryCid: cid, signal: throwingAdd },
+				(): void => {},
+			),
+		).to.deep.equal({
+			status: "rejected",
+			reason: "Policy lease signal could not be observed",
+		});
+		while (anchor.bufferedAdmissionCount !== 0) await Promise.resolve();
+		expect(anchor.state).to.equal("EMPTY");
+	});
+
+	it("bounds combined exact ancestry without poisoning or draining later pending policy", async () => {
+		const fixture = await createChain();
+		const resolver = createResolver();
+		resolver.add(...fixture.chain);
+		const twoBytes = entryBytes(fixture.chain[2].entry);
+		const twoCid = (await calculateRawCid(twoBytes)).cid;
+		const store = new ControlledPolicyAnchorStore();
+		const anchor = await openAnchor(
+			fixture,
+			store,
+			(digest) => resolver.resolve(digest),
+			(cid) => (cid === twoCid ? twoBytes : undefined),
+		);
+		await anchor.ingest(entryBytes(fixture.chain[0].entry));
+		let callbackCalls = 0;
+		const capped = await anchor.withExactPolicyHead(
+			{ policyEntryCid: twoCid, maxAncestrySteps: 1 },
+			() => {
+				callbackCalls += 1;
+			},
+		);
+		expect(capped.status).to.equal("unavailable");
+		expect(capped.status === "unavailable" ? capped.reason : "").to.contain(
+			"parent-edge budget",
+		);
+		expectHead(anchor, fixture.chain[0]);
+		expect(anchor.state).to.equal("ACTIVE");
+		expect(callbackCalls).to.equal(0);
+
+		const exact = await anchor.withExactPolicyHead(
+			{ policyEntryCid: twoCid, maxAncestrySteps: 2 },
+			({ policy }) => policy.sequence,
+		);
+		expect(exact).to.deep.equal({ status: "completed", value: 2n });
+		expectHead(anchor, fixture.chain[2]);
+	});
+
+	it("publishes only the named exact policy and leaves a pending successor untouched", async () => {
+		const fixture = await createChain();
+		const oneBytes = entryBytes(fixture.chain[1].entry);
+		const oneCid = (await calculateRawCid(oneBytes)).cid;
+		const twoBytes = entryBytes(fixture.chain[2].entry);
+		const twoCid = (await calculateRawCid(twoBytes)).cid;
+		const anchor = await openAnchor(
+			fixture,
+			new ControlledPolicyAnchorStore(),
+			() => undefined,
+			(cid) =>
+				cid === oneCid ? oneBytes : cid === twoCid ? twoBytes : undefined,
+		);
+		await anchor.ingest(entryBytes(fixture.chain[0].entry));
+		expect(
+			(await anchor.ingest(entryBytes(fixture.chain[2].entry))).status,
+		).to.equal("pending");
+		expect(anchor.pendingCount).to.equal(1);
+
+		const exact = await anchor.withExactPolicyHead(
+			{ policyEntryCid: oneCid, maxAncestrySteps: 1 },
+			({ policy }) => policy.sequence,
+		);
+		expect(exact).to.deep.equal({ status: "completed", value: 1n });
+		expectHead(anchor, fixture.chain[1]);
+		expect(anchor.pendingCount).to.equal(1);
+
+		expect(
+			await anchor.withExactPolicyHead(
+				{ policyEntryCid: twoCid, maxAncestrySteps: 1 },
+				({ policy }) => policy.sequence,
+			),
+		).to.deep.equal({ status: "completed", value: 2n });
+		expectHead(anchor, fixture.chain[2]);
+		expect(anchor.pendingCount).to.equal(0);
 	});
 
 	it("does not fall back to body-digest resolution for exact CID readiness", async () => {
