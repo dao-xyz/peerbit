@@ -3794,27 +3794,97 @@ describe("append delivery options — persisted receipts", function () {
 		expect(writer.log.log.length).to.equal(1);
 	});
 
-	it("does not count legacy confirms or a stale persisted response session", async () => {
+	it("does not count legacy confirms as persisted receipts", async () => {
 		const { writer, receiver } = await openPair(true);
 		await waitForPersistedCapability(writer, receiver);
 
 		const rpc = writer.log.rpc as any;
 		const originalRequest = rpc.request.bind(rpc);
+		const abortController = new AbortController();
+		const cancellation = new Error("legacy confirm was ignored");
 		let legacyConfirmInjected = false;
+		let persistedRequestCount = 0;
 		const request = sinon
 			.stub(rpc, "request")
 			.callsFake(async (...args: any[]) => {
-				const responses = await originalRequest(...args);
 				if (args[0] instanceof RequestPersistedEntriesV1) {
+					persistedRequestCount++;
 					if (!legacyConfirmInjected) {
 						legacyConfirmInjected = true;
 						await writer.log.onMessage(
 							new ConfirmEntriesMessage({ hashes: args[0].hashes }),
 							{ from: receiver.node.identity.publicKey } as any,
 						);
+					} else {
+						abortController.abort(cancellation);
 					}
+					return [];
+				}
+				return originalRequest(...args);
+			});
+
+		try {
+			await expect(
+				writer.add("legacy-confirm", {
+					target: "replicators",
+					delivery: {
+						reliability: "persisted",
+						minAcks: 1,
+						signal: abortController.signal,
+					},
+				}),
+			).to.be.rejectedWith(cancellation.message);
+			expect(
+				request
+					.getCalls()
+					.some((call) => call.args[0] instanceof RequestPersistedEntriesV1),
+			).to.equal(true);
+			expect(legacyConfirmInjected).to.equal(true);
+			expect(persistedRequestCount).to.be.greaterThan(1);
+			expect(writer.log.log.length).to.equal(1);
+		} finally {
+			request.restore();
+		}
+	});
+
+	it("does not count a stale persisted response session", async () => {
+		const { writer, receiver } = await openPair(true);
+		await waitForPersistedCapability(writer, receiver);
+
+		const rpc = writer.log.rpc as any;
+		const originalRequest = rpc.request.bind(rpc);
+		const abortController = new AbortController();
+		const cancellation = new Error("stale persisted response was ignored");
+		let staleResponseInjected = false;
+		let persistedRequestCount = 0;
+		const request = sinon
+			.stub(rpc, "request")
+			.callsFake(async (...args: any[]) => {
+				if (
+					args[0] instanceof RequestPersistedEntriesV1 &&
+					staleResponseInjected
+				) {
+					persistedRequestCount++;
+					abortController.abort(cancellation);
+					return [];
+				}
+				const responses = await originalRequest(...args);
+				if (args[0] instanceof RequestPersistedEntriesV1) {
+					persistedRequestCount++;
 					for (const response of responses) {
+						const wasCurrentSession =
+							response.message.header.session ===
+							args[0].expectedReceiverSession;
 						response.message.header.session += 1n;
+						if (
+							wasCurrentSession &&
+							response.response instanceof ConfirmEntriesMessage &&
+							response.response.hashes.some((hash: string) =>
+								args[0].hashes.includes(hash),
+							)
+						) {
+							staleResponseInjected = true;
+						}
 					}
 				}
 				return responses;
@@ -3827,18 +3897,17 @@ describe("append delivery options — persisted receipts", function () {
 					delivery: {
 						reliability: "persisted",
 						minAcks: 1,
-						timeout: 350,
+						signal: abortController.signal,
 					},
 				}),
-			).to.be.rejectedWith(
-				"Timed out waiting for 1 persisted remote replicas.",
-			);
+			).to.be.rejectedWith(cancellation.message);
 			expect(
 				request
 					.getCalls()
 					.some((call) => call.args[0] instanceof RequestPersistedEntriesV1),
 			).to.equal(true);
-			expect(legacyConfirmInjected).to.equal(true);
+			expect(staleResponseInjected).to.equal(true);
+			expect(persistedRequestCount).to.be.greaterThan(1);
 			expect(writer.log.log.length).to.equal(1);
 		} finally {
 			request.restore();

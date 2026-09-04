@@ -15,7 +15,13 @@ import {
 } from "./published-security-coverage.mjs";
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const npxCommand = process.platform === "win32" ? "npx.cmd" : "npx";
+const node18Executable = process.versions.node.startsWith("18.")
+	? process.execPath
+	: process.env.PEERBIT_NODE18_EXECUTABLE?.trim();
+assert(
+	node18Executable,
+	"PEERBIT_NODE18_EXECUTABLE must name a real Node 18 executable; CI and release workflows provision Node 18.20.8 explicitly",
+);
 const viteNodeEngine = "^20.19.0 || >=22.12.0";
 
 const run = (command, args, options = {}) => {
@@ -48,6 +54,15 @@ const run = (command, args, options = {}) => {
 	}
 	return result;
 };
+
+assert.match(
+	run(node18Executable, ["--version"], {
+		status: 0,
+		timeout: 30_000,
+	}).stdout.trim(),
+	/^v18\./,
+	"PEERBIT_NODE18_EXECUTABLE must run Node 18",
+);
 
 const publishablePackages = await discoverPublishableWorkspacePackages({
 	repositoryRoot,
@@ -328,11 +343,21 @@ try {
 		"the react-native peer subtree leaked into the audited consumer node_modules: " +
 			forbiddenInstalledPaths.join(", "),
 	);
-	const audit = run("npm", ["audit", "--omit=dev", "--json"], {
-		cwd: consumerDirectory,
-		status: 0,
-		timeout: 300_000,
-	});
+	// npm's default five-minute fetch timeout equals our process timeout. If the
+	// bulk advisory POST stalls, the parent kills npm before Arborist can try its
+	// separate quick-audit endpoint. Bound the individual request so that
+	// built-in fail-closed fallback remains reachable inside the existing total
+	// deadline. npm's fetch retry flags intentionally are not used: its fetcher
+	// does not retry POST requests.
+	const audit = run(
+		"npm",
+		["audit", "--omit=dev", "--json", "--fetch-timeout=60000"],
+		{
+			cwd: consumerDirectory,
+			status: 0,
+			timeout: 300_000,
+		},
+	);
 	const auditReport = JSON.parse(audit.stdout);
 	assert.equal(
 		auditReport.auditReportVersion,
@@ -421,8 +446,8 @@ try {
 		timeout: 120_000,
 	});
 	const node18 = run(
-		npxCommand,
-		["--yes", "node@18", join(consumerDirectory, "crypto-node18-smoke.mjs")],
+		node18Executable,
+		[join(consumerDirectory, "crypto-node18-smoke.mjs")],
 		{
 			cwd: consumerDirectory,
 			status: 0,

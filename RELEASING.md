@@ -231,6 +231,22 @@ workflow:
 - **rc** — builds and runs `pnpm run release:rc` (`aegir release-rc`) to
   publish prerelease versions.
 
+The published-package security smoke retains a Node 18 compatibility check for
+`@peerbit/crypto`, even though the repository toolchain itself requires Node
+22 or newer. CI and release jobs provision Node 18.20.8 explicitly. To run
+`pnpm run release:security-gate`, `pnpm run release`, or `pnpm run release:rc`
+locally from a newer Node runtime, set `PEERBIT_NODE18_EXECUTABLE` to the
+absolute path of a real Node 18 executable. The gate validates its major
+version before doing any package work and fails closed when it is absent or
+incorrect; it never downloads a runtime implicitly through npm.
+
+CI runs the packed-consumer, dependency-contract, and Node 18 crypto proofs on
+both supported Node majors. It runs the two workspace root audits once because
+both lanes install the same frozen lockfile; repeating those graph-independent
+advisory requests provides no additional runtime coverage. Stable and release
+candidate publication still run the complete gate, including both root audits,
+before publishing.
+
 ## Workspace-only image-size audit ignores
 
 The release security gate's two root pnpm audits ignore exactly
@@ -252,6 +268,9 @@ auto-installs the react-native peer subtree; it then asserts that
 react-native, metro, metro-config, metro-transform-worker, image-size, and
 every `@react-native/*` package are absent from the consumer lockfile and
 `node_modules`, and requires a strict zero-finding `npm audit --omit=dev`.
+The audit caps each advisory request below its existing five-minute process
+deadline so npm can fall back from a stalled bulk request to its separate quick
+audit endpoint. This does not retry or suppress a vulnerability result.
 
 If either root pnpm audit reports anything beyond these two advisories, the
 gate fails closed. Remove both `--ignore` pairs and this section together once

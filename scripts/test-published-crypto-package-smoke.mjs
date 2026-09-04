@@ -7,7 +7,13 @@ import { fileURLToPath } from "node:url";
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const cryptoDirectory = join(repositoryRoot, "packages", "utils", "crypto");
-const npxCommand = process.platform === "win32" ? "npx.cmd" : "npx";
+const node18Executable = process.versions.node.startsWith("18.")
+	? process.execPath
+	: process.env.PEERBIT_NODE18_EXECUTABLE?.trim();
+assert(
+	node18Executable,
+	"PEERBIT_NODE18_EXECUTABLE must name a real Node 18 executable; CI and release workflows provision Node 18.20.8 explicitly",
+);
 
 const run = (command, args, options = {}) => {
 	const result = spawnSync(command, args, {
@@ -36,6 +42,12 @@ const run = (command, args, options = {}) => {
 	);
 	return result;
 };
+
+assert.match(
+	run(node18Executable, ["--version"], { timeout: 30_000 }).stdout.trim(),
+	/^v18\./,
+	"PEERBIT_NODE18_EXECUTABLE must run Node 18",
+);
 
 const repositoryManifest = JSON.parse(
 	await readFile(join(repositoryRoot, "package.json"), "utf8"),
@@ -147,8 +159,8 @@ try {
 		);
 	}
 	const node18 = run(
-		npxCommand,
-		["--yes", "node@18", join(consumerDirectory, "crypto-node18-smoke.mjs")],
+		node18Executable,
+		[join(consumerDirectory, "crypto-node18-smoke.mjs")],
 		{ cwd: consumerDirectory, timeout: 300_000 },
 	);
 	assert.match(node18.stdout, /Node 18\./);
