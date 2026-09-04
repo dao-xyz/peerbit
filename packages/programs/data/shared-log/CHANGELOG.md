@@ -1,5 +1,13 @@
 # Changelog
 
+## 16.0.28
+
+### Patch Changes
+
+- [#1421](https://github.com/dao-xyz/peerbit/pull/1421) [`7d48413`](https://github.com/dao-xyz/peerbit/commit/7d484131f87dda246f5e79ed21da94184c263d45) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Keep `waitForReplicator` checking authoritative membership after bounded network recovery attempts so a transiently empty transition read cannot strand a ready waiter, and reject promptly with cleanup when the log closes.
+
+- [#1423](https://github.com/dao-xyz/peerbit/pull/1423) [`8f249d1`](https://github.com/dao-xyz/peerbit/commit/8f249d1cef6bffe51c07707093de9b01e7d3cb9b) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Repair missing entries after a same-identity successor session reaffirms unchanged replication ranges.
+
 ## 16.0.27
 
 ### Patch Changes
