@@ -678,11 +678,42 @@ assert.match(
 	/packageName\.startsWith\("@react-native\/"\)/,
 	"the audited consumer must assert the absence of every @react-native/* package",
 );
+const auditInvocationStart = publishedSecuritySmoke.indexOf(
+	'const audit = run(\n\t\t"npm",',
+);
+const auditReportStart = publishedSecuritySmoke.indexOf(
+	"const auditReport = JSON.parse(audit.stdout);",
+	auditInvocationStart,
+);
+assert(
+	auditInvocationStart >= 0 && auditReportStart > auditInvocationStart,
+	"the published consumer must run npm audit before parsing its report",
+);
+const auditInvocation = publishedSecuritySmoke.slice(
+	auditInvocationStart,
+	auditReportStart,
+);
 assert.match(
-	publishedSecuritySmoke,
-	/\["audit", "--omit=dev", "--json"\], \{\n\t\tcwd: consumerDirectory,\n\t\tstatus: 0,/,
+	auditInvocation,
+	/\["audit", "--omit=dev", "--json", "--fetch-timeout=60000"\],[\s\S]*?cwd: consumerDirectory,\n\t{3}status: 0,\n\t{3}timeout: 300_000,/,
 	"the published consumer npm audit must demand a zero-finding exit status",
 );
+assert.doesNotMatch(
+	auditInvocation,
+	/--fetch-retries|--fetch-retry-factor|--fetch-retry-mintimeout|--fetch-retry-maxtimeout/,
+	"the audit smoke must not claim npm fetch-level retries that do not apply to advisory POST requests",
+);
+for (const zeroFindingAssertion of [
+	/auditReport\.auditReportVersion,\n\t{2}2,/,
+	/auditReport\.vulnerabilities,\n\t{2}\{\},/,
+	/auditReport\.metadata\?\.vulnerabilities\?\.total,\n\t{2}0,/,
+]) {
+	assert.match(
+		publishedSecuritySmoke,
+		zeroFindingAssertion,
+		"the published consumer audit must retain every parsed zero-finding assertion",
+	);
+}
 assert.doesNotMatch(
 	publishedSecuritySmoke,
 	/validateImageSizeAuditException|image-size-advisory-exception|exception/i,

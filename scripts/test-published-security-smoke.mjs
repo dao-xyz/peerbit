@@ -343,11 +343,21 @@ try {
 		"the react-native peer subtree leaked into the audited consumer node_modules: " +
 			forbiddenInstalledPaths.join(", "),
 	);
-	const audit = run("npm", ["audit", "--omit=dev", "--json"], {
-		cwd: consumerDirectory,
-		status: 0,
-		timeout: 300_000,
-	});
+	// npm's default five-minute fetch timeout equals our process timeout. If the
+	// bulk advisory POST stalls, the parent kills npm before Arborist can try its
+	// separate quick-audit endpoint. Bound the individual request so that
+	// built-in fail-closed fallback remains reachable inside the existing total
+	// deadline. npm's fetch retry flags intentionally are not used: its fetcher
+	// does not retry POST requests.
+	const audit = run(
+		"npm",
+		["audit", "--omit=dev", "--json", "--fetch-timeout=60000"],
+		{
+			cwd: consumerDirectory,
+			status: 0,
+			timeout: 300_000,
+		},
+	);
 	const auditReport = JSON.parse(audit.stdout);
 	assert.equal(
 		auditReport.auditReportVersion,

@@ -268,6 +268,9 @@ auto-installs the react-native peer subtree; it then asserts that
 react-native, metro, metro-config, metro-transform-worker, image-size, and
 every `@react-native/*` package are absent from the consumer lockfile and
 `node_modules`, and requires a strict zero-finding `npm audit --omit=dev`.
+The audit caps each advisory request below its existing five-minute process
+deadline so npm can fall back from a stalled bulk request to its separate quick
+audit endpoint. This does not retry or suppress a vulnerability result.
 
 If either root pnpm audit reports anything beyond these two advisories, the
 gate fails closed. Remove both `--ignore` pairs and this section together once
