@@ -1,0 +1,64 @@
+name: Published Dependency Advisories
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - ".npmrc"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - "packages/**/package.json"
+      - "scripts/npm-audit-result.mjs"
+      - "scripts/npm-audit-result.test.mjs"
+      - "scripts/publishable-workspace-packages.mjs"
+      - "scripts/published-security-coverage.mjs"
+      - "scripts/test-published-security-smoke.mjs"
+      - ".github/workflows/published-dependency-advisories.yml"
+  pull_request:
+    paths:
+      - ".npmrc"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - "packages/**/package.json"
+      - "scripts/npm-audit-result.mjs"
+      - "scripts/npm-audit-result.test.mjs"
+      - "scripts/publishable-workspace-packages.mjs"
+      - "scripts/published-security-coverage.mjs"
+      - "scripts/test-published-security-smoke.mjs"
+      - ".github/workflows/published-dependency-advisories.yml"
+  schedule:
+    - cron: "17 4 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: published-dependency-advisories-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  scan:
+    name: Packed production dependency audit
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@v4
+        with:
+          run_install: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+      - name: Link package workspaces without lifecycle scripts
+        run: pnpm install --filter './packages/**' --frozen-lockfile --ignore-scripts
+      - name: Verify advisory result classification
+        run: pnpm run test:security-advisory-policy
+      - name: Scan the packed production dependency graph
+        run: pnpm run test:security-advisories
