@@ -1,3 +1,4 @@
+import { ClosedError } from "@peerbit/program";
 import { TestSession } from "@peerbit/test-utils";
 import { TimeoutError, delay, waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
@@ -279,6 +280,127 @@ describe("waitForReplicator", () => {
 		}
 	});
 
+	it("rechecks membership after the final transition read is transiently empty", async () => {
+		session = await TestSession.disconnected(2);
+		db = await session.peers[0].open(new EventStore<string, any>(), {
+			args: {
+				replicate: false,
+				timeUntilRoleMaturity: 0,
+				waitForReplicatorRequestIntervalMs: 100,
+				waitForReplicatorRequestMaxAttempts: 1,
+			},
+		});
+
+		const log = db.log as any;
+		const remote = session.peers[1].identity.publicKey;
+		const remoteHash = remote.hashcode();
+		const originalIterate = log.replicationIndex.iterate.bind(
+			log.replicationIndex,
+		);
+		let waiterReads = 0;
+		let firstRead!: () => void;
+		let transitionRead!: () => void;
+		const firstReadStarted = new Promise<void>((resolve) => {
+			firstRead = resolve;
+		});
+		const transitionReadStarted = new Promise<void>((resolve) => {
+			transitionRead = resolve;
+		});
+		const iterate = sinon.stub(log.replicationIndex, "iterate").callsFake(((
+			request?: any,
+			options?: any,
+		) => {
+			if (request?.query?.value !== remoteHash) {
+				return originalIterate(request, options);
+			}
+
+			const read = ++waiterReads;
+			return {
+				next: async () => {
+					if (read === 1) {
+						firstRead();
+						return [];
+					}
+					if (read === 2) {
+						transitionRead();
+						return [];
+					}
+					return [{ value: { timestamp: 0n } }];
+				},
+				close: async () => {},
+			};
+		}) as any);
+		const requestSubscribers = sinon
+			.stub(session.peers[0].services.pubsub, "requestSubscribers")
+			.resolves();
+
+		try {
+			const wait = log.waitForReplicator(remote, {
+				timeout: 500,
+				eager: true,
+			});
+			await firstReadStarted;
+			log.events.dispatchEvent(
+				new CustomEvent("replicator:mature", {
+					detail: { publicKey: remote },
+				}),
+			);
+			await transitionReadStarted;
+			await wait;
+
+			expect(waiterReads).to.be.greaterThanOrEqual(3);
+			expect(requestSubscribers.callCount).to.equal(1);
+		} finally {
+			requestSubscribers.restore();
+			iterate.restore();
+		}
+	});
+
+	it("rejects and cleans up when the log closes", async () => {
+		session = await TestSession.disconnected(2);
+		db = await session.peers[0].open(new EventStore<string, any>(), {
+			args: {
+				replicate: false,
+				timeUntilRoleMaturity: 0,
+				waitForReplicatorRequestIntervalMs: 50,
+			},
+		});
+		const log = db.log as any;
+		const iterate = sinon.spy(log.replicationIndex, "iterate");
+		const requestSubscribers = sinon.spy(
+			session.peers[0].services.pubsub,
+			"requestSubscribers",
+		);
+		const controller = new AbortController();
+		const wait = log.waitForReplicator(session.peers[1].identity.publicKey, {
+			timeout: 10_000,
+			eager: true,
+			signal: controller.signal,
+		});
+
+		try {
+			await waitForResolved(() =>
+				expect(iterate.callCount).to.be.greaterThan(0),
+			);
+			await db.close();
+			const outcome = await Promise.race([
+				wait.catch((error: unknown) => error),
+				delay(250).then(() => undefined),
+			]);
+			expect(outcome).to.be.instanceOf(ClosedError);
+			const readsAfterClose = iterate.callCount;
+			const requestsAfterClose = requestSubscribers.callCount;
+			await delay(150);
+			expect(iterate.callCount).to.equal(readsAfterClose);
+			expect(requestSubscribers.callCount).to.equal(requestsAfterClose);
+		} finally {
+			controller.abort();
+			await wait.catch(() => undefined);
+			requestSubscribers.restore();
+			iterate.restore();
+		}
+	});
+
 	it("does not request a subscriber snapshot while a V2 peer session is opening", async () => {
 		session = await TestSession.connected(2);
 		db = await session.peers[0].open(new EventStore<string, any>(), {
@@ -368,10 +490,13 @@ describe("waitForReplicator", () => {
 
 			// The snapshot really ran and really created the session + ranges.
 			expect(
-				requestSubscribers.getCalls().some(
-					(call) =>
-						call.args[0] === log.topic && (call.args[1] as any)?.equals(remote),
-				),
+				requestSubscribers
+					.getCalls()
+					.some(
+						(call) =>
+							call.args[0] === log.topic &&
+							(call.args[1] as any)?.equals(remote),
+					),
 			).to.be.true;
 			expect(log._peerSessions.current(remoteHash)?.phase).to.equal("open");
 			const replicators = await db.log.getReplicators();
@@ -422,7 +547,9 @@ describe("waitForReplicator", () => {
 			log.cancelReplicationInfoRequests(remoteHash);
 			log.scheduleReplicationInfoV2Recovery(remote);
 			const state = log._replicationInfoRequestByPeer.get(remoteHash);
-			expect(state?.peerSession).to.equal(log._peerSessions.current(remoteHash));
+			expect(state?.peerSession).to.equal(
+				log._peerSessions.current(remoteHash),
+			);
 
 			await waitForResolved(
 				() => expect(resumeTimes.length).to.be.greaterThanOrEqual(5),
