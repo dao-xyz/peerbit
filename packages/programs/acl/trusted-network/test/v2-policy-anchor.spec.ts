@@ -1,7 +1,8 @@
 import { field, fixedArray, serialize, variant, vec } from "@dao-xyz/borsh";
 import { CrashSafeTwoSlotCheckpoint } from "@peerbit/any-store/checkpoint";
+import { calculateRawCid } from "@peerbit/blocks-interface";
 import { Ed25519Keypair, PublicSignKey, sha256Sync } from "@peerbit/crypto";
-import { EntryV0 } from "@peerbit/log";
+import { Entry, EntryV0 } from "@peerbit/log";
 import { expect } from "chai";
 import sinon from "sinon";
 import { compare, concat } from "uint8arrays";
@@ -10,7 +11,10 @@ import {
 	TRUSTED_NETWORK_V2_MAX_POLICY_ANCHOR_CHECKPOINT_PAYLOAD_BYTES,
 	TrustedNetworkV2DurablePolicyReducer,
 } from "../src/v2-policy-anchor.js";
-import type { PolicyAdmissionResultV2 } from "../src/v2-policy-engine.js";
+import type {
+	AuthenticatedExactPolicyEntryV2,
+	PolicyAdmissionResultV2,
+} from "../src/v2-policy-engine.js";
 import {
 	NetworkDescriptorV2,
 	PolicySnapshotBodyV2,
@@ -437,10 +441,15 @@ const openAnchor = (
 		options: { signal: AbortSignal },
 	) => Uint8Array | undefined | Promise<Uint8Array | undefined> = () =>
 		undefined,
+	resolvePolicyEntryByCid?: (
+		policyEntryCid: string,
+		options: { signal: AbortSignal },
+	) => Uint8Array | undefined | Promise<Uint8Array | undefined>,
 ): Promise<TrustedNetworkV2DurablePolicyReducer> =>
 	TrustedNetworkV2DurablePolicyReducer.open({
 		descriptor: fixture.descriptor,
 		resolvePolicyEntry,
+		resolvePolicyEntryByCid,
 		store,
 		resolveTimeoutMs: 500,
 	});
@@ -868,6 +877,347 @@ describe("TrustedNetwork v2 durable policy anchor", () => {
 		);
 		expect(current).to.deep.equal({ status: "completed", value: 3n });
 		expect(resolverCalls).to.equal(callsBeforeHeadLease);
+	});
+
+	it("leases a CID-authenticated wrapper only while its policy identity is the durable current head", async () => {
+		const fixture = await createChain();
+		const current = fixture.chain[3];
+		const hashBearingBytes = entryBytes(current.entry);
+		const hashlessBytes = new Uint8Array(
+			Entry.getPreparedStorageBytes(current.entry)!,
+		);
+		const hashlessCid = (await calculateRawCid(hashlessBytes)).cid;
+		let cidResolverCalls = 0;
+		const store = new ControlledPolicyAnchorStore();
+		const resolveByCid = (cid: string): Uint8Array | undefined => {
+			cidResolverCalls += 1;
+			return cid === hashlessCid ? hashlessBytes : undefined;
+		};
+		const anchor = await openAnchor(fixture, store, undefined, resolveByCid);
+		for (const policy of fixture.chain) {
+			expect((await anchor.ingest(entryBytes(policy.entry))).status).to.equal(
+				"accepted",
+			);
+		}
+		const replacementsBefore = store.atomicReplaceCalls;
+		const originalHead = anchor.head!;
+
+		const leased = await anchor.withExactPolicyHead(
+			{ policyEntryCid: hashlessCid, maxAncestrySteps: 0 },
+			({ policyEntryCid, policy }) => {
+				expect(policyEntryCid).to.equal(hashlessCid);
+				expect(policy.sequence).to.equal(current.body.sequence);
+				expect(hex(policy.digest)).to.equal(hex(current.digest));
+				policy.digest.fill(0xff);
+				policy.bindings[0]!.roles = 0;
+				return "exact-head";
+			},
+		);
+
+		expect(leased).to.deep.equal({
+			status: "completed",
+			value: "exact-head",
+		});
+		expect(cidResolverCalls).to.equal(1);
+		expect(store.atomicReplaceCalls).to.equal(replacementsBefore);
+		expect(anchor.head).to.deep.equal(originalHead);
+		expect(hashlessBytes).not.to.deep.equal(hashBearingBytes);
+
+		anchor.abort();
+		const reopened = await openAnchor(fixture, store, undefined, resolveByCid);
+		const reopenedLease = await reopened.withExactPolicyHead(
+			{ policyEntryCid: hashlessCid, maxAncestrySteps: 0 },
+			({ policy }) => policy.sequence,
+		);
+		expect(reopenedLease).to.deep.equal({
+			status: "completed",
+			value: current.body.sequence,
+		});
+		expect(cidResolverCalls).to.equal(2);
+	});
+
+	it("does not fall back to body-digest resolution for exact CID readiness", async () => {
+		const fixture = await createChain();
+		const currentBytes = entryBytes(fixture.chain[0].entry);
+		const currentCid = (await calculateRawCid(currentBytes)).cid;
+		let digestResolverCalls = 0;
+		const anchor = await openAnchor(
+			fixture,
+			new ControlledPolicyAnchorStore(),
+			() => {
+				digestResolverCalls += 1;
+				return currentBytes;
+			},
+		);
+		await anchor.ingest(currentBytes);
+		let callbackCalls = 0;
+
+		const unavailable = await anchor.withExactPolicyHead(
+			{ policyEntryCid: currentCid },
+			() => {
+				callbackCalls += 1;
+			},
+		);
+
+		expect(unavailable.status).to.equal("unavailable");
+		expect(
+			unavailable.status === "unavailable" ? unavailable.reason : "",
+		).to.contain("no policy CID resolver");
+		expect(digestResolverCalls).to.equal(0);
+		expect(callbackCalls).to.equal(0);
+	});
+
+	it("caps exact-head acquisition at the instance ten-second ceiling", async () => {
+		const fixture = await createChain();
+		const currentBytes = entryBytes(fixture.chain[0].entry);
+		const currentCid = (await calculateRawCid(currentBytes)).cid;
+		let cidResolverCalls = 0;
+		const anchor = await openAnchor(
+			fixture,
+			new ControlledPolicyAnchorStore(),
+			undefined,
+			() => {
+				cidResolverCalls += 1;
+				return currentBytes;
+			},
+		);
+		await anchor.ingest(currentBytes);
+		let callbackCalls = 0;
+
+		const overlong = await anchor.withExactPolicyHead(
+			{ policyEntryCid: currentCid, timeoutMs: 10_001 },
+			() => {
+				callbackCalls += 1;
+			},
+		);
+
+		expect(overlong.status).to.equal("rejected");
+		expect(cidResolverCalls).to.equal(0);
+		expect(callbackCalls).to.equal(0);
+	});
+
+	it("distinguishes invalid CID-resolved bytes from an unavailable resolver", async () => {
+		const fixture = await createChain();
+		const currentBytes = entryBytes(fixture.chain[0].entry);
+		const currentCid = (await calculateRawCid(currentBytes)).cid;
+		let mode: "invalid" | "throw" = "invalid";
+		const anchor = await openAnchor(
+			fixture,
+			new ControlledPolicyAnchorStore(),
+			undefined,
+			() => {
+				if (mode === "throw") throw new Error("resolver offline");
+				return new Uint8Array([1]);
+			},
+		);
+		await anchor.ingest(currentBytes);
+
+		const invalid = await anchor.withExactPolicyHead(
+			{ policyEntryCid: currentCid },
+			(): void => {},
+		);
+		expect(invalid.status).to.equal("rejected");
+		expect(invalid.status === "rejected" ? invalid.reason : "").to.contain(
+			"bytes do not match the requested CID",
+		);
+
+		mode = "throw";
+		const unavailable = await anchor.withExactPolicyHead(
+			{ policyEntryCid: currentCid },
+			(): void => {},
+		);
+		expect(unavailable.status).to.equal("unavailable");
+		expect(
+			unavailable.status === "unavailable" ? unavailable.reason : "",
+		).to.contain("resolver offline");
+	});
+
+	it("bounds exact-head ancestry and rejects a stale accepted policy", async () => {
+		const fixture = await createChain();
+		const resolver = createResolver();
+		resolver.add(...fixture.chain);
+		const staleBytes = entryBytes(fixture.chain[1].entry);
+		const staleCid = (await calculateRawCid(staleBytes)).cid;
+		let ancestryResolverCalls = 0;
+		const anchor = await openAnchor(
+			fixture,
+			new ControlledPolicyAnchorStore(),
+			(digest) => {
+				ancestryResolverCalls += 1;
+				return resolver.resolve(digest);
+			},
+			(cid) => (cid === staleCid ? staleBytes : undefined),
+		);
+		for (const policy of fixture.chain)
+			await anchor.ingest(entryBytes(policy.entry));
+		let callbackCalls = 0;
+
+		const capped = await anchor.withExactPolicyHead(
+			{ policyEntryCid: staleCid, maxAncestrySteps: 1 },
+			() => {
+				callbackCalls += 1;
+			},
+		);
+		expect(capped.status).to.equal("unavailable");
+		expect(ancestryResolverCalls).to.equal(1);
+
+		const stale = await anchor.withExactPolicyHead(
+			{ policyEntryCid: staleCid, maxAncestrySteps: 2 },
+			() => {
+				callbackCalls += 1;
+			},
+		);
+		expect(stale.status).to.equal("unavailable");
+		expect(stale.status === "unavailable" ? stale.reason : "").to.contain(
+			"not the durable current policy head",
+		);
+		expect(callbackCalls).to.equal(0);
+	});
+
+	it("uses one queue-inclusive deadline before exact CID resolution", async () => {
+		const fixture = await createChain();
+		const currentBytes = entryBytes(fixture.chain[0].entry);
+		const currentCid = (await calculateRawCid(currentBytes)).cid;
+		let cidResolverCalls = 0;
+		const anchor = await openAnchor(
+			fixture,
+			new ControlledPolicyAnchorStore(),
+			undefined,
+			() => {
+				cidResolverCalls += 1;
+				return currentBytes;
+			},
+		);
+		await anchor.ingest(currentBytes);
+		const callbackEntered = deferred();
+		const callbackRelease = deferred();
+		const blocker = anchor.withAcceptedPolicyLease(
+			{ sequence: 0n, digest: fixture.chain[0].digest },
+			async () => {
+				callbackEntered.resolve();
+				await callbackRelease.promise;
+			},
+		);
+		await callbackEntered.promise;
+		const clock = sinon.useFakeTimers({
+			now: 20_000,
+			toFake: ["Date", "setTimeout", "clearTimeout"],
+		});
+		try {
+			let exactCallbackCalls = 0;
+			const exact = anchor.withExactPolicyHead(
+				{ policyEntryCid: currentCid, timeoutMs: 10 },
+				() => {
+					exactCallbackCalls += 1;
+				},
+			);
+			await clock.tickAsync(10);
+			expect((await exact).status).to.equal("unavailable");
+			expect(cidResolverCalls).to.equal(0);
+			expect(exactCallbackCalls).to.equal(0);
+		} finally {
+			clock.restore();
+			callbackRelease.resolve();
+			await blocker;
+		}
+	});
+
+	it("cancels a signal-ignoring exact CID resolver without invoking the callback", async () => {
+		const fixture = await createChain();
+		const currentBytes = entryBytes(fixture.chain[0].entry);
+		const currentCid = (await calculateRawCid(currentBytes)).cid;
+		const resolverStarted = deferred();
+		let resolverSignal: AbortSignal | undefined;
+		const anchor = await openAnchor(
+			fixture,
+			new ControlledPolicyAnchorStore(),
+			undefined,
+			(_cid, { signal }) => {
+				resolverSignal = signal;
+				resolverStarted.resolve();
+				return new Promise<Uint8Array | undefined>(() => {});
+			},
+		);
+		await anchor.ingest(currentBytes);
+		const controller = new AbortController();
+		let callbackCalls = 0;
+		const acquiring = anchor.withExactPolicyHead(
+			{ policyEntryCid: currentCid, signal: controller.signal },
+			() => {
+				callbackCalls += 1;
+			},
+		);
+		await resolverStarted.promise;
+		controller.abort();
+
+		const cancelled = await acquiring;
+		expect(cancelled.status).to.equal("unavailable");
+		expect(resolverSignal?.aborted).to.equal(true);
+		expect(callbackCalls).to.equal(0);
+	});
+
+	it("bounds local exact authentication and serializes its background cleanup", async () => {
+		const fixture = await createChain();
+		const currentBytes = entryBytes(fixture.chain[0].entry);
+		const currentCid = (await calculateRawCid(currentBytes)).cid;
+		const anchor = await openAnchor(
+			fixture,
+			new ControlledPolicyAnchorStore(),
+			undefined,
+			() => currentBytes,
+		);
+		await anchor.ingest(currentBytes);
+		type ExactAuthenticationProperties = {
+			policyEntryCid: string;
+			entryBytes: Uint8Array;
+			descriptor: NetworkDescriptorV2;
+		};
+		const testable = anchor as unknown as {
+			authenticateExactPolicyEntry: (
+				properties: ExactAuthenticationProperties,
+			) => Promise<AuthenticatedExactPolicyEntryV2>;
+		};
+		const authenticate = testable.authenticateExactPolicyEntry.bind(anchor);
+		const authenticationStarted = deferred();
+		const authenticationRelease = deferred();
+		const authenticationStub = sinon
+			.stub(testable, "authenticateExactPolicyEntry")
+			.callsFake(async (properties) => {
+				authenticationStarted.resolve();
+				await authenticationRelease.promise;
+				return authenticate(properties);
+			});
+		const clock = sinon.useFakeTimers({
+			now: 30_000,
+			toFake: ["Date", "setTimeout", "clearTimeout"],
+		});
+		try {
+			let callbackCalls = 0;
+			const acquiring = anchor.withExactPolicyHead(
+				{ policyEntryCid: currentCid, timeoutMs: 10 },
+				() => {
+					callbackCalls += 1;
+				},
+			);
+			await authenticationStarted.promise;
+			await clock.tickAsync(10);
+
+			expect((await acquiring).status).to.equal("unavailable");
+			expect(callbackCalls).to.equal(0);
+			expect(anchor.bufferedAdmissionCount).to.equal(0);
+
+			authenticationRelease.resolve();
+			const recovered = await anchor.withExactPolicyHead(
+				{ policyEntryCid: currentCid },
+				({ policy }) => policy.sequence,
+			);
+			expect(recovered).to.deep.equal({ status: "completed", value: 0n });
+			expect(authenticationStub.callCount).to.equal(2);
+		} finally {
+			authenticationRelease.resolve();
+			authenticationStub.restore();
+			clock.restore();
+		}
 	});
 
 	it("enforces an exact parent-step cap and permits a zero-step head lease", async () => {

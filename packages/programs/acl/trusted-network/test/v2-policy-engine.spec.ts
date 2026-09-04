@@ -1,4 +1,5 @@
 import { serialize } from "@dao-xyz/borsh";
+import { calculateRawCid } from "@peerbit/blocks-interface";
 import {
 	DecryptedThing,
 	Ed25519Keypair,
@@ -19,6 +20,7 @@ import { expect } from "chai";
 import { compare, concat } from "uint8arrays";
 import {
 	TrustedNetworkV2PolicyReducer,
+	authenticateExactPolicyEntryV2,
 	authenticatePolicySnapshotEntryV2,
 } from "../src/v2-policy-engine.js";
 import type { PolicyAdmissionResultV2 } from "../src/v2-policy-engine.js";
@@ -1105,6 +1107,44 @@ describe("TrustedNetwork v2 policy reducer", () => {
 		expect(hex(hashBearing.digest)).to.equal(hex(hashless.digest));
 		expect(hex(hashless.digest)).to.equal(hex(fixture.chain[1]!.digest));
 		expect(hashBearingBytes).not.to.deep.equal(hashlessBytes);
+	});
+
+	it("authenticates an exact policy CID without making its wrapper the policy identity", async () => {
+		const fixture = await createChain();
+		const hashBearingBytes = entryBytes(fixture.chain[1]!.entry);
+		const hashlessBytes = new Uint8Array(
+			Entry.getPreparedStorageBytes(fixture.chain[1]!.entry)!,
+		);
+		const [hashBearingCid, hashlessCid] = await Promise.all([
+			calculateRawCid(hashBearingBytes),
+			calculateRawCid(hashlessBytes),
+		]);
+		expect(hashBearingCid.cid).not.to.equal(hashlessCid.cid);
+
+		const [hashBearing, hashless] = await Promise.all([
+			authenticateExactPolicyEntryV2({
+				policyEntryCid: hashBearingCid.cid,
+				entryBytes: hashBearingBytes,
+				descriptor: fixture.descriptor,
+			}),
+			authenticateExactPolicyEntryV2({
+				policyEntryCid: hashlessCid.cid,
+				entryBytes: hashlessBytes,
+				descriptor: fixture.descriptor,
+			}),
+		]);
+		expect(hex(hashBearing.policy.digest)).to.equal(
+			hex(hashless.policy.digest),
+		);
+		expect(hashBearing.policy.sequence).to.equal(hashless.policy.sequence);
+		expect(hashBearing.policyEntryCid).not.to.equal(hashless.policyEntryCid);
+		await expect(
+			authenticateExactPolicyEntryV2({
+				policyEntryCid: hashBearingCid.cid,
+				entryBytes: hashlessBytes,
+				descriptor: fixture.descriptor,
+			}),
+		).to.be.rejectedWith("do not match the requested CID");
 	});
 
 	it("uses exact hashless or hash-bearing bytes in the raw tie-break", async () => {

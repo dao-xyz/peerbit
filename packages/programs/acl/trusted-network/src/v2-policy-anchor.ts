@@ -11,6 +11,7 @@ import { CrashSafeTwoSlotCheckpoint } from "@peerbit/any-store/checkpoint";
 import { PublicSignKey, sha256Sync } from "@peerbit/crypto";
 import { compare, concat, equals } from "uint8arrays";
 import type {
+	AuthenticatedExactPolicyEntryV2,
 	PolicyAdmissionResultV2,
 	PolicyForkEvidenceV2,
 	PolicyHeadProjectionV2,
@@ -20,7 +21,9 @@ import type {
 import {
 	TRUSTED_NETWORK_V2_MAX_PENDING_POLICIES,
 	TrustedNetworkV2PolicyReducer,
+	authenticateExactPolicyEntryV2,
 	authenticatePolicySnapshotEntryV2,
+	captureCanonicalPolicyEntryCidV2,
 } from "./v2-policy-engine.js";
 import {
 	NetworkDescriptorV2,
@@ -59,6 +62,9 @@ export const TRUSTED_NETWORK_V2_MAX_POLICY_ANCHOR_CHECKPOINT_PAYLOAD_BYTES =
 const MAX_QUEUED_POLICY_INPUT_BYTES_V2 =
 	TRUSTED_NETWORK_V2_MAX_POLICY_ENTRY_BYTES * 2;
 const MAX_TIMER_DELAY_MS_V2 = 0x7fffffff;
+const DEFAULT_EXACT_POLICY_HEAD_TIMEOUT_MS_V2 = 10 * 1000;
+const DEFAULT_EXACT_POLICY_HEAD_MAX_ANCESTRY_STEPS_V2 =
+	TRUSTED_NETWORK_V2_MAX_PENDING_POLICIES;
 const ZERO_DIGEST = new Uint8Array(32);
 const textEncoder = new TextEncoder();
 const CHECKPOINT_SCOPE_DOMAIN = textEncoder.encode(
@@ -84,11 +90,18 @@ const isAbortSignalV2 = (value: unknown): value is AbortSignal => {
 	}
 };
 
+const boundedDependencyReasonV2 = (error: unknown): string =>
+	(error instanceof Error ? error.message : String(error)).slice(
+		0,
+		MAX_UNAVAILABLE_REASON_LENGTH,
+	);
+
 export type CrashSafePolicyAnchorStoreV2 = CrashSafeAtomicReplaceStore;
 
 type DurableReducerOptionsV2 = {
 	descriptor: NetworkDescriptorV2;
 	resolvePolicyEntry: PolicySnapshotResolverV2;
+	resolvePolicyEntryByCid?: PolicyEntryCidResolverV2;
 	resolveTimeoutMs?: number;
 	signal?: AbortSignal;
 	maxPending?: number;
@@ -99,6 +112,25 @@ export type TrustedNetworkV2DurablePolicyReducerOptions =
 	DurableReducerOptionsV2 & {
 		store: CrashSafePolicyAnchorStoreV2;
 	};
+
+export type PolicyEntryCidResolverV2 = (
+	policyEntryCid: string,
+	options: { signal: AbortSignal },
+) => Uint8Array | undefined | Promise<Uint8Array | undefined>;
+
+export type ExactPolicyHeadRequirementV2 = {
+	policyEntryCid: string;
+	maxAncestrySteps?: number;
+	/** Queue-inclusive relative deadline; callers may only shorten the 10s cap. */
+	timeoutMs?: number;
+	deadline?: number;
+	signal?: AbortSignal;
+};
+
+export type ExactPolicyHeadLeaseV2 = {
+	policyEntryCid: string;
+	policy: PolicyHeadProjectionV2;
+};
 
 export type PolicyLeaseReferenceV2 = {
 	sequence: bigint;
@@ -126,6 +158,15 @@ export type PolicyLeaseResultV2<T> =
 			status: "unavailable" | "rejected" | "capacity" | "halted";
 			reason: string;
 	  };
+
+type PolicyLeaseFailureV2 = Exclude<
+	PolicyLeaseResultV2<never>,
+	{ status: "completed" }
+>;
+
+type PolicyLeaseAcquisitionV2<T> =
+	| { status: "resolved"; lease: T }
+	| PolicyLeaseFailureV2;
 
 /**
  * One self-contained application snapshot. The enclosing generic checkpoint
@@ -740,6 +781,13 @@ export class TrustedNetworkV2DurablePolicyReducer {
 	private checkpoint?: CrashSafeTwoSlotCheckpoint;
 	private core: TrustedNetworkV2PolicyReducer;
 	private published: PublishedProjectionV2;
+	private readonly descriptor: NetworkDescriptorV2;
+	private readonly resolvePolicyEntryByCid?: PolicyEntryCidResolverV2;
+	private readonly lifecycleSignal?: AbortSignal;
+	private exactResolutionController?: AbortController;
+	private exactAuthenticationInFlight?: Promise<AuthenticatedExactPolicyEntryV2>;
+	private readonly authenticateExactPolicyEntry =
+		authenticateExactPolicyEntryV2;
 	private durableCoreIdentityBytes?: Uint8Array;
 	private operationTail: Promise<void> = Promise.resolve();
 	private authorizationFences = 0;
@@ -750,11 +798,17 @@ export class TrustedNetworkV2DurablePolicyReducer {
 	private constructor(properties: {
 		checkpoint?: CrashSafeTwoSlotCheckpoint;
 		core: TrustedNetworkV2PolicyReducer;
+		descriptor: NetworkDescriptorV2;
+		resolvePolicyEntryByCid?: PolicyEntryCidResolverV2;
+		lifecycleSignal?: AbortSignal;
 		durableCoreIdentityBytes?: Uint8Array;
 	}) {
 		this.checkpoint = properties.checkpoint;
 		this.core = properties.core;
 		this.published = publishedFromReducer(this.core);
+		this.descriptor = properties.descriptor;
+		this.resolvePolicyEntryByCid = properties.resolvePolicyEntryByCid;
+		this.lifecycleSignal = properties.lifecycleSignal;
 		this.durableCoreIdentityBytes =
 			properties.durableCoreIdentityBytes === undefined
 				? undefined
@@ -765,6 +819,12 @@ export class TrustedNetworkV2DurablePolicyReducer {
 		options: TrustedNetworkV2DurablePolicyReducerOptions,
 	): Promise<TrustedNetworkV2DurablePolicyReducer> {
 		assertNetworkDescriptorV2(options.descriptor);
+		if (
+			options.resolvePolicyEntryByCid !== undefined &&
+			typeof options.resolvePolicyEntryByCid !== "function"
+		) {
+			throw new TypeError("Policy CID resolver must be a function");
+		}
 		const descriptor = deserialize(
 			serialize(options.descriptor),
 			NetworkDescriptorV2,
@@ -812,6 +872,9 @@ export class TrustedNetworkV2DurablePolicyReducer {
 				return new TrustedNetworkV2DurablePolicyReducer({
 					checkpoint,
 					core,
+					descriptor,
+					resolvePolicyEntryByCid: options.resolvePolicyEntryByCid,
+					lifecycleSignal: signal,
 				});
 			}
 
@@ -834,6 +897,9 @@ export class TrustedNetworkV2DurablePolicyReducer {
 				// storage, so release that potentially 8.78 MiB snapshot immediately.
 				checkpoint: forked ? undefined : checkpoint,
 				core,
+				descriptor,
+				resolvePolicyEntryByCid: options.resolvePolicyEntryByCid,
+				lifecycleSignal: signal,
 				durableCoreIdentityBytes: decoded.coreIdentityBytes,
 			});
 		} catch (error) {
@@ -915,6 +981,7 @@ export class TrustedNetworkV2DurablePolicyReducer {
 	}
 
 	abort(): void {
+		this.exactResolutionController?.abort();
 		this.core.abort();
 	}
 
@@ -1110,21 +1177,176 @@ export class TrustedNetworkV2DurablePolicyReducer {
 			});
 		}
 
-		const retainedReferenceBytes = 32;
-		if (!this.reserveOperation(retainedReferenceBytes)) {
-			return Promise.resolve({
-				status: "capacity",
-				reason: "Durable policy operation queue is at its fixed capacity",
-			});
-		}
 		let digest: Uint8Array;
 		try {
 			digest = copyBytes(suppliedDigest);
 		} catch {
-			this.releaseOperation(retainedReferenceBytes);
 			return Promise.resolve({
 				status: "rejected",
 				reason: "Policy reference digest must contain exactly 32 bytes",
+			});
+		}
+
+		return this.withSerializedPolicyLease(
+			32,
+			deadline,
+			signal,
+			async () => {
+				const resolution = await this.core.resolveAcceptedPolicyPrefix(
+					{ sequence, digest },
+					{ maxSteps, deadline, signal },
+				);
+				return resolution.status === "resolved"
+					? {
+							status: "resolved",
+							lease: {
+								policy: resolution.policy,
+								acceptedHead: resolution.acceptedHead,
+							},
+						}
+					: resolution;
+			},
+			use,
+		);
+	}
+
+	/**
+	 * Run one callback while a CID-addressed policy wrapper is authenticated and
+	 * its policy-body identity is the stable durable current head.
+	 *
+	 * The resolver, accepted-prefix proof, and callback share one bounded budget
+	 * and one serialized operation-queue slot. No digest resolver fallback is
+	 * allowed when the CID resolver is absent or unavailable.
+	 */
+	withExactPolicyHead<T>(
+		requirement: ExactPolicyHeadRequirementV2,
+		use: (lease: ExactPolicyHeadLeaseV2) => T | Promise<T>,
+	): Promise<PolicyLeaseResultV2<T>> {
+		const halted = this.immediateLeaseHaltedResult();
+		if (halted !== undefined) return Promise.resolve(halted);
+
+		let policyEntryCid: string;
+		let maxAncestrySteps: number;
+		let deadline: number;
+		let signal: AbortSignal | undefined;
+		try {
+			policyEntryCid = captureCanonicalPolicyEntryCidV2(
+				requirement.policyEntryCid,
+			);
+			maxAncestrySteps =
+				requirement.maxAncestrySteps ??
+				DEFAULT_EXACT_POLICY_HEAD_MAX_ANCESTRY_STEPS_V2;
+			if (
+				!Number.isSafeInteger(maxAncestrySteps) ||
+				maxAncestrySteps < 0 ||
+				maxAncestrySteps > TRUSTED_NETWORK_V2_MAX_PENDING_POLICIES
+			) {
+				return Promise.resolve({
+					status: "rejected",
+					reason: `Exact policy maxAncestrySteps must be between 0 and ${TRUSTED_NETWORK_V2_MAX_PENDING_POLICIES}`,
+				});
+			}
+			const suppliedDeadline = requirement.deadline;
+			if (
+				suppliedDeadline !== undefined &&
+				(!Number.isSafeInteger(suppliedDeadline) || suppliedDeadline < 0)
+			) {
+				return Promise.resolve({
+					status: "rejected",
+					reason: "Exact policy deadline must be a non-negative safe integer",
+				});
+			}
+			const timeoutMs =
+				requirement.timeoutMs ?? DEFAULT_EXACT_POLICY_HEAD_TIMEOUT_MS_V2;
+			if (
+				!Number.isSafeInteger(timeoutMs) ||
+				timeoutMs < 0 ||
+				timeoutMs > DEFAULT_EXACT_POLICY_HEAD_TIMEOUT_MS_V2
+			) {
+				return Promise.resolve({
+					status: "rejected",
+					reason: `Exact policy timeoutMs must be between 0 and ${DEFAULT_EXACT_POLICY_HEAD_TIMEOUT_MS_V2}`,
+				});
+			}
+			const relativeDeadline = Math.min(
+				Number.MAX_SAFE_INTEGER,
+				Date.now() + timeoutMs,
+			);
+			deadline =
+				suppliedDeadline === undefined
+					? relativeDeadline
+					: Math.min(suppliedDeadline, relativeDeadline);
+			signal = requirement.signal;
+			if (signal !== undefined && !isAbortSignalV2(signal)) {
+				return Promise.resolve({
+					status: "rejected",
+					reason: "Exact policy signal must be an AbortSignal",
+				});
+			}
+		} catch {
+			return Promise.resolve({
+				status: "rejected",
+				reason: "Exact policy-head requirement is invalid",
+			});
+		}
+		if (typeof use !== "function") {
+			return Promise.resolve({
+				status: "rejected",
+				reason: "Exact policy-head callback must be a function",
+			});
+		}
+
+		return this.withSerializedPolicyLease(
+			textEncoder.encode(policyEntryCid).byteLength,
+			deadline,
+			signal,
+			async () => {
+				const exact = await this.resolveExactPolicyEntry(
+					policyEntryCid,
+					deadline,
+					signal,
+				);
+				if (exact.status !== "resolved") return exact;
+				const accepted = await this.core.resolveAcceptedPolicyPrefix(
+					{
+						sequence: exact.lease.policy.sequence,
+						digest: exact.lease.policy.digest,
+					},
+					{ maxSteps: maxAncestrySteps, deadline, signal },
+				);
+				if (accepted.status !== "resolved") return accepted;
+				if (
+					accepted.acceptedHead.sequence !== exact.lease.policy.sequence ||
+					!equals(accepted.acceptedHead.digest, exact.lease.policy.digest)
+				) {
+					return {
+						status: "unavailable",
+						reason: "Exact policy entry is not the durable current policy head",
+					};
+				}
+				return {
+					status: "resolved",
+					lease: {
+						policyEntryCid,
+						policy: accepted.acceptedHead,
+					},
+				};
+			},
+			use,
+		);
+	}
+
+	private withSerializedPolicyLease<T, Lease>(
+		retainedInputBytes: number,
+		deadline: number | undefined,
+		signal: AbortSignal | undefined,
+		acquire: () => Promise<PolicyLeaseAcquisitionV2<Lease>>,
+		use: (lease: Lease) => T | Promise<T>,
+	): Promise<PolicyLeaseResultV2<T>> {
+		if (!this.reserveOperation(retainedInputBytes)) {
+			return Promise.resolve({
+				status: "capacity",
+				reason: "Durable policy operation queue is at its fixed capacity",
 			});
 		}
 
@@ -1212,17 +1434,11 @@ export class TrustedNetworkV2DurablePolicyReducer {
 				cleanupWakeups();
 				const queuedHalt = this.immediateLeaseHaltedResult();
 				if (queuedHalt !== undefined) return queuedHalt;
-				const resolution = await this.core.resolveAcceptedPolicyPrefix(
-					{
-						sequence,
-						digest,
-					},
-					{ maxSteps, deadline, signal },
-				);
+				const acquisition = await acquire();
 				if (preAcquisitionResult !== undefined) {
 					return preAcquisitionResult;
 				}
-				if (resolution.status !== "resolved") return resolution;
+				if (acquisition.status !== "resolved") return acquisition;
 				// Lifecycle abort before callback invocation loses acquisition. There is
 				// no await between this check and invoking user code, which is the lease's
 				// linearization point.
@@ -1242,17 +1458,12 @@ export class TrustedNetworkV2DurablePolicyReducer {
 				}
 				callbackAcquired = true;
 				cleanupWakeups();
-				const value = await use({
-					// The core created these two projections independently and retains
-					// neither, including when the requested policy is the current head.
-					policy: resolution.policy,
-					acceptedHead: resolution.acceptedHead,
-				});
+				const value = await use(acquisition.lease);
 				return { status: "completed", value };
 			});
 		const retainedResult = queuedResult.finally(() => {
 			cleanupWakeups();
-			this.releaseOperation(retainedReferenceBytes);
+			this.releaseOperation(retainedInputBytes);
 		});
 		this.operationTail = retainedResult.then(
 			(): void => {},
@@ -1277,6 +1488,166 @@ export class TrustedNetworkV2DurablePolicyReducer {
 		return Promise.race([retainedResult, earlyResult]);
 	}
 
+	private async resolveExactPolicyEntry(
+		policyEntryCid: string,
+		deadline: number,
+		callerSignal: AbortSignal | undefined,
+	): Promise<PolicyLeaseAcquisitionV2<ExactPolicyHeadLeaseV2>> {
+		const resolver = this.resolvePolicyEntryByCid;
+		if (resolver === undefined) {
+			return {
+				status: "unavailable",
+				reason: "Exact policy-head readiness has no policy CID resolver",
+			};
+		}
+		if (this.core.state === "HALTED") {
+			return {
+				status: "halted",
+				reason: "Policy reducer lifecycle is aborted",
+			};
+		}
+		if (callerSignal?.aborted) {
+			return {
+				status: "unavailable",
+				reason: "Exact policy-head acquisition was aborted by the caller",
+			};
+		}
+		const remaining = deadline - Date.now();
+		if (remaining <= 0) {
+			return {
+				status: "unavailable",
+				reason: "Exact policy-head acquisition deadline elapsed",
+			};
+		}
+
+		const controller = new AbortController();
+		this.exactResolutionController = controller;
+		let deadlineElapsed = false;
+		const abortFromLifecycle = (): void => controller.abort();
+		const abortFromCaller = (): void => {
+			controller.abort();
+		};
+		this.lifecycleSignal?.addEventListener("abort", abortFromLifecycle, {
+			once: true,
+		});
+		callerSignal?.addEventListener("abort", abortFromCaller, { once: true });
+		const deadlineTimer = setTimeout(
+			() => {
+				deadlineElapsed = true;
+				controller.abort();
+			},
+			Math.min(remaining, MAX_TIMER_DELAY_MS_V2),
+		);
+		const interrupted = new Promise<never>((_resolve, reject) => {
+			controller.signal.addEventListener(
+				"abort",
+				() => reject(new Error("Exact policy-head resolution interrupted")),
+				{ once: true },
+			);
+		});
+		const interruptionFailure = (): PolicyLeaseFailureV2 | undefined => {
+			const halted = this.immediateLeaseHaltedResult();
+			if (halted !== undefined) return halted;
+			if (this.lifecycleSignal?.aborted) {
+				return {
+					status: "halted",
+					reason: "Policy reducer lifecycle is aborted",
+				};
+			}
+			if (callerSignal?.aborted) {
+				return {
+					status: "unavailable",
+					reason: "Exact policy-head acquisition was aborted by the caller",
+				};
+			}
+			if (deadlineElapsed || Date.now() >= deadline) {
+				return {
+					status: "unavailable",
+					reason: "Exact policy-head acquisition deadline elapsed",
+				};
+			}
+			return undefined;
+		};
+
+		try {
+			const priorAuthentication = this.exactAuthenticationInFlight;
+			if (priorAuthentication !== undefined) {
+				try {
+					await Promise.race([
+						priorAuthentication.catch((): void => {}),
+						interrupted,
+					]);
+				} catch {
+					return (
+						interruptionFailure() ?? {
+							status: "unavailable",
+							reason: "Exact policy authentication slot is unavailable",
+						}
+					);
+				}
+				const interruptedResult = interruptionFailure();
+				if (interruptedResult !== undefined) return interruptedResult;
+			}
+			let entryBytes: Uint8Array | undefined;
+			try {
+				entryBytes = await Promise.race([
+					Promise.resolve().then(() =>
+						resolver(policyEntryCid, { signal: controller.signal }),
+					),
+					interrupted,
+				]);
+			} catch (error) {
+				const interruptedResult = interruptionFailure();
+				if (interruptedResult !== undefined) return interruptedResult;
+				return {
+					status: "unavailable",
+					reason: `Policy CID resolver dependency is unavailable: ${boundedDependencyReasonV2(error)}`,
+				};
+			}
+			if (entryBytes === undefined) {
+				return {
+					status: "unavailable",
+					reason: "Exact policy entry is unavailable from its CID resolver",
+				};
+			}
+			const authentication = Promise.resolve().then(() =>
+				this.authenticateExactPolicyEntry({
+					policyEntryCid,
+					entryBytes,
+					descriptor: this.descriptor,
+				}),
+			);
+			this.exactAuthenticationInFlight = authentication;
+			const clearAuthentication = (): void => {
+				if (this.exactAuthenticationInFlight === authentication) {
+					this.exactAuthenticationInFlight = undefined;
+				}
+			};
+			void authentication.then(clearAuthentication, clearAuthentication);
+			try {
+				const authenticated = await Promise.race([authentication, interrupted]);
+				const completedInterruption = interruptionFailure();
+				return (
+					completedInterruption ?? { status: "resolved", lease: authenticated }
+				);
+			} catch (error) {
+				const interruptedResult = interruptionFailure();
+				if (interruptedResult !== undefined) return interruptedResult;
+				return {
+					status: "rejected",
+					reason: `Exact policy entry is invalid: ${boundedDependencyReasonV2(error)}`,
+				};
+			}
+		} finally {
+			clearTimeout(deadlineTimer);
+			this.lifecycleSignal?.removeEventListener("abort", abortFromLifecycle);
+			callerSignal?.removeEventListener("abort", abortFromCaller);
+			if (this.exactResolutionController === controller) {
+				this.exactResolutionController = undefined;
+			}
+		}
+	}
+
 	private forkFailStopResult(): PolicyAdmissionResultV2 {
 		return {
 			status: "halted",
@@ -1297,7 +1668,7 @@ export class TrustedNetworkV2DurablePolicyReducer {
 		};
 	}
 
-	private immediateLeaseHaltedResult(): PolicyLeaseResultV2<never> | undefined {
+	private immediateLeaseHaltedResult(): PolicyLeaseFailureV2 | undefined {
 		if (this.terminalError !== undefined) {
 			return {
 				status: "halted",
@@ -1377,6 +1748,7 @@ export class TrustedNetworkV2DurablePolicyReducer {
 		);
 		terminal.cause = cause;
 		this.terminalError = terminal;
+		this.exactResolutionController?.abort();
 		this.core.abort();
 		return terminal;
 	}
