@@ -2723,6 +2723,10 @@ export class SharedLog<
 	// The epoch tokens are PeerSession objects (src/peer-session.ts); the map
 	// itself lives on the registry. Stage-2 of the fence refactor.
 	private _peerSessions!: PeerSessionRegistry;
+	// An exact successor session gets at most one unchanged-Full repair. Weak
+	// ownership keeps retired transport generations collectible without an
+	// identity-keyed cleanup path.
+	private _successorFullRepairSessions!: WeakSet<PeerSession>;
 	// A superseded removal may be the queue item that actually observed an active
 	// replicator. Carry that leave obligation to the transition that ultimately
 	// wins, while a winning reconnect clears it without emitting a stale leave.
@@ -4307,6 +4311,7 @@ export class SharedLog<
 		// replication-info blocked set (fence B5) alongside the session maps —
 		// the legacy inline `new Set()` that sat above moved there.
 		this._peerSessions = this.createPeerSessionRegistry();
+		this._successorFullRepairSessions = new WeakSet();
 		this._pendingReplicatorLeaveByPeer = new Set();
 		this._activeReceiveHandlersByPeer = new Map();
 		this._receiveHandlerDrainByPeer = new Map();
@@ -17959,6 +17964,7 @@ export class SharedLog<
 			})) > 0;
 
 		this._gidPeersHistory = new Map();
+		this._successorFullRepairSessions = new WeakSet();
 		this.resetGidPeerHistoryCleanupState();
 		const replicationChangeOwnershipLifecycleController =
 			this.captureReplicationOwnershipLifecycle();
@@ -20758,6 +20764,7 @@ export class SharedLog<
 			this._receiveHandlerDrainByPeer?.clear();
 			this._openingSyncCapabilitiesByPeer?.clear();
 			this._gidPeersHistory?.clear();
+			this._successorFullRepairSessions = new WeakSet();
 			this._peerSyncCapabilities?.clear();
 			this._peerSyncCapabilitySessions?.clear();
 			this._peerSyncCapabilityTimestamps?.clear();
@@ -24026,6 +24033,10 @@ export class SharedLog<
 		) {
 			return;
 		}
+		const isFirstSuccessorFull =
+			msg instanceof FullReplicationInfoV2Message &&
+			receiveSession.hasPredecessor &&
+			!this._successorFullRepairSessions.has(receiveSession);
 		const admission = this._v2Receive.reserve(msg, {
 			from,
 			peerSession: receiveSession,
@@ -24059,6 +24070,8 @@ export class SharedLog<
 				const exactGate = () =>
 					hostGate() && this._v2Receive.isAdmissionCurrent(admission);
 				let durableCommitted = false;
+				let committedSuccessorFull = false;
+				let repairUnchangedSuccessorFull = false;
 
 				try {
 					if (
@@ -24102,6 +24115,12 @@ export class SharedLog<
 						) {
 							return;
 						}
+						committedSuccessorFull =
+							isFirstSuccessorFull &&
+							msg instanceof FullReplicationInfoV2Message &&
+							msg.segments.length > 0;
+						repairUnchangedSuccessorFull =
+							committedSuccessorFull && result.length === 0;
 					} else {
 						if (!exactGate()) {
 							return;
@@ -24174,6 +24193,30 @@ export class SharedLog<
 				}
 				if (!hostGate()) {
 					return;
+				}
+				if (committedSuccessorFull) {
+					if (!exactGate()) {
+						return;
+					}
+					this._successorFullRepairSessions.add(receiveSession);
+					if (repairUnchangedSuccessorFull) {
+						// The unchanged range rows belong to the public-key principal, but
+						// delivery evidence may belong to the superseded process. Reuse the
+						// receipt-driven authoritative repair path and bypass only those stale
+						// hints; do not synthesize public membership or range-change events.
+						this._repairFrontierBypassKnownPeersByMode
+							.get("join-authoritative")
+							?.add(fromHash);
+						const peers = new Set([fromHash]);
+						this.scheduleRepairSweep(
+							{ mode: "join-authoritative", peers },
+							lane.ownershipLifecycleController,
+						);
+						this.scheduleJoinAuthoritativeRepair(
+							peers,
+							lane.ownershipLifecycleController,
+						);
+					}
 				}
 				this._liveness.markReplicatorActivity(fromHash);
 				// A committed V2 announcement is applied progress: the peer answers,
