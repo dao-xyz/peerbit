@@ -240,6 +240,13 @@ absolute path of a real Node 18 executable. The gate validates its major
 version before doing any package work and fails closed when it is absent or
 incorrect; it never downloads a runtime implicitly through npm.
 
+CI runs the packed-consumer, dependency-contract, and Node 18 crypto proofs on
+both supported Node majors. It runs the two workspace root audits once because
+both lanes install the same frozen lockfile; repeating those graph-independent
+advisory requests provides no additional runtime coverage. Stable and release
+candidate publication still run the complete gate, including both root audits,
+before publishing.
+
 ## Workspace-only image-size audit ignores
 
 The release security gate's two root pnpm audits ignore exactly

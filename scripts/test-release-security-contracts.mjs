@@ -79,8 +79,18 @@ for (const marker of [
 
 assert.equal(
 	scripts["release:security-gate"],
-	"pnpm run test:release-security-contracts && pnpm run test:security-dependencies && pnpm run test:security-published-closure && pnpm run test:security-published && pnpm dlx pnpm@11.13.0 with current audit --prod --ignore CVE-2025-71330 --ignore CVE-2025-71329 && pnpm dlx pnpm@11.13.0 with current audit --ignore CVE-2025-71330 --ignore CVE-2025-71329",
-	"the shared release gate must fail closed on its contract tests, dependency probe, focused publication-closure proof, full published-package smoke, and both workspace root audits, whose only ignores are the two documented workspace-only image-size CVEs",
+	"pnpm run release:security-gate:compatibility && pnpm run release:security-gate:root-audits",
+	"the shared release gate must fail closed on both the supported-runtime proofs and workspace root audits",
+);
+assert.equal(
+	scripts["release:security-gate:compatibility"],
+	"pnpm run test:release-security-contracts && pnpm run test:security-dependencies && pnpm run test:security-published-closure && pnpm run test:security-published",
+	"the supported-runtime gate must fail closed on its contract tests, dependency probe, focused publication-closure proof, and full published-package smoke",
+);
+assert.equal(
+	scripts["release:security-gate:root-audits"],
+	"pnpm dlx pnpm@11.13.0 with current audit --prod --ignore CVE-2025-71330 --ignore CVE-2025-71329 && pnpm dlx pnpm@11.13.0 with current audit --ignore CVE-2025-71330 --ignore CVE-2025-71329",
+	"the workspace root audit gate must run both production and full-graph audits, whose only ignores are the two documented workspace-only image-size CVEs",
 );
 assert.equal(
 	scripts["test:security-image-size-exception"],
@@ -88,7 +98,7 @@ assert.equal(
 	"the retired image-size audit exception must not return as a package script",
 );
 assert.doesNotMatch(
-	scripts["release:security-gate"],
+	scripts["release:security-gate:root-audits"],
 	/--ignore-unfixable/,
 	"the release gate must never suppress all unfixable advisories",
 );
@@ -482,7 +492,7 @@ const securityJob = workflowJob(ciWorkflow, "security_dependency_contracts");
 assert.match(securityJob, /needs: build_workspace/);
 assert.match(
 	securityJob,
-	/strategy:\n {6}fail-fast: false\n(?: {6}#[^\n]*\n {6}#[^\n]*\n)? {6}max-parallel: 1\n {6}matrix:/,
+	/strategy:\n {6}fail-fast: false\n(?: {6}#[^\n]*\n)* {6}max-parallel: 1\n {6}matrix:/,
 	"supported-runtime release gates must run serially to avoid competing duplicate advisory-service requests",
 );
 // Both supported majors must stay in this matrix. Node 24 was dropped once
@@ -500,10 +510,54 @@ assert.match(
 );
 assert.match(securityJob, /pnpm install --frozen-lockfile/);
 const restoreIndex = securityJob.indexOf("Restore workspace build outputs");
-const gateIndex = securityJob.indexOf("pnpm run release:security-gate");
+const runtimeGateIndex = securityJob.indexOf(
+	"pnpm run release:security-gate:compatibility",
+);
+const auditGateIndex = securityJob.indexOf(
+	"pnpm run release:security-gate:root-audits",
+);
 assert(
-	restoreIndex >= 0 && gateIndex > restoreIndex,
-	"CI must run the same release gate only after restoring built artifacts",
+	restoreIndex >= 0 && runtimeGateIndex > restoreIndex,
+	"CI must run the supported-runtime gate only after restoring built artifacts",
+);
+assert.match(
+	securityJob,
+	/name: Run workspace root audits once\n {8}if: matrix\.node-version == '22\.x'\n {8}run: pnpm run release:security-gate:root-audits/,
+	"CI must run the identical workspace root audits exactly once on the primary supported runtime",
+);
+assert.equal(
+	workflowSteps(securityJob).filter((step) =>
+		step.includes("pnpm run release:security-gate:root-audits"),
+	).length,
+	1,
+	"CI must not duplicate graph-independent workspace root audits across supported runtimes",
+);
+const compatibilitySteps = workflowSteps(securityJob).filter((step) =>
+	step.includes("pnpm run release:security-gate:compatibility"),
+);
+assert.equal(
+	compatibilitySteps.length,
+	1,
+	"CI must run exactly one unconditional compatibility step in every supported-runtime lane",
+);
+assert.doesNotMatch(
+	compatibilitySteps[0],
+	/^\s+if:/m,
+	"the supported-runtime compatibility step must run in every matrix lane",
+);
+assert.doesNotMatch(
+	securityJob,
+	/run: pnpm run release:security-gate(?:\s|$)/,
+	"CI must compose the compatibility and once-only root-audit steps explicitly instead of duplicating the aggregate release gate",
+);
+assert.doesNotMatch(
+	securityJob,
+	/with current audit/,
+	"CI must invoke workspace audits only through the contract-pinned once-only root-audit script",
+);
+assert(
+	auditGateIndex > runtimeGateIndex,
+	"CI must audit the workspace root only after its supported-runtime proofs pass",
 );
 
 const nightlyWorkflow = await readRepositoryFile(

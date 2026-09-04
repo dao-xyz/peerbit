@@ -244,8 +244,10 @@ jobs:
     timeout-minutes: 25
     strategy:
       fail-fast: false
-      # Both lanes execute the same advisory-service-heavy release gate. Keep
-      # them serial so duplicate npm audit requests cannot throttle each other.
+      # Both lanes exercise a packed consumer and its strict npm audit. Keep
+      # them serial so those supported-runtime proofs cannot throttle each
+      # other at the advisory service. The workspace root graph is identical
+      # between lanes and is audited once, on Node 22, below.
       max-parallel: 1
       matrix:
         # Node 24 was dropped from this matrix in #1239 and restored here after
@@ -299,8 +301,11 @@ jobs:
           name: workspace-dist-${{ github.sha }}
       - name: Restore workspace build outputs
         run: tar -xzf workspace-dist.tar.gz
-      - name: Run fail-closed release security gate
-        run: pnpm run release:security-gate
+      - name: Run supported-runtime security proofs
+        run: pnpm run release:security-gate:compatibility
+      - name: Run workspace root audits once
+        if: matrix.node-version == '22.x'
+        run: pnpm run release:security-gate:root-audits
 
   test_push:
     if: github.event_name == 'push'
