@@ -1,5 +1,11 @@
 # Changelog
 
+## 3.2.76
+
+### Patch Changes
+
+- [#1418](https://github.com/dao-xyz/peerbit/pull/1418) [`991f5f8`](https://github.com/dao-xyz/peerbit/commit/991f5f8b86a16731e7063b3bd708e6811474e4c8) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Publish the document interface under a fresh npm version after the previous version was reserved but remained unavailable from the registry.
+
 ## 3.2.75
 
 ### Patch Changes

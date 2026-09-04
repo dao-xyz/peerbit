@@ -1,5 +1,12 @@
 # Changelog
 
+## 15.0.30
+
+### Patch Changes
+
+- Updated dependencies [[`991f5f8`](https://github.com/dao-xyz/peerbit/commit/991f5f8b86a16731e7063b3bd708e6811474e4c8)]:
+  - @peerbit/document-interface@3.2.76
+
 ## 15.0.29
 
 ### Patch Changes
