@@ -1,5 +1,12 @@
 # Changelog
 
+## 6.0.128
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @peerbit/document@15.0.30
+
 ## 6.0.127
 
 ### Patch Changes
