@@ -9502,7 +9502,8 @@ export class NativeBackboneNodeCoordinatePersistenceStore
 		await fs.writeFile(temporaryPath, bytes);
 		let temporaryHandle: NativeBackboneNodeAppendFileHandle | undefined;
 		try {
-			temporaryHandle = await fs.open(temporaryPath, "r");
+			// Windows fsync requires a writable handle; r+ preserves existing bytes.
+			temporaryHandle = await fs.open(temporaryPath, "r+");
 			if (typeof temporaryHandle.sync !== "function") {
 				throw new Error(
 					"Node coordinate persistence atomic replacement does not expose FileHandle.sync",
@@ -9624,7 +9625,9 @@ export class NativeBackboneNodeCoordinatePersistenceStore
 			} else {
 				let handle: NativeBackboneNodeAppendFileHandle | undefined;
 				try {
-					handle = await fs.open(path, "r");
+					// Reopened files have no cached writable append handle. Do not create
+					// or truncate them, but retain the write access Windows fsync needs.
+					handle = await fs.open(path, "r+");
 					await syncHandle(handle, `file ${name}`);
 				} finally {
 					await handle?.close();

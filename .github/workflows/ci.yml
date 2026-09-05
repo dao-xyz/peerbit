@@ -299,6 +299,39 @@ jobs:
       - name: Run supported-runtime security proofs
         run: pnpm run release:security-gate:compatibility
 
+  test_receipt_liveness:
+    name: Receipt liveness (${{ matrix.os }})
+    needs: build_workspace
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          run_install: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+      - name: Install exact dependency graph
+        run: pnpm install --frozen-lockfile
+      - uses: actions/download-artifact@v4
+        with:
+          name: workspace-dist-${{ github.sha }}
+      - name: Restore build outputs
+        run: tar -xzf workspace-dist.tar.gz
+      - name: Test receipt and session liveness without retries
+        run: >-
+          node scripts/ci/assert-tests-ran.mjs node ./node_modules/aegir/src/index.js run test
+          --roots ./packages/programs/data/shared-log -- -t node --no-build
+          --grep "^(append delivery options|receive admission replication-info V2|replicator liveness|waitForReplicator)"
+          -- --retries 0
+
   test_push:
     if: github.event_name == 'push'
     name: Test (${{ matrix.test_cmd }}, Node v${{ matrix.node-version }}, OS ${{ matrix.os }})
