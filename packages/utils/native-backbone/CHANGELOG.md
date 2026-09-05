@@ -1,5 +1,11 @@
 # @peerbit/native-backbone
 
+## 0.2.14
+
+### Patch Changes
+
+- [#1427](https://github.com/dao-xyz/peerbit/pull/1427) [`07effe8`](https://github.com/dao-xyz/peerbit/commit/07effe83bc1e3fa63c0b29536032d131b154efe2) Thanks [@marcus-pousette](https://github.com/marcus-pousette)! - Open existing coordinate files and atomic-replacement temporary files with non-truncating writable handles before syncing. This fixes Windows permission failures during durable native-coordinate reopen while preserving missing-file and real sync failures.
+
 ## 0.2.13
 
 ### Patch Changes
