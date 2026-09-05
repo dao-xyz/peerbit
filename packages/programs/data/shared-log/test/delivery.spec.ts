@@ -250,6 +250,74 @@ describe("append delivery options", () => {
 		);
 	});
 
+	it("waits for remote delivery ownership when local coverage is already complete", async () => {
+		session = await TestSession.connected(2);
+		const args = {
+			replicas: { min: 2 },
+			replicate: { offset: 0, factor: 1 },
+			timeUntilRoleMaturity: 0,
+		};
+		const db1 = await session.peers[0].open(new EventStore<string, any>(), {
+			args,
+		});
+		const remoteKey = session.peers[1].identity.publicKey;
+		const remoteHash = remoteKey.hashcode();
+		const log = db1.log as any;
+		const gate = pDefer<void>();
+		const entered = pDefer<void>();
+		const originalReceive = log.handleReplicationInfoV2Announcement.bind(log);
+		log.handleReplicationInfoV2Announcement = async (...parameters: any[]) => {
+			if (parameters[1].from.hashcode() === remoteHash) {
+				entered.resolve();
+				await gate.promise;
+			}
+			return originalReceive(...parameters);
+		};
+		try {
+			await EventStore.open<EventStore<string, any>>(
+				db1.address!,
+				session.peers[1],
+				{ args },
+			);
+			await entered.promise;
+			// These two fences intentionally reproduce the old delivery fixture:
+			// the local full replica supplies coverage; subscription precedes apply.
+			await db1.log.waitForReplicators({
+				coverageThreshold: 1,
+				roleAge: 0,
+				timeout: 15e3,
+			});
+			const subscribers = await session.peers[0].services.pubsub.getSubscribers(
+				db1.log.rpc.topic,
+			);
+			expect(subscribers?.map((peer) => peer.hashcode())).to.include(
+				remoteHash,
+			);
+			expect((await db1.log.getReplicators()).has(remoteHash)).to.be.false;
+			await expect(
+				db1.add("not-yet-a-delivery-recipient", {
+					target: "replicators",
+					delivery: { reliability: "best-effort", requireRecipients: true },
+				}),
+			).to.be.rejectedWith(NoPeersError);
+
+			const ready = db1.log.waitForReplicator(remoteKey, {
+				roleAge: 0,
+				timeout: 15e3,
+			});
+			gate.resolve();
+			await ready;
+			expect((await db1.log.getReplicators()).has(remoteHash)).to.be.true;
+			await db1.add("delivery-recipient-admitted", {
+				target: "replicators",
+				delivery: { reliability: "best-effort", requireRecipients: true },
+			});
+		} finally {
+			gate.resolve();
+			log.handleReplicationInfoV2Announcement = originalReceive;
+		}
+	});
+
 	it("awaits transport acks and applies an explicit priority for target=replicators", async () => {
 		session = await TestSession.connected(2);
 
@@ -286,6 +354,10 @@ describe("append delivery options", () => {
 			expect((subscribers || []).map((x) => x.hashcode())).to.include(
 				remoteHash,
 			);
+		});
+		await db1.log.waitForReplicator(session.peers[1].identity.publicKey, {
+			roleAge: 0,
+			timeout: 15e3,
 		});
 
 		const gate = pDefer<void>();
@@ -398,6 +470,10 @@ describe("append delivery options", () => {
 				db1.log.rpc.topic,
 			);
 			expect((subscribers || []).map((x) => x.hashcode())).to.include(remoteHash);
+		});
+		await db1.log.waitForReplicator(session.peers[1].identity.publicKey, {
+			roleAge: 0,
+			timeout: 15e3,
 		});
 
 		const capturedModes: any[] = [];
