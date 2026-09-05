@@ -820,4 +820,58 @@ describe("TrustedNetwork v2 resource-operation authorization", () => {
 			"provisional",
 		);
 	});
+
+	it("does not publish an ancestor verdict after cancellation during the reverse closing-fence walk", async () => {
+		const context = await createContext();
+		const chain = await chainFixture(context);
+		const before = await createOperation(context, {
+			fence: chain.fence0,
+			policy: context.policy0,
+			contentEpoch: 0n,
+			manifestByte: 0x51,
+			parents: [chain.fence0, chain.before],
+			payloadByte: 9,
+		});
+		const closing = await createFence(context, {
+			sequence: 1n,
+			previousDigest: chain.fence0.digest,
+			policy: context.policy1,
+			parents: [before],
+			manifestByte: 0x52,
+		});
+		const anchor = await openAnchor(context);
+		await anchor.ingest(chain.fence0.bytes);
+		await anchor.ingest(closing.bytes);
+		for (const cancellation of ["caller", "engine"] as const) {
+			const caller = new AbortController();
+			let cancelledInReverseWalk = false;
+			const engine = new TrustedNetworkV2ResourceOperationEngine({
+				descriptor: context.descriptor,
+				expectedResourceId: RESOURCE_ID,
+				expectedGid: RESOURCE_GID,
+				fenceAnchor: anchor,
+				resolveEntryV0: (cids) => {
+					// Descent from the named fence and descent of the closing fence
+					// from this operation are direct edges; only the reverse walk
+					// has to resolve the additional bridge.
+					if (cids.includes(chain.before.cid)) {
+						cancelledInReverseWalk = true;
+						if (cancellation === "caller") caller.abort();
+						else engine.abort();
+					}
+					return new Map(
+						cids.map((cid) => [cid, context.entriesByCid.get(cid)]),
+					);
+				},
+			});
+			const result = await engine.authorize(before.bytes, {
+				signal: caller.signal,
+			});
+			expect(cancelledInReverseWalk).to.equal(true);
+			expect(result.status).to.equal(
+				cancellation === "caller" ? "unavailable" : "halted",
+			);
+			expect(result.applicationPayload).to.equal(undefined);
+		}
+	});
 });

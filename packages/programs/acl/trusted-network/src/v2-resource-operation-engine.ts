@@ -347,7 +347,7 @@ export class TrustedNetworkV2ResourceOperationEngine {
 				},
 				(lease) => this.authorizeUnderLease(snapshot, lease, budget),
 			);
-			return this.mapLeaseResult(leased);
+			return this.interruptionResult(budget) ?? this.mapLeaseResult(leased);
 		} finally {
 			budget.dispose();
 			this.releaseOperation(inputBytes);
@@ -412,6 +412,8 @@ export class TrustedNetworkV2ResourceOperationEngine {
 			{ cid: snapshot.entryCid, bytes: snapshot.entryBytes },
 			budget,
 		);
+		const descentInterruption = this.interruptionResult(budget);
+		if (descentInterruption) return descentInterruption;
 		if (descendsFence.status !== "ancestor") {
 			if (
 				descendsFence.status === "incomplete" ||
@@ -444,6 +446,10 @@ export class TrustedNetworkV2ResourceOperationEngine {
 				budget,
 			),
 		]);
+		// One positive ancestry proof must not hide cancellation of the other
+		// walk. The caller's budget covers completion of the whole classification.
+		const closingInterruption = this.interruptionResult(budget);
+		if (closingInterruption) return closingInterruption;
 		if (
 			operationBeforeClosing.status === "ancestor" &&
 			operationAfterClosing.status === "ancestor"
@@ -476,6 +482,21 @@ export class TrustedNetworkV2ResourceOperationEngine {
 			"rejected",
 			"Old-fence resource operation is concurrent with its closing fence",
 		);
+	}
+
+	private interruptionResult(
+		budget: OperationBudgetV2,
+	): ResourceOperationAuthorizationResultV2 | undefined {
+		if (this.lifecycleController.signal.aborted) {
+			return this.result("halted", "Resource operation engine is aborted");
+		}
+		if (budget.signal.aborted || Date.now() >= budget.deadline) {
+			return this.result(
+				"unavailable",
+				"Resource operation authorization deadline elapsed or was cancelled",
+			);
+		}
+		return undefined;
 	}
 
 	private async causalRelation(

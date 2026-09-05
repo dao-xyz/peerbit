@@ -730,11 +730,20 @@ after exact dependencies arrive computes a fresh verdict; there is no verdict
 cache, retained replay queue, history truncation, or materialized projection.
 
 Operation envelopes are capped at 128 KiB, application payloads at 64 KiB,
-metadata at 16 KiB, and direct predecessors at 64. Each classification uses
-at most 64 fence predecessor steps, 4,096 policy steps, and three bounded
-causal walks. Each causal walk permits 1,024 entries, 16 MiB, and 65,536 links.
-One queue-inclusive deadline covers classification. The operation engine
-retains at most 64 calls and 512 KiB of captured input, and at most 64 unsettled
+metadata at 16 KiB, and direct predecessors at 64. Each classification permits
+at most 64 fence predecessor steps and 4,096 policy steps. Every traversed
+fence predecessor transition has its own causal walk, followed by up to three
+operation-classification causal walks. This is at most 67 causal walks in
+total, not three. Each walk independently permits 1,024 entries, 16 MiB, and
+65,536 links by default; the fence reducer permits lower configured limits.
+The default cumulative causal-work ceiling is therefore 68,608 entry visits,
+1,072 MiB, and 4,390,912 links, including repeated visits across walks. These
+are cumulative work ceilings, not simultaneously retained memory, and exclude
+policy traversal and predecessor authentication. There is no shared entry,
+byte, or link counter across walks. One queue-inclusive deadline covers the
+whole classification (10 seconds by default, configurable up to 60 seconds).
+The operation engine retains at most 64 calls and 512 KiB of captured input,
+and at most 64 unsettled
 causal resolver calls even if a resolver ignores cancellation. Dependency
 hints are capped at 64. Missing history remains necessary for retry; none of
 these work ceilings grants permission to discard it.
