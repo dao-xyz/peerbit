@@ -1,7 +1,9 @@
 import { serialize } from "@dao-xyz/borsh";
 import type { CrashSafeAtomicReplaceStore } from "@peerbit/any-store-interface";
+import { calculateRawCid } from "@peerbit/blocks-interface";
 import { Ed25519Keypair } from "@peerbit/crypto";
 import { Entry, EntryV0 } from "@peerbit/log";
+import { waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
 import { equals } from "uint8arrays";
 import type {
@@ -9,6 +11,7 @@ import type {
 	PolicyLeaseReferenceV2,
 	PolicyLeaseResultV2,
 } from "../src/v2-policy-anchor.js";
+import { TrustedNetworkV2DurablePolicyReducer } from "../src/v2-policy-anchor.js";
 import {
 	type CrashSafeResourceFenceAnchorStoreV2,
 	type ResourceFencePolicyAnchorV2,
@@ -19,11 +22,15 @@ import {
 import { authenticateResourceFenceEntryV2 } from "../src/v2-resource-fence-entry.js";
 import {
 	NetworkDescriptorV2,
+	PolicySnapshotBodyV2,
+	PolicySubjectBindingV2,
 	ResourceFenceV2,
 	TRUSTED_NETWORK_V2_ENTRY_V0_AUTHORITY_ONLY_SIGNATURE_PROFILE,
 	TRUSTED_NETWORK_V2_POLICY_HASH_SHA256,
 	TRUSTED_NETWORK_V2_PROTOCOL_VERSION,
+	TrustedNetworkRole,
 	deriveNetworkIdV2,
+	digestPolicySnapshotBodyV2,
 } from "../src/v2.js";
 
 const ZERO = new Uint8Array(32);
@@ -383,24 +390,30 @@ const createFixture = async (): Promise<Fixture> => {
 const openAnchor = (
 	fixture: Fixture,
 	store: CrashSafeResourceFenceAnchorStoreV2,
-	lease: ControlledPolicyLease,
+	lease: ControlledPolicyLease | TrustedNetworkV2DurablePolicyReducer,
 	options?: {
 		signal?: AbortSignal;
 		resourceId?: Uint8Array;
 		gid?: string;
 		operationTimeoutMs?: number;
 		policyLeaseMaxSteps?: number;
+		resolveEntryV0?: Parameters<
+			typeof TrustedNetworkV2DurableResourceFenceReducer.open
+		>[0]["resolveEntryV0"];
 	},
 ) =>
 	TrustedNetworkV2DurableResourceFenceReducer.open({
 		descriptor: fixture.descriptor,
 		expectedResourceId: options?.resourceId ?? RESOURCE_ID,
 		expectedGid: options?.gid ?? RESOURCE_GID,
-		policyAnchor: lease.asAnchor(),
+		policyAnchor:
+			lease instanceof ControlledPolicyLease ? lease.asAnchor() : lease,
 		store,
 		resolveFenceEntry: (digest) => fixture.fencesByDigest.get(hex(digest)),
-		resolveEntryV0: (cids) =>
-			new Map(cids.map((cid) => [cid, fixture.entriesByCid.get(cid)])),
+		resolveEntryV0:
+			options?.resolveEntryV0 ??
+			((cids) =>
+				new Map(cids.map((cid) => [cid, fixture.entriesByCid.get(cid)]))),
 		causalTimeoutMs: 500,
 		policyLeaseMaxSteps: options?.policyLeaseMaxSteps ?? 7,
 		policyLeaseTimeoutMs: 1_000,
@@ -410,6 +423,589 @@ const openAnchor = (
 
 describe("TrustedNetwork v2 durable resource-fence anchor", function () {
 	this.timeout(30_000);
+
+	it("holds the real durable policy queue through exact resource callback completion", async () => {
+		const fixture = await createFixture();
+		const bindings = [
+			new PolicySubjectBindingV2({
+				signingKey: fixture.authority.publicKey,
+				roles: TrustedNetworkRole.ADMIN,
+			}),
+		];
+		const genesisBody = new PolicySnapshotBodyV2({
+			networkId: deriveNetworkIdV2(fixture.descriptor),
+			sequence: 0n,
+			previousPolicyDigest: ZERO,
+			bindings,
+		});
+		fixture.descriptor.genesisPolicyDigest =
+			digestPolicySnapshotBodyV2(genesisBody);
+		Object.assign(fixture.policy, {
+			digest: fixture.descriptor.genesisPolicyDigest,
+			bindings,
+		});
+		const genesis = await EntryV0.create({
+			store: {} as never,
+			data: serialize(genesisBody),
+			identity: fixture.authority,
+			deferStore: true,
+		});
+		const policy = await TrustedNetworkV2DurablePolicyReducer.open({
+			descriptor: fixture.descriptor,
+			store: new ControlledResourceFenceStore(),
+			resolvePolicyEntry: () => undefined,
+		});
+		expect(
+			(await policy.ingest(Entry.getPreparedStorageBytes(genesis)!)).status,
+		).to.equal("accepted");
+		const anchor = await openAnchor(
+			fixture,
+			new ControlledResourceFenceStore(),
+			policy,
+		);
+		const initial = await fixture.createFence({ sequence: 0n });
+		const entered = deferred();
+		const release = deferred();
+		const leased = anchor.withExactResourceFenceHead(
+			{ fenceEntryCid: initial.entryCid },
+			async ({ acceptedHead }) => {
+				expect(acceptedHead.sequence).to.equal(0n);
+				entered.resolve();
+				await release.promise;
+				expect(policy.head?.sequence).to.equal(0n);
+			},
+		);
+		await entered.promise;
+		const next = await EntryV0.create({
+			store: {} as never,
+			data: serialize(
+				new PolicySnapshotBodyV2({
+					networkId: genesisBody.networkId,
+					sequence: 1n,
+					previousPolicyDigest: fixture.policy.digest,
+					bindings,
+				}),
+			),
+			identity: fixture.authority,
+			deferStore: true,
+			meta: { next: [genesis] },
+		});
+		const advancing = policy.ingest(Entry.getPreparedStorageBytes(next)!);
+		await Promise.resolve();
+		expect(policy.head?.sequence).to.equal(0n);
+		release.resolve();
+		expect((await leased).status).to.equal("completed");
+		expect((await advancing).status).to.equal("accepted");
+		expect(policy.head?.sequence).to.equal(1n);
+	});
+
+	it("leases an exact signed empty frontier only after checkpoint and holds it through the callback", async () => {
+		const fixture = await createFixture();
+		const store = new ControlledResourceFenceStore();
+		const policy = new ControlledPolicyLease(fixture.policy);
+		const anchor = await openAnchor(fixture, store, policy);
+		const initial = await fixture.createFence({ sequence: 0n });
+		const next = await fixture.createFence({
+			sequence: 1n,
+			previousDigest: initial.digest,
+			parent: initial.entry,
+		});
+		const committing = store.gateNextAtomicReplace();
+		const entered = deferred();
+		const release = deferred();
+		const pending = anchor.withExactResourceFenceHead(
+			{ fenceEntryCid: initial.entryCid },
+			async (lease) => {
+				expect(policy.active).to.equal(1);
+				expect(lease.fence.entryCid).to.equal(initial.entryCid);
+				expect(lease.fence.causalFrontier).to.deep.equal([]);
+				expect(lease.policy.digest).to.deep.equal(fixture.policy.digest);
+				entered.resolve();
+				await release.promise;
+				expect(anchor.head?.entryCid).to.equal(initial.entryCid);
+				return 17;
+			},
+		);
+		await committing.entered;
+		expect(anchor.head).to.equal(undefined);
+		expect(policy.active).to.equal(1);
+		// Blocks may already exist, but a fresh opener has no committed frontier.
+		const beforeCommit = await openAnchor(
+			fixture,
+			store.clone(),
+			new ControlledPolicyLease(fixture.policy),
+		);
+		expect(beforeCommit.state).to.equal("EMPTY");
+		beforeCommit.abort();
+		committing.release();
+		await entered.promise;
+		const successor = anchor.ingest(next.bytes);
+		await Promise.resolve();
+		expect(anchor.head?.entryCid).to.equal(initial.entryCid);
+		release.resolve();
+		expect(await pending).to.deep.equal({ status: "completed", value: 17 });
+		expect((await successor).status).to.equal("accepted");
+		expect(anchor.head?.entryCid).to.equal(next.entryCid);
+	});
+
+	it("reacquires exact readiness after reopen without rewriting the empty-frontier checkpoint", async () => {
+		const fixture = await createFixture();
+		const store = new ControlledResourceFenceStore();
+		const initial = await fixture.createFence({ sequence: 0n });
+		const anchor = await openAnchor(
+			fixture,
+			store,
+			new ControlledPolicyLease(fixture.policy),
+		);
+		expect(
+			(
+				await anchor.withExactResourceFenceHead(
+					{ fenceEntryCid: initial.entryCid },
+					() => true,
+				)
+			).status,
+		).to.equal("completed");
+		anchor.abort();
+		const restoredStore = store.clone();
+		const restored = await openAnchor(
+			fixture,
+			restoredStore,
+			new ControlledPolicyLease(fixture.policy),
+		);
+		expect(
+			await restored.withExactResourceFenceHead(
+				{ fenceEntryCid: initial.entryCid },
+				({ fence }) => fence.causalFrontier,
+			),
+		).to.deep.equal({ status: "completed", value: [] });
+		expect(restoredStore.atomicReplaceCalls).to.equal(0);
+	});
+
+	it("does not confuse stale accepted ancestors or a later pending fence with the exact current head", async () => {
+		const fixture = await createFixture();
+		const store = new ControlledResourceFenceStore();
+		const anchor = await openAnchor(
+			fixture,
+			store,
+			new ControlledPolicyLease(fixture.policy),
+		);
+		const initial = await fixture.createFence({ sequence: 0n });
+		const next = await fixture.createFence({
+			sequence: 1n,
+			previousDigest: initial.digest,
+			parent: initial.entry,
+		});
+		expect((await anchor.ingest(next.bytes)).status).to.equal("pending");
+		expect(
+			await anchor.withExactResourceFenceHead(
+				{ fenceEntryCid: initial.entryCid },
+				({ fence }) => fence.entryCid,
+			),
+		).to.deep.equal({ status: "completed", value: initial.entryCid });
+		expect(anchor.pendingCount).to.equal(1);
+		expect(
+			(
+				await anchor.withExactResourceFenceHead(
+					{ fenceEntryCid: next.entryCid },
+					() => true,
+				)
+			).status,
+		).to.equal("completed");
+		let called = false;
+		expect(
+			(
+				await anchor.withExactResourceFenceHead(
+					{ fenceEntryCid: initial.entryCid },
+					() => {
+						called = true;
+					},
+				)
+			).status,
+		).to.equal("unavailable");
+		expect(called).to.equal(false);
+		expect(anchor.head?.entryCid).to.equal(next.entryCid);
+	});
+
+	it("authenticates exact bytes, authority, scope and policy before readiness", async () => {
+		const fixture = await createFixture();
+		const store = new ControlledResourceFenceStore();
+		const policy = new ControlledPolicyLease(fixture.policy);
+		const initial = await fixture.createFence({ sequence: 0n });
+		const other = await fixture.createFence({ sequence: 0n, manifestByte: 9 });
+		const foreign = await createFixture();
+		const foreignFence = await foreign.createFence({ sequence: 0n });
+		const malformed = await calculateRawCid(Uint8Array.of(1, 2, 3));
+		const anchor = await openAnchor(fixture, store, policy);
+		const original = initial.bytes;
+		fixture.entriesByCid.set(initial.entryCid, other.bytes);
+		let calls = 0;
+		const use = () => {
+			calls += 1;
+		};
+		expect(
+			(
+				await anchor.withExactResourceFenceHead(
+					{ fenceEntryCid: initial.entryCid },
+					use,
+				)
+			).status,
+		).to.equal("rejected");
+		fixture.entriesByCid.set(foreignFence.entryCid, foreignFence.bytes);
+		expect(
+			(
+				await anchor.withExactResourceFenceHead(
+					{ fenceEntryCid: foreignFence.entryCid },
+					use,
+				)
+			).status,
+		).to.equal("rejected");
+		fixture.entriesByCid.set(malformed.cid, Uint8Array.of(1, 2, 3));
+		expect(
+			(
+				await anchor.withExactResourceFenceHead(
+					{ fenceEntryCid: malformed.cid },
+					use,
+				)
+			).status,
+		).to.equal("rejected");
+		fixture.entriesByCid.set(initial.entryCid, original);
+		policy.allow = false;
+		expect(
+			(
+				await anchor.withExactResourceFenceHead(
+					{ fenceEntryCid: initial.entryCid },
+					use,
+				)
+			).status,
+		).to.equal("rejected");
+		expect(calls).to.equal(0);
+		expect(store.atomicReplaceCalls).to.equal(0);
+		expect(anchor.state).to.equal("EMPTY");
+	});
+
+	it("persists competing exact fences and keeps reopen halted", async () => {
+		const fixture = await createFixture();
+		const store = new ControlledResourceFenceStore();
+		const anchor = await openAnchor(
+			fixture,
+			store,
+			new ControlledPolicyLease(fixture.policy),
+		);
+		const left = await fixture.createFence({ sequence: 0n });
+		const right = await fixture.createFence({ sequence: 0n, manifestByte: 19 });
+		expect(
+			(
+				await anchor.withExactResourceFenceHead(
+					{ fenceEntryCid: left.entryCid },
+					() => true,
+				)
+			).status,
+		).to.equal("completed");
+		let called = false;
+		expect(
+			(
+				await anchor.withExactResourceFenceHead(
+					{ fenceEntryCid: right.entryCid },
+					() => {
+						called = true;
+					},
+				)
+			).status,
+		).to.equal("halted");
+		expect(anchor.state).to.equal("FORKED");
+		expect(called).to.equal(false);
+		const reopened = await openAnchor(
+			fixture,
+			store.clone(),
+			new ControlledPolicyLease(fixture.policy),
+		);
+		expect(
+			(
+				await reopened.withExactResourceFenceHead(
+					{ fenceEntryCid: left.entryCid },
+					() => {
+						called = true;
+					},
+				)
+			).status,
+		).to.equal("halted");
+		expect(called).to.equal(false);
+	});
+
+	it("settles cancellation during checkpoint promptly while retaining both leases until commit", async () => {
+		const fixture = await createFixture();
+		const store = new ControlledResourceFenceStore();
+		const policy = new ControlledPolicyLease(fixture.policy);
+		const anchor = await openAnchor(fixture, store, policy);
+		const initial = await fixture.createFence({ sequence: 0n });
+		const committing = store.gateNextAtomicReplace();
+		const controller = new AbortController();
+		let called = false;
+		const pending = anchor.withExactResourceFenceHead(
+			{ fenceEntryCid: initial.entryCid, signal: controller.signal },
+			() => {
+				called = true;
+			},
+		);
+		await committing.entered;
+		controller.abort();
+		expect((await pending).status).to.equal("unavailable");
+		expect(policy.active).to.equal(1);
+		expect(anchor.bufferedAdmissionCount).to.equal(1);
+		expect(called).to.equal(false);
+		committing.release();
+		await waitForResolved(() =>
+			expect(anchor.bufferedAdmissionCount).to.equal(0),
+		);
+		expect(policy.active).to.equal(0);
+		expect(anchor.head?.entryCid).to.equal(initial.entryCid);
+		expect(called).to.equal(false);
+	});
+
+	it("does not publish from an aborted lifecycle after a gated exact checkpoint commits", async () => {
+		const fixture = await createFixture();
+		const store = new ControlledResourceFenceStore();
+		const anchor = await openAnchor(
+			fixture,
+			store,
+			new ControlledPolicyLease(fixture.policy),
+		);
+		const initial = await fixture.createFence({ sequence: 0n });
+		const committing = store.gateNextAtomicReplace();
+		let called = false;
+		const pending = anchor.withExactResourceFenceHead(
+			{ fenceEntryCid: initial.entryCid },
+			() => {
+				called = true;
+			},
+		);
+		await committing.entered;
+		anchor.abort();
+		expect((await pending).status).to.equal("halted");
+		committing.release();
+		await waitForResolved(() =>
+			expect(anchor.bufferedAdmissionCount).to.equal(0),
+		);
+		expect(anchor.head).to.equal(undefined);
+		expect(called).to.equal(false);
+		const reopened = await openAnchor(
+			fixture,
+			store.clone(),
+			new ControlledPolicyLease(fixture.policy),
+		);
+		expect(
+			(
+				await reopened.withExactResourceFenceHead(
+					{ fenceEntryCid: initial.entryCid },
+					() => true,
+				)
+			).status,
+		).to.equal("completed");
+	});
+
+	it("retains a bounded preparation lane after resolver cancellation and skips expired queued work", async () => {
+		const fixture = await createFixture();
+		const store = new ControlledResourceFenceStore();
+		const initial = await fixture.createFence({ sequence: 0n });
+		const entered = deferred();
+		const release = deferred();
+		let calls = 0;
+		const anchor = await openAnchor(
+			fixture,
+			store,
+			new ControlledPolicyLease(fixture.policy),
+			{
+				resolveEntryV0: async () => {
+					calls += 1;
+					entered.resolve();
+					await release.promise;
+					return new Map([[initial.entryCid, initial.bytes]]);
+				},
+			},
+		);
+		const controller = new AbortController();
+		const pending = anchor.withExactResourceFenceHead(
+			{ fenceEntryCid: initial.entryCid, signal: controller.signal },
+			() => true,
+		);
+		await entered.promise;
+		controller.abort();
+		expect((await pending).status).to.equal("unavailable");
+		for (let i = 0; i < 2; i++) {
+			expect(
+				(
+					await anchor.withExactResourceFenceHead(
+						{ fenceEntryCid: initial.entryCid, timeoutMs: 0 },
+						() => true,
+					)
+				).status,
+			).to.equal("unavailable");
+		}
+		expect(
+			(
+				await anchor.withExactResourceFenceHead(
+					{ fenceEntryCid: initial.entryCid },
+					() => true,
+				)
+			).status,
+		).to.equal("capacity");
+		expect(calls).to.equal(1);
+		expect(store.atomicReplaceCalls).to.equal(0);
+		release.resolve();
+		await waitForResolved(() =>
+			expect(anchor.bufferedAdmissionCount).to.equal(0),
+		);
+		expect(calls).to.equal(1);
+	});
+
+	it("cancels a missing causal dependency without poisoning the committed frontier", async () => {
+		const fixture = await createFixture();
+		const store = new ControlledResourceFenceStore();
+		const initial = await fixture.createFence({ sequence: 0n });
+		const intermediate = await EntryV0.create({
+			store: {} as never,
+			data: Uint8Array.of(8),
+			identity: fixture.authority,
+			deferStore: true,
+			meta: { next: [initial.entry] },
+		});
+		const next = await fixture.createFence({
+			sequence: 1n,
+			previousDigest: initial.digest,
+			parent: intermediate as EntryV0<Uint8Array>,
+		});
+		const entered = deferred();
+		const release = deferred();
+		const anchor = await openAnchor(
+			fixture,
+			store,
+			new ControlledPolicyLease(fixture.policy),
+			{
+				resolveEntryV0: async (cids) => {
+					if (cids.includes(intermediate.hash)) {
+						entered.resolve();
+						await release.promise;
+					}
+					return new Map(
+						cids.map((cid) => [cid, fixture.entriesByCid.get(cid)]),
+					);
+				},
+			},
+		);
+		expect((await anchor.ingest(initial.bytes)).status).to.equal("accepted");
+		const replacements = store.atomicReplaceCalls;
+		const controller = new AbortController();
+		let called = false;
+		const pending = anchor.withExactResourceFenceHead(
+			{ fenceEntryCid: next.entryCid, signal: controller.signal },
+			() => {
+				called = true;
+			},
+		);
+		await entered.promise;
+		controller.abort();
+		expect((await pending).status).to.equal("unavailable");
+		await waitForResolved(() =>
+			expect(anchor.bufferedAdmissionCount).to.equal(0),
+		);
+		expect(anchor.state).to.equal("ACTIVE");
+		expect(anchor.head?.entryCid).to.equal(initial.entryCid);
+		expect(store.atomicReplaceCalls).to.equal(replacements);
+		fixture.entriesByCid.set(
+			intermediate.hash,
+			Entry.getPreparedStorageBytes(intermediate)!,
+		);
+		release.resolve();
+		expect(called).to.equal(false);
+		expect(
+			(
+				await anchor.withExactResourceFenceHead(
+					{ fenceEntryCid: next.entryCid },
+					() => true,
+				)
+			).status,
+		).to.equal("completed");
+	});
+
+	it("expires a signal-ignoring exact resolver and rejects malformed budgets before work", async () => {
+		const fixture = await createFixture();
+		const initial = await fixture.createFence({ sequence: 0n });
+		const release = deferred();
+		let calls = 0;
+		let resolverSignal: AbortSignal | undefined;
+		const anchor = await openAnchor(
+			fixture,
+			new ControlledResourceFenceStore(),
+			new ControlledPolicyLease(fixture.policy),
+			{
+				resolveEntryV0: async (_cids, { signal }) => {
+					calls += 1;
+					resolverSignal = signal;
+					await release.promise;
+					return new Map();
+				},
+			},
+		);
+		for (const requirement of [
+			{ fenceEntryCid: "not-a-cid" },
+			{ fenceEntryCid: initial.entryCid, timeoutMs: 10_001 },
+			{ fenceEntryCid: initial.entryCid, deadline: -1 },
+		]) {
+			expect(
+				(await anchor.withExactResourceFenceHead(requirement, () => true))
+					.status,
+			).to.equal("rejected");
+		}
+		expect(calls).to.equal(0);
+		expect(
+			(
+				await anchor.withExactResourceFenceHead(
+					{ fenceEntryCid: initial.entryCid, timeoutMs: 10 },
+					() => true,
+				)
+			).status,
+		).to.equal("unavailable");
+		expect(resolverSignal?.aborted).to.equal(true);
+		expect(anchor.bufferedAdmissionCount).to.equal(1);
+		release.resolve();
+		await waitForResolved(() =>
+			expect(anchor.bufferedAdmissionCount).to.equal(0),
+		);
+	});
+
+	it("does not retract a callback on cancellation or poison the anchor when user code rejects", async () => {
+		const fixture = await createFixture();
+		const store = new ControlledResourceFenceStore();
+		const policy = new ControlledPolicyLease(fixture.policy);
+		const anchor = await openAnchor(fixture, store, policy);
+		const initial = await fixture.createFence({ sequence: 0n });
+		const controller = new AbortController();
+		const entered = deferred();
+		const release = deferred();
+		const error = new Error("consumer failed");
+		const pending = anchor.withExactResourceFenceHead(
+			{ fenceEntryCid: initial.entryCid, signal: controller.signal },
+			async () => {
+				entered.resolve();
+				await release.promise;
+				throw error;
+			},
+		);
+		await entered.promise;
+		controller.abort();
+		expect(policy.active).to.equal(1);
+		release.resolve();
+		await expect(pending).to.be.rejectedWith(error);
+		expect(anchor.state).to.equal("ACTIVE");
+		expect(
+			(
+				await anchor.withExactResourceFenceHead(
+					{ fenceEntryCid: initial.entryCid },
+					() => 23,
+				)
+			).status,
+		).to.equal("completed");
+	});
 
 	it("holds the accepted-policy lease through commit and publishes only afterward", async () => {
 		const fixture = await createFixture();
