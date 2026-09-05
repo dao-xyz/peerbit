@@ -1,7 +1,14 @@
 import { noise } from "@chainsafe/libp2p-noise";
 import { yamux } from "@chainsafe/libp2p-yamux";
-import type { Connection, Stream } from "@libp2p/interface";
+import {
+	type Connection,
+	ConnectionClosedError,
+	MuxerClosedError,
+	type Stream,
+	StreamResetError,
+} from "@libp2p/interface";
 import { tcp } from "@libp2p/tcp";
+import { Cache } from "@peerbit/cache";
 import { Ed25519Keypair } from "@peerbit/crypto";
 import { expect } from "chai";
 import { createLibp2p } from "libp2p";
@@ -44,6 +51,150 @@ const createRaw = (id: string): Stream =>
 		abort: sinon.spy(),
 		close: sinon.stub().resolves(),
 	}) as unknown as Stream;
+
+describe("stream pruned connection rejection", () => {
+	for (const notification of ["incoming stream", "connected peer"] as const) {
+		it(`aborts a cached-pruned ${notification} before deleting peer-store state`, async () => {
+			const node = await createNode();
+			const subject = node.services.directstream;
+			const key = await Ed25519Keypair.create();
+			const peerId = key.publicKey.toPeerId();
+			const cache = new Cache<string>({ max: 10 });
+			subject["prunedConnectionsCache"] = cache;
+			cache.add(key.publicKey.hashcode());
+			const events: string[] = [];
+			const abort = sinon.spy((_error: Error) => {
+				events.push("abort");
+			});
+			const close = sinon.stub().callsFake(async () => {
+				events.push("close");
+			});
+			const connection = {
+				remotePeer: peerId,
+				status: "open",
+				abort,
+				close,
+			} as unknown as Connection;
+			const remove = sinon
+				.stub(subject.components.peerStore, "delete")
+				.callsFake(async () => {
+					events.push("delete");
+				});
+			const addPeer = sinon.spy(subject, "addPeer");
+			const enqueue = sinon.spy(subject["outboundInflightQueue"], "push");
+			try {
+				if (notification === "incoming stream") {
+					await subject["_onIncomingStream"](createRaw("rejected"), connection);
+				} else {
+					await subject.onPeerConnected(peerId, connection);
+				}
+				expect(events).to.deep.equal(["abort", "delete"]);
+				expect(close.called).to.equal(false);
+				expect(abort.firstCall.args[0]).to.be.instanceOf(Error);
+				expect(remove.calledOnceWithExactly(peerId)).to.equal(true);
+				expect(cache.has(key.publicKey.hashcode())).to.equal(true);
+				expect(addPeer.called).to.equal(false);
+				expect(enqueue.called).to.equal(false);
+			} finally {
+				remove.restore();
+				addPeer.restore();
+				enqueue.restore();
+				await node.stop();
+			}
+		});
+	}
+});
+
+describe("stream outbound negotiation recovery", () => {
+	for (const outcome of [
+		"healthy stream",
+		"closed muxer",
+		"closed connection",
+		"repeated resets",
+	] as const) {
+		it(`handles a reset followed by ${outcome} without treating a reset as connection failure`, async () => {
+			const node = await createNode();
+			const subject = node.services.directstream;
+			const key = await Ed25519Keypair.create();
+			const peerId = key.publicKey.toPeerId();
+			const abort = sinon.spy();
+			const newStream = sinon.stub().rejects(new StreamResetError());
+			if (outcome === "healthy stream")
+				newStream.onSecondCall().resolves(createRaw("recovered"));
+			if (outcome === "closed muxer")
+				newStream.onSecondCall().rejects(new MuxerClosedError());
+			if (outcome === "closed connection")
+				newStream.onSecondCall().rejects(new ConnectionClosedError());
+			const connection = {
+				id: "reset-negotiation",
+				remotePeer: peerId,
+				status: "open",
+				streams: [],
+				newStream,
+				abort,
+			} as unknown as Connection;
+			try {
+				await subject["createOutboundStream"](peerId, connection);
+				expect(newStream.callCount).to.equal(
+					outcome === "repeated resets" ? 4 : 2,
+				);
+				expect(abort.called).to.equal(
+					outcome === "closed muxer" || outcome === "closed connection",
+				);
+				if (outcome === "closed muxer")
+					expect(abort.firstCall.args[0]).to.be.instanceOf(MuxerClosedError);
+				expect(subject.peers.has(key.publicKey.hashcode())).to.equal(
+					outcome === "healthy stream",
+				);
+			} finally {
+				await node.stop();
+			}
+		});
+	}
+
+	it("does not retry a reset that arrives after shutdown starts", async () => {
+		const node = await createNode();
+		const subject = node.services.directstream;
+		const key = await Ed25519Keypair.create();
+		const entered = pDefer<void>();
+		const aborted = pDefer<void>();
+		const release = pDefer<void>();
+		const newStream = sinon
+			.stub()
+			.callsFake(
+				async (_protocols: string[], options: { signal: AbortSignal }) => {
+					options.signal.addEventListener("abort", () => aborted.resolve(), {
+						once: true,
+					});
+					entered.resolve();
+					await release.promise;
+					throw new StreamResetError();
+				},
+			);
+		const connectionAbort = sinon.spy();
+		const connection = {
+			status: "open",
+			streams: [],
+			newStream,
+			abort: connectionAbort,
+		} as unknown as Connection;
+		let stopping: Promise<void> | undefined;
+		try {
+			await subject.onPeerConnected(key.publicKey.toPeerId(), connection);
+			await entered.promise;
+			stopping = Promise.resolve(node.stop());
+			await aborted.promise;
+			release.resolve();
+			await stopping;
+			expect(newStream.calledOnce).to.equal(true);
+			expect(connectionAbort.called).to.equal(false);
+		} finally {
+			release.resolve();
+			await stopping;
+			await node.stop();
+		}
+	});
+});
 
 describe("stream before-stop barrier", () => {
 	it("preserves guarded subclass cleanup and permits a complete restart", async () => {

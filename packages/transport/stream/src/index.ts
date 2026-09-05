@@ -1,4 +1,5 @@
 import {
+	ConnectionClosedError,
 	MuxerClosedError,
 	StreamResetError,
 	TypedEventEmitter,
@@ -2011,7 +2012,9 @@ export abstract class DirectStream<
 		const publicKey = getPublicKeyFromPeerId(peerId);
 
 		if (this.prunedConnectionsCache?.has(publicKey.hashcode())) {
-			await connection.close();
+			// Reject immediately: graceful transport shutdown can race other
+			// incoming protocol negotiations that still need to reset their streams.
+			connection.abort(new AbortError("Connection was pruned"));
 			await this.components.peerStore.delete(peerId);
 			return;
 		}
@@ -2096,14 +2099,25 @@ export abstract class DirectStream<
 					continue; // Retry
 				}
 
+				if (connection.status !== "open") return;
 				if (
-					connection.status !== "open" ||
 					error?.message === "Muxer already closed" ||
-					error.code === "ERR_STREAM_RESET" ||
-					error instanceof StreamResetError ||
+					error instanceof ConnectionClosedError ||
 					error instanceof MuxerClosedError
 				) {
-					return; // fail silenty
+					// A closed muxer cannot open any protocol, even if the transport
+					// still reports open. Dispose it so a later dial can reconnect.
+					connection.abort(error);
+					return;
+				}
+				if (
+					error.code === "ERR_STREAM_RESET" ||
+					error instanceof StreamResetError
+				) {
+					// A single stream reset need not invalidate a healthy connection.
+					// Retry within the existing attempt/signal budget; a muxer-wide
+					// failure then surfaces on the next open instead of staying cached.
+					continue;
 				}
 
 				throw error;
@@ -2130,7 +2144,7 @@ export abstract class DirectStream<
 		const peerKey = getPublicKeyFromPeerId(peerId);
 
 		if (this.prunedConnectionsCache?.has(peerKey.hashcode())) {
-			await connection.close();
+			connection.abort(new AbortError("Connection was pruned"));
 			await this.components.peerStore.delete(peerId);
 			return; // we recently pruned this connect, dont allow it to connect for a while
 		}
