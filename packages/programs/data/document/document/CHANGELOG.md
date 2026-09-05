@@ -1,5 +1,21 @@
 # Changelog
 
+## 15.1.0
+
+### Minor Changes
+
+- [#1431](https://github.com/dao-xyz/peerbit/pull/1431) [`5a85ed2`](https://github.com/dao-xyz/peerbit/commit/5a85ed239e82e254a20de81237cf21c0b3e89d2c) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Add opt-in required putMany batching with captured invocation inputs, no sequential fallback, and immutable input-index/hash commit evidence on failure. Distinguish pre-append rejection, confirmed local append, and indeterminate recovery-required outcomes independently of remote persisted receipts; this is not an all-or-none transaction guarantee.
+
+### Patch Changes
+
+- Updated dependencies [[`a3d3cf6`](https://github.com/dao-xyz/peerbit/commit/a3d3cf62f7a6915b4e627f20e5d928a1ef4d5d02), [`204ca67`](https://github.com/dao-xyz/peerbit/commit/204ca6757185d55616da5c907e96b66054c77a3b)]:
+  - @peerbit/shared-log@16.0.30
+  - @peerbit/pubsub@5.4.6
+  - @peerbit/log@6.2.33
+  - @peerbit/program@6.0.60
+  - @peerbit/rpc@6.1.28
+  - @peerbit/document-interface@3.2.77
+
 ## 15.0.32
 
 ### Patch Changes

@@ -1,5 +1,19 @@
 # Changelog
 
+## 16.0.30
+
+### Patch Changes
+
+- [#1437](https://github.com/dao-xyz/peerbit/pull/1437) [`a3d3cf6`](https://github.com/dao-xyz/peerbit/commit/a3d3cf62f7a6915b4e627f20e5d928a1ef4d5d02) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Add opt-in aggregate sync.profile diagnostics for adaptive rebalance ticks, placement passes, and repair dispatch, plus existing-head hit counts. Reuse existing computations without new metadata scans or default logging, isolate these summaries from throwing sinks, and document elapsed-time and payload-byte boundaries.
+
+- Updated dependencies [[`dcd06c8`](https://github.com/dao-xyz/peerbit/commit/dcd06c8368a1773b5a475205637bb3a05fd2700f), [`204ca67`](https://github.com/dao-xyz/peerbit/commit/204ca6757185d55616da5c907e96b66054c77a3b)]:
+  - @peerbit/blocks-interface@2.2.1
+  - @peerbit/pubsub@5.4.6
+  - @peerbit/log@6.2.33
+  - @peerbit/program@6.0.60
+  - @peerbit/blocks@4.3.1
+  - @peerbit/rpc@6.1.28
+
 ## 16.0.29
 
 ### Patch Changes

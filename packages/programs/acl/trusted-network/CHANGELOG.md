@@ -1,5 +1,20 @@
 # Changelog
 
+## 6.0.131
+
+### Patch Changes
+
+- [#1434](https://github.com/dao-xyz/peerbit/pull/1434) [`033b648`](https://github.com/dao-xyz/peerbit/commit/033b64881285e61a6534f084f7f6d067afb245b9) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Add internal bounded signed protected-operation authentication and historical
+  fence-relative classification using durable policy and resource-prefix leases.
+  Bound aggregate causal work across historical fences and operation classification.
+  TrustedNetwork v2 remains disabled pending protected-resource integration.
+- Updated dependencies [[`a3d3cf6`](https://github.com/dao-xyz/peerbit/commit/a3d3cf62f7a6915b4e627f20e5d928a1ef4d5d02), [`dcd06c8`](https://github.com/dao-xyz/peerbit/commit/dcd06c8368a1773b5a475205637bb3a05fd2700f), [`5a85ed2`](https://github.com/dao-xyz/peerbit/commit/5a85ed239e82e254a20de81237cf21c0b3e89d2c)]:
+  - @peerbit/shared-log@16.0.30
+  - @peerbit/blocks-interface@2.2.1
+  - @peerbit/document@15.1.0
+  - @peerbit/log@6.2.33
+  - @peerbit/program@6.0.60
+
 ## 6.0.130
 
 ### Patch Changes

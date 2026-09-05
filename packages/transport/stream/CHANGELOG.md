@@ -1,5 +1,20 @@
 # Changelog
 
+## 5.2.2
+
+### Patch Changes
+
+- [#1436](https://github.com/dao-xyz/peerbit/pull/1436) [`204ca67`](https://github.com/dao-xyz/peerbit/commit/204ca6757185d55616da5c907e96b66054c77a3b) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Keep same-identity stream replacements independent of obsolete close, reader, and
+  disconnect callbacks. Preserve negotiated session state and reattach pubsub
+  readiness listeners to the replacement. Pending retired closes remain bounded
+  and owned by the network shutdown barrier.
+
+- [#1432](https://github.com/dao-xyz/peerbit/pull/1432) [`284f5c0`](https://github.com/dao-xyz/peerbit/commit/284f5c026574983dea2f7a041b96b9f14fd45251) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Cancel inbound pruning when peer streams close and reject late inbound or outbound attachments, disposing their raw streams so shutdown cannot retain timers or revive a closed peer.
+
+  Drain stream shutdown during libp2p's before-stop phase, before connection shutdown begins. Await existing peer closes and pending outbound opens while preserving subclass cleanup in the normal stop phase. Abort rejected, previously pruned connections before removing their peer-store state so concurrent protocol negotiation cannot race a graceful TCP shutdown.
+
+  Recover transient outbound negotiation resets within the existing attempt budget, and discard definitively closed connections or multiplexers so subsequent dials can reconnect.
+
 ## 5.2.1
 
 ### Patch Changes
