@@ -4,7 +4,9 @@ import { TerminalOperationNotStartedError } from "@peerbit/program";
 import { TestSession } from "@peerbit/test-utils";
 import { delay, waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
+import pDefer from "p-defer";
 import sinon from "sinon";
+import { ExchangeHeadsMessage } from "../src/exchange-heads.js";
 import { createReplicationDomainHash } from "../src/replication-domain-hash.js";
 import {
 	AllReplicatingSegmentsMessage,
@@ -12,8 +14,27 @@ import {
 	RequestReplicationInfoMessage,
 	ResponseRoleMessage,
 } from "../src/replication.js";
-import { SimpleSyncronizer } from "../src/sync/simple.js";
+import type { RepairSession } from "../src/sync/index.js";
+import { RatelessIBLTSynchronizer } from "../src/sync/rateless-iblt.js";
+import { ResponseMaybeSync, SimpleSyncronizer } from "../src/sync/simple.js";
 import { EventStore } from "./utils/stores/index.js";
+
+const boundedDispatchStage = async <T>(work: Promise<T>, label: string) => {
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	try {
+		return await Promise.race([
+			work,
+			new Promise<never>((_, reject) => {
+				timer = setTimeout(
+					() => reject(new Error(`${label} exceeded 3000ms`)),
+					3_000,
+				);
+			}),
+		]);
+	} finally {
+		clearTimeout(timer);
+	}
+};
 
 describe("lifecycle", () => {
 	let session: TestSession;
@@ -454,6 +475,267 @@ describe("lifecycle", () => {
 			}
 		});
 	}
+
+	for (const rateless of [false, true]) {
+		for (const operation of ["close", "drop"] as const) {
+			it(`${operation} cancels ${rateless ? "rateless and nested simple" : "simple"} dispatch before draining a response receive`, async () => {
+				session = await TestSession.disconnected(1);
+				const db = await session.peers[0].open(new EventStore(), {
+					args: {
+						replicate: false,
+						setup: {
+							type: "u32",
+							domain: createReplicationDomainHash("u32"),
+							syncronizer: rateless
+								? RatelessIBLTSynchronizer
+								: SimpleSyncronizer,
+							name: "cancel-response-before-drain",
+						},
+					},
+				});
+				const sharedLog = db.log as any;
+				const synchronizer = sharedLog.syncronizer;
+				const simple = rateless ? synchronizer.simple : synchronizer;
+				const requester = (await Ed25519Keypair.create()).publicKey;
+				const requesterHash = requester.hashcode();
+				const { entry } = await db.add("response-cancellation", {
+					target: "none",
+				});
+				const entered = pDefer<void>();
+				const sendGate = pDefer<void>();
+				const physicalDrain = pDefer<void>();
+				let signal: AbortSignal | undefined;
+				let rejectedWith: unknown;
+				let receive: Promise<void> | undefined;
+				let terminating: Promise<boolean> | undefined;
+				let repeated: Promise<boolean> | undefined;
+				let settled = false;
+				const originalSend = sharedLog.rpc.send.bind(sharedLog.rpc);
+				const send = sinon
+					.stub(sharedLog.rpc, "send")
+					.callsFake((message: unknown, options: any) => {
+						if (!(message instanceof ExchangeHeadsMessage)) {
+							return originalSend(message, options);
+						}
+						expect(message.heads[0]!.entry.hash).to.equal(entry.hash);
+						signal = options.signal;
+						expect(signal).to.be.instanceOf(AbortSignal);
+						const abort = () => sendGate.reject(signal!.reason);
+						signal!.addEventListener("abort", abort, { once: true });
+						if (signal!.aborted) abort();
+						entered.resolve();
+						return sendGate.promise
+							.catch((error) => {
+								rejectedWith = error;
+								throw error;
+							})
+							.finally(async () => {
+								signal!.removeEventListener("abort", abort);
+								// Cancellation is not physical completion: a cooperative
+								// sender may still be settling its local cleanup.
+								await physicalDrain.promise;
+							});
+					});
+				const finalClose = sinon.spy(synchronizer, "close");
+				const reservation = simple.expectMaybeSyncResponse({
+					hashes: [entry.hash],
+					targets: [requesterHash],
+				});
+				expect(reservation).to.exist;
+				const ratelessDispatch = rateless
+					? synchronizer.captureRatelessDispatchLifecycle([requesterHash])
+					: undefined;
+				const errors: unknown[] = [];
+				try {
+					receive = sharedLog.onMessage(
+						new ResponseMaybeSync({ hashes: [entry.hash] }),
+						{ from: requester },
+					);
+					await boundedDispatchStage(
+						entered.promise,
+						"response shipment admission",
+					);
+					expect(sharedLog._activeReceiveHandlersByPeer.size).to.equal(1);
+					terminating = db[operation]().then((value) => {
+						settled = true;
+						return value;
+					});
+					await waitForResolved(() => expect(signal!.aborted).to.be.true, {
+						timeout: 1_000,
+					});
+					expect(rejectedWith).to.equal(signal!.reason);
+					expect(simple.syncDispatchLifecycleController.signal.aborted).to.be
+						.true;
+					if (ratelessDispatch) {
+						expect(ratelessDispatch.controller.signal.aborted).to.be.true;
+						expect(
+							ratelessDispatch.targets.get(requesterHash).controller.signal
+								.aborted,
+						).to.be.true;
+					}
+					expect(settled).to.be.false;
+					expect(finalClose.called).to.be.false;
+					expect(sharedLog.log.closed).to.be.false;
+					expect(sharedLog._activeReceiveHandlersByPeer.size).to.equal(1);
+					expect(simple.activeMaybeSyncResponseCount).to.equal(1);
+					const sendsBeforeLateWork = send.callCount;
+					synchronizer.beginClose();
+					await synchronizer.onMaybeMissingEntries({
+						entries: new Map([[entry.hash, { hash: entry.hash }]]),
+						targets: [requesterHash],
+					});
+					await simple.queueSync(["late-entry"], requester, {
+						skipCheck: true,
+					});
+					expect(send.callCount).to.equal(sendsBeforeLateWork);
+					expect(
+						simple.expectMaybeSyncResponse({
+							hashes: [entry.hash],
+							targets: [requesterHash],
+						}),
+					).to.be.undefined;
+					const lateRepair: RepairSession = synchronizer.startRepairSession({
+						entries: new Map([[entry.hash, { hash: entry.hash }]]),
+						targets: [requesterHash],
+					});
+					expect(
+						(await boundedDispatchStage(lateRepair.done, "rejected repair"))[0]
+							.completed,
+					).to.be.false;
+					expect(simple.repairSessions.size).to.equal(0);
+					repeated = db[operation]();
+					physicalDrain.resolve();
+					await boundedDispatchStage(
+						Promise.all([receive, terminating, repeated]),
+						"cancelled receive and terminal drain",
+					);
+					expect(finalClose.calledOnce).to.be.true;
+					expect(simple.activeMaybeSyncResponseCount).to.equal(0);
+					expect(sharedLog._activeReceiveHandlersByPeer.size).to.equal(0);
+					if (operation === "close") {
+						await session.peers[0].open(db);
+						const reopened = sharedLog.syncronizer;
+						expect(reopened).to.not.equal(synchronizer);
+						const reopenedSimple = reopened.simple ?? reopened;
+						expect(
+							reopenedSimple.syncDispatchLifecycleController.signal.aborted,
+						).to.be.false;
+						expect(reopenedSimple.closed).to.be.false;
+					}
+				} catch (error) {
+					errors.push(error);
+				} finally {
+					sendGate.resolve();
+					physicalDrain.resolve();
+					reservation?.release();
+					if (ratelessDispatch)
+						synchronizer.finishRatelessDispatchLifecycle(ratelessDispatch);
+					for (const pending of [receive, terminating, repeated]) {
+						if (pending)
+							try {
+								await boundedDispatchStage<void | boolean>(
+									pending,
+									"diagnostic gate cleanup",
+								);
+							} catch (error) {
+								errors.push(error);
+							}
+					}
+					send.restore();
+					finalClose.restore();
+				}
+				if (errors.length === 1) throw errors[0];
+				if (errors.length > 1)
+					throw new AggregateError(errors, "dispatch cancellation regression");
+			});
+		}
+		it(`${rateless ? "rateless" : "simple"} terminal admission retains no late target epochs`, async () => {
+			session = await TestSession.disconnected(1);
+			const db = await session.peers[0].open(new EventStore(), {
+				args: {
+					replicate: false,
+					setup: {
+						type: "u32",
+						domain: createReplicationDomainHash("u32"),
+						syncronizer: rateless
+							? RatelessIBLTSynchronizer
+							: SimpleSyncronizer,
+						name: "terminal-dispatch-epochs",
+					},
+				},
+			});
+			const synchronizer = (db.log as any).syncronizer;
+			const simple = rateless ? synchronizer.simple : synchronizer;
+			const entries = new Map([["late-hash", { hash: "late-hash" }]]);
+			for (const phase of ["admission", "closed"]) {
+				if (phase === "admission") synchronizer.beginClose();
+				else await boundedDispatchStage(db.close(), "final close");
+				const epochs = [...simple.syncDispatchTargetEpochs];
+				const epochCounter = simple.syncDispatchTargetEpochCounter;
+				for (let index = 0; index < 32; index++) {
+					const targets = [`${phase}-late-target-${index}`];
+					const repair: RepairSession = synchronizer.startRepairSession({
+						entries,
+						targets,
+					});
+					expect(
+						(await boundedDispatchStage(repair.done, "late repair"))[0]
+							.completed,
+					).to.be.false;
+					await boundedDispatchStage(
+						Promise.resolve(
+							synchronizer.onMaybeMissingEntries({ entries, targets }),
+						),
+						"late dispatch",
+					);
+					expect(
+						simple.expectMaybeSyncResponse({ hashes: ["late-hash"], targets }),
+					).to.be.undefined;
+				}
+				expect([...simple.syncDispatchTargetEpochs]).to.deep.equal(epochs);
+				expect(simple.syncDispatchTargetEpochCounter).to.equal(epochCounter);
+				expect(simple.syncDispatchRegistry.activeTargets.size).to.equal(0);
+				expect(simple.repairSessions.size).to.equal(0);
+			}
+		});
+	}
+
+	it("retains a failed early dispatch cancellation for an exact close retry", async () => {
+		session = await TestSession.disconnected(1);
+		const db = await session.peers[0].open(new EventStore());
+		const synchronizer = (db.log as any).syncronizer;
+		const failure = new Error("custom dispatch cancellation failed");
+		const cancel = sinon.stub(synchronizer, "beginClose").throws(failure);
+		const finalClose = sinon.spy(synchronizer, "close");
+		try {
+			await expect(db.close()).to.be.rejectedWith(failure.message);
+			expect(finalClose.called).to.be.false;
+			expect(db.log.log.closed).to.be.false;
+		} finally {
+			cancel.restore();
+		}
+		await db.close();
+		expect(finalClose.calledOnce).to.be.true;
+		finalClose.restore();
+	});
+
+	it("still closes a custom synchronizer without an early cancellation hook", async () => {
+		session = await TestSession.disconnected(1);
+		const db = await session.peers[0].open(new EventStore());
+		const synchronizer = (db.log as any).syncronizer;
+		// Existing custom implementations only expose the original final close.
+		const close = sinon.stub(synchronizer, "close").resolves();
+		const beginClose = synchronizer.beginClose;
+		synchronizer.beginClose = undefined;
+		try {
+			await db.close();
+			expect(close.calledOnce).to.be.true;
+		} finally {
+			synchronizer.beginClose = beginClose;
+			close.restore();
+			await synchronizer.close();
+		}
+	});
 
 	it("clears active receive leases across a drained close and default reopen", async () => {
 		// Relocated B12 pin: the unique `_activeReceiveHandlersByPeer` reopen

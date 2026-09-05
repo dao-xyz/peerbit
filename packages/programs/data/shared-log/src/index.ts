@@ -20953,6 +20953,10 @@ export class SharedLog<
 		const pruneRemoveTerminalFence = this.acquirePruneRemoveTerminalFence();
 		try {
 			this.stopSubscriptionChangeCallbackAdmission();
+			// A receive may be awaiting a synchronizer response shipment. Cancel
+			// its dispatch generation before draining that receive, rather than
+			// waiting for _close() to reach the synchronizer's final teardown.
+			this.syncronizer?.beginClose?.();
 			this.joinWarmup.cancelAllJoinWarmupTargets();
 			await this.drainSubscriptionChangeCallbacks();
 			// An already-admitted subscription callback can create a fresh warmup
@@ -21091,6 +21095,7 @@ export class SharedLog<
 		const pruneRemoveTerminalFence = this.acquirePruneRemoveTerminalFence();
 		try {
 			this.stopSubscriptionChangeCallbackAdmission();
+			this.syncronizer?.beginClose?.();
 			this.joinWarmup.cancelAllJoinWarmupTargets();
 			await this.drainSubscriptionChangeCallbacks();
 			// An already-admitted subscription callback can create a fresh warmup
