@@ -864,7 +864,7 @@ export class TopicControlPlane
 				if (peer.isWritable) {
 					void this.sendAutoTopicRootCandidates([peer]).catch(() => {});
 				}
-				if (!existingPeer) {
+				if (existingPeer !== peer) {
 					peer.addEventListener("stream:outbound", sendWhenOutboundReady);
 					peer.addEventListener(
 						"close",
@@ -888,6 +888,8 @@ export class TopicControlPlane
 			(peer) => peer.protocol === TOPIC_CONTROL_PLANE_PROTOCOL_V2_1,
 		);
 		const removed = await super._removePeer(publicKey);
+		// A replacement may arrive after base removal but before this continuation.
+		if (!removed || this.peers.has(hash)) return;
 		let suppressedDepartedOrigin = false;
 		if (
 			removed &&

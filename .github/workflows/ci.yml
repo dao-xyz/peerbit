@@ -336,6 +336,17 @@ jobs:
           -- --retries 0
       - name: Verify default peers exit naturally after replication
         run: node --test scripts/ci/peerbit-shutdown-lifecycle.test.mjs scripts/ci/peerbit-shutdown.test.mjs
+      - name: Test stream replacement and pubsub ownership without retries
+        timeout-minutes: 3
+        env:
+          AEGIR_RUNNER: node
+          NODE_ENV: test
+        run: >-
+          node scripts/ci/assert-tests-ran.mjs node ./node_modules/mocha/bin/mocha.js
+          --no-config --no-package --require chai-extend/chai-global.js
+          --timeout 60000 --retries 0 --no-exit
+          packages/transport/stream/dist/test/stream-replacement.spec.js
+          packages/transport/pubsub/dist/test/subscribe-races.spec.js
 
   test_push:
     if: github.event_name == 'push'

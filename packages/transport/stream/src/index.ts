@@ -269,6 +269,7 @@ const DEFAULT_OUTBOUND_QUEUE_RESERVED_PRIORITY_BYTES = 1024 * 1024;
 const DEFAULT_PRUNE_CONNECTIONS_INTERVAL = 2e4;
 const DEFAULT_MIN_CONNECTIONS = 2;
 const DEFAULT_MAX_CONNECTIONS = 300;
+const MAX_RETIRED_PEER_STREAMS = 256;
 
 const DEFAULT_PRUNED_CONNNECTIONS_TIMEOUT = 30 * 1000;
 
@@ -389,6 +390,10 @@ export class PeerStreams extends TypedEventEmitter<PeerStreamEvents> {
 
 	private closed: boolean;
 	private closePromise?: Promise<void>;
+	/** Closing is irreversible, even while asynchronous cleanup is pending. */
+	public get isClosed(): boolean {
+		return this.closed;
+	}
 
 	public connId: string;
 
@@ -1276,6 +1281,8 @@ export abstract class DirectStream<
 	 * Map of peer streams
 	 */
 	public peers: Map<string, PeerStreams>;
+	// Replacements must not orphan teardown that beforeStop still needs to drain.
+	private readonly retiredPeerStreams = new Set<PeerStreams>();
 	public peerKeyHashToPublicKey: Map<string, PublicSignKey>;
 	public routes: RoutesLike;
 	/**
@@ -1936,8 +1943,16 @@ export abstract class DirectStream<
 		await this._outboundPump;
 		this._outboundPump = undefined;
 
-		for (const peerStreams of this.peers.values()) {
-			await peerStreams.close();
+		const closes = await Promise.allSettled(
+			[...this.peers.values(), ...this.retiredPeerStreams].map((peer) =>
+				peer.close(),
+			),
+		);
+		const failures = closes.flatMap((result) =>
+			result.status === "rejected" ? [result.reason] : [],
+		);
+		if (failures.length) {
+			throw new AggregateError(failures, "Peer stream teardown failed");
 		}
 	}
 
@@ -2019,16 +2034,17 @@ export abstract class DirectStream<
 			return;
 		}
 
-		const peer = this.addPeer(
-			peerId,
-			publicKey,
-			stream.protocol,
-			connection.id,
-		);
-
-		// handle inbound
-		const inboundRecord = peer.attachInboundStream(stream);
-		this.processMessages(peer.publicKey, inboundRecord, peer).catch(logError);
+		try {
+			const peer = this.addPeer(peerId, publicKey, stream.protocol, connection.id);
+			const inboundRecord = peer.attachInboundStream(stream);
+			this.processMessages(peer.publicKey, inboundRecord, peer).catch(logError);
+		} catch (error) {
+			try {
+				stream.abort(error as Error);
+			} catch {}
+			closeRawStreamBestEffort(stream);
+			throw error;
+		}
 
 		// try to create outbound stream
 		await this.outboundInflightQueue.push({ peerId, connection });
@@ -2089,6 +2105,12 @@ export abstract class DirectStream<
 				peer = this.addPeer(peerId, peerKey, stream.protocol!, connection.id); // TODO types
 				await peer.attachOutboundStream(stream);
 			} catch (error: any) {
+				if (stream) {
+					try {
+						stream.abort(error);
+					} catch {}
+					closeRawStreamBestEffort(stream);
+				}
 				if (error.code === "ERR_UNSUPPORTED_PROTOCOL") {
 					await delay(100);
 					continue; // Retry
@@ -2163,6 +2185,8 @@ export abstract class DirectStream<
 		// PeerId could be me, if so, it means that I am disconnecting
 		const peerKey = getPublicKeyFromPeerId(peerId);
 		const peerKeyHash = peerKey.hashcode();
+		const currentPeer = this.peers.get(peerKeyHash);
+		if (!currentPeer || (conn && conn.id !== currentPeer.connId)) return;
 		const allConnections =
 			this.components.connectionManager.getConnections?.() ?? [];
 		const connections = allConnections.filter(
@@ -2185,8 +2209,13 @@ export abstract class DirectStream<
 			return;
 		}
 		if (!this.publicKey.equals(peerKey)) {
-			await this._removePeer(peerKey);
-			if (this.stopping || !this.started) {
+			const removed = await this._removePeer(peerKey);
+			if (
+				removed !== currentPeer ||
+				this.peers.has(peerKeyHash) ||
+				this.stopping ||
+				!this.started
+			) {
 				return;
 			}
 
@@ -2204,7 +2233,7 @@ export abstract class DirectStream<
 						mode: new SilentDelivery({ to: dependent, redundancy: 2 }),
 					}),
 				}).sign(this.sign);
-				if (this.stopping || !this.started) {
+				if (this.stopping || !this.started || this.peers.has(peerKeyHash)) {
 					return;
 				}
 				await this.publishMessageMaybe(
@@ -2327,16 +2356,26 @@ export abstract class DirectStream<
 			protocol: string,
 			connId: string,
 	): PeerStreams {
+		if (this.stopping) throw new AbortError("Closed");
 		const publicKeyHash = publicKey.hashcode();
 
 		this.clearHealthcheckTimer(publicKeyHash);
 
 		const existing = this.peers.get(publicKeyHash);
 
-		// If peer streams already exists, do nothing
-		if (existing != null) {
+		// Reuse only a live object; close has already made attachments impossible.
+		if (existing != null && !existing.isClosed) {
 			existing.connId = connId;
 			return existing;
+		}
+		if (existing) {
+			if (this.retiredPeerStreams.size >= MAX_RETIRED_PEER_STREAMS) {
+				throw new AbortError("Too many pending peer stream closes");
+			}
+			this.retiredPeerStreams.add(existing);
+			const forget = () => this.retiredPeerStreams.delete(existing);
+			// A failed close remains owned so beforeStop cannot report a clean drain.
+			void existing.close().then(forget, () => {});
 		}
 
 		// else create a new peer streams
@@ -2355,21 +2394,31 @@ export abstract class DirectStream<
 		});
 
 		this.peers.set(publicKeyHash, peerStreams);
-		this.updateSession(publicKey, -1);
+		// Object replacement is not evidence of a new authenticated peer session.
+		if (!existing) this.updateSession(publicKey, -1);
 
 		// Propagate per-peer stream readiness events to the parent emitter
-			const forwardOutbound = () =>
-				this.dispatchEvent(new CustomEvent("stream:outbound"));
-			const forwardInbound = () =>
-				this.dispatchEvent(new CustomEvent("stream:inbound"));
-			const forwardQueue = () => this.notifyTotalOutboundQueueWaiters();
+			const isCurrentPeer = () => this.peers.get(publicKeyHash) === peerStreams;
+			const forwardOutbound = () => {
+				if (isCurrentPeer()) this.dispatchEvent(new CustomEvent("stream:outbound"));
+			};
+			const forwardInbound = () => {
+				if (isCurrentPeer()) this.dispatchEvent(new CustomEvent("stream:inbound"));
+			};
+			const forwardQueue = () => {
+				if (isCurrentPeer()) this.notifyTotalOutboundQueueWaiters();
+			};
 			peerStreams.addEventListener("stream:outbound", forwardOutbound);
 			peerStreams.addEventListener("stream:inbound", forwardInbound);
 			peerStreams.addEventListener("queue:outbound", forwardQueue);
 
-			peerStreams.addEventListener("close", () => this._removePeer(publicKey), {
-				once: true,
-		});
+			peerStreams.addEventListener(
+				"close",
+				() => {
+					if (isCurrentPeer()) void this._removePeer(publicKey).catch(logError);
+				},
+				{ once: true },
+			);
 		peerStreams.addEventListener(
 				"close",
 				() => {
@@ -2387,7 +2436,7 @@ export abstract class DirectStream<
 				publicKey,
 				-1,
 				+new Date(),
-				-1,
+				existing ? this.routes.getSession(publicKeyHash) ?? -1 : -1,
 			);
 
 			// Enforce connection manager limits eagerly when new peers are added. Without this,
@@ -2413,6 +2462,7 @@ export abstract class DirectStream<
 
 		// close peer streams
 		await peerStreams.close();
+		if (this.peers.get(hash) !== peerStreams) return;
 
 		// delete peer streams
 		logger.trace("delete peer" + publicKey.toString());
@@ -2433,6 +2483,7 @@ export abstract class DirectStream<
 		let failed = false;
 		try {
 			for await (const data of record.iterable) {
+				if (this.peers.get(peerId.hashcode()) !== peerStreams) break;
 				const now = Date.now();
 				record.lastActivity = now;
 				record.bytesReceived += data.length || data.byteLength || 0;
@@ -2457,14 +2508,21 @@ export abstract class DirectStream<
 						err?.message,
 				);
 			}
-			this.onPeerDisconnected(peerStreams.peerId);
+			if (this.peers.get(peerId.hashcode()) === peerStreams) {
+				void this.onPeerDisconnected(peerStreams.peerId).catch(logError);
+			}
 		} finally {
 			const removed = peerStreams.detachInboundStream(
 				record,
 				new AbortError("Inbound stream reader ended"),
 				{ closeRaw: failed },
 			);
-			if (removed && !failed && !peerStreams.isReadable) {
+			if (
+				removed &&
+				!failed &&
+				!peerStreams.isReadable &&
+				this.peers.get(peerId.hashcode()) === peerStreams
+			) {
 				void this.onPeerDisconnected(peerStreams.peerId).catch(logError);
 			}
 		}
