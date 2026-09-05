@@ -4,7 +4,9 @@ import { CrashSafeTwoSlotCheckpoint } from "@peerbit/any-store/checkpoint";
 import { sha256Sync } from "@peerbit/crypto";
 import { concat, equals } from "uint8arrays";
 import type {
+	AcceptedPolicyLeaseV2,
 	PolicyLeaseReferenceV2,
+	PolicyLeaseResultV2,
 	TrustedNetworkV2DurablePolicyReducer,
 } from "./v2-policy-anchor.js";
 import {
@@ -21,6 +23,7 @@ import {
 	TRUSTED_NETWORK_V2_MAX_RESOURCE_FENCE_MISSING_CIDS,
 	TrustedNetworkV2ResourceFenceReducer,
 	type TrustedNetworkV2ResourceFenceReducerProperties,
+	captureCanonicalResourceFenceCidV2,
 } from "./v2-resource-fence-engine.js";
 import {
 	NetworkDescriptorV2,
@@ -53,6 +56,7 @@ const DEFAULT_RESOURCE_OPERATION_TIMEOUT_MS = 10_000;
 const MAX_RESOURCE_OPERATION_TIMEOUT_MS = 60_000;
 const MAX_AUTOMATIC_PENDING_RETRIES =
 	TRUSTED_NETWORK_V2_MAX_PENDING_RESOURCE_FENCES;
+const MAX_EXACT_RESOURCE_FENCE_TIMEOUT_MS = 10_000;
 const CHECKPOINT_SCOPE_DOMAIN = new TextEncoder().encode(
 	"peerbit/trusted-network/v2/resource-fence-anchor/checkpoint/v1\0",
 );
@@ -73,6 +77,18 @@ export type CrashSafeResourceFenceAnchorStoreV2 = CrashSafeAtomicReplaceStore;
 
 /** The policy wrapper is deliberately concrete so every fence uses its lease. */
 export type ResourceFencePolicyAnchorV2 = TrustedNetworkV2DurablePolicyReducer;
+
+export type ExactResourceFenceHeadRequirementV2 = {
+	fenceEntryCid: string;
+	/** Queue-inclusive acquisition timeout; callers may only shorten 10 seconds. */
+	timeoutMs?: number;
+	deadline?: number;
+	signal?: AbortSignal;
+};
+
+export type ExactResourceFenceHeadLeaseV2 = AcceptedPolicyLeaseV2 & {
+	fence: ResourceFenceHeadProjectionV2;
+};
 
 @variant([2, 16, 6])
 class ResourceFenceAnchorCheckpointPayloadV2 {
@@ -639,11 +655,13 @@ export class TrustedNetworkV2DurableResourceFenceReducer {
 	private readonly policyLeaseMaxSteps: number;
 	private readonly policyLeaseTimeoutMs: number;
 	private readonly operationTimeoutMs: number;
+	private readonly resolveEntryV0: ResourceFenceCoreOptions["resolveEntryV0"];
 	private externalSignal?: AbortSignal;
 	private externalAbortListener?: () => void;
 	private published: PublishedResourceFenceProjectionV2;
 	private durableCoreIdentityBytes?: Uint8Array;
 	private operationTail: Promise<void> = Promise.resolve();
+	private exactPreparationTail: Promise<void> = Promise.resolve();
 	private publicationFences = 0;
 	private recoveryFences = 0;
 	private bufferedOperations = 0;
@@ -658,6 +676,7 @@ export class TrustedNetworkV2DurableResourceFenceReducer {
 		policyLeaseMaxSteps: number;
 		policyLeaseTimeoutMs: number;
 		operationTimeoutMs: number;
+		resolveEntryV0: ResourceFenceCoreOptions["resolveEntryV0"];
 		externalSignal?: AbortSignal;
 		externalAbortListener?: () => void;
 		durableCoreIdentityBytes?: Uint8Array;
@@ -669,6 +688,7 @@ export class TrustedNetworkV2DurableResourceFenceReducer {
 		this.policyLeaseMaxSteps = properties.policyLeaseMaxSteps;
 		this.policyLeaseTimeoutMs = properties.policyLeaseTimeoutMs;
 		this.operationTimeoutMs = properties.operationTimeoutMs;
+		this.resolveEntryV0 = properties.resolveEntryV0;
 		this.externalSignal = properties.externalSignal;
 		this.externalAbortListener = properties.externalAbortListener;
 		this.published = publishedFromReducer(this.core);
@@ -802,6 +822,7 @@ export class TrustedNetworkV2DurableResourceFenceReducer {
 					policyLeaseMaxSteps,
 					policyLeaseTimeoutMs,
 					operationTimeoutMs,
+					resolveEntryV0: coreProperties.resolveEntryV0,
 					externalSignal,
 					externalAbortListener,
 				});
@@ -838,6 +859,7 @@ export class TrustedNetworkV2DurableResourceFenceReducer {
 				policyLeaseMaxSteps,
 				policyLeaseTimeoutMs,
 				operationTimeoutMs,
+				resolveEntryV0: coreProperties.resolveEntryV0,
 				externalSignal,
 				externalAbortListener,
 				durableCoreIdentityBytes: coreIdentityBytesFromState(durableState),
@@ -919,6 +941,221 @@ export class TrustedNetworkV2DurableResourceFenceReducer {
 		this.detachExternalAbortListener();
 		this.lifecycleController.abort();
 		this.core.abort();
+	}
+
+	/**
+	 * Authenticate and durably admit one exact fence, then hold policy followed
+	 * by resource serialization through the callback. This proves the named local
+	 * head only, not remote freshness, complete resource replay, or authorization.
+	 * Callbacks must not await another operation on either anchor. Cancellation
+	 * after callback entry does not retract the lease or release its queue slots.
+	 */
+	withExactResourceFenceHead<T>(
+		requirement: ExactResourceFenceHeadRequirementV2,
+		use: (lease: ExactResourceFenceHeadLeaseV2) => T | Promise<T>,
+	): Promise<PolicyLeaseResultV2<T>> {
+		const halted = (): PolicyLeaseResultV2<T> | undefined =>
+			this.terminalError !== undefined ||
+			this.lifecycleController.signal.aborted ||
+			this.state === "FORKED"
+				? { status: "halted", reason: "Resource-fence anchor is halted" }
+				: undefined;
+		const terminal = halted();
+		if (terminal) return Promise.resolve(terminal);
+		let cid: string;
+		let deadline: number;
+		let interruptionSignal: AbortSignal;
+		try {
+			cid = captureCanonicalResourceFenceCidV2(requirement.fenceEntryCid);
+			const timeout =
+				requirement.timeoutMs ?? MAX_EXACT_RESOURCE_FENCE_TIMEOUT_MS;
+			const suppliedDeadline = requirement.deadline;
+			if (
+				!Number.isSafeInteger(timeout) ||
+				timeout < 0 ||
+				timeout > MAX_EXACT_RESOURCE_FENCE_TIMEOUT_MS ||
+				(suppliedDeadline !== undefined &&
+					(!Number.isSafeInteger(suppliedDeadline) || suppliedDeadline < 0)) ||
+				typeof use !== "function"
+			)
+				throw new Error("Invalid exact fence requirement");
+			deadline = Math.min(Date.now() + timeout, suppliedDeadline ?? Infinity);
+			const signal = requirement.signal;
+			interruptionSignal = AbortSignal.any(
+				signal === undefined
+					? [this.lifecycleController.signal]
+					: [this.lifecycleController.signal, signal],
+			);
+		} catch {
+			return Promise.resolve({
+				status: "rejected",
+				reason: "Exact resource-fence requirement is invalid",
+			});
+		}
+
+		// Reserve the full bounded response before starting a resolver. Retain the
+		// reservation until actual work settles even if cancellation settles outward.
+		const inputBytes =
+			TRUSTED_NETWORK_V2_MAX_RESOURCE_FENCE_ENTRY_BYTES + cid.length;
+		if (!this.reserveOperation(inputBytes)) {
+			return Promise.resolve({
+				status: "capacity",
+				reason: "Exact resource-fence queue is at its fixed capacity",
+			});
+		}
+		const controller = new AbortController();
+		let callbackEntered = false;
+		let interrupted: PolicyLeaseResultV2<T> | undefined;
+		let resolveEarly!: (result: PolicyLeaseResultV2<T>) => void;
+		const early = new Promise<PolicyLeaseResultV2<T>>((resolve) => {
+			resolveEarly = resolve;
+		});
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		const dispose = () => {
+			clearTimeout(timer);
+			interruptionSignal.removeEventListener("abort", interrupt);
+		};
+		const interrupt = () => {
+			if (callbackEntered || interrupted) return;
+			interrupted = halted() ?? {
+				status: "unavailable",
+				reason: "Exact resource-fence acquisition was cancelled or expired",
+			};
+			controller.abort();
+			dispose();
+			resolveEarly(interrupted);
+		};
+		const stop = (): PolicyLeaseResultV2<T> | undefined => {
+			if (
+				!callbackEntered &&
+				(interruptionSignal.aborted || Date.now() >= deadline)
+			)
+				interrupt();
+			return interrupted ?? halted();
+		};
+		interruptionSignal.addEventListener("abort", interrupt, { once: true });
+		if (interruptionSignal.aborted || Date.now() >= deadline) interrupt();
+		else timer = setTimeout(interrupt, deadline - Date.now());
+
+		// One preparation lane bounds ignored cancellation in resolver/signature
+		// work. Expired queued closures skip resolution when they reach the lane.
+		const preparation = this.exactPreparationTail.then(async () => {
+			const stopped = stop();
+			if (stopped) return stopped;
+			let bytes: Uint8Array | undefined;
+			try {
+				const resolved = await this.resolveEntryV0([cid], {
+					signal: controller.signal,
+				});
+				if (stop()) return stop()!;
+				bytes = resolved.get(cid);
+			} catch {
+				return (
+					stop() ?? {
+						status: "unavailable" as const,
+						reason: "Exact resource-fence CID resolution failed",
+					}
+				);
+			}
+			if (bytes === undefined)
+				return {
+					status: "unavailable" as const,
+					reason: "Exact resource-fence entry is missing",
+				};
+			const prepared = await this.core.prepare(bytes);
+			if (stop()) return stop()!;
+			if (prepared.status !== "prepared") return prepared;
+			if (prepared.candidate.entryCid !== cid) {
+				return {
+					status: "rejected" as const,
+					reason: "Resolved resource-fence bytes do not match the exact CID",
+				};
+			}
+			return prepared;
+		});
+		this.exactPreparationTail = preparation.then(
+			() => {},
+			() => {},
+		);
+		this.recoveryFences += 1;
+		const completed = preparation
+			.then(async (prepared): Promise<PolicyLeaseResultV2<T>> => {
+				if (prepared.status !== "prepared") return prepared;
+				const stopped = stop();
+				if (stopped) return stopped;
+				const budget = { signal: controller.signal, deadline, dispose };
+				const leased = await this.policyAnchor.withAcceptedPolicyLease(
+					this.policyLeaseReference(prepared.candidate.policyReference, budget),
+					(policyLease) =>
+						this.enqueueResourceOperation(
+							async (): Promise<PolicyLeaseResultV2<T>> => {
+								const queuedStop = stop();
+								if (queuedStop) return queuedStop;
+								let admission: ResourceFenceAdmissionResultV2;
+								try {
+									admission = await this.core.ingestPrepared(
+										prepared.candidate,
+										acceptedPolicyFromLease(policyLease.policy),
+										{
+											signal: controller.signal,
+											cancelBeforePublication: true,
+										},
+									);
+									// After evaluation may have changed core state, replacement must
+									// settle under both leases even if the caller already cancelled.
+									await this.persistCorePublication(admission);
+								} catch (error) {
+									throw this.halt(error);
+								}
+								const committedStop = stop();
+								if (committedStop) return committedStop;
+								if (
+									admission.status !== "accepted" &&
+									admission.status !== "duplicate"
+								) {
+									return {
+										status:
+											admission.status === "rejected" ||
+											admission.status === "capacity"
+												? admission.status
+												: "unavailable",
+										reason:
+											admission.reason ??
+											"Exact resource-fence admission is unavailable",
+									};
+								}
+								if (
+									this.state !== "ACTIVE" ||
+									this.published.head?.entryCid !== cid
+								) {
+									return {
+										status: "unavailable",
+										reason:
+											"Exact resource fence is not the durable current head",
+									};
+								}
+								const fence = copyHead(this.published.head)!;
+								// No await between the final lifecycle check and user code.
+								callbackEntered = true;
+								dispose();
+								return {
+									status: "completed",
+									value: await use({ ...policyLease, fence }),
+								};
+							},
+							false,
+						),
+				);
+				return leased.status === "completed"
+					? leased.value
+					: (stop() ?? leased);
+			})
+			.finally(() => {
+				dispose();
+				this.recoveryFences -= 1;
+				this.releaseOperation(inputBytes);
+			});
+		return Promise.race([completed, early]);
 	}
 
 	async ingest(
@@ -1226,14 +1463,17 @@ export class TrustedNetworkV2DurableResourceFenceReducer {
 		this.bufferedOperationInputBytes -= inputBytes;
 	}
 
-	private enqueueResourceOperation<T>(operation: () => Promise<T>): Promise<T> {
+	private enqueueResourceOperation<T>(
+		operation: () => Promise<T>,
+		haltOnError = true,
+	): Promise<T> {
 		this.publicationFences += 1;
 		const result = this.operationTail.then(async () => {
 			if (this.terminalError !== undefined) throw this.terminalError;
 			try {
 				return await operation();
 			} catch (error) {
-				throw this.halt(error);
+				throw haltOnError ? this.halt(error) : error;
 			}
 		});
 		this.operationTail = result.then(
@@ -1354,6 +1594,9 @@ export class TrustedNetworkV2DurableResourceFenceReducer {
 			throw new Error("Resource-fence anchor checkpoint is unavailable");
 		}
 		await checkpoint.commit(payloadBytes);
+		// A replacement that already crossed its commit boundary can be recovered
+		// by a fresh opener, but the aborted instance must not publish that head.
+		if (this.lifecycleController.signal.aborted) return;
 
 		this.durableCoreIdentityBytes = nextDurableCoreIdentityBytes;
 		this.published = nextPublished;
