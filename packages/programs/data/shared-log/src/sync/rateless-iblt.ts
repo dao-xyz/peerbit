@@ -1127,6 +1127,9 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 		timeoutMs?: number;
 		retryIntervalsMs?: number[];
 	}): RepairSession {
+		if (this.ratelessClosed) {
+			return this.simple.startRepairSession(properties);
+		}
 		const mode = properties.mode ?? "best-effort";
 		const targets = [...new Set(properties.targets)];
 		const timeoutMs = Math.max(
@@ -3303,13 +3306,16 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 		return this.simple.open();
 	}
 
-	close(): Promise<void> | void {
+	beginClose(): void {
 		this.ratelessClosed = true;
-		// Abort ownership first. Process abort listeners then cancel any in-flight
-		// StartSync/MoreSymbols send before they detach or free native state.
 		const reason = new Error("rateless synchronizer closed");
 		this.cancelRatelessRepairSessions(reason);
 		this.ratelessDispatchLifecycleController.abort(reason);
+		this.simple.beginClose();
+	}
+
+	close(): Promise<void> | void {
+		this.beginClose();
 		for (const obj of [...this.ingoingSyncProcesses.values()]) {
 			obj.free();
 		}

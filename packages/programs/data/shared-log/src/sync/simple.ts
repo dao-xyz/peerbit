@@ -879,7 +879,9 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 				const epoch =
 					expectedEpoch ??
 					currentEpoch ??
-					(options?.createTargetEpochs === false
+					(options?.createTargetEpochs === false ||
+					this.closed === true ||
+					ownershipLifecycleController.signal.aborted
 						? undefined
 						: this.getOrCreateSyncDispatchTargetEpoch(target));
 				if (!epoch) {
@@ -2362,7 +2364,11 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 				requestedCount: trackedHashes.length,
 				requestedTotalCount: allHashes.length,
 				attempts: 0,
-				targetEpoch: this.getOrCreateSyncDispatchTargetEpoch(target),
+				// Rejected late repairs only need result metadata. Do not create a
+				// retained dispatch epoch after the terminal admission fence.
+				targetEpoch: this.closed
+					? { id: 0 }
+					: this.getOrCreateSyncDispatchTargetEpoch(target),
 			});
 		}
 
@@ -2377,6 +2383,10 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 			deferred,
 			cancelled: false,
 		};
+		if (this.closed) {
+			deferred.resolve(this.buildRepairSessionResult(session, false));
+			return { id, done: deferred.promise, cancel: () => {} };
+		}
 
 		if (allHashes.length === 0 || targets.length === 0) {
 			deferred.resolve(this.buildRepairSessionResult(session, true));
@@ -3755,9 +3765,13 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 		});
 	}
 
-	async close() {
+	beginClose(): void {
 		this.closed = true;
 		this.syncDispatchLifecycleController.abort();
+	}
+
+	async close() {
+		this.beginClose();
 		this.syncDispatchTargetEpochs.clear();
 		this.clearPendingSyncAdmissions();
 		this.syncInFlightRetryIterator = undefined;

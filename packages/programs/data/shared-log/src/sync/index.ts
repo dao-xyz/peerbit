@@ -251,6 +251,13 @@ export interface Syncronizer<R extends "u32" | "u64"> {
 	onPeerDisconnected(key: PublicSignKey | string): void;
 
 	open(): Promise<void> | void;
+	/**
+	 * Synchronously fence dispatch admission and cancel the current generation's
+	 * network waits before SharedLog drains admitted receives. Do not stop shared
+	 * indexes or discard physical-work accounting here: close() still runs after
+	 * those receives settle. Optional for existing custom synchronizers.
+	 */
+	beginClose?(): void;
 	close(): Promise<void> | void;
 
 	get pending(): number;
