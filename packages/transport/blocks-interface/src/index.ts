@@ -1,5 +1,5 @@
-import { type WaitForPeer } from "@peerbit/stream-interface";
-import { type Block } from "multiformats/block";
+import type { WaitForPeer } from "@peerbit/stream-interface";
+import type { Block } from "multiformats/block";
 
 export type GetOptions = {
 	remote?:

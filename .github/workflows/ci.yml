@@ -208,6 +208,9 @@ jobs:
       - name: Validate census persistence round trips
         if: steps.workspace_dist_cache.outputs.cache-hit != 'true'
         run: node --test scripts/bench/*-census.integration.mjs
+      - name: Verify published blocks interface import isolation
+        if: steps.workspace_dist_cache.outputs.cache-hit != 'true'
+        run: node scripts/test-published-blocks-interface-import.mjs
       - name: Verify retired server artifacts cannot be packaged
         if: steps.workspace_dist_cache.outputs.cache-hit != 'true'
         run: |
