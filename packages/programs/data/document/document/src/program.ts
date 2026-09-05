@@ -30,12 +30,14 @@ import { logger as loggerFn } from "@peerbit/logger";
 import { Program, type ProgramEvents } from "@peerbit/program";
 import {
 	type EntryReplicated,
+	NativeDurableCommitError,
 	PersistedDeliveryError,
 	type ReplicationDomain,
 	type SharedAppendOptions,
 	SharedLog,
 	type SharedLogOptions,
 } from "@peerbit/shared-log";
+import { DocumentBatchCommitError } from "./batch-error.js";
 import {
 	detachCanPerformCallbackProperties,
 	detachEntryForCallback,
@@ -240,6 +242,16 @@ type DocumentPutOptions = SharedAppendOptions<Operation> & {
 	checkRemote?: boolean;
 };
 
+export type DocumentPutManyOptions = DocumentPutOptions & {
+	/** Require a supported independent batch; never fall back to sequential puts. */
+	batching?: "required";
+};
+
+type RequiredDocumentBatch<T> = TrustedLocalCommitEvidence & {
+	prepared: PreparedPlainPut<T>[];
+	appendStarted: boolean;
+};
+
 type TrustedLocalCommitEvidence = {
 	committedHashes: Set<string>;
 };
@@ -363,6 +375,7 @@ interface DocumentBackend<T> {
 	putMany(
 		docs: T[],
 		options?: DocumentPutOptions,
+		batch?: RequiredDocumentBatch<T>,
 	): MaybePromise<DocumentPutManyResult>;
 	del(
 		id: indexerTypes.Ideable | indexerTypes.IdKey,
@@ -439,6 +452,7 @@ type DocumentBackendPut<T> = (
 type DocumentBackendPutMany<T> = (
 	docs: T[],
 	options?: DocumentPutOptions,
+	batch?: RequiredDocumentBatch<T>,
 ) => MaybePromise<DocumentPutManyResult>;
 type DocumentBackendDelete = (
 	id: indexerTypes.Ideable | indexerTypes.IdKey,
@@ -459,8 +473,9 @@ class CompatDocumentBackend<T> implements DocumentBackend<T> {
 	putMany(
 		docs: T[],
 		options?: DocumentPutOptions,
+		batch?: RequiredDocumentBatch<T>,
 	): MaybePromise<DocumentPutManyResult> {
-		return this.putManyImpl(docs, options);
+		return this.putManyImpl(docs, options, batch);
 	}
 
 	del(
@@ -589,6 +604,7 @@ class NativeDocumentBackend<T, I extends Record<string, any>>
 	async putMany(
 		docs: T[],
 		options?: DocumentPutOptions,
+		batch?: RequiredDocumentBatch<T>,
 	): Promise<DocumentPutManyResult> {
 		if (docs.length === 0) {
 			return { entries: [], removed: [] };
@@ -597,8 +613,13 @@ class NativeDocumentBackend<T, I extends Record<string, any>>
 		for (const doc of docs) {
 			this.context.assertPlainPutSupported(doc, putOptions);
 		}
-		const prepared = docs.map((doc) => this.context.preparePlainPut(doc));
+		const prepared =
+			batch?.prepared ?? docs.map((doc) => this.context.preparePlainPut(doc));
 		if (this.context.hasDuplicatePreparedPutKeys(prepared)) {
+			if (batch)
+				throw new Error(
+					"Required putMany batching requires distinct document keys",
+				);
 			if (hasPersistedDelivery(options)) {
 				throw this.context.nativeModeError(
 					"requires distinct document keys for persisted putMany",
@@ -700,6 +721,7 @@ class NativeDocumentBackend<T, I extends Record<string, any>>
 				resolveTrimmedEntries: this.context.shouldResolveTrimmedEntries(),
 				options: putOptions,
 				useNativeExistingDocumentContext,
+				batch,
 			}),
 			(documentAppendCommit) => {
 				if (!documentAppendCommit) {
@@ -1113,6 +1135,7 @@ type NativeDocumentAppendManyCommitInput<T, I extends Record<string, any>> = {
 	resolveTrimmedEntries: boolean;
 	options?: DocumentPutOptions;
 	useNativeExistingDocumentContext?: boolean;
+	batch?: RequiredDocumentBatch<T>;
 };
 
 type DocumentAppendManyCommitFacts<T, I extends Record<string, any>> = {
@@ -3373,8 +3396,18 @@ export class Documents<
 		};
 	}
 
-	private preparePlainPut(doc: T): PreparedPlainPut<T> {
-		const keyValue = this.idResolver(doc);
+	private preparePlainPut(doc: T, capture = false): PreparedPlainPut<T> {
+		const resolvedKey = this.idResolver(doc);
+		const keyValue =
+			capture && ArrayBuffer.isView(resolvedKey)
+				? new Uint8Array(
+						new Uint8Array(
+							resolvedKey.buffer,
+							resolvedKey.byteOffset,
+							resolvedKey.byteLength,
+						),
+					)
+				: resolvedKey;
 		indexerTypes.checkId(keyValue);
 		const documentBytes = serialize(doc);
 		if (documentBytes.length > MAX_BATCH_SIZE) {
@@ -3386,7 +3419,9 @@ export class Documents<
 		}
 		const operationPayloadBytes = encodePutOperationPayload(documentBytes);
 		return {
-			document: doc,
+			document: capture
+				? this._index.valueEncoding.decoder(documentBytes)
+				: doc,
 			encodedDocument: operationPayloadBytes.subarray(
 				PUT_OPERATION_PREFIX_LENGTH,
 			),
@@ -3542,56 +3577,106 @@ export class Documents<
 
 	public async putMany(
 		docs: T[],
-		options?: DocumentPutOptions,
+		options?: DocumentPutManyOptions,
 	): Promise<DocumentPutManyResult> {
-		options = asTrustedDocumentSharedLog(
-			this.log,
-		).snapshotDocumentAppendOptions(
-			options,
-			this.isNativeMode() && docs.length > 0
-				? (capturedOptions) => {
-						if (capturedOptions.encryption) {
-							this.assertNativeModePlainPutSupported(docs[0]!, capturedOptions);
+		const batching = options?.batching;
+		if (batching !== undefined && batching !== "required") {
+			throw new Error('Unsupported putMany batching mode; expected "required"');
+		}
+		const batch: RequiredDocumentBatch<T> | undefined =
+			batching === "required"
+				? { prepared: [], committedHashes: new Set(), appendStarted: false }
+				: undefined;
+		try {
+			if (batch) docs = docs.slice();
+			options = asTrustedDocumentSharedLog(
+				this.log,
+			).snapshotDocumentAppendOptions(
+				options,
+				this.isNativeMode() && docs.length > 0
+					? (capturedOptions) => {
+							if (capturedOptions.encryption) {
+								this.assertNativeModePlainPutSupported(
+									docs[0]!,
+									capturedOptions,
+								);
+							}
 						}
-					}
-				: undefined,
-		);
-		const persistedRequested = hasPersistedDelivery(options);
-		const result = await this._documentBackend.putMany(docs, options);
-		if (!persistedRequested) {
-			return result;
-		}
-		const appendDelivery = persistedDocumentAppendDelivery.get(result);
-		if (appendDelivery) {
-			persistedDocumentAppendDelivery.delete(result);
-			await this.deliverPersistedDocumentAppendCommits(
-				appendDelivery,
-				options!,
+					: undefined,
 			);
-			let entries: Entry<Operation>[] | undefined;
-			return {
-				get entries() {
-					return (entries ??= result.entries);
-				},
-				removed: result.removed,
-			};
+			if (batch) {
+				if (Program.isPrototypeOf(this._clazz)) {
+					throw new Error(
+						"Required putMany batching does not support program-valued documents",
+					);
+				}
+				// Capture every encoded value and key before the first asynchronous
+				// operation, then reuse these bytes in the ordinary native batch path.
+				batch.prepared = docs.map((doc) => this.preparePlainPut(doc, true));
+				docs = batch.prepared.map(({ document }) => document);
+			}
+			const persistedRequested = hasPersistedDelivery(options);
+			const result = await this._documentBackend.putMany(docs, options, batch);
+			if (!persistedRequested) {
+				return result;
+			}
+			const appendDelivery = persistedDocumentAppendDelivery.get(result);
+			if (appendDelivery) {
+				persistedDocumentAppendDelivery.delete(result);
+				await this.deliverPersistedDocumentAppendCommits(
+					appendDelivery,
+					options!,
+				);
+				let entries: Entry<Operation>[] | undefined;
+				return {
+					get entries() {
+						return (entries ??= result.entries);
+					},
+					removed: result.removed,
+				};
+			}
+			const entries = result.entries;
+			if (entries.length === 0) {
+				return result;
+			}
+			await this.deliverPersistedDocumentEntries(entries, options!);
+			return { entries, removed: result.removed };
+		} catch (error) {
+			if (!batch) throw error;
+			const hashes = [...batch.committedHashes];
+			// The trusted independent-batch seam emits all hashes in input order.
+			// Never invent indexes from incomplete or contradictory batch evidence.
+			const complete =
+				hashes.length === batch.prepared.length && hashes.length > 0;
+			const cause =
+				error instanceof PersistedDeliveryError ? error.cause : error;
+			const localCommit =
+				complete && !(cause instanceof NativeDurableCommitError)
+					? "committed"
+					: batch.appendStarted || hashes.length > 0
+						? "indeterminate"
+						: "not-started";
+			throw new DocumentBatchCommitError(
+				error,
+				localCommit,
+				complete ? hashes.map((hash, index) => ({ index, hash })) : [],
+			);
 		}
-		const entries = result.entries;
-		if (entries.length === 0) {
-			return result;
-		}
-		await this.deliverPersistedDocumentEntries(entries, options!);
-		return { entries, removed: result.removed };
 	}
 
 	private async putManyCompatDocumentBackend(
 		docs: T[],
 		options?: DocumentPutOptions,
+		batch?: RequiredDocumentBatch<T>,
 	): Promise<DocumentPutManyResult> {
 		if (docs.length === 0) {
 			return { entries: [], removed: [] };
 		}
 		if (!this.canUsePlainPutManyFastPath(docs, options)) {
+			if (batch)
+				throw new Error(
+					"Required putMany batching requires the independent batched document path",
+				);
 			if (hasPersistedDelivery(options)) {
 				throw new Error(
 					"persisted putMany requires the independent batched document path",
@@ -3600,8 +3685,13 @@ export class Documents<
 			return this.putManySequential(docs, options);
 		}
 
-		const prepared = docs.map((doc) => this.preparePlainPut(doc));
+		const prepared =
+			batch?.prepared ?? docs.map((doc) => this.preparePlainPut(doc));
 		if (this.hasDuplicatePreparedPutKeys(prepared)) {
+			if (batch)
+				throw new Error(
+					"Required putMany batching requires distinct document keys",
+				);
 			if (hasPersistedDelivery(options)) {
 				throw new Error("persisted putMany requires distinct document keys");
 			}
@@ -3619,8 +3709,13 @@ export class Documents<
 			})),
 			resolveTrimmedEntries: !this._index.canGetIdentityIndexedByHead(),
 			options,
+			batch,
 		});
 		if (!documentAppendCommit) {
+			if (batch)
+				throw new Error(
+					"Required putMany batching requires native batched payload append support",
+				);
 			if (hasPersistedDelivery(options)) {
 				throw new Error(
 					"persisted putMany requires native batched payload append support",
@@ -4132,6 +4227,12 @@ export class Documents<
 	private async commitNativeDocumentAppendMany(
 		input: NativeDocumentAppendManyCommitInput<T, I>,
 	): Promise<DocumentAppendManyCommitFacts<T, I> | undefined> {
+		if (input.batch) {
+			return this.commitNativeDocumentAppendManyWithEvidence(
+				input,
+				input.batch,
+			);
+		}
 		if (!hasPersistedDelivery(input.options)) {
 			return this.commitNativeDocumentAppendManyWithEvidence(input, undefined);
 		}
@@ -4180,10 +4281,13 @@ export class Documents<
 			}
 			return [next];
 		});
+		const payloads = input.puts.map((put) => put.operationPayloadBytes);
+		const appendOptions = withoutPersistedDelivery(input.options);
+		if (input.batch) input.batch.appendStarted = true;
 		const appended =
 			await trustedLog.appendLocallyPreparedPayloadsManyIndependent(
-				input.puts.map((put) => put.operationPayloadBytes),
-				withoutPersistedDelivery(input.options),
+				payloads,
+				appendOptions,
 				{
 					resolveTrimmedEntries: input.resolveTrimmedEntries,
 					nexts,
@@ -4193,6 +4297,8 @@ export class Documents<
 				},
 			);
 		if (!appended) {
+			// An unsupported lower append can already have prepared native state.
+			// Absence of success evidence cannot prove that replay is safe.
 			if (this.isNativeMode()) {
 				throw this.nativeModeError(
 					"requires native batched payload append support",

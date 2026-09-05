@@ -33,6 +33,55 @@ single `del` operation. For a delete, the receipt covers the exact `CUT`
 tombstone entry. It does not wait for remote document-index or change-event
 side effects, prove permanent tombstone retention, or compact prior history.
 
+## Required local batching and failure accounting
+
+Callers that cannot accept a sequential `put` fallback can opt in explicitly:
+
+```typescript
+import { DocumentBatchCommitError } from "@peerbit/document";
+
+try {
+	const result = await store.docs.putMany(documents, {
+		batching: "required",
+		unique: true,
+		target: "none",
+	});
+	// result.entries has the same order as the captured input documents.
+} catch (error) {
+	if (!(error instanceof DocumentBatchCommitError)) throw error;
+	console.log(error.localCommit, error.committedItems, error.cause);
+}
+```
+
+Required mode captures the input array, document encodings, keys, and supported
+append options at invocation. It rejects unsupported document modes/options and
+duplicate keys before append, and never falls back to sequential document puts.
+The default behavior is unchanged. This requires the existing independent batch
+append path, not an all-or-none storage transaction or a particular number of
+fsync calls. Backend durability configuration still applies.
+
+`DocumentBatchCommitError.committedItems` is an immutable array of `{ index, hash }`
+pairs: indexes refer to the captured input array, not a later mutated array.
+The local outcome is separate from projection and remote delivery:
+
+- `not-started`: no local append was handed off; `retrySafe` is true for replaying
+  the local append only, not for application/policy callback side effects.
+- `committed`: the complete ordered local append is confirmed. Do not replay it;
+  projection, change-event, or remote-receipt work may still have failed. Inspect
+  `cause` to determine the failed phase.
+- `indeterminate`: native preparation/append may have changed state without a
+  complete success acknowledgment, or native durable persistence failed.
+  `recoveryRequired` is true and automatic replay is unsafe. An empty evidence
+  array does **not** mean nothing committed. Exact indexes are exposed only when
+  the complete ordered batch is known.
+
+`recoveryRequired` describes an unresolved local append outcome: false does not
+mean a failed document projection needs no repair. Required batching can also be
+combined with persisted delivery (omit `target: "none"` in that case). A remote
+receipt failure retains local commit evidence and the `PersistedDeliveryError`
+as `cause`; only successful persisted delivery proves the requested remote
+durability. No transaction atomicity or permanent custody is implied.
+
 
 
 Example 
