@@ -10,7 +10,11 @@ import {
 	type ResourceFenceLeaseResultV2,
 	TrustedNetworkV2DurableResourceFenceReducer,
 } from "./v2-resource-fence-anchor.js";
-import type { ResourceFenceFetchHintV2 } from "./v2-resource-fence-engine.js";
+import {
+	ResourceCausalWorkBudgetV2,
+	type ResourceCausalWorkLimitsV2,
+	type ResourceFenceFetchHintV2,
+} from "./v2-resource-fence-engine.js";
 import {
 	type AuthenticatedResourceOperationEntryV2,
 	TRUSTED_NETWORK_V2_MAX_RESOURCE_OPERATION_DIRECT_PARENTS,
@@ -115,12 +119,15 @@ export type TrustedNetworkV2ResourceOperationEngineProperties = Readonly<{
 	operationTimeoutMs?: number;
 	maxFenceSteps?: number;
 	maxPolicySteps?: number;
+	/** May only lower the total causal-work ceiling for one authorization. */
+	causalWorkLimits?: Partial<ResourceCausalWorkLimitsV2>;
 	signal?: AbortSignal;
 }>;
 
 type OperationBudgetV2 = {
 	signal: AbortSignal;
 	deadline: number;
+	causalWork: ResourceCausalWorkBudgetV2;
 	dispose: () => void;
 };
 
@@ -141,6 +148,7 @@ export class TrustedNetworkV2ResourceOperationEngine {
 	private readonly operationTimeoutMs: number;
 	private readonly maxFenceSteps: number;
 	private readonly maxPolicySteps: number;
+	private readonly causalWorkLimits: Readonly<ResourceCausalWorkLimitsV2>;
 	private readonly lifecycleController = new AbortController();
 	private externalSignal?: AbortSignal;
 	private externalAbortListener?: () => void;
@@ -180,6 +188,9 @@ export class TrustedNetworkV2ResourceOperationEngine {
 		this.expectedGid = properties.expectedGid;
 		this.fenceAnchor = properties.fenceAnchor;
 		this.resolveEntryV0 = properties.resolveEntryV0;
+		this.causalWorkLimits = new ResourceCausalWorkBudgetV2(
+			properties.causalWorkLimits,
+		).remaining;
 		this.operationTimeoutMs =
 			properties.operationTimeoutMs ?? DEFAULT_OPERATION_TIMEOUT_MS;
 		if (
@@ -344,6 +355,7 @@ export class TrustedNetworkV2ResourceOperationEngine {
 					maxPolicySteps: this.maxPolicySteps,
 					deadline: budget.deadline,
 					signal: budget.signal,
+					causalWork: budget.causalWork,
 				},
 				(lease) => this.authorizeUnderLease(snapshot, lease, budget),
 			);
@@ -434,18 +446,19 @@ export class TrustedNetworkV2ResourceOperationEngine {
 		if (closing === undefined) {
 			return this.acceptedResult("provisional", snapshot);
 		}
-		const [operationBeforeClosing, operationAfterClosing] = await Promise.all([
-			this.causalRelation(
-				snapshot.entryCid,
-				{ cid: closing.head.entryCid, bytes: closing.entryBytes },
-				budget,
-			),
-			this.causalRelation(
-				closing.head.entryCid,
-				{ cid: snapshot.entryCid, bytes: snapshot.entryBytes },
-				budget,
-			),
-		]);
+		// Sequential walks debit one shared allowance, including fence history.
+		const operationBeforeClosing = await this.causalRelation(
+			snapshot.entryCid,
+			{ cid: closing.head.entryCid, bytes: closing.entryBytes },
+			budget,
+		);
+		const beforeInterruption = this.interruptionResult(budget);
+		if (beforeInterruption) return beforeInterruption;
+		const operationAfterClosing = await this.causalRelation(
+			closing.head.entryCid,
+			{ cid: snapshot.entryCid, bytes: snapshot.entryBytes },
+			budget,
+		);
 		// One positive ancestry proof must not hide cancellation of the other
 		// walk. The caller's budget covers completion of the whole classification.
 		const closingInterruption = this.interruptionResult(budget);
@@ -496,6 +509,12 @@ export class TrustedNetworkV2ResourceOperationEngine {
 				"Resource operation authorization deadline elapsed or was cancelled",
 			);
 		}
+		if (budget.causalWork.exhausted) {
+			return this.result(
+				"unavailable",
+				"Resource operation causal work budget exhausted",
+			);
+		}
 		return undefined;
 	}
 
@@ -511,27 +530,30 @@ export class TrustedNetworkV2ResourceOperationEngine {
 			};
 		}
 		try {
-			return await checkBoundedEntryV0CausalReachability({
-				ancestorCid,
-				descendant,
-				resolve: async (cids, options) => {
-					// Ignoring AbortSignal must not permit unlimited abandoned calls
-					// across repeated timeouts. Keep the slot until actual settlement.
-					if (
-						this.outstandingResolvers >=
-						TRUSTED_NETWORK_V2_MAX_PENDING_RESOURCE_OPERATION_AUTHORIZATIONS
-					)
-						return new Map();
-					this.outstandingResolvers += 1;
-					try {
-						return await this.resolveEntryV0(cids, options);
-					} finally {
-						this.outstandingResolvers -= 1;
-					}
+			return await ResourceCausalWorkBudgetV2.check(
+				{
+					ancestorCid,
+					descendant,
+					resolve: async (cids, options) => {
+						// Ignoring AbortSignal must not permit unlimited abandoned calls
+						// across repeated timeouts. Keep the slot until actual settlement.
+						if (
+							this.outstandingResolvers >=
+							TRUSTED_NETWORK_V2_MAX_PENDING_RESOURCE_OPERATION_AUTHORIZATIONS
+						)
+							return new Map();
+						this.outstandingResolvers += 1;
+						try {
+							return await this.resolveEntryV0(cids, options);
+						} finally {
+							this.outstandingResolvers -= 1;
+						}
+					},
+					limits: CAUSAL_LIMITS,
+					signal: budget.signal,
 				},
-				limits: CAUSAL_LIMITS,
-				signal: budget.signal,
-			});
+				budget.causalWork,
+			);
 		} catch {
 			return {
 				status: "capacity",
@@ -673,6 +695,7 @@ export class TrustedNetworkV2ResourceOperationEngine {
 		return {
 			signal: controller.signal,
 			deadline,
+			causalWork: new ResourceCausalWorkBudgetV2(this.causalWorkLimits),
 			dispose: (): void => {
 				if (disposed) return;
 				disposed = true;

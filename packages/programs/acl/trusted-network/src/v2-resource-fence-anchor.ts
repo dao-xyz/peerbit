@@ -13,6 +13,7 @@ import {
 	type AcceptedResourceFenceEntryV2,
 	type AcceptedResourceFencePolicyV2,
 	type PreparedResourceFenceCandidateV2,
+	ResourceCausalWorkBudgetV2,
 	type ResourceFenceAdmissionResultV2,
 	type ResourceFenceAdmissionStatusV2,
 	type ResourceFenceFetchHintV2,
@@ -101,6 +102,7 @@ export type ResourceFenceLeaseReferenceV2 = {
 	deadline?: number;
 	timeoutMs?: number;
 	signal?: AbortSignal;
+	causalWork?: ResourceCausalWorkBudgetV2;
 };
 
 export type AcceptedResourceFenceLeaseV2 = {
@@ -999,6 +1001,7 @@ export class TrustedNetworkV2DurableResourceFenceReducer {
 		let policy: ResourceFencePolicyReferenceV2;
 		let maxFenceSteps: number;
 		let maxPolicySteps: number;
+		let causalWork: ResourceCausalWorkBudgetV2 | undefined;
 		let deadline: number;
 		let signal: AbortSignal;
 		try {
@@ -1026,8 +1029,11 @@ export class TrustedNetworkV2DurableResourceFenceReducer {
 				reference.maxFenceSteps ??
 				TRUSTED_NETWORK_V2_MAX_RESOURCE_FENCE_ANCESTRY_STEPS;
 			maxPolicySteps = reference.maxPolicySteps ?? this.policyLeaseMaxSteps;
+			causalWork = reference.causalWork;
 			const timeoutMs = reference.timeoutMs ?? this.operationTimeoutMs;
 			if (
+				(causalWork !== undefined &&
+					!(causalWork instanceof ResourceCausalWorkBudgetV2)) ||
 				!Number.isSafeInteger(maxFenceSteps) ||
 				maxFenceSteps < 0 ||
 				maxFenceSteps > TRUSTED_NETWORK_V2_MAX_RESOURCE_FENCE_ANCESTRY_STEPS ||
@@ -1110,7 +1116,7 @@ export class TrustedNetworkV2DurableResourceFenceReducer {
 							if (queuedStop) return queuedStop;
 							const resolution = await this.core.resolveAcceptedFencePrefix(
 								{ digest: fenceDigest },
-								{ maxSteps: maxFenceSteps, deadline, signal },
+								{ maxSteps: maxFenceSteps, deadline, signal, causalWork },
 							);
 							const resolvedStop = stop();
 							if (resolvedStop) return resolvedStop;

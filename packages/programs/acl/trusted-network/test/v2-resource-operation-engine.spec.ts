@@ -2,7 +2,13 @@ import { serialize } from "@dao-xyz/borsh";
 import type { CrashSafeAtomicReplaceStore } from "@peerbit/any-store-interface";
 import { calculateRawCid } from "@peerbit/blocks-interface";
 import { Ed25519Keypair } from "@peerbit/crypto";
-import { Entry, EntryV0, LamportClock, Timestamp } from "@peerbit/log";
+import {
+	type BoundedEntryV0CausalReachabilityLimits,
+	Entry,
+	EntryV0,
+	LamportClock,
+	Timestamp,
+} from "@peerbit/log";
 import { expect } from "chai";
 import { compare } from "uint8arrays";
 import type {
@@ -16,7 +22,16 @@ import {
 	type ResourceFencePolicyAnchorV2,
 	TrustedNetworkV2DurableResourceFenceReducer,
 } from "../src/v2-resource-fence-anchor.js";
-import { TrustedNetworkV2ResourceOperationEngine } from "../src/v2-resource-operation-engine.js";
+import {
+	ResourceCausalWorkBudgetV2,
+	type ResourceCausalWorkLimitsV2,
+} from "../src/v2-resource-fence-engine.js";
+import {
+	TRUSTED_NETWORK_V2_MAX_RESOURCE_OPERATION_CAUSAL_BYTES,
+	TRUSTED_NETWORK_V2_MAX_RESOURCE_OPERATION_CAUSAL_ENTRIES,
+	TRUSTED_NETWORK_V2_MAX_RESOURCE_OPERATION_CAUSAL_LINKS,
+	TrustedNetworkV2ResourceOperationEngine,
+} from "../src/v2-resource-operation-engine.js";
 import {
 	ResourceOperationEnvelopeV2,
 	TRUSTED_NETWORK_V2_RESOURCE_OPERATION_PROFILE,
@@ -40,6 +55,14 @@ const RESOURCE_ID = new Uint8Array(32).fill(0x71);
 const RESOURCE_GID = "resource-operation-engine";
 const bytes32 = (value: number): Uint8Array => new Uint8Array(32).fill(value);
 const hex = (value: Uint8Array): string => Buffer.from(value).toString("hex");
+const causalLimits: BoundedEntryV0CausalReachabilityLimits = {
+	maxEntryBytes: 128 * 1024,
+	maxDirectParents: 64,
+	maxVisitedEntries: TRUSTED_NETWORK_V2_MAX_RESOURCE_OPERATION_CAUSAL_ENTRIES,
+	maxTotalBytes: TRUSTED_NETWORK_V2_MAX_RESOURCE_OPERATION_CAUSAL_BYTES,
+	maxParentLinks: TRUSTED_NETWORK_V2_MAX_RESOURCE_OPERATION_CAUSAL_LINKS,
+	maxResolveBatchSize: 64,
+};
 
 const deferred = () => {
 	let resolve!: () => void;
@@ -356,6 +379,7 @@ const createOperation = async (
 const openAnchor = (
 	context: TestContext,
 	store: CrashSafeResourceFenceAnchorStoreV2 = context.store,
+	fenceCausalLimits?: BoundedEntryV0CausalReachabilityLimits,
 ): Promise<TrustedNetworkV2DurableResourceFenceReducer> =>
 	TrustedNetworkV2DurableResourceFenceReducer.open({
 		descriptor: context.descriptor,
@@ -363,6 +387,7 @@ const openAnchor = (
 		expectedGid: RESOURCE_GID,
 		policyAnchor: context.policyLease.asAnchor(),
 		store,
+		causalLimits: fenceCausalLimits,
 		resolveFenceEntry: async (digest) =>
 			context.fencesByDigest.get(hex(digest)),
 		resolveEntryV0: async (cids) =>
@@ -372,12 +397,14 @@ const openAnchor = (
 const operationEngine = (
 	context: TestContext,
 	anchor: TrustedNetworkV2DurableResourceFenceReducer,
+	causalWorkLimits?: Partial<ResourceCausalWorkLimitsV2>,
 ): TrustedNetworkV2ResourceOperationEngine =>
 	new TrustedNetworkV2ResourceOperationEngine({
 		descriptor: context.descriptor,
 		expectedResourceId: RESOURCE_ID,
 		expectedGid: RESOURCE_GID,
 		fenceAnchor: anchor,
+		causalWorkLimits,
 		resolveEntryV0: async (cids) =>
 			new Map(cids.map((cid) => [cid, context.entriesByCid.get(cid)])),
 	});
@@ -819,6 +846,162 @@ describe("TrustedNetwork v2 resource-operation authorization", () => {
 		expect((await engine.authorize(operation.bytes)).status).to.equal(
 			"provisional",
 		);
+	});
+
+	it("shares exact entry, byte, and link ceilings across historical prefix and classification walks", async () => {
+		const context = await createContext();
+		const chain = await chainFixture(context);
+		const anchor = await openAnchor(context);
+		for (const fence of [chain.fence0, chain.fence1, chain.fence2]) {
+			expect((await anchor.ingest(fence.bytes)).status).to.equal("accepted");
+		}
+		// Prefix walks visit [fence2] and [fence1, before]. Classification
+		// visits [before], [fence1], then [before, fence0], without deduplication.
+		const exact: ResourceCausalWorkLimitsV2 = {
+			maxVisitedEntries: 7,
+			maxTotalBytes:
+				chain.fence2.bytes.byteLength +
+				2 * chain.fence1.bytes.byteLength +
+				3 * chain.before.bytes.byteLength +
+				chain.fence0.bytes.byteLength,
+			maxParentLinks: 6,
+		};
+		expect(
+			(
+				await operationEngine(context, anchor, exact).authorize(
+					chain.before.bytes,
+				)
+			).status,
+		).to.equal("policy-final");
+		for (const key of Object.keys(exact) as Array<keyof typeof exact>) {
+			const engine = operationEngine(context, anchor, {
+				...exact,
+				[key]: exact[key] - 1,
+			});
+			const result = await engine.authorize(chain.before.bytes);
+			expect(result.status, key).to.equal("unavailable");
+			expect(result.reason, key).to.contain("causal work budget exhausted");
+			expect(result.applicationPayload, key).to.equal(undefined);
+			// An exhausted evaluation does not consume the next operation's budget.
+			expect((await engine.authorize(chain.regranted.bytes)).status).to.equal(
+				"provisional",
+			);
+		}
+	});
+
+	it("stops during historical-prefix exhaustion before calling the operation resolver", async () => {
+		const context = await createContext();
+		const chain = await chainFixture(context);
+		const anchor = await openAnchor(context);
+		for (const fence of [chain.fence0, chain.fence1, chain.fence2]) {
+			await anchor.ingest(fence.bytes);
+		}
+		let operationResolverCalls = 0;
+		const engine = new TrustedNetworkV2ResourceOperationEngine({
+			descriptor: context.descriptor,
+			expectedResourceId: RESOURCE_ID,
+			expectedGid: RESOURCE_GID,
+			fenceAnchor: anchor,
+			causalWorkLimits: { maxVisitedEntries: 2 },
+			resolveEntryV0: () => {
+				operationResolverCalls += 1;
+				return new Map();
+			},
+		});
+		const result = await engine.authorize(chain.before.bytes);
+		expect(result.status).to.equal("unavailable");
+		expect(result.reason).to.contain("causal work budget exhausted");
+		expect(operationResolverCalls).to.equal(0);
+		expect(result.applicationPayload).to.equal(undefined);
+		expect(
+			(await operationEngine(context, anchor).authorize(chain.before.bytes))
+				.status,
+		).to.equal("policy-final");
+	});
+
+	it("does not raise a historical fence walk's lower configured limits", async () => {
+		const context = await createContext();
+		const chain = await chainFixture(context);
+		const anchor = await openAnchor(context);
+		for (const fence of [chain.fence0, chain.fence1, chain.fence2]) {
+			await anchor.ingest(fence.bytes);
+		}
+		// The retained head-to-parent edge is direct and can reopen with one
+		// entry. The older fence1-to-fence0 transition needs two entries.
+		const reopened = await openAnchor(context, context.store.clone(), {
+			...causalLimits,
+			maxVisitedEntries: 1,
+		});
+		const result = await operationEngine(context, reopened).authorize(
+			chain.before.bytes,
+		);
+		expect(result.status).to.equal("unavailable");
+		expect(result.applicationPayload).to.equal(undefined);
+	});
+
+	it("debits capacity and cancelled walk receipts, including work before exhaustion", async () => {
+		const context = await createContext();
+		const chain = await chainFixture(context);
+		const initial: ResourceCausalWorkLimitsV2 = {
+			maxVisitedEntries: 8,
+			maxTotalBytes: 10_000,
+			maxParentLinks: 8,
+		};
+		for (const outcome of ["aggregate", "per-walk", "cancelled"] as const) {
+			const allowance =
+				outcome === "aggregate"
+					? { ...initial, maxVisitedEntries: 1 }
+					: initial;
+			const budget = new ResourceCausalWorkBudgetV2(allowance);
+			const controller = new AbortController();
+			let calls = 0;
+			const result = await ResourceCausalWorkBudgetV2.check(
+				{
+					ancestorCid: chain.fence0.cid,
+					descendant: { cid: chain.fence1.cid, bytes: chain.fence1.bytes },
+					limits:
+						outcome === "per-walk"
+							? { ...causalLimits, maxVisitedEntries: 1 }
+							: causalLimits,
+					signal: controller.signal,
+					resolve: () => {
+						calls += 1;
+						controller.abort();
+						return new Map();
+					},
+				},
+				budget,
+			);
+			expect(result.status).to.equal(
+				outcome === "cancelled" ? "incomplete" : "capacity",
+			);
+			expect(result.visited.entries).to.equal(outcome === "cancelled" ? 2 : 1);
+			expect(result.visited.bytes).to.equal(chain.fence1.bytes.byteLength);
+			expect(result.visited.parentLinks).to.equal(1);
+			expect(calls).to.equal(outcome === "cancelled" ? 1 : 0);
+			expect(budget.remaining).to.deep.equal({
+				maxVisitedEntries: allowance.maxVisitedEntries - result.visited.entries,
+				maxTotalBytes: allowance.maxTotalBytes - result.visited.bytes,
+				maxParentLinks: allowance.maxParentLinks - result.visited.parentLinks,
+			});
+			expect(budget.exhausted).to.equal(outcome !== "cancelled");
+		}
+	});
+
+	it("only permits lowering the aggregate causal ceilings", async () => {
+		const context = await createContext();
+		const anchor = await openAnchor(context);
+		for (const key of [
+			"maxVisitedEntries",
+			"maxTotalBytes",
+			"maxParentLinks",
+		] as const) {
+			for (const value of [0, -1, Number.NaN, causalLimits[key] + 1]) {
+				expect(() =>
+					operationEngine(context, anchor, { [key]: value }),
+				).to.throw("positive bounded safe integer");
+			}
+		}
 	});
 
 	it("does not publish an ancestor verdict after cancellation during the reverse closing-fence walk", async () => {

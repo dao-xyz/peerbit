@@ -6,8 +6,10 @@ import {
 	stringifyCid,
 } from "@peerbit/blocks-interface";
 import {
+	type BoundedEntryV0CausalReachabilityInput,
 	type BoundedEntryV0CausalReachabilityLimits,
 	type BoundedEntryV0CausalReachabilityResolver,
+	type BoundedEntryV0CausalReachabilityResult,
 	checkBoundedEntryV0CausalReachability,
 } from "@peerbit/log";
 import { compare, equals } from "uint8arrays";
@@ -50,6 +52,99 @@ const DEFAULT_CAUSAL_LIMITS: Readonly<BoundedEntryV0CausalReachabilityLimits> =
 		maxParentLinks: MAX_CAUSAL_PARENT_LINKS,
 		maxResolveBatchSize: TRUSTED_NETWORK_V2_MAX_RESOURCE_FENCE_DIRECT_PARENTS,
 	});
+
+export type ResourceCausalWorkLimitsV2 = Pick<
+	BoundedEntryV0CausalReachabilityLimits,
+	"maxVisitedEntries" | "maxTotalBytes" | "maxParentLinks"
+>;
+
+/** Internal, per-operation accounting; no entries or verdicts are retained. */
+export class ResourceCausalWorkBudgetV2 {
+	private readonly remainingWork: ResourceCausalWorkLimitsV2;
+	private active = false;
+	private failed = false;
+
+	constructor(limits: Partial<ResourceCausalWorkLimitsV2> = {}) {
+		this.remainingWork = {
+			maxVisitedEntries:
+				limits.maxVisitedEntries ?? DEFAULT_CAUSAL_LIMITS.maxVisitedEntries,
+			maxTotalBytes:
+				limits.maxTotalBytes ?? DEFAULT_CAUSAL_LIMITS.maxTotalBytes,
+			maxParentLinks:
+				limits.maxParentLinks ?? DEFAULT_CAUSAL_LIMITS.maxParentLinks,
+		};
+		for (const key of Object.keys(this.remainingWork) as Array<
+			keyof ResourceCausalWorkLimitsV2
+		>) {
+			const value = this.remainingWork[key];
+			if (
+				!Number.isSafeInteger(value) ||
+				value < 1 ||
+				value > DEFAULT_CAUSAL_LIMITS[key]
+			) {
+				throw new RangeError(`${key} must be a positive bounded safe integer`);
+			}
+		}
+	}
+
+	get remaining(): Readonly<ResourceCausalWorkLimitsV2> {
+		return { ...this.remainingWork };
+	}
+
+	get exhausted(): boolean {
+		return this.failed;
+	}
+
+	static async check(
+		input: BoundedEntryV0CausalReachabilityInput,
+		budget: ResourceCausalWorkBudgetV2,
+	): Promise<BoundedEntryV0CausalReachabilityResult> {
+		const capacity = (): BoundedEntryV0CausalReachabilityResult => ({
+			status: "capacity",
+			visited: { entries: 0, bytes: 0, parentLinks: 0, resolverCalls: 0 },
+		});
+		// Walks sharing this budget must be sequential. Refuse concurrent use
+		// before either walk can spend the same remaining allowance twice.
+		if (
+			budget.failed ||
+			budget.active ||
+			Object.values(budget.remainingWork).some((value) => value === 0)
+		) {
+			budget.failed = true;
+			return capacity();
+		}
+		const limits = { ...input.limits };
+		for (const key of Object.keys(budget.remainingWork) as Array<
+			keyof ResourceCausalWorkLimitsV2
+		>) {
+			limits[key] = Math.min(limits[key], budget.remainingWork[key]);
+		}
+		budget.active = true;
+		try {
+			const result = await checkBoundedEntryV0CausalReachability({
+				...input,
+				limits,
+			});
+			// Capacity and incomplete results consumed work too. Charge every
+			// completed walk, including repeated CIDs and bytes across walks.
+			budget.remainingWork.maxVisitedEntries -= result.visited.entries;
+			budget.remainingWork.maxTotalBytes -= result.visited.bytes;
+			budget.remainingWork.maxParentLinks -= result.visited.parentLinks;
+			if (result.status === "capacity") budget.failed = true;
+			return result;
+		} catch {
+			// Without a visited receipt, conservatively spend the remaining
+			// allowance; never turn an exceptional walk into uncharged work.
+			budget.remainingWork.maxVisitedEntries = 0;
+			budget.remainingWork.maxTotalBytes = 0;
+			budget.remainingWork.maxParentLinks = 0;
+			budget.failed = true;
+			return capacity();
+		} finally {
+			budget.active = false;
+		}
+	}
+}
 
 const TYPED_ARRAY_PROTOTYPE = Object.getPrototypeOf(Uint8Array.prototype);
 const TYPED_ARRAY_BYTE_LENGTH = Object.getOwnPropertyDescriptor(
@@ -225,6 +320,8 @@ export type AcceptedResourceFencePrefixTraversalV2 = Readonly<{
 	deadline?: number;
 	/** Cancels this lookup without aborting the reducer lifecycle. */
 	signal?: AbortSignal;
+	/** Shared only with the protected operation's subsequent causal walks. */
+	causalWork?: ResourceCausalWorkBudgetV2;
 }>;
 
 export type ResourceFenceForkChildProofV2 = Readonly<{
@@ -910,7 +1007,18 @@ export class TrustedNetworkV2ResourceFenceReducer {
 					fetchHints: [],
 				});
 			}
-			capturedTraversal = { maxSteps, deadline, signal };
+			const causalWork = traversal?.causalWork;
+			if (
+				causalWork !== undefined &&
+				!(causalWork instanceof ResourceCausalWorkBudgetV2)
+			) {
+				return Promise.resolve({
+					status: "rejected",
+					reason: "Resource-fence prefix causal work budget is invalid",
+					fetchHints: [],
+				});
+			}
+			capturedTraversal = { maxSteps, deadline, signal, causalWork };
 		} catch {
 			return Promise.resolve({
 				status: "rejected",
@@ -1767,7 +1875,7 @@ export class TrustedNetworkV2ResourceFenceReducer {
 			attempt.abort();
 		}, timeoutMs);
 		try {
-			const result = await checkBoundedEntryV0CausalReachability({
+			const input: BoundedEntryV0CausalReachabilityInput = {
 				ancestorCid: ancestor.entryCid,
 				descendant: {
 					cid: descendant.entryCid,
@@ -1788,7 +1896,11 @@ export class TrustedNetworkV2ResourceFenceReducer {
 				},
 				limits: this.causalLimits,
 				signal: attempt.signal,
-			});
+			};
+			const result =
+				traversal?.causalWork === undefined
+					? await checkBoundedEntryV0CausalReachability(input)
+					: await ResourceCausalWorkBudgetV2.check(input, traversal.causalWork);
 			return { result, timedOut, deadlineElapsed };
 		} finally {
 			clearTimeout(timeout);

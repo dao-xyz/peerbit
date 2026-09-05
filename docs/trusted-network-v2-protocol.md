@@ -733,20 +733,25 @@ Operation envelopes are capped at 128 KiB, application payloads at 64 KiB,
 metadata at 16 KiB, and direct predecessors at 64. Each classification permits
 at most 64 fence predecessor steps and 4,096 policy steps. Every traversed
 fence predecessor transition has its own causal walk, followed by up to three
-operation-classification causal walks. This is at most 67 causal walks in
-total, not three. Each walk independently permits 1,024 entries, 16 MiB, and
-65,536 links by default; the fence reducer permits lower configured limits.
-The default cumulative causal-work ceiling is therefore 68,608 entry visits,
-1,072 MiB, and 4,390,912 links, including repeated visits across walks. These
-are cumulative work ceilings, not simultaneously retained memory, and exclude
-policy traversal and predecessor authentication. There is no shared entry,
-byte, or link counter across walks. One queue-inclusive deadline covers the
-whole classification (10 seconds by default, configurable up to 60 seconds).
+operation-classification causal walks. These at most 67 walks share one
+per-operation ceiling of 1,024 admitted EntryV0 CIDs, 16 MiB of captured bytes,
+and 65,536 examined parent links. Repeated CIDs and bytes across walks are
+charged again; incomplete and capacity-limited walks also debit their visited
+work. Each walk is limited to the remaining shared allowance and never raises
+the fence reducer's lower configured per-walk limits. Closing-fence walks run
+sequentially so they cannot spend the same remaining allowance twice. These
+causal-work ceilings may only be lowered and exclude policy traversal,
+predecessor authentication, and arbitrary work performed inside a resolver.
+One queue-inclusive deadline covers the whole classification (10 seconds by
+default, configurable up to 60 seconds). Exhaustion returns `unavailable`,
+without releasing application payload, rejecting the operation permanently,
+or discarding history. Repeating an unchanged over-budget graph does not make
+it fit; a future authenticated checkpoint or proof mechanism remains necessary
+for longer histories. Every new evaluation receives a fresh bounded allowance.
 The operation engine retains at most 64 calls and 512 KiB of captured input,
-and at most 64 unsettled
-causal resolver calls even if a resolver ignores cancellation. Dependency
-hints are capped at 64. Missing history remains necessary for retry; none of
-these work ceilings grants permission to discard it.
+and at most 64 unsettled causal resolver calls even if a resolver ignores
+cancellation. Dependency hints are capped at 64. Missing history remains
+necessary for retry; none of these work ceilings grants permission to discard it.
 
 These modules are excluded from the package root and published artifact.
 The generic signed envelope does not interpret or authorize an application's
