@@ -334,6 +334,8 @@ jobs:
           --roots ./packages/programs/data/shared-log -- -t node --no-build
           --grep "^(append delivery options|receive admission replication-info V2|replicator liveness|waitForReplicator)"
           -- --retries 0
+      - name: Verify default peers exit naturally after replication
+        run: node --test scripts/ci/peerbit-shutdown-lifecycle.test.mjs scripts/ci/peerbit-shutdown.test.mjs
 
   test_push:
     if: github.event_name == 'push'

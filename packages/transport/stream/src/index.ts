@@ -1,4 +1,5 @@
 import {
+	ConnectionClosedError,
 	MuxerClosedError,
 	StreamResetError,
 	TypedEventEmitter,
@@ -387,6 +388,7 @@ export class PeerStreams extends TypedEventEmitter<PeerStreamEvents> {
 	private outboundAbortController: AbortController;
 
 	private closed: boolean;
+	private closePromise?: Promise<void>;
 
 	public connId: string;
 
@@ -800,6 +802,7 @@ export class PeerStreams extends TypedEventEmitter<PeerStreamEvents> {
 	 * Attach a raw inbound stream and setup a read stream
 	 */
 	attachInboundStream(stream: Stream): InboundStreamRecord {
+		this.assertOpenForAttachment(stream);
 		// Support multiple concurrent inbound streams with inactivity pruning.
 		// Enforce max inbound streams (drop least recently active)
 		if (this.inboundStreams.length >= PeerStreams.MAX_INBOUND_STREAMS) {
@@ -852,9 +855,10 @@ export class PeerStreams extends TypedEventEmitter<PeerStreamEvents> {
 	}
 
 	private _scheduleInboundPrune() {
-		if (this._inboundPruneTimer) return; // already scheduled
+		if (this.closed || this._inboundPruneTimer) return;
 		this._inboundPruneTimer = setTimeout(() => {
 			this._inboundPruneTimer = undefined;
+			if (this.closed) return;
 			this._pruneInboundInactive();
 			if (this.inboundStreams.length > 1) {
 				// schedule again if still multiple
@@ -864,7 +868,7 @@ export class PeerStreams extends TypedEventEmitter<PeerStreamEvents> {
 	}
 
 	private _pruneInboundInactive() {
-		if (this.inboundStreams.length <= 1) return;
+		if (this.closed || this.inboundStreams.length <= 1) return;
 		const now = Date.now();
 		// Keep at least one (the most recently active)
 		this.inboundStreams.sort((a, b) => b.lastActivity - a.lastActivity);
@@ -932,6 +936,7 @@ export class PeerStreams extends TypedEventEmitter<PeerStreamEvents> {
 	 */
 
 	async attachOutboundStream(stream: Stream) {
+		this.assertOpenForAttachment(stream);
 		if (this.outboundStreams.some((candidate) => candidate.raw === stream)) {
 			return; // duplicate
 		}
@@ -941,6 +946,16 @@ export class PeerStreams extends TypedEventEmitter<PeerStreamEvents> {
 			return;
 		}
 		this._scheduleOutboundPrune(true);
+	}
+
+	private assertOpenForAttachment(stream: Stream) {
+		if (!this.closed) return;
+		const error = new AbortError("Closed");
+		try {
+			stream.abort?.(error);
+		} catch {}
+		closeRawStreamBestEffort(stream);
+		throw error;
 	}
 
 	private pruneOutboundCandidates() {
@@ -1036,17 +1051,27 @@ export class PeerStreams extends TypedEventEmitter<PeerStreamEvents> {
 	/**
 	 * Closes the open connection to peer
 	 */
-	async close() {
-		if (this.closed) {
-			return;
-		}
+	close(): Promise<void> {
+		if (this.closePromise) return this.closePromise;
+		const closing = pDefer<void>();
+		// Publish the promise before callbacks can re-enter close().
+		this.closePromise = closing.promise;
 
 		this.closed = true;
+		// Cancel inbound maintenance before awaiting outbound shutdown.
+		if (this._inboundPruneTimer) {
+			clearTimeout(this._inboundPruneTimer);
+			this._inboundPruneTimer = undefined;
+		}
 		if (this._outboundPruneTimer) {
 			clearTimeout(this._outboundPruneTimer);
 			this._outboundPruneTimer = undefined;
 		}
+		void this.closeImpl().then(closing.resolve, closing.reject);
+		return this.closePromise;
+	}
 
+	private async closeImpl(): Promise<void> {
 		// End the outbound stream
 		if (this.outboundStreams.length) {
 			for (const c of this.outboundStreams) {
@@ -1060,29 +1085,29 @@ export class PeerStreams extends TypedEventEmitter<PeerStreamEvents> {
 			this.outboundAbortController.abort();
 		}
 
-			// End inbound streams
-			if (this.inboundStreams.length) {
-				for (const inbound of this.inboundStreams) {
+		// End inbound streams
+		if (this.inboundStreams.length) {
+			for (const inbound of this.inboundStreams) {
+				try {
+					inbound.abortController.abort();
+				} catch {
+					logger.error("Failed to abort inbound stream");
+				}
+				try {
+					// Best-effort shutdown: on some transports (notably websockets),
+					// awaiting a graceful close can hang indefinitely if the remote is
+					// concurrently stopping. Abort immediately and do not await close.
 					try {
-						inbound.abortController.abort();
+						inbound.raw.abort?.(new AbortError("Closed"));
 					} catch {
-						logger.error("Failed to abort inbound stream");
+						// ignore
 					}
-					try {
-						// Best-effort shutdown: on some transports (notably websockets),
-						// awaiting a graceful close can hang indefinitely if the remote is
-						// concurrently stopping. Abort immediately and do not await close.
-						try {
-							inbound.raw.abort?.(new AbortError("Closed"));
-						} catch {
-							// ignore
-						}
-						closeRawStreamBestEffort(inbound.raw);
-					} catch {
-						logger.error("Failed to close inbound stream");
-					}
+					closeRawStreamBestEffort(inbound.raw);
+				} catch {
+					logger.error("Failed to close inbound stream");
 				}
 			}
+		}
 
 		this.usedBandWidthTracker.stop();
 
@@ -1277,6 +1302,7 @@ export abstract class DirectStream<
 			private pruneToLimitsInFlight?: Promise<void>;
 			private _startInFlight?: Promise<void>;
 			private _stopInFlight?: Promise<void>;
+			private _networkStopPromise?: Promise<void>;
 			private routeMaxRetentionPeriod: number;
 	private routeCacheMaxFromEntries?: number;
 	private routeCacheMaxTargetsPerFrom?: number;
@@ -1557,10 +1583,11 @@ export abstract class DirectStream<
 
 		async start() {
 			// Do not queue a restart behind teardown; callers can retry after stop resolves.
-			if (this._stopInFlight) return;
+			if (this._stopInFlight || this.stopping) return;
 			if (this.started) return;
 			if (this._startInFlight) return this._startInFlight;
 			this.stopping = false;
+			this._networkStopPromise = undefined;
 			this._startInFlight = this._startImpl().finally(() => {
 				this._startInFlight = undefined;
 			});
@@ -1774,12 +1801,12 @@ export abstract class DirectStream<
 		}
 		if (this.connectionManagerOptions.pruner) {
 			const pruneConnectionsLoop = () => {
-				if (!this.connectionManagerOptions.pruner) {
+				if (this.stopping || !this.connectionManagerOptions.pruner) {
 					return;
 				}
 				this.pruneConnectionsTimeout = setTimeout(() => {
 					this.maybePruneConnections().finally(() => {
-						if (!this.started) {
+						if (this.stopping || !this.started) {
 							return;
 						}
 						pruneConnectionsLoop();
@@ -1791,11 +1818,23 @@ export abstract class DirectStream<
 	}
 
 	/**
+	 * Finish network teardown while libp2p still owns open transport connections.
+	 * Subclass resource cleanup remains in the normal stop phase.
+	 */
+	beforeStop(): Promise<void> {
+		if (this._networkStopPromise) return this._networkStopPromise;
+		if (!this.started && !this._startInFlight) return Promise.resolve();
+		return this.stopNetwork();
+	}
+
+	/**
 	 * Unregister the pubsub protocol and the streams with other peers will be closed.
 	 */
 	stop(): Promise<void> {
 		if (this._stopInFlight) return this._stopInFlight;
-		if (!this.started && !this._startInFlight) return Promise.resolve();
+		if (!this.started && !this._startInFlight && !this._networkStopPromise) {
+			return Promise.resolve();
+		}
 		this.stopping = true;
 		const starting = this._startInFlight;
 		this._stopInFlight = this._stopAfterStart(starting).finally(() => {
@@ -1817,9 +1856,10 @@ export abstract class DirectStream<
 
 		let stopFailed = false;
 		let stopFailure: unknown;
-		if (this.started) {
+		if (this.started || this._networkStopPromise) {
 			try {
-				await this._stopImpl();
+				if (this.started) await this._stopImpl();
+				else await this._networkStopPromise;
 			} catch (error) {
 				stopFailed = true;
 				stopFailure = error;
@@ -1836,9 +1876,23 @@ export abstract class DirectStream<
 		if (startFailed) throw startFailure;
 	}
 
-	private async _stopImpl(): Promise<void> {
-		const sharedState = this.sharedRoutingState;
-		const sharedKey = this.sharedRoutingKey;
+	private stopNetwork(): Promise<void> {
+		if (this._networkStopPromise) return this._networkStopPromise;
+		this.stopping = true;
+		this._networkStopPromise = this.stopNetworkAfterStart(
+			this._startInFlight,
+		).finally(() => {
+			// Startup can fail before marking the service started. In that case no
+			// normal stop is required to make a subsequent start possible.
+			if (!this.started && !this._stopInFlight) this.stopping = false;
+		});
+		return this._networkStopPromise;
+	}
+
+	private async stopNetworkAfterStart(starting?: Promise<void>): Promise<void> {
+		// A failed startup may still have installed handlers or opened streams.
+		// Its caller observes the startup error; teardown must still drain them.
+		await starting?.catch(() => {});
 
 		clearTimeout(this.pruneConnectionsTimeout);
 		try {
@@ -1873,20 +1927,26 @@ export abstract class DirectStream<
 			);
 		}
 
-		// reset and clear up
-		this.started = false;
-		this.outboundInflightQueue.end();
-		this.closeController.abort();
+		this.outboundInflightQueue?.end();
+		this.closeController?.abort();
+		for (const timer of this.healthChecks.values()) clearTimeout(timer);
+		this.healthChecks.clear();
+		// A stream open may settle after abort and still need to dispose its raw
+		// stream. Keep that work ahead of connection-manager shutdown as well.
+		await this._outboundPump;
+		this._outboundPump = undefined;
 
-		logger.trace("stopping");
 		for (const peerStreams of this.peers.values()) {
 			await peerStreams.close();
 		}
+	}
 
-		for (const [_k, v] of this.healthChecks) {
-			clearTimeout(v);
-		}
-		this.healthChecks.clear();
+	private async _stopImpl(): Promise<void> {
+		const sharedState = this.sharedRoutingState;
+		const sharedKey = this.sharedRoutingKey;
+		this.started = false;
+		logger.trace("stopping");
+		await this.stopNetwork();
 		this.prunedConnectionsCache?.clear();
 
 		this.queue.clear();
@@ -1939,7 +1999,8 @@ export abstract class DirectStream<
 	 */
 
 	protected async _onIncomingStream(stream: Stream, connection: Connection) {
-		if (!this.isStarted()) {
+		if (this.stopping || !this.isStarted()) {
+			closeRawStreamBestEffort(stream);
 			return;
 		}
 		const peerId = connection.remotePeer;
@@ -1951,7 +2012,9 @@ export abstract class DirectStream<
 		const publicKey = getPublicKeyFromPeerId(peerId);
 
 		if (this.prunedConnectionsCache?.has(publicKey.hashcode())) {
-			await connection.close();
+			// Reject immediately: graceful transport shutdown can race other
+			// incoming protocol negotiations that still need to reset their streams.
+			connection.abort(new AbortError("Connection was pruned"));
 			await this.components.peerStore.delete(peerId);
 			return;
 		}
@@ -1992,7 +2055,7 @@ export abstract class DirectStream<
 		const peerKey = getPublicKeyFromPeerId(peerId);
 		while (tries <= 3) {
 			tries++;
-			if (!this.started) {
+			if (this.stopping || !this.started) {
 				return;
 			}
 
@@ -2018,7 +2081,7 @@ export abstract class DirectStream<
 					return;
 				}
 
-				if (!this.started) {
+				if (this.stopping || !this.started) {
 					// we closed before we could create the stream
 					stream.abort(new Error("Closed"));
 					return;
@@ -2036,14 +2099,25 @@ export abstract class DirectStream<
 					continue; // Retry
 				}
 
+				if (connection.status !== "open") return;
 				if (
-					connection.status !== "open" ||
 					error?.message === "Muxer already closed" ||
-					error.code === "ERR_STREAM_RESET" ||
-					error instanceof StreamResetError ||
+					error instanceof ConnectionClosedError ||
 					error instanceof MuxerClosedError
 				) {
-					return; // fail silenty
+					// A closed muxer cannot open any protocol, even if the transport
+					// still reports open. Dispose it so a later dial can reconnect.
+					connection.abort(error);
+					return;
+				}
+				if (
+					error.code === "ERR_STREAM_RESET" ||
+					error instanceof StreamResetError
+				) {
+					// A single stream reset need not invalidate a healthy connection.
+					// Retry within the existing attempt/signal budget; a muxer-wide
+					// failure then surfaces on the next open instead of staying cached.
+					continue;
 				}
 
 				throw error;
@@ -2060,6 +2134,7 @@ export abstract class DirectStream<
 	 */
 	public async onPeerConnected(peerId: PeerId, connection: Connection) {
 		if (
+			this.stopping ||
 			!this.isStarted() ||
 			connection.limits ||
 			connection.status !== "open"
@@ -2069,7 +2144,7 @@ export abstract class DirectStream<
 		const peerKey = getPublicKeyFromPeerId(peerId);
 
 		if (this.prunedConnectionsCache?.has(peerKey.hashcode())) {
-			await connection.close();
+			connection.abort(new AbortError("Connection was pruned"));
 			await this.components.peerStore.delete(peerId);
 			return; // we recently pruned this connect, dont allow it to connect for a while
 		}
@@ -2612,7 +2687,7 @@ export abstract class DirectStream<
 		msg: Uint8ArrayList,
 		decodedMessage?: Message,
 	) {
-		if (!this.started) {
+		if (this.stopping || !this.started) {
 			return;
 		}
 
@@ -4034,6 +4109,7 @@ export abstract class DirectStream<
 		}
 
 	async pruneConnections(): Promise<void> {
+		if (this.stopping || !this.started) return;
 		// TODO sort by bandwidth
 		if (this.peers.size <= this.connectionManagerOptions.minConnections) {
 			return;
@@ -4051,6 +4127,7 @@ export abstract class DirectStream<
 			this.prunedConnectionsCache?.add(stream.publicKey.hashcode());
 
 			await this.onPeerDisconnected(stream.peerId);
+			if (this.stopping || !this.started) return;
 			return this.components.connectionManager.closeConnections(stream.peerId);
 		}
 
