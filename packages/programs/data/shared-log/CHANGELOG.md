@@ -1,5 +1,13 @@
 # Changelog
 
+## 16.0.31
+
+### Patch Changes
+
+- [#1438](https://github.com/dao-xyz/peerbit/pull/1438) [`9161fac`](https://github.com/dao-xyz/peerbit/commit/9161fac45fefc0620a574d8c2e3dd18ac7c37565) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Cancel built-in synchronizer dispatch before close/drop drains admitted receives, so an abort-aware response shipment cannot block the shutdown that must cancel it. Preserve final storage teardown and physical-work accounting until the receives finish; existing custom synchronizers remain compatible through an optional cancellation hook.
+
+- [#1439](https://github.com/dao-xyz/peerbit/pull/1439) [`98c7fae`](https://github.com/dao-xyz/peerbit/commit/98c7faea8225b4668dd8cc51d8eab41b8941b270) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Keep bounded capability and V2 confirmation recovery active during persisted delivery, including incomplete receive state and replacement sessions. Reuse the existing readiness watchdog for fresh leader candidates without weakening exact-entry, session, ownership, or durable receipt checks. Recovery does not occupy transfer slots, and authenticated key lookups and advisory waits are coalesced in a bounded per-delivery pool.
+
 ## 16.0.30
 
 ### Patch Changes
