@@ -1,5 +1,16 @@
 # Changelog
 
+## 6.0.130
+
+### Patch Changes
+
+- [#1428](https://github.com/dao-xyz/peerbit/pull/1428) [`ee1c120`](https://github.com/dao-xyz/peerbit/commit/ee1c1209e4fe702051117ee546997a47876f66ea) Thanks [@marcus-pousette](https://github.com/marcus-pousette)! - Add bounded internal readiness for an exact owner-signed resource-fence head, holding accepted policy and resource checkpoint state through its callback. The resource-fence implementation remains excluded from the npm artifact and package exports; this does not activate TrustedNetwork v2 or provide complete revocation enforcement.
+
+- Updated dependencies [[`242b468`](https://github.com/dao-xyz/peerbit/commit/242b4689bbcdcfa9807402a18cffa300b5f3f568)]:
+  - @peerbit/shared-log@16.0.29
+  - @peerbit/document@15.0.32
+  - @peerbit/log@6.2.32
+
 ## 6.0.129
 
 ### Patch Changes

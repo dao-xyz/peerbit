@@ -1,5 +1,15 @@
 # Changelog
 
+## 16.0.29
+
+### Patch Changes
+
+- [#1427](https://github.com/dao-xyz/peerbit/pull/1427) [`242b468`](https://github.com/dao-xyz/peerbit/commit/242b4689bbcdcfa9807402a18cffa300b5f3f568) Thanks [@marcus-pousette](https://github.com/marcus-pousette)! - Keep persisted receipt confirmation progressing across delayed replication-state commits and replacement sessions. Retry outstanding application queries without continuously replacing their sequence, recover missing sender state during persisted delivery, and recheck the current session and replicator eligibility when readiness transition events are missed. Existing authenticated session, exact entry, leader eligibility, cancellation, and durability checks remain required.
+
+- Updated dependencies []:
+  - @peerbit/log@6.2.32
+  - @peerbit/rpc@6.1.27
+
 ## 16.0.28
 
 ### Patch Changes
