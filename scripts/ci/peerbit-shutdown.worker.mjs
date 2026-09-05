@@ -7,6 +7,7 @@ import {
 	TestStore,
 } from "../../packages/programs/data/document/document/dist/test/data.js";
 import { randomBytes } from "../../packages/utils/crypto/dist/src/index.js";
+import { withPeerShutdown } from "./peerbit-shutdown-lifecycle.mjs";
 
 const mode = process.argv[2];
 assert.ok(mode === "memory" || mode === "disk");
@@ -25,7 +26,7 @@ process.once("exit", (code) => mark("exit-event", { code }));
 mark("start", { node: process.version, mode });
 
 const peers = [];
-try {
+await withPeerShutdown(peers, async () => {
 	for (let i = 0; i < 3; i++) {
 		peers.push(
 			await Peerbit.create(
@@ -87,10 +88,5 @@ try {
 		await new Promise((resolve) => setTimeout(resolve, 25));
 	}
 	mark("converged");
-} finally {
-	const results = await Promise.allSettled(peers.map((peer) => peer.stop()));
-	for (const result of results) {
-		if (result.status === "rejected") throw result.reason;
-	}
-	mark("stopped", { resources: process.getActiveResourcesInfo() });
-}
+});
+mark("stopped", { resources: process.getActiveResourcesInfo() });
