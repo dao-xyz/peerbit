@@ -1,6 +1,6 @@
 import { Ed25519PublicKey } from "@peerbit/crypto";
 import { TestSession } from "@peerbit/test-utils";
-import { waitForResolved } from "@peerbit/time";
+import { AbortError, waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
 import pDefer from "p-defer";
 import sinon from "sinon";
@@ -368,6 +368,57 @@ describe("receive admission replication-info V2 receiver state", () => {
 				senderTransportSession,
 			}).remoteFullRearmAttempts,
 		).to.equal(2);
+	});
+
+	it("backs off repeated remote-Full rearm without widening its session bounds", async () => {
+		const clock = sinon.useFakeTimers({ now: 1_000 });
+		coordinator = createCoordinator({
+			requestRetryMs: 1_000,
+			remoteFullRearmCooldownMs: 5_000,
+		});
+		const lifecycle = new AbortController();
+		const advertise = () =>
+			coordinator.advertiseLocalCapability({
+				target: sender,
+				peerSession: currentSession,
+				receiveEpoch: currentReceiveEpoch,
+				signal: lifecycle.signal,
+			}).firstAttempt;
+		const rearm = () =>
+			coordinator.reAdvertiseLocalCapabilityForRemoteFull({
+				peerHash,
+				peerSession: currentSession,
+				receiveEpoch: currentReceiveEpoch,
+				signal: lifecycle.signal,
+			});
+		await advertise();
+		refreshLocalCapability.resetHistory();
+		let attempts = 0;
+		for (const cooldown of [5_000, 10_000, 20_000, 30_000, 30_000]) {
+			expect(rearm()).to.be.true;
+			await clock.tickAsync(0);
+			expect(refreshLocalCapability.callCount).to.equal(++attempts);
+			expect(
+				coordinator.diagnosePeer({ peerHash, peerSession: currentSession })
+					.remoteFullRearmCooldownRemainingMs,
+			).to.equal(cooldown);
+			await clock.tickAsync(cooldown - 1);
+			expect(rearm()).to.be.true;
+			await clock.tickAsync(0);
+			expect(refreshLocalCapability.callCount).to.equal(attempts);
+			await clock.tickAsync(1);
+		}
+		coordinator.clearPeer(peerHash, currentSession);
+		currentSession = {};
+		currentReceiveEpoch = {};
+		await advertise();
+		expect(rearm()).to.be.true;
+		await clock.tickAsync(0);
+		expect(
+			coordinator.diagnosePeer({ peerHash, peerSession: currentSession })
+				.remoteFullRearmCooldownRemainingMs,
+		).to.equal(5_000);
+		expect(coordinator._remoteFullRearmOutstanding.size).to.equal(0);
 	});
 
 	it("detaches a cancelled remote-Full rearm even if transport never settles", async () => {
@@ -2334,6 +2385,163 @@ describe("receive admission replication-info V2 receiver state", () => {
 		await clock.tickAsync(1_000);
 		expect(sendRequest.calledOnce).to.be.true;
 		expect(coordinator._receiveStates.has(peerHash)).to.be.false;
+	});
+
+	it("lets a slow apply finish before the readiness watchdog replaces its binding again", async () => {
+		const clock = sinon.useFakeTimers({ now: 1_000 });
+		const senderPeerSession = {};
+		const ownership = new AbortController();
+		let capabilityTimestamp = 1n;
+		let applyDelay = 0;
+		let confirmed = false;
+		const source = {
+			from: sender,
+			peerSession: currentSession,
+			receiveEpoch: currentReceiveEpoch,
+			senderTransportSession,
+		};
+		let senderCoordinator: ReplicationInfoV2SendCoordinator<"u32">;
+		const rpcSend = sinon.stub().callsFake(async (message) => {
+			if (message instanceof RequestReplicationInfoV2AppliedMessage) {
+				const applied = coordinator.confirmApplied(message, source);
+				if (applied) {
+					setTimeout(
+						() =>
+							senderCoordinator.acceptApplied(applied, {
+								from: self,
+								receiverTransportSession,
+							}),
+						200,
+					);
+				}
+			} else {
+				const admission = coordinator.reserve(message, {
+					...source,
+					transportTimestamp: message.sequence,
+				});
+				if (admission) {
+					if (applyDelay === 0) coordinator.commit(admission);
+					else setTimeout(() => coordinator.commit(admission), applyDelay);
+				}
+			}
+			return [];
+		});
+		senderCoordinator = new ReplicationInfoV2SendCoordinator<"u32">({
+			getRpc: () => ({ send: rpcSend }) as any,
+			getSelfKey: () => sender,
+			getSenderTransportSession: () => senderTransportSession,
+			getMyReplicationSegments: async () => [],
+			validatePersistedReplicationRangeSnapshot: () => {},
+			isClosed: () => closed,
+			isPeerSessionCurrent: (_hash, session) => session === senderPeerSession,
+			isPeerSessionOpen: (_hash, session) => session === senderPeerSession,
+			captureReplicationOwnershipLifecycle: () => ownership,
+			isReplicationOwnershipLifecycleActive: (controller) =>
+				controller === ownership && !controller.signal.aborted,
+			supportsApplicationConfirmation: () => true,
+		});
+		sendRequest.callsFake(async (request) => {
+			senderCoordinator.acceptRequest(request, {
+				from: self,
+				peerSession: senderPeerSession,
+				receiverTransportSession,
+				capabilityTimestamp,
+				requestTimestamp: BigInt(Date.now()),
+			});
+		});
+		refreshLocalCapability.callsFake(async () => {
+			capabilityTimestamp = BigInt(Date.now());
+			return { receiverTransportSession, requestNotBeforeMs: Date.now() };
+		});
+		coordinator = createCoordinator({
+			requestRetryMs: 1_000,
+			maxRequestRetryMs: 30_000,
+		});
+		const watchdog = new ReplicationInfoV2ReceiveCoordinator({
+			getSelfKey: () => sender,
+			getReceiverTransportSession: () => senderTransportSession,
+			isClosed: () => closed,
+			isPeerSessionCurrent: () => true,
+			isReceiveEpochCurrent: () => true,
+			isPeerStateCurrent: () => true,
+			isSenderTransportSessionCurrent: () => true,
+			sendRequest: async () => {},
+			refreshLocalCapability: async ({ requestRemoteFullRearm }) => {
+				if (
+					requestRemoteFullRearm &&
+					coordinator.isCurrentActive({ peerHash, ...source })
+				) {
+					coordinator.advanceRecovery({
+						peerHash,
+						peerSession: currentSession,
+						receiveEpoch: currentReceiveEpoch,
+					});
+				}
+				return {
+					receiverTransportSession: senderTransportSession,
+					requestNotBeforeMs: Date.now(),
+				};
+			},
+		});
+		let timer: ReturnType<typeof setInterval> | undefined;
+		try {
+			expect(markLocalReady(999)).to.be.true;
+			expect(observeSender()).to.be.true;
+			await clock.tickAsync(1);
+			await senderCoordinator.drain();
+			await watchdog.advertiseLocalCapability({
+				target: self,
+				peerSession: senderPeerSession,
+				receiveEpoch: null,
+				signal: ownership.signal,
+			}).firstAttempt;
+			applyDelay = 10_000;
+			senderCoordinator.enqueue({ added: { segments: [] } });
+			// Public readiness arms its watchdog before starting confirmation. Keep
+			// that timer order, including the real rearm coordinator's cooldown.
+			timer = setInterval(() => {
+				if (!confirmed) {
+					watchdog.reAdvertiseLocalCapabilityForRemoteFull({
+						peerHash: self.hashcode(),
+						peerSession: senderPeerSession,
+						receiveEpoch: null,
+						signal: ownership.signal,
+					});
+				}
+			}, 1_000);
+			const deadline = Date.now() + 60_000;
+			const confirmation = (async () => {
+				while (true) {
+					try {
+						await senderCoordinator.confirmLatestForPeer(
+							{
+								peerHash: self.hashcode(),
+								peerSession: senderPeerSession,
+								receiverTransportSession,
+							},
+							{ timeout: deadline - Date.now() },
+						);
+						confirmed = true;
+						return true;
+					} catch (error) {
+						if (!(error instanceof AbortError) || Date.now() >= deadline) {
+							throw error;
+						}
+					}
+				}
+			})().catch((error) => error);
+			await senderCoordinator.drain();
+			await clock.tickAsync(60_000);
+			expect(await confirmation).to.equal(true);
+			expect(coordinator._receiveStates.get(peerHash)?.phase).to.equal(
+				"active",
+			);
+			expect(senderCoordinator._confirmations.size).to.equal(0);
+		} finally {
+			clearInterval(timer);
+			watchdog.clearForClose();
+			senderCoordinator.clearForClose();
+		}
 	});
 
 	it("re-handshakes after a B9 sender clears its same-session grant", async () => {
