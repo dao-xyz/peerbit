@@ -4425,6 +4425,8 @@ describe("start/stop", () => {
 			connectionsStub.restore();
 			dependentStub.restore();
 			publishSpy.restore();
+			// The stub bypassed teardown after this peer was removed from the map.
+			await peerStreams.close();
 		}
 	});
 
