@@ -16,6 +16,7 @@ import {
 	ReplicationIntent,
 	ReplicationRangeMessageU32,
 } from "../src/ranges.js";
+import { ReplicationInfoV2ReceiveCoordinator } from "../src/replication-info-v2-receive.js";
 import {
 	ReplicationInfoV2SendCoordinator,
 	type ReplicationInfoV2SendState,
@@ -277,10 +278,14 @@ describe("receive admission replication-info V2 sender streams", () => {
 		await coordinator.drain();
 		rpcSend.resetHistory();
 		let queries = 0;
+		let repaired = false;
 		rpcSend.callsFake(async (message) => {
+			if (message instanceof FullReplicationInfoV2Message) {
+				repaired = true;
+			}
 			if (message instanceof RequestReplicationInfoV2AppliedMessage) {
 				queries++;
-				if (queries === 2) {
+				if (repaired) {
 					expect(
 						coordinator.acceptApplied(
 							new ReplicationInfoV2AppliedMessage({
@@ -304,10 +309,10 @@ describe("receive admission replication-info V2 sender streams", () => {
 		const confirmation = coordinator.confirmLatest({ timeout: 100 });
 		await coordinator.drain();
 		expect(queries).to.equal(1);
-		await clock.tickAsync(5);
+		await clock.tickAsync(10);
 		await coordinator.drain();
 		await confirmation;
-		expect(queries).to.equal(2);
+		expect(queries).to.equal(3);
 		expect(
 			rpcSend.args.filter(
 				(args) => args[0] instanceof FullReplicationInfoV2Message,
@@ -318,6 +323,288 @@ describe("receive admission replication-info V2 sender streams", () => {
 				(args) => args[0] instanceof AddedReplicationInfoV2Message,
 			),
 		).to.have.length(1);
+	});
+
+	it("accepts an outstanding applied response after a same-revision reassertion", async () => {
+		const clock = sinon.useFakeTimers();
+		coordinator.clearForClose();
+		coordinator = createCoordinator({ confirmationRetryMs: 5 });
+		const peerSession = {};
+		openSessions.add(peerSession);
+		expect(accept(peerA, peerSession, challenge(68))).to.be.true;
+		await coordinator.drain();
+		rpcSend.resetHistory();
+
+		coordinator.enqueue({ added: { segments: [] } });
+		const confirmation = coordinator.confirmLatest({ timeout: 100 });
+		void confirmation.catch(() => {});
+		await coordinator.drain();
+		const firstQuery = rpcSend.args.find(
+			(args) => args[0] instanceof RequestReplicationInfoV2AppliedMessage,
+		)![0] as RequestReplicationInfoV2AppliedMessage;
+		await clock.tickAsync(10);
+		await coordinator.drain();
+		const queries = rpcSend.args
+			.map((args) => args[0])
+			.filter(
+				(message): message is RequestReplicationInfoV2AppliedMessage =>
+					message instanceof RequestReplicationInfoV2AppliedMessage,
+			);
+		expect(queries).to.have.length(3);
+		expect(
+			coordinator.acceptApplied(
+				new ReplicationInfoV2AppliedMessage({
+					receiverChallenge: firstQuery.receiverChallenge.slice(),
+					senderEpoch: firstQuery.senderEpoch.slice(),
+					sequence: firstQuery.sequence,
+					revision: firstQuery.revision,
+				}),
+				{ from: peerA, receiverTransportSession: 2n },
+			),
+		).to.be.true;
+		await confirmation;
+		expect(queries[1].sequence).to.equal(firstQuery.sequence);
+		expect(coordinator._confirmations.size).to.equal(0);
+	});
+
+	for (const applyDelay of [8, 12]) {
+		it(`confirms with a real receiver whose ${applyDelay}ms apply reservation outlasts the retry interval`, async () => {
+			const clock = sinon.useFakeTimers();
+			coordinator.clearForClose();
+			coordinator = createCoordinator({
+				confirmationRetryMs: 5,
+				sendRetryMs: 1,
+				maxSendRetryMs: 5,
+			});
+			const peerSession = {};
+			const receiveEpoch = {};
+			let requestTimestamp = 1n;
+			openSessions.add(peerSession);
+			const receiver = new ReplicationInfoV2ReceiveCoordinator({
+				getSelfKey: () => peerA,
+				getReceiverTransportSession: () => 2n,
+				isClosed: () => closed,
+				isPeerSessionCurrent: (_hash, session) => session === peerSession,
+				isReceiveEpochCurrent: (_hash, epoch) => epoch === receiveEpoch,
+				isPeerStateCurrent: (_hash, session, epoch) =>
+					session === peerSession && epoch === receiveEpoch,
+				isSenderTransportSessionCurrent: (_hash, session) =>
+					session === senderTransportSession,
+				sendRequest: async (request) => {
+					expect(
+						accept(
+							peerA,
+							peerSession,
+							request.receiverChallenge,
+							++requestTimestamp,
+							request,
+						),
+					).to.be.true;
+				},
+				refreshLocalCapability: async () => ({
+					receiverTransportSession: 2n,
+					requestNotBeforeMs: Date.now(),
+				}),
+			});
+			const source = {
+				from: self,
+				peerSession,
+				receiveEpoch,
+				senderTransportSession,
+			};
+			let commitDelay = 0;
+			const queries: RequestReplicationInfoV2AppliedMessage[] = [];
+			rpcSend.callsFake(async (message) => {
+				if (message instanceof RequestReplicationInfoV2AppliedMessage) {
+					queries.push(message);
+					const response = receiver.confirmApplied(message, source);
+					if (response) {
+						coordinator.acceptApplied(response, {
+							from: peerA,
+							receiverTransportSession: 2n,
+						});
+					}
+				} else {
+					const admission = receiver.reserve(message, {
+						...source,
+						transportTimestamp: message.sequence,
+					});
+					if (admission) {
+						if (commitDelay === 0) {
+							expect(receiver.commit(admission)).to.be.true;
+						} else {
+							setTimeout(() => receiver.commit(admission), commitDelay);
+						}
+					}
+				}
+				return [];
+			});
+			try {
+				expect(
+					receiver.observeCapability({
+						peerHash: self.hashcode(),
+						target: self,
+						peerSession,
+						receiveEpoch,
+						capabilities:
+							SYNC_CAPABILITY_REPLICATION_INFO_V2_DECODE |
+							SYNC_CAPABILITY_REPLICATION_INFO_V2_SEND,
+						senderTransportSession,
+						capabilityTimestamp: 1n,
+					}),
+				).to.be.true;
+				expect(
+					receiver.markLocalCapabilityReady({
+						peerHash: self.hashcode(),
+						peerSession,
+						receiveEpoch,
+						receiverTransportSession: 2n,
+						requestNotBeforeMs: Date.now(),
+					}),
+				).to.be.true;
+				const state = receiver._receiveStates.get(self.hashcode())!;
+				expect(accept(peerA, peerSession, state.receiverRequestChallenge)).to.be
+					.true;
+				await coordinator.drain();
+				commitDelay = applyDelay;
+				rpcSend.resetHistory();
+				coordinator.enqueue({ added: { segments: [] } });
+				let confirmed = false;
+				const confirmation = coordinator
+					.confirmLatest({ timeout: 100 })
+					.then(() => {
+						confirmed = true;
+					});
+				void confirmation.catch(() => {});
+				await coordinator.drain();
+				expect(state.reservedAdmission).to.exist;
+				await clock.tickAsync(80);
+				await coordinator.drain();
+				expect(confirmed).to.be.true;
+				await confirmation;
+				if (applyDelay === 12) {
+					expect(requestTimestamp > 1n).to.be.true;
+				}
+				expect(queries.length).to.be.greaterThan(2);
+				expect(new Set(queries.map((query) => query.sequence))).to.deep.equal(
+					new Set([2n]),
+				);
+				expect(coordinator._confirmations.size).to.equal(0);
+			} finally {
+				receiver.clearForClose();
+			}
+		});
+	}
+
+	it("settles an outstanding revision without confirming a newer revision or replacement session", async () => {
+		const clock = sinon.useFakeTimers();
+		coordinator.clearForClose();
+		coordinator = createCoordinator({ confirmationRetryMs: 5 });
+		const peerSession = {};
+		openSessions.add(peerSession);
+		expect(accept(peerA, peerSession, challenge(70))).to.be.true;
+		await coordinator.drain();
+		rpcSend.resetHistory();
+		const queries: RequestReplicationInfoV2AppliedMessage[] = [];
+		rpcSend.callsFake(async (message) => {
+			if (message instanceof RequestReplicationInfoV2AppliedMessage) {
+				queries.push(message);
+			}
+			return [];
+		});
+		const respond = (query: RequestReplicationInfoV2AppliedMessage) =>
+			coordinator.acceptApplied(
+				new ReplicationInfoV2AppliedMessage({
+					receiverChallenge: query.receiverChallenge.slice(),
+					senderEpoch: query.senderEpoch.slice(),
+					sequence: query.sequence,
+					revision: query.revision,
+				}),
+				{ from: peerA, receiverTransportSession: 2n },
+			);
+
+		coordinator.enqueue({ added: { segments: [] } });
+		const first = coordinator.confirmLatest({ timeout: 100 });
+		void first.catch(() => {});
+		await coordinator.drain();
+		const firstQuery = queries[0];
+		coordinator.enqueue({ stopped: { segmentIds: [] } });
+		let secondConfirmed = false;
+		const second = coordinator.confirmLatest({ timeout: 100 }).then(() => {
+			secondConfirmed = true;
+		});
+		void second.catch(() => {});
+		await coordinator.drain();
+		expect(respond(firstQuery)).to.be.true;
+		await first;
+		expect(secondConfirmed).to.be.false;
+		await clock.tickAsync(5);
+		await coordinator.drain();
+		const secondQuery = queries.at(-1)!;
+		expect(secondQuery.revision).to.equal(2n);
+		expect(respond(firstQuery)).to.be.false;
+
+		openSessions.delete(peerSession);
+		coordinator.clearPeer(peerA.hashcode(), peerSession);
+		const replacementSession = {};
+		openSessions.add(replacementSession);
+		expect(accept(peerA, replacementSession, challenge(71), 2n)).to.be.true;
+		await coordinator.drain();
+		expect(respond(secondQuery)).to.be.false;
+		expect(secondConfirmed).to.be.false;
+		const replacementQuery = queries.at(-1)!;
+		expect(replacementQuery.sequence).to.equal(1n);
+		expect(replacementQuery.revision).to.equal(2n);
+		expect(respond(replacementQuery)).to.be.true;
+		await second;
+		expect(coordinator._confirmations.size).to.equal(0);
+	});
+
+	it("advances a newer waiter after an older query-only retry expires", async () => {
+		const clock = sinon.useFakeTimers();
+		coordinator.clearForClose();
+		coordinator = createCoordinator({ confirmationRetryMs: 5 });
+		const peerSession = {};
+		openSessions.add(peerSession);
+		expect(accept(peerA, peerSession, challenge(72))).to.be.true;
+		await coordinator.drain();
+		const blockedQuery = pDefer<never[]>();
+		let queries = 0;
+		rpcSend.callsFake(async (message) => {
+			if (message instanceof RequestReplicationInfoV2AppliedMessage) {
+				queries++;
+				if (queries === 2) return blockedQuery.promise;
+				if (message.revision === 2n) {
+					coordinator.acceptApplied(
+						new ReplicationInfoV2AppliedMessage({
+							receiverChallenge: message.receiverChallenge.slice(),
+							senderEpoch: message.senderEpoch.slice(),
+							sequence: message.sequence,
+							revision: message.revision,
+						}),
+						{ from: peerA, receiverTransportSession: 2n },
+					);
+				}
+			}
+			return [];
+		});
+		coordinator.enqueue({ added: { segments: [] } });
+		const older = coordinator
+			.confirmLatest({ timeout: 6 })
+			.catch((error) => error);
+		await coordinator.drain();
+		await clock.tickAsync(5);
+		expect(queries).to.equal(2);
+		coordinator.enqueue({ stopped: { segmentIds: [] } });
+		const newer = coordinator.confirmLatest({ timeout: 100 });
+		void newer.catch(() => {});
+		await clock.tickAsync(1);
+		expect(await older).to.be.instanceOf(TimeoutError);
+		await coordinator.drain();
+		await newer;
+		expect(queries).to.equal(3);
+		expect(coordinator._confirmations.size).to.equal(0);
+		blockedQuery.resolve([]);
 	});
 
 	it("survives reconnect and confirms the replacement peer session", async () => {

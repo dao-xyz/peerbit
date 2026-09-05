@@ -430,10 +430,13 @@ describe("append delivery options — persisted receipts", function () {
 		}
 	});
 
-	it("rebinds a readiness waiter to a same-key replacement generation", async () => {
+	const assertReadinessRebind = async (
+		wake: "event" | "recovery tick" | "replicator loss",
+	) => {
 		const { writer, receiver } = await openPair(true);
 		await waitForPersistedCapability(writer, receiver);
 		const log = writer.log as any;
+		log.waitForReplicatorRequestIntervalMs = 50;
 		const receiverKey = receiver.node.identity.publicKey;
 		const receiverHash = receiverKey.hashcode();
 		const oldSession = log._peerSessions.current(receiverHash);
@@ -564,11 +567,33 @@ describe("append delivery options — persisted receipts", function () {
 			);
 			expect(oldConfirmationSignal.aborted).to.equal(false);
 
+			if (wake === "replicator loss") {
+				log.uniqueReplicators.delete(receiverHash);
+				await waitForResolved(
+					() => expect(oldConfirmationSignal.aborted).to.equal(true),
+					{ timeout: 500 },
+				);
+				const lost = await log.getPersistedReceiptPeerReadiness(receiverKey);
+				expect(lost).to.deep.include({
+					status: "pending",
+					reason: "not-replicating",
+				});
+				log.uniqueReplicators.add(receiverHash);
+			}
 			currentSession = newSession;
 			currentReceiveEpoch = newReceiveEpoch;
 			log._peerSyncCapabilitySessions.set(receiverHash, newTransportSession);
-			log.advanceReplicationInfoRecoveryEpoch(receiverHash);
-			expect(oldConfirmationSignal.aborted).to.equal(true);
+			if (wake === "event") {
+				log.advanceReplicationInfoRecoveryEpoch(receiverHash);
+				expect(oldConfirmationSignal.aborted).to.equal(true);
+			} else {
+				// Recovery must inspect the authoritative generation even if its
+				// transition event was coalesced or missed during confirmation.
+				await waitForResolved(
+					() => expect(oldConfirmationSignal.aborted).to.equal(true),
+					{ timeout: 500 },
+				);
+			}
 
 			const replacement = await wait;
 			expect(replacement.status).to.equal("ready");
@@ -605,7 +630,11 @@ describe("append delivery options — persisted receipts", function () {
 			current.restore();
 			log._peerSyncCapabilitySessions.set(receiverHash, oldTransportSession);
 		}
-	});
+	};
+	for (const wake of ["event", "recovery tick", "replicator loss"] as const) {
+		it(`rebinds a readiness waiter to a same-key replacement generation through ${wake}`, () =>
+			assertReadinessRebind(wake));
+	}
 
 	it("follows a real same-key replacement while a quiet log waits", async () => {
 		const { writer, receiver } = await openPair(true);
@@ -725,6 +754,7 @@ describe("append delivery options — persisted receipts", function () {
 		const rearm = sinon
 			.stub(log._v2Receive, "reAdvertiseLocalCapabilityForRemoteFull")
 			.returns(true);
+		const active = sinon.stub(log._v2Receive, "isCurrentActive").returns(true);
 		let confirmationSignal: AbortSignal | undefined;
 		const confirmationTimeouts: number[] = [];
 		const confirm = sinon
@@ -764,10 +794,18 @@ describe("append delivery options — persisted receipts", function () {
 			const initialNudges = nudge.callCount;
 			const initialRearms = rearm.callCount;
 
-			await clock.tickAsync(110);
+			// A reserved inbound Full temporarily closes receive admission without
+			// changing the peer/session or role. Keep the outbound query alive.
+			active.returns(false);
+			await clock.tickAsync(50);
+			expect(confirm.calledOnce).to.be.true;
+			expect(confirmationSignal?.aborted).to.be.false;
+			active.returns(true);
+
+			await clock.tickAsync(60);
 			expect(confirm.calledOnce).to.be.true;
 			expect(nudge.callCount).to.be.at.least(initialNudges + 2);
-			expect(rearm.callCount).to.be.at.least(initialRearms + 2);
+			expect(rearm.callCount).to.be.at.least(initialRearms + 1);
 			expect(rearm.getCalls().every((call) => !call.args[0].signal.aborted)).to
 				.be.true;
 			expect(confirmationTimeouts).to.have.length(1);
@@ -785,6 +823,7 @@ describe("append delivery options — persisted receipts", function () {
 		} finally {
 			clock.restore();
 			nudge.restore();
+			active.restore();
 			confirm.restore();
 			rearm.restore();
 			hasCurrent.restore();
@@ -1437,6 +1476,31 @@ describe("append delivery options — persisted receipts", function () {
 		} finally {
 			send.restore();
 		}
+	});
+
+	it("repairs missing outbound state after preflight before persisted delivery", async () => {
+		const { writer, receiver } = await openPair(true);
+		await waitForPersistedCapability(writer, receiver);
+		const receiverKey = receiver.node.identity.publicKey;
+		const receiverHash = receiverKey.hashcode();
+		await writer.log.waitForPersistedReceiptPeerReadiness(receiverKey, {
+			timeout: 5_000,
+		});
+		const { entry } = await writer.add("sender-disappeared-after-preflight", {
+			target: "none",
+		});
+		const log = writer.log as any;
+		await log._v2Send.drain();
+		log._v2Send.clearPeer(receiverHash);
+		expect(log.persistedReceiptPeerSession(receiverHash)).to.exist;
+		expect(log._v2Send._sendStates.has(receiverHash)).to.be.false;
+
+		await writer.log.deliverPersistedEntries([entry], {
+			target: "replicators",
+			delivery: { reliability: "persisted", minAcks: 1, timeout: 5_000 },
+		});
+		expect(await receiver.log.log.has(entry.hash)).to.be.true;
+		expect(log._v2Send._sendStates.has(receiverHash)).to.be.true;
 	});
 
 	it("rebuilds missing outbound confirmation state from an active quiet peer", async () => {

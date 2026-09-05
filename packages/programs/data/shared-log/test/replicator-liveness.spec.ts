@@ -1,8 +1,13 @@
+import { createStore } from "@peerbit/any-store";
 import type { PublicSignKey } from "@peerbit/crypto";
+import { create as createSQLiteIndices } from "@peerbit/indexer-sqlite3";
 import { TestSession } from "@peerbit/test-utils";
 import { waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
+import fs from "fs/promises";
+import os from "os";
 import pDefer from "p-defer";
+import path from "path";
 import sinon from "sinon";
 import { ReplicationPingMessage } from "../src/replication.js";
 import { EventStore } from "./utils/stores/index.js";
@@ -27,9 +32,14 @@ const getSubscriberTestHooks = (
 
 describe("waitForReplicator liveness", () => {
 	let session: TestSession;
+	let directory: string | undefined;
 
 	afterEach(async () => {
 		await session?.stop();
+		if (directory) {
+			await fs.rm(directory, { recursive: true, force: true });
+			directory = undefined;
+		}
 	});
 
 	it("evicts replicators that disappear without a clean close and emits leave", async () => {
@@ -741,6 +751,96 @@ describe("waitForReplicator liveness", () => {
 			db0.log.rpc.send = originalSend;
 			hooks.confirmReplicatorSubscriberPresence =
 				originalConfirmSubscriberPresence;
+		}
+	});
+
+	it("recovers quiet replicator loss before propagating independent heads", async () => {
+		directory = await fs.mkdtemp(
+			path.join(os.tmpdir(), "peerbit-replicator-recovery-"),
+		);
+		session = await TestSession.connected(
+			2,
+			["first", "second"].map((name) => ({
+				directory: path.join(directory!, name),
+				storage: {
+					storeFactory: (storeDirectory?: string) =>
+						createStore(storeDirectory),
+				},
+				indexer: (indexDirectory?: string) =>
+					createSQLiteIndices(indexDirectory),
+			})),
+		);
+		const store = new EventStore<string, any>();
+		const args = {
+			replicate: { factor: 1 },
+			timeUntilRoleMaturity: 0,
+			waitForReplicatorRequestIntervalMs: 50,
+		};
+		const db0 = await session.peers[0].open(store, { args });
+		const db1 = await session.peers[1].open(store.clone(), { args });
+		const remoteKey = session.peers[1].identity.publicKey;
+		const peerHash = remoteKey.hashcode();
+		await db0.log.waitForReplicator(remoteKey, { timeout: 10_000 });
+		await db0.log.waitForPersistedReceiptPeerReadiness(remoteKey, {
+			timeout: 10_000,
+		});
+
+		const log = db0.log as any;
+		const peerSession = log._peerSessions.current(peerHash);
+		const oldReceiveEpoch = log._peerSessions.receiveEpoch(peerHash);
+		const refreshEntered = pDefer<void>();
+		const releaseRefresh = pDefer<void>();
+		const receive = log._v2Receive;
+		const originalRefresh = receive.deps.refreshLocalCapability.bind(
+			receive.deps,
+		);
+		const refresh = sinon
+			.stub(receive.deps, "refreshLocalCapability")
+			.callsFake(async (properties) => {
+				refreshEntered.resolve();
+				await releaseRefresh.promise;
+				return originalRefresh(properties);
+			});
+		try {
+			// Exercise the committed removal used by the liveness monitor without
+			// replacing the still-authenticated subscription or emitting a new write.
+			expect(
+				await log.removeReplicator(remoteKey, {
+					subscriptionEpoch: peerSession,
+				}),
+			).to.be.true;
+			await refreshEntered.promise;
+			expect((await db0.log.getReplicators()).has(peerHash)).to.be.false;
+			expect(log._peerSessions.current(peerHash)).to.equal(peerSession);
+			expect(log._peerSessions.receiveEpoch(peerHash)).not.to.equal(
+				oldReceiveEpoch,
+			);
+			expect(log.persistedReceiptPeerSession(peerHash)).to.be.undefined;
+
+			const recovered = db0.log.waitForPersistedReceiptPeerReadiness(
+				remoteKey,
+				{ timeout: 10_000 },
+			);
+			releaseRefresh.resolve();
+			await db0.log.waitForReplicator(remoteKey, { timeout: 10_000 });
+			expect((await recovered).status).to.equal("ready");
+			expect(log._peerSessions.current(peerHash)).to.equal(peerSession);
+
+			const headHashes: string[] = [];
+			for (const value of ["first", "second", "third"]) {
+				const { entry } = await db1.add(value, { meta: { next: [] } });
+				headHashes.push(entry.hash);
+			}
+			await waitForResolved(
+				async () =>
+					expect(
+						(await db0.log.log.getHeads().all()).map((head) => head.hash),
+					).to.have.members(headHashes),
+				{ timeout: 10_000, delayInterval: 20 },
+			);
+		} finally {
+			releaseRefresh.resolve();
+			refresh.restore();
 		}
 	});
 });

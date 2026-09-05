@@ -40,10 +40,14 @@ type SendRequest =
 			revision: bigint;
 	  };
 
+type PendingRequest = SendRequest | { kind: "confirmation"; revision: bigint };
+
 type ApplicationConfirmationRequest = {
 	sequence: bigint;
 	revision: bigint;
 	controller: AbortController;
+	nextFullReassertAt: number;
+	fullReassertions: number;
 };
 
 type ApplicationConfirmationTarget = {
@@ -124,7 +128,7 @@ export type ReplicationInfoV2SendState = {
 	retryTimer?: ReturnType<typeof setTimeout>;
 	retryAttempts: number;
 	controller: AbortController;
-	pending?: SendRequest;
+	pending?: PendingRequest;
 	worker?: Promise<void>;
 	applicationConfirmationRequest?: ApplicationConfirmationRequest;
 	appliedRevision?: bigint;
@@ -442,10 +446,42 @@ export class ReplicationInfoV2SendCoordinator<R extends "u32" | "u64"> {
 				) {
 					continue;
 				}
-				this.enqueueState(state, {
-					kind: "snapshot",
-					revision,
-				});
+				const requested = state.applicationConfirmationRequest;
+				// A Full reserves the receiver's apply lane, which also closes its
+				// confirmation gate. Leave increasingly long query-only intervals
+				// for that commit to finish, while retaining Full repair for a quiet
+				// stream whose update reached transport but missed host admission.
+				if (
+					forceReassert &&
+					requested &&
+					Date.now() < requested.nextFullReassertAt
+				) {
+					this.enqueueState(state, {
+						kind: "confirmation",
+						revision: requested.revision,
+					});
+				} else {
+					if (requested) {
+						requested.fullReassertions = Math.min(
+							requested.fullReassertions + 1,
+							MAX_BACKOFF_EXPONENT,
+						);
+						requested.nextFullReassertAt =
+							Date.now() +
+							Math.min(
+								Math.max(
+									DEFAULT_MAX_SEND_RETRY_MS,
+									this.confirmationRetryMs * 2,
+								),
+								this.confirmationRetryMs *
+									2 ** (requested.fullReassertions + 1),
+							);
+					}
+					this.enqueueState(state, {
+						kind: "snapshot",
+						revision,
+					});
+				}
 			}
 		}
 		this.scheduleConfirmationRetry();
@@ -1000,7 +1036,7 @@ export class ReplicationInfoV2SendCoordinator<R extends "u32" | "u64"> {
 
 	private enqueueState(
 		state: ReplicationInfoV2SendState,
-		request: SendRequest,
+		request: PendingRequest,
 	): void {
 		if (state.nextSequence > MAX_U64 || !this.isCurrent(state)) {
 			this.parkSnapshotForRetry(state);
@@ -1207,7 +1243,7 @@ export class ReplicationInfoV2SendCoordinator<R extends "u32" | "u64"> {
 		});
 	}
 
-	/** Accept an exact, signed response to this destination's latest query. */
+	/** Accept an exact, signed response to this destination's outstanding query. */
 	acceptApplied(
 		message: ReplicationInfoV2AppliedMessage,
 		properties: {
@@ -1247,6 +1283,36 @@ export class ReplicationInfoV2SendCoordinator<R extends "u32" | "u64"> {
 		return true;
 	}
 
+	private async queryApplication(
+		state: ReplicationInfoV2SendState,
+		requested: ApplicationConfirmationRequest,
+	): Promise<void> {
+		const signal = AbortSignal.any([
+			state.controller.signal,
+			state.ownershipLifecycleController.signal,
+			requested.controller.signal,
+		]);
+		try {
+			await this.sendConfirmationRequest(
+				new RequestReplicationInfoV2AppliedMessage({
+					receiverChallenge: state.receiverChallenge.slice(),
+					senderEpoch: state.senderEpoch.slice(),
+					sequence: requested.sequence,
+					revision: requested.revision,
+				}),
+				state,
+				signal,
+			);
+		} catch (error) {
+			if (state.applicationConfirmationRequest === requested) {
+				state.applicationConfirmationRequest = undefined;
+			}
+			if (!requested.controller.signal.aborted) {
+				throw error;
+			}
+		}
+	}
+
 	private async runWorker(state: ReplicationInfoV2SendState): Promise<void> {
 		while (true) {
 			if (state.nextSequence > MAX_U64 || !this.isCurrent(state)) {
@@ -1259,6 +1325,14 @@ export class ReplicationInfoV2SendCoordinator<R extends "u32" | "u64"> {
 			}
 			state.pending = undefined;
 			state.inFlightRevision = request.revision;
+			if (request.kind === "confirmation") {
+				const requested = state.applicationConfirmationRequest;
+				if (requested && this.supportsApplicationConfirmation(state)) {
+					await this.queryApplication(state, requested);
+				}
+				state.inFlightRevision = undefined;
+				continue;
+			}
 			const message = await this.createMessage(state, request);
 			if (state.nextSequence > MAX_U64 || !this.isCurrent(state)) {
 				this.parkSnapshotForRetry(state);
@@ -1287,44 +1361,23 @@ export class ReplicationInfoV2SendCoordinator<R extends "u32" | "u64"> {
 				this.supportsApplicationConfirmation(state) &&
 				this.isCurrent(state)
 			) {
-				const confirmationRequest: ApplicationConfirmationRequest = {
-					sequence: message.sequence,
-					revision: request.revision,
-					controller: new AbortController(),
-				};
+				// Keep one outstanding query until answered or no longer needed. A
+				// query can arrive before the receiver commits its Full, and a retry
+				// must still ask about that sequence after the commit. Replacing it
+				// with each newer Full can keep every query ahead of the apply cursor
+				// and also discard a valid response already in flight.
+				const confirmationRequest: ApplicationConfirmationRequest =
+					state.applicationConfirmationRequest ?? {
+						sequence: message.sequence,
+						revision: request.revision,
+						controller: new AbortController(),
+						nextFullReassertAt: Date.now() + this.confirmationRetryMs * 2,
+						fullReassertions: 0,
+					};
 				// Install before invoking transport: an in-process or very fast remote
 				// response may arrive before this send promise resolves.
-				state.applicationConfirmationRequest?.controller.abort(
-					new AbortError("Replication confirmation superseded"),
-				);
 				state.applicationConfirmationRequest = confirmationRequest;
-				const confirmationSignal = AbortSignal.any([
-					state.controller.signal,
-					state.ownershipLifecycleController.signal,
-					confirmationRequest.controller.signal,
-				]);
-				try {
-					await this.sendConfirmationRequest(
-						new RequestReplicationInfoV2AppliedMessage({
-							receiverChallenge: state.receiverChallenge.slice(),
-							senderEpoch: state.senderEpoch.slice(),
-							sequence: message.sequence,
-							revision: request.revision,
-						}),
-						state,
-						confirmationSignal,
-					);
-				} catch (error) {
-					if (state.applicationConfirmationRequest === confirmationRequest) {
-						state.applicationConfirmationRequest = undefined;
-					}
-					if (confirmationRequest.controller.signal.aborted) {
-						if (!this.isCurrent(state)) return;
-						state.inFlightRevision = undefined;
-						continue;
-					}
-					throw error;
-				}
+				await this.queryApplication(state, confirmationRequest);
 			}
 			state.inFlightRevision = undefined;
 			if (state.nextSequence > MAX_U64 || !this.isCurrent(state)) {
