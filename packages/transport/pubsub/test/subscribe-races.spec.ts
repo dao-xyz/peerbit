@@ -1,4 +1,5 @@
 import { field, variant, vec } from "@dao-xyz/borsh";
+import type { Stream } from "@libp2p/interface";
 import { getPublicKeyFromPeerId, sha256Base64Sync } from "@peerbit/crypto";
 import { TestSession } from "@peerbit/libp2p-test-utils";
 import {
@@ -1320,6 +1321,178 @@ describe("pubsub (subscribe race regressions)", function () {
 			timeout: 1_000,
 			delayInterval: 10,
 		});
+	});
+
+	it("installs one signed snapshot listener on a same-identity stream replacement", async () => {
+		session = await createDisconnectedSessionWithPerPeerRoots(2);
+		const receiver = session.peers[0]!.services.pubsub;
+		const sender = session.peers[1]!.services.pubsub;
+		const internals = receiver as any;
+		const protocol = "/peerbit/topic-control-plane/2.1.0";
+		const raw = (id: string) =>
+			Object.assign(new EventTarget(), {
+				id,
+				protocol,
+				send: () => true,
+				abort: sinon.spy(),
+				close: sinon.stub().resolves(),
+			}) as unknown as Stream;
+		const send = sinon
+			.stub(internals, "sendAutoTopicRootCandidates")
+			.resolves();
+		const rebuild = sinon.stub(
+			internals,
+			"rebuildAutoTopicRootCandidatesFromClaims",
+		);
+		const remove = sinon.spy(internals, "_removePeer");
+		const outboundReady = sinon.spy();
+		(receiver as EventTarget).addEventListener(
+			"stream:outbound",
+			outboundReady,
+		);
+		const old = receiver.addPeer(
+			sender.peerId,
+			sender.publicKey,
+			protocol,
+			"old",
+		);
+		await old.attachOutboundStream(raw("old-outbound"));
+		const queue = old._getActiveOutboundPushable()!;
+		const originalReturn = queue.return!.bind(queue);
+		const gate = deferred();
+		const returning = sinon.stub(queue, "return").callsFake(async () => {
+			await gate.promise;
+			return originalReturn();
+		});
+		const closing = old.close();
+		try {
+			expect(returning.calledOnce).to.equal(true);
+			expect(old.isClosed).to.equal(true);
+			send.resetHistory();
+			outboundReady.resetHistory();
+			const replacement = receiver.addPeer(
+				sender.peerId,
+				sender.publicKey,
+				protocol,
+				"replacement",
+			);
+			expect(replacement).to.not.equal(old);
+			expect(replacement.isWritable).to.equal(false);
+			// Reusing this live object must not install another listener.
+			expect(
+				receiver.addPeer(
+					sender.peerId,
+					sender.publicKey,
+					protocol,
+					"replacement-again",
+				),
+			).to.equal(replacement);
+			old.dispatchEvent(new CustomEvent("stream:outbound"));
+			expect(send.called || outboundReady.called).to.equal(false);
+			const replacementRaw = raw("replacement-outbound");
+			const replacementAbort = replacementRaw.abort as sinon.SinonSpy;
+			await replacement.attachOutboundStream(replacementRaw);
+			expect(replacement.isWritable).to.equal(true);
+			expect(send.callCount).to.equal(1);
+			expect(send.firstCall.args[0]).to.deep.equal([replacement]);
+			expect(outboundReady.callCount).to.equal(1);
+
+			gate.resolve();
+			await closing;
+			expect(remove.called).to.equal(false);
+			expect(receiver.peers.get(sender.publicKeyHash)).to.equal(replacement);
+			expect(replacement.isClosed).to.equal(false);
+			expect(replacement.isWritable).to.equal(true);
+			expect(replacementAbort.called).to.equal(false);
+			old.dispatchEvent(new CustomEvent("stream:outbound"));
+			expect(send.callCount).to.equal(1);
+			expect(outboundReady.callCount).to.equal(1);
+			replacement.dispatchEvent(new CustomEvent("stream:outbound"));
+			expect(send.callCount).to.equal(2);
+			expect(send.secondCall.args[0]).to.deep.equal([replacement]);
+			expect(outboundReady.callCount).to.equal(2);
+		} finally {
+			gate.resolve();
+			await closing;
+			returning.restore();
+			remove.restore();
+			rebuild.restore();
+			send.restore();
+			(receiver as EventTarget).removeEventListener(
+				"stream:outbound",
+				outboundReady,
+			);
+		}
+	});
+
+	it("does not suppress a replacement claim between base and subclass removal", async () => {
+		session = await createDisconnectedSessionWithPerPeerRoots(2);
+		const receiver = session.peers[0]!.services.pubsub;
+		const sender = session.peers[1]!.services.pubsub;
+		const internals = receiver as any;
+		const protocol = "/peerbit/topic-control-plane/2.1.0";
+		const old = receiver.addPeer(
+			sender.peerId,
+			sender.publicKey,
+			protocol,
+			"old",
+		);
+		const claim = (sender as any).localSignedTopicRootCandidateClaim.bytes;
+		expect(
+			await internals.importSignedTopicRootCandidateClaim(
+				claim,
+				sender.publicKeyHash,
+			),
+		).to.equal(true);
+		const originalClose = old.close.bind(old);
+		const gate = deferred();
+		const closing = sinon.stub(old, "close").returns(gate.promise);
+		const rebuild = sinon.stub(
+			internals,
+			"rebuildAutoTopicRootCandidatesFromClaims",
+		);
+		let replacement: ReturnType<typeof receiver.addPeer> | undefined;
+		// Register before the base method awaits close. The queued stream open then
+		// runs after base deletion but before the subclass resumes its own await.
+		const replacementReady = gate.promise.then(
+			() =>
+				new Promise<void>((resolve, reject) => {
+					queueMicrotask(() => {
+						try {
+							expect(receiver.peers.has(sender.publicKeyHash)).to.equal(false);
+							replacement = receiver.addPeer(
+								sender.peerId,
+								sender.publicKey,
+								protocol,
+								"replacement",
+							);
+							resolve();
+						} catch (error) {
+							reject(error);
+						}
+					});
+				}),
+		);
+		const removing = internals._removePeer(sender.publicKey);
+		try {
+			gate.resolve();
+			expect(await removing).to.equal(undefined);
+			await replacementReady;
+			expect(replacement).to.not.equal(undefined);
+			expect(receiver.peers.get(sender.publicKeyHash)).to.equal(replacement);
+			expect(
+				internals.suppressedDepartedTopicRootCandidateClaims.has(
+					sender.publicKeyHash,
+				),
+			).to.equal(false);
+			expect(rebuild.calledOnce).to.equal(true);
+		} finally {
+			gate.resolve();
+			await Promise.allSettled([removing, replacementReady]);
+			closing.restore();
+			rebuild.restore();
+			await originalClose();
+		}
 	});
 
 	it("forwards retained claims when local refresh fails but envelope signing remains available", async () => {
