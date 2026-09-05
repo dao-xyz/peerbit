@@ -17,7 +17,7 @@ import path from "node:path";
 import { Peerbit } from "peerbit";
 import { createRustPeerbitOptions } from "peerbit/rust";
 import sinon from "sinon";
-import { policy, transform } from "../src/index.js";
+import { DocumentBatchCommitError, policy, transform } from "../src/index.js";
 import { Documents } from "../src/program.js";
 import { Document, TestStore } from "./data.js";
 
@@ -2990,79 +2990,92 @@ describe("durable native commit acknowledgement", function () {
 		});
 	}
 
-	it("uses one durable barrier for a native batch and reports its failure", async () => {
-		const { store, wrapper, durable, backbone } = await openStore();
-		const docs = [
-			new Document({ id: "batch-1", name: "batch-1" }),
-			new Document({ id: "batch-2", name: "batch-2" }),
-			new Document({ id: "batch-3", name: "batch-3" }),
-		];
-		let releaseWrite!: () => void;
-		const writeGate = new Promise<void>((resolve) => {
-			releaseWrite = resolve;
-		});
-		let markWriteStarted!: () => void;
-		const writeStarted = new Promise<void>((resolve) => {
-			markWriteStarted = resolve;
-		});
-		const durablePutStub = sinon
-			.stub(durable, "putKnownMany")
-			.callsFake(async () => {
-				markWriteStarted();
-				await writeGate;
-				throw new Error("batch durable mirror failed");
+	for (const batching of [undefined, "required"] as const) {
+		it(`uses one durable barrier for a native batch and reports its failure (${batching ?? "default"})`, async () => {
+			const { store, wrapper, durable, backbone } = await openStore();
+			const docs = [
+				new Document({ id: "batch-1", name: "batch-1" }),
+				new Document({ id: "batch-2", name: "batch-2" }),
+				new Document({ id: "batch-3", name: "batch-3" }),
+			];
+			let releaseWrite!: () => void;
+			const writeGate = new Promise<void>((resolve) => {
+				releaseWrite = resolve;
 			});
-		const singlePutSpy = sinon.spy(durable, "putKnown");
-		const mirrorSpy = sinon.spy(wrapper, "mirrorManyToDurable");
-		const nativeBatchSpy = sinon.spy(
-			backbone,
-			"preparePlainCommittedNoNextStorageAppendDocumentIndexCompactBatchTransaction",
-		);
-
-		try {
-			let settled = false;
-			const pending = store.docs.putMany(docs, {
-				unique: true,
-				target: "none",
+			let markWriteStarted!: () => void;
+			const writeStarted = new Promise<void>((resolve) => {
+				markWriteStarted = resolve;
 			});
-			void pending.then(
-				() => {
-					settled = true;
-				},
-				() => {
-					settled = true;
-				},
+			const durablePutStub = sinon
+				.stub(durable, "putKnownMany")
+				.callsFake(async () => {
+					markWriteStarted();
+					await writeGate;
+					throw new Error("batch durable mirror failed");
+				});
+			const singlePutSpy = sinon.spy(durable, "putKnown");
+			const mirrorSpy = sinon.spy(wrapper, "mirrorManyToDurable");
+			const nativeBatchSpy = sinon.spy(
+				backbone,
+				"preparePlainCommittedNoNextStorageAppendDocumentIndexCompactBatchTransaction",
 			);
-			await within(writeStarted, "durable batch mirror");
-			expect(mirrorSpy.callCount).equal(1);
-			expect(durablePutStub.callCount).equal(1);
-			expect(singlePutSpy.callCount).equal(0);
-			expect(settled).equal(false);
 
-			releaseWrite();
-			const failure = await pending.then(
-				() => undefined,
-				(error: unknown) => error,
-			);
-			expect(failure).to.be.instanceOf(NativeDurableCommitError);
-			const prepared = nativeBatchSpy.firstCall.returnValue as Array<{
-				entry: { hash: string };
-			}>;
-			expect((failure as NativeDurableCommitError).committedCids).deep.equal(
-				prepared.map(({ entry }) => entry.hash),
-			);
-			expect((failure as NativeDurableCommitError).failedCids).deep.equal(
-				prepared.map(({ entry }) => entry.hash),
-			);
-			expect(store.docs.log.log.length).equal(0);
-		} finally {
-			releaseWrite();
-			nativeBatchSpy.restore();
-			mirrorSpy.restore();
-			singlePutSpy.restore();
-			durablePutStub.restore();
-		}
-	});
+			try {
+				let settled = false;
+				const pending = store.docs.putMany(docs, {
+					batching,
+					unique: true,
+					target: "none",
+				});
+				void pending.then(
+					() => {
+						settled = true;
+					},
+					() => {
+						settled = true;
+					},
+				);
+				await within(writeStarted, "durable batch mirror");
+				expect(mirrorSpy.callCount).equal(1);
+				expect(durablePutStub.callCount).equal(1);
+				expect(singlePutSpy.callCount).equal(0);
+				expect(settled).equal(false);
+
+				releaseWrite();
+				const failure = await pending.then(
+					() => undefined,
+					(error: unknown) => error,
+				);
+				let durableFailure = failure;
+				if (batching === "required") {
+					expect(failure).instanceOf(DocumentBatchCommitError);
+					const batchFailure = failure as DocumentBatchCommitError;
+					expect(batchFailure.localCommit).equal("indeterminate");
+					expect(batchFailure.retrySafe).equal(false);
+					expect(batchFailure.recoveryRequired).equal(true);
+					expect(batchFailure.committedItems).deep.equal([]);
+					durableFailure = batchFailure.cause;
+				}
+				expect(durableFailure).to.be.instanceOf(NativeDurableCommitError);
+				const prepared = nativeBatchSpy.firstCall.returnValue as Array<{
+					entry: { hash: string };
+				}>;
+				expect(
+					(durableFailure as NativeDurableCommitError).committedCids,
+				).deep.equal(prepared.map(({ entry }) => entry.hash));
+				expect(
+					(durableFailure as NativeDurableCommitError).failedCids,
+				).deep.equal(prepared.map(({ entry }) => entry.hash));
+				expect(store.docs.log.log.length).equal(0);
+			} finally {
+				releaseWrite();
+				nativeBatchSpy.restore();
+				mirrorSpy.restore();
+				singlePutSpy.restore();
+				durablePutStub.restore();
+			}
+		});
+	}
 
 	it("does not delete the published head when its replacement mirror fails", async () => {
 		const { store, wrapper, durable } = await openStore(true);
