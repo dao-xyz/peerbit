@@ -50,11 +50,14 @@ plane without putting application identifiers into these summaries.
 - `sharedLog.adaptive.rebalance` reports one adaptive tick: `outcome`,
   `idleRemainingMs`, and, when reached, the existing controller inputs
   `storageUsedBytes`, `storageObjectiveBytes`, `currentFactor`, `totalFactor`,
-  `controllerPeerCount`, and `cpuUsage`, plus `proposedFactor`/`appliedFactor`.
+  `controllerPeerCount`, and `cpuUsage`, plus `proposedFactor`.
   Storage is local block-store usage, not process RSS; the objective is soft.
   `controllerPeerCount` is the controller's existing replication-index size
   input, not a new count of distinct peers. Outcomes distinguish `idle-deferred`,
-  `unchanged`, `applied`, `not-permitted`, `stale`, and `error`.
+  `unchanged`, `apply-settled`, `not-permitted`, `stale`, and `error`.
+  `apply-settled` only means the awaited update returned: a lower authorization
+  check can decline it and still settle. It does not prove that the proposed
+  factor was applied, and profiling adds no authorization checks to verify that.
   Resource-limited adaptive logs currently defer a tick after a local append
   until idle for `max(10 seconds, 5 × limits.interval)`; other adaptive logs use
   their rebalance interval. A deferral reports the remaining idle time without
@@ -70,10 +73,13 @@ plane without putting application identifiers into these summaries.
   handed to dispatch and `repairBatches` as dispatch calls, plus an `outcome`.
 - `sharedLog.repair.dispatch` reports `mode`, `transport`, `outcome`, and
   `knownSuppressedEntries`. `entries` is the input size; `count` is the selected
-  candidate size after known-peer suppression, for one target. `dispatched`
+  candidate size after known-peer suppression, captured before dispatch for one
+  target even if a custom synchronizer mutates its input map. `dispatched`
   means the local lower-level call settled, not that bytes arrived or a durable
-  receipt was obtained. Suppression, cancellation, staleness and errors can be
-  distinguished from successful local dispatch.
+  receipt was obtained. `stale` includes a false result from the last lifecycle
+  predicate check made by the simple lower path; profiling adds no such checks.
+  It does not detect invalidation the lower path never checked. Suppression,
+  observed cancellation/staleness, and errors have separate outcomes.
 - `sharedLog.receive.existingHeads` and
   `sharedLog.rawReceive.existingHeads` include `count`: distinct hashes already
   present according to the existing batched lookup. `entries` includes every

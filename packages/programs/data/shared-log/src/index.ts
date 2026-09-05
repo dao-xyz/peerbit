@@ -10656,6 +10656,8 @@ export class SharedLog<
 		const profile = this._logProperties?.sync?.profile;
 		const startedAt = syncProfileStart(profile);
 		const inputEntries = profile ? entries.size : 0;
+		let selectedEntries = 0;
+		let lastObservedCurrent = true;
 		let outcome = "stale";
 		try {
 			for (const [hash, entry] of entries) {
@@ -10673,6 +10675,8 @@ export class SharedLog<
 					knownHashes.push(hash);
 				}
 			}
+			// A custom synchronizer may mutate the Map once it receives it.
+			if (profile) selectedEntries = unknownEntries.size;
 			if (!isStillCurrent()) return;
 			this.clearRepairFrontierHashes(target, knownHashes);
 			if (unknownEntries.size === 0) {
@@ -10680,11 +10684,16 @@ export class SharedLog<
 				return;
 			}
 			if (transport === "simple") {
+				// Observe only checks the lower path already makes, without adding
+				// lifecycle decisions or wrapping the disabled-profiling path.
+				const dispatchIsStillCurrent = profile
+					? () => (lastObservedCurrent = isStillCurrent())
+					: isStillCurrent;
 				// Fallback repair does not wait for the maybe-sync round trip.
 				await this.pushRepairEntries(
 					target,
 					unknownEntries,
-					isStillCurrent,
+					dispatchIsStillCurrent,
 					options?.signal,
 				);
 			} else {
@@ -10700,7 +10709,11 @@ export class SharedLog<
 					signal: options?.signal,
 				});
 			}
-			outcome = options?.signal?.aborted ? "cancelled" : "dispatched";
+			outcome = !lastObservedCurrent
+				? "stale"
+				: options?.signal?.aborted
+					? "cancelled"
+					: "dispatched";
 		} catch (error) {
 			outcome = "error";
 			throw error;
@@ -10710,7 +10723,7 @@ export class SharedLog<
 					name: "sharedLog.repair.dispatch",
 					component: "shared-log",
 					entries: inputEntries,
-					count: unknownEntries.size,
+					count: selectedEntries,
 					targets: 1,
 					details: {
 						mode,
@@ -30206,8 +30219,7 @@ export class SharedLog<
 					);
 					if (!isCurrent()) return false;
 					if (profileDetails) {
-						profileDetails.outcome = "applied";
-						profileDetails.appliedFactor = newFactor;
+						profileDetails.outcome = "apply-settled";
 						profileDetails.applyMs = syncProfileStart(profile) - applyStartedAt;
 					}
 

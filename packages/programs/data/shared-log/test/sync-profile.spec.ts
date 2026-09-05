@@ -163,7 +163,7 @@ describe("advisory sync profiling", () => {
 				}
 			});
 
-			it("summarizes adaptive inputs and application without additional reads", async () => {
+			it("summarizes adaptive inputs and update settlement without additional reads", async () => {
 				const { host, run, debouncer } = adaptiveHost(profile);
 				expect(await run()).to.equal(true);
 				expect(host.getMemoryUsage.callCount).to.equal(1);
@@ -177,13 +177,12 @@ describe("advisory sync profiling", () => {
 				expect(events).to.have.length(1);
 				expect(events[0].name).to.equal("sharedLog.adaptive.rebalance");
 				expect(events[0].details).to.include({
-					outcome: "applied",
+					outcome: "apply-settled",
 					idleRemainingMs: 0,
 					storageUsedBytes: 100,
 					storageObjectiveBytes: 200,
 					currentFactor: 0.2,
 					proposedFactor: 0.3,
-					appliedFactor: 0.3,
 					totalFactor: 0.4,
 					controllerPeerCount: 2,
 					cpuUsage: 0.1,
@@ -408,6 +407,150 @@ describe("advisory sync profiling", () => {
 						rawContinuation,
 					);
 				});
+			}
+		});
+	}
+
+	for (const sinkMode of ["disabled", "recording", "throwing"]) {
+		const recordingSink = (
+			events: SyncProfileEvent[],
+		): SyncProfileFn | undefined =>
+			sinkMode === "disabled"
+				? undefined
+				: (event) => {
+						events.push(event);
+						if (sinkMode === "throwing")
+							throw new Error("diagnostic sink failure");
+					};
+
+		it(`preserves selected repair count across a custom synchronizer's mutation (${sinkMode})`, async () => {
+			const events: SyncProfileEvent[] = [];
+			const host = repairHost(recordingSink(events));
+			const isStillCurrent = sinon.stub().returns(true);
+			let selectedBeforeMutation = 0;
+			host.syncronizer.onMaybeMissingEntries.callsFake(async ({ entries }) => {
+				selectedBeforeMutation = entries.size;
+				entries.clear();
+			});
+			await methods.sendRepairEntriesWithTransport.call(
+				host,
+				"private-peer",
+				repairEntries(),
+				"rateless",
+				{ isStillCurrent },
+				"churn",
+			);
+			expect(selectedBeforeMutation).to.equal(1);
+			expect(host.syncronizer.onMaybeMissingEntries.callCount).to.equal(1);
+			expect(isStillCurrent.callCount).to.equal(3);
+			expect(host.isEntryRecentlyKnownByPeer.callCount).to.equal(2);
+			expect(host.isEntryKnownByPeer.callCount).to.equal(1);
+			expect(events).to.have.length(sinkMode === "disabled" ? 0 : 1);
+			if (events.length) {
+				expect(events[0]).to.include({ entries: 2, count: 1 });
+				expect(events[0].details?.outcome).to.equal("dispatched");
+			}
+		});
+
+		it(`observes stale repair checks without additional predicate calls (${sinkMode})`, async () => {
+			const events: SyncProfileEvent[] = [];
+			const host = repairHost(recordingSink(events));
+			const isStillCurrent = sinon.stub().returns(true);
+			isStillCurrent.onCall(2).returns(false);
+			const shipped = sinon.spy();
+			host.pushRepairEntries.callsFake(async (_target, _entries, current) => {
+				await Promise.resolve();
+				if (!current()) return;
+				shipped();
+			});
+			await methods.sendRepairEntriesWithTransport.call(
+				host,
+				"private-peer",
+				repairEntries(),
+				"simple",
+				{ isStillCurrent },
+				"churn",
+			);
+			expect(host.pushRepairEntries.callCount).to.equal(1);
+			expect(isStillCurrent.callCount).to.equal(3);
+			expect(shipped.callCount).to.equal(0);
+			expect(host.isEntryRecentlyKnownByPeer.callCount).to.equal(2);
+			expect(host.isEntryKnownByPeer.callCount).to.equal(1);
+			expect(events).to.have.length(sinkMode === "disabled" ? 0 : 1);
+			if (events.length) {
+				expect(events[0]).to.include({ entries: 2, count: 1 });
+				expect(events[0].details?.outcome).to.equal("stale");
+			} else {
+				expect(host.pushRepairEntries.firstCall.args[2]).to.equal(
+					isStillCurrent,
+				);
+			}
+		});
+
+		it(`observes staleness through the real simple repair stack (${sinkMode})`, async () => {
+			const events: SyncProfileEvent[] = [];
+			const profile = recordingSink(events);
+			let current = true;
+			const isStillCurrent = sinon.spy(() => current);
+			const host = {
+				...repairHost(profile),
+				_logProperties: { sync: { profile, rawExchangeHeads: true } },
+				pushRepairEntries: methods.pushRepairEntries,
+				pushEntryHashes: methods.pushEntryHashes,
+				pushEntryHashChunk: methods.pushEntryHashChunk,
+				peerSupportsRawExchangeHeads: () => true,
+				trySendFusedRawExchangeHeads: sinon.stub().callsFake(async () => {
+					await Promise.resolve();
+					current = false;
+					return 0;
+				}),
+			};
+			await methods.sendRepairEntriesWithTransport.call(
+				host,
+				"private-peer",
+				repairEntries(),
+				"simple",
+				{ isStillCurrent },
+				"churn",
+			);
+			expect(host.trySendFusedRawExchangeHeads.callCount).to.equal(1);
+			expect(isStillCurrent.callCount).to.equal(5);
+			expect(current).to.equal(false);
+			expect(events).to.have.length(sinkMode === "disabled" ? 0 : 1);
+			if (events.length) {
+				expect(events[0]).to.include({ entries: 2, count: 1 });
+				expect(events[0].details?.outcome).to.equal("stale");
+			}
+		});
+
+		it(`reports a declined adaptive update as settled without another authorization check (${sinkMode})`, async () => {
+			const events: SyncProfileEvent[] = [];
+			const { host, run, debouncer } = adaptiveHost(recordingSink(events));
+			const authorize = sinon.stub().resolves(false);
+			authorize.onFirstCall().resolves(true);
+			const enterMutationLane = sinon.spy();
+			Object.assign(host, {
+				_isTrustedReplicator: authorize,
+				node: { identity: { publicKey: {} } },
+				startAnnounceReplicating: methods.startAnnounceReplicating,
+				addReplicationRange: methods.addReplicationRange,
+				throwIfReplicationOwnershipLifecycleInactive: () => {},
+				ensureCurrentHeadCoordinatesIndexed: sinon.stub().resolves(),
+				validateReplicationRangeAnnouncement: () => {},
+				withReceiveOwnershipMutationQueue: enterMutationLane,
+			});
+			expect(await run()).to.equal(true);
+			expect(authorize.callCount).to.equal(2);
+			expect(enterMutationLane.callCount).to.equal(0);
+			expect(debouncer.call.callCount).to.equal(1);
+			expect(events).to.have.length(sinkMode === "disabled" ? 0 : 1);
+			if (events.length) {
+				expect(events[0].details).to.include({
+					outcome: "apply-settled",
+					proposedFactor: 0.3,
+				});
+				expect(events[0].details).not.to.have.property("appliedFactor");
+				expect(events[0].details?.applyMs).to.be.at.least(0);
 			}
 		});
 	}
