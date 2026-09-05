@@ -231,6 +231,9 @@ export interface Syncronizer<R extends "u32" | "u64"> {
 	onMessage(
 		message: TransportMessage,
 		context: RequestContext,
+		// Exact admitted receive lifetime, not a peer-hash-wide disconnect.
+		// Implementations must still settle physical work before returning.
+		options?: { signal?: AbortSignal },
 	): Promise<boolean> | boolean;
 
 	onReceivedEntries(properties: {
