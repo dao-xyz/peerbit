@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.2.1
+
+### Patch Changes
+
+- [#1435](https://github.com/dao-xyz/peerbit/pull/1435) [`dcd06c8`](https://github.com/dao-xyz/peerbit/commit/dcd06c8368a1773b5a475205637bb3a05fd2700f) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Erase type-only imports from the runtime entrypoint so importing block helpers does not unnecessarily evaluate the stream message and crypto module graph. This avoids an accidental nested-module initialization path in hoisted installations; it does not make arbitrary duplicated Peerbit cohorts interoperable.
+
 ## 2.2.0
 
 ### Minor Changes

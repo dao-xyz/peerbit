@@ -1,5 +1,16 @@
 # Changelog
 
+## 5.4.6
+
+### Patch Changes
+
+- [#1436](https://github.com/dao-xyz/peerbit/pull/1436) [`204ca67`](https://github.com/dao-xyz/peerbit/commit/204ca6757185d55616da5c907e96b66054c77a3b) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Keep same-identity stream replacements independent of obsolete close, reader, and
+  disconnect callbacks. Preserve negotiated session state and reattach pubsub
+  readiness listeners to the replacement. Pending retired closes remain bounded
+  and owned by the network shutdown barrier.
+- Updated dependencies [[`204ca67`](https://github.com/dao-xyz/peerbit/commit/204ca6757185d55616da5c907e96b66054c77a3b), [`284f5c0`](https://github.com/dao-xyz/peerbit/commit/284f5c026574983dea2f7a041b96b9f14fd45251)]:
+  - @peerbit/stream@5.2.2
+
 ## 5.4.5
 
 ### Patch Changes

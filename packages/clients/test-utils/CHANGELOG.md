@@ -1,5 +1,16 @@
 # Changelog
 
+## 3.1.41
+
+### Patch Changes
+
+- Updated dependencies [[`204ca67`](https://github.com/dao-xyz/peerbit/commit/204ca6757185d55616da5c907e96b66054c77a3b), [`284f5c0`](https://github.com/dao-xyz/peerbit/commit/284f5c026574983dea2f7a041b96b9f14fd45251)]:
+  - @peerbit/stream@5.2.2
+  - @peerbit/pubsub@5.4.6
+  - @peerbit/program@6.0.60
+  - @peerbit/blocks@4.3.1
+  - peerbit@5.4.2
+
 ## 3.1.40
 
 ### Patch Changes
