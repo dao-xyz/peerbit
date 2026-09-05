@@ -329,8 +329,8 @@ jobs:
         run: >-
           node scripts/ci/assert-tests-ran.mjs node ./node_modules/aegir/src/index.js run test
           --roots ./packages/programs/data/shared-log -- -t node --no-build
-          --retries 0
           --grep "^(append delivery options|receive admission replication-info V2|replicator liveness|waitForReplicator)"
+          -- --retries 0
 
   test_push:
     if: github.event_name == 'push'
