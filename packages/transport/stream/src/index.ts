@@ -800,6 +800,7 @@ export class PeerStreams extends TypedEventEmitter<PeerStreamEvents> {
 	 * Attach a raw inbound stream and setup a read stream
 	 */
 	attachInboundStream(stream: Stream): InboundStreamRecord {
+		this.assertOpenForAttachment(stream);
 		// Support multiple concurrent inbound streams with inactivity pruning.
 		// Enforce max inbound streams (drop least recently active)
 		if (this.inboundStreams.length >= PeerStreams.MAX_INBOUND_STREAMS) {
@@ -852,9 +853,10 @@ export class PeerStreams extends TypedEventEmitter<PeerStreamEvents> {
 	}
 
 	private _scheduleInboundPrune() {
-		if (this._inboundPruneTimer) return; // already scheduled
+		if (this.closed || this._inboundPruneTimer) return;
 		this._inboundPruneTimer = setTimeout(() => {
 			this._inboundPruneTimer = undefined;
+			if (this.closed) return;
 			this._pruneInboundInactive();
 			if (this.inboundStreams.length > 1) {
 				// schedule again if still multiple
@@ -864,7 +866,7 @@ export class PeerStreams extends TypedEventEmitter<PeerStreamEvents> {
 	}
 
 	private _pruneInboundInactive() {
-		if (this.inboundStreams.length <= 1) return;
+		if (this.closed || this.inboundStreams.length <= 1) return;
 		const now = Date.now();
 		// Keep at least one (the most recently active)
 		this.inboundStreams.sort((a, b) => b.lastActivity - a.lastActivity);
@@ -932,6 +934,7 @@ export class PeerStreams extends TypedEventEmitter<PeerStreamEvents> {
 	 */
 
 	async attachOutboundStream(stream: Stream) {
+		this.assertOpenForAttachment(stream);
 		if (this.outboundStreams.some((candidate) => candidate.raw === stream)) {
 			return; // duplicate
 		}
@@ -941,6 +944,16 @@ export class PeerStreams extends TypedEventEmitter<PeerStreamEvents> {
 			return;
 		}
 		this._scheduleOutboundPrune(true);
+	}
+
+	private assertOpenForAttachment(stream: Stream) {
+		if (!this.closed) return;
+		const error = new AbortError("Closed");
+		try {
+			stream.abort?.(error);
+		} catch {}
+		closeRawStreamBestEffort(stream);
+		throw error;
 	}
 
 	private pruneOutboundCandidates() {
@@ -1042,6 +1055,11 @@ export class PeerStreams extends TypedEventEmitter<PeerStreamEvents> {
 		}
 
 		this.closed = true;
+		// Cancel inbound maintenance before awaiting outbound shutdown.
+		if (this._inboundPruneTimer) {
+			clearTimeout(this._inboundPruneTimer);
+			this._inboundPruneTimer = undefined;
+		}
 		if (this._outboundPruneTimer) {
 			clearTimeout(this._outboundPruneTimer);
 			this._outboundPruneTimer = undefined;
@@ -1060,29 +1078,29 @@ export class PeerStreams extends TypedEventEmitter<PeerStreamEvents> {
 			this.outboundAbortController.abort();
 		}
 
-			// End inbound streams
-			if (this.inboundStreams.length) {
-				for (const inbound of this.inboundStreams) {
+		// End inbound streams
+		if (this.inboundStreams.length) {
+			for (const inbound of this.inboundStreams) {
+				try {
+					inbound.abortController.abort();
+				} catch {
+					logger.error("Failed to abort inbound stream");
+				}
+				try {
+					// Best-effort shutdown: on some transports (notably websockets),
+					// awaiting a graceful close can hang indefinitely if the remote is
+					// concurrently stopping. Abort immediately and do not await close.
 					try {
-						inbound.abortController.abort();
+						inbound.raw.abort?.(new AbortError("Closed"));
 					} catch {
-						logger.error("Failed to abort inbound stream");
+						// ignore
 					}
-					try {
-						// Best-effort shutdown: on some transports (notably websockets),
-						// awaiting a graceful close can hang indefinitely if the remote is
-						// concurrently stopping. Abort immediately and do not await close.
-						try {
-							inbound.raw.abort?.(new AbortError("Closed"));
-						} catch {
-							// ignore
-						}
-						closeRawStreamBestEffort(inbound.raw);
-					} catch {
-						logger.error("Failed to close inbound stream");
-					}
+					closeRawStreamBestEffort(inbound.raw);
+				} catch {
+					logger.error("Failed to close inbound stream");
 				}
 			}
+		}
 
 		this.usedBandWidthTracker.stop();
 
