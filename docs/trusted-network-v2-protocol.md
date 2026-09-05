@@ -655,9 +655,33 @@ persists comparison unavailability and canonical two-child fork evidence; and
 uses fixed count, byte, ancestry, dependency-time, and admission-work bounds.
 The deadline does not cancel an atomic checkpoint replacement after mutation;
 the wrapper keeps the policy lease until that durable operation settles.
-After a successful admission it deterministically retries the bounded set of
+After ordinary ingest it deterministically retries the bounded set of
 already policy-leased candidates, acquiring a separate exact lease for each so
 that a resolver-loaded unleased ancestor cannot become fork evidence.
+
+Its internal `withExactResourceFenceHead` lease resolves one canonical fence
+CID through the existing exact-entry resolver and authenticates the bounded
+signed EntryV0 before mutation. It admits only that named candidate under an
+accepted-policy lease, commits the resource checkpoint, requires the durable
+current fence CID to equal the requested CID, and holds policy-then-resource
+serialization through the callback. A historical duplicate cannot satisfy the
+current-head check. Later pending fences are not automatically drained by this
+acquisition. The callback receives copies of the exact signed frontier,
+including an empty initial frontier, referenced policy, and accepted policy
+head; it does not establish complete resource replay or distributed freshness.
+
+Acquisition shares one queue-inclusive ten-second ceiling that callers can only
+shorten. Every call reserves the maximum 8 KiB entry response plus its bounded
+CID against the existing 32 KiB/64-operation wrapper budget before resolution.
+One preparation lane prevents signal-ignoring resolution or authentication from
+accumulating after outward cancellation. Cancelled calls retain reservations
+until their internal work actually settles; expired queued calls skip work.
+Before callback entry, cancellation settles promptly and prevents the callback.
+An in-flight checkpoint still completes under both queue slots, and only a
+fresh opener may publish its result if the old lifecycle was aborted. Once the
+callback begins, cancellation no longer retracts its lease; callback rejection
+propagates without poisoning the anchor. Callbacks must not await another
+operation on either anchor because they hold both serialized queues.
 
 Pending candidates that have not reached a durable comparison remain replay
 work, not a durable authorization fact. A future protected-resource adapter

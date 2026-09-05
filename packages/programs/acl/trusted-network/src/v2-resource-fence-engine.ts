@@ -277,6 +277,8 @@ export type ResourceFenceEntryResolverV2 = (
 export type ResourceFenceAdmissionOptionsV2 = Readonly<{
 	/** Per-call cancellation; it does not abort the reducer lifecycle. */
 	signal?: AbortSignal;
+	/** Exact readiness may abandon evaluation before it changes durable state. */
+	cancelBeforePublication?: boolean;
 }>;
 
 export type TrustedNetworkV2ResourceFenceReducerProperties = Readonly<{
@@ -508,6 +510,8 @@ const captureCanonicalCid = (cid: unknown): string => {
 	}
 	return cid;
 };
+
+export { captureCanonicalCid as captureCanonicalResourceFenceCidV2 };
 
 const captureMissingCids = (cids: readonly string[]): string[] => {
 	if (
@@ -1097,7 +1101,15 @@ export class TrustedNetworkV2ResourceFenceReducer {
 			);
 		}
 		const snapshot = copySnapshot(prepared.snapshot);
-		return this.enqueue(() => this.ingestSnapshot(snapshot, policy), options);
+		return this.enqueue(
+			() =>
+				this.ingestSnapshot(
+					snapshot,
+					policy,
+					options?.cancelBeforePublication ? options.signal : undefined,
+				),
+			options,
+		);
 	}
 
 	retryPending(
@@ -1826,6 +1838,7 @@ export class TrustedNetworkV2ResourceFenceReducer {
 	private async ingestSnapshot(
 		candidate: ValidatedResourceFenceV2,
 		acceptedPolicy: AcceptedResourceFencePolicyV2,
+		publicationSignal?: AbortSignal,
 	): Promise<ResourceFenceAdmissionResultV2> {
 		if (!policyMatches(candidate, acceptedPolicy)) {
 			return this.result(
@@ -1835,7 +1848,11 @@ export class TrustedNetworkV2ResourceFenceReducer {
 		}
 		if (this.unavailable !== undefined) {
 			if (candidate.entryCid === this.unavailable.candidate.entryCid) {
-				return this.retryUnavailableCandidate(candidate, acceptedPolicy);
+				return this.retryUnavailableCandidate(
+					candidate,
+					acceptedPolicy,
+					publicationSignal,
+				);
 			}
 			const retention = this.retainPending(candidate);
 			return this.result(
@@ -1846,8 +1863,6 @@ export class TrustedNetworkV2ResourceFenceReducer {
 				retention.evictedEntryCids,
 			);
 		}
-		const existing = this.pending.get(candidate.entryCid);
-		if (existing !== undefined) this.pending.delete(candidate.entryCid);
 		const evaluation = await this.evaluate(candidate);
 		if (this.lifecycleController.signal.aborted) {
 			return this.result(
@@ -1855,6 +1870,13 @@ export class TrustedNetworkV2ResourceFenceReducer {
 				"Resource-fence reducer lifecycle is aborted",
 			);
 		}
+		if (publicationSignal?.aborted) {
+			return this.result(
+				"unavailable",
+				"Exact resource-fence evaluation was cancelled",
+			);
+		}
+		this.pending.delete(candidate.entryCid);
 		return this.applyEvaluation(candidate, evaluation);
 	}
 
@@ -1901,6 +1923,7 @@ export class TrustedNetworkV2ResourceFenceReducer {
 	private async retryUnavailableCandidate(
 		candidate: ValidatedResourceFenceV2,
 		acceptedPolicy: AcceptedResourceFencePolicyV2,
+		publicationSignal?: AbortSignal,
 	): Promise<ResourceFenceAdmissionResultV2> {
 		if (!policyMatches(candidate, acceptedPolicy)) {
 			return this.result(
@@ -1913,6 +1936,12 @@ export class TrustedNetworkV2ResourceFenceReducer {
 			return this.result(
 				"halted",
 				"Resource-fence reducer lifecycle is aborted",
+			);
+		}
+		if (publicationSignal?.aborted) {
+			return this.result(
+				"unavailable",
+				"Exact resource-fence evaluation was cancelled",
 			);
 		}
 		this.unavailable = undefined;
