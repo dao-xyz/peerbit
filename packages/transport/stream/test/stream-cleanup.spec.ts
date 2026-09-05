@@ -53,12 +53,17 @@ describe("peer stream shutdown", () => {
 			);
 			const aborts = rawStreams.map((raw) => sinon.spy(raw, "abort"));
 			const records = rawStreams.map((raw) => streams.attachInboundStream(raw));
-			const onClose = sinon.spy();
+			let reentrantClose: Promise<void> | undefined;
+			const onClose = sinon.spy(() => {
+				reentrantClose = streams.close();
+			});
 			streams.addEventListener("close", onClose);
 			expect(streams["_inboundPruneTimer"]).to.exist;
 			expect(clock.countTimers()).to.equal(2); // pruning and bandwidth tracking
 
-			await streams.close();
+			const closing = streams.close();
+			await closing;
+			expect(reentrantClose).to.equal(closing);
 			expect(streams["_inboundPruneTimer"]).to.equal(undefined);
 			expect(clock.countTimers()).to.equal(0);
 			expect(streams._getInboundCount()).to.equal(0);
@@ -178,7 +183,8 @@ describe("peer stream shutdown", () => {
 			expect(outboundAbort.calledOnce).to.equal(true);
 			expect(streams._getInboundCount()).to.equal(2);
 			expect(streams._getOutboundCount()).to.equal(1);
-			await streams.close();
+			const repeatedClose = streams.close();
+			expect(repeatedClose).to.equal(closing);
 			expect(returnStub.calledOnce).to.equal(true);
 		} finally {
 			// Release the real shutdown even when an assertion fails.
