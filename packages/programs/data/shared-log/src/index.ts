@@ -6524,6 +6524,24 @@ export class SharedLog<
 								);
 							};
 							try {
+								if (!isPeerRoundCurrent()) return;
+								if (
+									!this._v2Send.hasCurrentStateForPeer({
+										peerHash: peer,
+										peerSession: captured.peerSession,
+										receiverTransportSession: captured.capabilitySession,
+									})
+								) {
+									// Preflight can precede replacement or loss of the sender
+									// stream. Delivery must recover its own exact current
+									// binding before waiting for application confirmation.
+									this._v2Receive.reAdvertiseLocalCapabilityForRemoteFull({
+										peerHash: peer,
+										peerSession: captured.peerSession,
+										receiveEpoch: captured.receiveEpoch,
+										signal: roundSignal,
+									});
+								}
 								await this._v2Send.confirmLatestForPeer(
 									{
 										peerHash: peer,
@@ -24943,6 +24961,27 @@ export class SharedLog<
 				recoveryTimer = undefined;
 				if (!continueWait()) return;
 				const recoveryTarget = confirmationRecoveryTarget;
+				if (confirmationController && recoveryTarget) {
+					if (
+						this._peerSessions.current(peerHash) !==
+							recoveryTarget.peerSession ||
+						this._peerSessions.receiveEpoch(peerHash) !==
+							recoveryTarget.receiveEpoch ||
+						this._peerSyncCapabilitySessions.get(peerHash) !==
+							recoveryTarget.capabilitySession ||
+						!this.uniqueReplicators.has(peerHash)
+					) {
+						// Events can be coalesced while application confirmation waits.
+						// Release the obsolete target on the recovery tick as well,
+						// including loss of replicator eligibility within one session.
+						// A temporary receive reservation keeps this same target alive;
+						// the final readiness inspection still checks every admission gate.
+						confirmationRecoveryTarget = undefined;
+						confirmationController.abort(
+							new AbortError("Persisted-receipt readiness target changed"),
+						);
+					}
+				}
 				this.nudgePersistedReceiptPeerReadiness(
 					key,
 					operationSignal,

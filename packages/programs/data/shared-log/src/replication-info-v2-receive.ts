@@ -27,6 +27,7 @@ const DEFAULT_MAX_REQUEST_RETRY_MS = 30_000;
 const DEFAULT_REQUEST_MAX_ATTEMPTS = 7;
 const DEFAULT_REMOTE_FULL_REARM_ATTEMPT_TIMEOUT_MS = 2_000;
 const DEFAULT_REMOTE_FULL_REARM_COOLDOWN_MS = 5_000;
+const MAX_REMOTE_FULL_REARM_COOLDOWN_MS = 30_000;
 const MAX_REMOTE_FULL_REARM_OUTSTANDING_PER_SESSION = 2;
 const MAX_REMOTE_FULL_REARM_OUTSTANDING_GLOBAL = 64;
 const MAX_TIMER_MS = 2_147_483_647;
@@ -825,18 +826,28 @@ export class ReplicationInfoV2ReceiveCoordinator {
 		) {
 			return true;
 		}
+		// Repeated hints must leave time for a slow Full and its Applied response
+		// to settle. Reuse this exact generation's bounded attempt counter so a
+		// watchdog cannot continually replace the binding it is trying to confirm.
+		const nextAttemptAt =
+			now +
+			Math.min(
+				MAX_REMOTE_FULL_REARM_COOLDOWN_MS,
+				this.remoteFullRearmCooldownMs *
+					2 ** Math.min(rearm?.attemptsStarted ?? 0, MAX_BACKOFF_EXPONENT),
+			);
 		if (!rearm) {
 			rearm = {
 				peerHash: properties.peerHash,
 				receiveEpoch: properties.receiveEpoch,
 				receiverTransportSession,
-				nextAttemptAt: now + this.remoteFullRearmCooldownMs,
+				nextAttemptAt,
 				attemptsStarted: 0,
 				outstandingAttempts: 0,
 			};
 			this._remoteFullRearmBySession.set(properties.peerSession, rearm);
 		} else {
-			rearm.nextAttemptAt = now + this.remoteFullRearmCooldownMs;
+			rearm.nextAttemptAt = nextAttemptAt;
 		}
 		const attemptState = rearm;
 		const outstandingReservation = {};
