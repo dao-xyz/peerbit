@@ -6352,6 +6352,95 @@ export class SharedLog<
 				records.size,
 			);
 		const signal = deadline.signal;
+		const recoveryController = new AbortController();
+		const recoverySignal = AbortSignal.any([signal, recoveryController.signal]);
+		const recoveryByPeer = new Map<
+			string,
+			{
+				controller: AbortController;
+				timer: ReturnType<typeof setTimeout>;
+			}
+		>();
+		let recoveryCursor = 0;
+		const recoverSelectedPeers = (selected: Set<string>) => {
+			// Recovery is advisory work, not a receipt or a replacement leader plan.
+			// Never occupy transfer/request slots while waiting for it. The separate
+			// bounded pool rotates through fresh candidates so quiet/incomplete peers
+			// cannot indefinitely hide a later recoverable peer.
+			for (const [peer, state] of recoveryByPeer) {
+				if (!selected.has(peer)) {
+					clearTimeout(state.timer);
+					state.controller.abort();
+				}
+			}
+			const peers = [...selected];
+			for (
+				let visited = 0;
+				visited < peers.length &&
+				recoveryByPeer.size < MAX_PERSISTED_RECEIPT_REQUESTS_GLOBAL &&
+				!recoverySignal.aborted;
+				visited++
+			) {
+				const peer = peers[recoveryCursor++ % peers.length]!;
+				if (recoveryByPeer.has(peer)) continue;
+				const current = this.persistedReceiptPeerSession(peer);
+				if (
+					current &&
+					this._v2Send.isLatestConfirmedForPeer({
+						peerHash: peer,
+						peerSession: current.peerSession,
+						receiverTransportSession: current.capabilitySession,
+					})
+				) {
+					continue;
+				}
+				const expiresAt = Math.min(
+					deadline.deadline,
+					Date.now() + MAX_PERSISTED_RECEIPT_ATTEMPT_MS,
+				);
+				const controller = new AbortController();
+				const attemptSignal = AbortSignal.any([
+					recoverySignal,
+					controller.signal,
+				]);
+				const timer = setTimeout(
+					() => controller.abort(),
+					Math.max(1, expiresAt - Date.now()),
+				);
+				timer.unref?.();
+				const state = { controller, timer };
+				recoveryByPeer.set(peer, state);
+				void (async () => {
+					// Resolve only an authenticated transport-cache key. Keep this slot
+					// reserved until the lookup actually settles, even if a custom
+					// resolver ignores cancellation, rather than launching duplicates.
+					const key = await this._resolvePublicKeyFromHash(peer);
+					if (
+						attemptSignal.aborted ||
+						!key ||
+						key.hashcode() !== peer ||
+						Date.now() >= expiresAt
+					) {
+						return;
+					}
+					// Reuse the exact-session watchdog, capability/subscriber recovery,
+					// and replacement-session handling from the public preflight. Its
+					// result is ignored: settlement still checks the exact entry leaders
+					// and accepts only the subsequent durable, session-bound receipts.
+					await this.waitForPersistedReceiptPeerReadiness(key, {
+						timeout: Math.max(1, expiresAt - Date.now()),
+						signal: attemptSignal,
+					});
+				})()
+					.catch(() => undefined)
+					.finally(() => {
+						clearTimeout(timer);
+						if (recoveryByPeer.get(peer) === state) {
+							recoveryByPeer.delete(peer);
+						}
+					});
+			}
+		};
 		let maxAttemptMs = MAX_PERSISTED_RECEIPT_ATTEMPT_MS;
 		let initialTransferPending = transferOnFirstRound;
 		let needsInitialLeaderCheck = true;
@@ -6418,6 +6507,7 @@ export class SharedLog<
 				// transport epoch. A revision/session change purges them before they can
 				// survive an away-and-back leader transition or combine with a later peer.
 				const hashesByPeer = new Map<string, string[]>();
+				const recoveryCandidates = new Set<string>();
 				const entryArray = [...records.values()];
 				const leadersByEntry = await this.planPersistedDeliveryLeaders(
 					entryArray,
@@ -6462,6 +6552,7 @@ export class SharedLog<
 					if (acknowledgements.size >= minAcks) continue;
 					for (const peer of leaders.keys()) {
 						if (peer === selfHash) continue;
+						recoveryCandidates.add(peer);
 						const current = this.persistedReceiptPeerSession(peer);
 						if (!current) continue;
 						if (acknowledgements.has(peer)) continue;
@@ -6471,6 +6562,7 @@ export class SharedLog<
 					}
 				}
 				if (!isRoundOwnershipCurrent()) continue;
+				recoverSelectedPeers(recoveryCandidates);
 
 				const operationQueue = new PQueue({
 					concurrency: MAX_PERSISTED_RECEIPT_REQUESTS_GLOBAL,
@@ -6831,6 +6923,11 @@ export class SharedLog<
 			}
 			throw new PersistedDeliveryError(error, committedHashes);
 		} finally {
+			recoveryController.abort();
+			for (const state of recoveryByPeer.values()) {
+				clearTimeout(state.timer);
+				state.controller.abort();
+			}
 			if (ownedDeadline) deadline.dispose();
 		}
 	}

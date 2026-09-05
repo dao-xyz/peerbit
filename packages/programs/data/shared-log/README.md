@@ -2,6 +2,29 @@
 
 A log that can be replicated
 
+## Persisted delivery recovery
+
+Persisted delivery maintains bounded advisory recovery for currently selected
+entry leaders, including incomplete capability/receive state and unconfirmed or
+replacement V2 sessions. It reuses the persisted-readiness watchdog; readiness
+never substitutes for the exact-entry, current-session durable receipt.
+
+Each delivery operation reserves at most eight recovery tasks, shared across its
+entries. Two-second recovery windows rotate through candidates without occupying
+entry-transfer or receipt-request slots, changing the overall delivery deadline,
+or replaying the original local write. Already-confirmed peers need no recovery
+key lookup or readiness waiter. Removed candidates and completed, cancelled, or
+timed-out operations stop their recovery work.
+
+Custom asynchronous public-key resolvers must settle their promises. An
+unsettled lookup retains its reservation even after cancellation, and its late
+result cannot start new recovery work. Eight permanently unsettled lookups can
+therefore exhaust one operation's recovery capacity; the deadline still bounds
+the delivery call. The eight-task bound is per operation, not an aggregate limit
+across concurrent deliveries. The existing SharedLog-wide readiness-waiter limit
+also remains in effect. Missing or mismatched keys and unsupported peers cannot
+supply receipt evidence.
+
 ## Durable native history checkpoints
 
 Persistent peers created with `createRustPeerbitOptions()` automatically bound
