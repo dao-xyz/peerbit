@@ -39,3 +39,67 @@ and delayed pruning can make actual use exceed the configured value. The
 the objective. `range-coverage-underfilled` reports minimum ring coverage below
 `replicas.min`, while `default-replica-target-unattainable` reports fewer active
 replicators than that target.
+
+## Opt-in synchronization profiling
+
+The existing `sync.profile(event)` callback receives local diagnostic summaries.
+It is disabled by default. Keep the callback cheap and aggregate into fixed-size
+buckets; applications can label callbacks with a peer index and a metadata/content
+plane without putting application identifiers into these summaries.
+
+- `sharedLog.adaptive.rebalance` reports one adaptive tick: `outcome`,
+  `idleRemainingMs`, and, when reached, the existing controller inputs
+  `storageUsedBytes`, `storageObjectiveBytes`, `currentFactor`, `totalFactor`,
+  `controllerPeerCount`, and `cpuUsage`, plus `proposedFactor`/`appliedFactor`.
+  Storage is local block-store usage, not process RSS; the objective is soft.
+  `controllerPeerCount` is the controller's existing replication-index size
+  input, not a new count of distinct peers. Outcomes distinguish `idle-deferred`,
+  `unchanged`, `applied`, `not-permitted`, `stale`, and `error`.
+  Resource-limited adaptive logs currently defer a tick after a local append
+  until idle for `max(10 seconds, 5 × limits.interval)`; other adaptive logs use
+  their rebalance interval. A deferral reports the remaining idle time without
+  running the controller. This is a gate observation, not a prediction of when
+  content or metadata will converge.
+- `sharedLog.placement.pass` reports `phase: "range-change"` or `"repair-sweep"`.
+  For range changes, `entries` counts yielded rebalance candidates; `changes`,
+  `pruneScan`, and the fast-path flags describe the pass. Its duration starts
+  after the initial trim/setup. For repair sweeps, `entries` counts candidate
+  inputs (resident-map size for each native pass, fetched batch lengths otherwise),
+  with `passes` and `nativePasses`. This is not the number of entries actually
+  visited inside a native planner. Both phases report `count` as repair candidates
+  handed to dispatch and `repairBatches` as dispatch calls, plus an `outcome`.
+- `sharedLog.repair.dispatch` reports `mode`, `transport`, `outcome`, and
+  `knownSuppressedEntries`. `entries` is the input size; `count` is the selected
+  candidate size after known-peer suppression, for one target. `dispatched`
+  means the local lower-level call settled, not that bytes arrived or a durable
+  receipt was obtained. Suppression, cancellation, staleness and errors can be
+  distinguished from successful local dispatch.
+- `sharedLog.receive.existingHeads` and
+  `sharedLog.rawReceive.existingHeads` include `count`: distinct hashes already
+  present according to the existing batched lookup. `entries` includes every
+  received head, including duplicates. The plain continuation of an already
+  classified raw message omits `count`; do not count it as another lookup or hit.
+
+The new summaries and existing-head summaries isolate synchronous callback
+exceptions from replication behavior. They add no metadata queries or scans;
+with profiling disabled they allocate no event/detail objects or diagnostic
+timestamps. Other existing profile hooks retain their existing callback
+behavior, so callbacks should still avoid throwing. These diagnostics do not
+control replication, install listeners, retain histories, or provide persisted
+delivery evidence.
+
+Durations are elapsed time, not CPU time. The adaptive tick's `preStepMs` includes
+existing asynchronous metric/prune work; `stepMs` covers the controller call and
+`applyMs` covers the awaited range update. Phases can nest or run concurrently:
+do not sum their durations into a total latency. Compare each plane's timeline
+with independently observed metadata arrival, content arrival and durable
+receipt/offline-reopen checks.
+
+Likewise, existing `sharedLog.rawSend.fused.bytes` measures raw entry-block bytes
+and `sharedLog.rawReceive.wireStashResolve.bytes` measures stashed payload bytes.
+Neither is transport wire-byte accounting (framing, encryption, retransmission,
+and other protocol traffic are outside those counts). Do not add byte counts
+across these boundaries or infer bandwidth amplification from them alone.
+Range health, known-head hits, placement, and repair dispatch are not receipt
+proofs. Repeated candidate/known-hit counts can help locate repeated local work,
+but cannot establish unique network bytes or end-to-end delivery by themselves.

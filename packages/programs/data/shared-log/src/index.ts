@@ -564,7 +564,7 @@ const emitAdvisorySyncProfileDuration = (
 	try {
 		emitSyncProfileDuration(profile, startedAt, event);
 	} catch {
-		// Diagnostics must not change open or provider-resolution correctness.
+		// Advisory diagnostics must not change replication or lifecycle behavior.
 	}
 };
 
@@ -4033,7 +4033,13 @@ export class SharedLog<
 				this._repairMetrics["join-warmup"].simpleFallbackPasses += 1;
 			},
 			sendEntriesSimple: (target, entries, options) =>
-				this.sendRepairEntriesWithTransport(target, entries, "simple", options),
+				this.sendRepairEntriesWithTransport(
+					target,
+					entries,
+					"simple",
+					options,
+					"join-warmup",
+				),
 			logError: (error) => logger.error(error),
 		});
 	}
@@ -10639,6 +10645,7 @@ export class SharedLog<
 			isStillCurrent?: () => boolean;
 			signal?: AbortSignal;
 		},
+		mode?: RepairDispatchMode,
 	) {
 		const isStillCurrent = options?.isStillCurrent ?? (() => true);
 		if (!isStillCurrent()) {
@@ -10646,53 +10653,74 @@ export class SharedLog<
 		}
 		const unknownEntries = new Map<string, RepairDispatchEntry<R>>();
 		const knownHashes: string[] = [];
-		for (const [hash, entry] of entries) {
-			if (
-				(options?.bypassRecentKnownPeers ||
-					!this.isEntryRecentlyKnownByPeer(
-						hash,
-						target,
-						RECENT_KNOWN_REPAIR_SUPPRESSION_MS,
-					)) &&
-				(options?.bypassKnownPeers || !this.isEntryKnownByPeer(hash, target))
-			) {
-				unknownEntries.set(hash, entry);
+		const profile = this._logProperties?.sync?.profile;
+		const startedAt = syncProfileStart(profile);
+		const inputEntries = profile ? entries.size : 0;
+		let outcome = "stale";
+		try {
+			for (const [hash, entry] of entries) {
+				if (
+					(options?.bypassRecentKnownPeers ||
+						!this.isEntryRecentlyKnownByPeer(
+							hash,
+							target,
+							RECENT_KNOWN_REPAIR_SUPPRESSION_MS,
+						)) &&
+					(options?.bypassKnownPeers || !this.isEntryKnownByPeer(hash, target))
+				) {
+					unknownEntries.set(hash, entry);
+				} else {
+					knownHashes.push(hash);
+				}
+			}
+			if (!isStillCurrent()) return;
+			this.clearRepairFrontierHashes(target, knownHashes);
+			if (unknownEntries.size === 0) {
+				outcome = "known-suppressed";
+				return;
+			}
+			if (transport === "simple") {
+				// Fallback repair does not wait for the maybe-sync round trip.
+				await this.pushRepairEntries(
+					target,
+					unknownEntries,
+					isStillCurrent,
+					options?.signal,
+				);
 			} else {
-				knownHashes.push(hash);
+				const syncEntries = this._logProperties?.sync?.priority
+					? (this._coordinates.materializeRepairDispatchEntries(
+							unknownEntries,
+						) as unknown as Map<string, SyncEntryCoordinates<R>>)
+					: (unknownEntries as Map<string, SyncEntryCoordinates<R>>);
+				if (!isStillCurrent()) return;
+				await this.syncronizer.onMaybeMissingEntries({
+					entries: syncEntries,
+					targets: [target],
+					signal: options?.signal,
+				});
+			}
+			outcome = options?.signal?.aborted ? "cancelled" : "dispatched";
+		} catch (error) {
+			outcome = "error";
+			throw error;
+		} finally {
+			if (profile) {
+				emitAdvisorySyncProfileDuration(profile, startedAt, {
+					name: "sharedLog.repair.dispatch",
+					component: "shared-log",
+					entries: inputEntries,
+					count: unknownEntries.size,
+					targets: 1,
+					details: {
+						mode,
+						transport,
+						outcome,
+						knownSuppressedEntries: knownHashes.length,
+					},
+				});
 			}
 		}
-		if (!isStillCurrent()) {
-			return;
-		}
-		this.clearRepairFrontierHashes(target, knownHashes);
-		if (unknownEntries.size === 0) {
-			return;
-		}
-		if (transport === "simple") {
-			// Fallback repair should not depend on the target completing the
-			// RequestMaybeSync -> ResponseMaybeSync round trip.
-			await this.pushRepairEntries(
-				target,
-				unknownEntries,
-				isStillCurrent,
-				options?.signal,
-			);
-			return;
-		}
-
-		const syncEntries = this._logProperties?.sync?.priority
-			? (this._coordinates.materializeRepairDispatchEntries(
-					unknownEntries,
-				) as unknown as Map<string, SyncEntryCoordinates<R>>)
-			: (unknownEntries as Map<string, SyncEntryCoordinates<R>>);
-		if (!isStillCurrent()) {
-			return;
-		}
-		await this.syncronizer.onMaybeMissingEntries({
-			entries: syncEntries,
-			targets: [target],
-			signal: options?.signal,
-		});
 	}
 
 	private async sendMaybeMissingEntriesNow(
@@ -10776,6 +10804,7 @@ export class SharedLog<
 						this.isRepairLifecycleActive(repairLifecycleController),
 					signal: repairLifecycleController.signal,
 				},
+				options.mode,
 			),
 		).catch((error: any) => logger.error(error));
 	}
@@ -11166,6 +11195,7 @@ export class SharedLog<
 							this.isRepairLifecycleActive(repairLifecycleController),
 						signal: repairLifecycleController.signal,
 					},
+					options.mode,
 				),
 			).catch((error: any) => logger.error(error));
 		};
@@ -11309,6 +11339,18 @@ export class SharedLog<
 		repairLifecycleController: AbortController = this._instanceLifecycle
 			?.ownershipLifecycleController as AbortController,
 	) {
+		const profile = this._logProperties?.sync?.profile;
+		const startedAt = syncProfileStart(profile);
+		const profileCounts = profile
+			? {
+					passes: 0,
+					inputEntries: 0,
+					nativePasses: 0,
+					repairCandidates: 0,
+					repairBatches: 0,
+					outcome: "stale",
+				}
+			: undefined;
 		try {
 			while (this.isRepairLifecycleActive(repairLifecycleController)) {
 				if (!this.isRepairLifecycleActive(repairLifecycleController)) {
@@ -11347,8 +11389,10 @@ export class SharedLog<
 				pruneStaleJoinWarmupPeers();
 
 				if (pendingModes.size === 0) {
+					if (profileCounts) profileCounts.outcome = "completed";
 					return;
 				}
+				if (profileCounts) profileCounts.passes += 1;
 
 				const optimisticGidPeersByMode = new Map<
 					RepairDispatchMode,
@@ -11447,6 +11491,10 @@ export class SharedLog<
 						}
 						return;
 					}
+					if (profileCounts) {
+						profileCounts.repairCandidates += entries.size;
+						profileCounts.repairBatches += 1;
+					}
 					this.dispatchMaybeMissingEntries(
 						target,
 						entries,
@@ -11513,6 +11561,10 @@ export class SharedLog<
 					residentEntriesByHash &&
 					!this.hasCustomFindLeaders()
 				) {
+					if (profileCounts) {
+						profileCounts.nativePasses += 1;
+						profileCounts.inputEntries += residentEntriesByHash.size;
+					}
 					const repairDispatchPlan = pruneStaleJoinWarmupPeers()
 						? await this.planResidentRepairDispatchBatch(
 								{
@@ -11551,6 +11603,7 @@ export class SharedLog<
 							const entries = await iterator.next(
 								REPAIR_SWEEP_ENTRY_BATCH_SIZE,
 							);
+							if (profileCounts) profileCounts.inputEntries += entries.length;
 							if (!this.isRepairLifecycleActive(repairLifecycleController)) {
 								return;
 							}
@@ -11675,6 +11728,7 @@ export class SharedLog<
 				}
 			}
 		} catch (error: any) {
+			if (profileCounts) profileCounts.outcome = "error";
 			if (
 				this.isRepairLifecycleActive(repairLifecycleController) &&
 				!isNotStartedError(error)
@@ -11695,6 +11749,21 @@ export class SharedLog<
 					this._repairSweepRunning = true;
 					void this.runRepairSweep(repairLifecycleController);
 				}
+			}
+			if (profileCounts) {
+				emitAdvisorySyncProfileDuration(profile, startedAt, {
+					name: "sharedLog.placement.pass",
+					component: "shared-log",
+					entries: profileCounts.inputEntries,
+					count: profileCounts.repairCandidates,
+					details: {
+						phase: "repair-sweep",
+						outcome: profileCounts.outcome,
+						passes: profileCounts.passes,
+						nativePasses: profileCounts.nativePasses,
+						repairBatches: profileCounts.repairBatches,
+					},
+				});
 			}
 		}
 	}
@@ -21274,10 +21343,11 @@ export class SharedLog<
 			msg.heads.map((head) => head.hash),
 		);
 		if (syncProfile) {
-			emitSyncProfileDuration(syncProfile, rawExistingStartedAt, {
+			emitAdvisorySyncProfileDuration(syncProfile, rawExistingStartedAt, {
 				name: "sharedLog.rawReceive.existingHeads",
 				component: "shared-log",
 				entries: msg.heads.length,
+				count: rawExistingHashes.size,
 				messages: 1,
 			});
 		}
@@ -21711,10 +21781,11 @@ export class SharedLog<
 						? undefined
 						: await this.log.hasMany(headHashes);
 					if (syncProfile) {
-						emitSyncProfileDuration(syncProfile, existingStartedAt, {
+						emitAdvisorySyncProfileDuration(syncProfile, existingStartedAt, {
 							name: "sharedLog.receive.existingHeads",
 							component: "shared-log",
 							entries: heads.length,
+							count: existingHashes?.size,
 							messages: 1,
 							details: { rawMaterializedKnownMissing },
 						});
@@ -29478,6 +29549,17 @@ export class SharedLog<
 			isOwnershipLifecycleCurrent() &&
 			[...warmupPeers].every(isCurrentJoinWarmupTarget);
 
+		const profile = this._logProperties?.sync?.profile;
+		const profileStartedAt = syncProfileStart(profile);
+		const profileCounts = profile
+			? {
+					examinedEntries: 0,
+					repairCandidates: 0,
+					repairBatches: 0,
+					pruneScan: false,
+					outcome: "stale",
+				}
+			: undefined;
 		try {
 			const uncheckedDeliver: Map<
 				string,
@@ -29501,6 +29583,10 @@ export class SharedLog<
 					: isWarmupTarget
 						? "join-warmup"
 						: "join-authoritative";
+				if (profileCounts) {
+					profileCounts.repairCandidates += entries.size;
+					profileCounts.repairBatches += 1;
+				}
 				this.dispatchMaybeMissingEntries(
 					target,
 					entries,
@@ -29555,6 +29641,7 @@ export class SharedLog<
 						forceFresh: forceFreshDelivery || useJoinWarmupFastPath,
 					},
 				)) {
+					if (profileCounts) profileCounts.examinedEntries += 1;
 					if (
 						!isOwnershipLifecycleCurrent() ||
 						(useJoinWarmupFastPath && !areJoinWarmupGenerationsCurrent())
@@ -29838,6 +29925,7 @@ export class SharedLog<
 					));
 
 			if (shouldRunLocalPruneScan) {
+				if (profileCounts) profileCounts.pruneScan = true;
 				throwIfOwnershipLifecycleInactive();
 				// Adaptive range changes and fixed zero-width updates can make already-indexed
 				// local heads prunable even when the incremental rebalance scan misses them
@@ -29857,6 +29945,7 @@ export class SharedLog<
 				}
 			}
 
+			if (profileCounts) profileCounts.outcome = "completed";
 			return changed;
 		} catch (error: any) {
 			if (!isOwnershipLifecycleCurrent()) {
@@ -29866,8 +29955,27 @@ export class SharedLog<
 				return false; // we are not started yet, so no changes
 			}
 
+			if (profileCounts) profileCounts.outcome = "error";
 			logger.error(error.toString());
 			throw error;
+		} finally {
+			if (profileCounts) {
+				emitAdvisorySyncProfileDuration(profile, profileStartedAt, {
+					name: "sharedLog.placement.pass",
+					component: "shared-log",
+					entries: profileCounts.examinedEntries,
+					count: profileCounts.repairCandidates,
+					details: {
+						phase: "range-change",
+						outcome: profileCounts.outcome,
+						changes: changes.length,
+						repairBatches: profileCounts.repairBatches,
+						pruneScan: profileCounts.pruneScan,
+						forceFreshDelivery,
+						joinWarmupFastPath: useJoinWarmupFastPath,
+					},
+				});
+			}
 		}
 	}
 
@@ -29926,6 +30034,15 @@ export class SharedLog<
 		ownershipLifecycleController = this.captureReplicationOwnershipLifecycle(),
 		rebalanceParticipationDebounced = this.rebalanceParticipationDebounced,
 	) {
+		const profile = this._isAdaptiveReplicating
+			? this._logProperties?.sync?.profile
+			: undefined;
+		const profileStartedAt = syncProfileStart(profile);
+		const profileDetails:
+			| Record<string, string | number | boolean | undefined>
+			| undefined = profile
+			? { outcome: "stale", idleRemainingMs: 0 }
+			: undefined;
 		// Stage 3: the lifecycle owns all three identity terms. `lifecycle` may
 		// go stale later; its deps late-bind to the host, so the debouncer term
 		// still reads the current host field, and the role term can disagree
@@ -29965,6 +30082,14 @@ export class SharedLog<
 
 			if (this._isAdaptiveReplicating) {
 				if (this.shouldDelayAdaptiveRebalance()) {
+					if (profileDetails) {
+						profileDetails.outcome = "idle-deferred";
+						profileDetails.idleRemainingMs = Math.max(
+							0,
+							this.adaptiveRebalanceIdleMs -
+								(Date.now() - this._lastLocalAppendAt),
+						);
+					}
 					if (isCurrent()) {
 						void rebalanceParticipationDebounced?.call();
 					}
@@ -29974,11 +30099,17 @@ export class SharedLog<
 				const peers = this.replicationIndex;
 				const usedMemory = await this.getMemoryUsage();
 				if (!isCurrent()) return false;
+				if (profileDetails) {
+					profileDetails.storageUsedBytes = usedMemory;
+					profileDetails.storageObjectiveBytes =
+						this.replicationController.maxMemoryLimit;
+				}
 				this.scheduleReplicationStatusRefreshForStorage(usedMemory);
 				let dynamicRange = await this.getDynamicRange();
 				if (!isCurrent()) return false;
 
 				if (!dynamicRange) {
+					if (profileDetails) profileDetails.outcome = "not-permitted";
 					return; // not allowed to replicate
 				}
 
@@ -30005,13 +30136,24 @@ export class SharedLog<
 				const totalParticipation = await this.calculateTotalParticipation();
 				if (!isCurrent()) return false;
 
+				const cpuUsage = this.cpuUsage?.value();
+				const stepStartedAt = syncProfileStart(profile);
 				const newFactor = this.replicationController.step({
 					memoryUsage: usedMemory,
 					currentFactor: dynamicRange.widthNormalized,
 					totalFactor: totalParticipation, // TODO use this._totalParticipation when flakiness is fixed
 					peerCount: peersSize,
-					cpuUsage: this.cpuUsage?.value(),
+					cpuUsage,
 				});
+				if (profileDetails) {
+					profileDetails.preStepMs = stepStartedAt - profileStartedAt;
+					profileDetails.stepMs = syncProfileStart(profile) - stepStartedAt;
+					profileDetails.currentFactor = dynamicRange.widthNormalized;
+					profileDetails.proposedFactor = newFactor;
+					profileDetails.totalFactor = totalParticipation;
+					profileDetails.controllerPeerCount = peersSize;
+					profileDetails.cpuUsage = cpuUsage;
+				}
 
 				const absoluteDifference = Math.abs(
 					dynamicRange.widthNormalized - newFactor,
@@ -30048,9 +30190,11 @@ export class SharedLog<
 						(await this._isTrustedReplicator(this.node.identity.publicKey));
 					if (!isCurrent()) return false;
 					if (!canReplicate) {
+						if (profileDetails) profileDetails.outcome = "not-permitted";
 						return false;
 					}
 
+					const applyStartedAt = syncProfileStart(profile);
 					await this.startAnnounceReplicating(
 						[dynamicRange],
 						{
@@ -30061,6 +30205,11 @@ export class SharedLog<
 						ownershipLifecycleController,
 					);
 					if (!isCurrent()) return false;
+					if (profileDetails) {
+						profileDetails.outcome = "applied";
+						profileDetails.appliedFactor = newFactor;
+						profileDetails.applyMs = syncProfileStart(profile) - applyStartedAt;
+					}
 
 					/* await this._updateRole(newRole, onRoleChange); */
 					if (isCurrent()) {
@@ -30069,6 +30218,7 @@ export class SharedLog<
 
 					return true;
 				} else {
+					if (profileDetails) profileDetails.outcome = "unchanged";
 					if (isCurrent()) {
 						void rebalanceParticipationDebounced?.call();
 					}
@@ -30078,14 +30228,24 @@ export class SharedLog<
 			return false;
 		};
 
-		const resp = await fn().catch((error: any) => {
-			if (isNotStartedError(error) || isClosedStoreRace(error)) {
-				return false;
+		try {
+			return await fn().catch((error: any) => {
+				if (isNotStartedError(error) || isClosedStoreRace(error)) {
+					if (profileDetails) profileDetails.outcome = "stale";
+					return false;
+				}
+				if (profileDetails) profileDetails.outcome = "error";
+				throw error;
+			});
+		} finally {
+			if (profileDetails) {
+				emitAdvisorySyncProfileDuration(profile, profileStartedAt, {
+					name: "sharedLog.adaptive.rebalance",
+					component: "shared-log",
+					details: profileDetails,
+				});
 			}
-			throw error;
-		});
-
-		return resp;
+		}
 	}
 
 	private getDynamicRangeOffset(): NumberFromType<R> {
