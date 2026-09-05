@@ -1471,7 +1471,7 @@ describe("receive admission replication-info V2 receiver state", () => {
 		expect(coordinator.isCurrentActive(properties)).to.be.false;
 	});
 
-	it("drops a confirmation query before commit and answers its retry after commit", () => {
+	it("keeps same-sequence retries pending until the reserved Full commits", () => {
 		expect(markLocalReady()).to.be.true;
 		expect(observeSender()).to.be.true;
 		const state = coordinator._receiveStates.get(peerHash)!;
@@ -1482,7 +1482,6 @@ describe("receive admission replication-info V2 receiver state", () => {
 			sequence: 1n,
 			segments: [],
 		});
-		const admission = prepare(full)!;
 		const request = new RequestReplicationInfoV2AppliedMessage({
 			receiverChallenge: state.receiverBinding!.slice(),
 			senderEpoch,
@@ -1495,9 +1494,28 @@ describe("receive admission replication-info V2 receiver state", () => {
 			receiveEpoch: currentReceiveEpoch,
 			senderTransportSession,
 		};
+		const admission = coordinator.reserve(full, {
+			...properties,
+			transportTimestamp: 1n,
+		})!;
+		expect(admission).to.exist;
+		for (let retry = 0; retry < 3; retry++) {
+			expect(coordinator.confirmApplied(request, properties)).to.be.undefined;
+			expect(
+				coordinator.reserve(full, {
+					...properties,
+					transportTimestamp: BigInt(retry + 2),
+				}),
+			).to.be.undefined;
+			expect(state.reservedAdmission).to.equal(admission);
+			expect(admission.resyncAfterRelease).to.be.undefined;
+			expect(state.lastSequence).to.be.undefined;
+		}
 
 		expect(coordinator.confirmApplied(request, properties)).to.be.undefined;
 		expect(coordinator.commit(admission)).to.be.true;
+		expect(state.phase).to.equal("active");
+		expect(state.reservedAdmission).to.be.undefined;
 		const applied = coordinator.confirmApplied(request, properties);
 		expect(applied).to.be.instanceOf(ReplicationInfoV2AppliedMessage);
 		expect(applied?.sequence).to.equal(1n);
