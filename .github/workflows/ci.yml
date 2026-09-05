@@ -347,6 +347,22 @@ jobs:
           --timeout 60000 --retries 0 --no-exit
           packages/transport/stream/dist/test/stream-replacement.spec.js
           packages/transport/pubsub/dist/test/subscribe-races.spec.js
+      - name: Test synchronizer teardown without retries or forced exit
+        timeout-minutes: 3
+        env:
+          AEGIR_RUNNER: node
+          NODE_ENV: test
+        run: >-
+          node scripts/ci/assert-tests-ran.mjs node ./node_modules/mocha/bin/mocha.js
+          --no-config --no-package --require chai-extend/chai-global.js
+          --timeout 60000 --retries 0 --no-exit
+          packages/programs/data/shared-log/dist/test/lifecycle.spec.js
+          packages/programs/data/shared-log/dist/test/receive-admission.spec.js
+          packages/programs/data/shared-log/dist/test/sync-memory-pins.spec.js
+          packages/programs/data/shared-log/dist/test/rateless-iblt.spec.js
+          packages/programs/data/shared-log/dist/test/rateless-iblt-cache.spec.js
+          packages/programs/data/shared-log/dist/test/sync-session.spec.js
+          packages/programs/data/shared-log/dist/test/sync-chunking.spec.js
 
   test_push:
     if: github.event_name == 'push'
