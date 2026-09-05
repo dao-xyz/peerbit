@@ -26,8 +26,12 @@
 		"dist",
 		"!src/v2-resource-fence-anchor.ts",
 		"!src/v2-resource-fence-engine.ts",
+		"!src/v2-resource-operation-entry.ts",
+		"!src/v2-resource-operation-engine.ts",
 		"!dist/src/v2-resource-fence-anchor.*",
 		"!dist/src/v2-resource-fence-engine.*",
+		"!dist/src/v2-resource-operation-entry.*",
+		"!dist/src/v2-resource-operation-engine.*",
 		"!dist/e2e",
 		"!dist/test",
 		"!**/*.tsbuildinfo"

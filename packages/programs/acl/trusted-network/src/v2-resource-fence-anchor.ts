@@ -10,16 +10,20 @@ import type {
 	TrustedNetworkV2DurablePolicyReducer,
 } from "./v2-policy-anchor.js";
 import {
+	type AcceptedResourceFenceEntryV2,
 	type AcceptedResourceFencePolicyV2,
 	type PreparedResourceFenceCandidateV2,
+	ResourceCausalWorkBudgetV2,
 	type ResourceFenceAdmissionResultV2,
 	type ResourceFenceAdmissionStatusV2,
+	type ResourceFenceFetchHintV2,
 	type ResourceFenceForkEvidenceV2,
 	type ResourceFenceHeadProjectionV2,
 	type ResourceFencePolicyReferenceV2,
 	type ResourceFenceReducerDurableStateV2,
 	TRUSTED_NETWORK_V2_MAX_CANONICAL_ENTRY_CID_CHARACTERS,
 	TRUSTED_NETWORK_V2_MAX_PENDING_RESOURCE_FENCES,
+	TRUSTED_NETWORK_V2_MAX_RESOURCE_FENCE_ANCESTRY_STEPS,
 	TRUSTED_NETWORK_V2_MAX_RESOURCE_FENCE_MISSING_CIDS,
 	TrustedNetworkV2ResourceFenceReducer,
 	type TrustedNetworkV2ResourceFenceReducerProperties,
@@ -89,6 +93,33 @@ export type ExactResourceFenceHeadRequirementV2 = {
 export type ExactResourceFenceHeadLeaseV2 = AcceptedPolicyLeaseV2 & {
 	fence: ResourceFenceHeadProjectionV2;
 };
+
+export type ResourceFenceLeaseReferenceV2 = {
+	fenceDigest: Uint8Array;
+	policy: ResourceFencePolicyReferenceV2;
+	maxFenceSteps?: number;
+	maxPolicySteps?: number;
+	deadline?: number;
+	timeoutMs?: number;
+	signal?: AbortSignal;
+	causalWork?: ResourceCausalWorkBudgetV2;
+};
+
+export type AcceptedResourceFenceLeaseV2 = {
+	policy: AcceptedPolicyLeaseV2["policy"];
+	acceptedPolicyHead: AcceptedPolicyLeaseV2["acceptedHead"];
+	fence: AcceptedResourceFenceEntryV2;
+	acceptedHead: AcceptedResourceFenceEntryV2;
+	closingFence?: AcceptedResourceFenceEntryV2;
+};
+
+export type ResourceFenceLeaseResultV2<T> =
+	| { status: "completed"; value: T }
+	| {
+			status: "unavailable" | "rejected" | "capacity" | "halted";
+			reason: string;
+			fetchHints: readonly ResourceFenceFetchHintV2[];
+	  };
 
 @variant([2, 16, 6])
 class ResourceFenceAnchorCheckpointPayloadV2 {
@@ -941,6 +972,206 @@ export class TrustedNetworkV2DurableResourceFenceReducer {
 		this.detachExternalAbortListener();
 		this.lifecycleController.abort();
 		this.core.abort();
+	}
+
+	/**
+	 * Hold the exact historical policy, then the committed resource prefix,
+	 * through one callback. No new head is admitted by this read-only lease.
+	 * Callbacks must not await another operation on either anchor. Cancellation
+	 * before invocation skips the callback; after invocation both queues stay
+	 * held until it settles. This does not establish remote freshness or replay.
+	 */
+	withAcceptedFenceLease<T>(
+		reference: ResourceFenceLeaseReferenceV2,
+		use: (lease: AcceptedResourceFenceLeaseV2) => T | Promise<T>,
+	): Promise<ResourceFenceLeaseResultV2<T>> {
+		const failure = (
+			status: "unavailable" | "rejected" | "capacity" | "halted",
+			reason: string,
+		): ResourceFenceLeaseResultV2<T> => ({ status, reason, fetchHints: [] });
+		const halted = () =>
+			this.terminalError !== undefined ||
+			this.lifecycleController.signal.aborted ||
+			this.state === "FORKED"
+				? failure("halted", "Resource-fence anchor is halted")
+				: undefined;
+		const terminal = halted();
+		if (terminal) return Promise.resolve(terminal);
+		let fenceDigest: Uint8Array;
+		let policy: ResourceFencePolicyReferenceV2;
+		let maxFenceSteps: number;
+		let maxPolicySteps: number;
+		let causalWork: ResourceCausalWorkBudgetV2 | undefined;
+		let deadline: number;
+		let signal: AbortSignal;
+		try {
+			const suppliedFenceDigest = reference.fenceDigest;
+			const suppliedPolicy = reference.policy;
+			const suppliedPolicyDigest = suppliedPolicy.digest;
+			const policySequence = suppliedPolicy.sequence;
+			const suppliedDeadline = reference.deadline;
+			const suppliedSignal = reference.signal;
+			if (
+				!hasExactUint8ArrayByteLength(suppliedFenceDigest, 32) ||
+				!hasExactUint8ArrayByteLength(suppliedPolicyDigest, 32) ||
+				typeof policySequence !== "bigint" ||
+				policySequence < 0n ||
+				policySequence > 0xffffffffffffffffn ||
+				typeof use !== "function"
+			)
+				throw new Error("Invalid fence or policy reference");
+			fenceDigest = copyBytes(suppliedFenceDigest);
+			policy = {
+				sequence: policySequence,
+				digest: copyBytes(suppliedPolicyDigest),
+			};
+			maxFenceSteps =
+				reference.maxFenceSteps ??
+				TRUSTED_NETWORK_V2_MAX_RESOURCE_FENCE_ANCESTRY_STEPS;
+			maxPolicySteps = reference.maxPolicySteps ?? this.policyLeaseMaxSteps;
+			causalWork = reference.causalWork;
+			const timeoutMs = reference.timeoutMs ?? this.operationTimeoutMs;
+			if (
+				(causalWork !== undefined &&
+					!(causalWork instanceof ResourceCausalWorkBudgetV2)) ||
+				!Number.isSafeInteger(maxFenceSteps) ||
+				maxFenceSteps < 0 ||
+				maxFenceSteps > TRUSTED_NETWORK_V2_MAX_RESOURCE_FENCE_ANCESTRY_STEPS ||
+				!Number.isSafeInteger(maxPolicySteps) ||
+				maxPolicySteps < 0 ||
+				maxPolicySteps > MAX_POLICY_LEASE_STEPS ||
+				!Number.isSafeInteger(timeoutMs) ||
+				timeoutMs < 0 ||
+				timeoutMs > MAX_RESOURCE_OPERATION_TIMEOUT_MS ||
+				(suppliedDeadline !== undefined &&
+					(!Number.isSafeInteger(suppliedDeadline) || suppliedDeadline < 0))
+			)
+				throw new Error("Invalid fence lease limits");
+			deadline = Math.min(Date.now() + timeoutMs, suppliedDeadline ?? Infinity);
+			signal = AbortSignal.any(
+				suppliedSignal === undefined
+					? [this.lifecycleController.signal]
+					: [this.lifecycleController.signal, suppliedSignal],
+			);
+		} catch {
+			return Promise.resolve(
+				failure(
+					"rejected",
+					"Resource-fence lease reference or limits are invalid",
+				),
+			);
+		}
+		if (!this.reserveOperation(64)) {
+			return Promise.resolve(
+				failure(
+					"capacity",
+					"Resource-fence lease queue is at its fixed capacity",
+				),
+			);
+		}
+		let callbackEntered = false;
+		let interrupted: ResourceFenceLeaseResultV2<T> | undefined;
+		let resolveEarly!: (result: ResourceFenceLeaseResultV2<T>) => void;
+		const early = new Promise<ResourceFenceLeaseResultV2<T>>((resolve) => {
+			resolveEarly = resolve;
+		});
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		const dispose = () => {
+			clearTimeout(timer);
+			signal.removeEventListener("abort", interrupt);
+		};
+		const interrupt = () => {
+			if (callbackEntered || interrupted) return;
+			interrupted =
+				halted() ??
+				failure(
+					"unavailable",
+					"Resource-fence lease acquisition was cancelled or expired",
+				);
+			dispose();
+			resolveEarly(interrupted);
+		};
+		const stop = () => {
+			if (!callbackEntered && (signal.aborted || Date.now() >= deadline))
+				interrupt();
+			return interrupted ?? halted();
+		};
+		signal.addEventListener("abort", interrupt, { once: true });
+		if (signal.aborted || Date.now() >= deadline) interrupt();
+		else timer = setTimeout(interrupt, deadline - Date.now());
+		this.recoveryFences += 1;
+		const completed = this.policyAnchor
+			.withAcceptedPolicyLease(
+				{
+					...policy,
+					maxSteps: maxPolicySteps,
+					deadline,
+					timeoutMs: this.policyLeaseTimeoutMs,
+					signal,
+				},
+				(policyLease) =>
+					this.enqueueResourceOperation(
+						async (): Promise<ResourceFenceLeaseResultV2<T>> => {
+							const queuedStop = stop();
+							if (queuedStop) return queuedStop;
+							const resolution = await this.core.resolveAcceptedFencePrefix(
+								{ digest: fenceDigest },
+								{ maxSteps: maxFenceSteps, deadline, signal, causalWork },
+							);
+							const resolvedStop = stop();
+							if (resolvedStop) return resolvedStop;
+							if (resolution.status !== "resolved") return resolution;
+							if (
+								this.state !== "ACTIVE" ||
+								this.published.head?.entryCid !==
+									resolution.acceptedHead.head.entryCid
+							) {
+								return failure(
+									"unavailable",
+									"Resource-fence prefix is not durably committed",
+								);
+							}
+							if (
+								resolution.fence.head.policy.sequence !==
+									policyLease.policy.sequence ||
+								!equals(
+									resolution.fence.head.policy.digest,
+									policyLease.policy.digest,
+								)
+							) {
+								return failure(
+									"rejected",
+									"Resource fence does not reference the leased policy",
+								);
+							}
+							callbackEntered = true;
+							dispose();
+							return {
+								status: "completed",
+								value: await use({
+									policy: policyLease.policy,
+									acceptedPolicyHead: policyLease.acceptedHead,
+									fence: resolution.fence,
+									acceptedHead: resolution.acceptedHead,
+									closingFence: resolution.closingFence,
+								}),
+							};
+						},
+						false,
+					),
+			)
+			.then(
+				(leased): ResourceFenceLeaseResultV2<T> =>
+					leased.status === "completed"
+						? leased.value
+						: (stop() ?? { ...leased, fetchHints: [] }),
+			)
+			.finally(() => {
+				dispose();
+				this.recoveryFences -= 1;
+				this.releaseOperation(64);
+			});
+		return Promise.race([completed, early]);
 	}
 
 	/**

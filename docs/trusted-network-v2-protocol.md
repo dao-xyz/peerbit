@@ -203,8 +203,9 @@ policy snapshots and resource fences: the entry must use the normal
 one successfully verified signature, and that signer's canonical public-key
 bytes must equal the descriptor authority. A different entry type, signature
 cardinality, coverage rule, or signer requires a new profile identifier. This
-profile does not govern writer operations; every protected-resource adapter
-must pin its own bounded operation-entry and signature profile before use.
+profile does not govern writer operations. The internal operation profile
+below is separately pinned; protected-resource adapters must explicitly opt
+into it and validate their application payload before use.
 
 Profile `1` also fixes the maximum canonical serialized policy-entry size at
 131,072 bytes. Replicas apply that ceiling to direct admissions, resolved
@@ -301,7 +302,7 @@ terminal state and common parent, but if the authority signs more than two
 siblings, the retained pair depends on which conflict is observed first and is
 not a complete equivocation set. Its durable wrapper ties every mutating
 admission to the fence's exact accepted-policy-prefix lease. This does not make
-either component a protected resource API: they do not yet authenticate
+either component a protected resource API: they do not interpret
 application operations, revalidate their projections across a fence, prove
 that an offline peer has seen the newest fence, or provide encryption-epoch key
 rotation.
@@ -701,6 +702,64 @@ projection checkpoint required by protected resources. The implementation
 therefore remains internal and non-activatable while those resource-enforcement
 gates are incomplete.
 
+### Internal protected-operation classification
+
+The internal `ResourceOperationEnvelopeV2` uses variant `[2, 4]` and operation
+profile `1`. Its signed public payload contains the fixed 146-byte `[2, 3]`
+proof, the exact 32-byte epoch-manifest digest, and opaque application bytes.
+The envelope has 185 bytes of fixed overhead. This profile requires canonical
+public `EntryV0` APPEND storage with no embedded hash, zero reserved bytes,
+canonical unique CIDv1/raw/sha2-256 parents, and one to eight unique verified
+Ed25519 or canonical low-s secp256k1 signatures in signature-byte order. The
+clock principal must be one verified signer. At least one signer must have
+WRITER in the exact named historical policy; the role lookup uses the policy's
+sorted bindings. Signatures cover the policy, resource, fence, content epoch,
+manifest, application payload, and causal metadata together.
+
+The internal operation classifier acquires the exact accepted historical
+policy lease before the resource queue and holds both through classification.
+It walks backward from the durably committed fence head to the named fence,
+retaining its first closing child. The operation must descend from its named
+fence. An ancestor of the closing fence is `policy-final` relative to that
+accepted local prefix; a concurrent operation or one descending from the
+closing fence is rejected. An operation in an open interval is `provisional`.
+Later regrant does not change the first closing fence. Missing historical
+policy/fence/causal blocks, an unseen named fence, cancellation, and exhausted
+work budgets are `unavailable`, not permanent operation rejection. Retrying
+after exact dependencies arrive computes a fresh verdict; there is no verdict
+cache, retained replay queue, history truncation, or materialized projection.
+
+Operation envelopes are capped at 128 KiB, application payloads at 64 KiB,
+metadata at 16 KiB, and direct predecessors at 64. Each classification permits
+at most 64 fence predecessor steps and 4,096 policy steps. Every traversed
+fence predecessor transition has its own causal walk, followed by up to three
+operation-classification causal walks. These at most 67 walks share one
+per-operation ceiling of 1,024 admitted EntryV0 CIDs, 16 MiB of captured bytes,
+and 65,536 examined parent links. Repeated CIDs and bytes across walks are
+charged again; incomplete and capacity-limited walks also debit their visited
+work. Each walk is limited to the remaining shared allowance and never raises
+the fence reducer's lower configured per-walk limits. Closing-fence walks run
+sequentially so they cannot spend the same remaining allowance twice. These
+causal-work ceilings may only be lowered and exclude policy traversal,
+predecessor authentication, and arbitrary work performed inside a resolver.
+One queue-inclusive deadline covers the whole classification (10 seconds by
+default, configurable up to 60 seconds). Exhaustion returns `unavailable`,
+without releasing application payload, rejecting the operation permanently,
+or discarding history. Repeating an unchanged over-budget graph does not make
+it fit; a future authenticated checkpoint or proof mechanism remains necessary
+for longer histories. Every new evaluation receives a fresh bounded allowance.
+The operation engine retains at most 64 calls and 512 KiB of captured input,
+and at most 64 unsettled causal resolver calls even if a resolver ignores
+cancellation. Dependency hints are capped at 64. Missing history remains
+necessary for retry; none of these work ceilings grants permission to discard it.
+
+These modules are excluded from the package root and published artifact.
+The generic signed envelope does not interpret or authorize an application's
+payload semantics. A public protected-resource adapter, durable pending-context
+replay, projection revalidation and retractions, accepted-remote-entry/frontier
+callbacks, and end-to-end long-offline synchronization remain required before
+public revocation guarantees. The classifier does not rotate or release keys.
+
 ## Confidentiality boundary
 
 Replication and routing operate on ciphertext and public policy metadata.
@@ -823,8 +882,10 @@ Together, the internal reducer and durable wrapper now cover signed EntryV0
 authentication, exact accepted-policy provenance, bounded causal ancestry,
 monotone transition and fork reduction, bounded canonical dependency hints,
 and crash-safe persistence of accepted, unavailable-comparison, and fork states. The policy
-lease and fence-admission walks have aggregate bounds. Application-entry
-authentication, durable replay of all pending context, materialized projection
+lease and fence-admission walks have aggregate bounds. The bounded internal
+operation envelope now authenticates signed application bytes and classifies
+their fence-relative authorization. Application payload semantics, durable
+replay of all pending context, materialized projection
 revalidation and retractions, the public accepted-entry/frontier callback, and
 end-to-end long-offline catch-up remain open. This foundation does not complete
 the gate or provide a usable authorization path.

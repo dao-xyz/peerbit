@@ -1,16 +1,12 @@
 import { serialize } from "@dao-xyz/borsh";
-import {
-	calculateRawCid,
-	cidifyString,
-	codecMap,
-	defaultHasher,
-	stringifyCid,
-} from "@peerbit/blocks-interface";
+import { calculateRawCid } from "@peerbit/blocks-interface";
 import { EntryType, type Meta } from "@peerbit/log";
 import { equals } from "uint8arrays";
 import {
 	type AuthenticatedAuthorityEntryV0V2,
+	assertCanonicalSecp256k1SignatureV2,
 	authenticateAuthorityEntryV0V2,
+	canonicalDirectParentsV2,
 } from "./v2-authority-entry.js";
 import {
 	NetworkDescriptorV2,
@@ -26,81 +22,6 @@ import {
 const RESOURCE_FENCE_AUTHORITY_LIMITS_V2 = Object.freeze({
 	maximumEntryBytes: TRUSTED_NETWORK_V2_MAX_RESOURCE_FENCE_ENTRY_BYTES,
 });
-
-const SECP256K1_SIGNATURE_TEXT_BYTES = 132;
-const SECP256K1_LOW_S_MAX_HEX =
-	"7fffffffffffffffffffffffffffffff5d576e7357a4501ddfe92f46681b20a0";
-
-const isLowerHexByteV2 = (value: number): boolean =>
-	(value >= 0x30 && value <= 0x39) || (value >= 0x61 && value <= 0x66);
-
-const assertCanonicalSecp256k1SignatureV2 = (signature: Uint8Array): void => {
-	if (
-		signature.byteLength !== SECP256K1_SIGNATURE_TEXT_BYTES ||
-		signature[0] !== 0x30 ||
-		signature[1] !== 0x78
-	) {
-		throw new Error("Authority EntryV0 secp256k1 signature is not canonical");
-	}
-	for (let i = 2; i < signature.byteLength; i++) {
-		if (!isLowerHexByteV2(signature[i]!)) {
-			throw new Error("Authority EntryV0 secp256k1 signature is not canonical");
-		}
-	}
-	if (
-		signature[130] !== 0x31 ||
-		(signature[131] !== 0x62 && signature[131] !== 0x63)
-	) {
-		throw new Error("Authority EntryV0 secp256k1 signature is not canonical");
-	}
-	for (let i = 0; i < SECP256K1_LOW_S_MAX_HEX.length; i++) {
-		const actual = signature[66 + i]!;
-		const maximum = SECP256K1_LOW_S_MAX_HEX.charCodeAt(i);
-		if (actual < maximum) break;
-		if (actual > maximum) {
-			throw new Error("Authority EntryV0 secp256k1 signature is not canonical");
-		}
-	}
-};
-
-const canonicalDirectParentsV2 = (
-	parents: string[],
-): Array<{ cid: string; digest: Uint8Array }> => {
-	const seen = new Set<string>();
-	return parents.map((cid) => {
-		let parsed: ReturnType<typeof cidifyString>;
-		try {
-			parsed = cidifyString(cid);
-		} catch {
-			throw new Error(
-				"Authority EntryV0 direct parents must use canonical CIDv1/raw/sha2-256",
-			);
-		}
-		if (
-			!cid ||
-			parsed.version !== 1 ||
-			parsed.code !== codecMap.raw.code ||
-			parsed.multihash.code !== defaultHasher.code ||
-			parsed.multihash.digest.byteLength !== 32 ||
-			stringifyCid(parsed) !== cid
-		) {
-			throw new Error(
-				"Authority EntryV0 direct parents must use canonical CIDv1/raw/sha2-256",
-			);
-		}
-		if (seen.has(cid)) {
-			throw new Error("Authority EntryV0 direct parents must be unique");
-		}
-		seen.add(cid);
-		return {
-			cid,
-			digest: copyUint8ArrayWithLengthV2(
-				parsed.multihash.digest,
-				parsed.multihash.digest.byteLength,
-			),
-		};
-	});
-};
 
 type ResourceFenceEntryV0ProfileV2 = {
 	meta: Meta;
@@ -156,9 +77,12 @@ const assertResourceFenceEntryV0ProfileV2 = (
 	}
 	const signature = authenticated.entry.signatures[0]!;
 	if (serialize(signature.publicKey)[0] === 1) {
-		assertCanonicalSecp256k1SignatureV2(signature.signature);
+		assertCanonicalSecp256k1SignatureV2(signature.signature, "Authority");
 	}
-	return { meta, directParents: canonicalDirectParentsV2(meta.next) };
+	return {
+		meta,
+		directParents: canonicalDirectParentsV2(meta.next, "Authority"),
+	};
 };
 
 export type AuthenticatedResourceFenceEntryV2 = Readonly<{

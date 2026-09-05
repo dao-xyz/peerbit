@@ -6,8 +6,10 @@ import {
 	stringifyCid,
 } from "@peerbit/blocks-interface";
 import {
+	type BoundedEntryV0CausalReachabilityInput,
 	type BoundedEntryV0CausalReachabilityLimits,
 	type BoundedEntryV0CausalReachabilityResolver,
+	type BoundedEntryV0CausalReachabilityResult,
 	checkBoundedEntryV0CausalReachability,
 } from "@peerbit/log";
 import { compare, equals } from "uint8arrays";
@@ -51,6 +53,99 @@ const DEFAULT_CAUSAL_LIMITS: Readonly<BoundedEntryV0CausalReachabilityLimits> =
 		maxResolveBatchSize: TRUSTED_NETWORK_V2_MAX_RESOURCE_FENCE_DIRECT_PARENTS,
 	});
 
+export type ResourceCausalWorkLimitsV2 = Pick<
+	BoundedEntryV0CausalReachabilityLimits,
+	"maxVisitedEntries" | "maxTotalBytes" | "maxParentLinks"
+>;
+
+/** Internal, per-operation accounting; no entries or verdicts are retained. */
+export class ResourceCausalWorkBudgetV2 {
+	private readonly remainingWork: ResourceCausalWorkLimitsV2;
+	private active = false;
+	private failed = false;
+
+	constructor(limits: Partial<ResourceCausalWorkLimitsV2> = {}) {
+		this.remainingWork = {
+			maxVisitedEntries:
+				limits.maxVisitedEntries ?? DEFAULT_CAUSAL_LIMITS.maxVisitedEntries,
+			maxTotalBytes:
+				limits.maxTotalBytes ?? DEFAULT_CAUSAL_LIMITS.maxTotalBytes,
+			maxParentLinks:
+				limits.maxParentLinks ?? DEFAULT_CAUSAL_LIMITS.maxParentLinks,
+		};
+		for (const key of Object.keys(this.remainingWork) as Array<
+			keyof ResourceCausalWorkLimitsV2
+		>) {
+			const value = this.remainingWork[key];
+			if (
+				!Number.isSafeInteger(value) ||
+				value < 1 ||
+				value > DEFAULT_CAUSAL_LIMITS[key]
+			) {
+				throw new RangeError(`${key} must be a positive bounded safe integer`);
+			}
+		}
+	}
+
+	get remaining(): Readonly<ResourceCausalWorkLimitsV2> {
+		return { ...this.remainingWork };
+	}
+
+	get exhausted(): boolean {
+		return this.failed;
+	}
+
+	static async check(
+		input: BoundedEntryV0CausalReachabilityInput,
+		budget: ResourceCausalWorkBudgetV2,
+	): Promise<BoundedEntryV0CausalReachabilityResult> {
+		const capacity = (): BoundedEntryV0CausalReachabilityResult => ({
+			status: "capacity",
+			visited: { entries: 0, bytes: 0, parentLinks: 0, resolverCalls: 0 },
+		});
+		// Walks sharing this budget must be sequential. Refuse concurrent use
+		// before either walk can spend the same remaining allowance twice.
+		if (
+			budget.failed ||
+			budget.active ||
+			Object.values(budget.remainingWork).some((value) => value === 0)
+		) {
+			budget.failed = true;
+			return capacity();
+		}
+		const limits = { ...input.limits };
+		for (const key of Object.keys(budget.remainingWork) as Array<
+			keyof ResourceCausalWorkLimitsV2
+		>) {
+			limits[key] = Math.min(limits[key], budget.remainingWork[key]);
+		}
+		budget.active = true;
+		try {
+			const result = await checkBoundedEntryV0CausalReachability({
+				...input,
+				limits,
+			});
+			// Capacity and incomplete results consumed work too. Charge every
+			// completed walk, including repeated CIDs and bytes across walks.
+			budget.remainingWork.maxVisitedEntries -= result.visited.entries;
+			budget.remainingWork.maxTotalBytes -= result.visited.bytes;
+			budget.remainingWork.maxParentLinks -= result.visited.parentLinks;
+			if (result.status === "capacity") budget.failed = true;
+			return result;
+		} catch {
+			// Without a visited receipt, conservatively spend the remaining
+			// allowance; never turn an exceptional walk into uncharged work.
+			budget.remainingWork.maxVisitedEntries = 0;
+			budget.remainingWork.maxTotalBytes = 0;
+			budget.remainingWork.maxParentLinks = 0;
+			budget.failed = true;
+			return capacity();
+		} finally {
+			budget.active = false;
+		}
+	}
+}
+
 const TYPED_ARRAY_PROTOTYPE = Object.getPrototypeOf(Uint8Array.prototype);
 const TYPED_ARRAY_BYTE_LENGTH = Object.getOwnPropertyDescriptor(
 	TYPED_ARRAY_PROTOTYPE,
@@ -62,6 +157,20 @@ const TYPED_ARRAY_TAG = Object.getOwnPropertyDescriptor(
 )!.get!;
 const ARRAY_BUFFER_IS_VIEW = ArrayBuffer.isView;
 const UINT8_ARRAY_SET = Uint8Array.prototype.set;
+
+const isAbortSignalV2 = (value: unknown): value is AbortSignal => {
+	if (value === null || typeof value !== "object") return false;
+	try {
+		const signal = value as AbortSignal;
+		return (
+			typeof signal.aborted === "boolean" &&
+			typeof signal.addEventListener === "function" &&
+			typeof signal.removeEventListener === "function"
+		);
+	} catch {
+		return false;
+	}
+};
 
 const exactByteLength = (value: unknown): number => {
 	if (
@@ -181,6 +290,38 @@ export type ResourceFenceHeadProjectionV2 = Readonly<{
 	epochManifestDigest: Uint8Array;
 	/** Exact signed EntryV0 `meta.next`; an empty array is an explicit frontier. */
 	causalFrontier: ReadonlyArray<Readonly<{ cid: string; digest: Uint8Array }>>;
+}>;
+
+/** Exact authenticated fence retained only for one internal prefix lease. */
+export type AcceptedResourceFenceEntryV2 = Readonly<{
+	head: ResourceFenceHeadProjectionV2;
+	entryBytes: Uint8Array;
+}>;
+
+/** Internal read-only resolution used by the durable resource-fence lease. */
+export type AcceptedResourceFencePrefixResolutionV2 =
+	| Readonly<{
+			status: "resolved";
+			fence: AcceptedResourceFenceEntryV2;
+			acceptedHead: AcceptedResourceFenceEntryV2;
+			/** First accepted child after `fence`, if its interval is closed. */
+			closingFence?: AcceptedResourceFenceEntryV2;
+	  }>
+	| Readonly<{
+			status: "unavailable" | "rejected" | "halted";
+			reason: string;
+			fetchHints: readonly ResourceFenceFetchHintV2[];
+	  }>;
+
+export type AcceptedResourceFencePrefixTraversalV2 = Readonly<{
+	/** Maximum authenticated predecessor edges traversed for this lookup. */
+	maxSteps?: number;
+	/** Absolute wall-clock deadline in milliseconds since the Unix epoch. */
+	deadline?: number;
+	/** Cancels this lookup without aborting the reducer lifecycle. */
+	signal?: AbortSignal;
+	/** Shared only with the protected operation's subsequent causal walks. */
+	causalWork?: ResourceCausalWorkBudgetV2;
 }>;
 
 export type ResourceFenceForkChildProofV2 = Readonly<{
@@ -417,6 +558,13 @@ const projectionFromSnapshot = (
 	})),
 });
 
+const acceptedEntryFromSnapshot = (
+	snapshot: ValidatedResourceFenceV2,
+): AcceptedResourceFenceEntryV2 => ({
+	head: projectionFromSnapshot(snapshot),
+	entryBytes: copyBytes(snapshot.entryBytes),
+});
+
 const forkProofFromSnapshot = (
 	snapshot: ValidatedResourceFenceV2,
 ): ResourceFenceForkChildProofV2 => ({
@@ -646,6 +794,9 @@ export class TrustedNetworkV2ResourceFenceReducer {
 	private readonly pending = new Map<string, ValidatedResourceFenceV2>();
 	private admissionTail: Promise<void> = Promise.resolve();
 	private activeOperationSignal?: AbortSignal;
+	private outstandingFenceResolutions = 0;
+	private outstandingCausalResolutions = 0;
+	private pendingPrefixLookups = 0;
 
 	constructor(properties: TrustedNetworkV2ResourceFenceReducerProperties) {
 		assertNetworkDescriptorV2(properties.descriptor);
@@ -803,6 +954,250 @@ export class TrustedNetworkV2ResourceFenceReducer {
 
 	get forkEvidence(): ResourceFenceForkEvidenceV2 | undefined {
 		return this.fork === undefined ? undefined : copyForkEvidence(this.fork);
+	}
+
+	/**
+	 * Resolve an exact digest on the accepted resource-fence prefix and retain
+	 * the first accepted child that closes that fence's operation interval.
+	 * Direct users are serialized with admissions; the durable wrapper owns the
+	 * cross-policy lease and callback lifetime.
+	 */
+	resolveAcceptedFencePrefix(
+		reference: Readonly<{ digest: Uint8Array }>,
+		traversal?: AcceptedResourceFencePrefixTraversalV2,
+	): Promise<AcceptedResourceFencePrefixResolutionV2> {
+		let digest: Uint8Array;
+		let capturedTraversal: AcceptedResourceFencePrefixTraversalV2;
+		try {
+			const suppliedDigest = reference.digest;
+			if (exactByteLength(suppliedDigest) !== 32) {
+				throw new Error("invalid digest");
+			}
+			digest = copyBytes(suppliedDigest);
+			const maxSteps = traversal?.maxSteps;
+			if (
+				maxSteps !== undefined &&
+				(!Number.isSafeInteger(maxSteps) ||
+					maxSteps < 0 ||
+					maxSteps > TRUSTED_NETWORK_V2_MAX_RESOURCE_FENCE_ANCESTRY_STEPS)
+			) {
+				return Promise.resolve({
+					status: "rejected",
+					reason: `Resource-fence prefix maxSteps must be between 0 and ${TRUSTED_NETWORK_V2_MAX_RESOURCE_FENCE_ANCESTRY_STEPS}`,
+					fetchHints: [],
+				});
+			}
+			const deadline = traversal?.deadline;
+			if (
+				deadline !== undefined &&
+				(!Number.isSafeInteger(deadline) || deadline < 0)
+			) {
+				return Promise.resolve({
+					status: "rejected",
+					reason:
+						"Resource-fence prefix deadline must be a non-negative safe integer",
+					fetchHints: [],
+				});
+			}
+			const signal = traversal?.signal;
+			if (signal !== undefined && !isAbortSignalV2(signal)) {
+				return Promise.resolve({
+					status: "rejected",
+					reason: "Resource-fence prefix signal must be an AbortSignal",
+					fetchHints: [],
+				});
+			}
+			const causalWork = traversal?.causalWork;
+			if (
+				causalWork !== undefined &&
+				!(causalWork instanceof ResourceCausalWorkBudgetV2)
+			) {
+				return Promise.resolve({
+					status: "rejected",
+					reason: "Resource-fence prefix causal work budget is invalid",
+					fetchHints: [],
+				});
+			}
+			capturedTraversal = { maxSteps, deadline, signal, causalWork };
+		} catch {
+			return Promise.resolve({
+				status: "rejected",
+				reason: "Resource-fence reference digest must contain exactly 32 bytes",
+				fetchHints: [],
+			});
+		}
+		if (
+			this.pendingPrefixLookups >=
+			TRUSTED_NETWORK_V2_MAX_PENDING_RESOURCE_FENCES
+		) {
+			return Promise.resolve({
+				status: "unavailable",
+				reason: "Resource-fence prefix queue is at its fixed capacity",
+				fetchHints: [],
+			});
+		}
+		this.pendingPrefixLookups += 1;
+		const result = this.admissionTail.then(() =>
+			this.resolveAcceptedFencePrefixOne({ digest }, capturedTraversal),
+		);
+		this.admissionTail = result.then(
+			(): void => {},
+			(): void => {},
+		);
+		return result.finally(() => {
+			this.pendingPrefixLookups -= 1;
+		});
+	}
+
+	private async resolveAcceptedFencePrefixOne(
+		reference: Readonly<{ digest: Uint8Array }>,
+		traversal: AcceptedResourceFencePrefixTraversalV2,
+	): Promise<AcceptedResourceFencePrefixResolutionV2> {
+		const interrupted = this.acceptedPrefixInterruption(traversal);
+		if (interrupted !== undefined) return interrupted;
+		if (this.unavailable !== undefined) {
+			return {
+				status: "unavailable",
+				reason: "Resource-fence reducer has unresolved accepted ancestry",
+				fetchHints: this.fetchHints(),
+			};
+		}
+		if (this.acceptedHead === undefined) {
+			return {
+				status: "unavailable",
+				reason: "Resource-fence reducer has no accepted head",
+				fetchHints: [],
+			};
+		}
+
+		let cursor = copySnapshot(this.acceptedHead);
+		let closingFence: ValidatedResourceFenceV2 | undefined;
+		let steps = 0;
+		while (!equals(cursor.digest, reference.digest)) {
+			const loopInterruption = this.acceptedPrefixInterruption(traversal);
+			if (loopInterruption !== undefined) return loopInterruption;
+			if (cursor.body.fenceSequence === 0n) {
+				return {
+					status: "unavailable",
+					reason:
+						"Resource-fence reference is not in the currently accepted prefix",
+					fetchHints: [
+						{
+							kind: "resource-fence-predecessor",
+							digest: copyBytes(reference.digest),
+						},
+					],
+				};
+			}
+			const maximumSteps = traversal.maxSteps ?? this.maxFenceAncestrySteps;
+			if (steps >= maximumSteps) {
+				return {
+					status: "unavailable",
+					reason: "Accepted resource-fence prefix traversal reached maxSteps",
+					fetchHints: [
+						{
+							kind: "resource-fence-predecessor",
+							digest: copyBytes(cursor.body.previousFenceDigest),
+						},
+					],
+				};
+			}
+			steps += 1;
+			const child = cursor;
+			const predecessor = await this.predecessorOf(
+				child,
+				steps === 1,
+				traversal,
+			);
+			const resolutionInterruption = this.acceptedPrefixInterruption(traversal);
+			if (resolutionInterruption !== undefined) return resolutionInterruption;
+			if (predecessor.status !== "found") {
+				return {
+					status: "unavailable",
+					reason: `Accepted resource-fence prefix is unavailable: ${predecessor.reason}`,
+					fetchHints: [
+						{
+							kind: "resource-fence-predecessor",
+							digest: copyBytes(child.body.previousFenceDigest),
+						},
+					],
+				};
+			}
+			const causal = await this.validateCausalTransition(
+				predecessor.predecessor,
+				child,
+				traversal,
+			);
+			if (causal.status !== "found") {
+				return {
+					status: "unavailable",
+					reason: causal.reason,
+					fetchHints: [
+						...(causal.missingPredecessorDigest === undefined
+							? []
+							: [
+									{
+										kind: "resource-fence-predecessor" as const,
+										digest: copyBytes(causal.missingPredecessorDigest),
+									},
+								]),
+						...causal.missingCids.map((cid) => ({
+							kind: "causal-entry" as const,
+							cid,
+						})),
+					],
+				};
+			}
+			closingFence = child;
+			cursor = causal.fence;
+		}
+		const completedInterruption = this.acceptedPrefixInterruption(traversal);
+		if (completedInterruption !== undefined) return completedInterruption;
+		return {
+			status: "resolved",
+			fence: acceptedEntryFromSnapshot(cursor),
+			acceptedHead: acceptedEntryFromSnapshot(this.acceptedHead),
+			closingFence:
+				closingFence === undefined
+					? undefined
+					: acceptedEntryFromSnapshot(closingFence),
+		};
+	}
+
+	private acceptedPrefixInterruption(
+		traversal: AcceptedResourceFencePrefixTraversalV2,
+	):
+		| Exclude<AcceptedResourceFencePrefixResolutionV2, { status: "resolved" }>
+		| undefined {
+		if (this.lifecycleController.signal.aborted) {
+			return {
+				status: "halted",
+				reason: "Resource-fence reducer lifecycle is aborted",
+				fetchHints: [],
+			};
+		}
+		if (this.fork !== undefined) {
+			return {
+				status: "halted",
+				reason: "Resource-fence reducer is halted by authority equivocation",
+				fetchHints: [],
+			};
+		}
+		if (traversal.signal?.aborted) {
+			return {
+				status: "unavailable",
+				reason: "Resource-fence prefix resolution was aborted by the caller",
+				fetchHints: [],
+			};
+		}
+		if (traversal.deadline !== undefined && Date.now() >= traversal.deadline) {
+			return {
+				status: "unavailable",
+				reason: "Resource-fence prefix resolution deadline elapsed",
+				fetchHints: [],
+			};
+		}
+		return undefined;
 	}
 
 	static async restore(
@@ -1300,7 +1695,17 @@ export class TrustedNetworkV2ResourceFenceReducer {
 
 	private async resolveNamedPredecessor(
 		candidate: ValidatedResourceFenceV2,
+		traversal?: AcceptedResourceFencePrefixTraversalV2,
 	): Promise<NamedPredecessorResolutionV2> {
+		if (
+			this.outstandingFenceResolutions >=
+			TRUSTED_NETWORK_V2_MAX_PENDING_RESOURCE_FENCES
+		) {
+			return {
+				status: "unavailable",
+				reason: "Resource-fence predecessor resolver is at its fixed capacity",
+			};
+		}
 		if (candidate.body.fenceSequence === 0n) {
 			return {
 				status: "reject",
@@ -1310,9 +1715,11 @@ export class TrustedNetworkV2ResourceFenceReducer {
 		const digest = copyBytes(candidate.body.previousFenceDigest);
 		const attempt = new AbortController();
 		let timedOut = false;
+		let deadlineElapsed = false;
 		const abortFromLifecycle = (): void => attempt.abort();
 		const operationSignal = this.activeOperationSignal;
 		const abortFromOperation = (): void => attempt.abort();
+		const abortFromTraversal = (): void => attempt.abort();
 		this.lifecycleController.signal.addEventListener(
 			"abort",
 			abortFromLifecycle,
@@ -1321,16 +1728,36 @@ export class TrustedNetworkV2ResourceFenceReducer {
 		operationSignal?.addEventListener("abort", abortFromOperation, {
 			once: true,
 		});
-		if (operationSignal?.aborted) attempt.abort();
-		const timeout = setTimeout(() => {
-			timedOut = true;
+		traversal?.signal?.addEventListener("abort", abortFromTraversal, {
+			once: true,
+		});
+		if (operationSignal?.aborted || traversal?.signal?.aborted) attempt.abort();
+		const deadlineRemaining =
+			traversal?.deadline === undefined
+				? undefined
+				: traversal.deadline - Date.now();
+		if (deadlineRemaining !== undefined && deadlineRemaining <= 0) {
+			deadlineElapsed = true;
 			attempt.abort();
-		}, this.causalTimeoutMs);
+		}
+		const timeoutMs = Math.max(
+			0,
+			Math.min(this.causalTimeoutMs, deadlineRemaining ?? this.causalTimeoutMs),
+		);
+		const timeout = setTimeout(() => {
+			deadlineElapsed =
+				deadlineRemaining !== undefined &&
+				deadlineRemaining <= this.causalTimeoutMs;
+			timedOut = !deadlineElapsed;
+			attempt.abort();
+		}, timeoutMs);
 		const unavailable = (): NamedPredecessorResolutionV2 => ({
 			status: "unavailable",
-			reason: timedOut
-				? `Resource-fence predecessor resolver timed out after ${this.causalTimeoutMs} ms`
-				: "Resource-fence predecessor resolver was aborted",
+			reason: deadlineElapsed
+				? "Resource-fence predecessor resolution deadline elapsed"
+				: timedOut
+					? `Resource-fence predecessor resolver timed out after ${this.causalTimeoutMs} ms`
+					: "Resource-fence predecessor resolver was aborted",
 		});
 		let rejectOnAbort: (() => void) | undefined;
 		const abortPromise = new Promise<never>((_resolve, reject) => {
@@ -1338,17 +1765,22 @@ export class TrustedNetworkV2ResourceFenceReducer {
 			attempt.signal.addEventListener("abort", rejectOnAbort, { once: true });
 			if (attempt.signal.aborted) rejectOnAbort();
 		});
-		const resolution = Promise.resolve().then(async () => {
-			if (attempt.signal.aborted) throw new Error("resolver-aborted");
-			const supplied = await this.resolveFenceEntry(copyBytes(digest), {
-				signal: attempt.signal,
+		this.outstandingFenceResolutions += 1;
+		const resolution = Promise.resolve()
+			.then(async () => {
+				if (attempt.signal.aborted) throw new Error("resolver-aborted");
+				const supplied = await this.resolveFenceEntry(copyBytes(digest), {
+					signal: attempt.signal,
+				});
+				if (attempt.signal.aborted) throw new Error("resolver-aborted");
+				if (supplied === undefined) return undefined;
+				const captured = captureFenceEntryBytes(supplied);
+				if (attempt.signal.aborted) throw new Error("resolver-aborted");
+				return this.authenticateCaptured(captured);
+			})
+			.finally(() => {
+				this.outstandingFenceResolutions -= 1;
 			});
-			if (attempt.signal.aborted) throw new Error("resolver-aborted");
-			if (supplied === undefined) return undefined;
-			const captured = captureFenceEntryBytes(supplied);
-			if (attempt.signal.aborted) throw new Error("resolver-aborted");
-			return this.authenticateCaptured(captured);
-		});
 		void resolution.then(
 			(): void => undefined,
 			(): void => undefined,
@@ -1392,6 +1824,7 @@ export class TrustedNetworkV2ResourceFenceReducer {
 				abortFromLifecycle,
 			);
 			operationSignal?.removeEventListener("abort", abortFromOperation);
+			traversal?.signal?.removeEventListener("abort", abortFromTraversal);
 			if (rejectOnAbort !== undefined) {
 				attempt.signal.removeEventListener("abort", rejectOnAbort);
 			}
@@ -1401,12 +1834,15 @@ export class TrustedNetworkV2ResourceFenceReducer {
 	private async causalRelation(
 		ancestor: ValidatedResourceFenceV2,
 		descendant: ValidatedResourceFenceV2,
+		traversal?: AcceptedResourceFencePrefixTraversalV2,
 	) {
 		const attempt = new AbortController();
 		let timedOut = false;
+		let deadlineElapsed = false;
 		const abortFromLifecycle = (): void => attempt.abort();
 		const operationSignal = this.activeOperationSignal;
 		const abortFromOperation = (): void => attempt.abort();
+		const abortFromTraversal = (): void => attempt.abort();
 		this.lifecycleController.signal.addEventListener(
 			"abort",
 			abortFromLifecycle,
@@ -1415,23 +1851,57 @@ export class TrustedNetworkV2ResourceFenceReducer {
 		operationSignal?.addEventListener("abort", abortFromOperation, {
 			once: true,
 		});
-		if (operationSignal?.aborted) attempt.abort();
-		const timeout = setTimeout(() => {
-			timedOut = true;
+		traversal?.signal?.addEventListener("abort", abortFromTraversal, {
+			once: true,
+		});
+		if (operationSignal?.aborted || traversal?.signal?.aborted) attempt.abort();
+		const deadlineRemaining =
+			traversal?.deadline === undefined
+				? undefined
+				: traversal.deadline - Date.now();
+		if (deadlineRemaining !== undefined && deadlineRemaining <= 0) {
+			deadlineElapsed = true;
 			attempt.abort();
-		}, this.causalTimeoutMs);
+		}
+		const timeoutMs = Math.max(
+			0,
+			Math.min(this.causalTimeoutMs, deadlineRemaining ?? this.causalTimeoutMs),
+		);
+		const timeout = setTimeout(() => {
+			deadlineElapsed =
+				deadlineRemaining !== undefined &&
+				deadlineRemaining <= this.causalTimeoutMs;
+			timedOut = !deadlineElapsed;
+			attempt.abort();
+		}, timeoutMs);
 		try {
-			const result = await checkBoundedEntryV0CausalReachability({
+			const input: BoundedEntryV0CausalReachabilityInput = {
 				ancestorCid: ancestor.entryCid,
 				descendant: {
 					cid: descendant.entryCid,
 					bytes: descendant.entryBytes,
 				},
-				resolve: this.resolveEntryV0,
+				resolve: async (cids, options) => {
+					if (
+						this.outstandingCausalResolutions >=
+						TRUSTED_NETWORK_V2_MAX_PENDING_RESOURCE_FENCES
+					)
+						return new Map();
+					this.outstandingCausalResolutions += 1;
+					try {
+						return await this.resolveEntryV0(cids, options);
+					} finally {
+						this.outstandingCausalResolutions -= 1;
+					}
+				},
 				limits: this.causalLimits,
 				signal: attempt.signal,
-			});
-			return { result, timedOut };
+			};
+			const result =
+				traversal?.causalWork === undefined
+					? await checkBoundedEntryV0CausalReachability(input)
+					: await ResourceCausalWorkBudgetV2.check(input, traversal.causalWork);
+			return { result, timedOut, deadlineElapsed };
 		} finally {
 			clearTimeout(timeout);
 			this.lifecycleController.signal.removeEventListener(
@@ -1439,6 +1909,7 @@ export class TrustedNetworkV2ResourceFenceReducer {
 				abortFromLifecycle,
 			);
 			operationSignal?.removeEventListener("abort", abortFromOperation);
+			traversal?.signal?.removeEventListener("abort", abortFromTraversal);
 		}
 	}
 
@@ -1465,13 +1936,15 @@ export class TrustedNetworkV2ResourceFenceReducer {
 			status: "unavailable",
 			missingCids,
 			reason: boundedReason(
-				relation.timedOut
-					? `Resource-fence causal ancestry timed out after ${this.causalTimeoutMs} ms`
-					: relation.result.status === "capacity"
-						? "Resource-fence causal ancestry exceeded configured capacity"
-						: allMissing.length > missingCids.length
-							? "Resource-fence causal ancestry is unavailable; missing hints were truncated"
-							: "Resource-fence causal ancestry is unavailable",
+				relation.deadlineElapsed
+					? "Resource-fence causal ancestry deadline elapsed"
+					: relation.timedOut
+						? `Resource-fence causal ancestry timed out after ${this.causalTimeoutMs} ms`
+						: relation.result.status === "capacity"
+							? "Resource-fence causal ancestry exceeded configured capacity"
+							: allMissing.length > missingCids.length
+								? "Resource-fence causal ancestry is unavailable; missing hints were truncated"
+								: "Resource-fence causal ancestry is unavailable",
 			),
 		};
 	}
@@ -1479,6 +1952,7 @@ export class TrustedNetworkV2ResourceFenceReducer {
 	private async predecessorOf(
 		child: ValidatedResourceFenceV2,
 		preferRetainedAcceptedParent: boolean,
+		traversal?: AcceptedResourceFencePrefixTraversalV2,
 	): Promise<NamedPredecessorResolutionV2> {
 		if (
 			preferRetainedAcceptedParent &&
@@ -1491,12 +1965,13 @@ export class TrustedNetworkV2ResourceFenceReducer {
 				predecessor: copySnapshot(this.acceptedParent),
 			};
 		}
-		return this.resolveNamedPredecessor(child);
+		return this.resolveNamedPredecessor(child, traversal);
 	}
 
 	private async validateCausalTransition(
 		parent: ValidatedResourceFenceV2,
 		child: ValidatedResourceFenceV2,
+		traversal?: AcceptedResourceFencePrefixTraversalV2,
 	): Promise<FenceChainResolutionV2> {
 		let transitionError: string | undefined;
 		try {
@@ -1511,7 +1986,7 @@ export class TrustedNetworkV2ResourceFenceReducer {
 				reason: `Accepted resource-fence ancestry is invalid: ${transitionError}`,
 			};
 		}
-		const relation = await this.causalRelation(parent, child);
+		const relation = await this.causalRelation(parent, child, traversal);
 		const evaluated = this.relationEvaluation(relation, "duplicate");
 		if (evaluated.status === "duplicate") {
 			return { status: "found", fence: copySnapshot(parent) };
