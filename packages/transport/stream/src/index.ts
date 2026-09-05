@@ -2451,7 +2451,9 @@ export abstract class DirectStream<
 	/**
 	 * Notifies the router that a peer has been disconnected
 	 */
-	protected async _removePeer(publicKey: PublicSignKey) {
+	protected async _removePeer(
+		publicKey: PublicSignKey,
+	): Promise<PeerStreams | undefined> {
 		const hash = publicKey.hashcode();
 		const peerStreams = this.peers.get(hash);
 		this.clearHealthcheckTimer(hash);

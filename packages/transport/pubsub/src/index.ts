@@ -881,7 +881,9 @@ export class TopicControlPlane
 		return peer;
 	}
 
-	protected override async _removePeer(publicKey: PublicSignKey) {
+	protected override async _removePeer(
+		publicKey: PublicSignKey,
+	): Promise<PeerStreams | undefined> {
 		const hash = publicKey.hashcode();
 		const protocol = this.peers.get(hash)?.protocol;
 		const hadSignedPeer = [...this.peers.values()].some(
