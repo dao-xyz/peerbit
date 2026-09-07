@@ -1,5 +1,13 @@
 # @peerbit/document-react
 
+## 1.0.125
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @peerbit/document@15.1.3
+  - @peerbit/react@1.1.67
+
 ## 1.0.124
 
 ### Patch Changes

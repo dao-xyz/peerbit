@@ -1,5 +1,17 @@
 # Changelog
 
+## 6.0.134
+
+### Patch Changes
+
+- [#1445](https://github.com/dao-xyz/peerbit/pull/1445) [`76ec816`](https://github.com/dao-xyz/peerbit/commit/76ec816056fe6348b08e43a1681d3c67a30bfa65) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Add an internal classification-and-commit lease for resource replay groundwork. Hold policy and resource anchors through callback settlement, including cancellation and commit errors. The resource-operation modules remain excluded from published artifacts; this does not activate V2, provide complete replay, or change public revocation guarantees.
+
+- Updated dependencies [[`b5bf136`](https://github.com/dao-xyz/peerbit/commit/b5bf136e2d850879b69f39e0f5b329b8a916b8e1)]:
+  - @peerbit/shared-log@16.0.33
+  - @peerbit/log@6.2.34
+  - @peerbit/document@15.1.3
+  - @peerbit/program@6.0.61
+
 ## 6.0.133
 
 ### Patch Changes

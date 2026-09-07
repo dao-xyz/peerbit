@@ -1,5 +1,12 @@
 # Changelog
 
+## 4.3.2
+
+### Patch Changes
+
+- Updated dependencies [[`d610ab1`](https://github.com/dao-xyz/peerbit/commit/d610ab1ff7f1ce3cde1c6a3e5ae5cf9b2662662a)]:
+  - @peerbit/stream@5.2.3
+
 ## 4.3.1
 
 ### Patch Changes

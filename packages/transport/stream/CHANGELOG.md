@@ -1,5 +1,11 @@
 # Changelog
 
+## 5.2.3
+
+### Patch Changes
+
+- [#1451](https://github.com/dao-xyz/peerbit/pull/1451) [`d610ab1`](https://github.com/dao-xyz/peerbit/commit/d610ab1ff7f1ce3cde1c6a3e5ae5cf9b2662662a) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Fence fanout payload verification, dispatch and reply fallbacks to their exact channel and lifecycle. Stale verification cannot update peer sessions or consume the replacement channel's dedupe slot. Observe asynchronous payload failures while suppressing only expected not-started errors after their owner becomes stale; active and unexpected failures remain logged.
+
 ## 5.2.2
 
 ### Patch Changes

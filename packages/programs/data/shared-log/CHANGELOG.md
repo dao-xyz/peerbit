@@ -1,5 +1,18 @@
 # Changelog
 
+## 16.0.33
+
+### Patch Changes
+
+- [#1451](https://github.com/dao-xyz/peerbit/pull/1451) [`b5bf136`](https://github.com/dao-xyz/peerbit/commit/b5bf136e2d850879b69f39e0f5b329b8a916b8e1) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Clarify persisted delivery's initial empty/self-only leader-plan error without changing its fail-fast behavior or durability checks. Document the distinction between per-log replication maturity, receipt readiness, and exact-entry leader eligibility; committed-write errors still retain their exact hashes and unsafe-retry indication.
+
+- Updated dependencies [[`d610ab1`](https://github.com/dao-xyz/peerbit/commit/d610ab1ff7f1ce3cde1c6a3e5ae5cf9b2662662a)]:
+  - @peerbit/pubsub@5.4.7
+  - @peerbit/log@6.2.34
+  - @peerbit/program@6.0.61
+  - @peerbit/rpc@6.1.29
+  - @peerbit/blocks@4.3.2
+
 ## 16.0.32
 
 ### Patch Changes
