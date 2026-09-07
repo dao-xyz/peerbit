@@ -729,6 +729,27 @@ work budgets are `unavailable`, not permanent operation rejection. Retrying
 after exact dependencies arrive computes a fresh verdict; there is no verdict
 cache, retained replay queue, history truncation, or materialized projection.
 
+Its internal `withClassifiedOperation` callback holds the same policy ->
+resource leases through one application-owned commit. The callback receives
+the operation CID, a fresh conclusive classification (including rejection for
+persisting a retraction), and copied fixed-size policy/fence identities. It
+does not receive a reusable authorization capability or a complete-history
+claim. Unauthenticated input, unavailable context, halted anchors, and
+cancellation before callback entry never invoke it. After callback entry,
+cancellation or deadline expiry cannot undo a commit: both leases and the
+operation's input reservation remain held until the callback actually settles,
+and its actual value or error is returned. Callbacks must settle and must not
+await reentrant work on the same engine or either anchor. The deadline limits
+admission and classification, not an already-entered commit.
+
+This closes the gap between observing a classification and committing against
+that local anchor state. It does not implement resource replay. A protected
+resource adapter must still establish a complete retained-history boundary,
+reclassify previously provisional operations, persist deterministic retractions
+and a projection watermark using the generic checkpoint storage, and validate
+that watermark against the current anchors before serving protected reads.
+An empty pending inbox cannot establish those guarantees.
+
 Operation envelopes are capped at 128 KiB, application payloads at 64 KiB,
 metadata at 16 KiB, and direct predecessors at 64. Each classification permits
 at most 64 fence predecessor steps and 4,096 policy steps. Every traversed
