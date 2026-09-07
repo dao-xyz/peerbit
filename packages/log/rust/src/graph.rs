@@ -1,6 +1,10 @@
 use indexmap::{IndexMap, IndexSet};
 use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 
+#[cfg(test)]
+#[path = "../test/cut-coverage.rs"]
+mod cut_coverage_tests;
+
 const ENTRY_TYPE_CUT: u8 = 1;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -753,10 +757,47 @@ impl LogGraphIndex {
     }
 
     fn covered_by_cut(&self, hash: &str, gid: &str, wall_time: u64, logical: u32) -> bool {
-        self.head_entries(Some(gid)).into_iter().any(|entry| {
-            entry.entry_type == ENTRY_TYPE_CUT
-                && entry.next.iter().any(|next| next == hash)
-                && compare_clock(wall_time, logical, &entry).is_lt()
+        let Some(children) = self.children.get(hash) else {
+            return false;
+        };
+        // The reverse edge survives removal of its parent. Borrow the smaller
+        // candidate set so unrelated tombstones and wide non-head branches do
+        // not require cloning or sorting graph entries for an existence check.
+        let (candidates, other) = if children.len() <= self.heads.len() {
+            (children, &self.heads)
+        } else {
+            (&self.heads, children)
+        };
+        candidates.iter().any(|child| {
+            other.contains(child)
+                && self.entries.get(child).is_some_and(|entry| {
+                    entry.entry_type == ENTRY_TYPE_CUT
+                        && entry.gid == gid
+                        && compare_clock(wall_time, logical, entry).is_lt()
+                })
+        })
+    }
+
+    fn reverse_cut_checks_are_cheaper<'a>(
+        &self,
+        hashes: impl Iterator<Item = &'a str>,
+        reset: bool,
+    ) -> bool {
+        // A batch can amortize one head scan. Retain that path when repeatedly
+        // probing wide relevant adjacency would do more work than the scan.
+        let mut remaining = self.heads.len();
+        hashes.filter(|hash| reset || !self.has(hash)).all(|hash| {
+            let work = self
+                .children
+                .get(hash)
+                .map_or(0, |children| children.len().min(self.heads.len()));
+            match remaining.checked_sub(work) {
+                Some(left) => {
+                    remaining = left;
+                    true
+                }
+                None => false,
+            }
         })
     }
 
@@ -768,17 +809,21 @@ impl LogGraphIndex {
         reset: bool,
         cut_checks: Option<(&[String], &[u64], &[u32])>,
     ) -> Vec<JoinPlan> {
-        let cut_heads_by_gid = cut_checks.map(|_| {
-            let mut by_gid: HashMap<&str, Vec<&LogIndexEntry>> = HashMap::new();
-            for hash in &self.heads {
-                if let Some(entry) = self.entries.get(hash) {
-                    if entry.entry_type == ENTRY_TYPE_CUT {
-                        by_gid.entry(entry.gid.as_str()).or_default().push(entry);
+        let cut_heads_by_gid = cut_checks
+            .filter(|_| {
+                !self.reverse_cut_checks_are_cheaper(hashes.iter().map(String::as_str), reset)
+            })
+            .map(|_| {
+                let mut by_gid: HashMap<&str, Vec<&LogIndexEntry>> = HashMap::new();
+                for hash in &self.heads {
+                    if let Some(entry) = self.entries.get(hash) {
+                        if entry.entry_type == ENTRY_TYPE_CUT {
+                            by_gid.entry(entry.gid.as_str()).or_default().push(entry);
+                        }
                     }
                 }
-            }
-            by_gid
-        });
+                by_gid
+            });
 
         let mut plans = Vec::with_capacity(hashes.len());
         for i in 0..hashes.len() {
@@ -798,18 +843,19 @@ impl LogGraphIndex {
                 continue;
             }
 
-            let covered_by_cut = match (cut_check, cut_heads_by_gid.as_ref()) {
-                (Some((gid, wall_time, logical)), Some(cut_heads)) => cut_heads
-                    .get(gid)
-                    .map(|heads| {
-                        heads.iter().any(|entry| {
-                            entry.next.iter().any(|next| next == hash)
-                                && compare_clock(wall_time, logical, entry).is_lt()
+            let covered_by_cut = cut_check.is_some_and(|(gid, wall_time, logical)| {
+                cut_heads_by_gid.as_ref().map_or_else(
+                    || self.covered_by_cut(hash, gid, wall_time, logical),
+                    |heads| {
+                        heads.get(gid).is_some_and(|heads| {
+                            heads.iter().any(|entry| {
+                                entry.next.iter().any(|next| next == hash)
+                                    && compare_clock(wall_time, logical, entry).is_lt()
+                            })
                         })
-                    })
-                    .unwrap_or(false),
-                _ => false,
-            };
+                    },
+                )
+            });
 
             let missing_parents = if entry_type == ENTRY_TYPE_CUT || covered_by_cut {
                 Vec::new()
@@ -837,7 +883,12 @@ impl LogGraphIndex {
         reset: bool,
         cut_check: bool,
     ) -> Vec<JoinPlan> {
-        let cut_heads_by_gid = cut_check.then(|| {
+        let cut_heads_by_gid = (cut_check
+            && !self.reverse_cut_checks_are_cheaper(
+                entries.iter().map(|entry| entry.hash.as_str()),
+                reset,
+            ))
+        .then(|| {
             let mut by_gid: HashMap<&str, Vec<&LogIndexEntry>> = HashMap::new();
             for hash in &self.heads {
                 if let Some(entry) = self.entries.get(hash) {
@@ -862,20 +913,18 @@ impl LogGraphIndex {
                 continue;
             }
 
-            let covered_by_cut = if cut_check {
-                cut_heads_by_gid
-                    .as_ref()
-                    .and_then(|cut_heads| cut_heads.get(entry.gid.as_str()))
-                    .map(|heads| {
-                        heads.iter().any(|cut_entry| {
-                            cut_entry.next.iter().any(|next| next == &entry.hash)
-                                && compare_clock(entry.wall_time, entry.logical, cut_entry).is_lt()
+            let covered_by_cut = cut_check
+                && cut_heads_by_gid.as_ref().map_or_else(
+                    || self.covered_by_cut(&entry.hash, &entry.gid, entry.wall_time, entry.logical),
+                    |heads| {
+                        heads.get(entry.gid.as_str()).is_some_and(|heads| {
+                            heads.iter().any(|cut| {
+                                cut.next.iter().any(|next| next == &entry.hash)
+                                    && compare_clock(entry.wall_time, entry.logical, cut).is_lt()
+                            })
                         })
-                    })
-                    .unwrap_or(false)
-            } else {
-                false
-            };
+                    },
+                );
 
             let missing_parents = if entry.entry_type == ENTRY_TYPE_CUT || covered_by_cut {
                 Vec::new()
