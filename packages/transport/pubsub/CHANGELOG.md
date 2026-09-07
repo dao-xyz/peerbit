@@ -1,5 +1,11 @@
 # Changelog
 
+## 5.4.8
+
+### Patch Changes
+
+- [#1452](https://github.com/dao-xyz/peerbit/pull/1452) [`3f7767c`](https://github.com/dao-xyz/peerbit/commit/3f7767c1465ad6524359b3e76fb4bbcdb6426e77) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Renew subscription batching after a completed stop/start of the same service. Preserve queued reference counts on repeated start, and prevent already-flushing subscription announcements from publishing to or closing a replacement lifecycle's fanout channel.
+
 ## 5.4.7
 
 ### Patch Changes
