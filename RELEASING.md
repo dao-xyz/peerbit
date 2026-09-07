@@ -257,8 +257,12 @@ change, after matching pushes to `master`, once per day, and on manual dispatch.
 It is deliberately separate from stable and release-candidate publication.
 
 The consumer is installed with `--legacy-peer-deps`, matching the release smoke,
-so npm does not auto-install react-native-webrtc's optional React Native peer
-toolchain. The scan asserts that react-native, metro, metro-config,
+so npm does not auto-install react-native-webrtc's required transitive React
+Native peer toolchain. This peer-pruned fixture does not prove the dependency
+closure of a default npm consumer install. The unused Node-side subtree remains
+tracked in [Peerbit #1320](https://github.com/dao-xyz/peerbit/issues/1320), blocked
+by [libp2p #3609](https://github.com/libp2p/js-libp2p/issues/3609).
+The scan asserts that react-native, metro, metro-config,
 metro-transform-worker, image-size, and every `@react-native/*` package are
 absent. It has no advisory ignores and does not scan workspace-only development
 tools that are never published to users.
