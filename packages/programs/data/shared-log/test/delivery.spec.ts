@@ -1,3 +1,8 @@
+import type {
+	FanoutChannel,
+	FanoutTree,
+	FanoutTreeDataEvent,
+} from "@peerbit/pubsub";
 import {
 	ACK,
 	AcknowledgeDelivery,
@@ -5,7 +10,6 @@ import {
 	FOREGROUND_READ_MESSAGE_PRIORITY,
 	SilentDelivery,
 } from "@peerbit/stream-interface";
-import type { FanoutTree } from "@peerbit/pubsub";
 import { TestSession } from "@peerbit/test-utils";
 import { waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
@@ -15,7 +19,12 @@ import {
 	EXCHANGE_HEADS_REPAIR_HINT,
 	ExchangeHeadsMessage,
 } from "../src/exchange-heads.js";
-import { NoPeersError, type SyncProfileEvent } from "../src/index.js";
+import {
+	NoPeersError,
+	type SyncProfileEvent,
+	createReplicationDomainHash,
+} from "../src/index.js";
+import { SimpleSyncronizer } from "../src/sync/simple.js";
 import { EventStore } from "./utils/stores/index.js";
 
 // The ack gates below resolve only if the LOCAL publish interceptor recorded the
@@ -77,6 +86,21 @@ const hasNonRepairExchangeHeadsForEntry = (
 			(message.reserved[0] & EXCHANGE_HEADS_REPAIR_HINT) === 0 &&
 			message.heads.some(({ entry }) => entry.hash === hash),
 	);
+
+// Fanout routing does not depend on ownership or adaptive replication. Keep
+// received entries explicitly so those background processes cannot supply the
+// delivery that these tests intend to observe.
+const fanoutOnlyArgs = {
+	replicate: false as const,
+	keep: () => true,
+	setup: {
+		type: "u32" as const,
+		domain: createReplicationDomainHash("u32"),
+		syncronizer: SimpleSyncronizer,
+		name: "fanout-routing",
+	},
+	sync: { rawExchangeHeads: false },
+};
 
 describe("append delivery options", () => {
 	let session: TestSession;
@@ -469,7 +493,9 @@ describe("append delivery options", () => {
 			const subscribers = await session.peers[0].services.pubsub.getSubscribers(
 				db1.log.rpc.topic,
 			);
-			expect((subscribers || []).map((x) => x.hashcode())).to.include(remoteHash);
+			expect((subscribers || []).map((x) => x.hashcode())).to.include(
+				remoteHash,
+			);
 		});
 		await db1.log.waitForReplicator(session.peers[1].identity.publicKey, {
 			roleAge: 0,
@@ -496,9 +522,9 @@ describe("append delivery options", () => {
 		});
 
 		expect(capturedModes.length).to.be.greaterThan(0);
-		expect(capturedModes.every((mode) => mode instanceof SilentDelivery)).to.equal(
-			true,
-		);
+		expect(
+			capturedModes.every((mode) => mode instanceof SilentDelivery),
+		).to.equal(true);
 	});
 
 	it("awaits fanout unicast acks when delivery is set for target=replicators and fanout is configured", async () => {
@@ -527,14 +553,18 @@ describe("append delivery options", () => {
 				timeUntilRoleMaturity: 0,
 			},
 		});
-		await EventStore.open<EventStore<string, any>>(db1.address!, session.peers[1], {
-			args: {
-				fanout,
-				replicas: { min: 2 },
-				replicate: { offset: 0, factor: 1 },
-				timeUntilRoleMaturity: 0,
+		await EventStore.open<EventStore<string, any>>(
+			db1.address!,
+			session.peers[1],
+			{
+				args: {
+					fanout,
+					replicas: { min: 2 },
+					replicate: { offset: 0, factor: 1 },
+					timeUntilRoleMaturity: 0,
+				},
 			},
-		});
+		);
 
 		await db1.log.waitForReplicators({
 			coverageThreshold: 1,
@@ -546,9 +576,10 @@ describe("append delivery options", () => {
 			const ch: any = (db1.log as any)._fanoutChannel;
 			expect(ch, "expected shared-log to open a fanout channel").to.exist;
 			const peers = ch.getPeerHashes({ includeSelf: true });
-			expect(peers, "expected fanout overlay to include remote peer").to.include(
-				remoteHash,
-			);
+			expect(
+				peers,
+				"expected fanout overlay to include remote peer",
+			).to.include(remoteHash);
 		});
 
 		// Ensure the remote peer is known as a replicator before we append; otherwise the
@@ -571,7 +602,9 @@ describe("append delivery options", () => {
 				const hints = await Promise.resolve(
 					originalGetUnifiedRouteHints(topic, targetHash),
 				);
-				return (hints ?? []).filter((hint: any) => hint?.kind === "fanout-token");
+				return (hints ?? []).filter(
+					(hint: any) => hint?.kind === "fanout-token",
+				);
 			};
 		}
 
@@ -579,7 +612,8 @@ describe("append delivery options", () => {
 		const ackAttempted = pDefer<void>();
 
 		const remoteFanout = getDeliveryServices(session.peers[1]).fanout;
-		const originalPublishMessage = remoteFanout.publishMessage.bind(remoteFanout);
+		const originalPublishMessage =
+			remoteFanout.publishMessage.bind(remoteFanout);
 		remoteFanout.publishMessage = async (
 			...args: Parameters<typeof remoteFanout.publishMessage>
 		) => {
@@ -652,23 +686,32 @@ describe("append delivery options", () => {
 		const db1 = await session.peers[0].open(new EventStore<string, any>(), {
 			args: { fanout },
 		});
-		await EventStore.open<EventStore<string, any>>(db1.address!, session.peers[1], {
-			args: { fanout },
-		});
+		await EventStore.open<EventStore<string, any>>(
+			db1.address!,
+			session.peers[1],
+			{
+				args: { fanout },
+			},
+		);
 
 		await expect(
 			(db1.add as any)("bad-delivery-all", {
 				target: "all",
 				delivery: true,
 			}),
-		).to.be.rejectedWith("delivery options are not supported with target=\"all\"");
+		).to.be.rejectedWith(
+			'delivery options are not supported with target="all"',
+		);
 	});
 
 	it("throws on target=all when fanout channel is not configured", async () => {
 		session = await TestSession.connected(2);
 
 		const db1 = await session.peers[0].open(new EventStore<string, any>());
-		await EventStore.open<EventStore<string, any>>(db1.address!, session.peers[1]);
+		await EventStore.open<EventStore<string, any>>(
+			db1.address!,
+			session.peers[1],
+		);
 
 		await expect(
 			db1.add("missing-fanout", { target: "all" }),
@@ -692,13 +735,13 @@ describe("append delivery options", () => {
 		};
 
 		const db1 = await session.peers[0].open(new EventStore<string, any>(), {
-			args: { fanout },
+			args: { ...fanoutOnlyArgs, fanout },
 		});
 		const db2 = await EventStore.open<EventStore<string, any>>(
 			db1.address!,
 			session.peers[1],
 			{
-				args: { fanout },
+				args: { ...fanoutOnlyArgs, fanout },
 			},
 		);
 
@@ -754,13 +797,13 @@ describe("append delivery options", () => {
 		};
 
 		const db1 = await session.peers[0].open(store, {
-			args: { fanout },
+			args: { ...fanoutOnlyArgs, fanout },
 		});
 		const db2 = await EventStore.open<EventStore<string, any>>(
 			db1.address!,
 			session.peers[1],
 			{
-				args: { fanout },
+				args: { ...fanoutOnlyArgs, fanout },
 			},
 		);
 
@@ -798,124 +841,165 @@ describe("append delivery options", () => {
 		).to.equal(false);
 	});
 
-	it("does not fall back to rpc on target=all when a fanout member drops", async () => {
-		session = await TestSession.connected(3);
-
-		const root = getDeliveryServices(session.peers[0]).fanout.publicKeyHash;
-		const fanout = {
-			root,
-			channel: {
-				msgRate: 10,
-				msgSize: 256,
-				uploadLimitBps: 1_000_000,
-				maxChildren: 8,
-				repair: true,
-			},
-			join: { timeoutMs: 10_000 },
-		};
-
-		const db1 = await session.peers[0].open(new EventStore<string, any>(), {
-			args: { fanout },
-		});
-		const db2 = await EventStore.open<EventStore<string, any>>(
-			db1.address!,
-			session.peers[1],
-			{
-				args: { fanout },
-			},
-		);
-		await EventStore.open<EventStore<string, any>>(
-			db1.address!,
-			session.peers[2],
-			{
-				args: { fanout },
-			},
-		);
-
-		const fanoutChannel: any = (db1.log as any)._fanoutChannel;
-		await waitForResolved(() => {
-			const peers = new Set(fanoutChannel.getPeerHashes());
-			expect(
-				peers.has(session.peers[1].identity.publicKey.hashcode()),
-			).to.equal(true);
-		});
-
-		const exchangeHeadsRpcMessages: ExchangeHeadsMessage<any>[] = [];
-		const rpcAny: any = db1.log.rpc;
-		const originalSend = rpcAny.send.bind(rpcAny);
-		rpcAny.send = async (...args: any[]) => {
-			if (args[0] instanceof ExchangeHeadsMessage) {
-				exchangeHeadsRpcMessages.push(args[0]);
-			}
-			return originalSend(...args);
-		};
-
-		await session.peers[2].stop();
-		const { entry } = await db1.add("fanout-churn", { target: "all" });
-
-		await waitForResolved(
+	for (const publishFails of [false, true]) {
+		it(
+			publishFails
+				? "does not fall back to rpc when fanout publish fails during background sync"
+				: "does not fall back to rpc on target=all when a fanout member drops during background sync",
 			async () => {
-				const values = (await db2.log.log.toArray()).map(
-					(entry) => entry.payload.getValue().value,
+				session = await TestSession.connected(3);
+				const fanout = {
+					root: getDeliveryServices(session.peers[0]).fanout.publicKeyHash,
+					channel: {
+						msgRate: 10,
+						msgSize: 256,
+						uploadLimitBps: 1_000_000,
+						maxChildren: 8,
+						repair: true,
+					},
+					join: { timeoutMs: 10_000 },
+				};
+				const args = { ...fanoutOnlyArgs, fanout };
+				// Both remote members are leaves, so their membership is visible at
+				// the root and stopping one cannot change the survivor's parent.
+				const leafArgs = {
+					...args,
+					fanout: {
+						...fanout,
+						channel: { ...fanout.channel, uploadLimitBps: 0, maxChildren: 0 },
+					},
+				};
+				const db1 = await session.peers[0].open(new EventStore<string, any>(), {
+					args,
+				});
+				const db2 = await EventStore.open<EventStore<string, any>>(
+					db1.address!,
+					session.peers[1],
+					{ args: leafArgs },
 				);
-				expect(values).to.include("fanout-churn");
+				await EventStore.open<EventStore<string, any>>(
+					db1.address!,
+					session.peers[2],
+					{ args: leafArgs },
+				);
+				const fanoutChannel: FanoutChannel = (db1.log as any)._fanoutChannel;
+				const receiverChannel: FanoutChannel = (db2.log as any)._fanoutChannel;
+				await waitForResolved(() => {
+					expect(fanoutChannel.getPeerHashes()).to.include.members(
+						session.peers
+							.slice(1)
+							.map((peer) => peer.identity.publicKey.hashcode()),
+					);
+				});
+				await session.peers[2].stop();
+
+				const exchangeHeadsRpcMessages: ExchangeHeadsMessage<any>[] = [];
+				const rpcAny: any = db1.log.rpc;
+				const originalSend = rpcAny.send.bind(rpcAny);
+				rpcAny.send = async (...sendArgs: any[]) => {
+					if (sendArgs[0] instanceof ExchangeHeadsMessage) {
+						exchangeHeadsRpcMessages.push(sendArgs[0]);
+					}
+					return originalSend(...sendArgs);
+				};
+				const logAny: any = db1.log;
+				const originalReplicatorDelivery = logAny._appendDeliverToReplicators;
+				let replicatorDeliveries = 0;
+				logAny._appendDeliverToReplicators = async () => {
+					replicatorDeliveries++;
+					throw new Error("target=all entered replicator delivery");
+				};
+				const releasePublish = pDefer<void>();
+				const originalPublish = fanoutChannel.publish.bind(fanoutChannel);
+				const publishError = new Error("fanout publish failed");
+				let publishedPayload: Uint8Array | undefined;
+				fanoutChannel.publish = async (payload) => {
+					publishedPayload = payload;
+					await releasePublish.promise;
+					if (publishFails) throw publishError;
+					return originalPublish(payload);
+				};
+				const receivedPayloads: Uint8Array[] = [];
+				const onFanoutData = (event: Event) => {
+					receivedPayloads.push(
+						(event as CustomEvent<FanoutTreeDataEvent>).detail.payload,
+					);
+				};
+				receiverChannel.addEventListener("data", onFanoutData);
+				const append = db1.add("fanout-churn", { target: "all" });
+				// Observe an early rejection while gated assertions and the real
+				// synchronization round trip are in progress.
+				const appendOutcome = append.then(
+					(result) => ({ result, error: undefined }),
+					(error: unknown) => ({ result: undefined, error }),
+				);
+				try {
+					await waitForResolved(() => {
+						expect(publishedPayload, "append must reach fanout publish").to
+							.exist;
+					});
+					const [entry] = await db1.log.log.toArray();
+					expect(entry).to.exist;
+					expect(exchangeHeadsRpcMessages).to.have.length(0);
+					expect(db1.log.syncronizer).to.be.instanceOf(SimpleSyncronizer);
+					// Fanout is paused, so this request/response exchange is the only
+					// producer of the deliberately overlapping same-entry RPC message.
+					await (
+						db1.log.syncronizer as SimpleSyncronizer<any>
+					).onMaybeMissingHashes({
+						hashes: [entry!.hash],
+						targets: [session.peers[1].identity.publicKey.hashcode()],
+					});
+					await waitForResolved(async () => {
+						expect(await db2.log.log.toArray()).to.have.length(1);
+						expect(exchangeHeadsRpcMessages).to.have.length(1);
+					});
+					// Prove why the old global predicate is not an append-routing oracle.
+					expect(
+						hasNonRepairExchangeHeadsForEntry(
+							exchangeHeadsRpcMessages,
+							entry!.hash,
+						),
+					).to.equal(true);
+					const expectedSyncMessages = Object.freeze([
+						...exchangeHeadsRpcMessages,
+					]);
+					expect(receivedPayloads).not.to.deep.include(publishedPayload);
+					releasePublish.resolve();
+					const outcome = await appendOutcome;
+					if (publishFails) {
+						expect(outcome.error).to.equal(publishError);
+						expect(receivedPayloads).not.to.deep.include(publishedPayload);
+					} else {
+						expect(outcome.error).to.equal(undefined);
+						expect(outcome.result?.entry.hash).to.equal(entry!.hash);
+						// The background RPC already populated the log; observe the
+						// actual fanout payload independently to prove fanout delivery.
+						await waitForResolved(
+							() => {
+								expect(receivedPayloads).to.deep.include(publishedPayload);
+							},
+							{ timeout: 30_000 },
+						);
+					}
+					expect(replicatorDeliveries).to.equal(0);
+					// Exact identity and count catch any additional RPC fallback, even
+					// one sending the same entry or bypassing replicator delivery.
+					expect(exchangeHeadsRpcMessages).to.have.length(
+						expectedSyncMessages.length,
+					);
+					expect(exchangeHeadsRpcMessages[0]).to.equal(expectedSyncMessages[0]);
+				} finally {
+					releasePublish.resolve();
+					await appendOutcome;
+					fanoutChannel.publish = originalPublish;
+					logAny._appendDeliverToReplicators = originalReplicatorDelivery;
+					rpcAny.send = originalSend;
+					receiverChannel.removeEventListener("data", onFanoutData);
+				}
 			},
-			{ timeout: 30_000 },
 		);
-
-		expect(
-			hasNonRepairExchangeHeadsForEntry(exchangeHeadsRpcMessages, entry.hash),
-		).to.equal(false);
-	});
-
-	it("does not fall back to rpc when fanout publish fails", async () => {
-		session = await TestSession.connected(2);
-
-		const root = getDeliveryServices(session.peers[0]).fanout.publicKeyHash;
-		const fanout = {
-			root,
-			channel: {
-				msgRate: 10,
-				msgSize: 256,
-				uploadLimitBps: 1_000_000,
-				maxChildren: 8,
-				repair: true,
-			},
-			join: { timeoutMs: 10_000 },
-		};
-
-		const db1 = await session.peers[0].open(new EventStore<string, any>(), {
-			args: { fanout },
-		});
-		await EventStore.open<EventStore<string, any>>(db1.address!, session.peers[1], {
-			args: { fanout },
-		});
-
-		let exchangeHeadsRpcSends = 0;
-		const rpcAny: any = db1.log.rpc;
-		const originalSend = rpcAny.send.bind(rpcAny);
-		rpcAny.send = async (...args: any[]) => {
-			if (
-				args[0] instanceof ExchangeHeadsMessage &&
-				(args[0].reserved[0] & EXCHANGE_HEADS_REPAIR_HINT) === 0
-			) {
-				exchangeHeadsRpcSends++;
-			}
-			return originalSend(...args);
-		};
-
-		const fanoutChannel: any = (db1.log as any)._fanoutChannel;
-		expect(fanoutChannel).to.exist;
-		fanoutChannel.publish = async () => {
-			throw new Error("fanout publish failed");
-		};
-
-		await expect(
-			db1.add("fanout-fail", { target: "all" }),
-		).to.be.rejectedWith("fanout publish failed");
-
-		expect(exchangeHeadsRpcSends).to.equal(0);
-	});
+	}
 
 	it("settles towards the current replicators, not gid peer history", async () => {
 		session = await TestSession.connected(3);
@@ -960,9 +1044,12 @@ describe("append delivery options", () => {
 			return [...leaders.keys()][0];
 		};
 
-		const initial = await writer.log.append({ op: "ADD", value: `seed` }, {
-			target: "replicators",
-		});
+		const initial = await writer.log.append(
+			{ op: "ADD", value: `seed` },
+			{
+				target: "replicators",
+			},
+		);
 		const firstLeader = await getSingleLeader(initial.entry);
 
 		const capturedModes: any[] = [];
@@ -990,10 +1077,13 @@ describe("append delivery options", () => {
 
 		capturedModes.length = 0;
 		capture = true;
-		const res = await writer.log.append({ op: "ADD", value: `value` }, {
-			target: "replicators",
-			delivery: { reliability: "ack", minAcks: 1, timeout: 15e3 },
-		});
+		const res = await writer.log.append(
+			{ op: "ADD", value: `value` },
+			{
+				target: "replicators",
+				delivery: { reliability: "ack", minAcks: 1, timeout: 15e3 },
+			},
+		);
 		capture = false;
 
 		const leader = await getSingleLeader(res.entry);
