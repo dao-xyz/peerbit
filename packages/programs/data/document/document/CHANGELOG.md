@@ -1,5 +1,16 @@
 # Changelog
 
+## 15.1.2
+
+### Patch Changes
+
+- [#1442](https://github.com/dao-xyz/peerbit/pull/1442) [`9e67705`](https://github.com/dao-xyz/peerbit/commit/9e67705f423f0a42b0901ff505f4040d9fcf2fdf) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Apply `canSearch` to remote `SearchRequestIndexed` requests before query processing, closing their bypass of query authorization. The callback receives the actual indexed request, including its replication intent; per-result `canRead` filtering and owner-checked iterator cleanup remain unchanged.
+
+  The callback type now explicitly includes `SearchRequestIndexed`. Ordinary callbacks using shared request fields remain source-compatible, but policies that exhaustively check request classes must handle indexed requests explicitly. This is an authorization behavior correction with no persisted-data or wire-format change.
+
+- Updated dependencies [[`2ef2c14`](https://github.com/dao-xyz/peerbit/commit/2ef2c148e86dc8a5114036a83a3e70ee575135c0)]:
+  - @peerbit/shared-log@16.0.32
+
 ## 15.1.1
 
 ### Patch Changes

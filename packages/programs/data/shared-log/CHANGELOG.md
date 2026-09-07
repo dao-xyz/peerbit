@@ -1,5 +1,11 @@
 # Changelog
 
+## 16.0.32
+
+### Patch Changes
+
+- [#1441](https://github.com/dao-xyz/peerbit/pull/1441) [`2ef2c14`](https://github.com/dao-xyz/peerbit/commit/2ef2c148e86dc8a5114036a83a3e70ee575135c0) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Cancel cooperative synchronization work owned by an admitted peer receive generation before draining it during removal or subscription replacement. Keep cancellation scoped to that receive snapshot, preserve exact response authorization rollback, and wait for physical send and decoder work to settle before cleanup. Custom synchronizers remain compatible through an optional receive signal.
+
 ## 16.0.31
 
 ### Patch Changes
