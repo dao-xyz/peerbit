@@ -6531,7 +6531,7 @@ export class SharedLog<
 								(leaders.size === 1 && leaders.has(selfHash)),
 						)
 					) {
-						throw new NoPeersError(this.rpc.topic);
+						throw new NoPeersError(this.rpc.topic, "persisted");
 					}
 				}
 				for (let index = 0; index < entryArray.length; index++) {

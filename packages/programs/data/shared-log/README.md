@@ -4,6 +4,32 @@ A log that can be replicated
 
 ## Persisted delivery recovery
 
+Transport connections, topic coverage, and persisted-receipt capability are not
+entry-leader eligibility. If the first fresh persisted-delivery leader plan for
+any committed entry is empty or contains only the writer, delivery still fails
+immediately with `NoPeersError` as the cause of `PersistedDeliveryError`; it does
+not wait for initial leader discovery or maturity. The error identifies missing
+eligible remote entry leaders, not necessarily missing network connections.
+
+Before a new write, applications can use each relevant log's
+`waitForReplicator(remoteKey, { timeout, signal })`, retaining its default role
+maturity, followed by `waitForPersistedReceiptPeerReadiness(remoteKey, ...)`.
+Do not substitute `waitForReplicators({ coverageThreshold: 1 })`: a full local
+replica can satisfy that coverage without a remote. The default role maturity
+is at least five seconds for replicating writers and can increase with the gap
+between known role timestamps; non-replicating writers use zero. Readiness on
+one log therefore does not establish readiness on another log with a different
+replication role.
+
+These waits are advisory, not a guarantee that a future entry will have the
+requested remote leaders. Readiness without `entries` does not check entry
+leadership or role maturity. For already committed entries, its `entries` option
+also requires a fresh leader plan using `replicas` (the total leader-plan degree,
+not `minAcks`). Only the following persisted delivery proves durability. A
+`PersistedDeliveryError` retains exact `committedHashes`,
+`localCommitSucceeded: true`, and `retrySafe: false`; never replay the original
+write merely because its delivery failed.
+
 Persisted delivery maintains bounded advisory recovery for currently selected
 entry leaders, including incomplete capability/receive state and unconfirmed or
 replacement V2 sessions. It reuses the persisted-readiness watchdog; readiness
