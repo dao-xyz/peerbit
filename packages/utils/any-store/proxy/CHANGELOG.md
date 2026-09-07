@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.0.84
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @peerbit/canonical-host@1.0.84
+  - @peerbit/canonical-client@1.1.65
+
 ## 1.0.83
 
 ### Patch Changes
