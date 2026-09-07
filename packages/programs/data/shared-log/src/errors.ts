@@ -20,9 +20,11 @@ export const isNotStartedError = (e: Error) => {
 };
 
 export class NoPeersError extends Error {
-	constructor(topic: string) {
+	constructor(topic: string, delivery?: "persisted") {
 		super(
-			`No peers found for topic ${topic}. Please make sure you are connected to the network and try again.`,
+			delivery === "persisted"
+				? `No currently eligible remote entry leaders for persisted delivery on topic ${topic}. Transport connectivity and receipt capability alone do not establish entry-leader eligibility.`
+				: `No peers found for topic ${topic}. Please make sure you are connected to the network and try again.`,
 		);
 	}
 }
