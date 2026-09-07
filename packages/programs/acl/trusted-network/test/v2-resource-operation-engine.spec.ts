@@ -1,5 +1,9 @@
 import { serialize } from "@dao-xyz/borsh";
 import type { CrashSafeAtomicReplaceStore } from "@peerbit/any-store-interface";
+import {
+	CheckpointAmbiguousCommitError,
+	CrashSafeTwoSlotCheckpoint,
+} from "@peerbit/any-store/checkpoint";
 import { calculateRawCid } from "@peerbit/blocks-interface";
 import { Ed25519Keypair } from "@peerbit/crypto";
 import {
@@ -10,6 +14,7 @@ import {
 	Timestamp,
 } from "@peerbit/log";
 import { expect } from "chai";
+import sinon from "sinon";
 import { compare } from "uint8arrays";
 import type {
 	AcceptedPolicyLeaseV2,
@@ -465,6 +470,452 @@ const chainFixture = async (context: TestContext) => {
 };
 
 describe("TrustedNetwork v2 resource-operation authorization", () => {
+	describe("classified operation commit leases", () => {
+		it("copies exact provenance for provisional and closed classifications", async () => {
+			const context = await createContext();
+			const chain = await chainFixture(context);
+			const anchor = await openAnchor(context);
+			await anchor.ingest(chain.fence0.bytes);
+			const engine = operationEngine(context, anchor);
+			const provisional = await engine.withClassifiedOperation(
+				chain.before.bytes,
+				(view) => view,
+			);
+			if (provisional.status !== "completed")
+				throw new Error(provisional.status);
+			expect(provisional.value.classification.status).to.equal("provisional");
+			expect(provisional.value.closingFence).to.equal(undefined);
+			await anchor.ingest(chain.fence1.bytes);
+			for (let attempt = 0; attempt < 2; attempt++) {
+				const classified = await engine.withClassifiedOperation(
+					chain.before.bytes,
+					(view) => {
+						expect(view.entryCid).to.equal(chain.before.cid);
+						expect(view.classification.status).to.equal("policy-final");
+						expect(view.classification.applicationPayload).to.deep.equal(
+							Uint8Array.of(1),
+						);
+						expect(view.policy).to.deep.equal({
+							sequence: 0n,
+							digest: context.policy0.digest,
+						});
+						expect(view.acceptedPolicyHead).to.deep.equal({
+							sequence: 2n,
+							digest: context.policy2.digest,
+						});
+						expect(view.fence).to.deep.equal({
+							entryCid: chain.fence0.cid,
+							digest: chain.fence0.digest,
+						});
+						expect(view.acceptedFenceHead).to.deep.equal({
+							entryCid: chain.fence1.cid,
+							digest: chain.fence1.digest,
+						});
+						expect(view.closingFence).to.deep.equal(view.acceptedFenceHead);
+						view.classification.applicationPayload!.fill(0);
+						view.policy.digest.fill(0);
+						view.acceptedPolicyHead.digest.fill(0);
+						view.fence.digest.fill(0);
+						view.acceptedFenceHead.digest.fill(0);
+						expect(view.closingFence!.digest).to.deep.equal(
+							chain.fence1.digest,
+						);
+						view.closingFence!.digest.fill(0);
+						return "copied";
+					},
+				);
+				expect(classified).to.deep.equal({
+					status: "completed",
+					value: "copied",
+				});
+			}
+			// A retained result is a historical observation, not authority to skip replay.
+			expect(provisional.value.classification.status).to.equal("provisional");
+		});
+
+		it("does not call the consumer for unauthenticated, unavailable or interrupted inputs", async () => {
+			const context = await createContext();
+			const chain = await chainFixture(context);
+			const anchor = await openAnchor(context);
+			const engine = operationEngine(context, anchor);
+			let calls = 0;
+			const use = () => calls++;
+			expect(
+				(await engine.withClassifiedOperation(new Uint8Array(), use)).status,
+			).to.equal("rejected");
+			expect(
+				(await engine.withClassifiedOperation(chain.before.bytes, use)).status,
+			).to.equal("unavailable");
+			await anchor.ingest(chain.fence0.bytes);
+			const controller = new AbortController();
+			controller.abort();
+			expect(
+				(
+					await engine.withClassifiedOperation(chain.before.bytes, use, {
+						signal: controller.signal,
+					})
+				).status,
+			).to.equal("unavailable");
+			expect(
+				(
+					await engine.withClassifiedOperation(chain.before.bytes, use, {
+						timeoutMs: 0,
+					})
+				).status,
+			).to.equal("unavailable");
+			engine.abort();
+			expect(
+				(await engine.withClassifiedOperation(chain.before.bytes, use)).status,
+			).to.equal("halted");
+			expect(calls).to.equal(0);
+			expect(engine.bufferedAuthorizationCount).to.equal(0);
+			expect(engine.bufferedAuthorizationBytes).to.equal(0);
+		});
+
+		it("holds policy, fence and input ownership across a blocked generic checkpoint commit", async () => {
+			const context = await createContext();
+			const chain = await chainFixture(context);
+			const anchor = await openAnchor(context);
+			await anchor.ingest(chain.fence0.bytes);
+			const engine = operationEngine(context, anchor);
+			const store = new MemoryAnchorStore();
+			const checkpoint = await CrashSafeTwoSlotCheckpoint.open({
+				store,
+				scope: bytes32(0x74),
+				maxPayloadBytes: 1,
+			});
+			await checkpoint.commit(Uint8Array.of(0));
+			const entered = deferred();
+			const release = deferred();
+			const replace = store.crashSafeDurability.atomicReplace;
+			store.crashSafeDurability.atomicReplace = async (key, bytes) => {
+				entered.resolve();
+				await release.promise;
+				await replace(key, bytes);
+			};
+			const body = new PolicySnapshotBodyV2({
+				networkId: deriveNetworkIdV2(context.descriptor),
+				sequence: 3n,
+				previousPolicyDigest: context.policy2.digest,
+				bindings: [
+					new PolicySubjectBindingV2({
+						signingKey: context.authority.publicKey,
+						roles: TrustedNetworkRole.ADMIN,
+					}),
+				],
+			});
+			const nextPolicy = await EntryV0.create({
+				store: {} as never,
+				data: serialize(body),
+				identity: context.authority,
+				deferStore: true,
+			});
+			const operation = engine.withClassifiedOperation(chain.before.bytes, () =>
+				checkpoint.commit(Uint8Array.of(1)),
+			);
+			let fenceAdvance: ReturnType<typeof anchor.ingest> | undefined;
+			let policyAdvance:
+				| ReturnType<typeof context.policyLease.anchor.ingest>
+				| undefined;
+			try {
+				await entered.promise;
+				fenceAdvance = anchor.ingest(chain.fence1.bytes);
+				policyAdvance = context.policyLease.anchor.ingest(
+					Entry.getPreparedStorageBytes(nextPolicy)!,
+				);
+				await new Promise((resolve) => setTimeout(resolve, 0));
+				expect(context.policyLease.active).to.equal(1);
+				expect(anchor.head?.entryCid).to.equal(chain.fence0.cid);
+				expect(context.policyLease.anchor.head?.sequence).to.equal(2n);
+				expect(checkpoint.current?.payload).to.deep.equal(Uint8Array.of(0));
+				expect(engine.bufferedAuthorizationCount).to.equal(1);
+				expect(engine.bufferedAuthorizationBytes).to.equal(
+					chain.before.bytes.byteLength,
+				);
+			} finally {
+				release.resolve();
+				store.crashSafeDurability.atomicReplace = replace;
+				await Promise.all([operation, fenceAdvance, policyAdvance]);
+			}
+			expect((await operation).status).to.equal("completed");
+			expect((await fenceAdvance)?.status).to.equal("accepted");
+			expect((await policyAdvance)?.status).to.equal("accepted");
+			expect(anchor.head?.entryCid).to.equal(chain.fence1.cid);
+			expect(context.policyLease.anchor.head?.sequence).to.equal(3n);
+			expect(checkpoint.current?.payload).to.deep.equal(Uint8Array.of(1));
+			expect(engine.bufferedAuthorizationCount).to.equal(0);
+			expect(engine.bufferedAuthorizationBytes).to.equal(0);
+		});
+
+		for (const interruption of ["caller", "deadline"] as const) {
+			it(`never invokes a queued consumer after ${interruption} cancellation and later dequeue`, async () => {
+				const context = await createContext();
+				const chain = await chainFixture(context);
+				const anchor = await openAnchor(context);
+				await anchor.ingest(chain.fence0.bytes);
+				const engine = operationEngine(context, anchor);
+				const entered = deferred();
+				const release = deferred();
+				const clock = sinon.useFakeTimers({
+					now: Date.now(),
+					toFake: ["Date", "setTimeout", "clearTimeout"],
+				});
+				const first = engine.withClassifiedOperation(
+					chain.before.bytes,
+					async () => {
+						entered.resolve();
+						await release.promise;
+					},
+				);
+				await entered.promise;
+				const controller = new AbortController();
+				let calls = 0;
+				const consumer = () => {
+					calls++;
+				};
+				// Inspect ownership structurally, without nondeterministic GC/heap tests.
+				const seam = engine as unknown as {
+					createLeaseCallback(
+						work: {
+							snapshot?: unknown;
+							use?: unknown;
+							callbackEntered: boolean;
+						},
+						budget: unknown,
+					): unknown;
+					releaseOperation(bytes: number): void;
+				};
+				const factory = sinon.spy(seam, "createLeaseCallback");
+				const releaseCapacity = seam.releaseOperation;
+				const clearedBeforeRelease: boolean[] = [];
+				const releaseProbe = sinon
+					.stub(seam, "releaseOperation")
+					.callsFake((bytes) => {
+						const work = factory.firstCall?.args[0];
+						clearedBeforeRelease.push(
+							work !== undefined &&
+								work.snapshot === undefined &&
+								work.use === undefined,
+						);
+						releaseCapacity.call(engine, bytes);
+					});
+				let second:
+					| ReturnType<typeof engine.withClassifiedOperation>
+					| undefined;
+				try {
+					second = engine.withClassifiedOperation(
+						chain.concurrent.bytes,
+						consumer,
+						{ signal: controller.signal, timeoutMs: 100 },
+					);
+					await clock.tickAsync(0);
+					expect(anchor.bufferedAdmissionCount).to.equal(2);
+					expect(engine.bufferedAuthorizationCount).to.equal(2);
+					expect(factory.callCount).to.equal(1);
+					const work = factory.firstCall.args[0];
+					expect(work.snapshot).not.to.equal(undefined);
+					expect(work.use).to.equal(consumer);
+					if (interruption === "caller") controller.abort();
+					else await clock.tickAsync(101);
+					expect((await second).status).to.equal("unavailable");
+					expect(calls).to.equal(0);
+					expect(work).to.deep.equal({
+						snapshot: undefined,
+						use: undefined,
+						callbackEntered: false,
+					});
+					expect(clearedBeforeRelease).to.deep.equal([true]);
+					// The first callback still blocks progress. Unwinding the lower
+					// cancellation may release individual queue layers in either order.
+					expect(context.policyLease.active).to.equal(1);
+				} finally {
+					release.resolve();
+					try {
+						await Promise.all([first, second]);
+					} finally {
+						releaseProbe.restore();
+						factory.restore();
+						clock.restore();
+					}
+				}
+				expect(
+					await engine.withClassifiedOperation(
+						chain.before.bytes,
+						() => "drained",
+					),
+				).to.deep.equal({ status: "completed", value: "drained" });
+				expect(calls).to.equal(0);
+				expect(anchor.bufferedAdmissionCount).to.equal(0);
+				expect(engine.bufferedAuthorizationCount).to.equal(0);
+				expect(engine.bufferedAuthorizationBytes).to.equal(0);
+			});
+		}
+
+		for (const interruption of ["caller", "lifecycle", "deadline"] as const) {
+			it(`keeps an entered callback's actual outcome after ${interruption} cancellation`, async () => {
+				const context = await createContext();
+				const chain = await chainFixture(context);
+				const anchor = await openAnchor(context);
+				await anchor.ingest(chain.fence0.bytes);
+				const engine = operationEngine(context, anchor);
+				const entered = deferred();
+				const release = deferred();
+				const controller = new AbortController();
+				const clock = sinon.useFakeTimers({
+					now: Date.now(),
+					toFake: ["Date", "setTimeout", "clearTimeout"],
+				});
+				let settled = false;
+				const operation = engine.withClassifiedOperation(
+					chain.before.bytes,
+					async () => {
+						entered.resolve();
+						await release.promise;
+						return "committed";
+					},
+					{ signal: controller.signal, timeoutMs: 100 },
+				);
+				void operation.then(
+					() => {
+						settled = true;
+					},
+					() => {
+						settled = true;
+					},
+				);
+				try {
+					await entered.promise;
+					if (interruption === "caller") controller.abort();
+					else if (interruption === "lifecycle") engine.abort();
+					else await clock.tickAsync(101);
+					await Promise.resolve();
+					expect(settled).to.equal(false);
+					expect(context.policyLease.active).to.equal(1);
+					expect(engine.bufferedAuthorizationCount).to.equal(1);
+					expect(engine.bufferedAuthorizationBytes).to.equal(
+						chain.before.bytes.byteLength,
+					);
+				} finally {
+					release.resolve();
+					try {
+						await operation;
+					} finally {
+						clock.restore();
+					}
+				}
+				expect(await operation).to.deep.equal({
+					status: "completed",
+					value: "committed",
+				});
+				expect(engine.bufferedAuthorizationCount).to.equal(0);
+				expect(engine.bufferedAuthorizationBytes).to.equal(0);
+				expect(
+					(await operationEngine(context, anchor).authorize(chain.before.bytes))
+						.status,
+				).to.equal("provisional");
+			});
+		}
+
+		it("propagates callback rejection unchanged without poisoning the anchors", async () => {
+			const context = await createContext();
+			const chain = await chainFixture(context);
+			const anchor = await openAnchor(context);
+			await anchor.ingest(chain.fence0.bytes);
+			const engine = operationEngine(context, anchor);
+			const failure = new Error("projection commit failed");
+			const controller = new AbortController();
+			const observed = await engine
+				.withClassifiedOperation(
+					chain.before.bytes,
+					async () => {
+						controller.abort();
+						throw failure;
+					},
+					{ signal: controller.signal },
+				)
+				.catch((error: unknown) => error);
+			expect(observed).to.equal(failure);
+			expect(engine.bufferedAuthorizationCount).to.equal(0);
+			expect(context.policyLease.active).to.equal(0);
+			expect((await engine.authorize(chain.before.bytes)).status).to.equal(
+				"provisional",
+			);
+		});
+
+		for (const failurePoint of [
+			"none",
+			"before-write",
+			"after-write",
+		] as const) {
+			it(`reclassifies retained provisional bytes and recovers a complete checkpoint after ${failurePoint}`, async () => {
+				const context = await createContext();
+				const chain = await chainFixture(context);
+				const anchor = await openAnchor(context);
+				await anchor.ingest(chain.fence0.bytes);
+				const engine = operationEngine(context, anchor);
+				const store = new MemoryAnchorStore();
+				const scope = bytes32(0x75);
+				const checkpoint = await CrashSafeTwoSlotCheckpoint.open({
+					store,
+					scope,
+					maxPayloadBytes: 1,
+				});
+				const initial = await engine.withClassifiedOperation(
+					chain.concurrent.bytes,
+					async (view) => {
+						expect(view.classification.status).to.equal("provisional");
+						await checkpoint.commit(view.classification.applicationPayload!);
+					},
+				);
+				expect(initial.status).to.equal("completed");
+				await anchor.ingest(chain.fence1.bytes);
+				const failure = new Error("simulated atomic replacement failure");
+				const replace = store.crashSafeDurability.atomicReplace;
+				store.crashSafeDurability.atomicReplace = async (key, bytes) => {
+					if (failurePoint === "before-write") throw failure;
+					await replace(key, bytes);
+					if (failurePoint === "after-write") throw failure;
+				};
+				// The harness explicitly retains this one operation. It proves neither
+				// complete log enumeration nor a policy-final projection readiness flag.
+				const replay = engine.withClassifiedOperation(
+					chain.concurrent.bytes,
+					async (view) => {
+						expect(view.entryCid).to.equal(chain.concurrent.cid);
+						expect(view.classification.status).to.equal("rejected");
+						expect(view.classification.applicationPayload).to.equal(undefined);
+						expect(view.closingFence?.entryCid).to.equal(chain.fence1.cid);
+						await checkpoint.commit(Uint8Array.of(0));
+					},
+				);
+				if (failurePoint === "none") {
+					expect((await replay).status).to.equal("completed");
+				} else {
+					const error = await replay.catch((error: unknown) => error);
+					expect(error).to.be.instanceOf(CheckpointAmbiguousCommitError);
+					expect((error as CheckpointAmbiguousCommitError).cause).to.equal(
+						failure,
+					);
+					expect(() => checkpoint.current).to.throw(
+						CheckpointAmbiguousCommitError,
+					);
+				}
+				const recovered = await CrashSafeTwoSlotCheckpoint.open({
+					store: store.clone(),
+					scope,
+					maxPayloadBytes: 1,
+				});
+				expect(recovered.current?.payload).to.deep.equal(
+					Uint8Array.of(failurePoint === "before-write" ? 2 : 0),
+				);
+				expect(engine.bufferedAuthorizationCount).to.equal(0);
+				expect(
+					(await engine.authorize(chain.concurrent.bytes)).status,
+				).to.equal("rejected");
+			});
+		}
+	});
+
 	it("classifies ancestor, concurrent, post-fence, and regrant cases without resurrection", async () => {
 		const context = await createContext();
 		const chain = await chainFixture(context);

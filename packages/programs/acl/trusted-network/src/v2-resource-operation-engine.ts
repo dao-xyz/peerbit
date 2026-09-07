@@ -101,6 +101,31 @@ export type ResourceOperationAuthorizationResultV2 = Readonly<{
 	fetchHints: readonly ResourceFenceFetchHintV2[];
 }>;
 
+type ResourceOperationFailureV2 = ResourceOperationAuthorizationResultV2 & {
+	readonly status: "unavailable" | "rejected" | "halted";
+};
+
+/** Copied provenance for one callback, not a reusable authorization token. */
+export type ClassifiedResourceOperationLeaseV2 = Readonly<{
+	entryCid: string;
+	classification: ResourceOperationAuthorizationResultV2 & {
+		readonly status: "policy-final" | "provisional" | "rejected";
+	};
+	policy: Readonly<{ sequence: bigint; digest: Uint8Array }>;
+	acceptedPolicyHead: Readonly<{ sequence: bigint; digest: Uint8Array }>;
+	fence: Readonly<{ entryCid: string; digest: Uint8Array }>;
+	acceptedFenceHead: Readonly<{ entryCid: string; digest: Uint8Array }>;
+	closingFence?: Readonly<{ entryCid: string; digest: Uint8Array }>;
+}>;
+
+export type ClassifiedResourceOperationResultV2<T> =
+	| Readonly<{ status: "completed"; value: T }>
+	| ResourceOperationFailureV2;
+
+type UseClassifiedResourceOperationV2<T> = (
+	lease: ClassifiedResourceOperationLeaseV2,
+) => T | Promise<T>;
+
 export type ResourceOperationAuthorizationOptionsV2 = Readonly<{
 	/** Absolute wall-clock deadline, in milliseconds since the Unix epoch. */
 	deadline?: number;
@@ -129,6 +154,14 @@ type OperationBudgetV2 = {
 	deadline: number;
 	causalWork: ResourceCausalWorkBudgetV2;
 	dispose: () => void;
+};
+
+type OperationLeaseWorkV2<T> = {
+	snapshot?: NonNullable<
+		ReturnType<typeof readAuthenticatedResourceOperationEntryV2>
+	>;
+	use?: UseClassifiedResourceOperationV2<T>;
+	callbackEntered: boolean;
 };
 
 type CausalResultV2 = Awaited<
@@ -264,10 +297,54 @@ export class TrustedNetworkV2ResourceOperationEngine {
 		return this.bufferedInputBytes;
 	}
 
-	async authorize(
+	authorize(
 		entryBytes: Uint8Array,
 		options?: ResourceOperationAuthorizationOptionsV2,
 	): Promise<ResourceOperationAuthorizationResultV2> {
+		return this.evaluate(entryBytes, options);
+	}
+
+	/**
+	 * Classify and hold policy -> resource leases through an application commit.
+	 * Authenticated conclusive rejections also reach `use`, so a later replay can
+	 * persist retractions. Unauthenticated, unavailable and halted inputs do not.
+	 *
+	 * Cancellation prevents callback entry, but cannot undo an entered callback:
+	 * leases and input reservations stay held until its actual value/error settles.
+	 * The callback must settle and must not await this engine or either anchor
+	 * reentrantly. Its deadline is an admission deadline, not a commit timeout.
+	 * This does not replay retained history or establish projection readiness.
+	 */
+	async withClassifiedOperation<T>(
+		entryBytes: Uint8Array,
+		use: UseClassifiedResourceOperationV2<T>,
+		options?: ResourceOperationAuthorizationOptionsV2,
+	): Promise<ClassifiedResourceOperationResultV2<T>> {
+		if (typeof use !== "function") {
+			throw new TypeError(
+				"A classified resource operation callback is required",
+			);
+		}
+		return this.evaluate(entryBytes, options, use);
+	}
+
+	private evaluate(
+		entryBytes: Uint8Array,
+		options: ResourceOperationAuthorizationOptionsV2 | undefined,
+	): Promise<ResourceOperationAuthorizationResultV2>;
+	private evaluate<T>(
+		entryBytes: Uint8Array,
+		options: ResourceOperationAuthorizationOptionsV2 | undefined,
+		use: UseClassifiedResourceOperationV2<T>,
+	): Promise<ClassifiedResourceOperationResultV2<T>>;
+	private async evaluate<T>(
+		entryBytes: Uint8Array,
+		options: ResourceOperationAuthorizationOptionsV2 | undefined,
+		use?: UseClassifiedResourceOperationV2<T>,
+	): Promise<
+		| ResourceOperationAuthorizationResultV2
+		| ClassifiedResourceOperationResultV2<T>
+	> {
 		let inputBytes: number;
 		try {
 			inputBytes = exactUint8ArrayByteLengthV2(entryBytes);
@@ -306,6 +383,7 @@ export class TrustedNetworkV2ResourceOperationEngine {
 			this.releaseOperation(inputBytes);
 			return this.result("rejected", validationMessage(error));
 		}
+		let work: OperationLeaseWorkV2<T> | undefined;
 		try {
 			if (this.lifecycleController.signal.aborted) {
 				return this.result("halted", "Resource operation engine is aborted");
@@ -344,6 +422,7 @@ export class TrustedNetworkV2ResourceOperationEngine {
 				);
 			}
 			const proof = snapshot.envelope.policy;
+			work = { snapshot, use, callbackEntered: false };
 			const leased = await this.fenceAnchor.withAcceptedFenceLease(
 				{
 					fenceDigest: proof.fenceDigest,
@@ -357,13 +436,79 @@ export class TrustedNetworkV2ResourceOperationEngine {
 					signal: budget.signal,
 					causalWork: budget.causalWork,
 				},
-				(lease) => this.authorizeUnderLease(snapshot, lease, budget),
+				this.createLeaseCallback(work, budget),
 			);
-			return this.interruptionResult(budget) ?? this.mapLeaseResult(leased);
+			return (
+				(work.callbackEntered ? undefined : this.interruptionResult(budget)) ??
+				this.mapLeaseResult(leased)
+			);
 		} finally {
+			// The lower anchor can report cancellation before its queue drains.
+			// Its callback retains only this cell, never the caller's evaluation
+			// frame. Drop captured bytes and consumer before releasing capacity.
+			if (work !== undefined) {
+				work.snapshot = undefined;
+				work.use = undefined;
+			}
 			budget.dispose();
 			this.releaseOperation(inputBytes);
 		}
+	}
+
+	private createLeaseCallback<T>(
+		work: OperationLeaseWorkV2<T>,
+		budget: OperationBudgetV2,
+	) {
+		// Keep this factory separate from evaluate: a queued callback must not
+		// capture its authenticated token, original bytes, or consumer directly.
+		return async (lease: AcceptedResourceFenceLeaseV2) => {
+			const snapshot = work.snapshot;
+			if (snapshot === undefined) {
+				return this.result("unavailable", "Resource operation was released");
+			}
+			const classification = await this.authorizeUnderLease(
+				snapshot,
+				lease,
+				budget,
+			);
+			const use = work.use;
+			if (use === undefined) return classification;
+			const interruption = this.interruptionResult(budget);
+			if (interruption !== undefined) return interruption;
+			const status = classification.status;
+			if (status === "unavailable" || status === "halted") {
+				return classification;
+			}
+			const view: ClassifiedResourceOperationLeaseV2 = {
+				entryCid: snapshot.entryCid,
+				classification: { ...classification, status },
+				policy: {
+					sequence: lease.policy.sequence,
+					digest: copyBytes(lease.policy.digest),
+				},
+				acceptedPolicyHead: {
+					sequence: lease.acceptedPolicyHead.sequence,
+					digest: copyBytes(lease.acceptedPolicyHead.digest),
+				},
+				fence: {
+					entryCid: lease.fence.head.entryCid,
+					digest: copyBytes(lease.fence.head.digest),
+				},
+				acceptedFenceHead: {
+					entryCid: lease.acceptedHead.head.entryCid,
+					digest: copyBytes(lease.acceptedHead.head.digest),
+				},
+				closingFence: lease.closingFence && {
+					entryCid: lease.closingFence.head.entryCid,
+					digest: copyBytes(lease.closingFence.head.digest),
+				},
+			};
+			// No asynchronous gap between the final admission check and entry.
+			const beforeUse = this.interruptionResult(budget);
+			if (beforeUse !== undefined) return beforeUse;
+			work.callbackEntered = true;
+			return { status: "completed" as const, value: await use(view) };
+		};
 	}
 
 	private async authorizeUnderLease(
@@ -499,7 +644,7 @@ export class TrustedNetworkV2ResourceOperationEngine {
 
 	private interruptionResult(
 		budget: OperationBudgetV2,
-	): ResourceOperationAuthorizationResultV2 | undefined {
+	): ResourceOperationFailureV2 | undefined {
 		if (this.lifecycleController.signal.aborted) {
 			return this.result("halted", "Resource operation engine is aborted");
 		}
@@ -599,9 +744,9 @@ export class TrustedNetworkV2ResourceOperationEngine {
 		};
 	}
 
-	private mapLeaseResult(
-		leased: ResourceFenceLeaseResultV2<ResourceOperationAuthorizationResultV2>,
-	): ResourceOperationAuthorizationResultV2 {
+	private mapLeaseResult<T>(
+		leased: ResourceFenceLeaseResultV2<T>,
+	): T | ResourceOperationFailureV2 {
 		if (leased.status === "completed") return leased.value;
 		return this.result(
 			leased.status === "capacity" ? "unavailable" : leased.status,
@@ -610,11 +755,11 @@ export class TrustedNetworkV2ResourceOperationEngine {
 		);
 	}
 
-	private result(
-		status: ResourceOperationAuthorizationStatusV2,
+	private result<S extends ResourceOperationAuthorizationStatusV2>(
+		status: S,
 		reason?: string,
 		fetchHints: readonly ResourceFenceFetchHintV2[] = [],
-	): ResourceOperationAuthorizationResultV2 {
+	): ResourceOperationAuthorizationResultV2 & { readonly status: S } {
 		const canonicalHints = new Map<string, ResourceFenceFetchHintV2>();
 		for (const hint of fetchHints) {
 			const key =
