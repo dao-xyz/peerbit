@@ -27,7 +27,7 @@ import os from "os";
 import pDefer from "p-defer";
 import path from "path";
 import sinon from "sinon";
-import { PersistedDeliveryError } from "../src/errors.js";
+import { NoPeersError, PersistedDeliveryError } from "../src/errors.js";
 import {
 	EXCHANGE_HEADS_REPAIR_HINT,
 	ExchangeHeadsMessage,
@@ -4377,6 +4377,69 @@ describe("append delivery options — persisted receipts", function () {
 		);
 		expect(await receiver.log.log.has(entry.hash)).to.equal(true);
 	});
+
+	for (const initialPlan of ["empty", "self-only"] as const) {
+		it(`reports an ${initialPlan} initial persisted leader plan despite a capable connected peer`, async () => {
+			const { writer, receiver } = await openPair(true);
+			await waitForPersistedCapability(writer, receiver);
+			const receiverKey = receiver.node.identity.publicKey;
+			const ready = await writer.log.waitForPersistedReceiptPeerReadiness(
+				receiverKey,
+				{ timeout: 15_000 },
+			);
+			expect(ready.status).to.equal("ready");
+			const log = writer.log as any;
+			// Isolate the already-existing first-plan rejection, not a transport,
+			// capability, or maturity-policy failure. Do not manufacture a receipt.
+			const leaders = new Map(
+				initialPlan === "self-only"
+					? [
+							[
+								writer.node.identity.publicKey.hashcode(),
+								{ intersecting: true },
+							],
+						]
+					: [],
+			);
+			const plan = sinon
+				.stub(log, "planPersistedDeliveryLeaders")
+				.resolves([leaders]);
+			const append = sinon.spy(writer.log.log, "append");
+			const recovery = sinon.spy(log, "waitForPersistedReceiptPeerReadiness");
+			const request = sinon.spy(writer.log.rpc, "request");
+			let failure: unknown;
+			try {
+				await writer.add(`ineligible-${initialPlan}`, {
+					target: "replicators",
+					delivery: { reliability: "persisted", minAcks: 1 },
+				});
+			} catch (error) {
+				failure = error;
+			}
+			expect(failure).to.be.instanceOf(PersistedDeliveryError);
+			const persistedFailure = failure as PersistedDeliveryError;
+			expect(persistedFailure.cause).to.be.instanceOf(NoPeersError);
+			expect((persistedFailure.cause as Error).message).to.equal(
+				`No currently eligible remote entry leaders for persisted delivery on topic ${writer.log.rpc.topic}. Transport connectivity and receipt capability alone do not establish entry-leader eligibility.`,
+			);
+			expect(persistedFailure.localCommitSucceeded).to.equal(true);
+			expect(persistedFailure.retrySafe).to.equal(false);
+			expect(append.calledOnce).to.equal(true);
+			const committed = await append.firstCall.returnValue;
+			expect(persistedFailure.committedHashes).to.deep.equal([
+				committed.entry.hash,
+			]);
+			expect(await writer.log.log.has(committed.entry.hash)).to.equal(true);
+			expect(writer.log.log.length).to.equal(1);
+			expect(plan.calledOnce).to.equal(true);
+			expect(recovery.called).to.equal(false);
+			expect(
+				request
+					.getCalls()
+					.some((call) => call.args[0] instanceof RequestPersistedEntriesV1),
+			).to.equal(false);
+		});
+	}
 
 	it("times out after committing when no remote can issue receipts", async () => {
 		const { writer, receiver } = await openPair(false);

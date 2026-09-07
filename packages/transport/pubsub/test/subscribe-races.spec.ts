@@ -3,6 +3,8 @@ import type { Stream } from "@libp2p/interface";
 import { getPublicKeyFromPeerId, sha256Base64Sync } from "@peerbit/crypto";
 import { TestSession } from "@peerbit/libp2p-test-utils";
 import {
+	GetSubscribers,
+	PubSubData,
 	TOPIC_ROOT_CANDIDATES_MAX,
 	TopicRootCandidateClaims,
 	TopicRootCandidates,
@@ -15,6 +17,8 @@ import {
 	DataMessage,
 	type DeliveryMode,
 	MessageHeader,
+	NotStartedError,
+	getMsgId,
 } from "@peerbit/stream-interface";
 import { AbortError, delay, waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
@@ -25,6 +29,7 @@ import {
 	FanoutTree,
 	TopicControlPlane,
 	TopicRootControlPlane,
+	logger,
 } from "../src/index.js";
 
 abstract class ForeignDeliveryMode {}
@@ -337,6 +342,414 @@ describe("pubsub (subscribe race regressions)", function () {
 		if (session) {
 			await session.stop();
 			session = undefined;
+		}
+	});
+
+	describe("fanout inbound lifecycle", () => {
+		afterEach(() => sinon.restore());
+
+		const prepare = async (requestSubscribers = false) => {
+			session = await createDisconnectedSessionWithPerPeerRoots(2);
+			const receiver = session.peers[0]!.services.pubsub;
+			const sender = session.peers[1]!.services.pubsub;
+			const internals = receiver as any;
+			const topic = "fanout-inbound-lifecycle";
+			const shardTopic = internals.getShardTopicForUserTopic(topic);
+			receiver.topicRootControlPlane.setTopicRoot(
+				shardTopic,
+				receiver.publicKeyHash,
+			);
+			await receiver.subscribe(topic);
+			const channelState = internals.fanoutChannels.get(shardTopic);
+			expect(channelState).to.exist;
+			const message = requestSubscribers
+				? new GetSubscribers({ topics: [topic] })
+				: new PubSubData({
+						topics: [topic],
+						data: new Uint8Array([1, 2, 3]),
+						strict: false,
+					});
+			const embedded = await (sender as any).createMessage(message.bytes(), {
+				mode: new AnyWhere(),
+				skipRecipientValidation: true,
+			});
+			const payload = dataMessageBytes(embedded);
+			const messageId = await getMsgId(payload);
+			const receive = (state = channelState) =>
+				state.onData(new CustomEvent("data", { detail: { payload } }));
+			const replace = async () => {
+				await internals.closeFanoutChannel(shardTopic, { force: true });
+				await internals.ensureFanoutChannel(shardTopic, {
+					root: receiver.publicKeyHash,
+					rootCandidateGeneration: internals.getTopicRootCandidateGeneration(),
+					pin: true,
+				});
+				const replacement = internals.fanoutChannels.get(shardTopic);
+				expect(receiver.started).to.equal(true);
+				expect(replacement.channel).to.not.equal(channelState.channel);
+				return replacement;
+			};
+			const restart = async () => {
+				await receiver.stop();
+				await receiver.start();
+				receiver.topicRootControlPlane.setTopicRoot(
+					shardTopic,
+					receiver.publicKeyHash,
+				);
+				// This tests owner revision fencing, not the public debounced restart
+				// contract: stop() closes that aggregator. Reopen an internal channel.
+				await internals._subscribe([{ key: topic, counter: 1 }]);
+				const replacement = internals.fanoutChannels.get(shardTopic);
+				expect(receiver.started).to.equal(true);
+				expect(replacement.channel).to.not.equal(channelState.channel);
+				return replacement;
+			};
+			return {
+				receiver,
+				internals,
+				topic,
+				shardTopic,
+				channelState,
+				payload,
+				messageId,
+				receive,
+				replace,
+				restart,
+			};
+		};
+
+		const captureResponseTimer = (
+			internals: any,
+			shardTopic: string,
+			timers: sinon.SinonSpy,
+		) => {
+			const pending = internals.pendingSubscriberResponses.get(shardTopic);
+			const call = timers
+				.getCalls()
+				.find((call) => call.returnValue === pending.timer);
+			expect(call).to.exist;
+			// Schedule the captured callback explicitly at the race boundary. Leave
+			// libp2p's unrelated timers on the real clock throughout teardown.
+			clearTimeout(pending.timer);
+			return call!.args[0] as () => void;
+		};
+
+		it("dispatches a verified active payload once across data and unicast", async () => {
+			const { receiver, internals, channelState, payload, messageId, receive } =
+				await prepare();
+			const dispatched = deferred();
+			const data = sinon.spy(() => dispatched.resolve());
+			receiver.addEventListener("data", data);
+			try {
+				receive();
+				await dispatched.promise;
+				channelState.onUnicast(
+					new CustomEvent("unicast", {
+						detail: { payload, to: receiver.publicKeyHash },
+					}),
+				);
+				await delay(0);
+				expect(data.calledOnce).to.equal(true);
+				expect(internals.seenCache.get(messageId)).to.equal(2);
+			} finally {
+				receiver.removeEventListener("data", data);
+			}
+		});
+
+		it("does not let an old channel consume a payload while hashing", async () => {
+			const { internals, messageId, receive, replace } = await prepare();
+			const process = sinon.spy(internals, "processShardPubSubMessage");
+			receive();
+			const replacement = await replace();
+			await delay(0);
+			expect(process.called).to.equal(false);
+			expect(internals.seenCache.get(messageId)).to.equal(undefined);
+			receive(replacement);
+			await waitForResolved(() => expect(process.calledOnce).to.equal(true));
+		});
+
+		for (const transition of [
+			"replacement",
+			"internal channel reopen after stop/start",
+		] as const) {
+			it(`fences verification across ${transition} without consuming its replacement's payload`, async () => {
+				const { receiver, internals, messageId, receive, replace, restart } =
+					await prepare();
+				const entered = deferred();
+				const gate = deferred();
+				const originalVerify = DataMessage.prototype.verify;
+				const verify = sinon
+					.stub(DataMessage.prototype, "verify")
+					.callsFake(async function (this: DataMessage, ...args) {
+						entered.resolve();
+						await gate.promise;
+						return originalVerify.apply(this, args);
+					});
+				const updateSession = sinon.spy(receiver, "updateSession");
+				const process = sinon.spy(internals, "processShardPubSubMessage");
+				try {
+					receive();
+					await entered.promise;
+					const replacement = await (transition === "replacement"
+						? replace()
+						: restart());
+					updateSession.resetHistory();
+					receive(); // A queued callback retained by the removed channel.
+					gate.resolve();
+					await verify.firstCall.returnValue;
+					await delay(0);
+					expect(verify.calledOnce).to.equal(true);
+					expect(updateSession.called).to.equal(false);
+					expect(process.called).to.equal(false);
+					expect(internals.seenCache.get(messageId)).to.equal(undefined);
+					receive(replacement);
+					await waitForResolved(() =>
+						expect(process.calledOnce).to.equal(true),
+					);
+					expect(verify.callCount).to.equal(2);
+					expect(updateSession.calledOnce).to.equal(true);
+				} finally {
+					gate.resolve();
+				}
+			});
+		}
+
+		it("dispatches concurrent successful verifiers only once", async () => {
+			const { internals, receive } = await prepare();
+			const bothEntered = deferred();
+			const gate = deferred();
+			const originalVerify = DataMessage.prototype.verify;
+			let entries = 0;
+			const verify = sinon
+				.stub(DataMessage.prototype, "verify")
+				.callsFake(async function (this: DataMessage, ...args) {
+					if (++entries === 2) bothEntered.resolve();
+					await gate.promise;
+					return originalVerify.apply(this, args);
+				});
+			const process = sinon.spy(internals, "processShardPubSubMessage");
+			try {
+				receive();
+				receive();
+				await bothEntered.promise;
+				gate.resolve();
+				await Promise.all(verify.returnValues);
+				await delay(0);
+				expect(process.calledOnce).to.equal(true);
+			} finally {
+				gate.resolve();
+			}
+		});
+
+		it("does not send a subscriber reply created across stop", async () => {
+			const { receiver, internals, receive } = await prepare(true);
+			const entered = deferred();
+			const gate = deferred();
+			const create = sinon
+				.stub(internals, "createMessage")
+				.callsFake(async () => {
+					entered.resolve();
+					await gate.promise;
+					return { bytes: () => new Uint8Array([1]) };
+				});
+			const send = sinon.spy(internals, "sendFanoutUnicastOrBroadcast");
+			try {
+				receive();
+				await entered.promise;
+				await receiver.stop();
+				gate.resolve();
+				await create.firstCall.returnValue;
+				await delay(0);
+				expect(send.called).to.equal(false);
+			} finally {
+				gate.resolve();
+			}
+		});
+
+		it("does not broadcast an old channel's failed unicast through a replacement", async () => {
+			const { internals, channelState, receive, replace } = await prepare(true);
+			const entered = deferred();
+			const gate = deferred();
+			const unicast = sinon
+				.stub(channelState.channel, "unicastToAck")
+				.callsFake(async () => {
+					entered.resolve();
+					await gate.promise;
+					throw new NotStartedError();
+				});
+			const oldPublish = sinon.spy(channelState.channel, "publishMaybe");
+			const process = sinon.spy(internals, "processShardPubSubMessage");
+			const errors = sinon.stub(logger, "error");
+			try {
+				receive();
+				await entered.promise;
+				const replacement = await replace();
+				const newPublish = sinon.spy(replacement.channel, "publishMaybe");
+				gate.resolve();
+				await Promise.allSettled(process.returnValues);
+				await delay(0);
+				expect(unicast.calledOnce).to.equal(true);
+				expect(oldPublish.called).to.equal(false);
+				expect(newPublish.called).to.equal(false);
+				expect(errors.called).to.equal(false);
+			} finally {
+				gate.resolve();
+			}
+		});
+
+		for (const transition of [
+			"replacement",
+			"internal channel reopen after stop/start",
+		] as const) {
+			for (const trailing of [false, true]) {
+				it(`fences a ${trailing ? "trailing broadcast" : "leading targeted"} subscriber response across ${transition}`, async () => {
+					const {
+						internals,
+						channelState,
+						topic,
+						shardTopic,
+						replace,
+						restart,
+					} = await prepare();
+					const timers = sinon.spy(globalThis, "setTimeout");
+					const entered = deferred();
+					const gate = deferred();
+					const originalCreate = internals.createMessage.bind(internals);
+					let creates = 0;
+					const create = sinon
+						.stub(internals, "createMessage")
+						.callsFake(async (...args) => {
+							const reply = await originalCreate(...args);
+							if (++creates === (trailing ? 2 : 1)) {
+								entered.resolve();
+								await gate.promise;
+							}
+							return reply;
+						});
+					const send = sinon
+						.stub(internals, "sendFanoutUnicastOrBroadcast")
+						.resolves();
+					const oldPublish = sinon.spy(channelState.channel, "publishMaybe");
+					try {
+						internals.queueSubscriberResponse(shardTopic, "first", [topic]);
+						const tick = captureResponseTimer(internals, shardTopic, timers);
+						if (trailing) {
+							await create.firstCall.returnValue;
+							await Promise.resolve();
+							expect(send.calledOnce).to.equal(true);
+							send.resetHistory();
+							internals.queueSubscriberResponse(shardTopic, "second", [topic]);
+							internals.queueSubscriberResponse(shardTopic, "third", [topic]);
+							tick();
+						}
+						await entered.promise;
+						const replacement = await (transition === "replacement"
+							? replace()
+							: restart());
+						const newPublish = sinon.spy(replacement.channel, "publishMaybe");
+						gate.resolve();
+						await Promise.all(create.returnValues);
+						await Promise.resolve();
+						expect(send.called).to.equal(false);
+						expect(oldPublish.called).to.equal(false);
+						expect(newPublish.called).to.equal(false);
+					} finally {
+						gate.resolve();
+					}
+				});
+			}
+		}
+
+		it("keeps an active subscriber burst targeted first and coalesced afterward", async () => {
+			const { internals, channelState, topic, shardTopic } = await prepare();
+			const timers = sinon.spy(globalThis, "setTimeout");
+			const create = sinon.spy(internals, "createMessage");
+			const send = sinon
+				.stub(internals, "sendFanoutUnicastOrBroadcast")
+				.resolves();
+			const broadcast = sinon
+				.stub(channelState.channel, "publishMaybe")
+				.resolves();
+			internals.queueSubscriberResponse(shardTopic, "first", [topic]);
+			const tick = captureResponseTimer(internals, shardTopic, timers);
+			await create.firstCall.returnValue;
+			await Promise.resolve();
+			expect(send.calledOnce).to.equal(true);
+			expect(send.firstCall.args[1]).to.equal("first");
+			internals.queueSubscriberResponse(shardTopic, "second", [topic]);
+			internals.queueSubscriberResponse(shardTopic, "third", [topic]);
+			tick();
+			await create.secondCall.returnValue;
+			await Promise.resolve();
+			expect(send.calledOnce).to.equal(true);
+			expect(broadcast.calledOnce).to.equal(true);
+		});
+
+		it("does not let an old trailing callback delete or inherit a replacement's pending response", async () => {
+			const { internals, topic, shardTopic, replace } = await prepare();
+			const timers = sinon.spy(globalThis, "setTimeout");
+			const flush = sinon
+				.stub(internals, "flushSubscriberResponses")
+				.resolves();
+			internals.queueSubscriberResponse(shardTopic, "old-first", [topic]);
+			const stale = internals.pendingSubscriberResponses.get(shardTopic);
+			const staleCallback = captureResponseTimer(internals, shardTopic, timers);
+			internals.queueSubscriberResponse(shardTopic, "old-second", [topic]);
+			await replace();
+			expect(internals.pendingSubscriberResponses.has(shardTopic)).to.equal(
+				false,
+			);
+			expect(stale.isCurrent()).to.equal(false);
+			internals.queueSubscriberResponse(shardTopic, "new-first", [topic]);
+			const tick = captureResponseTimer(internals, shardTopic, timers);
+			const current = internals.pendingSubscriberResponses.get(shardTopic);
+			expect(current).to.not.equal(stale);
+			expect(current.isCurrent()).to.equal(true);
+			staleCallback(); // The timer callback was already queued before close.
+			expect(internals.pendingSubscriberResponses.get(shardTopic)).to.equal(
+				current,
+			);
+			expect([...current.targets]).to.deep.equal([]);
+			tick();
+			expect(flush.callCount).to.equal(2); // Only the two leading responses.
+		});
+
+		for (const stopped of [false, true]) {
+			for (const notStarted of [false, true]) {
+				it(`${stopped && notStarted ? "owns" : "logs"} ${notStarted ? "not-started" : "unexpected"} verification errors while ${stopped ? "stale" : "active"}`, async () => {
+					const { receiver, receive } = await prepare();
+					const entered = deferred();
+					const gate = deferred();
+					const failure = notStarted
+						? new NotStartedError()
+						: new Error("fanout-verifier-failed");
+					const verify = sinon
+						.stub(DataMessage.prototype, "verify")
+						.callsFake(async () => {
+							entered.resolve();
+							await gate.promise;
+							throw failure;
+						});
+					const errors = sinon.stub(logger, "error");
+					try {
+						receive();
+						await entered.promise;
+						if (stopped) await receiver.stop();
+						gate.resolve();
+						await Promise.allSettled(verify.returnValues);
+						await delay(0);
+						if (stopped && notStarted) {
+							expect(errors.called).to.equal(false);
+						} else {
+							expect(errors.calledOnceWithExactly(failure.message)).to.equal(
+								true,
+							);
+						}
+					} finally {
+						gate.resolve();
+					}
+				});
+			}
 		}
 	});
 

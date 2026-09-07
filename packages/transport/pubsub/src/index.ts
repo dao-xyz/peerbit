@@ -397,6 +397,7 @@ export class TopicControlPlane
 		{
 			targets: Set<string>;
 			topics: Set<string>;
+			isCurrent: () => boolean;
 			timer: ReturnType<typeof setTimeout>;
 		}
 	> = new Map();
@@ -2062,15 +2063,30 @@ export class TopicControlPlane
 		]);
 	}
 
+	private isTopicControlPlaneActive(lifecycleRevision: number): boolean {
+		return (
+			lifecycleRevision === this.topicControlPlaneLifecycleRevision &&
+			this.started &&
+			!this.stopping &&
+			!this.topicControlPlaneStopping
+		);
+	}
+
 	private assertTopicControlPlaneActive(lifecycleRevision: number): void {
-		if (
-			lifecycleRevision !== this.topicControlPlaneLifecycleRevision ||
-			!this.started ||
-			this.stopping ||
-			this.topicControlPlaneStopping
-		) {
+		if (!this.isTopicControlPlaneActive(lifecycleRevision)) {
 			throw new NotStartedError();
 		}
+	}
+
+	private isFanoutChannelCurrent(
+		shardTopic: string,
+		channel: FanoutChannel,
+		lifecycleRevision: number,
+	): boolean {
+		return (
+			this.isTopicControlPlaneActive(lifecycleRevision) &&
+			this.fanoutChannels.get(shardTopic)?.channel === channel
+		);
 	}
 
 	private syncTopicRootCandidateResolutionSignal(
@@ -2851,8 +2867,11 @@ export class TopicControlPlane
 			return;
 		}
 		const channel = new FanoutChannel(this.fanout, { topic: t, root });
+		const isCurrent = () =>
+			this.isFanoutChannelCurrent(t, channel, lifecycleRevision);
 
 		const onPayload = (payload: Uint8Array) => {
+			if (!isCurrent()) return;
 			let dm: DataMessage;
 			try {
 				dm = DataMessage.from(new Uint8ArrayList(payload));
@@ -2912,24 +2931,38 @@ export class TopicControlPlane
 
 			void (async () => {
 				const msgId = await getMsgId(payload);
-				const seen = this.seenCache.get(msgId);
-				this.seenCache.add(msgId, seen ? seen + 1 : 1);
-				if (seen) return;
+				if (!isCurrent()) return;
+				const previouslySeen = this.seenCache.get(msgId);
+				if (previouslySeen) {
+					this.seenCache.add(msgId, previouslySeen + 1);
+					return;
+				}
 
 				// fanout-delivered frames bypass the inbound stream decode, so
 				// the nested envelope is verified natively here when possible
 				this.seedNativeWireVerification(dm, payload);
-				if ((await this.verifyAndProcess(dm)) === false) {
+				if ((await this.verifyAndProcess(dm, isCurrent)) === false) {
 					return;
 				}
+				if (!isCurrent()) return;
+				// Only a verified frame owned by this exact channel may consume the
+				// shared dedupe slot. A stale verifier cannot suppress its replacement's
+				// copy. Concurrent verifiers recheck here before dispatching once.
+				const seen = this.seenCache.get(msgId);
+				this.seenCache.add(msgId, seen ? seen + 1 : 1);
+				if (seen) return;
 				const sender = dm.header.signatures!.signatures[0]!.publicKey!;
 				await this.processShardPubSubMessage({
 					pubsubMessage,
 					message: dm,
 					from: sender,
 					shardTopic: t,
+					isCurrent,
 				});
-			})();
+			})().catch((error) => {
+				if (error instanceof NotStartedError && !isCurrent()) return;
+				logError(error);
+			});
 		};
 
 		const onData = (ev?: CustomEvent<FanoutTreeDataEvent>) => {
@@ -3035,6 +3068,11 @@ export class TopicControlPlane
 		if (!st) return;
 		this.fanoutChannels.delete(t);
 		this.clearFanoutIdleClose(st);
+		const pendingResponse = this.pendingSubscriberResponses.get(t);
+		if (pendingResponse) {
+			clearTimeout(pendingResponse.timer);
+			this.pendingSubscriberResponses.delete(t);
+		}
 		try {
 			st.channel.removeEventListener("data", st.onData as any);
 		} catch {
@@ -3955,17 +3993,36 @@ export class TopicControlPlane
 		targetHash: string,
 		topics: string[],
 	) {
+		const lifecycleRevision = this.topicControlPlaneLifecycleRevision;
+		const st = this.fanoutChannels.get(shardTopic);
+		if (!st) return;
+		const isCurrent = () =>
+			this.isFanoutChannelCurrent(shardTopic, st.channel, lifecycleRevision);
+		if (!isCurrent()) return;
+		const onError = (error: Error) => {
+			if (error instanceof NotStartedError && !isCurrent()) return;
+			logError(error);
+		};
 		let entry = this.pendingSubscriberResponses.get(shardTopic);
+		if (entry && !entry.isCurrent()) {
+			clearTimeout(entry.timer);
+			this.pendingSubscriberResponses.delete(shardTopic);
+			entry = undefined;
+		}
 		if (!entry) {
 			const created = {
 				targets: new Set<string>(),
 				topics: new Set<string>(),
+				isCurrent,
 				timer: setTimeout(
 					() => {
+						if (this.pendingSubscriberResponses.get(shardTopic) !== created) {
+							return;
+						}
 						this.pendingSubscriberResponses.delete(shardTopic);
-						if (created.targets.size === 0) return;
+						if (!isCurrent() || created.targets.size === 0) return;
 						void this.flushSubscriberResponses(shardTopic, created).catch(
-							logErrorIfStarted,
+							onError,
 						);
 					},
 					150 + Math.floor(Math.random() * 150),
@@ -3976,7 +4033,8 @@ export class TopicControlPlane
 			void this.flushSubscriberResponses(shardTopic, {
 				targets: new Set([targetHash]),
 				topics: new Set(topics),
-			}).catch(logErrorIfStarted);
+				isCurrent,
+			}).catch(onError);
 			return;
 		}
 		entry.targets.add(targetHash);
@@ -3985,9 +4043,13 @@ export class TopicControlPlane
 
 	private async flushSubscriberResponses(
 		shardTopic: string,
-		entry: { targets: Set<string>; topics: Set<string> },
+		entry: {
+			targets: Set<string>;
+			topics: Set<string>;
+			isCurrent: () => boolean;
+		},
 	) {
-		if (!this.started) return;
+		if (!entry.isCurrent()) return;
 		// Re-filter: our subscriptions may have changed within the window.
 		const topics = this.getSubscriptionOverlap([...entry.topics]);
 		if (topics.length === 0) return;
@@ -4003,6 +4065,7 @@ export class TopicControlPlane
 				skipRecipientValidation: true,
 			} as any,
 		);
+		if (!entry.isCurrent()) return;
 		const payload = toUint8Array(embedded.bytes());
 		const [firstTarget] = entry.targets;
 		if (entry.targets.size === 1 && firstTarget) {
@@ -4019,8 +4082,12 @@ export class TopicControlPlane
 		targetHash: string,
 		payload: Uint8Array,
 	) {
+		const lifecycleRevision = this.topicControlPlaneLifecycleRevision;
 		const st = this.fanoutChannels.get(shardTopic);
 		if (!st) return;
+		const isCurrent = () =>
+			this.isFanoutChannelCurrent(shardTopic, st.channel, lifecycleRevision);
+		if (!isCurrent()) return;
 		const hints = this.getUnifiedRouteHints(shardTopic, targetHash);
 		const fanoutHint = hints.find(
 			(hint): hint is Extract<RouteHint, { kind: "fanout-token" }> =>
@@ -4032,16 +4099,25 @@ export class TopicControlPlane
 					timeoutMs: 5_000,
 				});
 				return;
-			} catch {
+			} catch (error) {
+				if (!isCurrent()) {
+					if (error instanceof NotStartedError) return;
+					throw error;
+				}
 				// ignore and fall back
 			}
 		}
 		try {
 			await st.channel.unicastToAck(targetHash, payload, { timeoutMs: 5_000 });
 			return;
-		} catch {
+		} catch (error) {
+			if (!isCurrent()) {
+				if (error instanceof NotStartedError) return;
+				throw error;
+			}
 			// ignore and fall back
 		}
+		if (!isCurrent()) return;
 		await st.channel.publishMaybe(payload);
 	}
 
@@ -4227,8 +4303,10 @@ export class TopicControlPlane
 		message: DataMessage;
 		from: PublicSignKey;
 		shardTopic: string;
+		isCurrent?: () => boolean;
 	}): Promise<void> {
-		const { pubsubMessage, message, from, shardTopic } = input;
+		const { pubsubMessage, message, from, shardTopic, isCurrent } = input;
+		if (isCurrent?.() === false) return;
 
 		if (pubsubMessage instanceof PubSubData) {
 			this.dispatchEvent(
@@ -4295,6 +4373,7 @@ export class TopicControlPlane
 				}
 			}
 
+			if (isCurrent?.() === false) return;
 			if (pubsubMessage.requestSubscribers) {
 				const overlap = this.getSubscriptionOverlap(pubsubMessage.topics);
 				if (overlap.length > 0) {
@@ -4425,6 +4504,7 @@ export class TopicControlPlane
 				} as any,
 			);
 			const payload = toUint8Array(embedded.bytes());
+			if (isCurrent?.() === false) return;
 			await this.sendFanoutUnicastOrBroadcast(shardTopic, senderKey, payload);
 			return;
 		}

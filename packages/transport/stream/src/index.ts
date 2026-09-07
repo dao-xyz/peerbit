@@ -2892,12 +2892,17 @@ export abstract class DirectStream<
 			}
 	}
 
-	public async verifyAndProcess(message: Message<any>) {
+	public async verifyAndProcess(
+		message: Message<any>,
+		canProcess?: () => boolean,
+	) {
+		if (canProcess?.() === false) return false;
 		if (message._verified == null) {
 			this.wireCounters.tsSignatureVerifies++;
 		}
 		const verified = await message.verify(true);
-		if (!verified) {
+		// Async verification must not let an obsolete ingress owner update sessions.
+		if (!verified || canProcess?.() === false) {
 			return false;
 		}
 
