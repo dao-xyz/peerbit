@@ -87,6 +87,11 @@ export class CachedIndex<T extends Record<string, any>, Nested = unknown>
 
 	/* --------------------- read operations (may use cache) ------------------ */
 
+	get scanKeyPrimitives(): Index<T, Nested>["scanKeyPrimitives"] {
+		// Keep optional inventory ownership at the origin, outside query caching.
+		return this.origin.scanKeyPrimitives?.bind(this.origin);
+	}
+
 	get(id: any, o?: { shape: Shape }) {
 		return this.origin.get(id, o);
 	}
