@@ -16,6 +16,26 @@
 // caller-specific fields such as epochs, batches and retained-work
 // counters); the registry owns the per-target active sets, the listener
 // add/remove pairing and the dispose gating.
+import { AbortError } from "@peerbit/time";
+
+/** Local receive drain cancellation; never a transport or persistence failure. */
+export class SyncReceiveAbortError extends AbortError {}
+
+export const isSyncDispatchCancellation = (
+	error: unknown,
+	signal: AbortSignal | undefined,
+	inactive = signal?.aborted === true,
+): boolean => {
+	if (!inactive) return false;
+	// Keep the existing owner/disconnect error policy. Only the new receive
+	// cancellation must distinguish unrelated failures that race its abort.
+	if (!(signal?.reason instanceof SyncReceiveAbortError)) return true;
+	return (
+		error === signal.reason ||
+		error instanceof AbortError ||
+		(error instanceof Error && error.name === "AbortError")
+	);
+};
 
 export interface DispatchTargetLifecycleBase<LC> {
 	lifecycle: LC;

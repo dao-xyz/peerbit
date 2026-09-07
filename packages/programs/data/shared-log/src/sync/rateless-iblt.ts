@@ -27,7 +27,9 @@ import { TransportMessage } from "../message.js";
 import { type EntryReplicated } from "../ranges.js";
 import {
 	DispatchLifecycleRegistry,
+	SyncReceiveAbortError,
 	isOwnershipGenerationActive,
+	isSyncDispatchCancellation,
 	isTrackedSessionActive,
 } from "./dispatch-lifecycle.js";
 import type {
@@ -827,6 +829,7 @@ type OutgoingRatelessSyncProcess = {
 		lastSeqNo: bigint;
 	}) => { symbols: CodedSymbolBatch; exhaustedAfterSend: boolean } | undefined;
 	startSimpleFallback: () => Promise<void>;
+	cancelSimpleFallback: (reason: unknown) => void;
 	simpleFallbackStarted: boolean;
 	free: (reason?: unknown) => void;
 	processController: AbortController;
@@ -863,6 +866,7 @@ type IncomingRatelessSyncProcess = {
 		symbols: CodedSymbolInput;
 	}) => Promise<IncomingRatelessProcessResult>;
 	requestAll: () => Promise<void>;
+	drain: () => Promise<void>;
 	fallbackToSimple: (reason?: unknown) => Promise<void>;
 	free: (reason?: unknown) => void;
 	complete: () => void;
@@ -1571,6 +1575,35 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 		);
 	}
 
+	private async settleIncomingReceive(
+		process: IncomingRatelessSyncProcess,
+		signal: AbortSignal,
+	): Promise<void> {
+		const errors: unknown[] = [];
+		try {
+			await process.drain();
+		} catch (error) {
+			errors.push(error);
+		}
+		if (signal.aborted) {
+			try {
+				process.free(signal.reason);
+			} catch (error) {
+				errors.push(error);
+			}
+		}
+		if (errors.length === 1) throw errors[0];
+		if (errors.length > 1) {
+			throw new AggregateError(
+				errors,
+				"incoming receive drain and cleanup failed",
+				{
+					cause: errors[0],
+				},
+			);
+		}
+	}
+
 	async onMaybeMissingEntries(properties: {
 		entries: Map<string, SyncEntryCoordinates<D>>;
 		targets: string[];
@@ -2008,6 +2041,7 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 			let symbolsProduced = startSyncSymbols.length;
 			let symbolBudgetExhausted = false;
 			let simpleFallbackPromise: Promise<void> | undefined;
+			const simpleFallbackController = new AbortController();
 			const symbolBudget = getOutgoingRatelessSymbolBudget(
 				properties.coordinates.length,
 				startSyncSymbols.length,
@@ -2055,7 +2089,14 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 						this.simple.onMaybeMissingHashes({
 							hashes: properties.outgoingHashes,
 							targets: [target],
-							signal: lifecycle.callerSignal,
+							// Encoder retirement must not cancel an admitted fallback.
+							// A receive awaiting that exact memoized operation can do so.
+							signal: lifecycle.callerSignal
+								? AbortSignal.any([
+										lifecycle.callerSignal,
+										simpleFallbackController.signal,
+									])
+								: simpleFallbackController.signal,
 						}),
 					);
 				}
@@ -2150,6 +2191,8 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 					return { symbols, exhaustedAfterSend };
 				},
 				startSimpleFallback,
+				cancelSimpleFallback: (reason) =>
+					simpleFallbackController.abort(reason),
 				simpleFallbackStarted: false,
 				free: clear,
 				outgoingHashes: properties.outgoingHashes,
@@ -2386,7 +2429,74 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 	async onMessage(
 		message: TransportMessage,
 		context: RequestContext,
+		options?: { signal?: AbortSignal },
 	): Promise<boolean> {
+		const signal = options?.signal;
+		if (!signal) {
+			return this.onMessageForReceive(message, context);
+		}
+		let cancel: (() => void) | undefined;
+		let settle: (() => Promise<void>) | undefined;
+		const onAbort = () => cancel?.();
+		signal.addEventListener("abort", onAbort, { once: true });
+		const errors: unknown[] = [];
+		let handled = false;
+		try {
+			handled = await this.onMessageForReceive(message, context, {
+				signal,
+				bind: (cancelWork, settleWork) => {
+					cancel = cancelWork;
+					settle = settleWork;
+					if (signal.aborted) {
+						onAbort();
+					}
+				},
+			});
+		} catch (error) {
+			errors.push(error);
+		} finally {
+			// Keep cancellation connected while a bounded fallback's logical
+			// completion still leaves its lower send physically draining.
+			try {
+				await settle?.();
+			} catch (error) {
+				if (!errors.includes(error)) {
+					errors.push(error);
+				}
+			} finally {
+				signal.removeEventListener("abort", onAbort);
+			}
+		}
+		if (errors.length === 1) throw errors[0];
+		if (errors.length > 1) {
+			throw new AggregateError(
+				errors,
+				"sync receive and physical cleanup failed",
+				{
+					cause: errors[0],
+				},
+			);
+		}
+		return handled;
+	}
+
+	private async onMessageForReceive(
+		message: TransportMessage,
+		context: RequestContext,
+		options?: {
+			signal: AbortSignal;
+			bind: (cancel: () => void, settle?: () => Promise<void>) => void;
+		},
+	): Promise<boolean> {
+		if (options?.signal.aborted) {
+			return (
+				message instanceof StartSync ||
+				message instanceof MoreSymbols ||
+				message instanceof RequestMoreSymbols ||
+				message instanceof RequestAll ||
+				(await this.simple.onMessage(message, context, options))
+			);
+		}
 		const profile = this.properties.sync?.profile;
 		if (message instanceof StartSync) {
 			const from = context.from;
@@ -2511,6 +2621,7 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 				symbolBudget: getIncomingRatelessSymbolBudget(message.symbols.length),
 				process: async () => undefined,
 				requestAll: async () => {},
+				drain: async () => {},
 				fallbackToSimple: async () => {},
 				free,
 				complete,
@@ -2521,6 +2632,10 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 				"abort",
 				onOwnershipAbort,
 				{ once: true },
+			);
+			options?.bind(
+				() => controller.abort(options.signal.reason),
+				() => this.settleIncomingReceive(obj, options.signal),
 			);
 			obj.deadlineTimeout = setTimeout(() => {
 				void obj.fallbackToSimple(
@@ -2534,6 +2649,9 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 			}
 
 			let requestAllPromise: Promise<void> | undefined;
+			obj.drain = async () => {
+				await requestAllPromise;
+			};
 			obj.requestAll = () => {
 				if (requestAllPromise) {
 					return requestAllPromise;
@@ -2565,6 +2683,12 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 								targets: 1,
 								syncId,
 							});
+						}
+					} catch (error) {
+						// Classify before complete() aborts the process as normal cleanup;
+						// that cleanup must not disguise a genuine lower-send failure.
+						if (!isSyncDispatchCancellation(error, controller.signal)) {
+							throw error;
 						}
 					} finally {
 						fallbackSendPending = false;
@@ -2643,7 +2767,8 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 				const processAborted = controller.signal.aborted;
 				free(error);
 				if (
-					processAborted ||
+					(processAborted &&
+						isSyncDispatchCancellation(error, controller.signal)) ||
 					!this.isIncomingSyncGenerationActive(ownershipLifecycleController)
 				) {
 					return true;
@@ -2924,7 +3049,13 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 					},
 				);
 			} catch (error) {
-				if (!this.isIncomingSyncProcessActive(obj)) {
+				if (
+					isSyncDispatchCancellation(
+						error,
+						controller.signal,
+						!this.isIncomingSyncProcessActive(obj),
+					)
+				) {
 					return true;
 				}
 				free(error);
@@ -2959,6 +3090,10 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 			) {
 				return true;
 			}
+			options?.bind(
+				() => obj.controller.abort(options.signal.reason),
+				() => this.settleIncomingReceive(obj, options.signal),
+			);
 			let outProcess: IncomingRatelessProcessResult;
 			try {
 				outProcess = await obj.process(message);
@@ -3005,7 +3140,13 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 						signal: obj.controller.signal,
 					},
 				);
-			} catch {
+			} catch (error) {
+				if (
+					obj.controller.signal.reason instanceof SyncReceiveAbortError &&
+					!isSyncDispatchCancellation(error, obj.controller.signal)
+				) {
+					throw error;
+				}
 				if (profile) {
 					emitSyncProfileDuration(profile, sendStartedAt, {
 						name: "rateless.sendRequestMoreSymbols",
@@ -3039,6 +3180,14 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 			if (context.from?.hashcode() !== obj.target) {
 				return true;
 			}
+			options?.bind(
+				() => obj.processController.abort(options.signal.reason),
+				async () => {
+					if (options.signal.aborted) {
+						obj.free(options.signal.reason);
+					}
+				},
+			);
 			const signal = obj.signal;
 			if (signal.aborted) {
 				return true;
@@ -3066,7 +3215,7 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 					},
 				);
 			} catch (error) {
-				if (signal?.aborted) {
+				if (isSyncDispatchCancellation(error, signal)) {
 					return true;
 				}
 				throw error;
@@ -3101,7 +3250,14 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 			}
 			// RequestAll ends only this target's rateless attempt. Other target
 			// encoders and response authorizations remain independently owned.
-			const fallback = p.startSimpleFallback();
+			let fallback: Promise<void> | undefined;
+			options?.bind(
+				() => p.cancelSimpleFallback(options.signal.reason),
+				async () => {
+					await fallback;
+				},
+			);
+			fallback = p.startSimpleFallback();
 			p.free();
 			await fallback;
 			return true;
@@ -3174,13 +3330,17 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 						entries: 0,
 					};
 					try {
+						const signal = options?.signal
+							? AbortSignal.any([response.signal, options.signal])
+							: response.signal;
 						responseShipment =
 							await this.simple.shipAuthorizedMaybeSyncResponse({
 								hashes: response.authorized,
 								from,
 								response: message,
-								signal: response.signal,
+								signal,
 							});
+						rollbackRatelessAuthorization = signal.aborted;
 					} catch (error) {
 						firstError = error;
 						rollbackRatelessAuthorization = true;
@@ -3209,6 +3369,7 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 							leases: simpleLeases,
 							from,
 							response: simpleMessage,
+							signal: options?.signal,
 						});
 					} catch (error) {
 						firstError ??= error;
@@ -3229,7 +3390,7 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 				}
 			}
 		}
-		return this.simple.onMessage(message, context);
+		return this.simple.onMessage(message, context, options);
 	}
 
 	onReceivedEntries(properties: {

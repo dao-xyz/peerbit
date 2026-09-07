@@ -297,6 +297,7 @@ import {
 	maxReplicas,
 } from "./replication.js";
 import { ReplicatorLivenessMonitor } from "./replicator-liveness.js";
+import { SyncReceiveAbortError } from "./sync/dispatch-lifecycle.js";
 import { createSyncronizer } from "./sync/factory.js";
 import type {
 	SharedLogNativeWireSync,
@@ -417,6 +418,7 @@ type PendingIHave<T> = {
 
 type PeerReceiveLeaseBucket = {
 	active: number;
+	controller: AbortController;
 	drain?: DeferredPromise<void>;
 };
 
@@ -433,13 +435,15 @@ type PeerReceiveLeaseState = {
  */
 type PeerReceiveLease = {
 	release: () => void;
+	signal: AbortSignal;
 };
 
 const createOneShotPeerReceiveLease = (
-	releaseFn: () => void,
+	releaseFn: (() => void) & { signal: AbortSignal },
 ): PeerReceiveLease => {
 	let released = false;
 	return {
+		signal: releaseFn.signal,
 		release: () => {
 			if (released) {
 				return;
@@ -7837,7 +7841,7 @@ export class SharedLog<
 			allowReplicationInfoBlocked?: boolean;
 			allowCleanupGate?: boolean;
 		},
-	): (() => void) | undefined {
+	): ((() => void) & { signal: AbortSignal }) | undefined {
 		if (
 			!this._peerSessions.isReceiveAdmissionOpen(
 				peerHash,
@@ -7851,7 +7855,10 @@ export class SharedLog<
 
 		let state = this._activeReceiveHandlersByPeer.get(peerHash);
 		if (!state) {
-			const current: PeerReceiveLeaseBucket = { active: 0 };
+			const current: PeerReceiveLeaseBucket = {
+				active: 0,
+				controller: new AbortController(),
+			};
 			state = { current, activeBuckets: new Set() };
 			this._activeReceiveHandlersByPeer.set(peerHash, state);
 		}
@@ -7859,7 +7866,7 @@ export class SharedLog<
 		bucket.active += 1;
 		state.activeBuckets.add(bucket);
 		let released = false;
-		return () => {
+		const release = () => {
 			if (released) {
 				return;
 			}
@@ -7878,6 +7885,7 @@ export class SharedLog<
 				this._activeReceiveHandlersByPeer.delete(peerHash);
 			}
 		};
+		return Object.assign(release, { signal: bucket.controller.signal });
 	}
 
 	private async drainPeerReceiveHandlers(peerHash: string): Promise<void> {
@@ -7890,7 +7898,7 @@ export class SharedLog<
 		// sync traffic without joining the drain for the previous subscription. Cleanup
 		// callers gate admission first; terminal callers also repeat until empty.
 		const buckets = [...state.activeBuckets];
-		state.current = { active: 0 };
+		state.current = { active: 0, controller: new AbortController() };
 		const drain = Promise.all(
 			buckets.map((bucket) => {
 				bucket.drain ??= pDefer<void>();
@@ -7903,6 +7911,14 @@ export class SharedLog<
 			this._receiveHandlerDrainByPeer.set(peerHash, drains);
 		}
 		drains.add(drain);
+		// Cancel only work admitted into this snapshot, never a replacement's
+		// current bucket. Aborting requests cooperation; the physical receive
+		// leases below still own all cleanup until their actual finally settles.
+		for (const bucket of buckets) {
+			bucket.controller.abort(
+				new SyncReceiveAbortError("peer receive generation draining"),
+			);
+		}
 		try {
 			await drain;
 		} finally {
@@ -23652,7 +23668,11 @@ export class SharedLog<
 						this._liveness.markReplicatorActivity(receiveFromHash);
 					}
 					return;
-				} else if (await this.syncronizer.onMessage(msg, context)) {
+				} else if (
+					await this.syncronizer.onMessage(msg, context, {
+						signal: peerReceiveLease.signal,
+					})
+				) {
 					return; // the syncronizer has handled the message
 				} else if (msg instanceof BlocksMessage) {
 					await this.remoteBlocks.onMessage(msg.message, {

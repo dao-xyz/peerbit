@@ -20,7 +20,10 @@ import {
 } from "../exchange-heads.js";
 import { TransportMessage } from "../message.js";
 import type { EntryReplicated } from "../ranges.js";
-import { DispatchLifecycleRegistry } from "./dispatch-lifecycle.js";
+import {
+	DispatchLifecycleRegistry,
+	isSyncDispatchCancellation,
+} from "./dispatch-lifecycle.js";
 import type {
 	HashSymbolHashListResolver,
 	HashSymbolResolver,
@@ -586,7 +589,10 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 	) => boolean;
 	private peerSupportsRawExchangeHeads?: (peer: string) => boolean;
 	private sendRawExchangeHeads?: RawExchangeHeadsSender;
-	private recentlySentExchangeHeads: Map<string, Map<string, number>>;
+	private recentlySentExchangeHeads: Map<
+		string,
+		Map<string, { timestamp: number }>
+	>;
 	private pendingMaybeSyncResponses: Map<
 		string,
 		Map<string, PendingMaybeSyncResponseAuthorization>
@@ -774,16 +780,17 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 	private filterRecentlySentExchangeHeads(
 		hashes: Iterable<string>,
 		peer: PublicSignKey,
-	): string[] {
+	): { hashes: string[]; rollback: () => void } {
 		const peerHash = peer.hashcode();
 		const now = Date.now();
+		const stamp = { timestamp: now };
 		let recentlySent = this.recentlySentExchangeHeads.get(peerHash);
 		if (!recentlySent) {
 			recentlySent = new Map();
 			this.recentlySentExchangeHeads.set(peerHash, recentlySent);
 		}
-		for (const [hash, timestamp] of recentlySent) {
-			if (now - timestamp > EXCHANGE_HEAD_RESPONSE_DEDUPE_TTL_MS) {
+		for (const [hash, previous] of recentlySent) {
+			if (now - previous.timestamp > EXCHANGE_HEAD_RESPONSE_DEDUPE_TTL_MS) {
 				recentlySent.delete(hash);
 			}
 		}
@@ -806,26 +813,27 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 			) {
 				continue;
 			}
-			recentlySent.set(hash, now);
+			recentlySent.set(hash, stamp);
 			out.push(hash);
 		}
-		return out;
-	}
-
-	private forgetRecentlySentExchangeHeads(
-		hashes: Iterable<string>,
-		peer: PublicSignKey,
-	): void {
-		const recentlySent = this.recentlySentExchangeHeads.get(peer.hashcode());
-		if (!recentlySent) {
-			return;
-		}
-		for (const hash of hashes) {
-			recentlySent.delete(hash);
-		}
-		if (recentlySent.size === 0) {
-			this.recentlySentExchangeHeads.delete(peer.hashcode());
-		}
+		return {
+			hashes: out,
+			rollback: () => {
+				// A cancelled predecessor may settle after a fresh receive shipped
+				// the same hash. Only undo this exact attempt's dedupe ownership.
+				for (const hash of out) {
+					if (recentlySent.get(hash) === stamp) {
+						recentlySent.delete(hash);
+					}
+				}
+				if (
+					recentlySent.size === 0 &&
+					this.recentlySentExchangeHeads.get(peerHash) === recentlySent
+				) {
+					this.recentlySentExchangeHeads.delete(peerHash);
+				}
+			},
+		};
 	}
 
 	private getOrCreateSyncDispatchTargetEpoch(
@@ -881,6 +889,7 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 					currentEpoch ??
 					(options?.createTargetEpochs === false ||
 					this.closed === true ||
+					callerSignal?.aborted === true ||
 					ownershipLifecycleController.signal.aborted
 						? undefined
 						: this.getOrCreateSyncDispatchTargetEpoch(target));
@@ -2530,8 +2539,12 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 							} catch (error) {
 								reservation.release();
 								if (
-									!this.isSyncDispatchLifecycleActive(lifecycle) ||
-									!this.isSyncDispatchLifecycleActive(lifecycle, target)
+									isSyncDispatchCancellation(
+										error,
+										this.getSyncDispatchSignal(lifecycle, target),
+										!this.isSyncDispatchLifecycleActive(lifecycle) ||
+											!this.isSyncDispatchLifecycleActive(lifecycle, target),
+									)
 								) {
 									break;
 								}
@@ -2593,7 +2606,7 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 					{ signal },
 				);
 			} catch (error) {
-				if (signal?.aborted) {
+				if (isSyncDispatchCancellation(error, signal)) {
 					return { messages: 0, fused: true };
 				}
 				throw error;
@@ -2621,7 +2634,7 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 				});
 				messages += 1;
 			} catch (error) {
-				if (signal?.aborted) {
+				if (isSyncDispatchCancellation(error, signal)) {
 					break;
 				}
 				throw error;
@@ -2644,7 +2657,7 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 		response: ResponseMaybeSync | ResponseMaybeSyncCapabilities;
 		signal: AbortSignal;
 	}): Promise<{ messages: number; fused: boolean; entries: number }> {
-		const hashes = this.filterRecentlySentExchangeHeads(
+		const { hashes, rollback } = this.filterRecentlySentExchangeHeads(
 			properties.hashes,
 			properties.from,
 		);
@@ -2660,11 +2673,11 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 				entries: hashes.length,
 			};
 		} catch (error) {
-			this.forgetRecentlySentExchangeHeads(hashes, properties.from);
+			rollback();
 			throw error;
 		} finally {
 			if (properties.signal.aborted) {
-				this.forgetRecentlySentExchangeHeads(hashes, properties.from);
+				rollback();
 			}
 		}
 	}
@@ -2673,6 +2686,7 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 		leases: AuthorizedMaybeSyncResponseLease[];
 		from: PublicSignKey;
 		response: ResponseMaybeSync | ResponseMaybeSyncCapabilities;
+		signal?: AbortSignal;
 		source?: string;
 	}): Promise<{ messages: number; fused: boolean; entries: number }> {
 		if (properties.leases.length === 0) {
@@ -2685,18 +2699,21 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 		let entries = 0;
 		let firstError: unknown;
 		for (const lease of properties.leases) {
+			const signal = properties.signal
+				? AbortSignal.any([lease.signal, properties.signal])
+				: lease.signal;
 			let fulfilled = false;
 			try {
 				const shipped = await this.shipAuthorizedMaybeSyncResponse({
 					hashes: lease.hashes,
 					from: properties.from,
 					response: properties.response,
-					signal: lease.signal,
+					signal,
 				});
 				messages += shipped.messages;
 				fused ||= shipped.fused;
 				entries += shipped.entries;
-				fulfilled = !lease.signal.aborted;
+				fulfilled = !signal.aborted;
 			} catch (error) {
 				firstError ??= error;
 			} finally {
@@ -2724,10 +2741,20 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 	async onMessage(
 		msg: TransportMessage,
 		context: RequestContext,
+		options?: { signal?: AbortSignal },
 	): Promise<boolean> {
+		if (options?.signal?.aborted) {
+			return (
+				msg instanceof RequestMaybeSync ||
+				msg instanceof ResponseMaybeSync ||
+				msg instanceof ResponseMaybeSyncCapabilities ||
+				msg instanceof RequestMaybeSyncCoordinate ||
+				msg instanceof RequestMaybeSyncCoordinateCapabilities
+			);
+		}
 		const from = context.from!;
 		if (msg instanceof RequestMaybeSync) {
-			await this.queueSync(msg.hashes, from);
+			await this.queueSync(msg.hashes, from, options);
 			return true;
 		} else if (
 			msg instanceof ResponseMaybeSync ||
@@ -2744,6 +2771,7 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 				leases: pending,
 				from,
 				response: msg,
+				signal: options?.signal,
 			});
 			return true;
 		} else if (
@@ -2762,7 +2790,10 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 				return true;
 			}
 			const { release: releaseLookup, row: slotRow } = lookupPermit;
-			const lifecycle = this.captureSyncDispatchLifecycle([target]);
+			const lifecycle = this.captureSyncDispatchLifecycle(
+				[target],
+				options?.signal,
+			);
 			let lifecycleFinished = false;
 			const finishLifecycle = () => {
 				if (lifecycleFinished) {
@@ -2820,16 +2851,25 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 				let hashesToSend: string[] = [];
 				let messages = 0;
 				let fused = false;
+				let rollback: (() => void) | undefined;
+				const signal = this.getSyncDispatchSignal(lifecycle, target);
 				try {
-					hashesToSend = this.filterRecentlySentExchangeHeads(hashes, from);
+					({ hashes: hashesToSend, rollback } =
+						this.filterRecentlySentExchangeHeads(hashes, from));
 					// dont set priority 1 here because this will block other messages that should higher priority
 					({ messages, fused } = await this.shipExchangeHeads(
 						hashesToSend,
 						context.from!,
 						canReceiveRawExchangeHeads(msg),
-						this.getSyncDispatchSignal(lifecycle, target),
+						signal,
 					));
+				} catch (error) {
+					rollback?.();
+					throw error;
 				} finally {
+					if (signal.aborted) {
+						rollback?.();
+					}
 					releaseResponse();
 					if (profile) {
 						emitSyncProfileDuration(profile, exchangeStartedAt, {
@@ -3095,9 +3135,9 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 	async queueSync(
 		keys: SyncableKey[],
 		from: PublicSignKey,
-		options?: { skipCheck?: boolean },
+		options?: { skipCheck?: boolean; signal?: AbortSignal },
 	) {
-		if (this.closed === true || keys.length === 0) {
+		if (this.closed === true || options?.signal?.aborted || keys.length === 0) {
 			return;
 		}
 		// A delayed timer must not let expired claims or admission reservations
@@ -3124,6 +3164,7 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 		const ownershipLifecycleController = this.syncDispatchLifecycleController;
 		const isCapturedLifecycleActive = () =>
 			this.closed !== true &&
+			options?.signal?.aborted !== true &&
 			this.syncDispatchLifecycleController === ownershipLifecycleController &&
 			!ownershipLifecycleController.signal.aborted &&
 			this.syncDispatchTargetEpochs.get(fromHash) === targetEpoch;
@@ -3219,6 +3260,7 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 		const existingRequest =
 			dispatchableExistingRequestHashes.length > 0
 				? this.requestSync(dispatchableExistingRequestHashes, [fromHash], {
+						signal: options?.signal,
 						ownershipLifecycleController,
 						targetEpochs: new Map([[fromHash, targetEpoch]]),
 						createTargetEpochs: false,
@@ -3229,54 +3271,92 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 		// when a later lifecycle check returns before joining it.
 		void existingRequest?.catch(() => {});
 		const resolveKnownStartedAt = syncProfileStart(profile);
-		try {
-			const knownKeys =
-				options?.skipCheck === true || keysToCheck.length === 0
-					? undefined
-					: await this.resolveKnownSyncKeys(keysToCheck);
-			if (!isCapturedLifecycleActive()) {
-				return;
-			}
-			if (profile) {
-				emitSyncProfileDuration(profile, resolveKnownStartedAt, {
-					name: "simple.queueSync.resolveKnown",
-					entries: keysToCheck.length,
-					count: knownKeys?.keys.size ?? 0,
-					details: {
-						checkedCoordinates: knownKeys?.checkedCoordinates === true,
-						checkedHashes: knownKeys?.checkedHashes === true,
-						skipCheck: options?.skipCheck === true,
-					},
-				});
-			}
-
-			if (keysToCheck.length > 0) {
-				// A resolver/index lookup may have populated coordinateToHash while
-				// it yielded. Refresh another fixed-size slice, never the full queue.
-				this.refreshQueuedSyncCoordinateAliases();
-			}
-			const loopStartedAt = syncProfileStart(profile);
-			for (let index = 0; index < keysToCheck.length; index += 1) {
-				const key = keysToCheck[index]!;
-				const identity = identitiesToCheck[index]!;
+		const planning = (async () => {
+			try {
+				const knownKeys =
+					options?.skipCheck === true || keysToCheck.length === 0
+						? undefined
+						: await this.resolveKnownSyncKeys(keysToCheck);
 				if (!isCapturedLifecycleActive()) {
 					return;
 				}
-				const queuedKeyResult = this.getQueuedSyncKeyForAdmission(key);
-				if (queuedKeyResult === QUEUED_SYNC_ALIAS_REFRESH_PENDING) {
-					const consumption = this.consumePendingSyncAdmission(
-						admission!,
-						identity,
-					);
-					if (consumption === "invalid") {
+				if (profile) {
+					emitSyncProfileDuration(profile, resolveKnownStartedAt, {
+						name: "simple.queueSync.resolveKnown",
+						entries: keysToCheck.length,
+						count: knownKeys?.keys.size ?? 0,
+						details: {
+							checkedCoordinates: knownKeys?.checkedCoordinates === true,
+							checkedHashes: knownKeys?.checkedHashes === true,
+							skipCheck: options?.skipCheck === true,
+						},
+					});
+				}
+
+				if (keysToCheck.length > 0) {
+					// A resolver/index lookup may have populated coordinateToHash while
+					// it yielded. Refresh another fixed-size slice, never the full queue.
+					this.refreshQueuedSyncCoordinateAliases();
+				}
+				const loopStartedAt = syncProfileStart(profile);
+				for (let index = 0; index < keysToCheck.length; index += 1) {
+					const key = keysToCheck[index]!;
+					const identity = identitiesToCheck[index]!;
+					if (!isCapturedLifecycleActive()) {
 						return;
 					}
-					continue;
-				}
-				const coordinateOrHash = queuedKeyResult ?? key;
-				const inFlight = this.syncInFlightQueue.get(coordinateOrHash);
-				if (inFlight) {
-					if (!this.hasPendingSyncClaim(coordinateOrHash, fromHash)) {
+					const queuedKeyResult = this.getQueuedSyncKeyForAdmission(key);
+					if (queuedKeyResult === QUEUED_SYNC_ALIAS_REFRESH_PENDING) {
+						const consumption = this.consumePendingSyncAdmission(
+							admission!,
+							identity,
+						);
+						if (consumption === "invalid") {
+							return;
+						}
+						continue;
+					}
+					const coordinateOrHash = queuedKeyResult ?? key;
+					const inFlight = this.syncInFlightQueue.get(coordinateOrHash);
+					if (inFlight) {
+						if (!this.hasPendingSyncClaim(coordinateOrHash, fromHash)) {
+							const consumption = this.consumePendingSyncAdmission(
+								admission!,
+								identity,
+							);
+							if (consumption === "invalid") {
+								return;
+							}
+							if (consumption === "settled") {
+								continue;
+							}
+							this.movePendingSyncKeyExpiryEarlier(
+								coordinateOrHash,
+								admission!.expiresAt,
+							);
+							const added = this.addPendingSyncClaim(
+								coordinateOrHash,
+								from,
+								admission!.expiresAt,
+							);
+							if (added) {
+								requestHashes.push(coordinateOrHash);
+							}
+						}
+					} else {
+						const has =
+							options?.skipCheck !== true &&
+							(await this.checkHasCoordinateOrHash(
+								coordinateOrHash,
+								knownKeys,
+							));
+						if (!isCapturedLifecycleActive()) {
+							return;
+						}
+						if (has) {
+							this.clearPendingSyncAdmissionIdentity(identity);
+							continue;
+						}
 						const consumption = this.consumePendingSyncAdmission(
 							admission!,
 							identity,
@@ -3287,76 +3367,51 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 						if (consumption === "settled") {
 							continue;
 						}
-						this.movePendingSyncKeyExpiryEarlier(
-							coordinateOrHash,
-							admission!.expiresAt,
-						);
-						const added = this.addPendingSyncClaim(
+						// Track the initial sender so we can retry if the first request is lost.
+						this.addPendingSyncClaim(
 							coordinateOrHash,
 							from,
 							admission!.expiresAt,
 						);
-						if (added) {
-							requestHashes.push(coordinateOrHash);
-						}
+						requestHashes.push(coordinateOrHash); // request immediately (first time we have seen this hash)
 					}
-				} else {
-					const has =
-						options?.skipCheck !== true &&
-						(await this.checkHasCoordinateOrHash(coordinateOrHash, knownKeys));
-					if (!isCapturedLifecycleActive()) {
-						return;
-					}
-					if (has) {
-						this.clearPendingSyncAdmissionIdentity(identity);
-						continue;
-					}
-					const consumption = this.consumePendingSyncAdmission(
-						admission!,
-						identity,
-					);
-					if (consumption === "invalid") {
-						return;
-					}
-					if (consumption === "settled") {
-						continue;
-					}
-					// Track the initial sender so we can retry if the first request is lost.
-					this.addPendingSyncClaim(
-						coordinateOrHash,
-						from,
-						admission!.expiresAt,
-					);
-					requestHashes.push(coordinateOrHash); // request immediately (first time we have seen this hash)
 				}
-			}
-			if (profile) {
-				emitSyncProfileDuration(profile, loopStartedAt, {
-					name: "simple.queueSync.plan",
-					entries: keysToCheck.length,
-					count: requestHashes.length,
-					targets: 1,
-				});
-			}
+				if (profile) {
+					emitSyncProfileDuration(profile, loopStartedAt, {
+						name: "simple.queueSync.plan",
+						entries: keysToCheck.length,
+						count: requestHashes.length,
+						targets: 1,
+					});
+				}
 
-			// Persistent admission work is complete. Do not let an unrelated
-			// blocked transport send retain unused quota.
-			this.releasePendingSyncAdmission(admission);
-			const dispatchableRequestHashes =
-				this.filterDispatchablePendingSyncClaims(
-					requestHashes,
-					fromHash,
-					targetEpoch,
-				);
-			dispatchableRequestHashes.length > 0 &&
-				(await this.requestSync(dispatchableRequestHashes, [fromHash], {
-					ownershipLifecycleController,
-					targetEpochs: new Map([[fromHash, targetEpoch]]),
-					createTargetEpochs: false,
-				}));
-			await existingRequest;
-		} finally {
-			this.releasePendingSyncAdmission(admission);
+				// Persistent admission work is complete. Do not let an unrelated
+				// blocked transport send retain unused quota.
+				this.releasePendingSyncAdmission(admission);
+				const dispatchableRequestHashes =
+					this.filterDispatchablePendingSyncClaims(
+						requestHashes,
+						fromHash,
+						targetEpoch,
+					);
+				dispatchableRequestHashes.length > 0 &&
+					(await this.requestSync(dispatchableRequestHashes, [fromHash], {
+						signal: options?.signal,
+						ownershipLifecycleController,
+						targetEpochs: new Map([[fromHash, targetEpoch]]),
+						createTargetEpochs: false,
+					}));
+			} finally {
+				this.releasePendingSyncAdmission(admission);
+			}
+		})();
+		// Admission quota covers the finished lookup only. The eager dispatch
+		// retains its own physical lifecycle, and every receive exit joins it.
+		const results = await Promise.allSettled([planning, existingRequest]);
+		const errors = results.flatMap((result) =>
+			result.status === "rejected" ? [result.reason] : [],
+		);
+		try {
 			if (profile) {
 				emitSyncProfileDuration(profile, startedAt, {
 					name: "simple.queueSync",
@@ -3369,6 +3424,18 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 					},
 				});
 			}
+		} catch (error) {
+			errors.push(error);
+		}
+		if (errors.length === 1) throw errors[0];
+		if (errors.length > 1) {
+			throw new AggregateError(
+				errors,
+				"sync lookup and eager response failed",
+				{
+					cause: errors[0],
+				},
+			);
 		}
 	}
 
@@ -3376,6 +3443,7 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 		hashes: SyncableKey[],
 		to: Set<string> | string[],
 		options?: {
+			signal?: AbortSignal;
 			ownershipLifecycleController?: AbortController;
 			targetEpochs?: Map<string, SyncDispatchTargetEpoch>;
 			createTargetEpochs?: boolean;
@@ -3385,11 +3453,15 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 		if (hashes.length === 0 || targets.length === 0) {
 			return;
 		}
-		const lifecycle = this.captureSyncDispatchLifecycle(targets, undefined, {
-			ownershipLifecycleController: options?.ownershipLifecycleController,
-			targetEpochs: options?.targetEpochs,
-			createTargetEpochs: options?.createTargetEpochs,
-		});
+		const lifecycle = this.captureSyncDispatchLifecycle(
+			targets,
+			options?.signal,
+			{
+				ownershipLifecycleController: options?.ownershipLifecycleController,
+				targetEpochs: options?.targetEpochs,
+				createTargetEpochs: options?.createTargetEpochs,
+			},
+		);
 		const profile = this.syncOptions?.profile;
 		const startedAt = syncProfileStart(profile);
 		let coordinateMessages = 0;
@@ -3453,7 +3525,13 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 							);
 							coordinateMessages += 1;
 						} catch (error) {
-							if (!this.isSyncDispatchLifecycleActive(lifecycle, target)) {
+							if (
+								isSyncDispatchCancellation(
+									error,
+									this.getSyncDispatchSignal(lifecycle, target),
+									!this.isSyncDispatchLifecycleActive(lifecycle, target),
+								)
+							) {
 								break;
 							}
 							throw error;
@@ -3489,7 +3567,13 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 							);
 							stringMessages += 1;
 						} catch (error) {
-							if (!this.isSyncDispatchLifecycleActive(lifecycle, target)) {
+							if (
+								isSyncDispatchCancellation(
+									error,
+									this.getSyncDispatchSignal(lifecycle, target),
+									!this.isSyncDispatchLifecycleActive(lifecycle, target),
+								)
+							) {
 								break;
 							}
 							throw error;

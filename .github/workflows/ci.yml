@@ -357,6 +357,7 @@ jobs:
           --no-config --no-package --require chai-extend/chai-global.js
           --timeout 60000 --retries 0 --no-exit
           packages/programs/data/shared-log/dist/test/lifecycle.spec.js
+          packages/programs/data/shared-log/dist/test/receive-drain-cancellation.spec.js
           packages/programs/data/shared-log/dist/test/receive-admission.spec.js
           packages/programs/data/shared-log/dist/test/sync-memory-pins.spec.js
           packages/programs/data/shared-log/dist/test/rateless-iblt.spec.js
