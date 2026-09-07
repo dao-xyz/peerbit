@@ -722,6 +722,7 @@ const DEFAULT_INDEX_BY = "id";
 export type CanSearch = (
 	request:
 		| types.SearchRequest
+		| types.SearchRequestIndexed
 		| types.IterationRequest
 		| types.CollectNextRequest,
 	from: PublicSignKey,
@@ -2180,15 +2181,10 @@ export class DocumentIndex<
 		if (
 			this.canSearch &&
 			(query instanceof types.SearchRequest ||
+				query instanceof types.SearchRequestIndexed ||
 				query instanceof types.IterationRequest ||
 				query instanceof types.CollectNextRequest) &&
-			!(await this.canSearch(
-				query as
-					| types.SearchRequest
-					| types.IterationRequest
-					| types.CollectNextRequest,
-				ctx.from,
-			))
+			!(await this.canSearch(query, ctx.from))
 		) {
 			indexRpcLogger("denied query", {
 				id: (query as { idString?: string }).idString,

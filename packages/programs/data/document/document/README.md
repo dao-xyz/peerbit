@@ -6,6 +6,23 @@ This store is built on top of the base store. This store allows for type-safe do
 
 As of now, go through the [tests](./src//__tests__/index.integration.test.ts) for documentation on how to use the module.
 
+## Remote query authorization
+
+`index.canSearch(request, from)` authorizes remote `SearchRequest`,
+`SearchRequestIndexed`, `IterationRequest`, and `CollectNextRequest` requests.
+It receives the actual decoded request (including indexed replication intent)
+and the authenticated requester's public key. Returning `false` produces
+`NoAccess` before query processing; `index.canRead` separately filters individual
+results after admission. Iterator-close messages retain their ownership check
+and can still clean up an admitted iterator after search permission is denied.
+
+Indexed requests previously bypassed `canSearch`. Policies that exhaustively
+check request classes must now handle `SearchRequestIndexed` explicitly;
+ordinary callbacks using shared request fields remain source-compatible.
+Persisted data and wire formats are unchanged. These checks authorize query
+responses, not all replication or direct block access, and do not by themselves
+provide store confidentiality.
+
 ## Durable remote delivery
 
 Document puts can opt in to waiting for crash-safe persistence on current remote
