@@ -5,11 +5,13 @@ import { TestSession } from "@peerbit/libp2p-test-utils";
 import {
 	GetSubscribers,
 	PubSubData,
+	Subscribe,
 	TOPIC_ROOT_CANDIDATES_MAX,
 	TopicRootCandidateClaims,
 	TopicRootCandidates,
 	TopicRootQuery,
 	TopicRootQueryResponse,
+	Unsubscribe,
 } from "@peerbit/pubsub-interface";
 import { waitForNeighbour } from "@peerbit/stream";
 import {
@@ -23,6 +25,7 @@ import {
 import { AbortError, delay, waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
 import sinon from "sinon";
+import { Uint8ArrayList } from "uint8arraylist";
 import { equals as bytesEqual } from "uint8arrays";
 import {
 	FanoutChannel,
@@ -345,6 +348,254 @@ describe("pubsub (subscribe race regressions)", function () {
 		}
 	});
 
+	describe("subscription batching lifecycle", () => {
+		afterEach(() => sinon.restore());
+
+		const prepare = async () => {
+			session = await createDisconnectedSession(1);
+			const pubsub = session.peers[0]!.services.pubsub;
+			const internals = pubsub as any;
+			const topic = "subscription-batching-lifecycle";
+			const shardTopic = internals.getShardTopicForUserTopic(topic);
+			pubsub.topicRootControlPlane.setTopicRoot(
+				shardTopic,
+				pubsub.publicKeyHash,
+			);
+			return { pubsub, internals, topic, shardTopic };
+		};
+
+		// Pause one real asynchronous operation after it has produced its result.
+		// Public subscribe/unsubscribe still drives the real batching callback.
+		const gateFirst = (
+			internals: any,
+			method: string,
+			matches: (args: any[]) => boolean,
+		) => {
+			const entered = deferred();
+			const release = deferred();
+			const original = internals[method].bind(internals);
+			let gated = false;
+			sinon.stub(internals, method).callsFake(async (...args: any[]) => {
+				const shouldGate = !gated && matches(args);
+				if (shouldGate) gated = true;
+				const result = await original(...args);
+				if (shouldGate) {
+					entered.resolve();
+					await release.promise;
+				}
+				return result;
+			});
+			return { entered: entered.promise, release: release.resolve };
+		};
+
+		it("renews both batches after completed stop/start without restoring old subscriptions", async () => {
+			const { pubsub, internals, topic, shardTopic } = await prepare();
+			await pubsub.subscribe("old-subscription");
+			const subscribe = internals.debounceSubscribeAggregator;
+			const unsubscribe = internals.debounceUnsubscribeAggregator;
+			await pubsub.stop();
+			await pubsub.start();
+			expect(internals.debounceSubscribeAggregator).to.not.equal(subscribe);
+			expect(internals.debounceUnsubscribeAggregator).to.not.equal(unsubscribe);
+			expect(internals.subscriptions.size).to.equal(0);
+			await pubsub.subscribe(topic);
+			expect(internals.subscriptions.get(topic)?.counter).to.equal(1);
+			expect(internals.pendingSubscriptions.size).to.equal(0);
+			const current = internals.fanoutChannels.get(shardTopic);
+			expect(current).to.exist;
+			expect(current.root).to.equal(pubsub.publicKeyHash);
+			expect(internals.shardRefCounts.get(shardTopic)).to.equal(1);
+			const published = sinon.spy(current.channel, "publish");
+			const announced = sinon.spy(internals, "_announceUnsubscribe");
+			expect(await pubsub.unsubscribe(topic)).to.equal(true);
+			expect(internals.subscriptions.has(topic)).to.equal(false);
+			await internals.debounceUnsubscribeAggregator.flush();
+			expect(announced.calledOnce).to.equal(true);
+			expect(published.calledOnce).to.equal(true);
+			const message = DataMessage.from(
+				new Uint8ArrayList(published.firstCall.args[0]),
+			);
+			expect(internals.decodePubSubMessage(message.data)).to.be.instanceOf(
+				Unsubscribe,
+			);
+		});
+
+		it("preserves the active pair and queued reference counts on idempotent start", async () => {
+			const { pubsub, internals, topic } = await prepare();
+			const subscribe = internals.debounceSubscribeAggregator;
+			const unsubscribe = internals.debounceUnsubscribeAggregator;
+			const first = pubsub.subscribe(topic);
+			const second = pubsub.subscribe(topic);
+			await pubsub.start();
+			expect(internals.debounceSubscribeAggregator).to.equal(subscribe);
+			expect(internals.debounceUnsubscribeAggregator).to.equal(unsubscribe);
+			await Promise.all([first, second]);
+			expect(internals.subscriptions.get(topic)?.counter).to.equal(2);
+			expect(await pubsub.unsubscribe(topic)).to.equal(true);
+			expect(internals.subscriptions.get(topic)?.counter).to.equal(1);
+		});
+
+		it("cancels an old pending batch instead of replaying it after restart", async () => {
+			const { pubsub, internals, topic } = await prepare();
+			const admitted = sinon.spy(internals, "_subscribe");
+			const pending = pubsub.subscribe("old-pending-subscription");
+			await pubsub.stop();
+			await pending;
+			expect(admitted.called).to.equal(false);
+			await pubsub.start();
+			await pubsub.subscribe(topic);
+			expect(admitted.calledOnce).to.equal(true);
+			expect([...internals.subscriptions.keys()]).to.deep.equal([topic]);
+			expect(internals.pendingSubscriptions.size).to.equal(0);
+		});
+
+		it("does not sign an old subscribe after its join crosses a completed restart", async () => {
+			const { pubsub, internals, topic, shardTopic } = await prepare();
+			const gate = gateFirst(
+				internals,
+				"ensureFanoutChannel",
+				([shard]) => shard === shardTopic,
+			);
+			const admitted = sinon.spy(internals, "_subscribe");
+			const signed = sinon.spy(internals, "createMessage");
+			const pending = pubsub.subscribe(topic);
+			try {
+				await gate.entered;
+				const oldFlush = admitted.firstCall.returnValue;
+				await pubsub.stop();
+				await pubsub.start();
+				await pubsub.subscribe(topic);
+				const signedBeforeRelease = signed.callCount;
+				gate.release();
+				await oldFlush;
+				await pending;
+				expect(signed.callCount).to.equal(signedBeforeRelease);
+				expect(internals.subscriptions.get(topic)?.counter).to.equal(1);
+			} finally {
+				gate.release();
+			}
+		});
+
+		for (const operation of ["subscribe", "unsubscribe"] as const) {
+			for (const replacement of ["restart", "channel"] as const) {
+				it(`fences ${operation} signing from a ${replacement} replacement`, async () => {
+					const { pubsub, internals, topic, shardTopic } = await prepare();
+					if (operation === "unsubscribe") await pubsub.subscribe(topic);
+					const gate = gateFirst(internals, "createMessage", ([bytes]) => {
+						const message = internals.decodePubSubMessage(bytes);
+						return operation === "subscribe"
+							? message instanceof Subscribe
+							: message instanceof Unsubscribe;
+					});
+					const admitted = sinon.spy(
+						internals,
+						operation === "subscribe" ? "_subscribe" : "_announceUnsubscribe",
+					);
+					const pending = pubsub[operation](topic);
+					try {
+						await gate.entered;
+						const oldFlush = admitted.firstCall.returnValue;
+						const oldChannel = internals.fanoutChannels.get(shardTopic).channel;
+						if (replacement === "restart") {
+							await pubsub.stop();
+							await pubsub.start();
+						} else {
+							await internals.closeFanoutChannel(shardTopic, { force: true });
+						}
+						// An unsubscribed replacement is deliberate: stale unsubscribe must
+						// not close it even when the current shard reference count is zero.
+						await internals.ensureFanoutChannel(shardTopic);
+						const current = internals.fanoutChannels.get(shardTopic);
+						expect(current.channel).to.not.equal(oldChannel);
+						const oldPublished = sinon.spy(oldChannel, "publish");
+						const published = sinon.spy(current.channel, "publish");
+						const touched = sinon.spy(internals, "touchFanoutChannel");
+						const closed = sinon.spy(internals, "closeFanoutChannel");
+						gate.release();
+						await oldFlush;
+						await pending;
+						expect(oldPublished.called).to.equal(false);
+						expect(published.called).to.equal(false);
+						expect(touched.called).to.equal(false);
+						expect(closed.called).to.equal(false);
+						expect(internals.fanoutChannels.get(shardTopic)).to.equal(current);
+					} finally {
+						gate.release();
+					}
+				});
+			}
+		}
+
+		it("does not touch a replacement channel after an old subscribe publish completes", async () => {
+			const { pubsub, internals, topic, shardTopic } = await prepare();
+			await internals.ensureFanoutChannel(shardTopic);
+			const old = internals.fanoutChannels.get(shardTopic).channel;
+			const gate = gateFirst(old, "publish", () => true);
+			const admitted = sinon.spy(internals, "_subscribe");
+			const pending = pubsub.subscribe(topic);
+			try {
+				await gate.entered;
+				const oldFlush = admitted.firstCall.returnValue;
+				await internals.closeFanoutChannel(shardTopic, { force: true });
+				await internals.ensureFanoutChannel(shardTopic);
+				const current = internals.fanoutChannels.get(shardTopic);
+				expect(current.channel).to.not.equal(old);
+				const touched = sinon.spy(internals, "touchFanoutChannel");
+				gate.release();
+				await oldFlush;
+				await pending;
+				expect(touched.called).to.equal(false);
+				expect(internals.fanoutChannels.get(shardTopic)).to.equal(current);
+			} finally {
+				gate.release();
+			}
+		});
+
+		for (const restart of [false, true]) {
+			it(`retains subscribe signing failure visibility ${restart ? "after completed restart" : "while active"}`, async () => {
+				const { pubsub, internals, topic } = await prepare();
+				const failure = new Error(`subscribe-signing-sentinel-${restart}`);
+				const expected = `Debounced subscribe failed: ${failure.message}`;
+				const entered = deferred();
+				const gate = deferred();
+				const logged = deferred();
+				const errors = sinon.stub(logger, "error").callsFake((message) => {
+					if (message === expected) logged.resolve();
+				});
+				const original = internals.createMessage.bind(internals);
+				let failNextSubscribe = true;
+				sinon.stub(internals, "createMessage").callsFake(async (...args) => {
+					if (
+						failNextSubscribe &&
+						internals.decodePubSubMessage(args[0]) instanceof Subscribe
+					) {
+						failNextSubscribe = false;
+						entered.resolve();
+						await gate.promise;
+						throw failure;
+					}
+					return original(...args);
+				});
+				const pending = pubsub.subscribe(topic);
+				try {
+					await entered.promise;
+					if (restart) {
+						await pubsub.stop();
+						await pubsub.start();
+						await pubsub.subscribe(topic);
+					}
+					gate.resolve();
+					await logged.promise;
+					await pending;
+					expect(errors.calledOnceWithExactly(expected)).to.equal(true);
+					expect(internals.subscriptions.get(topic)?.counter).to.equal(1);
+				} finally {
+					gate.resolve();
+				}
+			});
+		}
+	});
+
 	describe("fanout inbound lifecycle", () => {
 		afterEach(() => sinon.restore());
 
@@ -396,8 +647,8 @@ describe("pubsub (subscribe race regressions)", function () {
 					shardTopic,
 					receiver.publicKeyHash,
 				);
-				// This tests owner revision fencing, not the public debounced restart
-				// contract: stop() closes that aggregator. Reopen an internal channel.
+				// Isolate inbound owner revision fencing via an internal channel reopen;
+				// the batching lifecycle suite covers the public subscribe restart contract.
 				await internals._subscribe([{ key: topic, counter: 1 }]);
 				const replacement = internals.fanoutChannels.get(shardTopic);
 				expect(receiver.started).to.equal(true);

@@ -417,8 +417,9 @@ export class TopicControlPlane
 	// default) leaves every code path as-is.
 	private readonly nativeTopicControl?: RustTopicControl;
 
-	private debounceSubscribeAggregator: DebouncedAccumulatorCounterMap;
-	private debounceUnsubscribeAggregator: DebouncedAccumulatorCounterMap;
+	private debounceSubscribeAggregator!: DebouncedAccumulatorCounterMap;
+	private debounceUnsubscribeAggregator!: DebouncedAccumulatorCounterMap;
+	private readonly subscriptionDebounceDelay: number;
 
 	private readonly shardCount: number;
 	private readonly shardTopicPrefix: string;
@@ -637,17 +638,23 @@ export class TopicControlPlane
 			Math.max(1, Math.floor(requestedSubscriberCacheMaxEntries)),
 		);
 
+		this.subscriptionDebounceDelay = props?.subscriptionDebounceDelay ?? 50;
+		this.createSubscriptionAggregators();
+	}
+
+	private createSubscriptionAggregators(): void {
+		const lifecycleRevision = this.topicControlPlaneLifecycleRevision;
 		this.debounceSubscribeAggregator = debouncedAccumulatorSetCounter(
-			(set) => this._subscribe([...set.values()]),
-			props?.subscriptionDebounceDelay ?? 50,
+			(set) => this._subscribe([...set.values()], lifecycleRevision),
+			this.subscriptionDebounceDelay,
 			(error) =>
 				logger.error(`Debounced subscribe failed: ${error?.message ?? error}`),
 		);
 		// NOTE: Unsubscribe should update local state immediately and batch only the
 		// best-effort network announcements to avoid teardown stalls (program close).
 		this.debounceUnsubscribeAggregator = debouncedAccumulatorSetCounter(
-			(set) => this._announceUnsubscribe([...set.values()]),
-			props?.subscriptionDebounceDelay ?? 50,
+			(set) => this._announceUnsubscribe([...set.values()], lifecycleRevision),
+			this.subscriptionDebounceDelay,
 			(error) =>
 				logger.error(
 					`Debounced unsubscribe announce failed: ${error?.message ?? error}`,
@@ -713,6 +720,9 @@ export class TopicControlPlane
 		// candidates. In particular, a repeated start must not restore unsigned
 		// self while a signed-protocol peer is connected.
 		if (this.started) return;
+		// close() is terminal. Only a completed stop/start gets a fresh pair;
+		// repeated start() must preserve the active pair's queued reference counts.
+		if (this.topicControlPlaneStopping) this.createSubscriptionAggregators();
 		this.topicControlPlaneStopping = false;
 		if (
 			this.autoTopicRootCandidates &&
@@ -765,6 +775,8 @@ export class TopicControlPlane
 		this.clearAutoTopicRootCandidateUpdateSchedule();
 		this.clearSignedTopicRootCandidateState();
 		this.topicControlPlaneLifecycleRevision += 1;
+		this.debounceSubscribeAggregator.close();
+		this.debounceUnsubscribeAggregator.close();
 		this.reconcileShardOverlaysDirty = false;
 		for (const opening of this.ensureFanoutChannelInFlight.values()) {
 			opening.abortController.abort(
@@ -823,8 +835,6 @@ export class TopicControlPlane
 		}
 		this.pendingTopicRootQueries.clear();
 
-		this.debounceSubscribeAggregator.close();
-		this.debounceUnsubscribeAggregator.close();
 		await super.stop();
 		this.reconcileShardOverlaysDirty = false;
 	}
@@ -3187,8 +3197,12 @@ export class TopicControlPlane
 		return this.debounceSubscribeAggregator.add({ key: topic });
 	}
 
-	private async _subscribe(topics: { key: string; counter: number }[]) {
+	private async _subscribe(
+		topics: { key: string; counter: number }[],
+		lifecycleRevision = this.topicControlPlaneLifecycleRevision,
+	) {
 		if (!this.started) throw new NotStartedError();
+		if (!this.isTopicControlPlaneActive(lifecycleRevision)) return;
 		if (topics.length === 0) return;
 
 		const byShard = new Map<string, string[]>();
@@ -3214,11 +3228,15 @@ export class TopicControlPlane
 		}
 
 		await Promise.all(joins);
+		if (!this.isTopicControlPlaneActive(lifecycleRevision)) return;
 
 		// Announce subscriptions per shard overlay.
 		await Promise.all(
 			[...byShard.entries()].map(async ([shardTopic, userTopics]) => {
 				if (userTopics.length === 0) return;
+				const st = this.fanoutChannels.get(shardTopic);
+				if (!st)
+					throw new Error(`Fanout channel missing for shard: ${shardTopic}`);
 				const msg = new Subscribe({
 					topics: userTopics,
 					requestSubscribers: true,
@@ -3231,11 +3249,19 @@ export class TopicControlPlane
 						skipRecipientValidation: true,
 					} as any,
 				);
-				const st = this.fanoutChannels.get(shardTopic);
-				if (!st)
-					throw new Error(`Fanout channel missing for shard: ${shardTopic}`);
+				if (
+					!this.isFanoutChannelCurrent(
+						shardTopic,
+						st.channel,
+						lifecycleRevision,
+					)
+				)
+					return;
 				await st.channel.publish(toUint8Array(embedded.bytes()));
-				this.touchFanoutChannel(shardTopic);
+				if (
+					this.isFanoutChannelCurrent(shardTopic, st.channel, lifecycleRevision)
+				)
+					this.touchFanoutChannel(shardTopic);
 			}),
 		);
 	}
@@ -3291,8 +3317,10 @@ export class TopicControlPlane
 
 	private async _announceUnsubscribe(
 		topics: { key: string; counter: number }[],
+		lifecycleRevision = this.topicControlPlaneLifecycleRevision,
 	) {
 		if (!this.started) throw new NotStartedError();
+		if (!this.isTopicControlPlaneActive(lifecycleRevision)) return;
 
 		const byShard = new Map<string, string[]>();
 		for (const { key: topic } of topics) {
@@ -3305,6 +3333,8 @@ export class TopicControlPlane
 		await Promise.all(
 			[...byShard.entries()].map(async ([shardTopic, userTopics]) => {
 				if (userTopics.length === 0) return;
+				const st = this.fanoutChannels.get(shardTopic);
+				if (!st) return;
 
 				// Announce first.
 				try {
@@ -3317,20 +3347,39 @@ export class TopicControlPlane
 							skipRecipientValidation: true,
 						} as any,
 					);
-					const st = this.fanoutChannels.get(shardTopic);
-					if (st) {
+					if (
+						this.isFanoutChannelCurrent(
+							shardTopic,
+							st.channel,
+							lifecycleRevision,
+						)
+					) {
 						// Best-effort: do not let a stuck proxy publish stall teardown.
 						void st.channel
 							.publish(toUint8Array(embedded.bytes()))
 							.catch(() => {});
-						this.touchFanoutChannel(shardTopic);
+						if (
+							this.isFanoutChannelCurrent(
+								shardTopic,
+								st.channel,
+								lifecycleRevision,
+							)
+						)
+							this.touchFanoutChannel(shardTopic);
 					}
 				} catch {
 					// best-effort
 				}
 
 				// Close shard overlay if no local topics remain.
-				if ((this.shardRefCounts.get(shardTopic) ?? 0) <= 0) {
+				if (
+					this.isFanoutChannelCurrent(
+						shardTopic,
+						st.channel,
+						lifecycleRevision,
+					) &&
+					(this.shardRefCounts.get(shardTopic) ?? 0) <= 0
+				) {
 					try {
 						// Shutdown should be bounded and not depend on network I/O.
 						await this.closeFanoutChannel(shardTopic);
