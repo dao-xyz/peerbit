@@ -1,5 +1,11 @@
 # @peerbit/native-backbone
 
+## 0.2.16
+
+### Patch Changes
+
+- [#1451](https://github.com/dao-xyz/peerbit/pull/1451) [`ea1739c`](https://github.com/dao-xyz/peerbit/commit/ea1739c1a7a7b8d35b2c1ec9f83b37c4d0ed9146) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Use existing reverse-edge and head membership indexes to avoid unrelated CUT-head scans during native log join planning. Retain the amortized batch scan when estimated relevant adjacency work is larger. Preserve exact tombstone coverage and join decisions without removing history or changing storage or wire formats.
+
 ## 0.2.15
 
 ### Patch Changes
