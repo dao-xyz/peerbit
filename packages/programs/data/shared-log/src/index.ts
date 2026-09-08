@@ -308,6 +308,10 @@ import type {
 	Syncronizer,
 } from "./sync/index.js";
 import {
+	PERSISTED_DELIVERY_PROFILE_ENTRY_LIMIT,
+	createPersistedDeliveryProfile,
+} from "./sync/persisted-delivery-profile.js";
+import {
 	emitSyncProfileDuration,
 	emitSyncProfileEvent,
 	syncProfileStart,
@@ -6356,6 +6360,18 @@ export class SharedLog<
 				records.size,
 			);
 		const signal = deadline.signal;
+		const profile = createPersistedDeliveryProfile(
+			this._logProperties?.sync?.profile,
+			records.size,
+			minAcks,
+			replicas,
+		);
+		const profiledHashes = profile
+			? committedHashes.slice(0, PERSISTED_DELIVERY_PROFILE_ENTRY_LIMIT)
+			: undefined;
+		let profileRounds = 0;
+		let profileOutcome = "failed";
+		let profileReason: string | undefined;
 		const recoveryController = new AbortController();
 		const recoverySignal = AbortSignal.any([signal, recoveryController.signal]);
 		const recoveryByPeer = new Map<
@@ -6469,6 +6485,7 @@ export class SharedLog<
 		};
 		try {
 			while (true) {
+				const profileRound = profile ? ++profileRounds : 0;
 				if (signal.aborted) {
 					throw signal.reason ?? new AbortError();
 				}
@@ -6524,13 +6541,20 @@ export class SharedLog<
 				const selfHash = this.node.identity.publicKey.hashcode();
 				if (needsInitialLeaderCheck) {
 					needsInitialLeaderCheck = false;
-					if (
-						leadersByEntry.some(
-							(leaders) =>
-								leaders.size === 0 ||
-								(leaders.size === 1 && leaders.has(selfHash)),
-						)
-					) {
+					const noRemoteIndex = leadersByEntry.findIndex(
+						(leaders) =>
+							leaders.size === 0 ||
+							(leaders.size === 1 && leaders.has(selfHash)),
+					);
+					if (noRemoteIndex >= 0) {
+						if (noRemoteIndex < PERSISTED_DELIVERY_PROFILE_ENTRY_LIMIT)
+							profile?.emit("plan", {
+								round: profileRound,
+								entryIndex: noRemoteIndex,
+								remoteLeaderCount: 0,
+								selectedRequestPeerCount: 0,
+								carriedAckCount: 0,
+							});
 						throw new NoPeersError(this.rpc.topic, "persisted");
 					}
 				}
@@ -6542,6 +6566,10 @@ export class SharedLog<
 					}
 					if (!isRoundOwnershipCurrent()) break;
 					const acknowledgements = carriedAcknowledgements.get(hash)!;
+					const entryProfile =
+						index < PERSISTED_DELIVERY_PROFILE_ENTRY_LIMIT
+							? profile
+							: undefined;
 					for (const [peer, captured] of acknowledgements) {
 						const current = this.persistedReceiptPeerSession(peer);
 						if (
@@ -6551,19 +6579,67 @@ export class SharedLog<
 							current.peerSession !== captured.peerSession
 						) {
 							acknowledgements.delete(peer);
+						} else {
+							entryProfile?.emit(
+								"candidate",
+								{
+									round: profileRound,
+									entryIndex: index,
+									status: "carried-receipt",
+								},
+								peer,
+							);
 						}
 					}
-					if (acknowledgements.size >= minAcks) continue;
+					if (acknowledgements.size >= minAcks) {
+						entryProfile?.emit("plan", {
+							round: profileRound,
+							entryIndex: index,
+							remoteLeaderCount: leaders.size - Number(leaders.has(selfHash)),
+							selectedRequestPeerCount: 0,
+							carriedAckCount: acknowledgements.size,
+						});
+						continue;
+					}
+					let selectedRequestPeerCount = 0;
 					for (const peer of leaders.keys()) {
 						if (peer === selfHash) continue;
 						recoveryCandidates.add(peer);
 						const current = this.persistedReceiptPeerSession(peer);
-						if (!current) continue;
+						if (!current) {
+							entryProfile?.emit(
+								"candidate",
+								{
+									round: profileRound,
+									entryIndex: index,
+									status: "leader-no-current-session",
+								},
+								peer,
+							);
+							continue;
+						}
 						if (acknowledgements.has(peer)) continue;
 						const hashes = hashesByPeer.get(peer) ?? [];
 						hashes.push(hash);
 						hashesByPeer.set(peer, hashes);
+						selectedRequestPeerCount++;
+						entryProfile?.emit(
+							"candidate",
+							{
+								round: profileRound,
+								entryIndex: index,
+								status: "selected-for-request",
+							},
+							peer,
+						);
 					}
+					entryProfile?.emit("plan", {
+						round: profileRound,
+						entryIndex: index,
+						remoteLeaderCount: leaders.size - Number(leaders.has(selfHash)),
+						selectedRequestPeerCount,
+						carriedAckCount: acknowledgements.size,
+					});
 				}
 				if (!isRoundOwnershipCurrent()) continue;
 				recoverSelectedPeers(recoveryCandidates);
@@ -6644,17 +6720,30 @@ export class SharedLog<
 										signal: roundSignal,
 									});
 								}
-								await this._v2Send.confirmLatestForPeer(
-									{
-										peerHash: peer,
-										peerSession: captured.peerSession,
-										receiverTransportSession: captured.capabilitySession,
-									},
-									{
-										timeout: getAttemptTimeout(),
-										signal: roundSignal,
-									},
-								);
+								const confirmationTimeout = getAttemptTimeout();
+								const endConfirmation = profile?.phase("confirmation", {
+									round: profileRound,
+									requestedEntries: hashes.length,
+									timeoutMs: confirmationTimeout,
+									peer,
+								});
+								try {
+									await this._v2Send.confirmLatestForPeer(
+										{
+											peerHash: peer,
+											peerSession: captured.peerSession,
+											receiverTransportSession: captured.capabilitySession,
+										},
+										{
+											timeout: confirmationTimeout,
+											signal: roundSignal,
+										},
+									);
+									endConfirmation?.("fulfilled");
+								} catch (error) {
+									endConfirmation?.("rejected");
+									throw error;
+								}
 							} catch {
 								// The exact receiver generation did not prove that it applied
 								// our latest role state. Replan instead of transferring to a
@@ -6691,13 +6780,32 @@ export class SharedLog<
 											}
 										},
 										onChunkSent: async (chunk) => {
-											return this.waitForPersistedTransferAdmission(
+											const startedAt = profile?.now();
+											const pending = this.waitForPersistedTransferAdmission(
 												peer,
 												chunk,
 												captured,
 												roundSignal,
 												isPeerRoundCurrent,
 											);
+											const endAdmission = profile?.phase(
+												"transfer-admission",
+												{
+													round: profileRound,
+													peer,
+													requestedEntries: chunk.length,
+													startedAt,
+												},
+											);
+											if (endAdmission)
+												void pending.then(
+													(admitted) =>
+														endAdmission(
+															admitted ? "fulfilled" : "not-admitted",
+														),
+													() => endAdmission("rejected"),
+												);
+											return pending;
 										},
 										operationQueue,
 										priority: delivery.priority,
@@ -6742,19 +6850,37 @@ export class SharedLog<
 									break;
 								}
 								let responses;
+								const attempt = offset / PERSISTED_RECEIPT_CHUNK_SIZE + 1;
+								let requestStartedAt: number | undefined;
+								let endRequest:
+									| ((outcome: string, acceptedEntries?: number) => void)
+									| undefined;
 								try {
-									await this.waitForPersistedReceiptEgressAdmission(
+									const endEgress = profile?.phase("receipt-egress", {
+										round: profileRound,
+										attempt,
+										requestedEntries: requestedHashes.length,
 										peer,
-										captured.capabilitySession,
-										requestedHashes.length,
-										roundSignal,
-									);
+									});
+									try {
+										await this.waitForPersistedReceiptEgressAdmission(
+											peer,
+											captured.capabilitySession,
+											requestedHashes.length,
+											roundSignal,
+										);
+										endEgress?.("fulfilled");
+									} catch (error) {
+										endEgress?.("rejected");
+										throw error;
+									}
 									if (!isPeerRoundCurrent()) break;
 									const attemptTimeout = getAttemptTimeout();
 									responses =
 										(await operationQueue.add(async () => {
 											if (!isPeerRoundCurrent()) return [];
-											return this.rpc.request(
+											requestStartedAt = profile?.now();
+											const pending = this.rpc.request(
 												new RequestPersistedEntriesV1({
 													expectedReceiverSession: captured.capabilitySession,
 													hashes: requestedHashes,
@@ -6770,14 +6896,25 @@ export class SharedLog<
 													signal: roundSignal,
 												},
 											);
+											endRequest = profile?.phase("receipt-request", {
+												round: profileRound,
+												attempt,
+												requestedEntries: requestedHashes.length,
+												timeoutMs: attemptTimeout,
+												peer,
+												startedAt: requestStartedAt,
+											});
+											return pending;
 										})) ?? [];
 								} catch {
+									endRequest?.("rejected", 0);
 									if (roundSignal.aborted) break;
 									// A peer can disconnect or miss this retry while the overall
 									// quorum deadline remains active. Replan on the next round.
 									break;
 								}
 								if (!isRoundOwnershipCurrent()) {
+									endRequest?.("stale", 0);
 									roundController.abort();
 									break;
 								}
@@ -6788,6 +6925,7 @@ export class SharedLog<
 									current.peerSession !== captured.peerSession
 								) {
 									purgePeerDeliveryState(peer);
+									endRequest?.("stale", 0);
 									break;
 								}
 								const requested = new Set(requestedHashes);
@@ -6823,6 +6961,26 @@ export class SharedLog<
 											state.hashes.add(hash);
 										}
 									}
+								}
+								endRequest?.("fulfilled", confirmed.size);
+								for (
+									let entryIndex = 0;
+									entryIndex < (profiledHashes?.length ?? 0);
+									entryIndex++
+								) {
+									const hash = profiledHashes![entryIndex]!;
+									if (confirmed.has(hash))
+										profile?.emit(
+											"progress",
+											{
+												round: profileRound,
+												attempt,
+												entryIndex,
+												carriedAckCount:
+													carriedAcknowledgements.get(hash)!.size,
+											},
+											peer,
+										);
 								}
 							}
 						})()
@@ -6891,10 +7049,12 @@ export class SharedLog<
 					while (requests.size > 0) {
 						await Promise.race(requests);
 						if (await roundComplete()) {
+							profileOutcome = "quorum-validated";
 							return;
 						}
 					}
 					if (await roundComplete()) {
+						profileOutcome = "quorum-validated";
 						return;
 					}
 				} finally {
@@ -6922,6 +7082,16 @@ export class SharedLog<
 				);
 			}
 		} catch (error) {
+			profileReason =
+				signal.reason instanceof TimeoutError
+					? "timeout"
+					: signal.aborted
+						? "signal"
+						: error instanceof NoPeersError
+							? "no-peers"
+							: "error";
+			profileOutcome =
+				signal.aborted && profileReason !== "timeout" ? "aborted" : "failed";
 			if (error instanceof PersistedDeliveryError) {
 				throw error;
 			}
@@ -6933,6 +7103,11 @@ export class SharedLog<
 				state.controller.abort();
 			}
 			if (ownedDeadline) deadline.dispose();
+			profile?.finish({
+				outcome: profileOutcome,
+				reason: profileReason,
+				round: profileRounds,
+			});
 		}
 	}
 

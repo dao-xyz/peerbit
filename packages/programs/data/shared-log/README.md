@@ -158,3 +158,48 @@ across these boundaries or infer bandwidth amplification from them alone.
 Range health, known-head hits, placement, and repair dispatch are not receipt
 proofs. Repeated candidate/known-hit counts can help locate repeated local work,
 but cannot establish unique network bytes or end-to-end delivery by themselves.
+
+### Persisted-delivery traces
+
+The same callback also observes the existing exact-entry persisted-delivery
+settlement path. Events use the prefix `sharedLog.persistedDelivery.`:
+
+- `plan`: an entry's `remoteLeaderCount`, `selectedRequestPeerCount` (unacknowledged
+  leaders with a current receipt session), and `carriedAckCount` for that round.
+- `candidate`: a selected leader's status, `selected-for-request`,
+  `leader-no-current-session`, or `carried-receipt`.
+- `peerPhase`: start/end edges for `confirmation`, `transfer-admission`,
+  `receipt-egress`, and `receipt-request`, with requested entry counts and the
+  existing timeout where available. `attempt` is the receipt chunk ordinal within
+  a peer's round, not a total retry count. `fulfilled` means that phase completed;
+  a fulfilled receipt request can still have `acceptedEntries: 0`.
+- `progress`: a sampled entry's provisional `carriedAckCount` after processing a
+  current-session receipt. This count may decrease on a later round after leader
+  or session replacement. It is not a durable quorum assertion.
+- `settle`: one terminal observation, `quorum-validated`, `failed`, or `aborted`.
+  Failure reasons distinguish `timeout`, `no-peers`, and `error`; non-timeout
+  cancellation uses `aborted`/`signal`. The event is not a receipt object or an
+  alternative to awaiting successful persisted delivery.
+
+Each event has `details.v: 1`, `minAcks`, `leaderDegree`, and `elapsedMs` since
+settlement began (after local commit). `durationMs` measures the named phase for
+`peerPhase`, otherwise elapsed settlement time. Parallel phases overlap.
+`entries` counts deduplicated committed hashes; `entryIndex` is their
+first-occurrence ordinal within this invocation. No entry hashes or payloads are
+emitted. `traceId` is only process/module-local correlation; label the callback
+with a worker/log identity when combining traces. The optional `peer` field is a
+public peer hash and reveals topology, so handle captured traces accordingly.
+
+Only the first 16 entry ordinals can emit per-entry details. `entrySampleWindow`
+and `entriesOutsideSampleWindow` describe that window, not actual coverage.
+Each invocation emits at most 256 detail events plus one reserved terminal event
+(257 total); the terminal reports `emittedEvents` and `droppedEvents`. Early
+failure and the event cap can leave phases or entries unobserved. No trace
+history is retained internally.
+
+These hooks reuse existing plans, session checks, and responses. They add no
+queries, probes, listeners, retry work, or protocol waits. With no callback they
+allocate no diagnostic events or timestamps. Synchronous callback errors and
+rejected asynchronous callbacks are isolated; callbacks are never awaited.
+Keep them non-blocking and observational: an inline callback can still perturb
+timing, and arbitrary application mutations are not isolated.

@@ -94,8 +94,8 @@ export type SyncOptions<R extends "u32" | "u64"> = {
 	/**
 	 * Optional profiling callback. It is only invoked when provided, and should
 	 * avoid blocking because it runs inline during open, provider resolution,
-	 * and sync paths. Open-phase events describe setup progress only; they are
-	 * not replication or durable-write readiness barriers.
+	 * and sync paths, including bounded persisted-delivery observations.
+	 * Profiling events are not replication/readiness barriers or durable receipts.
 	 */
 	profile?: SyncProfileFn;
 };
