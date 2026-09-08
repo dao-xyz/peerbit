@@ -1,5 +1,18 @@
 # Changelog
 
+## 2.0.126
+
+### Patch Changes
+
+- Updated dependencies [[`f18f0e1`](https://github.com/dao-xyz/peerbit/commit/f18f0e16b6d303c52957716f864e5ab3ea602ce0)]:
+  - @peerbit/indexer-interface@3.1.0
+  - @peerbit/document@15.1.5
+  - @peerbit/document-interface@3.2.79
+  - @peerbit/shared-log-proxy@2.0.120
+  - @peerbit/program@6.0.63
+  - @peerbit/canonical-host@1.0.85
+  - @peerbit/canonical-client@1.1.66
+
 ## 2.0.125
 
 ### Patch Changes

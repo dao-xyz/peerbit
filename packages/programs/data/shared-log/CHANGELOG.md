@@ -1,5 +1,24 @@
 # Changelog
 
+## 16.0.35
+
+### Patch Changes
+
+- [#1457](https://github.com/dao-xyz/peerbit/pull/1457) [`0e9e351`](https://github.com/dao-xyz/peerbit/commit/0e9e351b4a9aee4128ff11ad363e0958774d544c) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Add opt-in bounded persisted-delivery traces to the existing `sync.profile`
+  callback. Report exact-entry leader/session selection, confirmation and receipt
+  phases, provisional receipt progress, and terminal outcomes without changing
+  durability checks, retries, or deadlines. Traces omit entry hashes and payloads,
+  cap detail events and entry sampling, and isolate callback failures.
+
+- [#1456](https://github.com/dao-xyz/peerbit/pull/1456) [`5c696a3`](https://github.com/dao-xyz/peerbit/commit/5c696a316e7e555eb8e536455c30127dc6ed9197) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Keep coordinate-selected young replicas in leader plans when a mature-only full-replica shortcut is incomplete. Preserve existing mature fallback owners, strict-range policy, peer filters, and maturity thresholds. Apply the same routing rule to TypeScript, Rust range planning, and the native backbone's embedded planner, including batch and local-leader checks. Persisted receipts remain the durability proof; this routing correction does not itself establish the cause of intermittent delivery timeouts.
+
+- Updated dependencies [[`f18f0e1`](https://github.com/dao-xyz/peerbit/commit/f18f0e16b6d303c52957716f864e5ab3ea602ce0)]:
+  - @peerbit/indexer-interface@3.1.0
+  - @peerbit/log@6.2.35
+  - @peerbit/program@6.0.63
+  - @peerbit/indexer-sqlite3@3.0.21
+  - @peerbit/rpc@6.1.31
+
 ## 16.0.34
 
 ### Patch Changes
