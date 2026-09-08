@@ -27046,8 +27046,9 @@ export class SharedLog<
 			);
 		}
 
+		let fullReplicaPlan;
 		if (!options?.candidates) {
-			const fullReplicaLeaders = await this.findFullReplicaLeaders(
+			fullReplicaPlan = await this.findFullReplicaLeaderPlan(
 				cursors.length,
 				context.roleAge,
 				peerFilter,
@@ -27055,8 +27056,8 @@ export class SharedLog<
 			this.throwIfReplicationOwnershipLifecycleInactive(
 				ownershipLifecycleController,
 			);
-			if (fullReplicaLeaders) {
-				return fullReplicaLeaders;
+			if (fullReplicaPlan?.complete) {
+				return fullReplicaPlan.leaders;
 			}
 		}
 
@@ -27073,6 +27074,16 @@ export class SharedLog<
 		this.throwIfReplicationOwnershipLifecycleInactive(
 			ownershipLifecycleController,
 		);
+		if (fullReplicaPlan) {
+			// Retain the existing mature global fallback (including strict owners).
+			// Young owners still need coordinate sampling before the plan is complete.
+			for (const [hash, leader] of leaders) {
+				if (!fullReplicaPlan.leaders.has(hash)) {
+					fullReplicaPlan.leaders.set(hash, leader);
+				}
+			}
+			return fullReplicaPlan.leaders;
+		}
 		return leaders;
 	}
 
@@ -27117,16 +27128,20 @@ export class SharedLog<
 		return peerFilter;
 	}
 
-	private async findFullReplicaLeaders(
+	private async findFullReplicaLeaderPlan(
 		replicas: number,
 		roleAge: number,
 		peerFilter?: Set<string>,
-	): Promise<Map<string, { intersecting: boolean }> | undefined> {
+	): Promise<
+		| { leaders: Map<string, { intersecting: boolean }>; complete: boolean }
+		| undefined
+	> {
 		const now = Date.now();
 		const leaders = new Map<string, { intersecting: boolean }>();
 		// Strict-only peers are not global fallbacks, but may still own an entry's
 		// coordinates. Remember them so a partial fallback cannot bypass sampling.
 		const excludedStrictPeers = new Set<string>();
+		const youngPeers = new Set<string>();
 		const includeStrict =
 			this._logProperties?.strictFullReplicaFallback !== false;
 		const iterator = this.replicationIndex.iterate(
@@ -27150,6 +27165,7 @@ export class SharedLog<
 						continue;
 					}
 					if (!isMatured(range, now, roleAge)) {
+						youngPeers.add(range.hash);
 						continue;
 					}
 					leaders.set(range.hash, { intersecting: true });
@@ -27168,7 +27184,12 @@ export class SharedLog<
 			}
 		}
 
-		return leaders.size > 0 ? leaders : undefined;
+		return leaders.size > 0
+			? {
+					leaders,
+					complete: [...youngPeers].every((hash) => leaders.has(hash)),
+				}
+			: undefined;
 	}
 
 	private async findEntryReplicatedLeaderBatch(
