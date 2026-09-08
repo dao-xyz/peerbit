@@ -2622,6 +2622,7 @@ export class Documents<
 			prefetch: options.index?.prefetch,
 			includeIndexed: options.index?.includeIndexed,
 			immutable: this.immutable,
+			profile: options.sync?.profile,
 		});
 		this._documentInternalChangeListenerCount = Math.max(
 			0,

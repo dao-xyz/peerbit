@@ -70,6 +70,7 @@
 		"@multiformats/multiaddr": "^13.0.3",
 		"@peerbit/cache": "workspace:*",
 		"@peerbit/crypto": "workspace:*",
+		"@peerbit/diagnostics": "workspace:*",
 		"@peerbit/document-interface": "workspace:*",
 		"@peerbit/indexer-cache": "workspace:*",
 		"@peerbit/indexer-interface": "workspace:*",

@@ -1220,6 +1220,9 @@ importers:
       '@peerbit/crypto':
         specifier: workspace:*
         version: link:../../../../utils/crypto
+      '@peerbit/diagnostics':
+        specifier: workspace:*
+        version: link:../../../../utils/diagnostics
       '@peerbit/document-interface':
         specifier: workspace:*
         version: link:../interface
@@ -2017,6 +2020,9 @@ importers:
       '@peerbit/crypto':
         specifier: workspace:*
         version: link:../../utils/crypto
+      '@peerbit/diagnostics':
+        specifier: workspace:*
+        version: link:../../utils/diagnostics
       '@peerbit/logger':
         specifier: workspace:*
         version: link:../../utils/logger

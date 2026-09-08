@@ -23,6 +23,36 @@ Persisted data and wire formats are unchanged. These checks authorize query
 responses, not all replication or direct block access, and do not by themselves
 provide store confidentiality.
 
+## Query timing diagnostics
+
+The existing `Documents.open({ type, sync: { profile } })` callback also receives
+bounded `documents.query.*` and `rpc.request.*` events. With no callback, tracing
+is disabled. These events are advisory and do not change query coverage,
+authorization, timeouts, or persisted delivery requirements.
+
+Each query has an opaque process-local `traceId`; forwarded RPC events include
+their own `details.requestTraceId`. Query events time local lookup, cover
+selection, and result introduction. RPC events distinguish key/seal setup from
+actual publishing, accepted responses, and the response deadline. Setup precedes
+the RPC response timer. A publish completion does not prove remote arrival;
+a deadline can return partial results that Documents tolerates. Inspect both
+RPC outcome/reason and the query terminal's `missingGroups`.
+
+Traces emit at most 256 detail events plus one reserved terminal, with version,
+elapsed time, emitted count and dropped count. Documents samples the first 16
+selected targets; RPC independently samples the first 16 accepted targeted
+responders. These sets may differ, exposing up to 32 distinct peer identities
+per query. `directPeerPresent` is local map-presence evidence, not a claim of
+reachability, subscriber readiness, authority, or receipt eligibility. Query
+keys, document contents and request bytes are not emitted. Peer identifiers are
+still operational metadata: control access to stored traces.
+
+Observers must remain cheap; slow synchronous callbacks can perturb measurements.
+These query/RPC emitters contain callback exceptions and async rejections without
+awaiting observers, and suppress late events after the terminal. Keep any external
+collector bounded too. The precommit immutable lookup is separate from persisted
+receipt settlement, so its time must not be attributed to receipt latency.
+
 ## Durable remote delivery
 
 Document puts can opt in to waiting for crash-safe persistence on current remote

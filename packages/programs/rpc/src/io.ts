@@ -4,6 +4,7 @@ import type {
 	X25519Keypair,
 	X25519PublicKey,
 } from "@peerbit/crypto";
+import type { DiagnosticSink } from "@peerbit/diagnostics";
 import { logger as loggerFn } from "@peerbit/logger";
 import type {
 	DataMessage,
@@ -22,6 +23,8 @@ export type RPCRequestResponseOptions<R> = {
 	isTrusted?: (publicKey: PublicSignKey) => Promise<boolean>;
 	onResponse?: (response: R, from?: PublicSignKey) => void;
 	signal?: AbortSignal;
+	/** Bounded, best-effort request timing; publish/response events are not delivery proofs. */
+	profile?: DiagnosticSink;
 };
 
 export type RequestResponseInterceptor<R> = {
