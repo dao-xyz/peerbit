@@ -1,5 +1,13 @@
 # Changelog
 
+## 3.1.0
+
+### Minor Changes
+
+- [#1454](https://github.com/dao-xyz/peerbit/pull/1454) [`f18f0e1`](https://github.com/dao-xyz/peerbit/commit/f18f0e16b6d303c52957716f864e5ab3ea602ce0) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Add optional bounded raw-key inventory scanning to the in-memory index, with direct capability forwarding through the cache wrapper. Scans fail closed on observed mutation, partial write failure, cancellation, or lifecycle replacement instead of treating mutable query pages as a complete inventory. Existing query iteration is unchanged.
+
+  This inventories one backend owner's canonical key primitives, not typed keys, document values, durable log closure, or a revocation checkpoint. Cursor bookkeeping and page item counts are bounded; key sizes and caller retention are not. SQLite, Rust, and custom engines remain unsupported unless they explicitly implement the capability. Callers must close abandoned scans and must not emulate the capability with ordinary iteration.
+
 ## 3.0.13
 
 ### Patch Changes

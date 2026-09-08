@@ -1,5 +1,11 @@
 # @peerbit/shared-log-rust
 
+## 0.1.8
+
+### Patch Changes
+
+- [#1456](https://github.com/dao-xyz/peerbit/pull/1456) [`5c696a3`](https://github.com/dao-xyz/peerbit/commit/5c696a316e7e555eb8e536455c30127dc6ed9197) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Keep coordinate-selected young replicas in leader plans when a mature-only full-replica shortcut is incomplete. Preserve existing mature fallback owners, strict-range policy, peer filters, and maturity thresholds. Apply the same routing rule to TypeScript, Rust range planning, and the native backbone's embedded planner, including batch and local-leader checks. Persisted receipts remain the durability proof; this routing correction does not itself establish the cause of intermittent delivery timeouts.
+
 ## 0.1.7
 
 ### Patch Changes
