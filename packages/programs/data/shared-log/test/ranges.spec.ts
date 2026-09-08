@@ -44,6 +44,12 @@ const resolutions: [R, R] = ["u32", "u64"];
 
 resolutions.forEach((resolution) => {
 	describe("ranges: " + resolution, () => {
+		const openedIndices: Awaited<ReturnType<typeof createIndices>>[] = [];
+		afterEach(async () => {
+			await Promise.all(
+				openedIndices.splice(0).map((indices) => indices.stop()),
+			);
+		});
 		const rangeClass =
 			resolution === "u32"
 				? ReplicationRangeIndexableU32
@@ -127,6 +133,7 @@ resolutions.forEach((resolution) => {
 
 			let create = async (...rects: ReplicationRangeIndexable<R>[]) => {
 				const indices = await createIndices();
+				openedIndices.push(indices);
 				await indices.start();
 				const index = await indices.init({ schema: rangeClass as any });
 				for (const rect of rects) {
@@ -2888,6 +2895,7 @@ resolutions.forEach((resolution) => {
 
 			let create = async (...rects: EntryReplicated<R>[]) => {
 				const indices = await createIndices();
+				openedIndices.push(indices);
 				await indices.start();
 				index = await indices.init({ schema: entryClass as any });
 				for (const rect of rects) {

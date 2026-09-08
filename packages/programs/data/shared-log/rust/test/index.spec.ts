@@ -195,6 +195,135 @@ describe("native shared-log range planner", () => {
 		).to.deep.equal(new Map([["peer-a", { intersecting: true }]]));
 	});
 
+	for (const includeStrictFullReplica of [false, true]) {
+		it(`samples every intersecting young owner for degree three (strict fallback ${includeStrictFullReplica})`, async () => {
+			const planner = await createRangePlanner("u32");
+			const peers = ["a", "b", "c", "d"];
+			for (const [index, hash] of peers.entries()) {
+				planner.put(
+					range({
+						id: hash,
+						hash,
+						start1: 0,
+						end1: 0xffffffff,
+						timestamp: index === 0 ? 0n : 950n,
+					}),
+				);
+			}
+			const options = {
+				now: 1_000,
+				roleAge: 100,
+				peerFilter: peers,
+				fullReplicaFallback: true,
+				includeStrictFullReplica,
+			};
+			const cursors = [10, 20, 30];
+			const canonical = planner.getSamples(cursors, options);
+			expect([...canonical.keys()]).to.deep.equal(peers);
+			expect(planner.getFullReplicaLeaders(3, options)).to.deep.equal(
+				new Map([["a", { intersecting: true }]]),
+			);
+			expect(planner.getRoutingFullReplicaLeaders(3, options)).to.equal(
+				undefined,
+			);
+			expect(planner.findLeaders(cursors, 3, options)).to.deep.equal(canonical);
+			expect(
+				planner.findLeadersBatch([{ cursors, replicas: 3 }], options),
+			).to.deep.equal([canonical]);
+			expect(
+				planner.planLeaderSamplesForGidsBatch(
+					[{ gid: "fresh-full-custodians", replicas: 3 }],
+					options,
+				),
+			).to.deep.equal([canonical]);
+			expect(
+				planner.planLocalLeaderHashesForGidsBatch(
+					[{ hash: "entry", gid: "fresh-full-custodians", replicas: 3 }],
+					{ ...options, selfHash: "b", selfReplicating: true },
+				),
+			).to.deep.equal(new Set(["entry"]));
+		});
+	}
+
+	it("keeps young nonintersecting owners out of fallback routing", async () => {
+		const planner = await createRangePlanner("u32");
+		planner.put(range({ id: "a", hash: "a", start1: 0, end1: 50 }));
+		planner.put(
+			range({ id: "b", hash: "b", start1: 70, end1: 80, timestamp: 950n }),
+		);
+		const options = { now: 1_000, roleAge: 100, fullReplicaFallback: true };
+		const canonical = planner.getSamples([5, 15, 25], options);
+		expect([...canonical.keys()]).to.deep.equal(["a"]);
+		expect(planner.findLeaders([5, 15, 25], 3, options)).to.deep.equal(
+			canonical,
+		);
+	});
+
+	for (const includeStrictFullReplica of [false, true]) {
+		it(`preserves mature strict fallback while sampling young owners (strict fallback ${includeStrictFullReplica})`, async () => {
+			const planner = await createRangePlanner("u32");
+			planner.put(range({ id: "a", hash: "a", start1: 10, end1: 20, mode: 1 }));
+			planner.put(
+				range({ id: "b", hash: "b", start1: 40, end1: 60, timestamp: 950n }),
+			);
+			const options = {
+				now: 1_000,
+				roleAge: 100,
+				fullReplicaFallback: true,
+				includeStrictFullReplica,
+			};
+			for (const intersecting of [false, true]) {
+				const cursors = intersecting ? [50, 75] : [70, 75];
+				const expected = new Map<string, { intersecting: boolean }>();
+				if (includeStrictFullReplica) expected.set("a", { intersecting: true });
+				if (intersecting) expected.set("b", { intersecting: true });
+				expect(planner.findLeaders(cursors, 2, options)).to.deep.equal(
+					expected,
+				);
+				expect(
+					planner.findLeadersBatch([{ cursors, replicas: 2 }], options),
+				).to.deep.equal([expected]);
+			}
+		});
+	}
+
+	it("retains complete routing shortcuts for same-owner evidence and explicit filters", async () => {
+		const planner = await createRangePlanner("u32");
+		planner.put(
+			range({
+				id: "young-a",
+				hash: "a",
+				start1: 0,
+				end1: 100,
+				timestamp: 950n,
+			}),
+		);
+		planner.put(range({ id: "mature-a", hash: "a", start1: 0, end1: 100 }));
+		planner.put(
+			range({
+				id: "young-b",
+				hash: "b",
+				start1: 0,
+				end1: 100,
+				timestamp: 950n,
+			}),
+		);
+		const options = {
+			now: 1_000,
+			roleAge: 100,
+			peerFilter: ["a"],
+			fullReplicaFallback: true,
+		};
+		const canonical = planner.getSamples([10, 20, 30], options);
+		expect([...canonical.keys()]).to.deep.equal(["a"]);
+		expect(planner.getRoutingFullReplicaLeaders(3, options)).to.deep.equal(
+			canonical,
+		);
+		expect(planner.findLeaders([10, 20, 30], 3, options)).to.deep.equal(
+			canonical,
+		);
+	});
+
 	it("expands underfilled peer filters with mature indexed peers", async () => {
 		const planner = await createRangePlanner("u32");
 		planner.put(range({ id: "a", hash: "peer-a", start1: 0, end1: 10 }));

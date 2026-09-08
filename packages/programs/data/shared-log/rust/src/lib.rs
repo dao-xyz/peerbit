@@ -116,6 +116,12 @@ pub struct LeaderSample {
     pub intersecting: bool,
 }
 
+#[derive(Clone)]
+struct FullReplicaPlan {
+    leaders: Vec<LeaderSample>,
+    complete: bool,
+}
+
 pub struct NativeAppendCoordinatePlan {
     pub hash: String,
     pub hash_number: u64,
@@ -927,6 +933,7 @@ impl RangePlanner {
         include_strict: bool,
     ) -> Option<Vec<LeaderSample>> {
         self.get_full_replica_leaders_inner(replicas, options, include_strict, false)
+            .map(|plan| plan.leaders)
     }
 
     fn get_full_replica_leaders_inner(
@@ -935,8 +942,9 @@ impl RangePlanner {
         options: &SampleOptions,
         include_strict: bool,
         require_coordinate_sampling_for_strict_only: bool,
-    ) -> Option<Vec<LeaderSample>> {
+    ) -> Option<FullReplicaPlan> {
         let mut leaders: IndexSet<String> = IndexSet::new();
+        let mut complete = true;
 
         for (hash, stats) in self.peer_ranges.iter() {
             if let Some(peer_filter) = options.peer_filter.as_ref() {
@@ -961,6 +969,9 @@ impl RangePlanner {
                 has_matured_non_strict
             };
             if !has_matured_range {
+                // This owner may intersect a coordinate even before maturity. Keep the
+                // mature global fallback, but do not certify it as the whole leader set.
+                complete = false;
                 continue;
             }
 
@@ -974,15 +985,16 @@ impl RangePlanner {
             return None;
         }
 
-        Some(
-            leaders
+        Some(FullReplicaPlan {
+            leaders: leaders
                 .into_iter()
                 .map(|hash| LeaderSample {
                     hash,
                     intersecting: true,
                 })
                 .collect(),
-        )
+            complete,
+        })
     }
 
     pub fn include_matured_peers(
@@ -1355,15 +1367,22 @@ fn find_leaders_with_prepared_options(
     full_replica_fallback: bool,
     include_strict_full_replica: bool,
 ) -> Vec<LeaderSample> {
-    if full_replica_fallback {
-        if let Some(leaders) = get_routing_full_replica_leaders(
-            planner,
-            replicas,
-            options,
-            include_strict_full_replica,
-        ) {
-            return leaders;
-        }
+    let fallback = if full_replica_fallback {
+        planner.get_full_replica_leaders_inner(replicas, options, include_strict_full_replica, true)
+    } else {
+        None
+    };
+    find_leaders_with_fallback_plan(planner, cursors, options, fallback)
+}
+
+fn find_leaders_with_fallback_plan(
+    planner: &RangePlanner,
+    cursors: &[u64],
+    options: &SampleOptions,
+    fallback: Option<FullReplicaPlan>,
+) -> Vec<LeaderSample> {
+    if fallback.as_ref().is_some_and(|plan| plan.complete) {
+        return fallback.unwrap().leaders;
     }
 
     let mut options = options.clone();
@@ -1372,7 +1391,27 @@ fn find_leaders_with_prepared_options(
         .as_ref()
         .map(|peers| IndexSet::from_iter(peers.iter().cloned()));
 
-    planner.get_samples(cursors, &options)
+    let samples = planner.get_samples(cursors, &options);
+    let Some(fallback) = fallback else {
+        return samples;
+    };
+    // Preserve existing mature global fallback owners (including strict owners),
+    // adding only coordinate-selected owners omitted by the incomplete shortcut.
+    let mut leaders: IndexMap<String, bool> = fallback
+        .leaders
+        .into_iter()
+        .map(|leader| (leader.hash, leader.intersecting))
+        .collect();
+    for sample in samples {
+        leaders
+            .entry(sample.hash)
+            .and_modify(|intersecting| *intersecting |= sample.intersecting)
+            .or_insert(sample.intersecting);
+    }
+    leaders
+        .into_iter()
+        .map(|(hash, intersecting)| LeaderSample { hash, intersecting })
+        .collect()
 }
 
 fn get_routing_full_replica_leaders(
@@ -1381,7 +1420,10 @@ fn get_routing_full_replica_leaders(
     options: &SampleOptions,
     include_strict_full_replica: bool,
 ) -> Option<Vec<LeaderSample>> {
-    planner.get_full_replica_leaders_inner(replicas, options, include_strict_full_replica, true)
+    planner
+        .get_full_replica_leaders_inner(replicas, options, include_strict_full_replica, true)
+        .filter(|plan| plan.complete)
+        .map(|plan| plan.leaders)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1448,7 +1490,7 @@ fn find_leaders_with_batch_caches(
     replicas: usize,
     base_options: &SampleOptions,
     prepared_options_by_replicas: &mut HashMap<usize, SampleOptions>,
-    full_replica_leaders_by_replicas: &mut HashMap<usize, Option<Vec<LeaderSample>>>,
+    full_replica_leaders_by_replicas: &mut HashMap<usize, Option<FullReplicaPlan>>,
     expand_peer_filter: bool,
     self_hash: &str,
     include_self: bool,
@@ -1465,24 +1507,23 @@ fn find_leaders_with_batch_caches(
         include_self,
     );
 
-    if full_replica_fallback {
-        if let Some(leaders) = full_replica_leaders_by_replicas
+    let fallback = if full_replica_fallback {
+        full_replica_leaders_by_replicas
             .entry(replicas)
             .or_insert_with(|| {
-                get_routing_full_replica_leaders(
-                    planner,
+                planner.get_full_replica_leaders_inner(
                     replicas,
                     prepared_options,
                     include_strict_full_replica,
+                    true,
                 )
             })
             .clone()
-        {
-            return leaders;
-        }
-    }
+    } else {
+        None
+    };
 
-    find_leaders_with_prepared_options(planner, cursors, replicas, prepared_options, false, true)
+    find_leaders_with_fallback_plan(planner, cursors, prepared_options, fallback)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1548,13 +1589,19 @@ fn full_replica_self_leader_with_batch_caches(
     full_replica_self_leader_by_replicas
         .entry(replicas)
         .or_insert_with(|| {
-            get_routing_full_replica_leaders(
-                planner,
-                replicas,
-                prepared_options,
-                include_strict_full_replica,
-            )
-            .map(|leaders| leaders.iter().any(|leader| leader.hash == self_hash))
+            planner
+                .get_full_replica_leaders_inner(
+                    replicas,
+                    prepared_options,
+                    include_strict_full_replica,
+                    true,
+                )
+                .and_then(|plan| {
+                    let included = plan.leaders.iter().any(|leader| leader.hash == self_hash);
+                    // Presence in the mature global fallback is conclusive. Absence is
+                    // only conclusive if no young owner still needs coordinate sampling.
+                    (included || plan.complete).then_some(included)
+                })
         })
         .as_ref()
         .copied()
@@ -4878,15 +4925,16 @@ fn samples_to_rows(samples: Vec<LeaderSample>) -> Array {
 #[cfg(test)]
 mod tests {
     use super::{
-        compare_closest, find_leaders_with_prepared_options, ContainmentIndexLocation,
-        EndpointGroup, FallbackCandidateStreams, FallbackKeyStream, LeaderSample,
-        NativeSharedLogState, RangeIndexKey, RangePlanner, ReplicationRange, SampleOptions,
-        SharedLogError, CONTAINMENT_BUCKETS, CONTAINMENT_RETAINED_CAPACITY_RATIO,
+        compare_closest, contains_leader_with_batch_caches, find_leaders_with_prepared_options,
+        get_routing_full_replica_leaders, ContainmentIndexLocation, EndpointGroup,
+        FallbackCandidateStreams, FallbackKeyStream, LeaderSample, NativeSharedLogState,
+        RangeIndexKey, RangePlanner, ReplicationRange, SampleOptions, SharedLogError,
+        CONTAINMENT_BUCKETS, CONTAINMENT_RETAINED_CAPACITY_RATIO,
         CONTAINMENT_RETAINED_CAPACITY_SLACK, MAX_CONTAINMENT_BUCKETS_PER_RANGE, MAX_U32, MAX_U64,
         MODE_NON_STRICT,
     };
     use indexmap::IndexSet;
-    use std::collections::HashSet;
+    use std::collections::{HashMap, HashSet};
 
     fn intersecting_options() -> SampleOptions {
         SampleOptions {
@@ -6459,6 +6507,310 @@ mod tests {
         assert_eq!(leaders[0].hash, "peer-a");
         assert_eq!(leaders[1].hash, "peer-b");
         assert!(leaders.iter().all(|leader| leader.intersecting));
+    }
+
+    #[test]
+    fn routing_maturity_preserves_intersecting_young_peers() {
+        for (resolution, max) in [("u32", MAX_U32), ("u64", MAX_U64)] {
+            let mut planner = RangePlanner::new(resolution);
+            for (id, timestamp) in [("a", 0), ("b", 950), ("c", 950), ("d", 950)] {
+                planner.put(ReplicationRange::new(
+                    id, id, timestamp, 0, max, 0, max, max, 0,
+                ));
+            }
+            let options = SampleOptions {
+                now: 1_000,
+                role_age_ms: 100,
+                peer_filter: Some(["a", "b", "c", "d"].map(String::from).into_iter().collect()),
+                ..Default::default()
+            };
+            let cursors = [10, max / 3, max / 2];
+            let canonical = planner.get_samples(&cursors, &options);
+            assert_eq!(canonical.len(), 4);
+            assert!(canonical.iter().all(|leader| leader.intersecting));
+            for include_strict in [false, true] {
+                // The mature-only enumeration is not the routing completeness shortcut.
+                assert_eq!(
+                    planner.get_full_replica_leaders(3, &options, include_strict),
+                    Some(vec![LeaderSample {
+                        hash: "a".to_string(),
+                        intersecting: true,
+                    }]),
+                );
+                assert_eq!(
+                    planner.find_leaders(
+                        &cursors,
+                        3,
+                        &options,
+                        false,
+                        "publisher",
+                        false,
+                        true,
+                        include_strict,
+                    ),
+                    canonical,
+                    "routing must not omit intersecting young peers: {resolution}",
+                );
+                assert!(
+                    get_routing_full_replica_leaders(&planner, 3, &options, include_strict)
+                        .is_none()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn routing_maturity_does_not_promote_nonintersecting_young_peers() {
+        let mut planner = RangePlanner::new("u32");
+        planner.put(ReplicationRange::new("a", "a", 0, 0, 50, 0, 50, 50, 0));
+        planner.put(ReplicationRange::new("b", "b", 950, 70, 80, 70, 80, 10, 0));
+        let options = SampleOptions {
+            now: 1_000,
+            role_age_ms: 100,
+            ..Default::default()
+        };
+        let canonical = planner.get_samples(&[5, 15, 25], &options);
+        assert_eq!(
+            canonical,
+            vec![LeaderSample {
+                hash: "a".to_string(),
+                intersecting: true,
+            }],
+        );
+        assert_eq!(
+            planner.find_leaders(
+                &[5, 15, 25],
+                3,
+                &options,
+                false,
+                "publisher",
+                false,
+                true,
+                true
+            ),
+            canonical,
+        );
+    }
+
+    #[test]
+    fn routing_maturity_preserves_strict_fallback_without_promoting_young_peers() {
+        let mut planner = RangePlanner::new("u32");
+        planner.put(ReplicationRange::new("a", "a", 0, 10, 20, 10, 20, 10, 1));
+        planner.put(ReplicationRange::new("b", "b", 950, 40, 60, 40, 60, 20, 0));
+        let options = SampleOptions {
+            now: 1_000,
+            role_age_ms: 100,
+            ..Default::default()
+        };
+        for intersecting in [false, true] {
+            let cursors = if intersecting { [50, 75] } else { [70, 75] };
+            for include_strict in [false, true] {
+                let mut expected = Vec::new();
+                if include_strict {
+                    // Preserve the existing underfilled global fallback, including its flag.
+                    expected.push(LeaderSample {
+                        hash: "a".to_string(),
+                        intersecting: true,
+                    });
+                }
+                if intersecting {
+                    expected.push(LeaderSample {
+                        hash: "b".to_string(),
+                        intersecting: true,
+                    });
+                }
+                assert_eq!(
+                    planner.find_leaders(
+                        &cursors,
+                        2,
+                        &options,
+                        false,
+                        "publisher",
+                        false,
+                        true,
+                        include_strict,
+                    ),
+                    expected,
+                    "strict={include_strict}, intersecting={intersecting}",
+                );
+                for self_hash in ["a", "b", "absent"] {
+                    assert_eq!(
+                        contains_leader_with_batch_caches(
+                            &planner,
+                            &cursors,
+                            2,
+                            &options,
+                            &mut HashMap::new(),
+                            &mut HashMap::new(),
+                            false,
+                            self_hash,
+                            true,
+                            true,
+                            include_strict,
+                        ),
+                        expected.iter().any(|leader| leader.hash == self_hash),
+                        "self={self_hash}, strict={include_strict}, intersecting={intersecting}",
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn routing_maturity_preserves_shortcut_for_same_owner_mature_evidence() {
+        for young_first in [false, true] {
+            let mut planner = RangePlanner::new("u32");
+            let young = ReplicationRange::new("young", "a", 950, 0, 100, 0, 100, 100, 0);
+            let mature = ReplicationRange::new("mature", "a", 0, 0, 100, 0, 100, 100, 0);
+            for range in if young_first {
+                [young, mature]
+            } else {
+                [mature, young]
+            } {
+                planner.put(range);
+            }
+            let options = SampleOptions {
+                now: 1_000,
+                role_age_ms: 100,
+                ..Default::default()
+            };
+            assert_eq!(
+                get_routing_full_replica_leaders(&planner, 3, &options, true),
+                Some(planner.get_samples(&[10, 20, 30], &options)),
+            );
+        }
+    }
+
+    #[test]
+    fn routing_maturity_preserves_fallback_order_and_intersection_flag() {
+        let mut planner = RangePlanner::new("u32");
+        planner.put(ReplicationRange::new("b", "b", 950, 40, 60, 40, 60, 20, 0));
+        planner.put(ReplicationRange::new("a", "a", 0, 10, 20, 10, 20, 10, 0));
+        let options = SampleOptions {
+            now: 1_000,
+            role_age_ms: 100,
+            ..Default::default()
+        };
+        assert_eq!(
+            planner.get_samples(&[50, 75], &options),
+            vec![
+                LeaderSample {
+                    hash: "b".to_string(),
+                    intersecting: true
+                },
+                LeaderSample {
+                    hash: "a".to_string(),
+                    intersecting: false
+                },
+            ],
+        );
+        assert_eq!(
+            planner.find_leaders(
+                &[50, 75],
+                2,
+                &options,
+                false,
+                "publisher",
+                false,
+                true,
+                true
+            ),
+            vec![
+                LeaderSample {
+                    hash: "a".to_string(),
+                    intersecting: true
+                },
+                LeaderSample {
+                    hash: "b".to_string(),
+                    intersecting: true
+                },
+            ],
+        );
+    }
+
+    #[test]
+    fn routing_maturity_rechecks_coordinates_with_reused_self_cache() {
+        let mut planner = RangePlanner::new("u32");
+        planner.put(ReplicationRange::new("a", "a", 0, 10, 20, 10, 20, 10, 1));
+        planner.put(ReplicationRange::new("b", "b", 950, 40, 60, 40, 60, 20, 0));
+        let options = SampleOptions {
+            now: 1_000,
+            role_age_ms: 100,
+            ..Default::default()
+        };
+        for inside_first in [false, true] {
+            let mut prepared = HashMap::new();
+            let mut self_cache = HashMap::new();
+            for inside in [inside_first, !inside_first, inside_first] {
+                let cursors = if inside { [50, 75] } else { [70, 75] };
+                assert_eq!(
+                    contains_leader_with_batch_caches(
+                        &planner,
+                        &cursors,
+                        2,
+                        &options,
+                        &mut prepared,
+                        &mut self_cache,
+                        false,
+                        "b",
+                        true,
+                        true,
+                        true,
+                    ),
+                    inside,
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn routing_maturity_preserves_explicit_peer_filter() {
+        let mut planner = RangePlanner::new("u32");
+        planner.put(ReplicationRange::new("a", "a", 0, 0, 100, 0, 100, 100, 0));
+        planner.put(ReplicationRange::new("b", "b", 950, 0, 100, 0, 100, 100, 0));
+        let options = SampleOptions {
+            now: 1_000,
+            role_age_ms: 100,
+            peer_filter: Some(["a".to_string()].into_iter().collect()),
+            ..Default::default()
+        };
+        let canonical = planner.get_samples(&[10, 20, 30], &options);
+        assert_eq!(canonical.len(), 1);
+        assert_eq!(
+            get_routing_full_replica_leaders(&planner, 3, &options, true),
+            Some(canonical.clone()),
+        );
+        assert_eq!(
+            planner.find_leaders(
+                &[10, 20, 30],
+                3,
+                &options,
+                false,
+                "publisher",
+                false,
+                true,
+                true
+            ),
+            canonical,
+        );
+    }
+
+    #[test]
+    fn routing_maturity_restores_shortcut_at_exact_maturity() {
+        let mut planner = RangePlanner::new("u32");
+        planner.put(ReplicationRange::new("a", "a", 0, 0, 100, 0, 100, 100, 0));
+        planner.put(ReplicationRange::new("b", "b", 950, 0, 100, 0, 100, 100, 0));
+        let mut options = SampleOptions {
+            now: 1_049,
+            role_age_ms: 100,
+            ..Default::default()
+        };
+        assert!(get_routing_full_replica_leaders(&planner, 3, &options, true).is_none());
+        options.now = 1_050;
+        assert_eq!(
+            get_routing_full_replica_leaders(&planner, 3, &options, true),
+            Some(planner.get_samples(&[10, 20, 30], &options)),
+        );
     }
 
     #[test]
