@@ -3085,19 +3085,39 @@ export class Documents<
 
 				const key = indexerTypes.toId(keyValue);
 
+				if (this.immutable && !this.isNativeMode()) {
+					const responses = await this.index.getDetailed(key, {
+						resolve: false,
+						local: true,
+						remote: { strategy: "fallback" },
+					});
+					// Empty or same-head replies must not hide a conflict from another
+					// responder. Preserve oldest-wins and the existing strict timestamp tie.
+					for (const response of responses ?? []) {
+						for (const result of response.results) {
+							const context = this.getExistingContext(result);
+							if (
+								context &&
+								context.head !== entry.hash &&
+								(context.created < entry.meta.clock.timestamp.wallTime ||
+									entry.meta.next.length > 0)
+							) {
+								return false;
+							}
+						}
+					}
+					return this.acceptPutOperation(
+						putOperation,
+						decodedDocumentForCanPerform,
+						hasDecodedDocumentForCanPerform,
+					);
+				}
+
 				const existingDocument = this.isNativeMode()
 					? this.hasNativeDocumentContextLookup()
 						? this.getNativeIndexedContext(key)
 						: undefined
-					: this.immutable
-						? (
-								await this.index.getDetailed(key, {
-									resolve: false,
-									local: true,
-									remote: { strategy: "fallback" },
-								})
-							)?.[0]?.results[0]
-						: await this.getLocalIndexedContext(key);
+					: await this.getLocalIndexedContext(key);
 				if (this.isNativeMode() && !this.hasNativeDocumentContextLookup()) {
 					return false;
 				}
