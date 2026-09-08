@@ -53,6 +53,15 @@ export class HashmapIndex<T extends Record<string, any>, NestedType = any>
 
 	private indexByArr!: string[];
 	private properties!: types.IndexEngineInitProperties<T, NestedType>;
+	private keyScanGeneration: symbol | undefined;
+	// Do not reset at init/start: an older asynchronous delete may still settle.
+	private keyScanMutations = 0;
+
+	private beginKeyMutation() {
+		// Allocate a new token only when a scan starts, not on every write.
+		this.keyScanGeneration = undefined;
+		this.keyScanMutations++;
+	}
 
 	private closedIterator<
 		S extends types.Shape | undefined,
@@ -77,25 +86,30 @@ export class HashmapIndex<T extends Record<string, any>, NestedType = any>
 	}
 
 	init(properties: types.IndexEngineInitProperties<T, NestedType>) {
-		this.properties = properties;
-		this._index = new Map();
-		if (properties.indexBy) {
-			this.indexByArr = Array.isArray(properties.indexBy)
-				? properties.indexBy
-				: [properties.indexBy];
-		} else {
-			const indexBy = types.getIdProperty(properties.schema);
+		this.beginKeyMutation();
+		try {
+			this.properties = properties;
+			this._index = new Map();
+			if (properties.indexBy) {
+				this.indexByArr = Array.isArray(properties.indexBy)
+					? properties.indexBy
+					: [properties.indexBy];
+			} else {
+				const indexBy = types.getIdProperty(properties.schema);
 
-			if (!indexBy) {
-				throw new Error(
-					"No indexBy property defined nor schema has a property decorated with `id({ type: '...' })`",
-				);
+				if (!indexBy) {
+					throw new Error(
+						"No indexBy property defined nor schema has a property decorated with `id({ type: '...' })`",
+					);
+				}
+
+				this.indexByArr = indexBy;
 			}
 
-			this.indexByArr = indexBy;
+			return this;
+		} finally {
+			this.keyScanMutations--;
 		}
-
-		return this;
 	}
 
 	async get(
@@ -121,14 +135,24 @@ export class HashmapIndex<T extends Record<string, any>, NestedType = any>
 			return;
 		}
 		this.assertOpen();
-		id = id ?? types.toId(types.extractFieldValue(value, this.indexByArr));
-		this._index.set(id.primitive, { id, value });
+		this.beginKeyMutation();
+		try {
+			id = id ?? types.toId(types.extractFieldValue(value, this.indexByArr));
+			this._index.set(id.primitive, { id, value });
+		} finally {
+			this.keyScanMutations--;
+		}
 	}
 
 	putBatch(values: T[]): void {
-		for (const value of values) {
-			const id = types.toId(types.extractFieldValue(value, this.indexByArr));
-			this._index.set(id.primitive, { id, value });
+		this.beginKeyMutation();
+		try {
+			for (const value of values) {
+				const id = types.toId(types.extractFieldValue(value, this.indexByArr));
+				this._index.set(id.primitive, { id, value });
+			}
+		} finally {
+			this.keyScanMutations--;
 		}
 	}
 
@@ -137,13 +161,89 @@ export class HashmapIndex<T extends Record<string, any>, NestedType = any>
 			return [];
 		}
 		this.assertOpen();
-		let deleted: types.IdKey[] = [];
-		for (const doc of await this.queryAll(query)) {
-			if (this._index.delete(doc.id.primitive)) {
-				deleted.push(doc.id);
+		// Reserve before asynchronous predicates, including across stop/start.
+		this.beginKeyMutation();
+		try {
+			let deleted: types.IdKey[] = [];
+			for (const doc of await this.queryAll(query)) {
+				if (this._index.delete(doc.id.primitive)) {
+					deleted.push(doc.id);
+				}
 			}
+			return deleted;
+		} finally {
+			this.keyScanMutations--;
 		}
-		return deleted;
+	}
+
+	scanKeyPrimitives({
+		pageSize,
+		signal,
+	}: types.IndexKeyScanOptions): types.IndexKeyScan {
+		if (!Number.isInteger(pageSize) || pageSize < 1 || pageSize > 4096) {
+			throw new RangeError(
+				"Key scan pageSize must be an integer from 1 to 4096",
+			);
+		}
+		this.assertOpen();
+		const generation = (this.keyScanGeneration ??= Symbol());
+		let owner: HashmapIndex<T, NestedType> | undefined = this;
+		let cursor: MapIterator<types.IdPrimitive> | undefined;
+		let remaining = this._index.size;
+		let terminal: Exclude<types.IndexKeyScanPage["status"], "more"> | undefined;
+		const finish = (status: NonNullable<typeof terminal>) => {
+			if (terminal) return;
+			terminal = status;
+			cursor = undefined;
+			owner = undefined;
+			signal?.removeEventListener("abort", onAbort);
+		};
+		const onAbort = () => finish("aborted");
+		const checkOwner = () => {
+			if (terminal) return;
+			// Other listeners may suppress delivery of the shared abort event.
+			if (signal?.aborted) finish("aborted");
+			else if (owner!.state !== "open") finish("closed");
+			else if (
+				owner!.keyScanGeneration !== generation ||
+				owner!.keyScanMutations
+			)
+				finish("invalidated");
+		};
+		if (signal?.aborted) finish("aborted");
+		else if (this.keyScanMutations) finish("invalidated");
+		else {
+			cursor = this._index.keys();
+			signal?.addEventListener("abort", onAbort, { once: true });
+		}
+		return {
+			next: () => {
+				checkOwner();
+				if (terminal) return { status: terminal, keys: [] };
+				const keys: types.IdPrimitive[] = [];
+				try {
+					while (keys.length < pageSize && remaining > 0) {
+						const item = cursor!.next();
+						if (item.done)
+							throw new Error("Key scan ended before its captured size");
+						keys.push(item.value);
+						remaining--;
+					}
+					// No awaits or value/IdKey getters: only immutable Map primitives.
+					checkOwner();
+					if (terminal) return { status: terminal, keys: [] };
+					if (remaining === 0) {
+						finish("complete");
+						return { status: "complete", keys };
+					}
+					return { status: "more", keys };
+				} catch (error) {
+					finish("failed");
+					throw error;
+				}
+			},
+			close: () => finish("closed"),
+		};
 	}
 
 	getSize(): number | Promise<number> {
@@ -171,6 +271,7 @@ export class HashmapIndex<T extends Record<string, any>, NestedType = any>
 	}
 
 	start(): void | Promise<void> {
+		if (this.state !== "open") this.keyScanGeneration = undefined;
 		this.state = "open";
 	}
 
@@ -178,14 +279,20 @@ export class HashmapIndex<T extends Record<string, any>, NestedType = any>
 		if (this.state === "closed") {
 			return;
 		}
+		this.keyScanGeneration = undefined;
 		this.state = "closing";
 		this.state = "closed";
 	}
 
 	drop() {
-		this.state = "closing";
-		this._index.clear();
-		this.state = "closed";
+		this.beginKeyMutation();
+		try {
+			this.state = "closing";
+			this._index.clear();
+			this.state = "closed";
+		} finally {
+			this.keyScanMutations--;
+		}
 		/* for (const subindex of this.subIndices) {
 			subindex[1].clear()
 		} */

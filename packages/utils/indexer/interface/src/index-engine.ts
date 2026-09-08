@@ -1,5 +1,5 @@
 import type { AbstractType } from "@dao-xyz/borsh";
-import { type IdKey } from "./id.js";
+import { type IdKey, type IdPrimitive } from "./id.js";
 import type { QueryLike, Sort } from "./query.js";
 
 type MaybePromise<T = void> = Promise<T> | T;
@@ -118,6 +118,46 @@ export type IndexIterator<
 	markYielded?: (ids: Iterable<IdKey>) => MaybePromise<void>;
 };
 
+export type IndexKeyScanOptions = {
+	/** Positive integer, at most 4096. Fixed for the lifetime of the scan. */
+	pageSize: number;
+	signal?: AbortSignal;
+};
+
+export type IndexKeyScanPage =
+	| { status: "more" | "complete"; keys: IdPrimitive[] }
+	| {
+			status: "invalidated" | "closed" | "aborted" | "failed";
+			keys: [];
+	  };
+
+/**
+ * Fresh, unfiltered inventory of one backend owner's canonical key primitives.
+ * These are membership/equality keys, not typed IdKey.key values: byte keys may
+ * be normalized to strings. Encoding and order are not portable across engines.
+ * No document values, queries, cached results or durable completeness are implied.
+ *
+ * Await next calls serially. Pages are provisional until `complete`: mutations
+ * (including replacements and possibly failed/no-op attempts) or lifecycle
+ * changes invalidate a scan. Starting during admitted mutation returns an
+ * invalidated scan without waiting. A completed inventory describes membership
+ * only at its completion point, NOT a lease protecting subsequent async work.
+ * Direct changes outside the backend owner's supported methods are not covered.
+ *
+ * Additional cursor state is bounded independently of row count; only one page
+ * is collected per next call. This bounds item count, not key sizes or caller
+ * retention. An idle cursor may keep its backing storage alive after lifecycle
+ * replacement. No all/pending operation or fallback to query iteration is allowed.
+ * Call close when abandoning a scan; abort also releases its cursor resources.
+ * Terminal results are sticky and subsequent calls return no keys. Unexpected
+ * errors release resources and are rethrown unchanged; later next calls fail
+ * closed with status `failed`.
+ */
+export interface IndexKeyScan {
+	next(): MaybePromise<IndexKeyScanPage>;
+	close(): MaybePromise<void>;
+}
+
 /**
  * Public data APIs require an open index and should throw NotStartedError after
  * the index is fully stopped. Implementations may return neutral results only
@@ -166,6 +206,12 @@ export interface Index<T extends Record<string, any>, NestedType = any> {
 		request?: IterateOptions,
 		options?: { shape?: S; reference?: boolean },
 	): IndexIterator<T, S>;
+	/**
+	 * Optional origin-owned key inventory, independent of ordinary query iterator
+	 * consistency. Absence means unsupported; callers must not emulate it using
+	 * iterate(). Creation requires an open owner and validates the page bound.
+	 */
+	scanKeyPrimitives?(options: IndexKeyScanOptions): IndexKeyScan;
 	getSize(): MaybePromise<number>;
 	persisted(): MaybePromise<boolean>;
 	readonly crashSafeDurability?: CrashSafeIndexDurability;
