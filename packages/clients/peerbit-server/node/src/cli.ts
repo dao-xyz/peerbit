@@ -4,11 +4,12 @@ import type { PeerId } from "@libp2p/interface";
 import { peerIdFromString } from "@libp2p/peer-id";
 import { toBase64 } from "@peerbit/crypto";
 import chalk from "chalk";
+import Table from "cli-table3";
 import fs from "fs";
 import sodium from "libsodium-wrappers";
 import path from "path";
 import readline from "readline";
-import Table from "tty-table";
+import wrapAnsi from "wrap-ansi";
 import type { Argv } from "yargs";
 import { createClient } from "./client.js";
 import {
@@ -540,13 +541,32 @@ export const cli = async (args?: string[]) => {
 								];
 								rows.push(row);
 							}
-							const table = Table(
-								["Name", "Group", "Origin", "Status", "Address"].map((x) => {
-									return { value: x, align: "left" };
-								}),
-								rows,
-							);
-							console.log(table.render());
+							const requestedColumns =
+								process.stdout.columns || Number(process.env.COLUMNS) || 80;
+							const columns =
+								Number.isFinite(requestedColumns) && requestedColumns > 0
+									? Math.floor(requestedColumns)
+									: 80;
+							// Five padded columns and six borders; keep at least two display columns per cell.
+							const contentColumns = Math.max(10, columns - 16);
+							const width = Math.floor(contentColumns / 5);
+							const contentWidths = [
+								width,
+								width,
+								width,
+								width,
+								contentColumns - width * 4,
+							];
+							const wrap = (value: string, index: number) =>
+								wrapAnsi(value, contentWidths[index], { hard: true, trim: false });
+							const table = new Table({
+								head: ["Name", "Group", "Origin", "Status", "Address"].map(wrap),
+								colWidths: contentWidths.map((width) => width + 2),
+								colAligns: ["left", "left", "left", "left", "left"],
+								style: { head: ["yellow"], border: [] },
+							});
+							for (const row of rows) table.push(row.map(wrap));
+							console.log(table.toString());
 						} else {
 							console.log("No remotes found!");
 						}

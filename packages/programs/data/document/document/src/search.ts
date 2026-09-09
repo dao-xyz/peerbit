@@ -14,6 +14,10 @@ import {
 	PublicSignKey,
 	sha256Base64Sync,
 } from "@peerbit/crypto";
+import {
+	type DiagnosticSink,
+	createDiagnosticTrace,
+} from "@peerbit/diagnostics";
 import * as types from "@peerbit/document-interface";
 import { CachedIndex, type QueryCacheOptions } from "@peerbit/indexer-cache";
 import * as indexerTypes from "@peerbit/indexer-interface";
@@ -79,6 +83,11 @@ import {
 } from "./transform.js";
 
 const WARNING_WHEN_ITERATING_FOR_MORE_THAN = 1e5;
+const QUERY_PROFILE_TARGET_LIMIT = 16;
+type QueryProfile = {
+	trace: NonNullable<ReturnType<typeof createDiagnosticTrace>>;
+	missingGroups: number;
+};
 
 const logger = loggerFn("peerbit:program:document:search");
 const warn = logger.newScope("warn");
@@ -838,6 +847,8 @@ export type OpenOptions<
 	prefetch?: boolean | Partial<PrefetchOptions>;
 	includeIndexed?: boolean; // if true, indexed representations will always be included in the search results
 	immutable?: boolean; // conflict rule of the owning store: oldest version wins when true (mirrors Documents "immutable")
+	/** Advisory query timing; no effect on coverage, authorization or deadlines. */
+	profile?: DiagnosticSink;
 };
 
 type IndexableClass<I> = new (
@@ -1089,6 +1100,7 @@ export class DocumentIndex<
 	) => Promise<void>;
 
 	private _log: SharedLog<Operation, D, any>;
+	private _queryProfile?: DiagnosticSink;
 
 	private _resolverProgramCache?: Map<string | number | bigint, T>;
 	private _resolverCache?: Cache<T>;
@@ -1534,6 +1546,7 @@ export class DocumentIndex<
 	}
 	async open(properties: OpenOptions<T, I, D>) {
 		this._log = properties.log;
+		this._queryProfile = properties.profile;
 		// Allow reopening with partial options (tests override the index transform)
 		const previousEvents = this.documentEvents;
 		this.documentEvents =
@@ -2305,6 +2318,7 @@ export class DocumentIndex<
 	async close(from?: Program): Promise<boolean> {
 		const closed = await super.close(from);
 		if (closed) {
+			this._queryProfile = undefined;
 			if (this._joinListener) {
 				this._query.events.removeEventListener("join", this._joinListener);
 			}
@@ -2339,6 +2353,7 @@ export class DocumentIndex<
 	async drop(from?: Program): Promise<boolean> {
 		const dropped = await super.drop(from);
 		if (dropped) {
+			this._queryProfile = undefined;
 			this.documentEvents?.removeEventListener(
 				"change",
 				this.handleDocumentChange,
@@ -4210,7 +4225,7 @@ export class DocumentIndex<
 	 * @param options
 	 * @returns
 	 */
-	private async queryCommence<
+	private queryCommence<
 		R extends
 			| types.SearchRequest
 			| types.SearchRequestIndexed
@@ -4221,6 +4236,56 @@ export class DocumentIndex<
 		options?: QueryDetailedOptions<T, I, D, boolean | undefined>,
 		fetchFirstForRemote?: Set<string>,
 	): Promise<types.Results<RT>[]> {
+		const trace = createDiagnosticTrace(
+			this._queryProfile,
+			"document",
+			"query",
+		);
+		if (!trace) {
+			return this.queryCommenceWithProfile<R, RT>(
+				queryRequest,
+				options,
+				fetchFirstForRemote,
+			);
+		}
+		const profile: QueryProfile = { trace, missingGroups: 0 };
+		let outcome = "rejected";
+		trace.emit({
+			name: "documents.query.start",
+			details: { immutable: this.immutable },
+		});
+		return (async () => {
+			try {
+				const results = await this.queryCommenceWithProfile<R, RT>(
+					queryRequest,
+					options,
+					fetchFirstForRemote,
+					profile,
+				);
+				outcome = "fulfilled";
+				return results;
+			} finally {
+				trace.finish({
+					name: "documents.query.settle",
+					details: { outcome, missingGroups: profile.missingGroups },
+				});
+			}
+		})();
+	}
+
+	private async queryCommenceWithProfile<
+		R extends
+			| types.SearchRequest
+			| types.SearchRequestIndexed
+			| types.IterationRequest,
+		RT extends types.Result = types.ResultTypeFromRequest<R, T, I>,
+	>(
+		queryRequest: R,
+		options?: QueryDetailedOptions<T, I, D, boolean | undefined>,
+		fetchFirstForRemote?: Set<string>,
+		profile?: QueryProfile,
+	): Promise<types.Results<RT>[]> {
+		const trace = profile?.trace;
 		const local = typeof options?.local === "boolean" ? options?.local : true;
 		let remote:
 			| RemoteQueryOptions<
@@ -4259,11 +4324,22 @@ export class DocumentIndex<
 			[];
 
 		if (local) {
+			const startedAt = trace?.now();
+			trace?.emit({
+				name: "documents.query.local",
+				details: { edge: "start" },
+			});
 			const results = await this.processQuery(
 				queryRequest,
 				this.node.identity.publicKey,
 				true,
 			);
+			trace?.emit({
+				name: "documents.query.local",
+				durationMs: trace.now() - startedAt!,
+				entries: results.results.length,
+				details: { edge: "end" },
+			});
 			if (results.results.length > 0) {
 				options?.onResponse &&
 					(await options.onResponse(results, this.node.identity.publicKey));
@@ -4284,6 +4360,11 @@ export class DocumentIndex<
 				(!("args" in coverProps) || (coverProps as any).args == null);
 			const remoteWasExplicit = options?.remote != null;
 
+			const coverStartedAt = trace?.now();
+			trace?.emit({
+				name: "documents.query.cover",
+				details: { edge: "start" },
+			});
 			let replicatorGroups = options?.remote?.from
 				? options?.remote?.from
 				: await this._log.getCover(coverProps, {
@@ -4292,6 +4373,16 @@ export class DocumentIndex<
 						reachableOnly: !!remote.wait, // when we want to merge joining we can ignore pending to be online peers and instead consider them once they become online
 						signal: options?.signal,
 					});
+			trace?.emit({
+				name: "documents.query.cover",
+				durationMs: trace.now() - coverStartedAt!,
+				targets: replicatorGroups.length,
+				details: {
+					edge: "end",
+					explicit: !!options?.remote?.from,
+					reachableOnly: !!remote.wait,
+				},
+			});
 
 			// Cold start: cover can be temporarily self-only or empty while
 			// replication metadata converges. For explicit bounded remote searches,
@@ -4365,6 +4456,11 @@ export class DocumentIndex<
 						from?: PublicSignKey;
 					}[],
 				) => {
+					const startedAt = trace?.now();
+					trace?.emit({
+						name: "documents.query.introduce",
+						details: { edge: "start" },
+					});
 					const resultInitialized = await introduceEntries(
 						queryRequest,
 						results,
@@ -4373,6 +4469,12 @@ export class DocumentIndex<
 						this._sync,
 						options,
 					);
+					trace?.emit({
+						name: "documents.query.introduce",
+						durationMs: trace.now() - startedAt!,
+						count: resultInitialized.length,
+						details: { edge: "end" },
+					});
 					for (const r of resultInitialized) {
 						resolved.push(r.response);
 					}
@@ -4425,9 +4527,54 @@ export class DocumentIndex<
 					.map((x) => [x]);
 
 				options?.onRemoteTargets?.(selectedRemoteHashes);
+				if (trace) {
+					trace.emit({
+						name: "documents.query.targets",
+						targets: selectedRemoteHashes.length,
+						details: {
+							requestTargets: groupHashes.length,
+							sampledTargets: Math.min(
+								QUERY_PROFILE_TARGET_LIMIT,
+								selectedRemoteHashes.length,
+							),
+						},
+					});
+					for (
+						let i = 0;
+						i <
+						Math.min(QUERY_PROFILE_TARGET_LIMIT, selectedRemoteHashes.length);
+						i++
+					) {
+						const hash = selectedRemoteHashes[i];
+						// Presence is only local direct-peer evidence, not reachability,
+						// subscriber readiness, authority or receipt eligibility.
+						const peers = (
+							this.node.services.pubsub as { peers?: Map<string, unknown> }
+						).peers;
+						trace.emit({
+							name: "documents.query.target",
+							peer: hash,
+							details: {
+								index: i,
+								directPeerPresent:
+									peers instanceof Map ? peers.has(hash) : undefined,
+							},
+						});
+					}
+				}
 				extraPromises && (await Promise.all(extraPromises));
 				let tearDown: (() => void) | undefined = undefined;
 				const search = this;
+				const requestOptions = trace
+					? {
+							...remote,
+							profile: (event: Parameters<DiagnosticSink>[0]) =>
+								trace.emit({
+									...event,
+									details: { ...event.details, requestTraceId: event.traceId },
+								}),
+						}
+					: remote;
 
 				try {
 					groupHashes.length > 0 &&
@@ -4438,7 +4585,7 @@ export class DocumentIndex<
 							responseHandler,
 							search._prefetch?.accumulator
 								? {
-										...remote,
+										...requestOptions,
 										responseInterceptor(fn) {
 											const listener = (evt: {
 												detail: {
@@ -4490,10 +4637,18 @@ export class DocumentIndex<
 											};
 										},
 									}
-								: remote,
+								: requestOptions,
 						));
 				} catch (error) {
 					if (error instanceof MissingResponsesError) {
+						if (profile) {
+							profile.missingGroups = error.missingGroups.length;
+							trace!.emit({
+								name: "documents.query.missing",
+								count: error.missingGroups.length,
+								details: { tolerated: !remote.throwOnMissing },
+							});
+						}
 						warn("Did not reciveve responses from all shard");
 						if (options?.onMissingResponses) {
 							await options.onMissingResponses(error);

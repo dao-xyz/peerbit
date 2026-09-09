@@ -89,11 +89,12 @@
 		"@peerbit/program": "workspace:*",
 		"@peerbit/pubsub": "workspace:*",
 		"@peerbit/stream": "workspace:*",
+		"cli-table3": "^0.6.5",
 		"it-pushable": "^3.1.4",
 		"libp2p": "^3.3.8",
 		"libsodium-wrappers": "^0.7.15",
 		"peerbit": "workspace:*",
-		"tty-table": "^4.2.1"
+		"wrap-ansi": "^8.1.0"
 	},
 	"devDependencies": {
 		"@peerbit/time": "workspace:*",

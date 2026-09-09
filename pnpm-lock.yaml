@@ -755,6 +755,9 @@ importers:
       chalk:
         specifier: ^5.3.0
         version: 5.6.2
+      cli-table3:
+        specifier: ^0.6.5
+        version: 0.6.5
       level:
         specifier: ^10.0.0
         version: 10.0.0
@@ -779,12 +782,12 @@ importers:
       tmp:
         specifier: ^0.2.7
         version: 0.2.7
-      tty-table:
-        specifier: ^4.2.1
-        version: 4.2.3
       uint8arrays:
         specifier: ^5.1.0
         version: 5.1.1
+      wrap-ansi:
+        specifier: ^8.1.0
+        version: 8.1.0
       yargs:
         specifier: ^17.7.2
         version: 17.7.3
@@ -883,6 +886,9 @@ importers:
       '@peerbit/stream':
         specifier: workspace:*
         version: link:../../transport/stream
+      cli-table3:
+        specifier: ^0.6.5
+        version: 0.6.5
       it-pushable:
         specifier: ^3.1.4
         version: 3.2.4
@@ -895,9 +901,9 @@ importers:
       peerbit:
         specifier: workspace:*
         version: link:../peerbit
-      tty-table:
-        specifier: ^4.2.1
-        version: 4.2.3
+      wrap-ansi:
+        specifier: ^8.1.0
+        version: 8.1.0
     devDependencies:
       '@peerbit/time':
         specifier: workspace:*
@@ -1220,6 +1226,9 @@ importers:
       '@peerbit/crypto':
         specifier: workspace:*
         version: link:../../../../utils/crypto
+      '@peerbit/diagnostics':
+        specifier: workspace:*
+        version: link:../../../../utils/diagnostics
       '@peerbit/document-interface':
         specifier: workspace:*
         version: link:../interface
@@ -2017,6 +2026,9 @@ importers:
       '@peerbit/crypto':
         specifier: workspace:*
         version: link:../../utils/crypto
+      '@peerbit/diagnostics':
+        specifier: workspace:*
+        version: link:../../utils/diagnostics
       '@peerbit/logger':
         specifier: workspace:*
         version: link:../../utils/logger
