@@ -1,5 +1,6 @@
 /* eslint-disable no-console */
-import Table from "tty-table";
+import Table from "cli-table3";
+import wrapAnsi from "wrap-ansi";
 
 export const printMemoryUsage = (
 	memoryUsages: { value: number; progress: number }[],
@@ -23,7 +24,7 @@ export const printMemoryUsage = (
 
 	console.log("Memory Usage Graph");
 
-	// do a nicely tty-table formatted table with "Memory ascii", "Memory bytes (mb)", "# of inserts".
+	// Format the memory graph, megabytes and progress as a terminal table.
 
 	const colorString = (bytes: number, string: string) => {
 		// color encode byte values so that the highest get red color and lowest get green color
@@ -39,22 +40,40 @@ export const printMemoryUsage = (
 		return `\x1b[${color}m${string}\x1b[0m`;
 	};
 
-	let table = Table(
-		[
-			{ value: "Memory usage (*)", width: steps + 2, align: "left" },
-			{ value: "Memory bytes (mb)" },
-			{ value: progressColumnName },
-		],
-		lines.map((line, i) => {
-			return [
-				{ value: colorString(memoryUsages[i].value, line) },
-				{ value: Math.round(memoryUsages[i].value / 1e6) },
-				{ value: memoryUsages[i].progress /* insertBatchSize * (i + 1) */ },
-			];
-		}),
-	);
+	const requestedColumns =
+		process.stdout.columns || Number(process.env.COLUMNS) || 80;
+	const columns =
+		Number.isFinite(requestedColumns) && requestedColumns > 0
+			? Math.floor(requestedColumns)
+			: 80;
+	// Reserve borders and padding, with at least two display columns per cell.
+	const contentColumns = Math.max(6, columns - 10);
+	const numericColumns = Math.min(18, Math.floor(contentColumns / 3));
+	const progressColumns = Math.min(16, Math.floor(contentColumns / 3));
+	const contentWidths = [
+		Math.min(steps, contentColumns - numericColumns - progressColumns),
+		numericColumns,
+		progressColumns,
+	];
+	const wrap = (value: string | number, index: number) =>
+		wrapAnsi(String(value), contentWidths[index], { hard: true, trim: false });
+	const table = new Table({
+		head: ["Memory usage (*)", "Memory bytes (mb)", progressColumnName].map(wrap),
+		colWidths: contentWidths.map((width) => width + 2),
+		colAligns: ["left", "center", "center"],
+		style: { head: ["yellow"], border: [] },
+	});
+	for (const [i, line] of lines.entries()) {
+		table.push(
+			[
+				colorString(memoryUsages[i].value, line),
+				Math.round(memoryUsages[i].value / 1e6),
+				memoryUsages[i].progress,
+			].map(wrap),
+		);
+	}
 
-	console.log(table.render());
+	console.log(table.toString());
 	console.log("Max memory usage", Math.round(max / 1e6), "mb");
 	console.log("Min memory usage", Math.round(min / 1e6), "mb");
 };
