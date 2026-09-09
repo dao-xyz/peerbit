@@ -1,5 +1,18 @@
 # Changelog
 
+## 3.1.45
+
+### Patch Changes
+
+- [#1463](https://github.com/dao-xyz/peerbit/pull/1463) [`20d873a`](https://github.com/dao-xyz/peerbit/commit/20d873a0e439438fda4b39f2c2b8d20b9de08f49) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Replace the terminal table renderer with cli-table3 so server remote listings and memory reports no longer bring in tty-table's unused CSV parser dependency chain. Preserve table fields, multiline values and ANSI-colored content without changing networking or authorization behavior.
+
+  Wrap long values to the terminal width without truncating ANSI-colored content, using wrap-ansi. Exclude compiled server tests from published tarballs while retaining the source tests.
+
+- Updated dependencies [[`25d0f58`](https://github.com/dao-xyz/peerbit/commit/25d0f58588e47a55f62032c2b0faa8d2c2ed7fb4)]:
+  - @peerbit/pubsub@5.4.9
+  - peerbit@5.4.6
+  - @peerbit/program@6.0.64
+
 ## 3.1.44
 
 ### Patch Changes
