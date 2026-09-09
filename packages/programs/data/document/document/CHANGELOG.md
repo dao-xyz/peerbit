@@ -1,5 +1,11 @@
 # Changelog
 
+## 15.1.6
+
+### Patch Changes
+
+- [#1458](https://github.com/dao-xyz/peerbit/pull/1458) [`8466fad`](https://github.com/dao-xyz/peerbit/commit/8466fadb208e4d887ae400013feae9140f0c127a) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Check all returned immutable document contexts before admitting a put, so an empty, newer, or same-head reply cannot hide an older conflicting value from another response. Preserve existing timestamp ties, dependency-pointer rules, lookup coverage, and timeouts. This corrects admission of known conflicts; it does not revalidate previously admitted entries or change the wire or storage format.
+
 ## 15.1.5
 
 ### Patch Changes
