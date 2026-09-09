@@ -791,7 +791,7 @@ export class TopicControlPlane
 			);
 		}
 		for (const st of this.fanoutChannels.values()) {
-			if (st.idleCloseTimeout) clearTimeout(st.idleCloseTimeout);
+			this.clearFanoutIdleClose(st);
 			try {
 				st.channel.removeEventListener("data", st.onData as any);
 			} catch {
@@ -1775,6 +1775,7 @@ export class TopicControlPlane
 
 	private async reconcileShardOverlays() {
 		if (!this.started || this.topicControlPlaneStopping) return;
+		const lifecycleRevision = this.topicControlPlaneLifecycleRevision;
 
 		const byShard = new Map<string, string[]>();
 		for (const topic of this.subscriptions.keys()) {
@@ -1804,7 +1805,7 @@ export class TopicControlPlane
 				const st = this.fanoutChannels.get(shardTopic);
 				if (!st) return;
 				await st.channel.publish(toUint8Array(embedded.bytes()));
-				this.touchFanoutChannel(shardTopic);
+				this.touchFanoutChannel(shardTopic, st.channel, lifecycleRevision);
 			}),
 		);
 	}
@@ -1893,22 +1894,42 @@ export class TopicControlPlane
 
 	private scheduleFanoutIdleClose(topic: string) {
 		const st = this.fanoutChannels.get(topic);
-		if (!st || !st.ephemeral) return;
+		const lifecycleRevision = this.topicControlPlaneLifecycleRevision;
+		if (
+			!st ||
+			!st.ephemeral ||
+			!this.isTopicControlPlaneActive(lifecycleRevision)
+		)
+			return;
 		this.clearFanoutIdleClose(st);
 		if (this.fanoutPublishIdleCloseMs <= 0) return;
-		st.idleCloseTimeout = setTimeout(() => {
-			const cur = this.fanoutChannels.get(topic);
-			if (!cur || !cur.ephemeral) return;
-			const idleMs = Date.now() - cur.lastUsedAt;
+		const timer = setTimeout(() => {
+			// Cancellation can race a queued callback. It must still own this exact
+			// timer, channel state and lifecycle before acting on the topic again.
+			if (
+				!this.isTopicControlPlaneActive(lifecycleRevision) ||
+				this.fanoutChannels.get(topic) !== st ||
+				st.idleCloseTimeout !== timer ||
+				!st.ephemeral
+			)
+				return;
+			st.idleCloseTimeout = undefined;
+			const idleMs = Date.now() - st.lastUsedAt;
 			if (idleMs >= this.fanoutPublishIdleCloseMs) {
 				void this.closeFanoutChannel(topic);
 				return;
 			}
 			this.scheduleFanoutIdleClose(topic);
 		}, this.fanoutPublishIdleCloseMs);
+		st.idleCloseTimeout = timer;
 	}
 
-	private touchFanoutChannel(topic: string) {
+	private touchFanoutChannel(
+		topic: string,
+		channel: FanoutChannel,
+		lifecycleRevision: number,
+	) {
+		if (!this.isFanoutChannelCurrent(topic, channel, lifecycleRevision)) return;
 		const st = this.fanoutChannels.get(topic);
 		if (!st) return;
 		st.lastUsedAt = Date.now();
@@ -3053,7 +3074,7 @@ export class TopicControlPlane
 		join
 			.then(() => {
 				const st = this.fanoutChannels.get(t);
-				if (st === channelState && st.ephemeral) {
+				if (st === channelState && st.ephemeral && isCurrent()) {
 					this.scheduleFanoutIdleClose(t);
 				}
 			})
@@ -3261,7 +3282,7 @@ export class TopicControlPlane
 				if (
 					this.isFanoutChannelCurrent(shardTopic, st.channel, lifecycleRevision)
 				)
-					this.touchFanoutChannel(shardTopic);
+					this.touchFanoutChannel(shardTopic, st.channel, lifecycleRevision);
 			}),
 		);
 	}
@@ -3365,7 +3386,11 @@ export class TopicControlPlane
 								lifecycleRevision,
 							)
 						)
-							this.touchFanoutChannel(shardTopic);
+							this.touchFanoutChannel(
+								shardTopic,
+								st.channel,
+								lifecycleRevision,
+							);
 					}
 				} catch {
 					// best-effort
@@ -3396,6 +3421,7 @@ export class TopicControlPlane
 		batches: { session: bigint; timestamp: bigint; topics: string[] }[],
 	) {
 		if (!this.started) throw new NotStartedError();
+		const lifecycleRevision = this.topicControlPlaneLifecycleRevision;
 
 		const byShard = new Map<
 			string,
@@ -3446,7 +3472,7 @@ export class TopicControlPlane
 					const st = this.fanoutChannels.get(shardTopic);
 					if (st) {
 						void st.channel.publishMaybe(toUint8Array(embedded.bytes()));
-						this.touchFanoutChannel(shardTopic);
+						this.touchFanoutChannel(shardTopic, st.channel, lifecycleRevision);
 					}
 				} catch {
 					// best-effort
@@ -3460,6 +3486,7 @@ export class TopicControlPlane
 		shardTopic: string,
 	) {
 		if (!this.started) throw new NotStartedError();
+		const lifecycleRevision = this.topicControlPlaneLifecycleRevision;
 		try {
 			const msg = new PeerUnavailable({
 				publicKeyHash,
@@ -3476,7 +3503,7 @@ export class TopicControlPlane
 			const st = this.fanoutChannels.get(shardTopic);
 			if (st) {
 				void st.channel.publishMaybe(toUint8Array(embedded.bytes()));
-				this.touchFanoutChannel(shardTopic);
+				this.touchFanoutChannel(shardTopic, st.channel, lifecycleRevision);
 			}
 		} catch {
 			// best-effort
@@ -3543,6 +3570,7 @@ export class TopicControlPlane
 		to?: PublicSignKey,
 	): Promise<void> {
 		if (!this.started) throw new NotStartedError();
+		const lifecycleRevision = this.topicControlPlaneLifecycleRevision;
 		if (topic == null) throw new Error("ERR_NOT_VALID_TOPIC");
 		if (topic.length === 0) return;
 
@@ -3594,7 +3622,7 @@ export class TopicControlPlane
 				} else {
 					await st.channel.publish(payload);
 				}
-				this.touchFanoutChannel(shardTopic);
+				this.touchFanoutChannel(shardTopic, st.channel, lifecycleRevision);
 			}),
 		);
 	}
@@ -3612,6 +3640,7 @@ export class TopicControlPlane
 			WithExtraSigners & { signal?: AbortSignal },
 	): Promise<Uint8Array | undefined> {
 		if (!this.started) throw new NotStartedError();
+		const lifecycleRevision = this.topicControlPlaneLifecycleRevision;
 
 		const topicsAll =
 			(options as { topics: string[] }).topics?.map((x) => x.toString()) || [];
@@ -3719,7 +3748,7 @@ export class TopicControlPlane
 					throw new Error(`Fanout channel missing for shard: ${shardTopic}`);
 				}
 				await withAbort(st.channel.publish(payload), options?.signal);
-				this.touchFanoutChannel(shardTopic);
+				this.touchFanoutChannel(shardTopic, st.channel, lifecycleRevision);
 			}),
 		);
 

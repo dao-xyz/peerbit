@@ -347,6 +347,7 @@ jobs:
           --timeout 60000 --retries 0 --no-exit
           packages/transport/stream/dist/test/stream-replacement.spec.js
           packages/transport/pubsub/dist/test/subscribe-races.spec.js
+          packages/transport/pubsub/dist/test/fanout-idle-close.spec.js
       - name: Test synchronizer teardown without retries or forced exit
         timeout-minutes: 3
         env:
