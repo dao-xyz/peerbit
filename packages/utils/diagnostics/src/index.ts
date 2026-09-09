@@ -48,3 +48,5 @@ export const emitDiagnosticDuration = (
 		durationMs: diagnosticNow() - startedAt,
 	});
 };
+
+export { createDiagnosticTrace } from "./trace.js";

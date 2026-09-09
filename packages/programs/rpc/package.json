@@ -61,6 +61,7 @@
 	"dependencies": {
 		"@dao-xyz/borsh": "^6.0.0",
 		"@peerbit/crypto": "workspace:*",
+		"@peerbit/diagnostics": "workspace:*",
 		"@peerbit/logger": "workspace:*",
 		"@peerbit/program": "workspace:*",
 		"@peerbit/time": "workspace:*",

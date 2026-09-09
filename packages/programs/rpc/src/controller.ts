@@ -15,18 +15,19 @@ import {
 	randomBytes,
 	toBase64,
 } from "@peerbit/crypto";
+import { createDiagnosticTrace } from "@peerbit/diagnostics";
 import { Program, type ProgramEvents } from "@peerbit/program";
 import {
 	DataEvent,
 	type PublishOptions as PubSubPublishOptions,
 } from "@peerbit/pubsub-interface";
 import {
-	createRequestTransportContext,
 	DataMessage,
 	type PriorityOptions,
 	type RequestTransportContext,
 	SilentDelivery,
 	type WithExtraSigners,
+	createRequestTransportContext,
 } from "@peerbit/stream-interface";
 import { AbortError, TimeoutError } from "@peerbit/time";
 import pDefer, { type DeferredPromise } from "p-defer";
@@ -370,10 +371,7 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>, RPCEvents<Q, R>> {
 					// cannot be re-serialized. Swallowing it silently makes the
 					// requester time out with no trace, so surface it.
 					logger.error(
-						"RPC serialization failed at stage " +
-							stage +
-							": " +
-							error.message,
+						"RPC serialization failed at stage " + stage + ": " + error.message,
 					);
 					this.events.dispatchEvent(
 						new CustomEvent<CodecErrorEvent>("codecError", {
@@ -457,10 +455,7 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>, RPCEvents<Q, R>> {
 	 * @param message
 	 * @param options
 	 */
-	public async send(
-		message: Q,
-		options?: RPCSendOptions,
-	): Promise<void> {
+	public async send(message: Q, options?: RPCSendOptions): Promise<void> {
 		await this.node.services.pubsub.publish(
 			serialize(await this.seal(message, undefined, options)),
 			this.getPublishOptions(undefined, options, options?.signal),
@@ -478,6 +473,7 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>, RPCEvents<Q, R>> {
 		responders: Set<string>,
 		expectedResponders?: Set<string>,
 		options?: RPCRequestOptions<R>,
+		profile?: ReturnType<typeof createDiagnosticTrace>,
 	) {
 		const expectedResponseHash =
 			expectedResponders && response.from
@@ -504,6 +500,16 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>, RPCEvents<Q, R>> {
 				allResults.push(response);
 
 				responders.add(response.from.hashcode());
+				profile?.emit({
+					name: "rpc.request.response",
+					peer: allResults.length <= 16 ? expectedResponseHash : undefined,
+					details: {
+						peerSampleOmitted: allResults.length > 16,
+						expectedResponders: expectedResponders.size,
+						receivedResponses: allResults.length,
+						unresolvedResponders: expectedResponders.size - responders.size,
+					},
+				});
 				if (responders.size === expectedResponders.size) {
 					promise.resolve();
 				}
@@ -512,6 +518,10 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>, RPCEvents<Q, R>> {
 			options?.onResponse &&
 				options?.onResponse(response.response, response.from);
 			allResults.push(response);
+			profile?.emit({
+				name: "rpc.request.response",
+				details: { receivedResponses: allResults.length },
+			});
 			if (
 				options?.amount != null &&
 				allResults.length >= (options?.amount as number)
@@ -527,6 +537,7 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>, RPCEvents<Q, R>> {
 		responders: Set<string>,
 		expectedResponders?: Set<string>,
 		options?: RPCRequestOptions<R>,
+		profile?: ReturnType<typeof createDiagnosticTrace>,
 	) {
 		return async (properties: {
 			response: ResponseV0;
@@ -557,6 +568,7 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>, RPCEvents<Q, R>> {
 					responders,
 					expectedResponders,
 					options,
+					profile,
 				);
 			} catch (error: any) {
 				if (error instanceof AccessError) {
@@ -577,9 +589,7 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>, RPCEvents<Q, R>> {
 					// request's keypair) but its payload failed to decode —
 					// that is a codec bug, not a namespace conflict. Keep the
 					// request alive for other responders, but surface it.
-					logger.error(
-						"Failed to decode RPC response: " + error.message,
-					);
+					logger.error("Failed to decode RPC response: " + error.message);
 					this.events.dispatchEvent(
 						new CustomEvent<CodecErrorEvent>("codecError", {
 							detail: {
@@ -608,153 +618,238 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>, RPCEvents<Q, R>> {
 		request: Q,
 		options?: RPCRequestOptions<R>,
 	): Promise<RPCResponse<R>[]> {
-		const requestSignal = options?.signal;
-		const getAbortReason = (signal?: AbortSignal): unknown =>
-			signal?.reason === undefined ? new AbortError() : signal.reason;
-		if (requestSignal?.aborted) {
-			throw getAbortReason(requestSignal);
-		}
-
-		let rejectSetupForAbort!: (reason?: unknown) => void;
-		const setupAbortPromise = new Promise<never>((_resolve, reject) => {
-			rejectSetupForAbort = reject;
-		});
-		const setupAbortListener = () => {
-			rejectSetupForAbort(getAbortReason(requestSignal));
-		};
-		requestSignal?.addEventListener("abort", setupAbortListener, { once: true });
-		const setupPromise = (async () => {
-			// We are generatinga new encryption keypair for each send, so we now that when we get the responses, they are encrypted specifcally for me, and for this request
-			// this allows us to easily disregard a bunch of message just beacuse they are for a different receiver!
-			const keypair = await X25519Keypair.create();
-			if (requestSignal?.aborted) {
-				throw getAbortReason(requestSignal);
+		const profile = createDiagnosticTrace(options?.profile, "rpc", "rpc");
+		let resultsForProfile: RPCResponse<R>[] | undefined;
+		let respondersForProfile: Set<string> | undefined;
+		let expectedCount: number | undefined;
+		let effectiveTimeoutMs: number | undefined;
+		let deadlineFired = false;
+		let abortCause: unknown;
+		let abortKind: string | undefined;
+		const recordAbort = (cause: unknown, kind: string): unknown => {
+			// The request promise keeps its first rejection even if another
+			// lifecycle callback runs before the awaiting continuation resumes.
+			if (abortKind === undefined) {
+				abortCause = cause;
+				abortKind = kind;
 			}
-			const requestMessage = await this.seal(
-				request,
-				keypair.publicKey,
-				options,
-			);
-			return { keypair, requestBytes: serialize(requestMessage) };
-		})();
-		let setup: Awaited<typeof setupPromise>;
+			return cause;
+		};
+		let outcome = "failed";
+		let reason = "error";
 		try {
-			setup = await Promise.race([setupPromise, setupAbortPromise]);
-		} finally {
-			requestSignal?.removeEventListener("abort", setupAbortListener);
-		}
-		const { keypair, requestBytes } = setup;
-		if (requestSignal?.aborted) {
-			throw getAbortReason(requestSignal);
-		}
-
-		const allResults: RPCResponse<R>[] = [];
-
-		const deferredPromise = pDefer<void>();
-		const publishAbortController = new AbortController();
-		const abortPublish = (reason: unknown) => {
-			if (!publishAbortController.signal.aborted) {
-				publishAbortController.abort(reason);
-			}
-		};
-
-		if (this.closed) {
-			throw new AbortError("Closed");
-		}
-		const timeoutFn = setTimeout(
-			() => {
-				abortPublish(new AbortError("RPC request timeout"));
-				deferredPromise.resolve();
-			},
-			options?.timeout || 10 * 1000,
-		);
-
-		const rejectForAbort = (signal?: AbortSignal) => {
-			const reason = getAbortReason(signal);
-			abortPublish(reason);
-			deferredPromise.reject(reason);
-		};
-		const abortListener = (event: Event) => {
-			rejectForAbort(event.target as AbortSignal | undefined);
-		};
-		requestSignal?.addEventListener("abort", abortListener);
-		// Cover the narrow handoff between the setup listener and the active request
-		// listener before registering any resolver or transport side effects.
-		if (requestSignal?.aborted) {
-			const reason = getAbortReason(requestSignal);
-			abortPublish(reason);
-			clearTimeout(timeoutFn);
-			requestSignal.removeEventListener("abort", abortListener);
-			throw reason;
-		}
-
-		const closeListener = () => {
-			const reason = new AbortError("Closed");
-			abortPublish(reason);
-			deferredPromise.reject(reason);
-		};
-		const dropListener = () => {
-			const reason = new AbortError("Dropped");
-			abortPublish(reason);
-			deferredPromise.reject(reason);
-		};
-
-		this.events.addEventListener("close", closeListener);
-		this.events.addEventListener("drop", dropListener);
-
-		const expectedResponders = getExpectedResponders(options?.mode);
-
-		const responders = new Set<string>();
-
-		const messageId = randomBytes(32);
-		const id = toBase64(messageId);
-
-		const responseHandler = this.createResponseHandler(
-			deferredPromise,
-			keypair,
-			allResults,
-			responders,
-			expectedResponders,
-			options,
-		);
-		this._responseResolver.set(id, responseHandler);
-		void deferredPromise.promise
-			.finally(() => {
-				abortPublish(new AbortError("Resolved early"));
-			})
-			.catch(() => {});
-
-		try {
+			const requestSignal = options?.signal;
+			const getAbortReason = (signal?: AbortSignal): unknown =>
+				signal?.reason === undefined ? new AbortError() : signal.reason;
 			if (requestSignal?.aborted) {
-				throw getAbortReason(requestSignal);
+				throw recordAbort(getAbortReason(requestSignal), "signal");
 			}
-			if (options?.responseInterceptor) {
-				options.responseInterceptor((response: RPCResponse<R>) => {
-					return this.handleDecodedResponse(
-						response,
-						deferredPromise,
-						allResults,
-						responders,
-						expectedResponders,
+
+			let rejectSetupForAbort!: (reason?: unknown) => void;
+			const setupAbortPromise = new Promise<never>((_resolve, reject) => {
+				rejectSetupForAbort = reject;
+			});
+			const setupAbortListener = () => {
+				rejectSetupForAbort(
+					recordAbort(getAbortReason(requestSignal), "signal"),
+				);
+			};
+			requestSignal?.addEventListener("abort", setupAbortListener, {
+				once: true,
+			});
+			const setupStartedAt = profile?.now();
+			profile?.emit({ name: "rpc.request.setup", details: { edge: "start" } });
+			const setupPromise = (async () => {
+				try {
+					// We are generatinga new encryption keypair for each send, so we now that when we get the responses, they are encrypted specifcally for me, and for this request
+					// this allows us to easily disregard a bunch of message just beacuse they are for a different receiver!
+					const keypair = await X25519Keypair.create();
+					if (requestSignal?.aborted) {
+						throw recordAbort(getAbortReason(requestSignal), "signal");
+					}
+					const requestMessage = await this.seal(
+						request,
+						keypair.publicKey,
 						options,
 					);
-				});
+					const result = { keypair, requestBytes: serialize(requestMessage) };
+					profile?.emit({
+						name: "rpc.request.setup",
+						durationMs: profile.now() - setupStartedAt!,
+						details: { edge: "end", outcome: "fulfilled" },
+					});
+					return result;
+				} catch (error) {
+					profile?.emit({
+						name: "rpc.request.setup",
+						durationMs: profile.now() - setupStartedAt!,
+						details: { edge: "end", outcome: "rejected" },
+					});
+					throw error;
+				}
+			})();
+			let setup: Awaited<typeof setupPromise>;
+			try {
+				setup = await Promise.race([setupPromise, setupAbortPromise]);
+			} finally {
+				requestSignal?.removeEventListener("abort", setupAbortListener);
 			}
+			const { keypair, requestBytes } = setup;
 			if (requestSignal?.aborted) {
-				throw getAbortReason(requestSignal);
+				throw recordAbort(getAbortReason(requestSignal), "signal");
 			}
-			const publishPromise = Promise.resolve()
-				.then(() =>
-					this.node.services.pubsub.publish(
+
+			const allResults: RPCResponse<R>[] = [];
+			if (profile) resultsForProfile = allResults;
+
+			const deferredPromise = pDefer<void>();
+			const publishAbortController = new AbortController();
+			const abortPublish = (reason: unknown) => {
+				if (!publishAbortController.signal.aborted) {
+					publishAbortController.abort(reason);
+				}
+			};
+
+			if (this.closed) {
+				throw recordAbort(new AbortError("Closed"), "closed");
+			}
+			const timeoutMs = options?.timeout || 10 * 1000;
+			if (profile) effectiveTimeoutMs = timeoutMs;
+			const timeoutFn = setTimeout(() => {
+				deadlineFired = true;
+				profile?.emit({
+					name: "rpc.request.deadline",
+					details: {
+						timeoutMs,
+						expectedResponders: expectedCount,
+						receivedResponses: allResults.length,
+						unresolvedResponders:
+							expectedCount === undefined
+								? undefined
+								: expectedCount - (respondersForProfile?.size ?? 0),
+					},
+				});
+				abortPublish(new AbortError("RPC request timeout"));
+				deferredPromise.resolve();
+			}, timeoutMs);
+
+			const rejectForAbort = (signal?: AbortSignal) => {
+				const reason = getAbortReason(signal);
+				recordAbort(reason, "signal");
+				abortPublish(reason);
+				deferredPromise.reject(reason);
+			};
+			const abortListener = (event: Event) => {
+				rejectForAbort(event.target as AbortSignal | undefined);
+			};
+			requestSignal?.addEventListener("abort", abortListener);
+			// Cover the narrow handoff between the setup listener and the active request
+			// listener before registering any resolver or transport side effects.
+			if (requestSignal?.aborted) {
+				const reason = getAbortReason(requestSignal);
+				recordAbort(reason, "signal");
+				abortPublish(reason);
+				clearTimeout(timeoutFn);
+				requestSignal.removeEventListener("abort", abortListener);
+				throw reason;
+			}
+
+			const closeListener = () => {
+				const reason = new AbortError("Closed");
+				recordAbort(reason, "closed");
+				abortPublish(reason);
+				deferredPromise.reject(reason);
+			};
+			const dropListener = () => {
+				const reason = new AbortError("Dropped");
+				recordAbort(reason, "dropped");
+				abortPublish(reason);
+				deferredPromise.reject(reason);
+			};
+
+			this.events.addEventListener("close", closeListener);
+			this.events.addEventListener("drop", dropListener);
+
+			const expectedResponders = getExpectedResponders(options?.mode);
+
+			const responders = new Set<string>();
+			if (profile) {
+				expectedCount = expectedResponders?.size;
+				respondersForProfile = responders;
+			}
+
+			const messageId = randomBytes(32);
+			const id = toBase64(messageId);
+
+			const responseHandler = this.createResponseHandler(
+				deferredPromise,
+				keypair,
+				allResults,
+				responders,
+				expectedResponders,
+				options,
+				profile,
+			);
+			this._responseResolver.set(id, responseHandler);
+			void deferredPromise.promise
+				.finally(() => {
+					abortPublish(new AbortError("Resolved early"));
+				})
+				.catch(() => {});
+
+			try {
+				if (requestSignal?.aborted) {
+					throw recordAbort(getAbortReason(requestSignal), "signal");
+				}
+				if (options?.responseInterceptor) {
+					options.responseInterceptor((response: RPCResponse<R>) => {
+						return this.handleDecodedResponse(
+							response,
+							deferredPromise,
+							allResults,
+							responders,
+							expectedResponders,
+							options,
+							profile,
+						);
+					});
+				}
+				if (requestSignal?.aborted) {
+					throw recordAbort(getAbortReason(requestSignal), "signal");
+				}
+				let publishStartedAt: number | undefined;
+				const rawPublishPromise = Promise.resolve().then(() => {
+					publishStartedAt = profile?.now();
+					profile?.emit({
+						name: "rpc.request.publish",
+						details: { edge: "start" },
+					});
+					return this.node.services.pubsub.publish(
 						requestBytes,
 						this.getPublishOptions(
 							messageId,
 							options,
 							publishAbortController.signal,
 						),
-					),
-				)
-				.catch((error: any) => {
+					);
+				});
+				if (profile) {
+					void rawPublishPromise.then(
+						() =>
+							profile.emit({
+								name: "rpc.request.publish",
+								durationMs: profile.now() - publishStartedAt!,
+								details: { edge: "end", outcome: "fulfilled" },
+							}),
+						() =>
+							profile.emit({
+								name: "rpc.request.publish",
+								durationMs: profile.now() - publishStartedAt!,
+								details: { edge: "end", outcome: "rejected" },
+							}),
+					);
+				}
+				const publishPromise = rawPublishPromise.catch((error: any) => {
 					if (
 						publishAbortController.signal.aborted &&
 						(error instanceof AbortError ||
@@ -768,18 +863,47 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>, RPCEvents<Q, R>> {
 					}
 					throw error;
 				});
-			await Promise.race([publishPromise, deferredPromise.promise]);
-			await deferredPromise.promise;
-		} finally {
-			abortPublish(new AbortError("RPC request finished"));
-			clearTimeout(timeoutFn);
-			this.events.removeEventListener("close", closeListener);
-			this.events.removeEventListener("drop", dropListener);
-			requestSignal?.removeEventListener("abort", abortListener);
-			this._responseResolver.delete(id);
-		}
+				await Promise.race([publishPromise, deferredPromise.promise]);
+				await deferredPromise.promise;
+			} finally {
+				abortPublish(new AbortError("RPC request finished"));
+				clearTimeout(timeoutFn);
+				this.events.removeEventListener("close", closeListener);
+				this.events.removeEventListener("drop", dropListener);
+				requestSignal?.removeEventListener("abort", abortListener);
+				this._responseResolver.delete(id);
+			}
 
-		return allResults;
+			outcome =
+				deadlineFired &&
+				expectedResponders &&
+				responders.size < expectedResponders.size
+					? "partial"
+					: "fulfilled";
+			reason = deadlineFired ? "deadline" : "responses";
+			return allResults;
+		} catch (error) {
+			if (abortKind && error === abortCause) {
+				outcome = "aborted";
+				reason = abortKind;
+			}
+			throw error;
+		} finally {
+			profile?.finish({
+				name: "rpc.request.settle",
+				details: {
+					outcome,
+					reason,
+					timeoutMs: effectiveTimeoutMs,
+					expectedResponders: expectedCount,
+					receivedResponses: resultsForProfile?.length ?? 0,
+					unresolvedResponders:
+						expectedCount === undefined
+							? undefined
+							: expectedCount - (respondersForProfile?.size ?? 0),
+				},
+			});
+		}
 	}
 
 	public get topic(): string {
