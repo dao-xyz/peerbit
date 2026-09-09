@@ -1,5 +1,11 @@
 # Changelog
 
+## 5.4.9
+
+### Patch Changes
+
+- [#1463](https://github.com/dao-xyz/peerbit/pull/1463) [`25d0f58`](https://github.com/dao-xyz/peerbit/commit/25d0f58588e47a55f62032c2b0faa8d2c2ed7fb4) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Keep ephemeral fanout idle timers owned by their exact channel and lifecycle. Prevent pending publish completions from rearming timers during shutdown or touching replacement channels after restart, and ignore stale timer callbacks without changing idle deadlines or delivery behavior.
+
 ## 5.4.8
 
 ### Patch Changes
