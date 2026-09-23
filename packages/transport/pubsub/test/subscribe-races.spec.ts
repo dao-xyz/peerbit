@@ -968,15 +968,19 @@ describe("pubsub (subscribe race regressions)", function () {
 		for (const stopped of [false, true]) {
 			for (const notStarted of [false, true]) {
 				it(`${stopped && notStarted ? "owns" : "logs"} ${notStarted ? "not-started" : "unexpected"} verification errors while ${stopped ? "stale" : "active"}`, async () => {
-					const { receiver, receive } = await prepare();
+					const { receiver, payload, receive } = await prepare();
 					const entered = deferred();
 					const gate = deferred();
 					const failure = notStarted
 						? new NotStartedError()
 						: new Error("fanout-verifier-failed");
+					const originalVerify = DataMessage.prototype.verify;
 					const verify = sinon
 						.stub(DataMessage.prototype, "verify")
-						.callsFake(async () => {
+						.callsFake(async function (this: DataMessage, ...args) {
+							if (!bytesEqual(dataMessageBytes(this), payload)) {
+								return originalVerify.apply(this, args);
+							}
 							entered.resolve();
 							await gate.promise;
 							throw failure;
@@ -987,15 +991,20 @@ describe("pubsub (subscribe race regressions)", function () {
 						await entered.promise;
 						if (stopped) await receiver.stop();
 						gate.resolve();
-						await Promise.allSettled(verify.returnValues);
-						await delay(0);
-						if (stopped && notStarted) {
-							expect(errors.called).to.equal(false);
-						} else {
-							expect(errors.calledOnceWithExactly(failure.message)).to.equal(
-								true,
+						const targetVerifications = verify
+							.getCalls()
+							.filter((call) =>
+								bytesEqual(dataMessageBytes(call.thisValue), payload),
 							);
-						}
+						expect(targetVerifications).to.have.length(1);
+						await Promise.allSettled(
+							targetVerifications.map((call) => call.returnValue),
+						);
+						await delay(0);
+						const targetErrors = errors
+							.getCalls()
+							.filter((call) => call.calledWithExactly(failure.message));
+						expect(targetErrors).to.have.length(stopped && notStarted ? 0 : 1);
 					} finally {
 						gate.resolve();
 					}
