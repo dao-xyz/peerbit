@@ -21,6 +21,7 @@ on:
           - scale-persistent-roots
           - scale-persistent-coordinate
           - scale-lifecycle-trim
+          - scale-cut-lifecycle
       compact_max_journal_bytes:
         description: Optional total byte threshold for lifecycle coordinate-WAL compaction
         required: false
@@ -93,11 +94,11 @@ jobs:
         run: pnpm install --frozen-lockfile=false
 
       - name: Build shared-log workspace
-        if: matrix.profile != 'scale-lifecycle-trim'
+        if: matrix.profile != 'scale-lifecycle-trim' && matrix.profile != 'scale-cut-lifecycle'
         run: pnpm --filter @peerbit/shared-log... run build
 
       - name: Build lifecycle-census workspace
-        if: matrix.profile == 'scale-lifecycle-trim'
+        if: matrix.profile == 'scale-lifecycle-trim' || matrix.profile == 'scale-cut-lifecycle'
         run: pnpm --filter peerbit... --filter @peerbit/document... run build
 
       - name: Run profile
@@ -137,6 +138,18 @@ jobs:
                 --history-count 100000 \
                 --retain 1000 \
                 --batch-size 256 \
+                --runs 1 \
+                --output "$destination" \
+                --json > /dev/null
+              ;;
+            scale-cut-lifecycle)
+              node "$GITHUB_WORKSPACE/scripts/bench/shared-log-cut-lifecycle-census.mjs" \
+                --history-operations 100000 \
+                --key-count 1000 \
+                --batch-size 250 \
+                --delete-concurrency 16 \
+                --compact-max-journal-bytes 16777216 \
+                --compact-max-journal-records 65536 \
                 --runs 1 \
                 --output "$destination" \
                 --json > /dev/null
@@ -181,12 +194,13 @@ jobs:
             const expectedNames = {
               "sync-phase": "shared-log-sync-phase-profile",
               "receive-prune": "shared-log-receive-prune",
+              "scale-lifecycle-trim": "shared-log-lifecycle-census",
+              "scale-cut-lifecycle": "shared-log-cut-lifecycle-census",
             };
-            const expectedName = process.env.PROFILE === "scale-lifecycle-trim"
-              ? "shared-log-lifecycle-census"
-              : process.env.PROFILE.startsWith("scale-")
+            const expectedName = expectedNames[process.env.PROFILE] ??
+              (process.env.PROFILE.startsWith("scale-")
                 ? "shared-log-scale-census"
-                : expectedNames[process.env.PROFILE];
+                : undefined);
             if (!expectedName) {
               throw new Error(`Unknown profile '${process.env.PROFILE}'`);
             }

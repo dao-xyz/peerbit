@@ -19,7 +19,7 @@ test("reopens matched empty CUT histories in separate processes", async () => {
 			process.execPath,
 			[
 				SCRIPT,
-				..."--history-operations 12 --key-count 2 --batch-size 2 --runs 2 --compact-max-journal-records 1".split(
+				..."--history-operations 12 --key-count 2 --batch-size 2 --delete-concurrency 2 --runs 2 --compact-max-journal-records 1".split(
 					" ",
 				),
 				"--output",
@@ -35,6 +35,7 @@ test("reopens matched empty CUT histories in separate processes", async () => {
 			[report.name, report.progress.complete, report.rows.length],
 			[CUT_LIFECYCLE_CENSUS_NAME, true, 2],
 		);
+		assert.equal(report.meta.deleteConcurrency, 2);
 		const [row, reverse] = report.rows;
 		assert.deepEqual(row.executionOrder, ["fresh", "history"]);
 		assert.deepEqual(reverse.executionOrder, ["history", "fresh"]);
