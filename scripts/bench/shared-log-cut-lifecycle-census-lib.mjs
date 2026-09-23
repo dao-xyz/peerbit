@@ -17,7 +17,12 @@ export const deleteHeadMatches = (remaining, hashes) => {
 	return unexpected;
 };
 
-const validateWorkload = ({ historyOperations, keyCount, batchSize }) => {
+const validateWorkload = ({
+	historyOperations,
+	keyCount,
+	batchSize,
+	deleteConcurrency,
+}) => {
 	const freshOperations = keyCount * 2;
 	if (historyOperations <= freshOperations) {
 		throw new Error(
@@ -32,6 +37,9 @@ const validateWorkload = ({ historyOperations, keyCount, batchSize }) => {
 	if (batchSize > keyCount) {
 		throw new Error("batch-size must not exceed key-count");
 	}
+	if (deleteConcurrency > batchSize) {
+		throw new Error("delete-concurrency must not exceed batch-size");
+	}
 };
 
 export const parseCutLifecycleCensusArgs = (args, env = {}) => {
@@ -45,6 +53,7 @@ export const parseCutLifecycleCensusArgs = (args, env = {}) => {
 			"history-operations": { type: "string" },
 			"key-count": { type: "string" },
 			"batch-size": { type: "string" },
+			"delete-concurrency": { type: "string" },
 		},
 	});
 
@@ -64,14 +73,25 @@ export const parseCutLifecycleCensusArgs = (args, env = {}) => {
 		values["batch-size"] ?? env.SHARED_LOG_CUT_LIFECYCLE_BATCH_SIZE ?? "10",
 		"batch-size",
 	);
-	validateWorkload({ historyOperations, keyCount, batchSize });
+	const deleteConcurrency = parsePositiveInteger(
+		values["delete-concurrency"] ??
+			env.SHARED_LOG_CUT_LIFECYCLE_DELETE_CONCURRENCY ??
+			"1",
+		"delete-concurrency",
+	);
+	validateWorkload({
+		historyOperations,
+		keyCount,
+		batchSize,
+		deleteConcurrency,
+	});
 	return parseLifecycleExecutionOptions({
 		values,
 		env,
 		envPrefix: "SHARED_LOG_CUT_LIFECYCLE",
 		scenarios: CUT_LIFECYCLE_CENSUS_SCENARIOS,
 		scenarioLabel: "CUT lifecycle-census",
-		workload: { historyOperations, keyCount, batchSize },
+		workload: { historyOperations, keyCount, batchSize, deleteConcurrency },
 	});
 };
 
@@ -176,6 +196,7 @@ export const buildCutLifecycleCensusReport = ({
 	historyOperations,
 	keyCount,
 	batchSize,
+	deleteConcurrency,
 	compactMaxJournalBytes,
 	compactMaxJournalRecords,
 	runs,
@@ -191,6 +212,7 @@ export const buildCutLifecycleCensusReport = ({
 		freshOperations: keyCount * 2,
 		keyCount,
 		batchSize,
+		deleteConcurrency,
 		runs,
 		physicalCheckpointPolicy: {
 			coupledWalMaxJournalBytes: compactMaxJournalBytes ?? null,

@@ -170,9 +170,22 @@ const seedWorker = async (options) => {
 						{ unique: true },
 					);
 					puts += result.entries.length;
-					for (const key of keys) {
-						await store.docs.del(`cut-census-${key}`);
-						deletes++;
+					for (
+						let offset = 0;
+						offset < keys.length;
+						offset += options.deleteConcurrency
+					) {
+						// Only independent keys overlap; finish the entire chunk before
+						// starting another or reusing a key in the next cycle.
+						const settled = await Promise.allSettled(
+							keys
+								.slice(offset, offset + options.deleteConcurrency)
+								.map((key) => store.docs.del(`cut-census-${key}`)),
+						);
+						for (const result of settled) {
+							if (result.status === "rejected") throw result.reason;
+							deletes++;
+						}
 					}
 					if (puts + deletes >= nextProgress) {
 						console.error(
@@ -256,6 +269,7 @@ const runWorkerProcess = (options) => {
 			["history-operations", "historyOperations"],
 			["key-count", "keyCount"],
 			["batch-size", "batchSize"],
+			["delete-concurrency", "deleteConcurrency"],
 		]),
 		description: `CUT lifecycle-census worker failed (${options.scenario}, ${options.phase}, run=${options.run})`,
 		maxBuffer: 10 * 1024 * 1024,

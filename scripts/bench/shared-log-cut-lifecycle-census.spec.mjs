@@ -15,15 +15,17 @@ test("parses CUT lifecycle profiles", () => {
 	assert.equal(defaults.historyOperations, 200);
 	assert.equal(defaults.keyCount, 10);
 	assert.equal(defaults.batchSize, 10);
+	assert.equal(defaults.deleteConcurrency, 1);
 	assert.equal(defaults.runs, 1);
 	const parsed = parseCutLifecycleCensusArgs(
-		"--history-operations 100_000 --key-count 1_000 --batch-size 250 --runs 3 --compact-max-journal-bytes 16_777_216 --compact-max-journal-records 65_536 --json".split(
+		"--history-operations 100_000 --key-count 1_000 --batch-size 250 --delete-concurrency 16 --runs 3 --compact-max-journal-bytes 16_777_216 --compact-max-journal-records 65_536 --json".split(
 			" ",
 		),
 		{},
 	);
 	assert.equal(parsed.historyOperations, 100_000);
 	assert.equal(parsed.keyCount, 1_000);
+	assert.equal(parsed.deleteConcurrency, 16);
 	assert.equal(parsed.compactMaxJournalRecords, 65_536);
 });
 
@@ -32,6 +34,7 @@ test("rejects incomplete CUT churn cycles", () => {
 		[["--history-operations", "20", "--key-count", "10"], /must exceed/],
 		[["--history-operations", "42", "--key-count", "10"], /divisible/],
 		[["--key-count", "10", "--batch-size", "11"], /batch-size/],
+		[["--delete-concurrency", "11"], /delete-concurrency/],
 		[["--scenario", "fresh"], /worker-only/],
 	]) {
 		assert.throws(() => parseCutLifecycleCensusArgs(args, {}), message);
