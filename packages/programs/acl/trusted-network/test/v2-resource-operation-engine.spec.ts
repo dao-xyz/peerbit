@@ -28,6 +28,10 @@ import type {
 } from "../src/v2-policy-anchor.js";
 import { TrustedNetworkV2DurablePolicyReducer } from "../src/v2-policy-anchor.js";
 import {
+	ImmutableResourceDocumentV2,
+	TrustedNetworkV2ResourceDocumentProjection,
+} from "../src/v2-resource-document-projection.js";
+import {
 	type CrashSafeResourceFenceAnchorStoreV2,
 	type ResourceFencePolicyAnchorV2,
 	TrustedNetworkV2DurableResourceFenceReducer,
@@ -358,6 +362,7 @@ const createOperation = async (
 		manifestByte: number;
 		parents: SignedEntry[];
 		payloadByte?: number;
+		applicationPayload?: Uint8Array;
 	},
 ): Promise<SignedEntry> => {
 	const parentClock = new LamportClock({
@@ -375,7 +380,9 @@ const createOperation = async (
 			contentEpoch: properties.contentEpoch,
 		}),
 		epochManifestDigest: bytes32(properties.manifestByte),
-		applicationPayload: Uint8Array.of(properties.payloadByte ?? 7),
+		applicationPayload:
+			properties.applicationPayload ??
+			Uint8Array.of(properties.payloadByte ?? 7),
 	});
 	const entry = (await EntryV0.create({
 		store: {} as never,
@@ -425,7 +432,10 @@ const operationEngine = (
 			new Map(cids.map((cid) => [cid, context.entriesByCid.get(cid)])),
 	});
 
-const chainFixture = async (context: TestContext) => {
+const chainFixture = async (
+	context: TestContext,
+	applicationPayload?: (value: number) => Uint8Array,
+) => {
 	const fence0 = await createFence(context, {
 		sequence: 0n,
 		policy: context.policy0,
@@ -438,6 +448,7 @@ const chainFixture = async (context: TestContext) => {
 		manifestByte: 0x51,
 		parents: [fence0],
 		payloadByte: 1,
+		applicationPayload: applicationPayload?.(1),
 	});
 	const concurrent = await createOperation(context, {
 		fence: fence0,
@@ -446,6 +457,7 @@ const chainFixture = async (context: TestContext) => {
 		manifestByte: 0x51,
 		parents: [fence0],
 		payloadByte: 2,
+		applicationPayload: applicationPayload?.(2),
 	});
 	const fence1 = await createFence(context, {
 		sequence: 1n,
@@ -461,6 +473,7 @@ const chainFixture = async (context: TestContext) => {
 		manifestByte: 0x51,
 		parents: [fence1],
 		payloadByte: 3,
+		applicationPayload: applicationPayload?.(3),
 	});
 	const fence2 = await createFence(context, {
 		sequence: 2n,
@@ -476,6 +489,7 @@ const chainFixture = async (context: TestContext) => {
 		manifestByte: 0x53,
 		parents: [fence2],
 		payloadByte: 4,
+		applicationPayload: applicationPayload?.(4),
 	});
 	return { fence0, before, concurrent, fence1, after, fence2, regranted };
 };
@@ -1500,6 +1514,499 @@ describe("TrustedNetwork v2 retained resource replay", () => {
 			value: "published",
 		});
 		await closing;
+	});
+});
+
+const protectedDocument = (value: number) =>
+	new ImmutableResourceDocumentV2({
+		key: `document-${value}`,
+		value: Uint8Array.of(value),
+	});
+const documentBytes = (value: number) => serialize(protectedDocument(value));
+const DOCUMENT_PROFILE = bytes32(0x81);
+const openDocumentProjection = (
+	context: TestContext,
+	anchor: TrustedNetworkV2DurableResourceFenceReducer,
+	store: CrashSafeAtomicReplaceStore = new MemoryAnchorStore(),
+	projectionStore: CrashSafeAtomicReplaceStore = new MemoryAnchorStore(),
+	documentProfileId = DOCUMENT_PROFILE,
+) =>
+	TrustedNetworkV2ResourceDocumentProjection.open({
+		descriptor: context.descriptor,
+		expectedResourceId: RESOURCE_ID,
+		expectedGid: RESOURCE_GID,
+		fenceAnchor: anchor,
+		resolveEntryV0: async (cids) =>
+			new Map(cids.map((cid) => [cid, context.entriesByCid.get(cid)])),
+		store,
+		projectionStore,
+		documentProfileId,
+	});
+
+const documentProjectionFixture = async () => {
+	const context = await createContext();
+	const chain = await chainFixture(context, documentBytes);
+	const anchor = await openAnchor(context);
+	await anchor.ingest(chain.fence0.bytes);
+	const store = new MemoryAnchorStore();
+	const projectionStore = new MemoryAnchorStore();
+	const projection = await openDocumentProjection(
+		context,
+		anchor,
+		store,
+		projectionStore,
+	);
+	return { context, chain, anchor, store, projectionStore, projection };
+};
+
+describe("TrustedNetwork v2 protected document projection", () => {
+	it("pins the immutable document codec without interpreting its key as a unique row id", async () => {
+		expect(
+			Buffer.from(
+				serialize(
+					new ImmutableResourceDocumentV2({
+						key: "a",
+						value: Uint8Array.of(1, 2),
+					}),
+				),
+			).toString("hex"),
+		).to.equal("02050100000061020000000102");
+		const { context, chain, projection, projectionStore } =
+			await documentProjectionFixture();
+		const key = "\ufeff" + "\u20ac".repeat(340) + "a"; // Exactly 1,024 UTF-8 bytes, including a preserved BOM.
+		for (const length of [1, 60 * 1024]) {
+			const entry = await createOperation(context, {
+				fence: chain.fence0,
+				policy: context.policy0,
+				contentEpoch: 0n,
+				manifestByte: 0x51,
+				parents: [chain.fence0],
+				applicationPayload: serialize(
+					new ImmutableResourceDocumentV2({
+						key,
+						value: new Uint8Array(length).fill(7),
+					}),
+				),
+			});
+			expect((await projection.retain(entry.bytes)).status).to.equal(
+				"retained",
+			);
+		}
+		const read = () =>
+			projection.withDocuments(chain.fence0.cid, (view) => {
+				for (const row of view.documents) expect(row.value.key).to.equal(key);
+				return view.documents
+					.map((row) => row.value.value.length)
+					.sort((a, b) => a - b);
+			});
+		expect(await read()).to.deep.equal({
+			status: "completed",
+			value: [1, 60 * 1024],
+		});
+		const replace = sinon.spy(
+			projectionStore.crashSafeDurability,
+			"atomicReplace",
+		);
+		expect(await read()).to.deep.equal({
+			status: "completed",
+			value: [1, 60 * 1024],
+		});
+		expect(replace.called).to.equal(false);
+		await projection.close();
+	});
+
+	it("materializes identical typed rows across arrival orders and never resurrects revoked operations on regrant", async () => {
+		const {
+			context,
+			chain,
+			anchor,
+			projection: left,
+		} = await documentProjectionFixture();
+		const rightAnchor = await openAnchor(context, new MemoryAnchorStore());
+		expect((await rightAnchor.ingest(chain.fence1.bytes)).status).to.equal(
+			"pending",
+		);
+		expect((await rightAnchor.ingest(chain.fence0.bytes)).status).to.equal(
+			"accepted",
+		);
+		expect((await rightAnchor.ingest(chain.fence1.bytes)).status).to.equal(
+			"duplicate",
+		);
+		const right = await openDocumentProjection(context, rightAnchor);
+		for (const entry of [chain.before, chain.concurrent, chain.after])
+			await left.retain(entry.bytes);
+		for (const entry of [chain.after, chain.concurrent, chain.before])
+			await right.retain(entry.bytes);
+		const provisional = await left.withDocuments(chain.fence0.cid, (view) =>
+			view.documents.map((row) => row.entryCid),
+		);
+		expect(provisional.status).to.equal("completed");
+		if (provisional.status !== "completed") throw new Error(provisional.status);
+		expect(provisional.value).to.include(chain.concurrent.cid);
+		await anchor.ingest(chain.fence1.bytes);
+		const closed = await left.withDocuments(chain.fence1.cid, (view) => view);
+		expect(closed).to.deep.equal(
+			await right.withDocuments(chain.fence1.cid, (view) => view),
+		);
+		if (closed.status !== "completed") throw new Error(closed.status);
+		expect(closed.value.documents).to.deep.equal([
+			{
+				entryCid: chain.before.cid,
+				status: "policy-final",
+				value: protectedDocument(1),
+			},
+		]);
+		expect(closed.value.documents[0]!.value).to.be.instanceOf(
+			ImmutableResourceDocumentV2,
+		);
+		expect(closed.value.acceptedFenceHead.entryCid).to.equal(chain.fence1.cid);
+		closed.value.documents[0]!.value.value[0] = 99;
+		await anchor.ingest(chain.fence2.bytes);
+		await left.retain(chain.regranted.bytes);
+		const regranted = await left.withDocuments(chain.fence2.cid, (view) =>
+			view.documents.map((row) => [
+				row.entryCid,
+				row.status,
+				row.value.value[0],
+			]),
+		);
+		expect(regranted.status).to.equal("completed");
+		if (regranted.status !== "completed") throw new Error(regranted.status);
+		expect(regranted.value).to.have.deep.members([
+			[chain.before.cid, "policy-final", 1],
+			[chain.regranted.cid, "provisional", 4],
+		]);
+		for (const entry of [chain.concurrent, chain.after])
+			expect(left.get(entry.cid)).to.deep.equal(entry.bytes);
+		await Promise.all([left.close(), right.close()]);
+	});
+
+	it("retracts every document while preserving the signed fence chain", async () => {
+		const { context, chain, anchor, projection } =
+			await documentProjectionFixture();
+		await projection.retain(chain.concurrent.bytes);
+		expect(
+			await projection.withDocuments(
+				chain.fence0.cid,
+				(view) => view.documents.length,
+			),
+		).to.deep.equal({ status: "completed", value: 1 });
+		const disconnectedFence = await createFence(context, {
+			sequence: 1n,
+			previousDigest: chain.fence0.digest,
+			policy: context.policy1,
+			parents: [],
+			manifestByte: 0x52,
+		});
+		expect((await anchor.ingest(disconnectedFence.bytes)).status).to.equal(
+			"rejected",
+		);
+		// Empty application frontier, but the successor must still descend from
+		// the preceding fence. Dropping that causal link is not an empty revoke.
+		const emptyFence = await createFence(context, {
+			sequence: 1n,
+			previousDigest: chain.fence0.digest,
+			policy: context.policy1,
+			parents: [chain.fence0],
+			manifestByte: 0x52,
+		});
+		await anchor.ingest(emptyFence.bytes);
+		const result = await projection.withDocuments(
+			emptyFence.cid,
+			(view) => view,
+		);
+		if (result.status !== "completed") throw new Error(result.status);
+		expect(result.value.documents).to.deep.equal([]);
+		expect(result.value.acceptedFenceHead.entryCid).to.equal(emptyFence.cid);
+		expect(projection.get(chain.concurrent.cid)).to.deep.equal(
+			chain.concurrent.bytes,
+		);
+		await projection.close();
+	});
+
+	it("reopens both disk stores without serving a previously authorized document under a newer fence", async () => {
+		const context = await createContext();
+		const chain = await chainFixture(context, documentBytes);
+		const anchor = await openAnchor(context);
+		await anchor.ingest(chain.fence0.bytes);
+		const directory = await mkdtemp(
+			join(tmpdir(), "peerbit-document-projection-"),
+		);
+		let store = createStore(join(directory, "operations"));
+		let projectionStore = createStore(join(directory, "projection"));
+		let projection: TrustedNetworkV2ResourceDocumentProjection | undefined;
+		try {
+			for (let reopen = 0; reopen < 2; reopen++) {
+				await store.open();
+				await projectionStore.open();
+				if (
+					!isCrashSafeAtomicReplaceStore(store) ||
+					!isCrashSafeAtomicReplaceStore(projectionStore)
+				)
+					throw new Error("Disk stores must support crash-safe replacement");
+				projection = await openDocumentProjection(
+					context,
+					anchor,
+					store,
+					projectionStore,
+				);
+				if (reopen === 0) await projection.retain(chain.concurrent.bytes);
+				expect(projection.get(chain.concurrent.cid)).to.deep.equal(
+					chain.concurrent.bytes,
+				);
+				expect(
+					await projection.withDocuments(
+						reopen === 0 ? chain.fence0.cid : chain.fence1.cid,
+						(view) => view.documents.length,
+					),
+				).to.deep.equal({ status: "completed", value: reopen === 0 ? 1 : 0 });
+				await projection.close();
+				projection = undefined;
+				await store.close();
+				await projectionStore.close();
+				if (reopen === 0) {
+					await anchor.ingest(chain.fence1.bytes);
+					store = createStore(join(directory, "operations"));
+					projectionStore = createStore(join(directory, "projection"));
+				}
+			}
+		} finally {
+			await projection?.close();
+			await store.close();
+			await projectionStore.close();
+			await rm(directory, { recursive: true, force: true });
+		}
+	});
+
+	it("does not reuse a saved projection when context is missing and preserves original bytes for recovery", async () => {
+		const { context, chain, projectionStore, projection } =
+			await documentProjectionFixture();
+		await projection.retain(chain.before.bytes);
+		await projection.withDocuments(chain.fence0.cid, () => true);
+		const replace = sinon.spy(
+			projectionStore.crashSafeDurability,
+			"atomicReplace",
+		);
+		context.entriesByCid.delete(chain.fence0.cid);
+		const use = sinon.spy();
+		expect(
+			(await projection.withDocuments(chain.fence0.cid, use)).status,
+		).to.equal("unavailable");
+		expect(use.called).to.equal(false);
+		expect(replace.called).to.equal(false);
+		expect(projection.get(chain.before.cid)).to.deep.equal(chain.before.bytes);
+		context.entriesByCid.set(chain.fence0.cid, chain.fence0.bytes);
+		expect(
+			await projection.withDocuments(
+				chain.fence0.cid,
+				(view) => view.documents[0]!.value.value[0],
+			),
+		).to.deep.equal({ status: "completed", value: 1 });
+		await projection.close();
+	});
+
+	for (const [encoding, applicationPayload] of [
+		["malformed", Uint8Array.of(0xff)],
+		["trailing-bytes", Uint8Array.from([...documentBytes(2), 0])],
+		["u32-max key length", Uint8Array.of(2, 5, 255, 255, 255, 255)],
+		[
+			"u32-max value length",
+			Uint8Array.of(2, 5, 1, 0, 0, 0, 97, 255, 255, 255, 255),
+		],
+		["truncated value", Uint8Array.of(2, 5, 1, 0, 0, 0, 97, 1, 0, 0, 0)],
+		[
+			"surrogate UTF-8 key",
+			Uint8Array.of(2, 5, 3, 0, 0, 0, 0xed, 0xa0, 0x80, 0, 0, 0, 0),
+		],
+		[
+			"overlong UTF-8 key",
+			Uint8Array.of(2, 5, 2, 0, 0, 0, 0xc0, 0xaf, 0, 0, 0, 0),
+		],
+		[
+			"oversized UTF-8 key",
+			serialize(
+				new ImmutableResourceDocumentV2({
+					key: "\u20ac".repeat(342),
+					value: Uint8Array.of(2),
+				}),
+			),
+		],
+	] as const) {
+		it(`rejects the entire projection for a ${encoding} authorized payload without dropping retained operations`, async () => {
+			const { context, chain, projectionStore, projection } =
+				await documentProjectionFixture();
+			await projection.retain(chain.before.bytes);
+			await projection.withDocuments(chain.fence0.cid, () => true);
+			const prior = projectionStore.clone().values;
+			const invalid = await createOperation(context, {
+				fence: chain.fence0,
+				policy: context.policy0,
+				contentEpoch: 0n,
+				manifestByte: 0x51,
+				parents: [chain.fence0],
+				applicationPayload,
+			});
+			expect((await projection.retain(invalid.bytes)).status).to.equal(
+				"retained",
+			);
+			const use = sinon.spy();
+			expect(
+				(await projection.withDocuments(chain.fence0.cid, use)).status,
+			).to.equal("rejected");
+			expect(use.called).to.equal(false);
+			expect(projectionStore.values).to.deep.equal(prior);
+			expect(projection.entries()).to.have.members([
+				chain.before.cid,
+				invalid.cid,
+			]);
+			expect(projection.get(invalid.cid)).to.deep.equal(invalid.bytes);
+			await projection.close();
+		});
+	}
+
+	for (const failurePoint of ["before-write", "after-write"] as const) {
+		it(`recovers by fresh replay after an ambiguous ${failurePoint} document checkpoint`, async () => {
+			const { context, chain, anchor, store, projectionStore, projection } =
+				await documentProjectionFixture();
+			await projection.retain(chain.concurrent.bytes);
+			await projection.withDocuments(chain.fence0.cid, () => true);
+			await anchor.ingest(chain.fence1.bytes);
+			const replace = projectionStore.crashSafeDurability.atomicReplace;
+			projectionStore.crashSafeDurability.atomicReplace = async (
+				key,
+				bytes,
+			) => {
+				if (failurePoint === "after-write") await replace(key, bytes);
+				throw new Error("document projection publication failed");
+			};
+			const use = sinon.spy();
+			expect(
+				await projection
+					.withDocuments(chain.fence1.cid, use)
+					.catch((error: unknown) => error),
+			).to.be.instanceOf(CheckpointAmbiguousCommitError);
+			expect(use.called).to.equal(false);
+			expect(
+				(await projection.withDocuments(chain.fence1.cid, use)).status,
+			).to.equal("halted");
+			await projection.close();
+			const reopened = await openDocumentProjection(
+				context,
+				anchor,
+				store.clone(),
+				projectionStore.clone(),
+			);
+			expect(reopened.get(chain.concurrent.cid)).to.deep.equal(
+				chain.concurrent.bytes,
+			);
+			expect(
+				await reopened.withDocuments(
+					chain.fence1.cid,
+					(view) => view.documents,
+				),
+			).to.deep.equal({ status: "completed", value: [] });
+			await reopened.close();
+		});
+	}
+
+	for (const cancellation of ["caller", "close"] as const) {
+		it(`drains started document publication and suppresses reads after ${cancellation} cancellation`, async () => {
+			const { context, chain, anchor, store, projectionStore, projection } =
+				await documentProjectionFixture();
+			await projection.retain(chain.before.bytes);
+			const entered = deferred();
+			const release = deferred();
+			const replace = projectionStore.crashSafeDurability.atomicReplace;
+			projectionStore.crashSafeDurability.atomicReplace = async (
+				key,
+				bytes,
+			) => {
+				entered.resolve();
+				await release.promise;
+				await replace(key, bytes);
+			};
+			const caller = new AbortController();
+			const use = sinon.spy();
+			const reading = projection.withDocuments(chain.fence0.cid, use, {
+				signal: caller.signal,
+			});
+			await entered.promise;
+			let closed = false;
+			let closing: Promise<void> | undefined;
+			if (cancellation === "caller") caller.abort();
+			else
+				closing = projection.close().then(() => {
+					closed = true;
+				});
+			await Promise.resolve();
+			expect(closed).to.equal(false);
+			release.resolve();
+			expect(["unavailable", "halted"]).to.include((await reading).status);
+			expect(use.called).to.equal(false);
+			await (closing ?? projection.close());
+			const reopened = await openDocumentProjection(
+				context,
+				anchor,
+				store.clone(),
+				projectionStore.clone(),
+			);
+			expect(
+				await reopened.withDocuments(
+					chain.fence0.cid,
+					(view) => view.documents[0]!.value,
+				),
+			).to.deep.equal({ status: "completed", value: protectedDocument(1) });
+			await reopened.close();
+		});
+	}
+
+	it("rejects a document profile mismatch on reopen", async () => {
+		const { context, chain, anchor, store, projectionStore, projection } =
+			await documentProjectionFixture();
+		await projection.retain(chain.before.bytes);
+		await projection.withDocuments(chain.fence0.cid, () => true);
+		await projection.close();
+		const reopened = await openDocumentProjection(
+			context,
+			anchor,
+			store.clone(),
+			projectionStore.clone(),
+			bytes32(0x82),
+		).catch((error: unknown) => error);
+		expect(reopened).to.be.instanceOf(Error);
+	});
+
+	it("holds both authorization leases through an entered document consumer and drains its actual result", async () => {
+		const { context, chain, anchor, projection } =
+			await documentProjectionFixture();
+		await projection.retain(chain.before.bytes);
+		const entered = deferred();
+		const release = deferred();
+		const reading = projection.withDocuments(chain.fence0.cid, async (view) => {
+			expect(context.policyLease.active).to.be.greaterThan(0);
+			entered.resolve();
+			await release.promise;
+			expect(view.documents[0]!.value.value[0]).to.equal(1);
+			return "consumed";
+		});
+		await entered.promise;
+		let fenceAdvanced = false;
+		const advancing = anchor.ingest(chain.fence1.bytes).then(() => {
+			fenceAdvanced = true;
+		});
+		let closed = false;
+		const closing = projection.close().then(() => {
+			closed = true;
+		});
+		await Promise.resolve();
+		expect(closed).to.equal(false);
+		expect(fenceAdvanced).to.equal(false);
+		release.resolve();
+		expect(await reading).to.deep.equal({
+			status: "completed",
+			value: "consumed",
+		});
+		await Promise.all([closing, advancing]);
 	});
 });
 
