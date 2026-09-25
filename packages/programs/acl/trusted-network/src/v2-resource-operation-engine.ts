@@ -133,6 +133,8 @@ export type ResourceOperationAuthorizationOptionsV2 = Readonly<{
 	timeoutMs?: number;
 	/** Cancels this evaluation without halting either anchor. */
 	signal?: AbortSignal;
+	/** Internal sequential replay may share a lower aggregate causal budget. */
+	causalWork?: ResourceCausalWorkBudgetV2;
 }>;
 
 export type TrustedNetworkV2ResourceOperationEngineProperties = Readonly<{
@@ -790,6 +792,21 @@ export class TrustedNetworkV2ResourceOperationEngine {
 	private beginBudget(
 		options: ResourceOperationAuthorizationOptionsV2 | undefined,
 	): OperationBudgetV2 {
+		const causalWork =
+			options?.causalWork ??
+			new ResourceCausalWorkBudgetV2(this.causalWorkLimits);
+		if (
+			!(causalWork instanceof ResourceCausalWorkBudgetV2) ||
+			(
+				Object.keys(this.causalWorkLimits) as Array<
+					keyof ResourceCausalWorkLimitsV2
+				>
+			).some((key) => causalWork.remaining[key] > this.causalWorkLimits[key])
+		) {
+			throw new RangeError(
+				"Shared causal work may only lower the instance limits",
+			);
+		}
 		const timeoutMs = options?.timeoutMs ?? this.operationTimeoutMs;
 		if (
 			!Number.isSafeInteger(timeoutMs) ||
@@ -840,7 +857,7 @@ export class TrustedNetworkV2ResourceOperationEngine {
 		return {
 			signal: controller.signal,
 			deadline,
-			causalWork: new ResourceCausalWorkBudgetV2(this.causalWorkLimits),
+			causalWork,
 			dispose: (): void => {
 				if (disposed) return;
 				disposed = true;

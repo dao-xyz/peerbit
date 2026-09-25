@@ -798,8 +798,8 @@ as authority. An operation omitted by a closing fence therefore remains
 recoverable even when its later classification rejects it.
 
 The configured limits may only lower 256 retained entries and 16 MiB of entry
-bytes. There is one retention in flight and no unbounded waiting queue. Full or
-busy journals return `capacity` without evicting an entry; the caller remains
+bytes. There is one journal mutation in flight and no unbounded waiting queue.
+Full or busy journals return `capacity` without evicting an entry; the caller remains
 responsible for any input that did not receive `retained`. An indeterminate
 checkpoint replacement faults the instance until reopen. Closing drains
 started storage replacements and classified callbacks before releasing memory;
@@ -811,11 +811,44 @@ not coherent rollback of a directory. The journal also does not retain blocks
 referenced by an application's payload. Full application recovery and source
 disposal still require the application closure to be retained separately.
 
+`withReplayedOperations` explicitly reclassifies the complete locally retained
+set. It first acquires the requested exact resource fence and captures the
+accepted policy/fence heads, including for an empty inventory. It classifies
+each retained operation outside that lease, requires every classification to
+match the captured heads, then reacquires the exact fence and checks both heads
+again. One mutation lane prevents concurrent retention from changing the set.
+An unavailable dependency or changed head leaves the prior projection untouched;
+there is no automatic retry or partially published result.
+
+The successful final lease atomically checkpoints raw records, one classification
+per canonical CID, and a watermark binding the exact policy/fence pair and the
+retained-inventory digest. A new retained operation clears that projection in
+the same replacement. Identical fresh replay skips the journal replacement, not
+the classification or final lease checks. The consumer callback receives fresh
+application payloads only for non-rejected operations and runs under both anchors
+after publication.
+CID order is deterministic set order, not causal or application conflict order.
+This is an authorization-set projection, not a Documents index or a transaction
+with an external application database.
+
+The entire replay shares one acquisition deadline (at most ten seconds) and
+one aggregate causal-work budget across classifications. The two exact-fence
+acquisitions retain their own existing bounded verification. Cancellation before
+consumer entry suppresses the callback; a started durable replacement still
+finishes. Once the consumer enters, its actual result/error is preserved and
+close drains it. A consumer error does not invalidate a successful checkpoint.
+
+`persistedProjection` is copied historical diagnostic data, never current
+authorization. After reopen and on every consumer call, full fresh replay is
+required; saved verdicts cannot bypass it. Retention-only journal format v1 is
+read as having no projection; new replacements use v2. This does not migrate
+public TrustedNetwork v1 resources.
+
 This internal module is excluded from the package root and published artifact.
-It supplies recovery storage for the next resource adapter; it does not activate
-v2, provide a current projection, import a snapshot or delete log history. No
-automatic re-signing, replay, eviction or acknowledgment of reconciliation is
-provided.
+It does not activate v2, prove complete remote history or authority freshness,
+interpret application operations, import a snapshot or delete history. Those
+remain prerequisites for a protected-resource adapter and compaction. No
+automatic re-signing, eviction or acknowledgment of reconciliation is provided.
 
 ## Confidentiality boundary
 
