@@ -781,6 +781,42 @@ replay, projection revalidation and retractions, accepted-remote-entry/frontier
 callbacks, and end-to-end long-offline synchronization remain required before
 public revocation guarantees. The classifier does not rotate or release keys.
 
+### Internal retained-operation recovery
+
+`TrustedNetworkV2ResourceOperationJournal` is the first durable consumer of the
+operation classifier. It preserves exact signed operation bytes in a dedicated
+two-slot checkpoint before returning `retained`. Retention verifies canonical
+signatures and immutable network/resource/log scope; it does not establish
+WRITER authority, application acceptance, complete history or current policy.
+This is an explicit local submission API, not an automatic inbound inbox.
+
+The journal retains operations even when their policy/fence context is
+unavailable. A caller can export the original bytes after reopen or invoke
+`withClassifiedOperation` to evaluate them against the current anchors while
+holding the existing leases through its callback. No saved verdict is reused
+as authority. An operation omitted by a closing fence therefore remains
+recoverable even when its later classification rejects it.
+
+The configured limits may only lower 256 retained entries and 16 MiB of entry
+bytes. There is one retention in flight and no unbounded waiting queue. Full or
+busy journals return `capacity` without evicting an entry; the caller remains
+responsible for any input that did not receive `retained`. An indeterminate
+checkpoint replacement faults the instance until reopen. Closing drains
+started storage replacements and classified callbacks before releasing memory;
+callbacks must not await close or reenter either anchor.
+
+Reopen reauthenticates every retained entry and checks canonical framing and
+the configured bounds. The local checkpoint detects incomplete publication,
+not coherent rollback of a directory. The journal also does not retain blocks
+referenced by an application's payload. Full application recovery and source
+disposal still require the application closure to be retained separately.
+
+This internal module is excluded from the package root and published artifact.
+It supplies recovery storage for the next resource adapter; it does not activate
+v2, provide a current projection, import a snapshot or delete log history. No
+automatic re-signing, replay, eviction or acknowledgment of reconciliation is
+provided.
+
 ## Confidentiality boundary
 
 Replication and routing operate on ciphertext and public policy metadata.

@@ -1,8 +1,10 @@
 import { serialize } from "@dao-xyz/borsh";
+import { createStore } from "@peerbit/any-store";
 import type { CrashSafeAtomicReplaceStore } from "@peerbit/any-store-interface";
 import {
 	CheckpointAmbiguousCommitError,
 	CrashSafeTwoSlotCheckpoint,
+	isCrashSafeAtomicReplaceStore,
 } from "@peerbit/any-store/checkpoint";
 import { calculateRawCid } from "@peerbit/blocks-interface";
 import { Ed25519Keypair } from "@peerbit/crypto";
@@ -14,6 +16,9 @@ import {
 	Timestamp,
 } from "@peerbit/log";
 import { expect } from "chai";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import sinon from "sinon";
 import { compare } from "uint8arrays";
 import type {
@@ -41,6 +46,7 @@ import {
 	ResourceOperationEnvelopeV2,
 	TRUSTED_NETWORK_V2_RESOURCE_OPERATION_PROFILE,
 } from "../src/v2-resource-operation-entry.js";
+import { TrustedNetworkV2ResourceOperationJournal } from "../src/v2-resource-operation-journal.js";
 import {
 	NetworkDescriptorV2,
 	OperationPolicyProofV2,
@@ -151,12 +157,14 @@ class MemoryAnchorStore implements CrashSafeAtomicReplaceStore {
 
 class HistoricalPolicyLease {
 	active = 0;
+	onAcquire?: () => void;
 	constructor(readonly anchor: TrustedNetworkV2DurablePolicyReducer) {}
 
 	async withAcceptedPolicyLease<T>(
 		reference: PolicyLeaseReferenceV2,
 		use: (lease: AcceptedPolicyLeaseV2) => T | Promise<T>,
 	): Promise<PolicyLeaseResultV2<T>> {
+		this.onAcquire?.();
 		return this.anchor.withAcceptedPolicyLease(reference, async (lease) => {
 			this.active += 1;
 			try {
@@ -468,6 +476,450 @@ const chainFixture = async (context: TestContext) => {
 	});
 	return { fence0, before, concurrent, fence1, after, fence2, regranted };
 };
+
+const openOperationJournal = (
+	context: TestContext,
+	anchor: TrustedNetworkV2DurableResourceFenceReducer,
+	store: CrashSafeAtomicReplaceStore = new MemoryAnchorStore(),
+	options: Partial<
+		Parameters<typeof TrustedNetworkV2ResourceOperationJournal.open>[0]
+	> = {},
+) =>
+	TrustedNetworkV2ResourceOperationJournal.open({
+		descriptor: context.descriptor,
+		expectedResourceId: RESOURCE_ID,
+		expectedGid: RESOURCE_GID,
+		fenceAnchor: anchor,
+		resolveEntryV0: async (cids) =>
+			new Map(cids.map((cid) => [cid, context.entriesByCid.get(cid)])),
+		store,
+		...options,
+	});
+
+describe("TrustedNetwork v2 retained resource-operation journal", () => {
+	it("reopens exact signed bytes from a new disk store and classifies against the current fence", async () => {
+		const context = await createContext();
+		const chain = await chainFixture(context);
+		const anchor = await openAnchor(context);
+		await anchor.ingest(chain.fence0.bytes);
+		const directory = await mkdtemp(
+			join(tmpdir(), "peerbit-operation-journal-"),
+		);
+		let store = createStore(directory);
+		let journal: TrustedNetworkV2ResourceOperationJournal | undefined;
+		try {
+			await store.open();
+			if (!isCrashSafeAtomicReplaceStore(store))
+				throw new Error("Disk store does not support crash-safe replacement");
+			journal = await openOperationJournal(context, anchor, store);
+			expect((await journal.retain(chain.concurrent.bytes)).status).to.equal(
+				"retained",
+			);
+			expect(
+				await journal.withClassifiedOperation(
+					chain.concurrent.cid,
+					(view) => view.classification.status,
+				),
+			).to.deep.equal({ status: "completed", value: "provisional" });
+			await journal.close();
+			journal = undefined;
+			await store.close();
+			await anchor.ingest(chain.fence1.bytes);
+			store = createStore(directory);
+			await store.open();
+			if (!isCrashSafeAtomicReplaceStore(store))
+				throw new Error(
+					"Reopened store does not support crash-safe replacement",
+				);
+			journal = await openOperationJournal(context, anchor, store);
+			expect(journal.entries()).to.deep.equal([chain.concurrent.cid]);
+			expect(journal.get(chain.concurrent.cid)).to.deep.equal(
+				chain.concurrent.bytes,
+			);
+			expect(
+				await journal.withClassifiedOperation(
+					chain.concurrent.cid,
+					(view) => view.classification.status,
+				),
+			).to.deep.equal({ status: "completed", value: "rejected" });
+		} finally {
+			await journal?.close();
+			await store.close();
+			await rm(directory, { recursive: true, force: true });
+		}
+	});
+
+	it("retains unavailable operations and reclassifies recoverable signed bytes after a closing fence and reopen", async () => {
+		const context = await createContext();
+		const chain = await chainFixture(context);
+		const anchor = await openAnchor(context);
+		const store = new MemoryAnchorStore();
+		const journal = await openOperationJournal(context, anchor, store);
+		const unused = sinon.spy();
+		expect(
+			(await journal.withClassifiedOperation(chain.concurrent.cid, unused))
+				.status,
+		).to.equal("unavailable");
+		for (const entry of [chain.before, chain.concurrent]) {
+			expect((await journal.retain(entry.bytes)).status).to.equal("retained");
+		}
+		expect(
+			(await journal.withClassifiedOperation(chain.concurrent.cid, unused))
+				.status,
+		).to.equal("unavailable");
+		expect(unused.called).to.equal(false);
+		await anchor.ingest(chain.fence0.bytes);
+		expect(
+			await journal.withClassifiedOperation(
+				chain.concurrent.cid,
+				(view) => view.classification.status,
+			),
+		).to.deep.equal({ status: "completed", value: "provisional" });
+		await journal.close();
+		await anchor.ingest(chain.fence1.bytes);
+		const reopened = await openOperationJournal(context, anchor, store.clone());
+		for (const [entry, verdict] of [
+			[chain.before, "policy-final"],
+			[chain.concurrent, "rejected"],
+		] as const) {
+			expect(reopened.get(entry.cid)).to.deep.equal(entry.bytes);
+			expect(
+				await reopened.withClassifiedOperation(
+					entry.cid,
+					(view) => view.classification.status,
+				),
+			).to.deep.equal({ status: "completed", value: verdict });
+		}
+		expect(reopened.size).to.equal(2);
+		await reopened.close();
+	});
+
+	for (const bound of ["entries", "bytes"] as const) {
+		it(`preserves exact copied bytes and duplicates at its ${bound} capacity`, async () => {
+			const context = await createContext();
+			const chain = await chainFixture(context);
+			const anchor = await openAnchor(context);
+			const journal = await openOperationJournal(
+				context,
+				anchor,
+				new MemoryAnchorStore(),
+				bound === "entries"
+					? { maxEntries: 1 }
+					: { maxRetainedBytes: chain.before.bytes.byteLength },
+			);
+			const input = Uint8Array.from(chain.before.bytes);
+			const retaining = journal.retain(input);
+			input.fill(0);
+			expect(await retaining).to.deep.equal({
+				status: "retained",
+				entryCid: chain.before.cid,
+				duplicate: false,
+			});
+			expect(await journal.retain(chain.before.bytes)).to.deep.equal({
+				status: "retained",
+				entryCid: chain.before.cid,
+				duplicate: true,
+			});
+			expect((await journal.retain(chain.concurrent.bytes)).status).to.equal(
+				"capacity",
+			);
+			journal.get(chain.before.cid)!.fill(0);
+			expect(journal.get(chain.before.cid)).to.deep.equal(chain.before.bytes);
+			expect(journal.entries()).to.deep.equal([chain.before.cid]);
+			expect(journal.size).to.equal(1);
+			expect(journal.byteLength).to.equal(chain.before.bytes.byteLength);
+			await journal.close();
+		});
+	}
+
+	it("rejects unauthenticated and foreign-scope entries and foreign-scope reopen", async () => {
+		const context = await createContext();
+		const chain = await chainFixture(context);
+		const anchor = await openAnchor(context);
+		const store = new MemoryAnchorStore();
+		const journal = await openOperationJournal(context, anchor, store);
+		const corrupt = Uint8Array.from(chain.before.bytes);
+		corrupt[corrupt.length - 1] ^= 1;
+		expect((await journal.retain(corrupt)).status).to.equal("rejected");
+		expect(journal.size).to.equal(0);
+		await journal.retain(chain.before.bytes);
+		for (const options of [
+			{ expectedResourceId: bytes32(0x72) },
+			{ expectedGid: "another-resource" },
+			{ descriptor: (await createContext()).descriptor },
+		]) {
+			const foreign = await openOperationJournal(
+				context,
+				anchor,
+				new MemoryAnchorStore(),
+				options,
+			);
+			expect((await foreign.retain(chain.before.bytes)).status).to.equal(
+				"rejected",
+			);
+			await foreign.close();
+			const error = await openOperationJournal(
+				context,
+				anchor,
+				store.clone(),
+				options,
+			).then(
+				(): undefined => undefined,
+				(error: unknown) => error,
+			);
+			expect(error).to.be.instanceOf(Error);
+		}
+		await journal.close();
+	});
+
+	it("rejects retained sets beyond reopen limits and reauthenticates checksummed bytes", async () => {
+		const context = await createContext();
+		const chain = await chainFixture(context);
+		const anchor = await openAnchor(context);
+		const store = new MemoryAnchorStore();
+		const journal = await openOperationJournal(context, anchor, store);
+		await journal.retain(chain.before.bytes);
+		await journal.retain(chain.concurrent.bytes);
+		for (const options of [
+			{ maxEntries: 1 },
+			{ maxRetainedBytes: chain.before.bytes.byteLength },
+		]) {
+			const error = await openOperationJournal(
+				context,
+				anchor,
+				store.clone(),
+				options,
+			).then(
+				(): undefined => undefined,
+				(error: unknown) => error,
+			);
+			expect(error).to.be.instanceOf(Error);
+		}
+		// A valid storage checksum cannot replace signed-operation authentication.
+		const checkpoint = (
+			journal as unknown as { checkpoint: CrashSafeTwoSlotCheckpoint }
+		).checkpoint;
+		const corrupted = checkpoint.current!.payload;
+		corrupted[corrupted.length - 1] ^= 1;
+		await checkpoint.commit(corrupted);
+		await journal.close();
+		const error = await openOperationJournal(
+			context,
+			anchor,
+			store.clone(),
+		).then(
+			(): undefined => undefined,
+			(error: unknown) => error,
+		);
+		expect(error).to.be.instanceOf(Error);
+	});
+
+	for (const failurePoint of ["before-write", "after-write"] as const) {
+		it(`halts on ambiguous ${failurePoint} failure and recovers a complete retained set`, async () => {
+			const context = await createContext();
+			const chain = await chainFixture(context);
+			const anchor = await openAnchor(context);
+			const store = new MemoryAnchorStore();
+			const journal = await openOperationJournal(context, anchor, store);
+			await journal.retain(chain.before.bytes);
+			const replace = store.crashSafeDurability.atomicReplace;
+			store.crashSafeDurability.atomicReplace = async (key, bytes) => {
+				if (failurePoint === "after-write") await replace(key, bytes);
+				throw new Error("simulated journal publication failure");
+			};
+			const error = await journal
+				.retain(chain.concurrent.bytes)
+				.catch((error: unknown) => error);
+			expect(error).to.be.instanceOf(CheckpointAmbiguousCommitError);
+			expect((await journal.retain(chain.concurrent.bytes)).status).to.equal(
+				"halted",
+			);
+			const recovered = await openOperationJournal(
+				context,
+				anchor,
+				store.clone(),
+			);
+			expect(recovered.get(chain.before.cid)).to.deep.equal(chain.before.bytes);
+			expect(recovered.get(chain.concurrent.cid)).to.deep.equal(
+				failurePoint === "after-write" ? chain.concurrent.bytes : undefined,
+			);
+			expect(recovered.size).to.equal(failurePoint === "after-write" ? 2 : 1);
+			await recovered.close();
+			await journal.close();
+		});
+	}
+
+	it("cancels before publication but drains a started replacement through cancellation and close", async () => {
+		const context = await createContext();
+		const chain = await chainFixture(context);
+		const anchor = await openAnchor(context);
+		const store = new MemoryAnchorStore();
+		const journal = await openOperationJournal(context, anchor, store);
+		const cancelled = new AbortController();
+		cancelled.abort();
+		expect(
+			(await journal.retain(chain.before.bytes, { signal: cancelled.signal }))
+				.status,
+		).to.equal("unavailable");
+		expect(store.values.size).to.equal(0);
+		const entered = deferred();
+		const release = deferred();
+		const replace = store.crashSafeDurability.atomicReplace;
+		store.crashSafeDurability.atomicReplace = async (key, bytes) => {
+			entered.resolve();
+			await release.promise;
+			await replace(key, bytes);
+		};
+		const caller = new AbortController();
+		const retaining = journal.retain(chain.before.bytes, {
+			signal: caller.signal,
+		});
+		await entered.promise;
+		expect((await journal.retain(chain.concurrent.bytes)).status).to.equal(
+			"capacity",
+		);
+		caller.abort();
+		let closed = false;
+		const closing = journal.close().then(() => {
+			closed = true;
+		});
+		await Promise.resolve();
+		expect(closed).to.equal(false);
+		release.resolve();
+		expect(await retaining).to.deep.equal({
+			status: "retained",
+			entryCid: chain.before.cid,
+			duplicate: false,
+		});
+		await closing;
+		const reopened = await openOperationJournal(context, anchor, store.clone());
+		expect(reopened.get(chain.before.cid)).to.deep.equal(chain.before.bytes);
+		expect(reopened.size).to.equal(1);
+		await reopened.close();
+	});
+
+	it("drains an entered classification after a simultaneous retention failure during close", async () => {
+		const context = await createContext();
+		const chain = await chainFixture(context);
+		const anchor = await openAnchor(context);
+		await anchor.ingest(chain.fence0.bytes);
+		const store = new MemoryAnchorStore();
+		const journal = await openOperationJournal(context, anchor, store);
+		await journal.retain(chain.before.bytes);
+		const callbackEntered = deferred();
+		const releaseCallback = deferred();
+		const classified = journal.withClassifiedOperation(
+			chain.before.cid,
+			async () => {
+				callbackEntered.resolve();
+				await releaseCallback.promise;
+				return "committed";
+			},
+		);
+		await callbackEntered.promise;
+		const replacementEntered = deferred();
+		const releaseReplacement = deferred();
+		store.crashSafeDurability.atomicReplace = async () => {
+			replacementEntered.resolve();
+			await releaseReplacement.promise;
+			throw new Error("retention failed while closing");
+		};
+		const retaining = journal
+			.retain(chain.concurrent.bytes)
+			.catch((error: unknown) => error);
+		await replacementEntered.promise;
+		let closed = false;
+		const closing = journal.close().then(() => {
+			closed = true;
+		});
+		releaseReplacement.resolve();
+		expect(await retaining).to.be.instanceOf(CheckpointAmbiguousCommitError);
+		await Promise.resolve();
+		expect(closed).to.equal(false);
+		releaseCallback.resolve();
+		expect(await classified).to.deep.equal({
+			status: "completed",
+			value: "committed",
+		});
+		await closing;
+		expect(closed).to.equal(true);
+	});
+
+	it("never enters a queued classification after retention faults the journal", async () => {
+		const context = await createContext();
+		const chain = await chainFixture(context);
+		const anchor = await openAnchor(context);
+		await anchor.ingest(chain.fence0.bytes);
+		const store = new MemoryAnchorStore();
+		const journal = await openOperationJournal(context, anchor, store);
+		await journal.retain(chain.before.bytes);
+		const leaseEntered = deferred();
+		const releaseLease = deferred();
+		const blocker = anchor.withAcceptedFenceLease(
+			{ fenceDigest: chain.fence0.digest, policy: context.policy0 },
+			async () => {
+				leaseEntered.resolve();
+				await releaseLease.promise;
+			},
+		);
+		await leaseEntered.promise;
+		const queued = deferred();
+		context.policyLease.onAcquire = queued.resolve;
+		const use = sinon.spy();
+		const classifying = journal.withClassifiedOperation(chain.before.cid, use);
+		await queued.promise;
+		store.crashSafeDurability.atomicReplace = async () => {
+			throw new Error("retention failed behind a lease");
+		};
+		const error = await journal
+			.retain(chain.concurrent.bytes)
+			.catch((error: unknown) => error);
+		expect(error).to.be.instanceOf(CheckpointAmbiguousCommitError);
+		releaseLease.resolve();
+		await blocker;
+		expect((await classifying).status).to.equal("halted");
+		expect(use.called).to.equal(false);
+		await journal.close();
+	});
+
+	it("captures the lifecycle signal before asynchronous checkpoint reads", async () => {
+		const context = await createContext();
+		const anchor = await openAnchor(context);
+		const memory = new MemoryAnchorStore();
+		const store: CrashSafeAtomicReplaceStore = memory;
+		const read = store.get.bind(store);
+		const entered = deferred();
+		const release = deferred();
+		store.get = async (key) => {
+			entered.resolve();
+			await release.promise;
+			return read(key);
+		};
+		const caller = new AbortController();
+		const properties = {
+			descriptor: context.descriptor,
+			expectedResourceId: RESOURCE_ID,
+			expectedGid: RESOURCE_GID,
+			fenceAnchor: anchor,
+			resolveEntryV0: async (cids: readonly string[]) =>
+				new Map(cids.map((cid) => [cid, context.entriesByCid.get(cid)])),
+			store,
+			signal: caller.signal,
+		};
+		const opening = TrustedNetworkV2ResourceOperationJournal.open(
+			properties,
+		).then(
+			(): undefined => undefined,
+			(error: unknown) => error,
+		);
+		await entered.promise;
+		properties.signal = new AbortController().signal;
+		caller.abort();
+		release.resolve();
+		expect(await opening).to.be.instanceOf(Error);
+		expect(memory.values.size).to.equal(0);
+	});
+});
 
 describe("TrustedNetwork v2 resource-operation authorization", () => {
 	describe("classified operation commit leases", () => {

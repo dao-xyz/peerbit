@@ -28,10 +28,12 @@
 		"!src/v2-resource-fence-engine.ts",
 		"!src/v2-resource-operation-entry.ts",
 		"!src/v2-resource-operation-engine.ts",
+		"!src/v2-resource-operation-journal.ts",
 		"!dist/src/v2-resource-fence-anchor.*",
 		"!dist/src/v2-resource-fence-engine.*",
 		"!dist/src/v2-resource-operation-entry.*",
 		"!dist/src/v2-resource-operation-engine.*",
+		"!dist/src/v2-resource-operation-journal.*",
 		"!dist/e2e",
 		"!dist/test",
 		"!**/*.tsbuildinfo"
