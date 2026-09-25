@@ -340,4 +340,102 @@ describe("durable native block store restart", function () {
 			await store2.log.log.blocks.hasMany!([removed.entry.hash]),
 		).to.deep.equal([false]);
 	});
+
+	it("persists a received CUT before first seeing its victim", async () => {
+		directory = await fs.mkdtemp(
+			path.join(os.tmpdir(), "peerbit-durable-native-cut-target-"),
+		);
+		const sourceDirectory = await fs.mkdtemp(
+			path.join(os.tmpdir(), "peerbit-durable-native-cut-source-"),
+		);
+		const storeId = new Uint8Array(32).fill(30);
+		let sourceClient: Peerbit | undefined;
+		try {
+			sourceClient = await Peerbit.create({
+				directory: sourceDirectory,
+				...createRustPeerbitOptions(),
+			});
+			const source = await sourceClient.open(
+				new EventStore<string, any>({ id: storeId }),
+				{ args: { replicate: { factor: 1 } } },
+			);
+			const victim = await source.add("removed-before-receive", {
+				meta: { next: [] },
+			});
+			const cut = await source.log.append(
+				{ op: "DELETE", value: "removed-before-receive" },
+				{ meta: { next: [victim.entry], type: EntryType.CUT } },
+			);
+			await sourceClient.stop();
+			sourceClient = undefined;
+
+			// The receiver opens only after the source is offline: the signed CUT
+			// arrives alone, not through a connection that could supply the victim.
+			client = await Peerbit.create({
+				directory,
+				...createRustPeerbitOptions(),
+			});
+			const target = await client.open(
+				new EventStore<string, any>({ id: storeId }),
+				{ args: { replicate: { factor: 1 } } },
+			);
+			expect(target.log.log.length).to.equal(0);
+			expect(await target.log.log.has(victim.entry.hash)).to.equal(false);
+			expect(await target.log.log.has(cut.entry.hash)).to.equal(false);
+			expect(await target.log.log.blocks.has(victim.entry.hash)).to.equal(
+				false,
+			);
+			await target.log.log.join([cut.entry], { verifySignatures: true });
+			expect(target.log.log.length).to.equal(1);
+			expect(await target.log.log.has(victim.entry.hash)).to.equal(false);
+			expect(await target.log.log.blocks.has(victim.entry.hash)).to.equal(
+				false,
+			);
+			const headsBefore = (await target.log.log.getHeads().all()).map(
+				(entry) => entry.hash,
+			);
+			expect(headsBefore).to.deep.equal([cut.entry.hash]);
+
+			await client.stop();
+			client = undefined;
+
+			client = await Peerbit.create({
+				directory,
+				...createRustPeerbitOptions(),
+			});
+			const reopened = await client.open(
+				new EventStore<string, any>({ id: storeId }),
+				{ args: { replicate: { factor: 1 } } },
+			);
+			expect(reopened.log.log.length).to.equal(1);
+			expect(
+				(await reopened.log.log.getHeads(true).all()).map(
+					(entry) => entry.hash,
+				),
+			).to.deep.equal(headsBefore);
+			expect(await reopened.log.log.blocks.has(cut.entry.hash)).to.equal(true);
+			expect(await reopened.log.log.blocks.has(victim.entry.hash)).to.equal(
+				false,
+			);
+			expect(
+				(await reopened.log.log.entryIndex.planJoin(victim.entry)).coveredByCut,
+			).to.equal(true);
+
+			await reopened.log.log.join([victim.entry], { verifySignatures: true });
+			expect(reopened.log.log.length).to.equal(1);
+			expect(await reopened.log.log.has(victim.entry.hash)).to.equal(false);
+			expect(await reopened.log.log.blocks.has(victim.entry.hash)).to.equal(
+				false,
+			);
+			expect(
+				(await reopened.log.log.getHeads().all()).map((entry) => entry.hash),
+			).to.deep.equal(headsBefore);
+		} finally {
+			try {
+				await sourceClient?.stop();
+			} finally {
+				await fs.rm(sourceDirectory, { recursive: true, force: true });
+			}
+		}
+	});
 });
