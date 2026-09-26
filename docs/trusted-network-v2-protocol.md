@@ -850,6 +850,49 @@ interpret application operations, import a snapshot or delete history. Those
 remain prerequisites for a protected-resource adapter and compaction. No
 automatic re-signing, eviction or acknowledgment of reconciliation is provided.
 
+### Internal immutable document projection
+
+`TrustedNetworkV2ResourceDocumentProjection` consumes that journal to materialize
+canonical `ImmutableResourceDocumentV2` records (`[2,5]`, UTF-8 key and byte
+value), one independent document per original signed operation CID. Keys may
+repeat; there is no key normalization or implicit winner selection. This is an
+explicit immutable-set profile, not mutable `Documents.put/del`
+replay: CID order is only deterministic set order. Each visible row keeps its
+`provisional` or `policy-final` classification; provisional rows can be retracted.
+It does not establish reader authorization or confidentiality.
+
+Every `withDocuments` call freshly replays the complete bounded local inventory.
+Under the final policy/fence leases, the adapter decodes all non-rejected rows,
+then atomically replaces their canonical bytes and the exact policy/fence/inventory
+watermark using the existing two-slot checkpoint. Rejected rows disappear from
+the view but their signed bytes remain in the journal for export/recovery. An
+invalid or noncanonical document payload fails the entire projection; it neither
+silently drops a document nor serves an older view. There is no unguarded cache
+read. The consumer runs only after durable publication, under the same leases.
+
+The projection uses a dedicated store, separate from the journal and anchors,
+scoped to the network/resource/log and a stable 32-byte application value
+interpretation/version identifier. It inherits the journal's entry/byte bounds.
+The fixed document decoder checks exact framing, strict UTF-8, a 1,024-byte key
+bound and a 60-KiB value bound before materialization; no arbitrary application
+schema runs while authorization is leased. Every resource operation in this
+profile must carry that document format. Retention alone still authenticates
+envelope scope/signatures, not document acceptance.
+Reusing a profile identifier for different application semantics is unsupported.
+
+The journal and document checkpoint are deliberately not a cross-store
+transaction. A crash between their publications is safe because reopen never
+serves saved rows: a fresh replay must repair/revalidate the projection first.
+Ambiguous document publication halts the adapter until reopen. Cancellation or
+close drains a started publication but suppresses a not-yet-entered consumer;
+an entered consumer keeps its actual outcome. Unchanged fresh replay avoids a
+redundant document checkpoint write, never the authorization checks.
+
+The adapter remains internal and excluded from published artifacts. It is not
+public v2 activation, mutable document conflict handling, an automatically fed
+network inbox, proof of complete remote history/freshness, snapshot import or
+permission to discard history. Those larger integration gates remain open.
+
 ## Confidentiality boundary
 
 Replication and routing operate on ciphertext and public policy metadata.

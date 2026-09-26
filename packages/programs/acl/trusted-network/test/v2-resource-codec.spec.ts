@@ -109,6 +109,10 @@ describe("TrustedNetwork v2 resource codecs", () => {
 		expect("OperationPolicyProofV2" in publicApi).to.equal(false);
 		expect("decodeResourceFenceV2" in publicApi).to.equal(false);
 		expect("decodeOperationPolicyProofV2" in publicApi).to.equal(false);
+		expect("ImmutableResourceDocumentV2" in publicApi).to.equal(false);
+		expect("TrustedNetworkV2ResourceDocumentProjection" in publicApi).to.equal(
+			false,
+		);
 	});
 
 	it("pins the exact variants, field order, lengths, and golden bytes", () => {
@@ -189,10 +193,7 @@ describe("TrustedNetwork v2 resource codecs", () => {
 		maxFence.fenceSequence = maximum;
 		maxFence.policySequence = maximum;
 		maxFence.contentEpoch = maximum;
-		const decodedFence = decodeResourceFenceV2(
-			serialize(maxFence),
-			DESCRIPTOR,
-		);
+		const decodedFence = decodeResourceFenceV2(serialize(maxFence), DESCRIPTOR);
 		expect(decodedFence.fenceSequence).to.equal(maximum);
 		expect(decodedFence.policySequence).to.equal(maximum);
 		expect(decodedFence.contentEpoch).to.equal(maximum);
