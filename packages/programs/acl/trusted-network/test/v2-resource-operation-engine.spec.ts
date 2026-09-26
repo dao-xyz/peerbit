@@ -37,6 +37,9 @@ import {
 	type ResourceCausalWorkLimitsV2,
 } from "../src/v2-resource-fence-engine.js";
 import {
+	type ClassifiedResourceOperationLeaseV2,
+	type ClassifiedResourceOperationResultV2,
+	type ResourceOperationAuthorizationOptionsV2,
 	TRUSTED_NETWORK_V2_MAX_RESOURCE_OPERATION_CAUSAL_BYTES,
 	TRUSTED_NETWORK_V2_MAX_RESOURCE_OPERATION_CAUSAL_ENTRIES,
 	TRUSTED_NETWORK_V2_MAX_RESOURCE_OPERATION_CAUSAL_LINKS,
@@ -516,11 +519,12 @@ describe("TrustedNetwork v2 retained resource-operation journal", () => {
 				"retained",
 			);
 			expect(
-				await journal.withClassifiedOperation(
-					chain.concurrent.cid,
-					(view) => view.classification.status,
+				await journal.withReplayedOperations(
+					chain.fence0.cid,
+					(view) => view.entries[0]!.status,
 				),
 			).to.deep.equal({ status: "completed", value: "provisional" });
+			const saved = journal.persistedProjection;
 			await journal.close();
 			journal = undefined;
 			await store.close();
@@ -532,14 +536,15 @@ describe("TrustedNetwork v2 retained resource-operation journal", () => {
 					"Reopened store does not support crash-safe replacement",
 				);
 			journal = await openOperationJournal(context, anchor, store);
+			expect(journal.persistedProjection).to.deep.equal(saved);
 			expect(journal.entries()).to.deep.equal([chain.concurrent.cid]);
 			expect(journal.get(chain.concurrent.cid)).to.deep.equal(
 				chain.concurrent.bytes,
 			);
 			expect(
-				await journal.withClassifiedOperation(
-					chain.concurrent.cid,
-					(view) => view.classification.status,
+				await journal.withReplayedOperations(
+					chain.fence1.cid,
+					(view) => view.entries[0]!.status,
 				),
 			).to.deep.equal({ status: "completed", value: "rejected" });
 		} finally {
@@ -700,7 +705,9 @@ describe("TrustedNetwork v2 retained resource-operation journal", () => {
 			journal as unknown as { checkpoint: CrashSafeTwoSlotCheckpoint }
 		).checkpoint;
 		const corrupted = checkpoint.current!.payload;
-		corrupted[corrupted.length - 1] ^= 1;
+		const offset = Buffer.from(corrupted).indexOf(chain.concurrent.bytes);
+		expect(offset).to.be.greaterThan(-1);
+		corrupted[offset + chain.concurrent.bytes.length - 1] ^= 1;
 		await checkpoint.commit(corrupted);
 		await journal.close();
 		const error = await openOperationJournal(
@@ -918,6 +925,581 @@ describe("TrustedNetwork v2 retained resource-operation journal", () => {
 		release.resolve();
 		expect(await opening).to.be.instanceOf(Error);
 		expect(memory.values.size).to.equal(0);
+	});
+});
+
+describe("TrustedNetwork v2 retained resource replay", () => {
+	it("keeps one absolute replay deadline across entries and publishes nothing after expiry", async () => {
+		const context = await createContext();
+		const chain = await chainFixture(context);
+		const anchor = await openAnchor(context);
+		await anchor.ingest(chain.fence0.bytes);
+		const store = new MemoryAnchorStore();
+		const journal = await openOperationJournal(context, anchor, store);
+		await journal.retain(chain.before.bytes);
+		await journal.retain(chain.concurrent.bytes);
+		await journal.withReplayedOperations(chain.fence0.cid, () => true);
+		const prior = journal.persistedProjection;
+		const replace = sinon.spy(store.crashSafeDurability, "atomicReplace");
+		const use = sinon.spy();
+		const cancelled = new AbortController();
+		cancelled.abort();
+		expect(
+			(
+				await journal.withReplayedOperations(chain.fence0.cid, use, {
+					signal: cancelled.signal,
+				})
+			).status,
+		).to.equal("unavailable");
+		expect(replace.called).to.equal(false);
+		const clock = sinon.useFakeTimers({ now: Date.now(), toFake: ["Date"] });
+		try {
+			const deadline = Date.now() + 1_000;
+			const engine = (
+				journal as unknown as {
+					engine: TrustedNetworkV2ResourceOperationEngine;
+				}
+			).engine;
+			const classify = engine.withClassifiedOperation.bind(engine);
+			let dispatched = 0;
+			engine.withClassifiedOperation = async <T>(
+				bytes: Uint8Array,
+				consumer: (lease: ClassifiedResourceOperationLeaseV2) => T | Promise<T>,
+				options?: ResourceOperationAuthorizationOptionsV2,
+			): Promise<ClassifiedResourceOperationResultV2<T>> => {
+				dispatched += 1;
+				const result = await classify<T>(bytes, consumer, options);
+				clock.setSystemTime(deadline + 1);
+				return result;
+			};
+			expect(
+				(
+					await journal.withReplayedOperations(chain.fence0.cid, use, {
+						deadline,
+					})
+				).status,
+			).to.equal("unavailable");
+			expect(dispatched).to.equal(1);
+			expect(use.called).to.equal(false);
+			expect(replace.called).to.equal(false);
+			expect(journal.persistedProjection).to.deep.equal(prior);
+		} finally {
+			clock.restore();
+			await journal.close();
+		}
+	});
+
+	for (const changed of ["resource", "policy"] as const) {
+		it(`rejects a ${changed} anchor change between classifications without publishing a partial replay`, async () => {
+			const context = await createContext();
+			const chain = await chainFixture(context);
+			const anchor = await openAnchor(context);
+			await anchor.ingest(chain.fence0.bytes);
+			const journal = await openOperationJournal(context, anchor);
+			await journal.retain(chain.before.bytes);
+			await journal.retain(chain.concurrent.bytes);
+			await journal.withReplayedOperations(chain.fence0.cid, () => true);
+			const prior = journal.persistedProjection;
+			const engine = (
+				journal as unknown as {
+					engine: TrustedNetworkV2ResourceOperationEngine;
+				}
+			).engine;
+			const classify = engine.withClassifiedOperation.bind(engine);
+			let advanced = false;
+			engine.withClassifiedOperation = async <T>(
+				bytes: Uint8Array,
+				use: (lease: ClassifiedResourceOperationLeaseV2) => T | Promise<T>,
+				options?: ResourceOperationAuthorizationOptionsV2,
+			): Promise<ClassifiedResourceOperationResultV2<T>> => {
+				const result = await classify<T>(bytes, use, options);
+				if (!advanced) {
+					advanced = true;
+					if (changed === "resource") {
+						expect((await anchor.ingest(chain.fence1.bytes)).status).to.equal(
+							"accepted",
+						);
+					} else {
+						const policy = await EntryV0.create({
+							store: {} as never,
+							data: serialize(
+								new PolicySnapshotBodyV2({
+									networkId: deriveNetworkIdV2(context.descriptor),
+									sequence: 3n,
+									previousPolicyDigest: context.policy2.digest,
+									bindings: [
+										new PolicySubjectBindingV2({
+											signingKey: context.authority.publicKey,
+											roles: TrustedNetworkRole.ADMIN,
+										}),
+									],
+								}),
+							),
+							identity: context.authority,
+							deferStore: true,
+						});
+						expect(
+							(
+								await context.policyLease.anchor.ingest(
+									Entry.getPreparedStorageBytes(policy)!,
+								)
+							).status,
+						).to.equal("accepted");
+						expect(anchor.head?.entryCid).to.equal(chain.fence0.cid);
+					}
+				}
+				return result;
+			};
+			const use = sinon.spy();
+			expect(
+				(await journal.withReplayedOperations(chain.fence0.cid, use)).status,
+			).to.equal("unavailable");
+			expect(advanced).to.equal(true);
+			expect(use.called).to.equal(false);
+			expect(journal.persistedProjection).to.deep.equal(prior);
+			await journal.close();
+		});
+	}
+
+	it("shares the causal work ceiling across individually admissible retained operations", async () => {
+		const context = await createContext();
+		const chain = await chainFixture(context);
+		const anchor = await openAnchor(context);
+		await anchor.ingest(chain.fence0.bytes);
+		const journal = await openOperationJournal(
+			context,
+			anchor,
+			new MemoryAnchorStore(),
+			{
+				causalWorkLimits: { maxVisitedEntries: 1 },
+			},
+		);
+		for (const entry of [chain.before, chain.concurrent]) {
+			await journal.retain(entry.bytes);
+			expect(
+				await journal.withClassifiedOperation(
+					entry.cid,
+					(view) => view.classification.status,
+				),
+			).to.deep.equal({
+				status: "completed",
+				value: "provisional",
+			});
+		}
+		const use = sinon.spy();
+		expect(
+			(await journal.withReplayedOperations(chain.fence0.cid, use)).status,
+		).to.equal("unavailable");
+		expect(use.called).to.equal(false);
+		expect(journal.persistedProjection).to.equal(undefined);
+		await journal.close();
+	});
+
+	it("replays reordered inventories identically and retracts omitted operations after a closing fence", async () => {
+		const context = await createContext();
+		const chain = await chainFixture(context);
+		const anchor = await openAnchor(context);
+		await anchor.ingest(chain.fence0.bytes);
+		const left = await openOperationJournal(context, anchor);
+		const right = await openOperationJournal(context, anchor);
+		for (const entry of [chain.before, chain.concurrent])
+			await left.retain(entry.bytes);
+		for (const entry of [chain.concurrent, chain.before])
+			await right.retain(entry.bytes);
+		const provisional = await left.withReplayedOperations(
+			chain.fence0.cid,
+			(view) => view,
+		);
+		const reordered = await right.withReplayedOperations(
+			chain.fence0.cid,
+			(view) => view,
+		);
+		expect(provisional).to.deep.equal(reordered);
+		if (provisional.status !== "completed") throw new Error(provisional.status);
+		expect(
+			provisional.value.entries.map((entry) => entry.entryCid),
+		).to.deep.equal(left.entries());
+		expect(
+			provisional.value.entries.map((entry) => entry.status),
+		).to.deep.equal(["provisional", "provisional"]);
+		await anchor.ingest(chain.fence1.bytes);
+		const closed = await left.withReplayedOperations(
+			chain.fence1.cid,
+			(view) => view,
+		);
+		expect(closed).to.deep.equal(
+			await right.withReplayedOperations(chain.fence1.cid, (view) => view),
+		);
+		if (closed.status !== "completed") throw new Error(closed.status);
+		expect(closed.value.inventoryDigest).to.deep.equal(
+			provisional.value.inventoryDigest,
+		);
+		expect(closed.value.acceptedFenceHead.entryCid).to.equal(chain.fence1.cid);
+		expect(
+			closed.value.entries.find((entry) => entry.entryCid === chain.before.cid),
+		).to.deep.equal({
+			entryCid: chain.before.cid,
+			status: "policy-final",
+			applicationPayload: Uint8Array.of(1),
+		});
+		const rejected = closed.value.entries.find(
+			(entry) => entry.entryCid === chain.concurrent.cid,
+		)!;
+		expect(rejected.status).to.equal("rejected");
+		expect(rejected.applicationPayload).to.equal(undefined);
+		expect(left.get(chain.concurrent.cid)).to.deep.equal(
+			chain.concurrent.bytes,
+		);
+		expect(left.persistedProjection).to.deep.equal(right.persistedProjection);
+		expect(
+			left.persistedProjection!.entries.every(
+				(entry) => !("applicationPayload" in entry),
+			),
+		).to.equal(true);
+		const saved = left.persistedProjection;
+		closed.value.inventoryDigest.fill(0);
+		closed.value.acceptedPolicyHead.digest.fill(0);
+		closed.value.entries
+			.find((entry) => entry.entryCid === chain.before.cid)!
+			.applicationPayload!.fill(0);
+		const copied = left.persistedProjection!;
+		copied.acceptedFenceHead.digest.fill(0);
+		(copied.entries[0] as { status: string }).status = "corrupted";
+		expect(left.persistedProjection).to.deep.equal(saved);
+		expect(
+			await left.withReplayedOperations(
+				chain.fence1.cid,
+				(view) =>
+					view.entries.find((entry) => entry.entryCid === chain.before.cid)!
+						.applicationPayload,
+			),
+		).to.deep.equal({ status: "completed", value: Uint8Array.of(1) });
+		expect(left.get(chain.before.cid)).to.deep.equal(chain.before.bytes);
+		await Promise.all([left.close(), right.close()]);
+	});
+
+	it("requires an exact authenticated fence even for an empty retained inventory", async () => {
+		const context = await createContext();
+		const chain = await chainFixture(context);
+		const anchor = await openAnchor(context);
+		context.entriesByCid.delete(chain.fence0.cid);
+		const store = new MemoryAnchorStore();
+		const journal = await openOperationJournal(context, anchor, store);
+		const use = sinon.spy();
+		expect(
+			(await journal.withReplayedOperations(chain.fence0.cid, use)).status,
+		).to.equal("unavailable");
+		expect(use.called).to.equal(false);
+		expect(journal.persistedProjection).to.equal(undefined);
+		context.entriesByCid.set(chain.fence0.cid, chain.fence0.bytes);
+		const result = await journal.withReplayedOperations(
+			chain.fence0.cid,
+			(view) => view,
+		);
+		if (result.status !== "completed") throw new Error(result.status);
+		expect(result.value.entries).to.deep.equal([]);
+		expect(result.value.acceptedFenceHead.entryCid).to.equal(chain.fence0.cid);
+		await journal.close();
+		const reopened = await openOperationJournal(context, anchor, store.clone());
+		expect(reopened.persistedProjection!.entries).to.deep.equal([]);
+		await reopened.close();
+	});
+
+	it("reopens a retention-only v1 checkpoint and upgrades it on replay", async () => {
+		const context = await createContext();
+		const chain = await chainFixture(context);
+		const anchor = await openAnchor(context);
+		await anchor.ingest(chain.fence0.bytes);
+		const store = new MemoryAnchorStore();
+		const journal = await openOperationJournal(context, anchor, store);
+		await journal.retain(chain.before.bytes);
+		const checkpoint = (
+			journal as unknown as { checkpoint: CrashSafeTwoSlotCheckpoint }
+		).checkpoint;
+		const current = checkpoint.current!.payload;
+		expect(current[current.length - 1]).to.equal(0);
+		const legacy = current.slice(0, -1);
+		legacy[3] = 1;
+		await checkpoint.commit(legacy);
+		await journal.close();
+		const reopenedStore = store.clone();
+		const reopened = await openOperationJournal(context, anchor, reopenedStore);
+		expect(reopened.get(chain.before.cid)).to.deep.equal(chain.before.bytes);
+		expect(reopened.persistedProjection).to.equal(undefined);
+		expect(
+			(await reopened.withReplayedOperations(chain.fence0.cid, () => true))
+				.status,
+		).to.equal("completed");
+		const upgraded = (
+			reopened as unknown as { checkpoint: CrashSafeTwoSlotCheckpoint }
+		).checkpoint.current!.payload;
+		expect(upgraded[3]).to.equal(2);
+		const saved = reopened.persistedProjection;
+		await reopened.close();
+		const verified = await openOperationJournal(
+			context,
+			anchor,
+			reopenedStore.clone(),
+		);
+		expect(verified.persistedProjection).to.deep.equal(saved);
+		await verified.close();
+	});
+
+	it("rejects a checksummed projection with a foreign inventory or invalid status", async () => {
+		const context = await createContext();
+		const chain = await chainFixture(context);
+		const anchor = await openAnchor(context);
+		await anchor.ingest(chain.fence0.bytes);
+		const store = new MemoryAnchorStore();
+		const journal = await openOperationJournal(context, anchor, store);
+		await journal.retain(chain.before.bytes);
+		await journal.withReplayedOperations(chain.fence0.cid, () => true);
+		const checkpoint = (
+			journal as unknown as { checkpoint: CrashSafeTwoSlotCheckpoint }
+		).checkpoint;
+		const valid = checkpoint.current!.payload;
+		for (const corruption of ["inventory", "status"] as const) {
+			const corrupted = Uint8Array.from(valid);
+			if (corruption === "inventory") {
+				const offset = Buffer.from(corrupted).lastIndexOf(
+					journal.persistedProjection!.inventoryDigest,
+				);
+				expect(offset).to.be.greaterThan(-1);
+				corrupted[offset] ^= 1;
+			} else corrupted[corrupted.length - 1] = 0xff;
+			await checkpoint.commit(corrupted);
+			const error = await openOperationJournal(
+				context,
+				anchor,
+				store.clone(),
+			).then(
+				(): undefined => undefined,
+				(error: unknown) => error,
+			);
+			expect(error).to.be.instanceOf(Error);
+		}
+		await journal.close();
+	});
+
+	it("elides identical checkpoint writes including reopen but always reclassifies against available context", async () => {
+		const context = await createContext();
+		const chain = await chainFixture(context);
+		const anchor = await openAnchor(context);
+		await anchor.ingest(chain.fence0.bytes);
+		await anchor.ingest(chain.fence1.bytes);
+		const store = new MemoryAnchorStore();
+		const journal = await openOperationJournal(context, anchor, store);
+		await journal.retain(chain.concurrent.bytes);
+		const replace = sinon.spy(store.crashSafeDurability, "atomicReplace");
+		const classify = sinon.spy(
+			(
+				journal as unknown as {
+					engine: TrustedNetworkV2ResourceOperationEngine;
+				}
+			).engine,
+			"withClassifiedOperation",
+		);
+		for (let i = 0; i < 2; i++) {
+			expect(
+				(await journal.withReplayedOperations(chain.fence1.cid, () => true))
+					.status,
+			).to.equal("completed");
+		}
+		expect(classify.callCount).to.equal(2);
+		expect(replace.callCount).to.equal(1);
+		const prior = journal.persistedProjection;
+		await journal.close();
+		const reopenedStore = store.clone();
+		const reopened = await openOperationJournal(context, anchor, reopenedStore);
+		const restoredReplace = sinon.spy(
+			reopenedStore.crashSafeDurability,
+			"atomicReplace",
+		);
+		const restoredClassify = sinon.spy(
+			(
+				reopened as unknown as {
+					engine: TrustedNetworkV2ResourceOperationEngine;
+				}
+			).engine,
+			"withClassifiedOperation",
+		);
+		expect(
+			(await reopened.withReplayedOperations(chain.fence1.cid, () => true))
+				.status,
+		).to.equal("completed");
+		expect(restoredClassify.callCount).to.equal(1);
+		expect(restoredReplace.callCount).to.equal(0);
+		context.entriesByCid.delete(chain.before.cid);
+		const use = sinon.spy();
+		expect(
+			(await reopened.withReplayedOperations(chain.fence1.cid, use)).status,
+		).to.equal("unavailable");
+		expect(use.called).to.equal(false);
+		expect(restoredClassify.callCount).to.equal(2);
+		expect(restoredReplace.callCount).to.equal(0);
+		expect(reopened.persistedProjection).to.deep.equal(prior);
+		context.entriesByCid.set(chain.before.cid, chain.before.bytes);
+		const replayed = await reopened.withReplayedOperations(
+			chain.fence1.cid,
+			(view) => view.entries[0]!.status,
+		);
+		expect(replayed).to.deep.equal({ status: "completed", value: "rejected" });
+		await reopened.close();
+	});
+
+	it("invalidates a projection only for newly retained bytes and preserves callback errors without halting", async () => {
+		const context = await createContext();
+		const chain = await chainFixture(context);
+		const anchor = await openAnchor(context);
+		await anchor.ingest(chain.fence0.bytes);
+		const journal = await openOperationJournal(context, anchor);
+		await journal.retain(chain.before.bytes);
+		const failure = new Error("projection consumer failed");
+		expect(
+			await journal
+				.withReplayedOperations(chain.fence0.cid, () => {
+					throw failure;
+				})
+				.catch((error: unknown) => error),
+		).to.equal(failure);
+		const saved = journal.persistedProjection;
+		expect(saved).not.to.equal(undefined);
+		await journal.retain(chain.before.bytes);
+		expect(journal.persistedProjection).to.deep.equal(saved);
+		expect(
+			(await journal.withReplayedOperations(chain.fence0.cid, () => true))
+				.status,
+		).to.equal("completed");
+		await journal.retain(chain.concurrent.bytes);
+		expect(journal.persistedProjection).to.equal(undefined);
+		await journal.close();
+	});
+
+	for (const failurePoint of ["before-write", "after-write"] as const) {
+		it(`recovers one complete replay watermark after ${failurePoint} failure`, async () => {
+			const context = await createContext();
+			const chain = await chainFixture(context);
+			const anchor = await openAnchor(context);
+			await anchor.ingest(chain.fence0.bytes);
+			const store = new MemoryAnchorStore();
+			const journal = await openOperationJournal(context, anchor, store);
+			await journal.retain(chain.concurrent.bytes);
+			await journal.withReplayedOperations(chain.fence0.cid, () => true);
+			await anchor.ingest(chain.fence1.bytes);
+			const replace = store.crashSafeDurability.atomicReplace;
+			store.crashSafeDurability.atomicReplace = async (key, bytes) => {
+				if (failurePoint === "after-write") await replace(key, bytes);
+				throw new Error("replay publication failed");
+			};
+			const use = sinon.spy();
+			const result = await journal
+				.withReplayedOperations(chain.fence1.cid, use)
+				.catch((error: unknown) => error);
+			expect(result).to.be.instanceOf(CheckpointAmbiguousCommitError);
+			expect(use.called).to.equal(false);
+			await journal.close();
+			const reopened = await openOperationJournal(
+				context,
+				anchor,
+				store.clone(),
+			);
+			expect(reopened.persistedProjection!.acceptedFenceHead.entryCid).to.equal(
+				failurePoint === "before-write" ? chain.fence0.cid : chain.fence1.cid,
+			);
+			expect(reopened.persistedProjection!.entries[0]!.status).to.equal(
+				failurePoint === "before-write" ? "provisional" : "rejected",
+			);
+			expect(reopened.get(chain.concurrent.cid)).to.deep.equal(
+				chain.concurrent.bytes,
+			);
+			await reopened.close();
+		});
+	}
+
+	for (const cancellation of ["caller", "close"] as const) {
+		it(`drains a started replay replacement but skips the consumer after ${cancellation} cancellation`, async () => {
+			const context = await createContext();
+			const chain = await chainFixture(context);
+			const anchor = await openAnchor(context);
+			await anchor.ingest(chain.fence0.bytes);
+			const store = new MemoryAnchorStore();
+			const journal = await openOperationJournal(context, anchor, store);
+			await journal.retain(chain.before.bytes);
+			const entered = deferred();
+			const release = deferred();
+			const replace = store.crashSafeDurability.atomicReplace;
+			store.crashSafeDurability.atomicReplace = async (key, bytes) => {
+				entered.resolve();
+				await release.promise;
+				await replace(key, bytes);
+			};
+			const caller = new AbortController();
+			const use = sinon.spy();
+			const replay = journal.withReplayedOperations(chain.fence0.cid, use, {
+				signal: caller.signal,
+			});
+			await entered.promise;
+			expect((await journal.retain(chain.concurrent.bytes)).status).to.equal(
+				"capacity",
+			);
+			expect(
+				(await journal.withReplayedOperations(chain.fence0.cid, use)).status,
+			).to.equal("capacity");
+			let closed = false;
+			let closing: Promise<void> | undefined;
+			if (cancellation === "caller") caller.abort();
+			else
+				closing = journal.close().then(() => {
+					closed = true;
+				});
+			await Promise.resolve();
+			expect(closed).to.equal(false);
+			release.resolve();
+			expect(["unavailable", "halted"]).to.include((await replay).status);
+			expect(use.called).to.equal(false);
+			await (closing ?? journal.close());
+			const reopened = await openOperationJournal(
+				context,
+				anchor,
+				store.clone(),
+			);
+			expect(reopened.persistedProjection!.acceptedFenceHead.entryCid).to.equal(
+				chain.fence0.cid,
+			);
+			await reopened.close();
+		});
+	}
+
+	it("drains an entered replay consumer on close and returns its actual value", async () => {
+		const context = await createContext();
+		const chain = await chainFixture(context);
+		const anchor = await openAnchor(context);
+		await anchor.ingest(chain.fence0.bytes);
+		const journal = await openOperationJournal(context, anchor);
+		await journal.retain(chain.before.bytes);
+		const entered = deferred();
+		const release = deferred();
+		const replay = journal.withReplayedOperations(
+			chain.fence0.cid,
+			async () => {
+				entered.resolve();
+				await release.promise;
+				return "published";
+			},
+		);
+		await entered.promise;
+		let closed = false;
+		const closing = journal.close().then(() => {
+			closed = true;
+		});
+		await Promise.resolve();
+		expect(closed).to.equal(false);
+		release.resolve();
+		expect(await replay).to.deep.equal({
+			status: "completed",
+			value: "published",
+		});
+		await closing;
 	});
 });
 
