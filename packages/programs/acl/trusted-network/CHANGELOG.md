@@ -1,5 +1,22 @@
 # Changelog
 
+## 6.0.139
+
+### Patch Changes
+
+- [#1470](https://github.com/dao-xyz/peerbit/pull/1470) [`764043e`](https://github.com/dao-xyz/peerbit/commit/764043ea8ad46bc3cb77bf75aa33187b21daa7b1) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Prepare internal retained-operation replay with an atomic authorization-set
+  projection and policy/fence watermark. The journal remains excluded from
+  published artifacts; public authorization and history retention are unchanged.
+
+- [#1471](https://github.com/dao-xyz/peerbit/pull/1471) [`709bf76`](https://github.com/dao-xyz/peerbit/commit/709bf76fb5ec06c0cac9a87e069a45654d5b6ab7) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Prepare an internal immutable-document projection with fresh authorization replay
+  and crash-safe replacement of document rows and their policy/fence watermark.
+  The adapter is excluded from published artifacts; public V1 semantics, mutable
+  Documents conflict handling and history retention are unchanged.
+
+- [#1469](https://github.com/dao-xyz/peerbit/pull/1469) [`443e593`](https://github.com/dao-xyz/peerbit/commit/443e593ecc616931c6b9ba79e4fbd3a626fd617f) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Prepare bounded internal retention of signed resource operations for recovery
+  across policy changes and restart. The module remains excluded from published
+  artifacts; this does not change public v1 authorization or enable v2 compaction.
+
 ## 6.0.138
 
 ### Patch Changes
