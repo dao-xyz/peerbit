@@ -893,6 +893,23 @@ public v2 activation, mutable document conflict handling, an automatically fed
 network inbox, proof of complete remote history/freshness, snapshot import or
 permission to discard history. Those larger integration gates remain open.
 
+The independent-peer recovery regression uses three real Peerbit block services
+with separate disk stores and dependency catalogues. It stops a writer
+with a provisional view, advances the owner's revocation fence, then reconnects
+and later regrants. A cold peer receives operations before their policy/fence
+dependencies and receives that context in reverse order. Missing context blocks
+reads, including after a successful view was saved; fetching the exact missing
+block restores progress. Every replica then stops, and a fresh child process
+recreates all policy/fence anchors, journals and projections from disk without
+connections. The writer's stale document checkpoint is revalidated, not served
+as authority; the replicas agree on rows and watermarks and retain rejected
+operations' original signed bytes.
+
+Delivery and the exact policy/fence requirement are test-owned. This is a bounded
+four-operation immutable-set fixture, not an automatic accepted-remote-frontier
+bridge, a latest-authority proof, a mutable Documents workload, or a hard-kill
+test. It does not establish history completeness, snapshot import or truncation.
+
 ## Confidentiality boundary
 
 Replication and routing operate on ciphertext and public policy metadata.
@@ -1017,11 +1034,13 @@ monotone transition and fork reduction, bounded canonical dependency hints,
 and crash-safe persistence of accepted, unavailable-comparison, and fork states. The policy
 lease and fence-admission walks have aggregate bounds. The bounded internal
 operation envelope now authenticates signed application bytes and classifies
-their fence-relative authorization. Application payload semantics, durable
-replay of all pending context, materialized projection
-revalidation and retractions, the public accepted-entry/frontier callback, and
-end-to-end long-offline catch-up remain open. This foundation does not complete
-the gate or provide a usable authorization path.
+their fence-relative authorization. The internal immutable-document profile adds
+bounded retained-operation replay, retractions and durable projection watermarks,
+with independent-peer and fresh-process recovery coverage as described above.
+General application semantics, automatic durable replay of pending remote context,
+the public accepted-entry/frontier callback and complete long-offline catch-up
+remain open. This foundation does not complete the gate or provide a public
+authorization path.
 
 ### 4. Role enforcement and encryption
 
