@@ -5568,7 +5568,8 @@ export class Log<T> {
 					(x) => x.meta.type !== EntryType.CUT && x.hash !== entry.hash, // second arg is to avoid references to the same entry that is to be deleted (i.e we are looking for other entries)
 				);
 				if (!hasAlternativeNext) {
-					const ne = await this.get(next);
+					// Cleanup follows the admitted graph, not unindexed block history.
+					const ne = (await this.entryIndex.getShallow(next))?.value;
 					if (ne) {
 						stack.push(ne);
 					}

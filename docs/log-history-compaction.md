@@ -177,6 +177,34 @@ separate-process crash/reopen to match full replay while every omitted-prefix
 lookup is forbidden and counted. Retain source history throughout. Physical
 history retirement is a later milestone requiring custody and old-peer tests.
 
+### Prototype findings
+
+The test-only Documents snapshot fixture preserves original signed heads and
+`Context`. With `P -> A` represented by a snapshot at A, a complete `B -> CUT(B)`
+suffix can remove A without reading omitted P. This required fixing JavaScript
+CUT cleanup to traverse admitted index metadata, like the native planner,
+instead of loading blocks beyond an unindexed predecessor. It does not change
+ordinary join authorization or certify an import boundary.
+
+A concurrent `A -> C` replayed after that CUT still needs to restore A; ordinary
+joining then tries to resolve P. Supplying A's exact signed bytes and sorting the
+complete suffix are insufficient. A CUT received without its victim evidence
+also cannot establish deletion from the snapshot alone. The diagnostic checks
+retained graph entries and heads as well as serialized values/context: matching
+visible values can otherwise hide different accepted history. The production
+profile needs an authenticated terminal boundary and independently retained
+suffix evidence, not a new ordering rule silently applied to legacy Documents.
+
+These are disconnected, compat-backend fixtures, not a public importer,
+crash-safe publication proof, or measured cold-join improvement.
+
+The next executable slice should bind one finite suffix inventory and replay
+order to the owner-signed checkpoint, authenticate and bound all supplied bytes
+before projection, and retain them independently of live-log pruning. Its first
+gate is reconstructing C with the original head/context after the delete, with
+every P lookup forbidden; incomplete evidence must not expose a partial view.
+Then exercise separately delivered suffix batches and interrupted publication.
+
 Required gates include direct and ancestor replay, A-before-B delivery,
 surviving branch C, writes concurrent with sealing, omitted offline writes,
 same-sequence authority forks, stale/foreign checkpoints, missing snapshot

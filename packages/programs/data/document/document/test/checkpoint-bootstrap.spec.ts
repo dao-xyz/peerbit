@@ -6,7 +6,7 @@ import {
 } from "@peerbit/crypto";
 import { Context } from "@peerbit/document-interface";
 import { toId } from "@peerbit/indexer-interface";
-import { Entry, Timestamp } from "@peerbit/log";
+import { Entry, EntryV0, LamportClock, Timestamp } from "@peerbit/log";
 import { expect } from "chai";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -173,6 +173,290 @@ const importSnapshot = async (
 
 describe("Documents checkpoint boundary fixture", function () {
 	this.timeout(60_000);
+
+	it("replays a complete delete suffix but diagnoses unresolved concurrent-branch restoration", async () => {
+		const source = await Peerbit.create();
+		const recipients: Peerbit[] = [];
+		const sandbox = sinon.createSandbox();
+		try {
+			const owner = await source.open(
+				new TestStore({ docs: new Documents<Document>() }),
+				{ args: openArgs() },
+			);
+			const localPut = (wallTime: bigint) => ({
+				target: "none" as const,
+				meta: { timestamp: new Timestamp({ wallTime }) },
+			});
+			const p = await owner.docs.put(
+				new Document({ id: "k", name: "P" }),
+				localPut(1_000n),
+			);
+			const a = await owner.docs.put(
+				new Document({ id: "k", name: "A" }),
+				localPut(2_000n),
+			);
+			const snapshot = await exportSnapshot(owner);
+			const aBytes = new Uint8Array(
+				(await owner.docs.log.log.blocks.get(a.entry.hash))!,
+			);
+			const b = await owner.docs.put(
+				new Document({ id: "k", name: "B" }),
+				localPut(3_000n),
+			);
+			const bBytes = new Uint8Array(
+				(await owner.docs.log.log.blocks.get(b.entry.hash))!,
+			);
+			const c = await EntryV0.create({
+				store: owner.docs.log.log.blocks,
+				identity: source.identity,
+				encoding: owner.docs.log.log.encoding,
+				data: new PutOperation({
+					data: serialize(new Document({ id: "k", name: "C" })),
+				}),
+				meta: {
+					next: [a.entry],
+					data: b.entry.meta.data,
+					clock: new LamportClock({
+						id: source.identity.publicKey.bytes,
+						timestamp: new Timestamp({ wallTime: 5_000n }),
+					}),
+				},
+			});
+			const cBytes = new Uint8Array(
+				(await owner.docs.log.log.blocks.get(c.hash))!,
+			);
+			const cut = await owner.docs.del("k", localPut(4_000n));
+			const cutBytes = new Uint8Array(
+				(await owner.docs.log.log.blocks.get(cut.entry.hash))!,
+			);
+			expect(await visibleRows(owner.docs)).deep.equal([]);
+			// CUT(B) does not reject a replay of the older A. With full ancestry
+			// available, ordinary joining makes A visible again before C arrives.
+			await owner.docs.log.log.join([
+				{ entry: a.entry, references: [p.entry] },
+			]);
+			expect(
+				(await visibleRows(owner.docs)).map((row) => [
+					row.value.name,
+					row.context.created,
+				]),
+			).deep.equal([["A", 1_000n]]);
+			// The full-history oracle has the source prefix available even after
+			// CUT pruning; explicitly supply those signed entries as references.
+			await owner.docs.log.log.join([
+				{ entry: c, references: [a.entry, p.entry] },
+			]);
+			const expected = await visibleRows(owner.docs);
+			expect(
+				expected.map((row) => [row.value.name, row.context.created]),
+			).deep.equal([["C", 1_000n]]);
+			const raw = { A: aBytes, B: bBytes, D: cutBytes, C: cBytes };
+			type Label = keyof typeof raw;
+			const expectedRows = new Map<string, Uint8Array>();
+			for (const [name, entry] of [
+				["A", a.entry],
+				["B", b.entry],
+				["C", c],
+			] as const) {
+				expectedRows.set(
+					name,
+					serialize(
+						new SnapshotRow(
+							new Document({ id: "k", name }),
+							new Context({
+								created: 1_000n,
+								modified: entry.meta.clock.timestamp.wallTime,
+								head: entry.hash,
+								gid: entry.meta.gid,
+								size: entry.payload.byteLength,
+							}),
+						),
+					),
+				);
+			}
+			expect(expected.map((row) => serialize(row))).deep.equal([
+				expectedRows.get("C"),
+			]);
+			const labelByHash = new Map([
+				[p.entry.hash, "P"],
+				[a.entry.hash, "A"],
+				[b.entry.hash, "B"],
+				[cut.entry.hash, "D"],
+				[c.hash, "C"],
+			]);
+			const graph = async (docs: Documents<Document>) => ({
+				entries: (await docs.log.log.toArray())
+					.map((entry) => labelByHash.get(entry.hash))
+					.sort(),
+				heads: (await docs.log.log.getHeads().all())
+					.map((entry) => labelByHash.get(entry.hash))
+					.sort(),
+			});
+			expect(await graph(owner.docs)).deep.equal({
+				entries: ["A", "C", "D", "P"],
+				heads: ["C", "D"],
+			});
+			const decode = async (label: Label, docs: Documents<Document>) => {
+				const entry = deserialize(
+					new Uint8Array(raw[label]),
+					Entry,
+				) as Entry<Operation>;
+				entry.hash = await Entry.prepareMultihash(entry);
+				entry.init(docs.log.log);
+				return entry;
+			};
+			// Each order is the entry order within one join(batch), not separate
+			// network arrivals or independent join calls.
+			const run = async (order: Label[], topological: boolean) => {
+				const recipient = await Peerbit.create();
+				recipients.push(recipient);
+				const target = await recipient.open(owner.clone(), {
+					args: openArgs(),
+				});
+				await importSnapshot(target.docs, snapshot, source.identity.publicKey);
+				const forbidden: string[] = [];
+				const guarded = new Set<object>();
+				for (const blocks of [
+					recipient.services.blocks,
+					target.docs.log.log.blocks,
+				]) {
+					if (guarded.has(blocks)) continue;
+					guarded.add(blocks);
+					const check = (hash: string) => {
+						if (hash !== p.entry.hash) return;
+						forbidden.push(hash);
+						throw new Error("Read omitted checkpoint prefix P");
+					};
+					const get = blocks.get.bind(blocks);
+					sandbox.stub(blocks, "get").callsFake(async (hash, options) => {
+						check(hash);
+						return get(hash, options);
+					});
+					if (blocks.getMany) {
+						const getMany = blocks.getMany.bind(blocks);
+						sandbox
+							.stub(blocks, "getMany")
+							.callsFake(async (hashes, options) => {
+								for (const hash of hashes) check(hash);
+								return getMany(hashes, options);
+							});
+					}
+				}
+				const entries = await Promise.all(
+					order.map((label) => decode(label, target.docs)),
+				);
+				if (topological)
+					entries.sort((x, y) =>
+						Number(
+							x.meta.clock.timestamp.wallTime - y.meta.clock.timestamp.wallTime,
+						),
+					);
+				let error: Error | undefined;
+				try {
+					// A's bytes are already part of the signed checkpoint. Keep them as
+					// normal references even if CUT removes the installed A, so restoring
+					// C probes A's missing prefix without a missing-A network timeout.
+					const boundary = await decode("A", target.docs);
+					await target.docs.log.log.join(
+						entries.map((entry) => ({ entry, references: [boundary] })),
+					);
+				} catch (caught) {
+					if (!(caught instanceof Error)) throw caught;
+					error = caught;
+				}
+				const rows = await visibleRows(target.docs);
+				expect(rows.length).at.most(1);
+				if (rows.length > 0)
+					expect(serialize(rows[0])).deep.equal(
+						expectedRows.get(rows[0].value.name!),
+					);
+				const result = {
+					order: order.join(""),
+					topological,
+					value: rows[0]?.value.name,
+					created: rows[0]?.context.created?.toString(),
+					forbidden: forbidden.length,
+					error: error?.message,
+					graph: await graph(target.docs),
+				};
+				await recipient.stop();
+				return result;
+			};
+			const failure = {
+				created: "1000",
+				forbidden: 1,
+				error: "Read omitted checkpoint prefix P",
+			};
+			// Complete B→CUT(B) can now delete the certified A using only admitted
+			// graph rows. This is a successful ordinary delete suffix, not a general
+			// checkpoint replay protocol or concurrent-branch restoration guarantee.
+			expect(await run(["B", "D"], false)).deep.equal({
+				order: "BD",
+				topological: false,
+				value: undefined,
+				created: undefined,
+				forbidden: 0,
+				error: undefined,
+				graph: { entries: ["D"], heads: ["D"] },
+			});
+			expect(await run(["D"], false)).deep.equal({
+				...failure,
+				order: "D",
+				topological: false,
+				value: "A",
+				graph: { entries: ["A"], heads: ["A"] },
+			});
+			expect(await run(["B", "D", "A"], false)).deep.equal({
+				...failure,
+				order: "BDA",
+				topological: false,
+				value: undefined,
+				created: undefined,
+				graph: { entries: ["D"], heads: ["D"] },
+			});
+			const partial = {
+				BDC: {
+					value: undefined,
+					created: undefined,
+					graph: { entries: ["D"], heads: ["D"] },
+				},
+				BCD: { value: "C", graph: { entries: ["A", "B", "C"], heads: ["C"] } },
+				CDB: { value: "C", graph: { entries: ["A", "C"], heads: ["C"] } },
+			};
+			// These representative batch orders leave three distinct partial graphs.
+			// Equal visible C rows in BCD and CDB do not prove equivalent replay.
+			for (const order of [
+				["B", "D", "C"],
+				["B", "C", "D"],
+				["C", "D", "B"],
+			] as Label[][]) {
+				const name = order.join("") as keyof typeof partial;
+				expect(await run(order, false)).deep.equal({
+					...failure,
+					...partial[name],
+					order: name,
+					topological: false,
+				});
+			}
+			// Complete input and a deterministic topological batch order still cannot
+			// restore C: it rejoins the removed A, then crosses A's boundary to P.
+			for (const order of [
+				["B", "C", "D"],
+				["D", "C", "B"],
+			] as Label[][]) {
+				expect(await run(order, true)).deep.equal({
+					...failure,
+					...partial.BDC,
+					order: order.join(""),
+					topological: true,
+				});
+			}
+		} finally {
+			for (const recipient of recipients) await recipient.stop();
+			await source.stop();
+			sandbox.restore();
+		}
+	});
 
 	it("restores live state and ordinary writes without reading omitted ancestry, including disk reopen", async () => {
 		const directory = await mkdtemp(
