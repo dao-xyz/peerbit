@@ -72,6 +72,7 @@ export type Args<
 		entry: Entry<Operation<T>> | ShallowEntry | EntryReplicated<R>,
 	) => boolean;
 	canAppend?: CanAppend<Operation<T>>;
+	canJoin?: CanAppend<Operation<T>>;
 	canReplicate?: (publicKey: PublicSignKey) => Promise<boolean> | boolean;
 	onMessage?: (msg: TransportMessage, context: RequestContext) => Promise<void>;
 	setup?: TestSetupConfig<R>;
@@ -135,6 +136,7 @@ export class EventStore<
 		await this.log.open({
 			onChange: properties?.onChange,
 			canAppend,
+			canJoin: properties?.canJoin,
 			canReplicate: properties?.canReplicate,
 			replicate: properties?.replicate,
 			trim: properties?.trim,

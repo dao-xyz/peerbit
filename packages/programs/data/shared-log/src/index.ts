@@ -20892,7 +20892,11 @@ export class SharedLog<
 		profile?: SyncProfileFn,
 		options?: { decodedReplicaCounts?: DecodedReplicaCountMap },
 	): Promise<boolean> {
-		if (entries.length === 0 || this._logProperties?.canAppend) {
+		if (
+			entries.length === 0 ||
+			this._logProperties?.canAppend ||
+			this._logProperties?.canJoin
+		) {
 			return false;
 		}
 		const nativeBackboneValidated =
@@ -21688,12 +21692,14 @@ export class SharedLog<
 			(msg.reserved[0] & EXCHANGE_HEADS_REPAIR_HINT) !== 0;
 		const rawPrepareVerifySetting =
 			this._logProperties?.sync?.rawExchangeHeadsVerifySignaturesDuringPrepare;
-		// A program-level canAppend hook must observe every entry before
+		// Program-level admission hooks must observe every entry before
 		// it commits, so the native join commit (which validates and
 		// commits entirely in wasm) is not used for programs that
 		// register one; those joins run through the lower-log batch
 		// join where the hook fires per entry.
-		const programCanAppend = !!this._logProperties?.canAppend;
+		const programCanAppend = !!(
+			this._logProperties?.canAppend || this._logProperties?.canJoin
+		);
 		const canVerifyPreparedRawReceiveOnCommit =
 			!programCanAppend &&
 			!!this._nativeBackbone?.graph.commitVerifiedPreparedRawReceiveJoinBatch;
@@ -23111,12 +23117,14 @@ export class SharedLog<
 					if (allToMerge.length > 0) {
 						const validateStartedAt = syncProfileStart(syncProfile);
 						// Program-level hooks must observe the joined entries:
-						// a canAppend hook disables the native-validated commit
+						// an admission hook disables the native-validated commit
 						// (the lower-log join runs the hook per entry instead),
 						// and an onChange consumer disables the hash-only sink
 						// so the join dispatches the change event with lazy
 						// entry views.
-						const programCanAppend = !!this._logProperties?.canAppend;
+						const programCanAppend = !!(
+							this._logProperties?.canAppend || this._logProperties?.canJoin
+						);
 						const programOnChange = !!this._logProperties?.onChange;
 						const receiveSignatureVerificationFacts = programCanAppend
 							? await this.preverifyReceiveSignaturesBatch(

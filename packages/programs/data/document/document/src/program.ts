@@ -19,6 +19,7 @@ import {
 	Entry,
 	EntryType,
 	LamportClock,
+	type LogProperties,
 	ShallowEntry,
 	ShallowMeta,
 	type ShallowOrFullEntry,
@@ -1170,6 +1171,11 @@ export type SetupOptions<
 	} & TransformOptions<T, I>;
 	log?: {
 		trim?: TrimOptions;
+		/**
+		 * Reject join candidates before resolving parents. The detached entry may
+		 * be unauthenticated; this does not replace canPerform or apply to local puts.
+		 */
+		canJoin?: LogProperties<Operation>["canJoin"];
 	};
 	domain?: (db: Documents<T, I, D>) => CustomDocumentDomain<InferR<D>>;
 	keep?:
@@ -2696,6 +2702,7 @@ export class Documents<
 		await this.log.open({
 			encoding: BORSH_ENCODING_OPERATION,
 			canReplicate: options?.canReplicate,
+			canJoin: options?.log?.canJoin,
 			canAppend: this.canAppend.bind(this),
 			onChange: this.handleChanges.bind(this),
 			trim: this.detachTrimEntryCallback(options?.log?.trim),

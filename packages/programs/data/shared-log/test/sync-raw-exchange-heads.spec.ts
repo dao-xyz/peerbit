@@ -3672,131 +3672,133 @@ describe("raw exchange-head sync", () => {
 		}
 	});
 
-	it("runs the program canAppend hook on the raw receive path", async () => {
-		const session = await TestSession.disconnected(2, {
-			indexer: (directory) => createRustIndexer(directory),
-		});
-
-		try {
-			const setup = {
-				domain: createReplicationDomainHash("u32"),
-				type: "u32" as const,
-				syncronizer: SimpleSyncronizer,
-				name: "u32-simple-raw",
-			};
-			const store = new EventStore<string, any>();
-			const changes: any[] = [];
-			let allowAppends = true;
-			const canAppendHashes: string[] = [];
-			const source = await session.peers[0].open(store.clone(), {
-				args: {
-					replicate: false,
-					setup,
-					nativeGraph: true,
-					nativeBackbone: { optional: false },
-					sync: { rawExchangeHeads: true },
-					keep: () => true,
-					timeUntilRoleMaturity: 0,
-				},
-			});
-			const target = await session.peers[1].open(store.clone(), {
-				args: {
-					replicate: { factor: 1 },
-					setup,
-					nativeGraph: true,
-					nativeBackbone: { optional: false },
-					canAppend: (entry) => {
-						canAppendHashes.push(entry.hash);
-						return allowAppends;
-					},
-					onChange: (change) => {
-						changes.push(change);
-					},
-					sync: { rawExchangeHeads: true },
-					timeUntilRoleMaturity: 0,
-				},
+	for (const hook of ["canAppend", "canJoin"] as const) {
+		it(`runs the program ${hook} hook on the raw receive path`, async () => {
+			const session = await TestSession.disconnected(2, {
+				indexer: (directory) => createRustIndexer(directory),
 			});
 
-			const entryCount = 3;
-			const hashes: string[] = [];
-			for (let i = 0; i < entryCount; i++) {
-				const { entry } = await source.add(uuid(), { meta: { next: [] } });
-				hashes.push(entry.hash);
-			}
-			const collectRawMessage = async (forHashes: string[]) => {
-				for await (const generated of createRawExchangeHeadsMessages(
-					source.log.log,
-					forHashes,
-				)) {
-					return generated as RawExchangeHeadsMessage;
+			try {
+				const setup = {
+					domain: createReplicationDomainHash("u32"),
+					type: "u32" as const,
+					syncronizer: SimpleSyncronizer,
+					name: "u32-simple-raw",
+				};
+				const store = new EventStore<string, any>();
+				const changes: any[] = [];
+				let allowAppends = true;
+				const admissionHashes: string[] = [];
+				const source = await session.peers[0].open(store.clone(), {
+					args: {
+						replicate: false,
+						setup,
+						nativeGraph: true,
+						nativeBackbone: { optional: false },
+						sync: { rawExchangeHeads: true },
+						keep: () => true,
+						timeUntilRoleMaturity: 0,
+					},
+				});
+				const target = await session.peers[1].open(store.clone(), {
+					args: {
+						replicate: { factor: 1 },
+						setup,
+						nativeGraph: true,
+						nativeBackbone: { optional: false },
+						[hook]: (entry: Entry<any>) => {
+							admissionHashes.push(entry.hash);
+							return allowAppends;
+						},
+						onChange: (change) => {
+							changes.push(change);
+						},
+						sync: { rawExchangeHeads: true },
+						timeUntilRoleMaturity: 0,
+					},
+				});
+
+				const entryCount = 3;
+				const hashes: string[] = [];
+				for (let i = 0; i < entryCount; i++) {
+					const { entry } = await source.add(uuid(), { meta: { next: [] } });
+					hashes.push(entry.hash);
 				}
-				throw new Error("Missing raw exchange heads message");
-			};
+				const collectRawMessage = async (forHashes: string[]) => {
+					for await (const generated of createRawExchangeHeadsMessages(
+						source.log.log,
+						forHashes,
+					)) {
+						return generated as RawExchangeHeadsMessage;
+					}
+					throw new Error("Missing raw exchange heads message");
+				};
 
-			const sharedLog = target.log as any;
-			const backbone = sharedLog._nativeBackbone;
-			const nativePreparedJoinCommitSpy = sinon.spy(
-				backbone.graph,
-				"commitPreparedRawReceiveJoinBatch",
-			);
-			const nativeVerifiedPreparedJoinCommitSpy =
-				backbone.graph.commitVerifiedPreparedRawReceiveJoinBatch
+				const sharedLog = target.log as any;
+				const backbone = sharedLog._nativeBackbone;
+				const nativePreparedJoinCommitSpy = sinon.spy(
+					backbone.graph,
+					"commitPreparedRawReceiveJoinBatch",
+				);
+				const nativeVerifiedPreparedJoinCommitSpy = backbone.graph
+					.commitVerifiedPreparedRawReceiveJoinBatch
 					? sinon.spy(
 							backbone.graph,
 							"commitVerifiedPreparedRawReceiveJoinBatch",
 						)
 					: undefined;
-			const nativeVerifiedAllPreparedJoinCommitSpy =
-				backbone.graph.commitVerifiedAllPreparedRawReceiveJoinBatch
+				const nativeVerifiedAllPreparedJoinCommitSpy = backbone.graph
+					.commitVerifiedAllPreparedRawReceiveJoinBatch
 					? sinon.spy(
 							backbone.graph,
 							"commitVerifiedAllPreparedRawReceiveJoinBatch",
 						)
 					: undefined;
-			try {
-				await target.log.onMessage(await collectRawMessage(hashes), {
-					from: source.node.identity.publicKey,
-				} as any);
+				try {
+					await target.log.onMessage(await collectRawMessage(hashes), {
+						from: source.node.identity.publicKey,
+					} as any);
 
-				// the hook observed every entry and the entries committed
-				expect(canAppendHashes).to.have.members(hashes);
-				expect(target.log.log.length).to.equal(entryCount);
-				const added = changes.flatMap((change) => change.added);
-				expect(added.map((a: any) => a.entry.hash)).to.have.members(hashes);
-				// the native join commit (which cannot run the hook) was not used
-				expect(nativePreparedJoinCommitSpy.callCount).to.equal(0);
-				expect(nativeVerifiedPreparedJoinCommitSpy?.callCount ?? 0).to.equal(
-					0,
-				);
-				expect(
-					nativeVerifiedAllPreparedJoinCommitSpy?.callCount ?? 0,
-				).to.equal(0);
+					// the hook observed every entry and the entries committed
+					expect(admissionHashes).to.have.members(hashes);
+					expect(target.log.log.length).to.equal(entryCount);
+					const added = changes.flatMap((change) => change.added);
+					expect(added.map((a: any) => a.entry.hash)).to.have.members(hashes);
+					// the native join commit (which cannot run the hook) was not used
+					expect(nativePreparedJoinCommitSpy.callCount).to.equal(0);
+					expect(nativeVerifiedPreparedJoinCommitSpy?.callCount ?? 0).to.equal(
+						0,
+					);
+					expect(
+						nativeVerifiedAllPreparedJoinCommitSpy?.callCount ?? 0,
+					).to.equal(0);
 
-				// a rejecting hook keeps entries out of the log
-				allowAppends = false;
-				const rejectedHashes: string[] = [];
-				for (let i = 0; i < entryCount; i++) {
-					const { entry } = await source.add(uuid(), {
-						meta: { next: [] },
-					});
-					rejectedHashes.push(entry.hash);
-				}
-				await target.log.onMessage(await collectRawMessage(rejectedHashes), {
-					from: source.node.identity.publicKey,
-				} as any);
-				expect(target.log.log.length).to.equal(entryCount);
-				for (const hash of rejectedHashes) {
-					expect(canAppendHashes).to.include(hash);
+					// a rejecting hook keeps entries out of the log
+					allowAppends = false;
+					const rejectedHashes: string[] = [];
+					for (let i = 0; i < entryCount; i++) {
+						const { entry } = await source.add(uuid(), {
+							meta: { next: [] },
+						});
+						rejectedHashes.push(entry.hash);
+					}
+					await target.log.onMessage(await collectRawMessage(rejectedHashes), {
+						from: source.node.identity.publicKey,
+					} as any);
+					expect(target.log.log.length).to.equal(entryCount);
+					for (const hash of rejectedHashes) {
+						expect(admissionHashes).to.include(hash);
+					}
+				} finally {
+					nativeVerifiedAllPreparedJoinCommitSpy?.restore();
+					nativeVerifiedPreparedJoinCommitSpy?.restore();
+					nativePreparedJoinCommitSpy.restore();
 				}
 			} finally {
-				nativeVerifiedAllPreparedJoinCommitSpy?.restore();
-				nativeVerifiedPreparedJoinCommitSpy?.restore();
-				nativePreparedJoinCommitSpy.restore();
+				await session.stop();
 			}
-		} finally {
-			await session.stop();
-		}
-	});
+		});
+	}
 
 	it("encodes the fused sync payload byte-identical to the TS serialization", async () => {
 		const session = await TestSession.disconnected(1, {

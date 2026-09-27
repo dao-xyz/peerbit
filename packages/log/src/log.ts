@@ -413,6 +413,18 @@ export type LogProperties<T> = {
 	sortFn?: Sorting.SortFn;
 	trim?: TrimOptions;
 	canAppend?: CanAppend<T>;
+	/**
+	 * Reject a join candidate before resolving its missing parents. A true result
+	 * only permits normal join processing; signature verification and canAppend
+	 * still apply. Unless join requests signature verification, this hook must
+	 * treat the candidate as unauthenticated. It does not run for local appends or
+	 * joins skipped because the entry is already indexed. Rejecting a parent does
+	 * not by itself reject its child; canAppend remains responsible for admission.
+	 * The callback receives a detached entry, without local/verifier flags. Its
+	 * metadata is available synchronously; use async accessors for encrypted
+	 * payloads and signatures. Mutating it does not change the joined candidate.
+	 */
+	canJoin?: CanAppend<T>;
 	resolveRemotePeers?: (
 		hash: string,
 		options?: { signal?: AbortSignal },
@@ -601,6 +613,7 @@ export class Log<T> {
 	private _encoding!: Encoding<T>;
 	private _trim!: Trim<T>;
 	private _canAppend?: CanAppend<T>;
+	private _canJoin?: CanAppend<T>;
 	private _onChange?: OnChange<T>;
 	private _closed = true;
 	private _dropCompleted = false;
@@ -972,6 +985,9 @@ export class Log<T> {
 			return true;
 		};
 		this._hasCustomCanAppend = !!options?.canAppend;
+		this._canJoin = options.canJoin
+			? this.wrapMutationCallback(options.canJoin)
+			: undefined;
 
 		this._onChange = options?.onChange
 			? this.wrapMutationCallback(options.onChange)
@@ -4747,6 +4763,7 @@ export class Log<T> {
 		options?: TrustedPreparedAppendFactsBatchJoinOptions,
 	): Promise<boolean> {
 		if (
+			this._canJoin ||
 			entries.length === 0 ||
 			!canAppendAlreadyValidated(options) ||
 			entries.some((entry) => this._joining.has(entry.hash))
@@ -5048,6 +5065,7 @@ export class Log<T> {
 		options: TrustedJoinOptions<T>,
 	): Promise<boolean> {
 		if (
+			this._canJoin ||
 			entries.length < 2 ||
 			options.reset ||
 			options.trim ||
@@ -5312,6 +5330,30 @@ export class Log<T> {
 		if (options.verifySignatures) {
 			if (!(await entry.verifySignatures())) {
 				throw new Error(`Invalid signature entry with hash "${entry.hash}"`);
+			}
+		}
+
+		if (this._canJoin) {
+			// Raw/native entry readers can return a view into their prepared storage.
+			// Copy before decoding so neither nested byte mutations nor top-level
+			// flags/method overrides can alter the candidate admitted below.
+			const candidate = deserialize(
+				new Uint8Array(entry.getStorageBytes()),
+				Entry,
+			) as Entry<T>;
+			try {
+				candidate.size = entry.size;
+			} catch {
+				// A directly deserialized entry may not have its runtime size cache.
+				// Derive the hashless storage length using only the owned copy.
+				candidate.hash = undefined as unknown as string;
+				candidate.size = candidate.getStorageBytes().byteLength;
+			}
+			candidate.hash = entry.hash;
+			candidate.init(this);
+			await candidate.getMeta();
+			if (!(await this._canJoin(candidate))) {
+				return false;
 			}
 		}
 

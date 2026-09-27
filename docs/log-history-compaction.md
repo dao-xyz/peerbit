@@ -57,12 +57,20 @@ A-before-B delivery order unresolved.
 
 ## Proposed first profile
 
-Use an explicitly opted-in, authority-governed resource. Reuse the authority,
-resource-fence identity and signed operation context defined by
-[TrustedNetwork v2](./trusted-network-v2-protocol.md); do not introduce an
-unrelated signer hierarchy or silently assign checkpoint authority to any log
-writer. Those v2 components remain internal until the protected-resource
-adapter and replay guarantees are complete.
+Use an explicitly opted-in, authority-governed Documents resource. Reuse the
+configured owner authority model from
+[TrustedNetwork v2](./trusted-network-v2-protocol.md), but define a separate,
+narrow checkpoint profile: a fixed writer set, plain document values and an
+identity index. Do not silently assign checkpoint authority to any log writer.
+This is not activation of full TrustedNetwork v2, dynamic writer revocation or
+reader confidentiality. Arbitrary history-dependent `canPerform` predicates,
+Program-valued documents and transformed indexes are outside the first profile.
+
+The current v2 operation classifier is not itself a bounded bootstrap adapter:
+it can require historical policy/fence/causal blocks. Its envelope also does not
+encode ordinary Documents PUT/CUT operations. The checkpoint profile must bind
+its own operation format into a new serialized resource version; an open-time
+option on an unchanged v1 resource is insufficient.
 
 The authority closes an admission epoch over an exact accepted frontier and a
 verified application snapshot. Here an epoch means the checkpoint interval
@@ -131,18 +139,43 @@ to retire history. A snapshot Merkle root likewise does not establish that its
 blocks remain available. Legacy peers cannot count as checkpoint-capable
 replicas or be promised catch-up after the history they require is removed.
 
-## Small implementation sequence
+## Checkpoint cold-join milestone
 
-First, complete one protected-resource adapter's retained-history replay and
-projection watermark using the existing v2 foundations. Demonstrate identical
-results for reordered operations, revocation and concurrent branches without
-deleting history. Do not add a detached checkpoint API before there is a
-consumer that enforces its admission rules.
+The outcome is a fresh Documents peer using an authenticated snapshot plus a
+bounded suffix, with ordinary reads, inserts, updates and deletes. Preserve
+the original visible document heads and `Context`, not just key/value contents.
+Do not substitute a newly signed copy of the state in a successor resource:
+that would reset document identities, authorship and timestamps.
 
-Then add bounded verification/import of an authority-certified snapshot, still
-retaining history. Require a fresh empty-store bootstrap and a crash/reopen to
-produce exactly the same state as full replay. Only a later slice may truncate
-history, after replica-custody and old-peer behavior have executable tests.
+The internal protected-resource recovery test in #1473 establishes a different
+prerequisite: independent retained-history recovery with a projection watermark.
+It is not mutable Documents integration or a snapshot importer. Keep the
+following work together until the cold-join outcome has executable evidence:
+
+1. Reject wrong admission contexts before resolving parents. The optional
+   reject-only log `canJoin` hook is not authorization: `canAppend`/`canPerform`
+   and signature checks remain mandatory. In particular, a rejected parent
+   does not automatically reject its child under existing log semantics; the
+   checkpoint adapter must enforce admitted parent membership itself.
+2. Verify and register exact signed boundary entries, and restore their values
+   and original Documents context. Certified boundary entries terminate the
+   importer's ancestry walk; do not rewrite their signed parent links. The
+   snapshot must include surviving branches needed for future behavior, but
+   must not require importing every historical CUT head just to represent an
+   empty projection. A frontier commitment alone does not supply missing data.
+3. Retain and validate the current suffix's causal evidence, including deletes.
+   New epochs do not fix `A -> B -> CUT(B)` replay within the active epoch.
+   Missing evidence leaves a projection unavailable, not authoritatively empty.
+4. Publish snapshot identity, boundary and projection watermark under an
+   admission barrier. A verified blob followed by several independent index
+   writes is not atomic publication. Reopen must repair or reject an interrupted
+   import before serving any view.
+
+No standalone import helper, passing fixture or early-rejection hook completes
+this milestone. Require fresh empty-store import, post-import writes and
+separate-process crash/reopen to match full replay while every omitted-prefix
+lookup is forbidden and counted. Retain source history throughout. Physical
+history retirement is a later milestone requiring custody and old-peer tests.
 
 Required gates include direct and ancestor replay, A-before-B delivery,
 surviving branch C, writes concurrent with sealing, omitted offline writes,
