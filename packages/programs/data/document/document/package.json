@@ -93,6 +93,7 @@
 	"devDependencies": {
 		"@chainsafe/libp2p-noise": "^17.0.0",
 		"@libp2p/websockets": "^10.1.19",
+		"@peerbit/any-store": "workspace:*",
 		"@peerbit/log-rust": "workspace:*",
 		"@peerbit/native-backbone": "workspace:*",
 		"@peerbit/test-utils": "workspace:*",

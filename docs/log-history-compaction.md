@@ -198,12 +198,53 @@ suffix evidence, not a new ordering rule silently applied to legacy Documents.
 These are disconnected, compat-backend fixtures, not a public importer,
 crash-safe publication proof, or measured cold-join improvement.
 
-The next executable slice should bind one finite suffix inventory and replay
-order to the owner-signed checkpoint, authenticate and bound all supplied bytes
-before projection, and retain them independently of live-log pruning. Its first
-gate is reconstructing C with the original head/context after the delete, with
-every P lookup forbidden; incomplete evidence must not expose a partial view.
-Then exercise separately delivered suffix batches and interrupted publication.
+### Finite-bundle recovery proof
+
+The internal `checkpoint-recovery` fixture now authenticates one owner-certified
+snapshot, exact suffix inventory and replay order before mutating private
+Documents staging. It pins an externally supplied owner, resource ID and exact
+manifest digest. This is a fixed plain-document, single-Ed25519-owner profile,
+not general writer authorization. Verification bounds manifest bytes, entry
+bytes/count, parent links and total input; it reuses the canonical public EntryV0
+scanner from Log before Borsh decoding and checks CIDs, signatures and same-key
+causal closure separately. Every supplied block must belong to the inventory.
+
+After `B -> CUT(B)`, the importer can reinstall the exact certified A entry and
+its original row/context immediately before joining C. Restoring only A's graph
+entry loses the original creation time. Both restores happen while the view is
+inaccessible; C still goes through ordinary signature checking and admission.
+Only missing certified direct parents of a PUT can be restored. Missing pruned
+suffix dependencies are rejected, not silently treated as checkpoint boundaries.
+The completed view must match the owner's certified rows, all Context fields,
+remaining graph and frontier. The reference is full-history replay, minus
+omitted P. Reordered block inventories do not change the certified replay order;
+this is not evidence for arbitrary live delivery orders.
+
+The fixture retains the complete authenticated bundle with the existing two-slot
+checkpoint store **before** projection. A second commit records the same bundle
+and completed-view watermark. Every reopen revalidates and reconstructs fresh
+private staging, even when a published watermark exists. A copied read-only view
+is returned only after successful replay, publication and scratch cleanup.
+
+Separate-process tests SIGKILL the importer after input retention, after CUT,
+before publication and after publication. The original ingress file is deleted
+before the fresh reader starts. Recovery matches the exact view with zero
+omitted-prefix reads and no view exposure during any phase. Error injection
+before and after both atomic replacements also keeps the gate closed; ambiguous
+checkpoint instances cannot be reused before reopen.
+
+This proves **first-bundle recovery**, not atomic updates to persistent Documents
+indexes. Staging is disposable and the returned result is not a mutable Documents
+handle. Later ordinary writes are not durably retained by this fixture. Live
+epoch admission/sealing, writer roles, incremental suffix retention, active
+checkpoint replacement/fork handling, general document/index schemas, and large
+frontiers remain outside its scope. No checkpoint runtime API is activated,
+history retired, or performance improvement claimed.
+
+The next integration gate is the explicit versioned opt-in resource: retain
+post-import operations before acknowledging them, preserve the read gate across
+restart, and test writes concurrent with sealing and omitted offline writes.
+Then measure bounded cold join and reopen against the retained-history baseline.
 
 Required gates include direct and ancestor replay, A-before-B delivery,
 surviving branch C, writes concurrent with sealing, omitted offline writes,

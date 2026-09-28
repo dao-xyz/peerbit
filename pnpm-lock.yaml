@@ -1281,6 +1281,9 @@ importers:
       '@libp2p/websockets':
         specifier: ^10.1.19
         version: 10.1.19
+      '@peerbit/any-store':
+        specifier: workspace:*
+        version: link:../../../../utils/any-store/any-store
       '@peerbit/log-rust':
         specifier: workspace:*
         version: link:../../../../log/rust
