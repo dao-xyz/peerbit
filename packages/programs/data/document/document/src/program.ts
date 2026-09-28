@@ -1046,6 +1046,10 @@ type TrustedDocumentIndexTransformFacts = {
 };
 
 type TrustedDocumentIndex<T, I extends Record<string, any>> = {
+	openForDocuments(
+		properties: Parameters<DocumentIndex<T, I, any>["open"]>[0],
+	): Promise<void>;
+	startQueries(): Promise<void>;
 	attachNativeBackboneDocumentIndex(
 		backbone: unknown,
 		options?: { preserveExisting?: boolean },
@@ -2599,7 +2603,7 @@ export class Documents<
 		this._hasLogTrim = options.log?.trim != null;
 
 		const changeListenersBeforeIndexOpen = this._documentChangeListenerCount;
-		await this._index.open({
+		await asTrustedDocumentIndex(this._index).openForDocuments({
 			documentEvents: this.events,
 			log: this.log,
 			canRead: options?.index?.canRead,
@@ -2758,6 +2762,8 @@ export class Documents<
 			: undefined;
 		this.assertNativeModeReady();
 		this._documentBackend = this.createDocumentBackend();
+		// Advertise queries only after log recovery and backend validation succeed.
+		await asTrustedDocumentIndex(this._index).startQueries();
 	}
 
 	async recover() {

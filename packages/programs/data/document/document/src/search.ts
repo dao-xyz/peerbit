@@ -1544,6 +1544,20 @@ export class DocumentIndex<
 			) => obj.index.search(query),
 		};
 	}
+	private deferQueryStart = false;
+
+	// Preserve custom open overrides while Documents holds query activation
+	// until its log recovery and backend validation have completed.
+	private async openForDocuments(properties: OpenOptions<T, I, D>) {
+		const previous = this.deferQueryStart;
+		this.deferQueryStart = true;
+		try {
+			await this.open(properties);
+		} finally {
+			this.deferQueryStart = previous;
+		}
+	}
+
 	async open(properties: OpenOptions<T, I, D>) {
 		this._log = properties.log;
 		this._queryProfile = properties.profile;
@@ -1771,6 +1785,12 @@ export class DocumentIndex<
 			}
 		}
 
+		this.handleDocumentChange ??= (event) => this.onDocumentChange(event);
+		this.documentEvents.addEventListener("change", this.handleDocumentChange);
+		if (!this.deferQueryStart) await this.startQueries();
+	}
+
+	private async startQueries() {
 		await this._query.open({
 			topic: sha256Base64Sync(
 				concat([this._log.log.id, fromString("/document")]),
@@ -1779,8 +1799,6 @@ export class DocumentIndex<
 			responseType: types.AbstractSearchResult,
 			queryType: types.AbstractSearchRequest,
 		});
-		this.handleDocumentChange ??= (event) => this.onDocumentChange(event);
-		this.documentEvents.addEventListener("change", this.handleDocumentChange);
 	}
 
 	private attachNativeBackboneDocumentIndex(

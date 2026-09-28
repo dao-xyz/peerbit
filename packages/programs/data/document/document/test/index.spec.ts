@@ -20359,7 +20359,7 @@ describe("index", () => {
 		};
 
 		const setupInitialStoresAndPrefetch = async (options?: {
-			beforePrefetch?: Promise<void>;
+			beforePrefetch?: () => Promise<void>;
 			data?: Uint8Array;
 			prefetch?:
 				| false
@@ -20393,11 +20393,11 @@ describe("index", () => {
 				const sendFn = store.docs.index._query.send.bind(
 					store.docs.index._query,
 				);
-				store.docs.index._query.send = async (request: any) => {
+				store.docs.index._query.send = async (request: any, sendOptions) => {
 					if (request instanceof PredictedSearchRequest) {
-						await options?.beforePrefetch;
+						await options.beforePrefetch?.();
 					}
-					return sendFn(request);
+					return sendFn(request, sendOptions);
 				};
 			}
 			let docCount = 3;
@@ -20699,61 +20699,90 @@ describe("index", () => {
 
 		it("will intercept outgoing search queries with incoming prefetch results", async () => {
 			const prefetchSendDelay = pDefer<void>();
+			const prefetchQueued = pDefer<void>();
+			let restoreRequest: (() => void) | undefined;
+			let removePublishListener: (() => void) | undefined;
+			let closeIterator: (() => Promise<void>) | undefined;
+			try {
+				const { store, store2 } = await setupInitialStoresAndPrefetch({
+					beforePrefetch: async () => {
+						prefetchQueued.resolve();
+						await prefetchSendDelay.promise;
+					},
+				});
+				// A prediction must exist before testing interception of its matching
+				// query. Opening the requester does not await the donor's join handler.
+				// Delivery remains blocked, so this still tests an in-flight prefetch.
+				await prefetchQueued.promise;
 
-			const { store, store2 } = await setupInitialStoresAndPrefetch({
-				beforePrefetch: prefetchSendDelay.promise,
-			});
+				const sentData: RPCMessage[] = [];
+				const publishListener: Parameters<
+					typeof store.node.services.pubsub.addEventListener<"publish">
+				>[1] = (evt) => {
+					if (evt.detail.data.topics.includes(store.docs.index._query.topic)) {
+						sentData.push(deserialize(evt.detail.data.data, RPCMessage));
+					}
+				};
+				store.node.services.pubsub.addEventListener("publish", publishListener);
+				removePublishListener = () =>
+					store.node.services.pubsub.removeEventListener(
+						"publish",
+						publishListener,
+					);
 
-			const sentData: RPCMessage[] = [];
-			store.node.services.pubsub.addEventListener("publish", (evt) => {
-				if (evt.detail.data.topics.includes(store.docs.index._query.topic)) {
-					sentData.push(deserialize(evt.detail.data.data, RPCMessage));
-				}
-			});
+				// make it so that requesting results is also delayed, so that we will have an outgoing process (requesting)
+				// and an incoming process (prefetching) at the same time
+				const requestSentPromise = pDefer<void>();
 
-			// make it so that requesting results is also delayed, so that we will have an outgoing process (requesting)
-			// and an incoming process (prefetching) at the same time
-			const requestSentPromise = pDefer<void>();
+				const originalRequest = store2.docs.index._query.request;
+				const requestFn = originalRequest.bind(store2.docs.index._query);
+				restoreRequest = () => {
+					store2.docs.index._query.request = originalRequest;
+				};
 
-			const requestFn = store2.docs.index._query.request.bind(
-				store2.docs.index._query,
-			);
+				store2.docs.index._query.request = async (request, options) => {
+					if (
+						request instanceof SearchRequest ||
+						request instanceof SearchRequestIndexed ||
+						request instanceof IterationRequest
+					) {
+						requestSentPromise.resolve();
+					}
+					return requestFn(request, options);
+				};
 
-			store2.docs.index._query.request = async (request, options) => {
-				if (
-					request instanceof SearchRequest ||
-					request instanceof SearchRequestIndexed ||
-					request instanceof IterationRequest
-				) {
-					requestSentPromise.resolve();
-				}
-				return requestFn(request, options);
-			};
+				const iterator = store2.docs.index.iterate({}, { resolve: false });
+				closeIterator = () => iterator.close();
+				const promise = iterator.next(1);
+				await requestSentPromise.promise;
 
-			const iterator = store2.docs.index.iterate({}, { resolve: false });
-			const promise = iterator.next(1);
-			await requestSentPromise.promise;
+				prefetchSendDelay.resolve(); // allow the prefetch to send
 
-			prefetchSendDelay.resolve(); // allow the prefetch to send
+				let t0 = Date.now();
+				const results = await promise;
+				expect(sentData.filter((x) => x instanceof ResponseV0).length).to.eq(0);
 
-			let t0 = Date.now();
-			const results = await promise;
-			expect(sentData.filter((x) => x instanceof ResponseV0).length).to.eq(0);
+				const next = await iterator.next(2);
+				await iterator.close();
+				closeIterator = undefined;
+				let t1 = Date.now();
+				expect(t1 - t0).to.be.lessThan(3000); // should not be 10 seconds since we are consuming the pretfetch results
 
-			const next = await iterator.next(2);
-			await iterator.close();
-			let t1 = Date.now();
-			expect(t1 - t0).to.be.lessThan(3000); // should not be 10 seconds since we are consuming the pretfetch results
+				expect(results[0].name).to.eq("name1");
+				expect(results[0] instanceof Document).to.be.true;
+				expect(next[0].name).to.eq("name2");
+				expect(next[1].name).to.eq("name3");
+				expect(next[0] instanceof Document).to.be.true;
+				expect(next[1] instanceof Document).to.be.true;
 
-			expect(results[0].name).to.eq("name1");
-			expect(results[0] instanceof Document).to.be.true;
-			expect(next[0].name).to.eq("name2");
-			expect(next[1].name).to.eq("name3");
-			expect(next[0] instanceof Document).to.be.true;
-			expect(next[1] instanceof Document).to.be.true;
-
-			await delay(2e3);
-			expect(sentData.filter((x) => x instanceof ResponseV0).length).to.eq(1);
+				await delay(2e3);
+				expect(sentData.filter((x) => x instanceof ResponseV0).length).to.eq(1);
+			} finally {
+				prefetchSendDelay.resolve();
+				restoreRequest?.();
+				removePublishListener?.();
+				await closeIterator?.();
+			}
 		});
 
 		/* TODO improve this speed test 

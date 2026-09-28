@@ -10,3 +10,5 @@ Add an optional reject-only `canJoin` preflight before recursive join dependency
 Keep JavaScript recursive CUT cleanup within locally indexed graph metadata, matching the native planner. Cleanup no longer loads entry payload blocks or crosses an unindexed predecessor to delete older indexed entries.
 
 Reuse TrustedNetwork's canonical public EntryV0 scanner from `@peerbit/log`, preserving the existing TrustedNetwork aliases. The scanner checks framing before decoding; callers still provide byte limits, CID checks, signature verification, and application policy.
+
+Defer Documents query RPC startup until lower-log opening, local log recovery and document backend validation succeed. Preserve custom index open overrides and standalone DocumentIndex opening. This is not a checkpoint publication barrier: it does not gate local reads, replication or later Program/parent lifecycle callbacks.

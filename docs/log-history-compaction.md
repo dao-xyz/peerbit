@@ -1,6 +1,7 @@
 # Log history compaction: admission boundary
 
-Status: proposed; no runtime activation or history deletion.
+Status: end-to-end implementation in progress; not a released checkpoint feature
+and no history deletion.
 
 Tracking: [#1286](https://github.com/dao-xyz/peerbit/issues/1286). Regression
 coverage: [#1468](https://github.com/dao-xyz/peerbit/pull/1468).
@@ -57,7 +58,7 @@ A-before-B delivery order unresolved.
 
 ## Proposed first profile
 
-Use an explicitly opted-in, authority-governed Documents resource. Reuse the
+Deliver a supported, versioned authority-governed Documents resource. Reuse the
 configured owner authority model from
 [TrustedNetwork v2](./trusted-network-v2-protocol.md), but define a separate,
 narrow checkpoint profile: a fixed writer set, plain document values and an
@@ -71,6 +72,13 @@ it can require historical policy/fence/causal blocks. Its envelope also does not
 encode ordinary Documents PUT/CUT operations. The checkpoint profile must bind
 its own operation format into a new serialized resource version; an open-time
 option on an unchanged v1 resource is insufficient.
+
+The version boundary is a compatibility contract, not an experimental runtime
+flag. Checkpoint admission and recovery must be mandatory for this resource;
+failure must not fall back to legacy replay. Existing resources remain readable
+with their existing semantics. Migrating one requires an explicit, verified
+state transfer preserving signed heads and Context, not re-signing its values.
+Do not release disconnected helpers as the completed feature.
 
 The authority closes an admission epoch over an exact accepted frontier and a
 verified application snapshot. Here an epoch means the checkpoint interval
@@ -241,10 +249,48 @@ checkpoint replacement/fork handling, general document/index schemas, and large
 frontiers remain outside its scope. No checkpoint runtime API is activated,
 history retired, or performance improvement claimed.
 
-The next integration gate is the explicit versioned opt-in resource: retain
+The next integration gate is the supported versioned resource: retain
 post-import operations before acknowledging them, preserve the read gate across
 restart, and test writes concurrent with sealing and omitted offline writes.
 Then measure bounded cold join and reopen against the retained-history baseline.
+
+### Runtime integration constraints
+
+Keep the resource descriptor immutable: owner, fixed writer set, document/key
+profile and protocol-specific log scope. The changing epoch and checkpoint
+watermark belong in durable state, not serialized Program fields that determine
+its address. A new Program variant alone does not isolate replication: SharedLog
+topics use the lower log ID. Derive and validate the new scope from the resource
+descriptor so legacy traffic cannot share it accidentally.
+
+Do not register a decorated subclass of the existing concrete `Documents` or
+`PutOperation` classes. Borsh's discriminator tree is shared with legacy readers;
+adding children can change their decoding and interacts with serializer caches.
+Use sibling wire types and preserve golden legacy bytes and address-based loading
+under both module-import orders. Reuse runtime implementation without moving
+decorated fields ahead of the legacy discriminator.
+
+An operation needs a signed resource and epoch envelope. SharedLog owns
+`meta.data` for replica metadata and overwrites it during append, so it cannot
+carry that envelope. Reject a foreign/stale envelope before parent resolution
+and validate it again at authoritative admission. Native raw-commit paths must
+not bypass the same contract.
+
+The active suffix needs retained causal evidence. Logical deletes in this new
+profile can use APPEND records, leaving physical evidence retirement to the
+seal; changing CUT to APPEND alone is insufficient. The projection must retain
+delete/frontier information, preserve a concurrent branch's original creation
+context, and converge independently of receive order. The existing mutable
+Documents wall-time/delete projection does not establish these properties.
+
+Recovery must complete before query or replication services advertise the
+resource, not merely before the public `open()` promise resolves. Reuse existing
+incremental log/block storage for suffix operations and a small two-slot record
+for checkpoint publication; do not rewrite the entire snapshot on every put.
+Advance a seal under an admission barrier that drains writes and receives.
+An interrupted transition must recover from durable evidence before reopening
+either service. Persisted delivery still proves exact entry persistence, not
+checkpoint completeness or permission to retire the source history.
 
 Required gates include direct and ancestor replay, A-before-B delivery,
 surviving branch C, writes concurrent with sealing, omitted offline writes,
