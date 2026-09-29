@@ -246,8 +246,8 @@ indexes. Staging is disposable and the returned result is not a mutable Document
 handle. Later ordinary writes are not durably retained by this fixture. Live
 epoch admission/sealing, writer roles, incremental suffix retention, active
 checkpoint replacement/fork handling, general document/index schemas, and large
-frontiers remain outside its scope. No checkpoint runtime API is activated,
-history retired, or performance improvement claimed.
+frontiers remain outside its scope. This fixture does not activate a checkpoint
+runtime API, retire history, or establish a performance improvement.
 
 The next integration gate is the supported versioned resource: retain
 post-import operations before acknowledging them, preserve the read gate across
@@ -299,3 +299,98 @@ blocks, bounded verification work, and interruption at every durable publication
 boundary. Re-run the matched 100k lifecycle census only once a runtime change
 can affect the measured bound; progress to 1M after correctness and resource
 budgets pass.
+
+## Runtime integration on the unreleased checkpoint branch
+
+`CheckpointDocuments` is now a separate Program wire variant, not an option on
+legacy `Documents`. Its immutable descriptor binds an owner, up to 32 fixed
+Ed25519 writers and a resource nonce. The current implementation uses bounded
+public JSON values with string `id` keys. `CheckpointDocument.decode()` returns
+the plain value; the identity index contains `id` and canonical value bytes,
+not automatically indexed nested JSON fields. Transforms and Program values
+remain outside this profile.
+
+Every operation signs the resource, epoch and accepted checkpoint digest.
+Logical deletes retain APPEND evidence. Current-epoch parents must be admitted,
+same-key, same-gid and causally earlier. A first operation in an epoch inherits
+that key's certified boundary context. Concurrent tips are retained; visible
+state uses a deterministic timestamp/CID order, including tombstones. A PUT
+inherits creation time from its live PUT parents; recreation after only DELETE
+parents starts a new lifetime, consistently before and after sealing. Bounded
+32-parent writes always include the earliest-created live branch when one
+exists. The legacy Documents projection rules are unchanged.
+
+Seals omit keys whose entire frontier is DELETE, but retain **every** tip of
+a mixed PUT/DELETE frontier, even when a DELETE is the visible winner. Mandatory
+epoch-bound admission prevents old operations from resurrecting omitted keys.
+Import rejects noncanonical tombstone-only checkpoint groups. Repeated empty
+churn can therefore seal to zero records. This bounds logical replay; source
+blocks and old epoch logs are not physically reclaimed.
+
+Each checkpoint gets a separate deterministic SharedLog scope. Recovery reads
+only authenticated terminal frontier blocks and that scope's active suffix;
+it does not traverse terminal parents or enumerate older source logs. Exact
+signed heads and inherited creation Context survive import. Both receive and
+local-write projection cross physical block/log-index barriers before becoming
+visible. The current backend requires actual crash-safe storage capabilities;
+an in-memory or unsupported store cannot silently substitute for them.
+
+The transition is deliberately explicit:
+
+1. `createGenesis(blocks, ownerIdentity)` creates an empty initial anchor. It is
+   not evidence that genesis is still the latest checkpoint.
+2. `peer.open(resource, { args: { checkpoint } })` verifies and retains that
+   externally authenticated anchor. Later offline reopen uses the durable floor.
+3. `put()` and `del()` append to the active epoch. They acknowledge **local**
+   persistence, not remote durability; extra delivery options are rejected.
+   `index` exposes local-only queries over admitted data, not unauthenticated
+   remote query projections. Its unused generic query RPC is never started.
+4. Every writer calls `freezeCheckpoint()`. It fences new writes, drains
+   admitted work and network receives, closes the resource, and persists a
+   frozen floor. It exports the active epoch's signed causal closure through
+   the node block service and durably pins one signed freeze-manifest CID.
+   Repeated calls, including after restart, return that same manifest.
+5. The owner calls `prepareCheckpoint(freezeCids)` with every fixed writer's
+   manifest. It authenticates and durably binds the complete collection, merges
+   missing admitted operations locally before starting any network service,
+   and proposes the reconciled retained live-key frontier. A single writer may
+   call `prepareCheckpoint()` directly as shorthand for its own freeze.
+6. Every fixed writer calls `approveCheckpoint(proposal)`. Each reconstructs
+   the same manifest collection and checks the exact retained live-key frontier.
+   A proposal omitting an accepted live branch cannot gain approval. The owner
+   then calls `publishCheckpoint(proposal, approvals)`.
+7. Reopen on the returned certificate to start the successor epoch. Observers
+   may adopt an authenticated direct successor without signing it. Frozen
+   writers recover locally without advertising queries or replication and can
+   resume approval after restart.
+
+There is no automatic latest-checkpoint discovery. A fresh client still needs
+an externally authenticated current anchor. Ordinary signatures alone cannot
+prove freshness. Same-epoch certificate conflicts poison the durable floor
+rather than selecting an arrival winner. Query handles and iterators expire
+across freeze, failure and same-instance reopen.
+
+Sealing requires exclusive Program ownership; releasing just one of several
+owners keeps the resource usable for the others. `drop()` is rejected before
+any mutation because history retirement has not been implemented. An unavailable
+fixed writer prevents a new seal, by design: silence cannot prove that writer
+has no unpublished accepted operations.
+
+### Remaining release gates
+
+This is an **unreleased integration**, not a finished compaction release.
+Real network import, successor writes and offline reopen are tested. Separate
+processes also verify SIGKILL recovery after committed writes, durable prepare,
+certificate publication, successor writes, and a partially committed
+multi-writer reconciliation. A fresh process resumes that merge from the pinned
+writer collection without receiving an input bundle or expected data. Run the
+matched 100k/1M cold-join/reopen census, including peak memory and active suffix
+size, and complete cross-platform validation. Raw transfer is processed one
+bounded block at a time, but active-epoch facts remain in memory and the
+iterative traversal stack scales with causal depth. The suffix continues
+growing until a seal. No constant-memory or end-to-end performance gain is yet
+claimed.
+The original legacy-resource migration gate also remains: creating a new
+resource and copying values is not an authenticated migration preserving old
+signed heads. Physical deletion of the old epoch logs is intentionally a
+separate custody-safe retirement milestone.

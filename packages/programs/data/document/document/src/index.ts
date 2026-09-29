@@ -1,6 +1,16 @@
 export * from "@peerbit/indexer-interface";
 export * from "@peerbit/document-interface";
 export * from "./program.js";
+export {
+	CheckpointDocuments,
+	type CheckpointDocumentsOpenOptions,
+} from "./checkpoint-documents.js";
+export {
+	CheckpointDocument,
+	type CheckpointDocumentValue,
+	type CheckpointJSONValue,
+} from "./checkpoint-operation.js";
+export type { CheckpointApproval } from "./checkpoint-certificate.js";
 export * from "./batch-error.js";
 export type {
 	CanRead,

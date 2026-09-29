@@ -397,6 +397,10 @@ export class DirectBlock extends DirectStream implements IBlocks {
 		return this.remoteBlocks.persisted();
 	}
 
+	get crashSafeDurability() {
+		return this.remoteBlocks.crashSafeDurability;
+	}
+
 	get localReclamation(): ScopedBlockReclamationV1 | undefined {
 		return this.remoteBlocks.localReclamation;
 	}

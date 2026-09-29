@@ -1220,6 +1220,12 @@ importers:
       '@multiformats/multiaddr':
         specifier: ^13.0.3
         version: 13.0.3
+      '@peerbit/any-store':
+        specifier: workspace:*
+        version: link:../../../../utils/any-store/any-store
+      '@peerbit/blocks-interface':
+        specifier: workspace:*
+        version: link:../../../../transport/blocks-interface
       '@peerbit/cache':
         specifier: workspace:*
         version: link:../../../../utils/cache
@@ -1281,9 +1287,6 @@ importers:
       '@libp2p/websockets':
         specifier: ^10.1.19
         version: 10.1.19
-      '@peerbit/any-store':
-        specifier: workspace:*
-        version: link:../../../../utils/any-store/any-store
       '@peerbit/log-rust':
         specifier: workspace:*
         version: link:../../../../log/rust

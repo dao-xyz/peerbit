@@ -17708,7 +17708,54 @@ export class SharedLog<
 		return this.createPreparedLocalAppendCommits(entries, nativeAppendPlans);
 	}
 
+	private _opening = false;
+	private _localRecoveryOpen?: {
+		recover?: () => Promise<void | "local-only">;
+		entered: boolean;
+		completed: boolean;
+	};
+
+	// Resource owners restore their local projection before this log advertises
+	// itself. Keep this internal: recovery is an invariant of the resource type,
+	// not an optional public SharedLog configuration.
+	private async openWithLocalRecovery(
+		options: Args<T, D, R> | undefined,
+		recover: () => Promise<void | "local-only">,
+	): Promise<void> {
+		if (this._opening || this._localRecoveryOpen || !this.log.closed) {
+			throw new Error("SharedLog local recovery requires an idle closed log");
+		}
+		const recovery = { recover, entered: false, completed: false };
+		this._localRecoveryOpen = recovery;
+		try {
+			// Preserve custom open overrides, just as for ordinary resource startup.
+			await this.open(options);
+			if (!recovery.completed) {
+				throw new Error("SharedLog open did not complete local recovery");
+			}
+		} finally {
+			this._localRecoveryOpen = undefined;
+		}
+	}
+
 	async open(options?: Args<T, D, R>): Promise<void> {
+		const recovery = this._localRecoveryOpen;
+		if (this._opening || recovery?.entered) {
+			throw new Error("SharedLog open is already in progress");
+		}
+		if (recovery) recovery.entered = true;
+		this._opening = true;
+		try {
+			await this.openInternal(options, recovery);
+		} finally {
+			this._opening = false;
+		}
+	}
+
+	private async openInternal(
+		options?: Args<T, D, R>,
+		recovery?: NonNullable<SharedLog<T, D, R>["_localRecoveryOpen"]>,
+	): Promise<void> {
 		// B12: replication-info network compatibility modes are retired. Read the
 		// RAW argument value (the option no longer exists on the type) so untyped
 		// JS callers cannot smuggle a value past the removed field, and reject
@@ -18641,6 +18688,22 @@ export class SharedLog<
 			sync: options?.sync,
 			syncronizer: options?.syncronizer,
 		});
+		if (recovery) {
+			const recover = recovery.recover;
+			if (!recover) {
+				throw new Error("SharedLog local recovery was already consumed");
+			}
+			// Consume before awaiting so nested opens cannot reuse this callback.
+			recovery.recover = undefined;
+			const recoveryMode = await recover();
+			if (this.closed || this.log.closed) {
+				throw new Error("SharedLog closed during local recovery");
+			}
+			recovery.completed = true;
+			// A durably frozen resource may recover only to finish its checkpoint
+			// approval. Its owner closes these local handles without networking.
+			if (recoveryMode === "local-only") return;
+		}
 
 		// Open for communcation
 		this._onSubscriptionFn =

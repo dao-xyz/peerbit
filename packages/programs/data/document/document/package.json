@@ -68,6 +68,8 @@
 		"@libp2p/interface": "^3.2.5",
 		"@libp2p/tcp": "^11.0.26",
 		"@multiformats/multiaddr": "^13.0.3",
+		"@peerbit/any-store": "workspace:*",
+		"@peerbit/blocks-interface": "workspace:*",
 		"@peerbit/cache": "workspace:*",
 		"@peerbit/crypto": "workspace:*",
 		"@peerbit/diagnostics": "workspace:*",
@@ -93,7 +95,6 @@
 	"devDependencies": {
 		"@chainsafe/libp2p-noise": "^17.0.0",
 		"@libp2p/websockets": "^10.1.19",
-		"@peerbit/any-store": "workspace:*",
 		"@peerbit/log-rust": "workspace:*",
 		"@peerbit/native-backbone": "workspace:*",
 		"@peerbit/test-utils": "workspace:*",
