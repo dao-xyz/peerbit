@@ -3340,8 +3340,7 @@ export class TopicControlPlane
 			subscribed
 				? subscriptions.get(topic) != null &&
 					this.subscriptions.get(topic) === subscriptions.get(topic)
-				: !this.subscriptions.has(topic) &&
-					!this.pendingSubscriptions.has(topic);
+				: !this.subscriptions.has(topic);
 		await Promise.all(
 			peers
 				.map(async (peer) => {
@@ -3495,9 +3494,9 @@ export class TopicControlPlane
 
 		const byShard = new Map<string, string[]>();
 		for (const { key: topic } of topics) {
-			// If the topic got re-subscribed before this debounced batch ran, skip.
-			if (this.subscriptions.has(topic) || this.pendingSubscriptions.has(topic))
-				continue;
+			// A pending reopen must not erase the previous departure: its Subscribe
+			// shares the transport session and would otherwise only refresh the cache.
+			if (this.subscriptions.has(topic)) continue;
 			const shardTopic = this.getShardTopicForUserTopic(topic);
 			byShard.set(shardTopic, [...(byShard.get(shardTopic) ?? []), topic]);
 		}

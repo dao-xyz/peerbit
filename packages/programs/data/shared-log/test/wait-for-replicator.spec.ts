@@ -447,10 +447,13 @@ describe("waitForReplicator", () => {
 		session = await TestSession.disconnected(2);
 		const pubsub0 = session.peers[0].services.pubsub as any;
 		const pubsub1 = session.peers[1].services.pubsub as any;
-		// Quiesce only the LIVE announce path (subscription re-broadcast on
-		// topology change), so the live Subscribe can never race the snapshot.
-		const reconcile0 = sinon.stub(pubsub0, "reconcileShardOverlays").resolves();
-		const reconcile1 = sinon.stub(pubsub1, "reconcileShardOverlays").resolves();
+		// Drop live Subscribe announcements over both shard fanout and direct
+		// neighbor discovery, including topology-attachment retries. Keep overlay
+		// reconciliation and the real targeted GetSubscribers reply path active.
+		const liveAnnouncements = [pubsub0, pubsub1].flatMap((pubsub) => [
+			sinon.stub(pubsub, "announceShardSubscriptions").resolves(),
+			sinon.stub(pubsub, "announceDirectSubscriptions").resolves(),
+		]);
 
 		const db2 = await session.peers[1].open(new EventStore<string, any>(), {
 			args: {
@@ -503,8 +506,7 @@ describe("waitForReplicator", () => {
 			expect([...replicators]).to.include(remoteHash);
 		} finally {
 			requestSubscribers.restore();
-			reconcile0.restore();
-			reconcile1.restore();
+			for (const announcement of liveAnnouncements) announcement.restore();
 			if (db2.closed === false) {
 				await db2.drop();
 			}

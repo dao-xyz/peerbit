@@ -1,6 +1,8 @@
 import { Ed25519PublicKey } from "@peerbit/crypto";
 import { TestSession } from "@peerbit/libp2p-test-utils";
 import { Subscribe, Unsubscribe } from "@peerbit/pubsub-interface";
+import { waitForNeighbour } from "@peerbit/stream";
+import { waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
 import {
 	FanoutTree,
@@ -67,7 +69,183 @@ const fixture = () => {
 	return { receiver, internals, deliver };
 };
 
+const connectedFixture = async () => {
+	const perPeer = new Map<
+		string,
+		{ fanout: FanoutTree; topicRootControlPlane: TopicRootControlPlane }
+	>();
+	const session = await TestSession.disconnected<{
+		pubsub: TopicControlPlane;
+		fanout: FanoutTree;
+	}>(2, {
+		services: {
+			fanout: (components: any) => {
+				const topicRootControlPlane = new TopicRootControlPlane();
+				const fanout = new FanoutTree(components, {
+					connectionManager: false,
+					topicRootControlPlane,
+				});
+				perPeer.set(components.peerId.toString(), {
+					fanout,
+					topicRootControlPlane,
+				});
+				return fanout;
+			},
+			pubsub: (components: any) =>
+				new TopicControlPlane(components, {
+					...perPeer.get(components.peerId.toString())!,
+					connectionManager: false,
+					shardCount: 1,
+				}),
+		},
+	});
+	try {
+		const [receiver, sender] = session.peers.map(
+			(peer) => peer.services.pubsub,
+		);
+		for (const pubsub of [receiver, sender]) {
+			pubsub.setTopicRootCandidates([receiver.publicKeyHash]);
+		}
+		await receiver.hostShardRootsNow();
+		await session.connect([[session.peers[0], session.peers[1]]]);
+		await waitForNeighbour(receiver, sender);
+		await Promise.all([receiver.subscribe(topic), sender.subscribe(topic)]);
+		await waitForResolved(() =>
+			expect(receiver.topics.get(topic)?.has(sender.publicKeyHash)).to.equal(
+				true,
+			),
+		);
+		return { session, receiver, sender };
+	} catch (error) {
+		await session.stop();
+		throw error;
+	}
+};
+
+const deferred = () => {
+	let resolve!: () => void;
+	const promise = new Promise<void>((done) => {
+		resolve = done;
+	});
+	return { promise, resolve };
+};
+
 describe("pubsub (unsubscribe ordering)", () => {
+	it("announces departure before a pending same-session reopen", async function () {
+		this.timeout(15_000);
+		const { session, receiver, sender } = await connectedFixture();
+		const internals = sender as any;
+		const aggregator = internals.debounceSubscribeAggregator;
+		const originalAdd = aggregator.add;
+		const resumeSubscribe = deferred();
+		let reopened: Promise<void> | undefined;
+		try {
+			const events: string[] = [];
+			for (const type of ["subscribe", "unsubscribe"] as const) {
+				receiver.addEventListener(type, (event) => {
+					if (
+						event.detail.from.hashcode() === sender.publicKeyHash &&
+						event.detail.topics.includes(topic)
+					) {
+						events.push(type);
+					}
+				});
+			}
+			// Freeze only the debounce boundary, not network delivery or signing.
+			// Public subscribe() must already expose this topic as pending.
+			aggregator.add = async (...args: any[]) => {
+				await resumeSubscribe.promise;
+				return originalAdd.apply(aggregator, args);
+			};
+			await sender.unsubscribe(topic);
+			reopened = sender.subscribe(topic);
+			expect(internals.pendingSubscriptions.has(topic)).to.equal(true);
+			expect(internals.subscriptions.has(topic)).to.equal(false);
+			await waitForResolved(
+				() => expect(events).to.deep.equal(["unsubscribe"]),
+				{ timeout: 5_000, delayInterval: 10 },
+			);
+			expect(receiver.topics.get(topic)?.has(sender.publicKeyHash)).to.equal(
+				false,
+			);
+			resumeSubscribe.resolve();
+			await reopened;
+			await waitForResolved(
+				() => expect(events).to.deep.equal(["unsubscribe", "subscribe"]),
+				{ timeout: 5_000, delayInterval: 10 },
+			);
+			expect(receiver.topics.get(topic)?.has(sender.publicKeyHash)).to.equal(
+				true,
+			);
+		} finally {
+			resumeSubscribe.resolve();
+			aggregator.add = originalAdd;
+			await reopened?.catch(() => {});
+			await session.stop();
+		}
+	});
+
+	it("ignores an older signed departure delivered after a committed reopen", async function () {
+		this.timeout(15_000);
+		const { session, receiver, sender } = await connectedFixture();
+		const internals = sender as any;
+		const receiverInternals = receiver as any;
+		const originalCreateMessage = internals.createMessage;
+		const originalProcessUnsubscribe =
+			receiverInternals.processUnsubscribeMessage;
+		const resumeSigning = deferred();
+		const timestamps: bigint[] = [];
+		let receivedDepartures = 0;
+		try {
+			internals.createMessage = async (bytes: Uint8Array, ...args: any[]) => {
+				const message = await originalCreateMessage.call(
+					sender,
+					bytes,
+					...args,
+				);
+				const control = internals.decodePubSubMessage(bytes);
+				if (control instanceof Unsubscribe && control.topics.includes(topic)) {
+					timestamps.push(message.header.timestamp);
+					await resumeSigning.promise;
+				}
+				return message;
+			};
+			receiverInternals.processUnsubscribeMessage = (...args: any[]) => {
+				const result = originalProcessUnsubscribe.apply(receiver, args);
+				if (args[2].hashcode() === sender.publicKeyHash) receivedDepartures++;
+				return result;
+			};
+			await sender.unsubscribe(topic);
+			await waitForResolved(() => expect(timestamps).to.have.length(2), {
+				timeout: 5_000,
+				delayInterval: 10,
+			});
+			await sender.subscribe(topic);
+			await waitForResolved(() => {
+				const current = receiver.lastSubscriptionMessages
+					.get(sender.publicKeyHash)
+					?.get(topic)?.timestamp;
+				expect(current).to.exist;
+				expect(timestamps.every((timestamp) => timestamp < current!)).to.equal(
+					true,
+				);
+			});
+			resumeSigning.resolve();
+			await waitForResolved(
+				() => expect(receivedDepartures).to.be.greaterThan(0),
+				{ timeout: 5_000, delayInterval: 10 },
+			);
+			expect(receiver.topics.get(topic)?.has(sender.publicKeyHash)).to.equal(
+				true,
+			);
+		} finally {
+			resumeSigning.resolve();
+			internals.createMessage = originalCreateMessage;
+			receiverInternals.processUnsubscribeMessage = originalProcessUnsubscribe;
+			await session.stop();
+		}
+	});
+
 	for (const path of ["direct", "shard"] as const) {
 		it(`rejects an older Subscribe from the other path after ${path} Unsubscribe`, async () => {
 			const { receiver, deliver } = fixture();

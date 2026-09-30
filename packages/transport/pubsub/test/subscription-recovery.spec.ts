@@ -152,6 +152,22 @@ describe("pubsub (subscription recovery)", function () {
 			});
 
 			const { internals, shardTopic } = channelState(newcomer!, topic);
+			// Settled outbound announcements do not drain their in-flight replies.
+			// Keep this donor's subscription lost until the explicit recovery phase.
+			const originalProcess =
+				internals.processShardPubSubMessage.bind(internals);
+			const donorLoss = sinon
+				.stub(internals, "processShardPubSubMessage")
+				.callsFake(async (input: any) => {
+					if (
+						input.from.equals(donor!.publicKey) &&
+						input.pubsubMessage instanceof Subscribe &&
+						input.pubsubMessage.topics.includes(topic)
+					) {
+						return;
+					}
+					return originalProcess(input);
+				});
 			// Finish initial overlay attachment before C tracks the topic. This
 			// reproduces donors' announcements arriving before C can retain them.
 			await internals.ensureFanoutChannel(shardTopic);
@@ -164,18 +180,20 @@ describe("pubsub (subscription recovery)", function () {
 			const state = channelState(newcomer!, topic).state;
 			const originalPublish = state.channel.publish.bind(state.channel);
 			let dropped = 0;
+			let successfulAnnouncements = 0;
 			sinon.stub(state.channel, "publish").callsFake(async (payload: any) => {
 				const message = decodePublish(newcomer!, payload);
-				if (
-					dropped === 0 &&
+				const isAnnouncement =
 					message instanceof Subscribe &&
 					message.requestSubscribers &&
-					message.topics.includes(topic)
-				) {
+					message.topics.includes(topic);
+				if (dropped === 0 && isAnnouncement) {
 					dropped++;
 					return;
 				}
-				return originalPublish(payload);
+				const result = await originalPublish(payload);
+				if (isAnnouncement) successfulAnnouncements++;
+				return result;
 			});
 			const requests = [root!, donor!, newcomer!].map((pubsub) =>
 				sinon.spy(pubsub, "requestSubscribers"),
@@ -189,6 +207,8 @@ describe("pubsub (subscription recovery)", function () {
 				donor!.publicKeyHash,
 			);
 
+			const announcementsBeforeRecovery = successfulAnnouncements;
+			donorLoss.restore();
 			if (event === "overlay reattachment") {
 				// Reattach C through the real join protocol to exercise both the
 				// parent notification and the recovered child's notification.
@@ -204,6 +224,9 @@ describe("pubsub (subscription recovery)", function () {
 			}
 			await waitForResolved(
 				() => {
+					expect(successfulAnnouncements).to.be.greaterThan(
+						announcementsBeforeRecovery,
+					);
 					expect(subscribers(newcomer!, topic)).to.include.members([
 						root!.publicKeyHash,
 						donor!.publicKeyHash,
