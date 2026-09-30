@@ -836,6 +836,11 @@ export interface FanoutTreeEvents extends StreamEvents {
 	"fanout:data": CustomEvent<FanoutTreeDataEvent>;
 	"fanout:unicast": CustomEvent<FanoutTreeUnicastEvent>;
 	"fanout:joined": CustomEvent<{ topic: string; root: string; parent: string }>;
+	"fanout:child-joined": CustomEvent<{
+		topic: string;
+		root: string;
+		child: string;
+	}>;
 	"fanout:kicked": CustomEvent<{ topic: string; root: string; from: string }>;
 	"fanout:provider": CustomEvent<{
 		namespace: string;
@@ -8851,7 +8856,8 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 					void this.kickChildHashes(ch, [worstChild]).catch(() => {});
 				}
 
-				ch.children.set(fromHash, { bidPerByte });
+				const child = { bidPerByte };
+				ch.children.set(fromHash, child);
 				if (ch.isRoot && consumedParentUpgradeReservation) {
 					ch.parentUpgradeTrackerNoCapacityUntil = Math.max(
 						ch.parentUpgradeTrackerNoCapacityUntil,
@@ -8868,6 +8874,12 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 				);
 				void (async () => {
 					await this._sendControl(fromHash, joinAccept);
+					if (ch.closed || ch.children.get(fromHash) !== child) return;
+					this.dispatchEvent(
+						new CustomEvent("fanout:child-joined", {
+							detail: { topic: ch.id.topic, root: ch.id.root, child: fromHash },
+						}),
+					);
 					if (ch.endSeqExclusive > 0) {
 						await this._sendControl(
 							fromHash,

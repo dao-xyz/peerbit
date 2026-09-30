@@ -285,7 +285,7 @@ describe("pubsub (fanout topics)", function () {
 		}
 	});
 
-	it("delivers over sharded fanout (no direct subscription gossip)", async () => {
+	it("delivers data over sharded fanout with direct subscription discovery", async () => {
 		const { session, configureBootstraps, configureShards } =
 			await createSession(4);
 
@@ -296,8 +296,10 @@ describe("pubsub (fanout topics)", function () {
 			// Configure trackers/bootstraps for fanout join without self-dialing.
 			configureBootstraps([1, 2]);
 
-			// Track any subscription gossip (should be zero for the fanout-backed topic).
+			// Direct membership discovery is allowed, but application data must still
+			// travel over the shard overlay instead of the direct pubsub protocol.
 			const subscribesByPeer = new Array<number>(session.peers.length).fill(0);
+			const directDataByPeer = new Array<number>(session.peers.length).fill(0);
 			for (const [i, peer] of session.peers.entries()) {
 				const pubsub = peer.services.pubsub;
 				const onDataMessage = pubsub.onDataMessage.bind(pubsub);
@@ -310,6 +312,11 @@ describe("pubsub (fanout topics)", function () {
 								decoded.topics.includes(TOPIC)
 							) {
 								subscribesByPeer[i] += 1;
+							} else if (
+								decoded instanceof PubSubData &&
+								decoded.topics.includes(TOPIC)
+							) {
+								directDataByPeer[i] += 1;
 							}
 						}
 					} catch {
@@ -341,6 +348,7 @@ describe("pubsub (fanout topics)", function () {
 			});
 
 			await waitForResolved(() => {
+				expect(subscribesByPeer.some((count) => count > 0)).to.equal(true);
 				for (const [i, received] of receivedByPeer.entries()) {
 					// Match DirectStream behaviour: don't dispatch self-signed messages.
 					if (i === 2) {
@@ -357,8 +365,8 @@ describe("pubsub (fanout topics)", function () {
 				}
 			});
 
-			// Assert: no pubsub subscription gossip was used for this topic.
-			for (const count of subscribesByPeer) {
+			// Membership control traffic does not turn topic data into direct gossip.
+			for (const count of directDataByPeer) {
 				expect(count).to.equal(0);
 			}
 		} finally {
