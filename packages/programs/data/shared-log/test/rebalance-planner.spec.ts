@@ -387,6 +387,48 @@ for (const resolution of resolutions) {
 			}
 		});
 
+		it("lets a pending task run between synchronous row pages", async () => {
+			const changes = sparseChanges(resolution, 1);
+			const cache = new Cache<string>({ max: 100, ttl: 1e5 });
+			const entry = {
+				hash: "first",
+				coordinates: [asCoordinate(resolution, 10)],
+				assignedToRangeBoundary: false,
+			} as EntryReplicated<typeof resolution>;
+			let reads = 0;
+			let closed = false;
+			let scheduledTaskRan = false;
+			const index = {
+				iterate: () => ({
+					next: async () => {
+						reads++;
+						if (reads === 2) expect(scheduledTaskRan).to.equal(true);
+						return [{ value: { ...entry, hash: String(reads) } }];
+					},
+					done: () => reads === 2,
+					close: async () => {
+						closed = true;
+					},
+				}),
+			} as unknown as Index<EntryReplicated<typeof resolution>>;
+			const task = new Promise<void>((resolve) => {
+				const callback = () => {
+					scheduledTaskRan = true;
+					resolve();
+				};
+				if (typeof setImmediate === "function") setImmediate(callback);
+				else setTimeout(callback, 0);
+			});
+			try {
+				const result = await consume(toRebalance(changes, index, cache));
+				expect(result.map((item) => item.hash)).to.deep.equal(["1", "2"]);
+				expect(cache.has(changes[0].range.rangeHash)).to.equal(true);
+			} finally {
+				await task;
+				expect(closed).to.equal(true);
+			}
+		});
+
 		it("does not commit history after a page-two failure or incomplete page", async () => {
 			const changes = sparseChanges(resolution, 1024, { boundary: true });
 			for (const failure of ["next", "close"] as const) {

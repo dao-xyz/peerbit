@@ -2304,6 +2304,40 @@ describe("append delivery options — persisted receipts", function () {
 		).to.equal(true);
 	});
 
+	it("does no parsing or storage work after receipt ingress is exhausted", async () => {
+		session = await TestSession.disconnected(1);
+		const writer = await session.peers[0].open(new EventStore<string, any>());
+		const log = writer.log as any;
+		const now = 1_250_000;
+		const hash = (await calculateRawCid(randomBytes(32))).cid;
+		sinon.stub(log, "isPersistedReceiptRequestSessionCurrent").returns(true);
+		sinon.stub(Date, "now").returns(now);
+		const shape = sinon.spy(log, "validatePersistedReceiptRequestShape");
+		const hashes = sinon.spy(log, "hasValidPersistedReceiptHashes");
+		const blocks = sinon.spy(log.remoteBlocks.localStore, "hasMany");
+		const mutation = sinon.spy(log, "withReplicationRangeMutationQueue");
+		for (let index = 0; index < 16; index++) {
+			expect(
+				log.admitPersistedReceiptIngress("busy-peer", 1n, 1, now),
+			).to.equal(true);
+		}
+		const request = new RequestPersistedEntriesV1({
+			expectedReceiverSession: 1n,
+			hashes: [hash],
+		});
+		const context = { message: { header: { session: 1n } } };
+		const lane = { fromHash: "busy-peer" };
+		for (let index = 0; index < 32; index++) {
+			expect(
+				await log.handleRequestPersistedEntriesV1(request, context, lane),
+			).to.equal(undefined);
+		}
+		expect(
+			shape.called || hashes.called || blocks.called || mutation.called,
+		).to.equal(false);
+		expect(log._persistedReceiptRequestsInFlightTotal).to.equal(0);
+	});
+
 	it("charges malformed receipt hashes against the ingress budget before parsing", async () => {
 		session = await TestSession.disconnected(1);
 		const writer = await session.peers[0].open(new EventStore<string, any>());
@@ -4218,7 +4252,7 @@ describe("append delivery options — persisted receipts", function () {
 		}
 	});
 
-	it("waits for both block and coordinate durability barriers", async () => {
+	it("waits for slow block and coordinate durability barriers across receipt retries", async () => {
 		const { writer, receiver } = await openPair(true);
 		await waitForPersistedCapability(writer, receiver);
 		const receiverLog = receiver.log as any;
@@ -4244,6 +4278,7 @@ describe("append delivery options — persisted receipts", function () {
 		const coordinateBarrier = sinon
 			.stub(coordinateDurability, "barrier")
 			.callsFake(() => coordinateGate);
+		const receiptRequests = sinon.spy(writer.log.rpc, "request");
 		let settled = false;
 		try {
 			const write = writer
@@ -4264,6 +4299,21 @@ describe("append delivery options — persisted receipts", function () {
 				expect(coordinateBarrier.calledOnce).to.equal(true);
 			});
 			expect(settled).to.equal(false);
+			// A durability barrier may outlast one bounded response wait. Retrying
+			// must not turn its still-pending work into a positive receipt.
+			await waitForResolved(
+				() => {
+					expect(
+						receiptRequests
+							.getCalls()
+							.filter(
+								(call) => call.args[0] instanceof RequestPersistedEntriesV1,
+							).length,
+					).to.be.at.least(2);
+				},
+				{ timeout: 5_000 },
+			);
+			expect(settled).to.equal(false);
 			releaseBlock();
 			await new Promise((resolve) => setTimeout(resolve, 10));
 			expect(settled).to.equal(false);
@@ -4276,6 +4326,7 @@ describe("append delivery options — persisted receipts", function () {
 			blockBarrier.restore();
 			coordinateBarrier.restore();
 			resolveReceiptStorage.restore();
+			receiptRequests.restore();
 		}
 	});
 
@@ -4833,6 +4884,255 @@ describe("append delivery options — persisted receipts", function () {
 		}
 	});
 
+	const openScriptedReceiptDelivery = async () => {
+		session = await TestSession.disconnected(1);
+		const writer = await session.peers[0].open(new EventStore<string, any>());
+		const { entry } = await writer.add("bounded-receipt-retry", {
+			target: "none",
+		});
+		const log = writer.log as any;
+		const peer = "durable-peer";
+		const receiptSession = {
+			capabilitySession: 1n,
+			peerSession: { peer },
+		};
+		sinon.stub(log, "findLeadersFromEntry").resolves(new Map([[peer, {}]]));
+		sinon.stub(log, "persistedReceiptPeerSession").returns(receiptSession);
+		sinon.stub(log, "isReceiveOwnershipSnapshotStable").returns(true);
+		sinon.stub(log._v2Send, "hasCurrentStateForPeer").returns(true);
+		sinon.stub(log._v2Send, "isLatestConfirmedForPeer").returns(true);
+		allowPersistedReceiptFreshness(log);
+		sinon.stub(log, "pushEntryHashes").callsFake(async (...args: unknown[]) => {
+			const hashes = args[1] as string[];
+			const options = args[2] as {
+				onChunkAttempted?: (hashes: string[]) => void;
+			};
+			options.onChunkAttempted?.(hashes);
+		});
+		const response = (hashes: string[], from = peer) => [
+			{
+				response: new ConfirmEntriesMessage({ hashes }),
+				from: { hashcode: () => from },
+				message: { header: { session: receiptSession.capabilitySession } },
+			},
+		];
+		return { writer, log, entry, response };
+	};
+
+	it("bounds receipt silence after valid empty rounds until a coordinate becomes receiptable", async () => {
+		const { writer, log, entry, response } =
+			await openScriptedReceiptDelivery();
+		const clock = sinon.useFakeTimers();
+		const controller = new AbortController();
+		const requestTimes: number[] = [];
+		const requestTimeouts: number[] = [];
+		let coordinateReady = false;
+		const request = sinon
+			.stub(log.rpc, "request")
+			.callsFake(async (...args: unknown[]) => {
+				const message = args[0] as RequestPersistedEntriesV1;
+				const options = args[1] as { timeout: number; signal: AbortSignal };
+				requestTimes.push(Date.now());
+				requestTimeouts.push(options.timeout);
+				if (requestTimes.length <= 6) return response([]);
+				if (requestTimes.length === 7) {
+					// The receiver becomes able to receipt while this one request is
+					// silently dropped. Only a subsequent request can observe it.
+					setTimeout(() => {
+						coordinateReady = true;
+					}, 250);
+					return new Promise<ReturnType<typeof response>>((resolve, reject) => {
+						const onAbort = () => {
+							clearTimeout(timer);
+							options.signal.removeEventListener("abort", onAbort);
+							reject(options.signal.reason);
+						};
+						const timer = setTimeout(() => {
+							options.signal.removeEventListener("abort", onAbort);
+							resolve([]);
+						}, options.timeout);
+						options.signal.addEventListener("abort", onAbort, { once: true });
+					});
+				}
+				expect(coordinateReady).to.equal(true);
+				return response(message.hashes);
+			});
+		let settled = false;
+		const outcome = writer.log
+			.deliverPersistedEntries([entry], {
+				target: "replicators",
+				delivery: {
+					reliability: "persisted",
+					minAcks: 1,
+					timeout: 15_000,
+					signal: controller.signal,
+				},
+			})
+			.then(
+				() => {
+					settled = true;
+				},
+				(error: unknown) => error,
+			);
+		try {
+			await clock.tickAsync(10_000);
+			expect(settled).to.equal(true);
+			expect(await outcome).to.equal(undefined);
+			expect(request.callCount).to.equal(8);
+			expect(
+				requestTimeouts.slice(0, 7).every((timeout) => timeout === 2_000),
+			).to.equal(true);
+			expect(requestTimeouts[7]).to.equal(4_000);
+			expect(
+				requestTimes
+					.slice(1, 7)
+					.map((time, index) => time - requestTimes[index]!),
+			).to.deep.equal([50, 100, 200, 400, 800, 1_000]);
+			expect(requestTimes[7]! - requestTimes[6]!).to.be.at.most(2_100);
+		} finally {
+			controller.abort();
+			await clock.tickAsync(0);
+			await outcome;
+			clock.restore();
+		}
+	});
+
+	const checkSlowReceiptResponse = async (
+		responseMs: number,
+		deadlineMs: number,
+		elapsedMs: number,
+		expectedTimeouts: number[],
+	) => {
+		const { writer, log, entry, response } =
+			await openScriptedReceiptDelivery();
+		log.findLeadersFromEntry.resolves(
+			new Map([
+				["durable-peer", {}],
+				["empty-peer", {}],
+			]),
+		);
+		const clock = sinon.useFakeTimers();
+		const controller = new AbortController();
+		const slowTimeouts: number[] = [];
+		let emptyResponses = 0;
+		sinon.stub(log.rpc, "request").callsFake(async (...args: unknown[]) => {
+			const message = args[0] as RequestPersistedEntriesV1;
+			const options = args[1] as {
+				timeout: number;
+				signal: AbortSignal;
+				mode: { to: string[] };
+			};
+			const peer = options.mode.to[0]!;
+			if (peer === "empty-peer") {
+				emptyResponses++;
+				return response([], peer);
+			}
+			slowTimeouts.push(options.timeout);
+			return new Promise<ReturnType<typeof response>>((resolve, reject) => {
+				const cleanup = () => {
+					clearTimeout(timeout);
+					clearTimeout(receipt);
+					options.signal.removeEventListener("abort", onAbort);
+				};
+				const onAbort = () => {
+					cleanup();
+					reject(options.signal.reason);
+				};
+				const timeout = setTimeout(() => {
+					cleanup();
+					resolve([]);
+				}, options.timeout);
+				// Every request starts its own slow durability barrier, rather than
+				// sharing a one-shot gate that makes all later calls instantaneous.
+				const receipt = setTimeout(() => {
+					cleanup();
+					resolve(response(message.hashes));
+				}, responseMs);
+				options.signal.addEventListener("abort", onAbort, { once: true });
+			});
+		});
+		let settled = false;
+		const outcome = writer.log
+			.deliverPersistedEntries([entry], {
+				target: "replicators",
+				delivery: {
+					reliability: "persisted",
+					minAcks: 1,
+					timeout: deadlineMs,
+					signal: controller.signal,
+				},
+			})
+			.then(
+				() => {
+					settled = true;
+				},
+				(error: unknown) => error,
+			);
+		try {
+			await clock.tickAsync(elapsedMs);
+			expect(settled).to.equal(true);
+			expect(await outcome).to.equal(undefined);
+			expect(slowTimeouts).to.deep.equal(expectedTimeouts);
+			expect(emptyResponses).to.equal(expectedTimeouts.length);
+		} finally {
+			controller.abort();
+			await clock.tickAsync(0);
+			await outcome;
+			clock.restore();
+		}
+	};
+
+	it("adapts a slow receipt response independently of another peer's empty replies", async () => {
+		await checkSlowReceiptResponse(3_000, 15_000, 6_000, [2_000, 4_000]);
+	});
+
+	it("allows repeated ten-second receipt barriers within the original caller deadline", async () => {
+		await checkSlowReceiptResponse(
+			10_000,
+			60_000,
+			30_000,
+			[2_000, 4_000, 8_000, 16_000],
+		);
+	});
+
+	it("cancels no-progress receipt backoff without sending another request", async () => {
+		const { writer, log, entry, response } =
+			await openScriptedReceiptDelivery();
+		const clock = sinon.useFakeTimers();
+		const request = sinon.stub(log.rpc, "request").resolves(response([]));
+		const controller = new AbortController();
+		const cancellation = new Error("cancel empty receipt backoff");
+		const outcome = writer.log
+			.deliverPersistedEntries([entry], {
+				target: "replicators",
+				delivery: {
+					reliability: "persisted",
+					minAcks: 1,
+					timeout: 15_000,
+					signal: controller.signal,
+				},
+			})
+			.catch((error: unknown) => error);
+		try {
+			await clock.tickAsync(200);
+			expect(request.callCount).to.equal(3);
+			controller.abort(cancellation);
+			await clock.tickAsync(0);
+			const failure = await outcome;
+			expect(failure).to.be.instanceOf(PersistedDeliveryError);
+			expect((failure as PersistedDeliveryError).cause).to.equal(cancellation);
+			await clock.tickAsync(2_000);
+			expect(request.callCount).to.equal(3);
+			expect(log._persistedReceiptReadinessWaiters.size).to.equal(0);
+			expect(log._v2Send._confirmations.size).to.equal(0);
+		} finally {
+			controller.abort(cancellation);
+			await clock.tickAsync(0);
+			await outcome;
+			clock.restore();
+		}
+	});
+
 	it("retries a failed receipt request in a fresh round", async () => {
 		session = await TestSession.disconnected(1);
 		const writer = await session.peers[0].open(new EventStore<string, any>());
@@ -4849,7 +5149,7 @@ describe("append delivery options — persisted receipts", function () {
 		const peerSession = sinon
 			.stub(log, "persistedReceiptPeerSession")
 			.returns(receiptSession);
-		allowPersistedReceiptFreshness(log);
+		const confirmation = allowPersistedReceiptFreshness(log);
 		const stable = sinon
 			.stub(log, "isReceiveOwnershipSnapshotStable")
 			.returns(true);
@@ -4890,8 +5190,11 @@ describe("append delivery options — persisted receipts", function () {
 			expect(request.firstCall.args[0]).not.to.equal(
 				request.secondCall.args[0],
 			);
-			expect(request.secondCall.args[1].timeout).to.be.greaterThan(
-				request.firstCall.args[1].timeout,
+			expect(request.firstCall.args[1].timeout).to.equal(2_000);
+			expect(request.secondCall.args[1].timeout).to.equal(4_000);
+			// The growing prerequisite window is independent of receipt silence.
+			expect(confirmation.secondCall.args[1].timeout).to.be.greaterThan(
+				confirmation.firstCall.args[1].timeout,
 			);
 			const targetPushes = push
 				.getCalls()

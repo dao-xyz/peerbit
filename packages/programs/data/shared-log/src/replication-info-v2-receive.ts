@@ -111,6 +111,7 @@ export type ReplicationInfoV2LocalCapabilityAdvertisement = {
 	context: ReplicationInfoV2LocalCapabilityContext;
 	attempts: number;
 	ready: boolean;
+	requestRemoteFullRearm?: boolean;
 	acknowledgedReady?: LocalCapabilityReady;
 	receiverTransportSession?: bigint;
 	timer?: ReturnType<typeof setTimeout>;
@@ -190,6 +191,7 @@ export type ReplicationInfoV2ReceiveState = {
 	requestsSinceCapabilityRefresh: number;
 	requestParked: boolean;
 	capabilityRefreshRequired: boolean;
+	remoteRearmPending?: boolean;
 	reservedAdmission?: ReplicationInfoV2ReceiveAdmission;
 };
 
@@ -235,6 +237,7 @@ export type ReplicationInfoV2ReceiveDeps = {
 		receiveEpoch: object | null;
 		signal: AbortSignal;
 		requestRemoteFullRearm?: boolean;
+		acknowledgeRearm?: boolean;
 	}) => Promise<ReplicationInfoV2LocalCapabilityRefresh | undefined>;
 	onRequestError?: (error: unknown) => void;
 	onLocalCapabilityError?: (error: unknown) => void;
@@ -596,6 +599,8 @@ export class ReplicationInfoV2ReceiveCoordinator {
 					state.controller.signal,
 					state.lifecycleSignal,
 				]),
+				requestRemoteFullRearm: state.requestRemoteFullRearm,
+				acknowledgeRearm: state.requestRemoteFullRearm,
 			});
 			if (
 				!refreshed ||
@@ -653,6 +658,7 @@ export class ReplicationInfoV2ReceiveCoordinator {
 		peerSession: object;
 		receiveEpoch: object | null;
 		signal: AbortSignal;
+		requestRemoteFullRearm?: boolean;
 	}): ReplicationInfoV2LocalCapabilityAdvertisementHandle {
 		const peerHash = properties.target.hashcode();
 		if (
@@ -729,6 +735,7 @@ export class ReplicationInfoV2ReceiveCoordinator {
 				context,
 				attempts: 0,
 				ready: false,
+				requestRemoteFullRearm: properties.requestRemoteFullRearm,
 				receiverTransportSession: this.deps.getReceiverTransportSession(),
 			};
 			advertisement.onLifecycleAbort = () =>
@@ -1418,6 +1425,28 @@ export class ReplicationInfoV2ReceiveCoordinator {
 		});
 	}
 
+	/** Coalesce reciprocal capability recovery into the existing request worker. */
+	acceptRemoteRearm(properties: {
+		peerHash: string;
+		peerSession: object;
+		receiveEpoch: object | null;
+	}): boolean {
+		const state = this._receiveStates.get(properties.peerHash);
+		if (
+			!state ||
+			state.peerSession !== properties.peerSession ||
+			state.receiveEpoch !== properties.receiveEpoch ||
+			!this.isStateCurrent(state)
+		) {
+			return false;
+		}
+		// A newer solicitation can describe another remote topic opening before
+		// the previous Full commits. Invalidating the captured version makes an
+		// in-flight refresh yield to one trailing refresh, not a second worker.
+		state.remoteRearmPending = true;
+		return this.advanceRecovery(properties);
+	}
+
 	/** Require a fresh capability-bound grant and authoritative Full. */
 	advanceRecovery(properties: {
 		peerHash: string;
@@ -1796,11 +1825,11 @@ export class ReplicationInfoV2ReceiveCoordinator {
 			return false;
 		}
 		state.lastSequence = message.sequence;
-		state.phase = "active";
+		state.phase = state.remoteRearmPending ? "resync" : "active";
 		state.requestAttempts = 0;
 		state.requestsSinceCapabilityRefresh = 0;
 		state.requestParked = false;
-		state.capabilityRefreshRequired = false;
+		state.capabilityRefreshRequired = state.remoteRearmPending === true;
 		if (state.requestTimer) {
 			clearTimeout(state.requestTimer);
 			state.requestTimer = undefined;
@@ -1810,6 +1839,7 @@ export class ReplicationInfoV2ReceiveCoordinator {
 		admission.receiveEpoch = state.receiveEpoch;
 		admission.committed = true;
 		this.release(admission);
+		if (state.remoteRearmPending) this.armRequest(state, 0);
 		return true;
 	}
 
@@ -1959,6 +1989,7 @@ export class ReplicationInfoV2ReceiveCoordinator {
 		state.lastSequence = undefined;
 		state.phase = "resync";
 		state.capabilityRefreshRequired = false;
+		state.remoteRearmPending = false;
 		state.requestsSinceCapabilityRefresh = 0;
 		state.version++;
 		this.bindLocalCapability(state, ready);
