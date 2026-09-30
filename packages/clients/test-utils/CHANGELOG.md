@@ -1,5 +1,17 @@
 # Changelog
 
+## 3.1.46
+
+### Patch Changes
+
+- Updated dependencies [[`574f362`](https://github.com/dao-xyz/peerbit/commit/574f36259593262dc1cee759714e9d1aa31b16d0), [`9e23a57`](https://github.com/dao-xyz/peerbit/commit/9e23a570147e7efaafba19d998c05a6a101dd1be), [`574f362`](https://github.com/dao-xyz/peerbit/commit/574f36259593262dc1cee759714e9d1aa31b16d0), [`d9d3296`](https://github.com/dao-xyz/peerbit/commit/d9d3296a7941abd88596373140b158a3fa7f5ce2), [`8948801`](https://github.com/dao-xyz/peerbit/commit/8948801be8fbb90240f8da100e45f1d7d11656f6)]:
+  - @peerbit/libp2p-test-utils@3.0.11
+  - @peerbit/stream@5.2.4
+  - @peerbit/pubsub@5.4.10
+  - @peerbit/program@6.0.65
+  - @peerbit/blocks@4.3.3
+  - peerbit@5.4.7
+
 ## 3.1.45
 
 ### Patch Changes

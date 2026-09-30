@@ -1,5 +1,15 @@
 # Changelog
 
+## 6.0.39
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @peerbit/program@6.0.65
+  - @peerbit/shared-log@16.0.37
+  - @peerbit/rpc@6.2.1
+  - @peerbit/log@6.2.36
+
 ## 6.0.38
 
 ### Patch Changes

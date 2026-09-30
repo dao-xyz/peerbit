@@ -1,5 +1,11 @@
 # Changelog
 
+## 5.2.4
+
+### Patch Changes
+
+- [#1477](https://github.com/dao-xyz/peerbit/pull/1477) [`9e23a57`](https://github.com/dao-xyz/peerbit/commit/9e23a570147e7efaafba19d998c05a6a101dd1be) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Release cancelled or failed ACK waits' route-health checks without cancelling other active waits or pruning replacement routes. Keep cleanup bound to the original wait when a later message reuses its ID.
+
 ## 5.2.3
 
 ### Patch Changes

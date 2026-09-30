@@ -1,5 +1,11 @@
 # Changelog
 
+## 3.0.11
+
+### Patch Changes
+
+- [#1476](https://github.com/dao-xyz/peerbit/pull/1476) [`574f362`](https://github.com/dao-xyz/peerbit/commit/574f36259593262dc1cee759714e9d1aa31b16d0) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Apply simulated packet loss to complete length-prefixed frames, including fragmented headers and payloads or coalesced writes. Preserve following control messages, per-frame metrics, and backpressure, and discard incomplete frames when a stream closes.
+
 ## 3.0.10
 
 ### Patch Changes
