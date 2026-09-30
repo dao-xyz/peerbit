@@ -512,7 +512,7 @@ export type FanoutTreeJoinOptions = {
 	parentUpgradeStaleRootProbeProbability?: number;
 
 	/**
-	 * How long to wait for a parent probe reply before skipping that candidate.
+	 * How long to wait for a candidate or idle-parent probe reply.
 	 */
 	parentProbeTimeoutMs?: number;
 
@@ -891,6 +891,7 @@ const DATA_WRITE_FAIL_KICK_COOLDOWN_MS = 2_000;
 const DATA_WRITE_FAIL_KICK_MAX_PER_EVENT = 4;
 const PARENT_REPAIR_DEAD_STREAK_THRESHOLD = 16;
 const PARENT_REPAIR_DEAD_MIN_LIVENESS_MS = 15_000;
+const PARENT_IDLE_PROBE_INTERVAL_MS = 5_000;
 const REPAIR_RETRY_MIN_MS = 1_000;
 const REPAIR_RETRY_INTERVAL_FACTOR = 5;
 // A stream can remain locally readable/writable while silently dropping every
@@ -1167,7 +1168,10 @@ type ChannelState = {
 		number,
 		{ resolve(entries: TrackerCandidate[]): void }
 	>;
-	pendingParentProbe: Map<number, { resolve(reply?: ParentProbeReply): void }>;
+	pendingParentProbe: Map<
+		number,
+		{ peer: PeerStreams; resolve(reply?: ParentProbeReply): void }
+	>;
 	parentUpgradeReservationsByHash: Map<
 		string,
 		{ token: number; expiresAt: number; minFreeSlots: number }
@@ -5900,23 +5904,53 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		minFreeSlots = 0,
 		reserveRootCapacity = true,
 	): Promise<ParentProbeReply | undefined> {
-		if (!this.peers.get(parentHash)) return;
-		const reqId = (this.random() * 0xffffffff) >>> 0;
-		const p = new Promise<ParentProbeReply | undefined>((resolve) => {
-			ch.pendingParentProbe.set(reqId, { resolve });
-		});
-		await this._sendControl(
-			parentHash,
-			this.codec.encodeParentProbeReq(ch.id.key, reqId, minFreeSlots, reserveRootCapacity),
-		);
-		const res = await Promise.race([
-			p,
-			delay(Math.max(1, timeoutMs), { signal }).then(
-				(): undefined => undefined,
-			),
-		]);
-		if (!res) ch.pendingParentProbe.delete(reqId);
-		return res;
+		const peer = this.peers.get(parentHash);
+		if (!peer) return;
+		const controller = new AbortController();
+		let reqId = (this.random() * 0xffffffff) >>> 0;
+		while (ch.pendingParentProbe.has(reqId)) reqId = (reqId + 1) >>> 0;
+		let pending:
+			| { peer: PeerStreams; resolve(reply?: ParentProbeReply): void }
+			| undefined;
+		let onAbort!: () => void;
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		try {
+			return await new Promise<ParentProbeReply | undefined>((resolve, reject) => {
+				pending = { peer, resolve };
+				ch.pendingParentProbe.set(reqId, pending);
+				onAbort = () => {
+					const reason = signal.reason ?? new AbortError("fanout probe aborted");
+					controller.abort(reason);
+					reject(reason);
+				};
+				signal.addEventListener("abort", onAbort, { once: true });
+				if (signal.aborted) return onAbort();
+				// Bound signing/queueing as well as the reply; a stuck send must not
+				// prevent the join loop from recovering or closing the channel.
+				timer = setTimeout(() => {
+					controller.abort(new AbortError("fanout probe timed out"));
+					resolve(undefined);
+				}, Math.max(1, timeoutMs));
+				timer.unref?.();
+				void this._sendControl(
+					parentHash,
+					this.codec.encodeParentProbeReq(
+						ch.id.key,
+						reqId,
+						minFreeSlots,
+						reserveRootCapacity,
+					),
+					controller.signal,
+				).catch(() => resolve(undefined));
+			});
+		} finally {
+			clearTimeout(timer);
+			signal.removeEventListener("abort", onAbort);
+			if (ch.pendingParentProbe.get(reqId) === pending) {
+				ch.pendingParentProbe.delete(reqId);
+			}
+			controller.abort(new AbortError("fanout probe settled"));
+		}
 	}
 
 	private async _joinLoop(
@@ -6025,6 +6059,10 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 			if (initialJoinRemainingMs() === 0) throwInitialJoinTimeout();
 		};
 		let nextParentUpgradeCheckAt = 0;
+		let nextParentHealthProbeAt = 0;
+		let failedParentProbe:
+			| { peer: PeerStreams; route: ChannelState["routeFromRoot"] }
+			| undefined;
 		let parentUpgradeCheckSeq = 0;
 		let parentUpgradeActiveGuardBackoffMs = 0;
 		const unsuccessfulColdBootstrapPeers = new Set<string>();
@@ -6115,8 +6153,10 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 
 				// Parent disappeared? Rejoin.
 				if (ch.parent) {
-					const parentPeer = this.peers.get(ch.parent);
+					const parentHash = ch.parent;
+					const parentPeer = this.peers.get(parentHash);
 					let connected = false;
+					let probeFailed = false;
 					if (parentPeer) {
 						try {
 							const conns = this.components.connectionManager.getConnections(
@@ -6127,8 +6167,60 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 							connected = parentPeer.isReadable || parentPeer.isWritable;
 						}
 					}
+					const now = Date.now();
+					if (now - ch.lastParentDataAt < PARENT_IDLE_PROBE_INTERVAL_MS) {
+						failedParentProbe = undefined;
+					} else if (
+						connected &&
+						parentPeer &&
+						now >= nextParentHealthProbeAt
+					) {
+						const route = ch.routeFromRoot;
+						const lastDataAt = ch.lastParentDataAt;
+						const reply = await this.probeParentCandidate(
+							ch,
+							parentHash,
+							parentUpgrade.probe.timeoutMs,
+							signal,
+							0,
+							false,
+						);
+						if (
+							ch.closed ||
+							signal.aborted ||
+							this.channelsBySuffixKey.get(ch.id.suffixKey) !== ch ||
+							ch.parent !== parentHash ||
+							ch.routeFromRoot !== route ||
+							this.peers.get(parentHash) !== parentPeer
+						) {
+							failedParentProbe = undefined;
+							continue;
+						}
+						nextParentHealthProbeAt = Date.now() + PARENT_IDLE_PROBE_INTERVAL_MS;
+						// A full parent is still healthy. Do not reserve capacity or
+						// refresh lastParentDataAt: probes must not mask stalled data.
+						if (reply || ch.lastParentDataAt !== lastDataAt) {
+							failedParentProbe = undefined;
+						} else if (
+							failedParentProbe?.peer === parentPeer &&
+							failedParentProbe.route === route
+						) {
+							probeFailed = true;
+							connected = false;
+							cooldownUntilByHash.set(
+								parentHash,
+								Date.now() + candidateCooldownMs,
+							);
+						} else {
+							failedParentProbe = { peer: parentPeer, route };
+							nextParentHealthProbeAt = Date.now() + Math.max(retryMs, 1_000);
+						}
+					}
 					if (!connected) {
-						ch.metrics.reparentDisconnect += 1;
+						if (probeFailed) ch.metrics.reparentStale += 1;
+						else ch.metrics.reparentDisconnect += 1;
+						failedParentProbe = undefined;
+						nextParentHealthProbeAt = 0;
 						const hadChildren = ch.children.size > 0;
 						this.detachFromParent(ch);
 						nextParentUpgradeCheckAt = 0;
@@ -8571,7 +8663,14 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 				if (!decoded) return false;
 				const { reqId, ...reply } = decoded;
 				const pending = ch.pendingParentProbe.get(reqId);
-				if (!pending) return true;
+				if (
+					!pending ||
+					pending.peer !== peerStream ||
+					pending.peer.publicKey.hashcode() !== fromHash ||
+					this.peers.get(fromHash) !== peerStream
+				) {
+					return true;
+				}
 				ch.pendingParentProbe.delete(reqId);
 				pending.resolve(reply);
 				this.touchPeerHint(ch, fromHash);
@@ -9323,6 +9422,21 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 			}
 
 			if (kind === MSG_KICK) {
+				if (this.peers.get(fromHash) !== peerStream) return true;
+				if (fromHash !== ch.parent) {
+					if (ch.parentUpgradeGrace?.previousParent === fromHash) {
+						// This attachment was evicted; never roll back to it.
+						this.clearParentUpgradeGrace(ch);
+					}
+					if (ch.parentShadow?.hash === fromHash) {
+						ch.parentShadow = undefined;
+						ch.metrics.parentShadowReset += 1;
+						if (this.parentUpgradeShadowInFlightSuffixKey === ch.id.suffixKey) {
+							this.parentUpgradeShadowInFlightSuffixKey = undefined;
+						}
+					}
+					return true;
+				}
 				ch.metrics.reparentKicked += 1;
 				ch.parent = undefined;
 				ch.level = Number.POSITIVE_INFINITY;
