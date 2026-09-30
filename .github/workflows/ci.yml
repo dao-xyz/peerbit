@@ -357,8 +357,14 @@ jobs:
           --no-config --no-package --require chai-extend/chai-global.js
           --timeout 60000 --retries 0 --no-exit
           packages/transport/stream/dist/test/stream-replacement.spec.js
+          packages/transport/stream/dist/test/ack-wait-ownership.spec.js
           packages/transport/pubsub/dist/test/subscribe-races.spec.js
           packages/transport/pubsub/dist/test/fanout-idle-close.spec.js
+          packages/transport/pubsub/dist/test/fanout-parent-liveness.spec.js
+          packages/transport/pubsub/dist/test/fanout-parent-probe.spec.js
+          packages/transport/pubsub/dist/test/fanout-parent-probe-metrics.spec.js
+          packages/transport/pubsub/dist/test/stale-root-recovery.spec.js
+          packages/transport/pubsub/dist/test/stale-root-cold-join.spec.js
       - name: Test synchronizer teardown without retries or forced exit
         timeout-minutes: 3
         env:

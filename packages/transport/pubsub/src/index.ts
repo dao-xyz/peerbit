@@ -244,6 +244,31 @@ const TOPIC_ROOT_QUERY_ROUND_TIMEOUT_MS = 3_000;
 const TOPIC_ROOT_HOST_SCAN_TIMEOUT_MS = DEFAULT_TOPIC_ROOT_QUERY_TIMEOUT_MS;
 const TOPIC_ROOT_HOST_SCAN_CONCURRENCY = 8;
 const DIRECT_SHARD_ROOT_CONFIRM_TIMEOUT_MS = 2_000;
+const RELAY_ROOT_PREFLIGHT_TIMEOUT_MS = 2_000;
+const RELAY_ROOT_PREFLIGHT_REUSE_MS = 2_000;
+
+type RelayRootProbeResult = {
+	claim: TopicRootCandidateClaimRecord;
+	routes: string[];
+	status: "alive" | "failed" | "unknown";
+	observedAt: number;
+};
+type RelayRootProbeCohort = {
+	controller: AbortController;
+	users: Set<() => boolean>;
+	promise: Promise<ReadonlyMap<string, RelayRootProbeResult>>;
+	results?: ReadonlyMap<string, RelayRootProbeResult>;
+	lifecycleRevision: number;
+};
+type RelayRootRecoveryAttempt = {
+	cohort?: RelayRootProbeCohort;
+	policyDeadline?: number;
+};
+type TopicRootState = {
+	root?: string;
+	authoritative: boolean;
+	autoCandidate: boolean;
+};
 
 const DEFAULT_PUBSUB_FANOUT_CHANNEL_OPTIONS: Omit<
 	FanoutTreeChannelOptions,
@@ -341,6 +366,7 @@ type EnsureFanoutChannelOptions = {
 	root?: string;
 	rootCandidateGeneration?: string;
 	signal?: AbortSignal;
+	isCurrent?: () => boolean;
 };
 
 export type TopicControlPlaneComponents = DirectStreamComponents;
@@ -427,7 +453,7 @@ export class TopicControlPlane
 	private readonly hostShards: boolean;
 	private readonly shardRootCache = new Map<
 		string,
-		{ root: string; authoritative: boolean }
+		TopicRootState & { root: string }
 	>();
 	private readonly shardTopicCache = new Map<string, string>();
 	private readonly shardRefCounts = new Map<string, number>();
@@ -466,9 +492,9 @@ export class TopicControlPlane
 		string,
 		TopicRootCandidateClaimRecord
 	>();
-	// A directly observed departure makes only that origin's current lease
-	// ineffective locally. This is not a component-wide withdrawal: claims learned
-	// only through relays keep their existing lease semantics. Keeping the verified
+	private relayRootProbeCohort?: RelayRootProbeCohort;
+	// Locally observed unreachability makes only that origin's current lease
+	// ineffective locally. This is not a component-wide withdrawal. Keeping the verified
 	// bytes + replay floor prevents a relay from resurrecting the departed lease;
 	// the map is bounded by the same retained-origin cap as the claim map.
 	private readonly suppressedDepartedTopicRootCandidateClaims = new Map<
@@ -551,6 +577,7 @@ export class TopicControlPlane
 		string,
 		{
 			abortController: AbortController;
+			isCurrent: () => boolean;
 			candidateGeneration: string;
 			lifecycleRevision: number;
 			opening: Promise<void>;
@@ -954,16 +981,10 @@ export class TopicControlPlane
 			this.signedTopicRootCandidateClaims.has(hash)
 		) {
 			const claim = this.signedTopicRootCandidateClaims.get(hash)!;
-			const suppressed =
-				this.suppressedDepartedTopicRootCandidateClaims.get(hash);
-			suppressedDepartedOrigin =
-				!suppressed ||
-				suppressed.timestamp !== claim.timestamp ||
-				!bytesEqual(suppressed.bytes, claim.bytes);
-			this.suppressedDepartedTopicRootCandidateClaims.set(hash, {
-				bytes: claim.bytes,
-				timestamp: claim.timestamp,
-			});
+			suppressedDepartedOrigin = this.suppressTopicRootCandidateClaim(
+				hash,
+				claim,
+			);
 		}
 		if (
 			this.autoTopicRootCandidates &&
@@ -1016,6 +1037,10 @@ export class TopicControlPlane
 	}
 
 	private clearSignedTopicRootCandidateState() {
+		this.relayRootProbeCohort?.controller.abort(
+			new AbortError("topic root candidate recovery stopped"),
+		);
+		this.relayRootProbeCohort = undefined;
 		this.clearTopicRootCandidateClaimTimer();
 		this.signedTopicRootCandidateClaims.clear();
 		this.suppressedDepartedTopicRootCandidateClaims.clear();
@@ -1389,6 +1414,329 @@ export class TopicControlPlane
 			suppressed?.timestamp === claim.timestamp &&
 			bytesEqual(suppressed.bytes, claim.bytes)
 		);
+	}
+
+	private suppressTopicRootCandidateClaim(
+		origin: string,
+		claim: TopicRootCandidateClaimRecord,
+	): boolean {
+		if (
+			!this.autoTopicRootCandidates ||
+			origin === this.publicKeyHash ||
+			this.peers.has(origin) ||
+			this.signedTopicRootCandidateClaims.get(origin) !== claim ||
+			this.isDepartedTopicRootCandidateClaimSuppressed(origin, claim)
+		)
+			return false;
+		this.suppressedDepartedTopicRootCandidateClaims.set(origin, {
+			bytes: claim.bytes,
+			timestamp: claim.timestamp,
+		});
+		return true;
+	}
+
+	private topicRootRouteObservations(origin: string): string[] {
+		return this.routes
+			.getRouteHints(this.publicKeyHash, origin)
+			.map((hint) =>
+				JSON.stringify([hint.nextHop, hint.session, hint.updatedAt]),
+			);
+	}
+
+	private createRelayRootProbeCohort(
+		claims: Array<[string, TopicRootCandidateClaimRecord]>,
+	): RelayRootProbeCohort {
+		const previous = this.relayRootProbeCohort?.results;
+		const lifecycleRevision = this.topicControlPlaneLifecycleRevision;
+		const controller = new AbortController();
+		const users = new Set<() => boolean>();
+		const deadline = new AbortError("relay root reachability deadline reached");
+		const timer = setTimeout(
+			() => controller.abort(deadline),
+			RELAY_ROOT_PREFLIGHT_TIMEOUT_MS,
+		);
+		timer.unref?.();
+		let resolveRetry!: () => void;
+		const retryBoundary = new Promise<void>((resolve) => {
+			resolveRetry = resolve;
+		});
+		const retryTimer = setTimeout(
+			resolveRetry,
+			RELAY_ROOT_PREFLIGHT_TIMEOUT_MS / 2,
+		);
+		retryTimer.unref?.();
+		const captured = claims.map(([origin, claim]) => ({
+			origin,
+			claim,
+			routes: this.topicRootRouteObservations(origin),
+		}));
+		const cohort: RelayRootProbeCohort = {
+			controller,
+			users,
+			lifecycleRevision,
+			promise: Promise.resolve()
+				.then(async () => {
+					const outcomes = await Promise.all(
+						captured.map(async ({ origin, claim, routes }) => {
+							const cached = previous?.get(origin);
+							if (
+								cached?.claim === claim &&
+								cached.status === "alive" &&
+								performance.now() - cached.observedAt <
+									RELAY_ROOT_PREFLIGHT_REUSE_MS
+							)
+								return [origin, { ...cached, routes }] as const;
+							const winner = new AbortController();
+							const signals = linkAbortSignals([
+								controller.signal,
+								winner.signal,
+							]);
+							let alive = false;
+							let resolveAlive!: (status: "alive") => void;
+							const firstSuccess = new Promise<"alive">((resolve) => {
+								resolveAlive = resolve;
+							});
+							const probe = async (
+								retry: boolean,
+							): Promise<RelayRootProbeResult["status"]> => {
+								const signal = signals.signal;
+								let submitted = false;
+								try {
+									if (retry) await withAbort(retryBoundary, signal);
+									throwIfAborted(signal);
+									if (alive) return "alive";
+									const message = await withAbort(
+										this.createMessage(undefined, {
+											mode: new AcknowledgeDelivery({
+												to: [origin],
+												redundancy: 1,
+											}),
+											priority: 1,
+											responsePriority: 1,
+										}),
+										signal,
+									);
+									// Signers may ignore cancellation. Fence the send continuation.
+									throwIfAborted(signal);
+									if (alive) return "alive";
+									if (
+										!this.isTopicControlPlaneActive(lifecycleRevision) ||
+										![...users].some((current) => current())
+									) {
+										return "unknown";
+									}
+									// No transport neighbor is local readiness, not proof of origin death.
+									if (this.peers.size === 0) return "unknown";
+									submitted = true;
+									await withAbort(
+										this.publishMessage(
+											this.publicKey,
+											message,
+											undefined,
+											undefined,
+											signal,
+										),
+										signal,
+									);
+									throwIfAborted(signal);
+									alive = true;
+									resolveAlive("alive");
+									return "alive";
+								} catch (error) {
+									if (
+										submitted &&
+										(error === deadline || error instanceof DeliveryError)
+									)
+										return "failed";
+									else if (!signal.aborted) throw error;
+									return "unknown";
+								}
+							};
+							// Hedge once at the shared midpoint without discarding the first
+							// authenticated ACK wait: a 1.5s first reply is still timely.
+							let status: RelayRootProbeResult["status"];
+							try {
+								status = await Promise.race([
+									firstSuccess,
+									Promise.all([probe(false), probe(true)]).then((results) =>
+										results.includes("unknown")
+											? ("unknown" as const)
+											: ("failed" as const),
+									),
+								]);
+							} finally {
+								winner.abort(new AbortError("origin probe settled"));
+								signals.clear();
+							}
+							return [
+								origin,
+								{ claim, routes, status, observedAt: performance.now() },
+							] as const;
+						}),
+					);
+					cohort.results = new Map(outcomes);
+					return cohort.results;
+				})
+				.finally(() => {
+					clearTimeout(timer);
+					clearTimeout(retryTimer);
+					controller.abort(new AbortError("relay root probes settled"));
+				}),
+		};
+		this.relayRootProbeCohort = cohort;
+		return cohort;
+	}
+
+	private async preflightRelayRootCandidates(
+		shardTopic: string,
+		attempt: RelayRootRecoveryAttempt,
+		signal: AbortSignal | undefined,
+		isCurrent: () => boolean,
+		localPolicyOnly = false,
+	): Promise<boolean> {
+		throwIfAborted(signal);
+		const revision = this.topicControlPlaneLifecycleRevision;
+		const current = () =>
+			isCurrent() && this.isTopicControlPlaneActive(revision);
+		if (!current()) throw new AbortError("obsolete relay root recovery");
+		if (
+			!this.autoTopicRootCandidates ||
+			this.maybeDisableAutoTopicRootCandidatesIfExternallyConfigured()
+		)
+			return false;
+		const claims = [...this.signedTopicRootCandidateClaims.entries()]
+			.filter(
+				([origin, claim]) =>
+					origin !== this.publicKeyHash &&
+					!this.peers.has(origin) &&
+					!this.isDepartedTopicRootCandidateClaimSuppressed(origin, claim),
+			)
+			.slice(0, TOPIC_ROOT_CANDIDATES_MAX);
+		if (claims.length === 0) return false;
+		const shared = this.relayRootProbeCohort;
+		const cohort = (attempt.cohort ??=
+			shared &&
+			(shared.results
+				? shared.users.size > 0
+				: !shared.controller.signal.aborted) &&
+			shared.lifecycleRevision === revision
+				? shared
+				: this.createRelayRootProbeCohort(claims));
+		cohort.users.add(current);
+		let held = true;
+		const release = () => {
+			if (!held) return;
+			held = false;
+			cohort.users.delete(current);
+			if (cohort.users.size === 0 && !cohort.results) {
+				cohort.controller.abort(
+					new AbortError("relay root recovery cancelled"),
+				);
+			}
+		};
+		signal?.addEventListener("abort", release, { once: true });
+		try {
+			const outcomes = await withAbort(cohort.promise, signal);
+			throwIfAborted(signal);
+			if (!current()) throw new AbortError("obsolete relay root recovery");
+
+			// Policy setters do not share the candidate generation. Re-read configured
+			// roots/resolvers/trackers after observation; a stalled policy is unknown,
+			// never evidence authorizing local suppression.
+			attempt.policyDeadline ??=
+				performance.now() + RELAY_ROOT_PREFLIGHT_TIMEOUT_MS;
+			return await this.withRelayRootPolicyDeadline(
+				attempt,
+				signal,
+				async (policySignal) => {
+					const configured = await withAbort(
+						localPolicyOnly
+							? this.topicRootControlPlane.resolveLocalTopicRoot(shardTopic, {
+									signal: policySignal,
+								})
+							: this.topicRootControlPlane.resolveTrackedTopicRoot(shardTopic, {
+									signal: policySignal,
+								}),
+						policySignal,
+					);
+					throwIfAborted(policySignal);
+					if (!current()) throw new AbortError("obsolete relay root recovery");
+					this.shardRootCache.delete(shardTopic);
+					if (
+						configured ||
+						this.topicRootControlPlane.getTopicRoot(shardTopic) ||
+						!this.autoTopicRootCandidates ||
+						this.maybeDisableAutoTopicRootCandidatesIfExternallyConfigured()
+					)
+						return true;
+					let changed = false;
+					let unknown = false;
+					for (const [origin, claim] of claims) {
+						if (
+							this.peers.has(origin) ||
+							this.isDepartedTopicRootCandidateClaimSuppressed(origin, claim)
+						)
+							continue;
+						const observed = outcomes.get(origin);
+						if (
+							this.signedTopicRootCandidateClaims.get(origin) !== claim ||
+							observed?.claim !== claim
+						) {
+							unknown = true;
+							continue;
+						}
+						const freshRoute =
+							this.routes.isReachable(this.publicKeyHash, origin) &&
+							this.topicRootRouteObservations(origin).some(
+								(route) => !observed.routes.includes(route),
+							);
+						if (freshRoute || observed.status === "alive") continue;
+						if (observed.status === "unknown") unknown = true;
+						else
+							changed =
+								this.suppressTopicRootCandidateClaim(origin, claim) || changed;
+					}
+					if (changed)
+						this.rebuildAutoTopicRootCandidatesFromClaims(BigInt(Date.now()), {
+							immediate: true,
+						});
+					if (unknown)
+						throw new DeliveryError(
+							"Relay root reachability could not be established",
+						);
+					return true;
+				},
+			);
+		} finally {
+			signal?.removeEventListener("abort", release);
+			release();
+		}
+	}
+
+	private async withRelayRootPolicyDeadline<T>(
+		attempt: RelayRootRecoveryAttempt,
+		signal: AbortSignal | undefined,
+		resolve: (signal: AbortSignal | undefined) => Promise<T>,
+	): Promise<T> {
+		// Ordinary initial resolution retains its existing contract. Only work
+		// following a probe shares the one additional policy budget, including retries.
+		if (attempt.policyDeadline === undefined) return resolve(signal);
+		throwIfAborted(signal);
+		const remaining = attempt.policyDeadline - performance.now();
+		const deadline = new AbortError(
+			"relay root policy recheck deadline reached",
+		);
+		if (remaining <= 0) throw deadline;
+		const controller = new AbortController();
+		const timer = setTimeout(() => controller.abort(deadline), remaining);
+		timer.unref?.();
+		const signals = linkAbortSignals([signal, controller.signal]);
+		try {
+			return await withAbort(resolve(signals.signal), signals.signal);
+		} finally {
+			clearTimeout(timer);
+			signals.clear();
+		}
 	}
 
 	private canAdvanceTopicRootCandidateClaimReplayFloor(
@@ -1839,7 +2187,17 @@ export class TopicControlPlane
 		const results = await Promise.allSettled(
 			[...byShard.entries()].map(async ([shardTopic, userTopics]) => {
 				if (userTopics.length === 0) return;
-				await this.ensureFanoutChannel(shardTopic, { ephemeral: false });
+				const owners = userTopics.map(
+					(topic) => [topic, this.subscriptions.get(topic)] as const,
+				);
+				await this.ensureFanoutChannel(shardTopic, {
+					ephemeral: false,
+					isCurrent: () =>
+						owners.some(
+							([topic, owner]) =>
+								owner && this.subscriptions.get(topic) === owner,
+						),
+				});
 				await this.announceShardSubscriptions(shardTopic, lifecycleRevision);
 			}),
 		);
@@ -2236,7 +2594,7 @@ export class TopicControlPlane
 	private normalizePeerTopicRootState(
 		topic: string,
 		root: string,
-	): { root: string; authoritative: boolean } {
+	): TopicRootState & { root: string } {
 		const deterministic =
 			this.topicRootControlPlane.resolveDeterministicTopicRoot(topic);
 		if (
@@ -2245,9 +2603,16 @@ export class TopicControlPlane
 			deterministic &&
 			root !== deterministic
 		) {
-			return { root: deterministic, authoritative: false };
+			return { root: deterministic, authoritative: false, autoCandidate: true };
 		}
-		return { root, authoritative: true };
+		return {
+			root,
+			authoritative: true,
+			autoCandidate:
+				this.autoTopicRootCandidates &&
+				topic.startsWith(this.shardTopicPrefix) &&
+				root === deterministic,
+		};
 	}
 
 	private async resolveTopicRootState(
@@ -2255,19 +2620,20 @@ export class TopicControlPlane
 		options?: TopicRootResolutionOptions & {
 			queryConnectedPeers?: boolean;
 		},
-	): Promise<{ root?: string; authoritative: boolean }> {
+	): Promise<TopicRootState> {
 		throwIfAborted(options?.signal);
 		const tracked = await this.topicRootControlPlane.resolveTrackedTopicRoot(
 			topic,
 			options,
 		);
 		if (tracked) {
-			return { root: tracked, authoritative: true };
+			return { root: tracked, authoritative: true, autoCandidate: false };
 		}
 		if (options?.queryConnectedPeers === false) {
 			return {
 				root: this.topicRootControlPlane.resolveDeterministicTopicRoot(topic),
 				authoritative: false,
+				autoCandidate: this.autoTopicRootCandidates,
 			};
 		}
 
@@ -2343,6 +2709,7 @@ export class TopicControlPlane
 		return {
 			root: this.topicRootControlPlane.resolveDeterministicTopicRoot(topic),
 			authoritative: false,
+			autoCandidate: this.autoTopicRootCandidates,
 		};
 	}
 
@@ -2366,7 +2733,11 @@ export class TopicControlPlane
 		options?: TopicRootResolutionOptions & {
 			queryConnectedPeers?: boolean;
 		},
-	): Promise<{ root: string; candidateGeneration: string }> {
+	): Promise<{
+		root: string;
+		candidateGeneration: string;
+		autoCandidate: boolean;
+	}> {
 		const lifecycleRevision = this.topicControlPlaneLifecycleRevision;
 		for (;;) {
 			throwIfAborted(options?.signal);
@@ -2389,7 +2760,11 @@ export class TopicControlPlane
 					? undefined
 					: this.shardRootCache.get(shardTopic);
 			if (cached && (cached.authoritative || !hasConnectedTrackers)) {
-				return { root: cached.root, candidateGeneration };
+				return {
+					root: cached.root,
+					candidateGeneration,
+					autoCandidate: cached.autoCandidate,
+				};
 			}
 
 			const resolved = await this.resolveTopicRootState(shardTopic, options);
@@ -2405,15 +2780,16 @@ export class TopicControlPlane
 			if (resolved.authoritative || !hasConnectedTrackers) {
 				this.shardRootCache.set(
 					shardTopic,
-					resolved as {
-						root: string;
-						authoritative: boolean;
-					},
+					resolved as TopicRootState & { root: string },
 				);
 			} else {
 				this.shardRootCache.delete(shardTopic);
 			}
-			return { root: resolved.root, candidateGeneration };
+			return {
+				root: resolved.root,
+				candidateGeneration,
+				autoCandidate: resolved.autoCandidate,
+			};
 		}
 	}
 
@@ -2607,6 +2983,7 @@ export class TopicControlPlane
 			this.shardRootCache.set(shardTopic, {
 				root: resolved.root,
 				authoritative: true,
+				autoCandidate: resolved.autoCandidate,
 			});
 		}
 		return resolved.root;
@@ -2614,20 +2991,55 @@ export class TopicControlPlane
 
 	private async resolveQueryableTopicRoot(
 		topic: string,
+		isCurrent: () => boolean = () => true,
 	): Promise<string | undefined> {
 		const lifecycleRevision = this.topicControlPlaneLifecycleRevision;
 		const lifecycleSignal = this.topicRootResolutionAbortController.signal;
+		const recovery: RelayRootRecoveryAttempt = {};
 		return this.withTopicRootCandidateResolution(
 			async ({ candidateGeneration, signal }) => {
 				throwIfAborted(signal);
 				this.assertTopicControlPlaneActive(lifecycleRevision);
-				const root = await this.topicRootControlPlane.resolveCanonicalTopicRoot(
-					topic,
-					{
+				if (!isCurrent()) throw new AbortError("obsolete topic root query");
+				// Incoming queries retain canonical directory semantics: never ask
+				// trackers here, since a tracker may itself query this peer.
+				const resolveCanonical = () =>
+					this.withRelayRootPolicyDeadline(
+						recovery,
 						signal,
-					},
-				);
+						async (policySignal) => {
+							const local =
+								await this.topicRootControlPlane.resolveLocalTopicRoot(topic, {
+									signal: policySignal,
+								});
+							return {
+								root:
+									local ??
+									this.topicRootControlPlane.resolveDeterministicTopicRoot(
+										topic,
+									),
+								autoCandidate: !local && this.autoTopicRootCandidates,
+							};
+						},
+					);
+				let resolved = await resolveCanonical();
+				if (resolved.autoCandidate && topic.startsWith(this.shardTopicPrefix)) {
+					if (
+						await this.preflightRelayRootCandidates(
+							topic,
+							recovery,
+							signal,
+							isCurrent,
+							true,
+						)
+					) {
+						throwIfAborted(signal);
+						resolved = await resolveCanonical();
+					}
+				}
+				const root = resolved.root;
 				this.assertTopicControlPlaneActive(lifecycleRevision);
+				if (!isCurrent()) throw new AbortError("obsolete topic root query");
 				if (root !== this.publicKeyHash) {
 					return root;
 				}
@@ -2757,8 +3169,11 @@ export class TopicControlPlane
 	): Promise<void> {
 		const topic = shardTopic.toString();
 		const lifecycleRevision = this.topicControlPlaneLifecycleRevision;
+		const recovery: RelayRootRecoveryAttempt = {};
 		for (;;) {
 			this.assertTopicControlPlaneActive(lifecycleRevision);
+			if (options?.isCurrent?.() === false)
+				throw new AbortError("obsolete fanout channel owner");
 			if (options?.signal?.aborted) {
 				throw (
 					options.signal.reason ??
@@ -2769,13 +3184,20 @@ export class TopicControlPlane
 			const active = this.ensureFanoutChannelInFlight.get(topic);
 			if (
 				active?.candidateGeneration === candidateGeneration &&
-				active.lifecycleRevision === lifecycleRevision
+				active.lifecycleRevision === lifecycleRevision &&
+				active.isCurrent()
 			) {
 				try {
 					await withAbort(active.opening, options?.signal);
 				} catch (error) {
 					if (options?.signal?.aborted) throw error;
 					this.assertTopicControlPlaneActive(lifecycleRevision);
+					if (
+						candidateGeneration === this.getTopicRootCandidateGeneration() &&
+						!active.abortController.signal.aborted &&
+						active.isCurrent()
+					)
+						throw error;
 				}
 				await withAbort(active.settled, options?.signal);
 				if (this.ensureFanoutChannelInFlight.get(topic) === active) {
@@ -2809,11 +3231,21 @@ export class TopicControlPlane
 				});
 			}
 
-			const opening = this.ensureFanoutChannelOnce(
-				topic,
-				{ ...options, signal: abortController.signal },
-				lifecycleRevision,
-				candidateGeneration,
+			// Publish the opening identity before even a synchronously resolved root
+			// can enter its guarded recovery/creation continuation.
+			const opening = Promise.resolve().then(() =>
+				this.ensureFanoutChannelOnce(
+					topic,
+					{ ...options, signal: abortController.signal },
+					lifecycleRevision,
+					candidateGeneration,
+					recovery,
+					() =>
+						this.ensureFanoutChannelInFlight.get(topic)?.abortController ===
+							abortController &&
+						!abortController.signal.aborted &&
+						options?.isCurrent?.() !== false,
+				),
 			);
 			let resolveSettled!: () => void;
 			const settled = new Promise<void>((resolve) => {
@@ -2821,6 +3253,7 @@ export class TopicControlPlane
 			});
 			const inFlight = {
 				abortController,
+				isCurrent: () => options?.isCurrent?.() !== false,
 				candidateGeneration,
 				lifecycleRevision,
 				opening,
@@ -2865,6 +3298,8 @@ export class TopicControlPlane
 		options: EnsureFanoutChannelOptions | undefined,
 		lifecycleRevision: number,
 		candidateGeneration: string,
+		recovery: RelayRootRecoveryAttempt = {},
+		isOpeningCurrent: () => boolean = () => true,
 	): Promise<void> {
 		this.assertTopicControlPlaneActive(lifecycleRevision);
 		if (candidateGeneration !== this.getTopicRootCandidateGeneration()) return;
@@ -2886,15 +3321,19 @@ export class TopicControlPlane
 		this.assertTopicControlPlaneActive(lifecycleRevision);
 		let resolvedGeneration = candidateGeneration;
 		let root = suppliedRoot;
+		let autoCandidate = false;
+		const resolveRoot = () =>
+			this.withRelayRootPolicyDeadline(recovery, options?.signal, (signal) =>
+				this.resolveShardRootState(t, { signal }),
+			);
 		const existing = this.fanoutChannels.get(t);
 		if (existing) {
 			if (!root) {
-				const resolved = await this.resolveShardRootState(t, {
-					signal: options?.signal,
-				});
+				const resolved = await resolveRoot();
 				this.assertTopicControlPlaneActive(lifecycleRevision);
 				root = resolved.root;
 				resolvedGeneration = resolved.candidateGeneration;
+				autoCandidate = resolved.autoCandidate;
 			}
 			if (
 				resolvedGeneration !== candidateGeneration ||
@@ -2935,21 +3374,45 @@ export class TopicControlPlane
 		}
 
 		if (!root) {
-			const resolved = await this.resolveShardRootState(t, {
-				signal: options?.signal,
-			});
+			const resolved = await resolveRoot();
 			this.assertTopicControlPlaneActive(lifecycleRevision);
 			root = resolved.root;
 			resolvedGeneration = resolved.candidateGeneration;
+			autoCandidate = resolved.autoCandidate;
 		}
-		root = await this.confirmDirectShardRoot(
-			t,
-			root,
-			resolvedGeneration,
-			lifecycleRevision,
-			options?.signal,
-		);
+		if (
+			autoCandidate &&
+			(await this.preflightRelayRootCandidates(
+				t,
+				recovery,
+				options?.signal,
+				isOpeningCurrent,
+			))
+		) {
+			throwIfAborted(options?.signal);
+			if (candidateGeneration !== this.getTopicRootCandidateGeneration())
+				return;
+			const resolved = await resolveRoot();
+			root = resolved.root;
+			resolvedGeneration = resolved.candidateGeneration;
+			autoCandidate = resolved.autoCandidate;
+		}
+		if (
+			suppliedRoot !== undefined ||
+			!this.autoTopicRootCandidates ||
+			autoCandidate
+		) {
+			root = await this.confirmDirectShardRoot(
+				t,
+				root,
+				resolvedGeneration,
+				lifecycleRevision,
+				options?.signal,
+			);
+		}
 		this.assertTopicControlPlaneActive(lifecycleRevision);
+		if (!isOpeningCurrent())
+			throw new AbortError("obsolete fanout channel owner");
 		if (
 			resolvedGeneration !== candidateGeneration ||
 			candidateGeneration !== this.getTopicRootCandidateGeneration()
@@ -3424,7 +3887,16 @@ export class TopicControlPlane
 
 		const results = await Promise.allSettled(
 			[...byShard.keys()].map(async (shardTopic) => {
-				await this.ensureFanoutChannel(shardTopic);
+				const owners = byShard
+					.get(shardTopic)!
+					.map((topic) => [topic, this.subscriptions.get(topic)] as const);
+				await this.ensureFanoutChannel(shardTopic, {
+					isCurrent: () =>
+						owners.some(
+							([topic, owner]) =>
+								owner && this.subscriptions.get(topic) === owner,
+						),
+				});
 				await this.announceShardSubscriptions(shardTopic, lifecycleRevision);
 			}),
 		);
@@ -3474,6 +3946,12 @@ export class TopicControlPlane
 		const next = (this.shardRefCounts.get(shardTopic) ?? 0) - 1;
 		if (next <= 0) {
 			this.shardRefCounts.delete(shardTopic);
+			const opening = this.ensureFanoutChannelInFlight.get(shardTopic);
+			if (opening && !opening.isCurrent()) {
+				opening.abortController.abort(
+					new AbortError("last shard subscription removed"),
+				);
+			}
 		} else {
 			this.shardRefCounts.set(shardTopic, next);
 		}
@@ -4003,6 +4481,18 @@ export class TopicControlPlane
 
 	public override onPeerUnreachable(publicKeyHash: string) {
 		super.onPeerUnreachable(publicKeyHash);
+		const claim = this.signedTopicRootCandidateClaims.get(publicKeyHash);
+		if (
+			this.isTopicControlPlaneActive(this.topicControlPlaneLifecycleRevision) &&
+			!this.maybeDisableAutoTopicRootCandidatesIfExternallyConfigured() &&
+			claim &&
+			!this.routes.isReachable(this.publicKeyHash, publicKeyHash) &&
+			this.suppressTopicRootCandidateClaim(publicKeyHash, claim)
+		) {
+			this.rebuildAutoTopicRootCandidatesFromClaims(BigInt(Date.now()), {
+				immediate: true,
+			});
+		}
 		const key = this.peerKeyHashToPublicKey.get(publicKeyHash);
 		if (!key) {
 			return;
@@ -4441,7 +4931,10 @@ export class TopicControlPlane
 		}
 
 		if (pubsubMessage instanceof TopicRootQuery) {
-			const root = await this.resolveQueryableTopicRoot(pubsubMessage.topic);
+			const root = await this.resolveQueryableTopicRoot(
+				pubsubMessage.topic,
+				() => this.peers.get(from.hashcode()) === stream,
+			);
 			await this.sendDirectControlMessage(
 				stream,
 				new TopicRootQueryResponse({
