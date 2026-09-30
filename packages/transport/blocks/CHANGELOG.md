@@ -1,5 +1,13 @@
 # Changelog
 
+## 4.3.3
+
+### Patch Changes
+
+- Updated dependencies [[`9e23a57`](https://github.com/dao-xyz/peerbit/commit/9e23a570147e7efaafba19d998c05a6a101dd1be)]:
+  - @peerbit/stream@5.2.4
+  - @peerbit/blocks-interface@2.2.1
+
 ## 4.3.2
 
 ### Patch Changes

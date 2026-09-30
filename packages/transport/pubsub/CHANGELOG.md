@@ -1,5 +1,26 @@
 # Changelog
 
+## 5.4.10
+
+### Patch Changes
+
+- [#1476](https://github.com/dao-xyz/peerbit/pull/1476) [`574f362`](https://github.com/dao-xyz/peerbit/commit/574f36259593262dc1cee759714e9d1aa31b16d0) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Recover idle fanout channels whose parent stops responding while its transport still appears open. Reuse the existing join loop and parent-probe protocol, requiring two consecutive missed probes of the same attachment before rejoining. Healthy full parents remain attached, and late results cannot detach replacement channels or streams.
+
+  Bound parent probes across signing, sending and reply waits; cancel outstanding work and reject replies from the wrong or superseded stream.
+
+  Ignore delayed kicks from former parents or superseded streams so they cannot detach a replacement attachment.
+
+  Distinguish current-parent health probes from proactive upgrade probes in diagnostic counters and benchmark policy checks, while retaining total traffic and control-cost accounting.
+
+- [#1475](https://github.com/dao-xyz/peerbit/pull/1475) [`d9d3296`](https://github.com/dao-xyz/peerbit/commit/d9d3296a7941abd88596373140b158a3fa7f5ce2) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Re-announce local subscriptions after shard attachment or child attachment, coalesce recovery work, and apply signed root-claim batches before remapping shards. Announce successful shard subscriptions independently when another shard join fails. Exchange signed subscription state with direct neighbours so bootstrap/dial root-policy differences do not prevent direct discovery, while preserving configured roots and lifecycle fencing.
+
+  Retain bounded unsubscribe timestamps so delayed Subscribe messages from the other delivery path cannot immediately restore a departed subscription. Clear these timestamps when the local topic is removed or the service stops.
+
+- [#1478](https://github.com/dao-xyz/peerbit/pull/1478) [`8948801`](https://github.com/dao-xyz/peerbit/commit/8948801be8fbb90240f8da100e45f1d7d11656f6) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Recover automatic shard discovery from stale relay-learned root leases with bounded, coalesced reachability checks. Preserve signed claims and replay protection, configured root policy, and cancelled opening ownership while remapping unreachable origins locally.
+
+- Updated dependencies [[`9e23a57`](https://github.com/dao-xyz/peerbit/commit/9e23a570147e7efaafba19d998c05a6a101dd1be)]:
+  - @peerbit/stream@5.2.4
+
 ## 5.4.9
 
 ### Patch Changes
