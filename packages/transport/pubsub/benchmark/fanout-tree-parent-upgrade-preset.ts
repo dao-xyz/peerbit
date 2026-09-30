@@ -55,6 +55,25 @@ export type EvidenceFailure = {
 	limit: number;
 };
 
+/** Health checks share the wire protocol, but are not proactive upgrade work. */
+export const parentUpgradeProbeReqSent = (metrics: {
+	parentProbeReqSentTotal: number;
+	parentHealthProbeReqSentTotal: number;
+}): number => {
+	const total = metrics.parentProbeReqSentTotal;
+	const health = metrics.parentHealthProbeReqSentTotal;
+	if (
+		!Number.isSafeInteger(total) ||
+		!Number.isSafeInteger(health) ||
+		total < 0 ||
+		health < 0 ||
+		health > total
+	) {
+		throw new Error("Invalid parent probe counters");
+	}
+	return total - health;
+};
+
 const PARENT_UPGRADE_RUNTIME_OPTION_KEYS = [
 	"parentUpgradeIntervalMs",
 	"parentUpgradeLeafOnly",

@@ -279,6 +279,7 @@ export type FanoutTreeSimResult = {
 	reparentUpgradeSkipProbeOverloadedTotal: number;
 	reparentUpgradeSkipProbeCooldownTotal: number;
 	parentProbeReqSentTotal: number;
+	parentHealthProbeReqSentTotal: number;
 	parentProbeReqReceivedTotal: number;
 	parentProbeReplySentTotal: number;
 	parentProbeReplyReceivedTotal: number;
@@ -651,7 +652,7 @@ export const formatFanoutTreeSimResult = (r: FanoutTreeSimResult) => {
 			: []),
 		`reparent: disconnect=${r.reparentDisconnectTotal} stale=${r.reparentStaleTotal} kicked=${r.reparentKickedTotal} upgrade=${r.reparentUpgradeTotal}`,
 		`reparentUpgradeSkipped: leaf=${r.reparentUpgradeSkipLeafTotal} repair=${r.reparentUpgradeSkipRepairTotal} data=${r.reparentUpgradeSkipDataTotal} cooldown=${r.reparentUpgradeSkipCooldownTotal} quiet=${r.reparentUpgradeSkipQuietTotal} budget=${r.reparentUpgradeSkipBudgetTotal} candidateLevel=${r.reparentUpgradeSkipCandidateLevelTotal} candidateSlots=${r.reparentUpgradeSkipCandidateSlotsTotal} candidatePressure=${r.reparentUpgradeSkipCandidatePressureTotal} rootPressure=${r.reparentUpgradeSkipRootPressureTotal}`,
-		`parentProbe: req=${r.parentProbeReqSentTotal}/${r.parentProbeReqReceivedTotal} reply=${r.parentProbeReplySentTotal}/${r.parentProbeReplyReceivedTotal} skipped noReply=${r.reparentUpgradeSkipProbeNoReplyTotal} notRooted=${r.reparentUpgradeSkipProbeNotRootedTotal} repair=${r.reparentUpgradeSkipProbeRepairTotal} lag=${r.reparentUpgradeSkipProbeLagTotal} overloaded=${r.reparentUpgradeSkipProbeOverloadedTotal} cooldown=${r.reparentUpgradeSkipProbeCooldownTotal}`,
+		`parentProbe: req=${r.parentProbeReqSentTotal}/${r.parentProbeReqReceivedTotal} health=${r.parentHealthProbeReqSentTotal} reply=${r.parentProbeReplySentTotal}/${r.parentProbeReplyReceivedTotal} skipped noReply=${r.reparentUpgradeSkipProbeNoReplyTotal} notRooted=${r.reparentUpgradeSkipProbeNotRootedTotal} repair=${r.reparentUpgradeSkipProbeRepairTotal} lag=${r.reparentUpgradeSkipProbeLagTotal} overloaded=${r.reparentUpgradeSkipProbeOverloadedTotal} cooldown=${r.reparentUpgradeSkipProbeCooldownTotal}`,
 		`parentRootReservations: created=${r.parentUpgradeRootReservationCreatedTotal} consumed=${r.parentUpgradeRootReservationConsumedTotal} rejected=${r.parentUpgradeRootReservationRejectedTotal} marginRejected=${r.parentUpgradeRootReservationMarginRejectedTotal} blocked=${r.parentUpgradeRootReservationBlockedTotal} expired=${r.parentUpgradeRootReservationExpiredTotal}`,
 		`parentShadow: start=${r.parentShadowStartTotal} observe=${r.parentShadowObserveTotal} promote=${r.parentShadowPromoteTotal} reset=${r.parentShadowResetTotal} reject noReply=${r.parentShadowRejectNoReplyTotal} notRooted=${r.parentShadowRejectNotRootedTotal} capacity=${r.parentShadowRejectCapacityTotal} repair=${r.parentShadowRejectRepairTotal} lag=${r.parentShadowRejectLagTotal} overloaded=${r.parentShadowRejectOverloadedTotal} level=${r.parentShadowRejectLevelTotal}`,
 		`tree: maxLevel=${r.treeMaxLevel} p95Level=${r.treeLevelP95.toFixed(1)} avgLevel=${r.treeLevelAvg.toFixed(2)} orphans=${r.treeOrphans} rootChildren=${r.treeRootChildren} children(p95/max)=${r.treeChildrenP95.toFixed(1)}/${r.treeChildrenMax}`,
@@ -1979,6 +1980,7 @@ export const runFanoutTreeSim = async (
 			let reparentUpgradeSkipProbeOverloadedTotal = 0;
 			let reparentUpgradeSkipProbeCooldownTotal = 0;
 			let parentProbeReqSentTotal = 0;
+			let parentHealthProbeReqSentTotal = 0;
 			let parentProbeReqReceivedTotal = 0;
 			let parentProbeReplySentTotal = 0;
 			let parentProbeReplyReceivedTotal = 0;
@@ -2045,6 +2047,7 @@ export const runFanoutTreeSim = async (
 				reparentUpgradeSkipProbeCooldownTotal +=
 					m.reparentUpgradeSkipProbeCooldown;
 				parentProbeReqSentTotal += m.parentProbeReqSent;
+				parentHealthProbeReqSentTotal += m.parentHealthProbeReqSent;
 				parentProbeReqReceivedTotal += m.parentProbeReqReceived;
 				parentProbeReplySentTotal += m.parentProbeReplySent;
 				parentProbeReplyReceivedTotal += m.parentProbeReplyReceived;
@@ -2245,6 +2248,7 @@ export const runFanoutTreeSim = async (
 				reparentUpgradeSkipProbeOverloadedTotal,
 				reparentUpgradeSkipProbeCooldownTotal,
 				parentProbeReqSentTotal,
+				parentHealthProbeReqSentTotal,
 				parentProbeReqReceivedTotal,
 				parentProbeReplySentTotal,
 				parentProbeReplyReceivedTotal,

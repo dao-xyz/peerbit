@@ -16,6 +16,7 @@ import {
 	defaultEvidenceLimitsForPreset,
 	fmt,
 	maxFinite,
+	parentUpgradeProbeReqSent,
 	parentUpgradeRuntimeOptions,
 	parseBool01,
 	parseCsvNumbers,
@@ -397,6 +398,8 @@ const evaluateRun = (
 	args: EvalArgs,
 ) => {
 	const failures: Failure[] = [];
+	parentUpgradeProbeReqSent(baseline);
+	const upgradeProbes = parentUpgradeProbeReqSent(upgrade);
 	const promoted = upgrade.reparentUpgradeTotal > 0;
 	const treeLevelP95Gain =
 		Number.isFinite(baseline.treeLevelP95) &&
@@ -460,7 +463,7 @@ const evaluateRun = (
 			: 0;
 	const upgradeActivity =
 		upgrade.reparentUpgradeTotal > 0 ||
-		upgrade.parentProbeReqSentTotal > 0 ||
+		upgradeProbes > 0 ||
 		upgrade.parentShadowStartTotal > 0;
 
 	if (hasLivePublishPhase(scenario)) {
@@ -503,9 +506,9 @@ const evaluateRun = (
 	if (isLiveStreamScenario(scenario)) {
 		failIfGreater(
 			failures,
-			"liveTotalParentProbeReqSent",
+			"liveTotalParentUpgradeProbeReqSent",
 			0,
-			upgrade.parentProbeReqSentTotal,
+			upgradeProbes,
 			0,
 		);
 		failIfGreater(
@@ -541,7 +544,7 @@ const evaluateRun = (
 				"idleProbePerUpgrade",
 				0,
 				upgrade.reparentUpgradeTotal > 0
-					? upgrade.parentProbeReqSentTotal / upgrade.reparentUpgradeTotal
+					? upgradeProbes / upgrade.reparentUpgradeTotal
 					: Number.POSITIVE_INFINITY,
 				args.maxProbePerUpgrade,
 			);
@@ -597,7 +600,7 @@ const evaluateRun = (
 		!isIdleUpgradeScenario(scenario) &&
 		!isLiveStreamScenario(scenario) &&
 		upgrade.reparentUpgradeTotal === 0 &&
-		upgrade.parentProbeReqSentTotal === 0 &&
+		upgradeProbes === 0 &&
 		upgrade.parentShadowStartTotal === 0
 	) {
 		return failures;
@@ -723,7 +726,7 @@ const classifyEffect = (
 ): EvalEffect => {
 	if (
 		upgrade.reparentUpgradeTotal === 0 &&
-		upgrade.parentProbeReqSentTotal === 0 &&
+		parentUpgradeProbeReqSent(upgrade) === 0 &&
 		upgrade.parentShadowStartTotal === 0
 	) {
 		return "no-op";
@@ -1050,6 +1053,7 @@ const compactResult = (result: FanoutTreeSimResult) => ({
 	rootUploadFracPct: result.rootUploadFracPct,
 	reparentUpgradeTotal: result.reparentUpgradeTotal,
 	parentProbeReqSentTotal: result.parentProbeReqSentTotal,
+	parentHealthProbeReqSentTotal: result.parentHealthProbeReqSentTotal,
 	parentShadowStartTotal: result.parentShadowStartTotal,
 	parentShadowPromoteTotal: result.parentShadowPromoteTotal,
 	publishActiveReparentUpgradeTotal: result.publishActiveReparentUpgradeTotal,
