@@ -1650,6 +1650,100 @@ describe("receive admission replication-info V2 receiver state", () => {
 		expect(coordinator.commit(admission!)).to.be.true;
 	});
 
+	it("coalesces fresh rearm hints during an ACKed refresh without losing the trailing reply", async () => {
+		const clock = sinon.useFakeTimers({ now: 1_000 });
+		expect(markLocalReady()).to.be.true;
+		expect(observeSender(10n)).to.be.true;
+		const state = coordinator._receiveStates.get(peerHash)!;
+		const full = (sequence: bigint) =>
+			new FullReplicationInfoV2Message({
+				receiverChallenge: state.receiverBinding!.slice(),
+				senderEpoch: bytes(96),
+				sequence,
+				segments: [],
+			});
+		expect(coordinator.commit(prepare(full(1n))!)).to.be.true;
+		const first = pDefer<any>();
+		const second = pDefer<any>();
+		refreshLocalCapability.onFirstCall().returns(first.promise);
+		refreshLocalCapability.onSecondCall().returns(second.promise);
+		const target = {
+			peerHash,
+			peerSession: currentSession,
+			receiveEpoch: currentReceiveEpoch,
+		};
+		expect(coordinator.acceptRemoteRearm(target)).to.be.true;
+		await clock.tickAsync(1);
+		expect(refreshLocalCapability.callCount).to.equal(1);
+		for (let i = 0; i < 5; i++)
+			expect(coordinator.acceptRemoteRearm(target)).to.be.true;
+		// A Full from the previous grant cannot erase the reciprocal advert owed
+		// to the newer reopening while the first refresh ACK is still pending.
+		expect(coordinator.commit(prepare(full(2n))!)).to.be.true;
+		expect(state.phase).to.equal("resync");
+		expect(state.remoteRearmPending).to.equal(true);
+		await clock.tickAsync(25);
+		expect(refreshLocalCapability.callCount).to.equal(1);
+		first.resolve({ receiverTransportSession, requestNotBeforeMs: Date.now() });
+		await clock.tickAsync(25);
+		expect(refreshLocalCapability.callCount).to.equal(2);
+		expect(state.remoteRearmPending).to.equal(true);
+		second.resolve({
+			receiverTransportSession,
+			requestNotBeforeMs: Date.now(),
+		});
+		await clock.tickAsync(1);
+		expect(state.remoteRearmPending).to.equal(false);
+		expect(
+			refreshLocalCapability.args.every(
+				([properties]) => !properties.requestRemoteFullRearm,
+			),
+		).to.equal(true);
+		expect(coordinator.commit(prepare(full(1n))!)).to.be.true;
+		expect(state.phase).to.equal("active");
+	});
+
+	for (const stop of ["peer replacement", "close"] as const) {
+		it(`does not revive a rearm refresh after ${stop}`, async () => {
+			const clock = sinon.useFakeTimers({ now: 1_000 });
+			expect(markLocalReady()).to.be.true;
+			expect(observeSender(10n)).to.be.true;
+			const refresh = pDefer<any>();
+			refreshLocalCapability.returns(refresh.promise);
+			expect(
+				coordinator.acceptRemoteRearm({
+					peerHash,
+					peerSession: currentSession,
+					receiveEpoch: currentReceiveEpoch,
+				}),
+			).to.be.true;
+			await clock.tickAsync(1);
+			expect(refreshLocalCapability.callCount).to.equal(1);
+			const oldSession = currentSession;
+			if (stop === "close") {
+				closed = true;
+				coordinator.clearForClose();
+			} else {
+				coordinator.clearPeer(peerHash, currentSession);
+				currentSession = {};
+				currentReceiveEpoch = {};
+			}
+			expect(refreshLocalCapability.firstCall.args[0].signal.aborted).to.equal(
+				true,
+			);
+			refresh.resolve({
+				receiverTransportSession,
+				requestNotBeforeMs: Date.now(),
+			});
+			await clock.tickAsync(100);
+			expect(refreshLocalCapability.callCount).to.equal(1);
+			expect(coordinator._receiveStates.size).to.equal(0);
+			expect(
+				coordinator._localCapabilityReadyBySession.has(oldSession),
+			).to.equal(false);
+		});
+	}
+
 	it("makes exact capability replays side-effect free", async () => {
 		const clock = sinon.useFakeTimers({ now: 1_000 });
 		expect(markLocalReady()).to.be.true;
