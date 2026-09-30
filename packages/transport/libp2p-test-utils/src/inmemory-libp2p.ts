@@ -84,15 +84,14 @@ const isPeerId = (value: unknown): value is PeerId => {
 
 const decodeUVarint = (buf: Uint8Array): { value: number; bytes: number } => {
 	let x = 0;
-	let s = 0;
 	for (let i = 0; i < buf.length; i++) {
 		const b = buf[i]!;
+		x += (b & 0x7f) * 2 ** (7 * i);
+		if (!Number.isSafeInteger(x)) throw new Error("varint overflow");
 		if (b < 0x80) {
-			if (i > 9 || (i === 9 && b > 1)) throw new Error("varint overflow");
-			return { value: x | (b << s), bytes: i + 1 };
+			return { value: x, bytes: i + 1 };
 		}
-		x |= (b & 0x7f) << s;
-		s += 7;
+		if (i >= 7) throw new Error("varint overflow");
 	}
 	throw new Error("unexpected eof decoding varint");
 };
@@ -182,7 +181,10 @@ class InMemoryStream extends EventTarget {
 	private readonly lowWaterMark: number;
 	private backpressured = false;
 
-	private pendingLengthPrefix?: Uint8Array;
+	private pendingLengthPrefix: number[] = [];
+	private pendingFrameChunks: Uint8Array[] = [];
+	private pendingFrameLength?: number;
+	private pendingFrameBytes = 0;
 
 	peer?: InMemoryStream;
 	private readonly recordSend?: (encodedFrame: Uint8Array) => void;
@@ -242,52 +244,6 @@ class InMemoryStream extends EventTarget {
 			throw new Error("Cannot send on closed stream");
 		}
 
-		// `it-length-prefixed` may yield the length prefix and the message body as
-		// separate chunks. Dropping only one of them would corrupt framing and can
-		// deadlock decoders. Buffer the prefix chunk so loss injection operates on
-		// whole messages.
-		if (this.pendingLengthPrefix) {
-			const prefix = this.pendingLengthPrefix;
-			this.pendingLengthPrefix = undefined;
-			const frame = new Uint8Array(prefix.byteLength + data.byteLength);
-			frame.set(prefix, 0);
-			frame.set(data, prefix.byteLength);
-
-			this.recordSend?.(frame);
-			if (this.shouldDrop?.(frame)) {
-				this.recordDrop?.(frame);
-				return true;
-			}
-
-			const remote = this.peer;
-			if (!remote) throw new Error("Missing remote stream endpoint");
-			if (remote.closed) throw new Error("Remote stream endpoint is closed");
-			remote.bufferedBytes += frame.byteLength;
-			remote.inbound.push(frame);
-			if (remote.bufferedBytes > remote.highWaterMark) {
-				remote.backpressured = true;
-				return false;
-			}
-			return true;
-		}
-
-		// Prefix-only chunk? Buffer it and wait for the body chunk.
-		try {
-			const { bytes } = decodeUVarint(data);
-			if (bytes === data.byteLength && data.byteLength <= 10) {
-				this.pendingLengthPrefix = data;
-				return true;
-			}
-		} catch {
-			// not a varint prefix
-		}
-
-		// Full frame already (prefix+body).
-		this.recordSend?.(data);
-		if (this.shouldDrop?.(data)) {
-			this.recordDrop?.(data);
-			return true;
-		}
 		const remote = this.peer;
 		if (!remote) {
 			throw new Error("Missing remote stream endpoint");
@@ -295,13 +251,67 @@ class InMemoryStream extends EventTarget {
 		if (remote.closed) {
 			throw new Error("Remote stream endpoint is closed");
 		}
-		remote.bufferedBytes += data.byteLength;
-		remote.inbound.push(data);
-		if (remote.bufferedBytes > remote.highWaterMark) {
-			remote.backpressured = true;
-			return false;
+		// LP encoding can split both the prefix and body across arbitrary chunks
+		// (notably DataMessage's separate header/payload), or coalesce frames.
+		// Only apply loss once the entire declared frame has arrived; leaking any
+		// fragment of a dropped frame would corrupt every later control message.
+		let offset = 0;
+		while (offset < data.length) {
+			if (this.pendingFrameLength == null) {
+				const byte = data[offset++];
+				this.pendingLengthPrefix.push(byte);
+				if (byte >= 0x80 && this.pendingLengthPrefix.length < 8) continue;
+				try {
+					this.pendingFrameLength = decodeUVarint(
+						Uint8Array.from(this.pendingLengthPrefix),
+					).value;
+				} catch (error) {
+					this.abort(error);
+					throw error;
+				}
+			}
+
+			const take = Math.min(
+				this.pendingFrameLength - this.pendingFrameBytes,
+				data.length - offset,
+			);
+			if (take > 0) {
+				this.pendingFrameChunks.push(data.subarray(offset, offset + take));
+				this.pendingFrameBytes += take;
+				offset += take;
+			}
+			if (this.pendingFrameBytes !== this.pendingFrameLength) continue;
+
+			// Allocate only after receiving the body, never from an advertised size.
+			const frame = new Uint8Array(
+				this.pendingLengthPrefix.length + this.pendingFrameBytes,
+			);
+			frame.set(this.pendingLengthPrefix);
+			let frameOffset = this.pendingLengthPrefix.length;
+			for (const chunk of this.pendingFrameChunks) {
+				frame.set(chunk, frameOffset);
+				frameOffset += chunk.length;
+			}
+			this.clearPendingFrame();
+			this.recordSend?.(frame);
+			if (this.shouldDrop?.(frame)) {
+				this.recordDrop?.(frame);
+				continue;
+			}
+			remote.bufferedBytes += frame.byteLength;
+			remote.inbound.push(frame);
+			if (remote.bufferedBytes > remote.highWaterMark) {
+				remote.backpressured = true;
+			}
 		}
-		return true;
+		return !remote.backpressured;
+	}
+
+	private clearPendingFrame(): void {
+		this.pendingLengthPrefix = [];
+		this.pendingFrameChunks = [];
+		this.pendingFrameLength = undefined;
+		this.pendingFrameBytes = 0;
 	}
 
 	abort(_err?: any): void {
@@ -317,6 +327,7 @@ class InMemoryStream extends EventTarget {
 	private closeLocal(): void {
 		if (this.closed) return;
 		this.closed = true;
+		this.clearPendingFrame();
 		try {
 			this.inbound.end();
 		} catch {}
