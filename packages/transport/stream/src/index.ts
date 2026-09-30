@@ -1245,6 +1245,11 @@ type SharedRoutingState = {
 	refs: number;
 };
 
+type DeliveryHealthCheck = {
+	timer: ReturnType<typeof setTimeout>;
+	owners: Set<object>;
+};
+
 const sharedRoutingByPrivateKey = new WeakMap<PrivateKey, SharedRoutingState>();
 
 export type PublishOptions = (WithMode | WithTo) &
@@ -1303,7 +1308,7 @@ export abstract class DirectStream<
 	private readonly maxOutboundStreams?: number;
 	connectionManagerOptions: ConnectionManagerOptions;
 	private recentDials?: Cache<string>;
-	private healthChecks: Map<string, ReturnType<typeof setTimeout>>;
+	private healthChecks: Map<string, DeliveryHealthCheck>;
 			private pruneConnectionsTimeout: ReturnType<typeof setInterval>;
 			private prunedConnectionsCache?: Cache<string>;
 			private pruneToLimitsInFlight?: Promise<void>;
@@ -1936,7 +1941,7 @@ export abstract class DirectStream<
 
 		this.outboundInflightQueue?.end();
 		this.closeController?.abort();
-		for (const timer of this.healthChecks.values()) clearTimeout(timer);
+		for (const check of this.healthChecks.values()) clearTimeout(check.timer);
 		this.healthChecks.clear();
 		// A stream open may settle after abort and still need to dispose its raw
 		// stream. Keep that work ahead of connection-manager shutdown as well.
@@ -3349,8 +3354,8 @@ export abstract class DirectStream<
 	}
 
 	private clearHealthcheckTimer(to: string) {
-		const timer = this.healthChecks.get(to);
-		clearTimeout(timer);
+		const check = this.healthChecks.get(to);
+		if (check) clearTimeout(check.timer);
 		this.healthChecks.delete(to);
 	}
 
@@ -3390,13 +3395,19 @@ export abstract class DirectStream<
 		message: DataMessage | Goodbye,
 		relayed?: boolean,
 		signal?: AbortSignal,
-	): Promise<{ promise: Promise<void>; startTimeout: () => void }> {
+	): Promise<{
+		promise: Promise<void>;
+		startTimeout: () => void;
+		clear: () => void;
+	}> {
 		if (isAnyWhereDeliveryMode(message.header.mode)) {
 			return {
 				promise: Promise.resolve(),
 				startTimeout: () => {},
+				clear: () => {},
 			};
 		}
+		if (signal?.aborted) throw new AbortError("Aborted");
 
 		const idString = toBase64(message.id);
 
@@ -3405,6 +3416,7 @@ export abstract class DirectStream<
 			return {
 				promise: existing.promise,
 				startTimeout: () => {},
+				clear: existing.clear,
 			};
 		}
 
@@ -3414,15 +3426,6 @@ export abstract class DirectStream<
 			for (const to of message.header.mode.to) {
 				if (to === from.hashcode()) continue;
 				messageToSet.add(to);
-
-				if (!relayed && !this.healthChecks.has(to)) {
-					this.healthChecks.set(
-						to,
-						setTimeout(() => {
-							this.removePeerFromRoutes(to);
-						}, this.seekTimeout),
-					);
-				}
 			}
 		}
 		const haveReceivers = messageToSet.size > 0;
@@ -3437,7 +3440,37 @@ export abstract class DirectStream<
 					),
 				),
 				startTimeout: () => {},
+				clear: () => {},
 			};
+		}
+
+		const healthOwner = {};
+		const ownedHealthChecks = new Map<string, DeliveryHealthCheck>();
+		// Concurrent waits share the original deadline, but cancellation releases
+		// only this wait's ownership of the captured health-check generation.
+		if (!relayed) {
+			for (const to of messageToSet) {
+				let check = this.healthChecks.get(to);
+				if (!check) {
+					const created: DeliveryHealthCheck = {
+						owners: new Set(),
+						timer: setTimeout(() => {
+							if (
+								this.healthChecks.get(to) !== created ||
+								created.owners.size === 0
+							) {
+								return;
+							}
+							this.healthChecks.delete(to);
+							this.removePeerFromRoutes(to);
+						}, this.seekTimeout),
+					};
+					this.healthChecks.set(to, created);
+					check = created;
+				}
+				check.owners.add(healthOwner);
+				ownedHealthChecks.set(to, check);
+			}
 		}
 
 		const deliveryDeferredPromise = pDefer<void>();
@@ -3483,7 +3516,16 @@ export abstract class DirectStream<
 			timeout && clearTimeout(timeout);
 			onUnreachable &&
 				this.removeEventListener("peer:unreachable", onUnreachable);
-			this._ackCallbacks.delete(idString);
+			if (this._ackCallbacks.get(idString) === ackCallback) {
+				this._ackCallbacks.delete(idString);
+			}
+			for (const [to, check] of ownedHealthChecks) {
+				check.owners.delete(healthOwner);
+				if (check.owners.size === 0 && this.healthChecks.get(to) === check) {
+					this.clearHealthcheckTimer(to);
+				}
+			}
+			ownedHealthChecks.clear();
 			onAbort && signal?.removeEventListener("abort", onAbort);
 		};
 
@@ -3535,18 +3577,6 @@ export abstract class DirectStream<
 			}, this.seekTimeout);
 		};
 
-		if (signal) {
-			onAbort = () => {
-				clear();
-				deliveryDeferredPromise.reject(new AbortError("Aborted"));
-			};
-			if (signal.aborted) {
-				onAbort();
-			} else {
-				signal.addEventListener("abort", onAbort, { once: true });
-			}
-		}
-
 			const checkDone = () => {
 				// This if clause should never enter for relayed connections, since we don't
 				// know how many ACKs we will get
@@ -3577,9 +3607,13 @@ export abstract class DirectStream<
 			return false;
 		};
 
-		this._ackCallbacks.set(idString, {
+		const ackCallback = {
 			promise: deliveryDeferredPromise.promise,
-			callback: (ack: ACK, messageThrough, messageFrom) => {
+			callback: (
+				ack: ACK,
+				messageThrough: PeerStreams,
+				messageFrom?: PeerStreams,
+			) => {
 				const messageTarget = ack.header.signatures!.publicKeys[0];
 				const messageTargetHash = messageTarget.hashcode();
 				const seenCounter = ack.seenCounter;
@@ -3648,10 +3682,23 @@ export abstract class DirectStream<
 
 				deliveryDeferredPromise.resolve();
 			},
-		});
+		};
+		this._ackCallbacks.set(idString, ackCallback);
+		if (signal) {
+			onAbort = () => {
+				clear();
+				deliveryDeferredPromise.reject(new AbortError("Aborted"));
+			};
+			if (signal.aborted) {
+				onAbort();
+			} else {
+				signal.addEventListener("abort", onAbort, { once: true });
+			}
+		}
 		return {
 			promise: deliveryDeferredPromise.promise,
 			startTimeout,
+			clear: ackCallback.clear,
 		};
 	}
 
@@ -3669,7 +3716,7 @@ export abstract class DirectStream<
 		const isRelayed = relayed ?? from.hashcode() !== this.publicKeyHash;
 		let delivereyPromise: Promise<void> | undefined = undefined as any;
 		let startDeliveryTimeout: (() => void) | undefined;
-		let ackCallbackId: string | undefined;
+		let clearDelivery: (() => void) | undefined;
 
 		if (
 			(!message.header.signatures ||
@@ -3696,7 +3743,7 @@ export abstract class DirectStream<
 			);
 			delivereyPromise = deliveryDeferredPromise.promise;
 			startDeliveryTimeout = deliveryDeferredPromise.startTimeout;
-			ackCallbackId = toBase64(message.id);
+			clearDelivery = deliveryDeferredPromise.clear;
 		}
 
 		try {
@@ -3934,9 +3981,8 @@ export abstract class DirectStream<
 			// If message fanout/write fails before publishMessage returns its delivery
 			// promise, clear any ACK callback to avoid late timer rejections leaking as
 			// unhandled rejections in fire-and-forget call paths.
-			if (ackCallbackId) {
-				this._ackCallbacks.get(ackCallbackId)?.clear();
-			}
+			// Use the captured wait, not a same-ID successor installed after an abort.
+			clearDelivery?.();
 			throw error;
 		}
 	}
