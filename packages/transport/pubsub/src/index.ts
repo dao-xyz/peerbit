@@ -499,6 +499,38 @@ export class TopicControlPlane
 	private _onFanoutPeerUnreachable?: (
 		ev: CustomEvent<{ topic: string; root: string; publicKeyHash: string }>,
 	) => void;
+	private readonly onFanoutAttached = (
+		ev: CustomEvent<{ topic: string; root: string }>,
+	) => {
+		const st = this.fanoutChannels.get(ev.detail.topic);
+		if (!st || st.root !== ev.detail.root) return;
+		// A successful publish before attachment may have had no listeners.
+		// Coalesce attachment bursts, retaining one trailing pass during a send.
+		st.announceDirty = true;
+		if (st.announceTask) return;
+		const revision = this.topicControlPlaneLifecycleRevision;
+		st.announceTask = Promise.resolve()
+			.then(async () => {
+				await st.join;
+				while (
+					st.announceDirty &&
+					this.isFanoutChannelCurrent(ev.detail.topic, st.channel, revision)
+				) {
+					st.announceDirty = false;
+					await this.announceShardSubscriptions(ev.detail.topic, revision);
+				}
+			})
+			.catch(logErrorIfStarted)
+			.finally(() => {
+				st.announceTask = undefined;
+				if (
+					st.announceDirty &&
+					this.isFanoutChannelCurrent(ev.detail.topic, st.channel, revision)
+				) {
+					this.onFanoutAttached(ev);
+				}
+			});
+	};
 
 	private fanoutChannels = new Map<
 		string,
@@ -511,6 +543,8 @@ export class TopicControlPlane
 			ephemeral: boolean;
 			lastUsedAt: number;
 			idleCloseTimeout?: ReturnType<typeof setTimeout>;
+			announceDirty?: boolean;
+			announceTask?: Promise<void>;
 		}
 	>();
 	private ensureFanoutChannelInFlight = new Map<
@@ -742,6 +776,8 @@ export class TopicControlPlane
 			"fanout:peer-unreachable",
 			this._onFanoutPeerUnreachable as any,
 		);
+		this.fanout.addEventListener("fanout:joined", this.onFanoutAttached);
+		this.fanout.addEventListener("fanout:child-joined", this.onFanoutAttached);
 		await super.start();
 		if (this.autoTopicRootCandidates) {
 			let retryDelayMs = 0;
@@ -790,6 +826,11 @@ export class TopicControlPlane
 				this._onFanoutPeerUnreachable as any,
 			);
 		}
+		this.fanout.removeEventListener("fanout:joined", this.onFanoutAttached);
+		this.fanout.removeEventListener(
+			"fanout:child-joined",
+			this.onFanoutAttached,
+		);
 		for (const st of this.fanoutChannels.values()) {
 			this.clearFanoutIdleClose(st);
 			try {
@@ -862,32 +903,34 @@ export class TopicControlPlane
 			this.rebuildAutoTopicRootCandidatesFromClaims(BigInt(Date.now()), {
 				immediate: hadSignedPeer !== hasSignedPeer,
 			});
-			if (peer.protocol === TOPIC_CONTROL_PLANE_PROTOCOL_V2_1) {
-				const sendWhenOutboundReady = () => {
-					if (
-						!this.autoTopicRootCandidates ||
-						this.peers.get(publicKey.hashcode()) !== peer
-					) {
-						return;
-					}
-					void this.sendAutoTopicRootCandidates([peer]).catch(() => {});
-				};
-				if (peer.isWritable) {
-					void this.sendAutoTopicRootCandidates([peer]).catch(() => {});
-				}
-				if (existingPeer !== peer) {
-					peer.addEventListener("stream:outbound", sendWhenOutboundReady);
-					peer.addEventListener(
-						"close",
-						() =>
-							peer.removeEventListener(
-								"stream:outbound",
-								sendWhenOutboundReady,
-							),
-						{ once: true },
-					);
-				}
+		}
+		const lifecycleRevision = this.topicControlPlaneLifecycleRevision;
+		const sendWhenOutboundReady = () => {
+			if (
+				!this.isTopicControlPlaneActive(lifecycleRevision) ||
+				this.peers.get(publicKey.hashcode()) !== peer
+			)
+				return;
+			if (
+				this.autoTopicRootCandidates &&
+				peer.protocol === TOPIC_CONTROL_PLANE_PROTOCOL_V2_1
+			) {
+				void this.sendAutoTopicRootCandidates([peer]).catch(() => {});
 			}
+			void this.announceDirectSubscriptions(
+				[...this.subscriptions.keys()],
+				[peer],
+			).catch(logErrorIfStarted);
+		};
+		if (peer.isWritable) sendWhenOutboundReady();
+		if (existingPeer !== peer) {
+			peer.addEventListener("stream:outbound", sendWhenOutboundReady);
+			peer.addEventListener(
+				"close",
+				() =>
+					peer.removeEventListener("stream:outbound", sendWhenOutboundReady),
+				{ once: true },
+			);
 		}
 		return peer;
 	}
@@ -1425,6 +1468,7 @@ export class TopicControlPlane
 		rawClaim: Uint8Array,
 		outerPeerHash: string,
 		expectedPeer?: PeerStreams,
+		batchUpdate?: { immediate: boolean },
 	): Promise<boolean> {
 		const lifecycleRevision = this.topicControlPlaneLifecycleRevision;
 		if (
@@ -1470,7 +1514,12 @@ export class TopicControlPlane
 			return false;
 		}
 
-		this.rebuildAutoTopicRootCandidatesFromClaims(now);
+		if (batchUpdate) {
+			if (this.pruneExpiredTopicRootCandidateClaims(now))
+				batchUpdate.immediate = true;
+		} else {
+			this.rebuildAutoTopicRootCandidatesFromClaims(now);
+		}
 		const retained = this.signedTopicRootCandidateClaims.get(origin);
 		if (
 			outerPeerHash === origin &&
@@ -1490,7 +1539,9 @@ export class TopicControlPlane
 			// monotonic acceptance deadline. A current authenticated origin stream is
 			// sufficient liveness evidence; do not advance the floor or lease.
 			this.suppressedDepartedTopicRootCandidateClaims.delete(origin);
-			this.rebuildAutoTopicRootCandidatesFromClaims(now, { immediate: true });
+			if (batchUpdate) batchUpdate.immediate = true;
+			else
+				this.rebuildAutoTopicRootCandidatesFromClaims(now, { immediate: true });
 			return false;
 		}
 
@@ -1785,29 +1836,15 @@ export class TopicControlPlane
 
 		// Ensure shard overlays are joined using the current root mapping (may
 		// migrate channels if roots changed), then re-announce subscriptions.
-		await Promise.all(
+		const results = await Promise.allSettled(
 			[...byShard.entries()].map(async ([shardTopic, userTopics]) => {
 				if (userTopics.length === 0) return;
 				await this.ensureFanoutChannel(shardTopic, { ephemeral: false });
-
-				const msg = new Subscribe({
-					topics: userTopics,
-					requestSubscribers: true,
-				});
-				const embedded = await this.createMessage(
-					this.encodePubSubMessage(msg),
-					{
-						mode: new AnyWhere(),
-						priority: 1,
-						skipRecipientValidation: true,
-					} as any,
-				);
-				const st = this.fanoutChannels.get(shardTopic);
-				if (!st) return;
-				await st.channel.publish(toUint8Array(embedded.bytes()));
-				this.touchFanoutChannel(shardTopic, st.channel, lifecycleRevision);
+				await this.announceShardSubscriptions(shardTopic, lifecycleRevision);
 			}),
 		);
+		const failure = results.find((result) => result.status === "rejected");
+		if (failure?.status === "rejected") throw failure.reason;
 	}
 
 	private isTrackedTopic(topic: string) {
@@ -1821,14 +1858,15 @@ export class TopicControlPlane
 	private untrackTopic(topic: string) {
 		const peers = this.topics.get(topic);
 		this.topics.delete(topic);
-		if (!peers) return;
-		for (const peerHash of peers.keys()) {
+		for (const peerHash of peers?.keys() ?? []) {
 			this.peerToTopic.get(peerHash)?.delete(topic);
-			this.lastSubscriptionMessages.get(peerHash)?.delete(topic);
 			if (!this.peerToTopic.get(peerHash)?.size) {
 				this.peerToTopic.delete(peerHash);
-				this.lastSubscriptionMessages.delete(peerHash);
 			}
+		}
+		for (const [peerHash, messages] of this.lastSubscriptionMessages) {
+			messages.delete(topic);
+			if (messages.size === 0) this.lastSubscriptionMessages.delete(peerHash);
 		}
 	}
 
@@ -1853,8 +1891,23 @@ export class TopicControlPlane
 			this.lastSubscriptionMessages.get(oldest)?.delete(topic);
 			if (!this.peerToTopic.get(oldest)?.size) {
 				this.peerToTopic.delete(oldest);
+			}
+			if (!this.lastSubscriptionMessages.get(oldest)?.size) {
 				this.lastSubscriptionMessages.delete(oldest);
 			}
+		}
+	}
+
+	private pruneUnsubscribedWatermarks(topic: string) {
+		let remaining = this.subscriberCacheMaxEntries;
+		for (const [peerHash, messages] of [
+			...this.lastSubscriptionMessages,
+		].reverse()) {
+			if (!messages.has(topic) || this.topics.get(topic)?.has(peerHash))
+				continue;
+			if (remaining-- > 0) continue;
+			messages.delete(topic);
+			if (messages.size === 0) this.lastSubscriptionMessages.delete(peerHash);
 		}
 	}
 
@@ -2393,6 +2446,11 @@ export class TopicControlPlane
 		pubsubMessage: PubSubMessage,
 		signal?: AbortSignal,
 	) {
+		const revision = this.topicControlPlaneLifecycleRevision;
+		const isCurrent = () =>
+			this.isTopicControlPlaneActive(revision) &&
+			this.peers.get(peer.publicKey.hashcode()) === peer;
+		if (!isCurrent()) return;
 		const embedded = await this.createMessage(
 			this.encodePubSubMessage(pubsubMessage),
 			{
@@ -2404,12 +2462,13 @@ export class TopicControlPlane
 				skipRecipientValidation: true,
 			} as any,
 		);
+		if (!isCurrent()) return;
 		await this.publishMessage(
 			this.publicKey,
 			embedded,
 			[peer],
 			undefined,
-			signal,
+			signal ?? this.topicRootResolutionAbortController.signal,
 		);
 	}
 
@@ -3218,6 +3277,118 @@ export class TopicControlPlane
 		return this.debounceSubscribeAggregator.add({ key: topic });
 	}
 
+	private async announceShardSubscriptions(
+		shardTopic: string,
+		lifecycleRevision: number,
+	) {
+		const st = this.fanoutChannels.get(shardTopic);
+		if (!st) return;
+		let topics = [...this.subscriptions.entries()].filter(
+			([topic]) => this.getShardTopicForUserTopic(topic) === shardTopic,
+		);
+		while (
+			topics.length > 0 &&
+			this.isFanoutChannelCurrent(shardTopic, st.channel, lifecycleRevision)
+		) {
+			const embedded = await this.createMessage(
+				this.encodePubSubMessage(
+					new Subscribe({
+						topics: topics.map(([topic]) => topic),
+						requestSubscribers: true,
+					}),
+				),
+				{
+					mode: new AnyWhere(),
+					priority: 1,
+					skipRecipientValidation: true,
+				} as any,
+			);
+			if (
+				!this.isFanoutChannelCurrent(shardTopic, st.channel, lifecycleRevision)
+			)
+				return;
+			const current = topics.filter(
+				([topic, sub]) => this.subscriptions.get(topic) === sub,
+			);
+			if (current.length !== topics.length) {
+				// Never announce a subscription removed while signing. This retry
+				// only shrinks the original batch, so churn cannot extend it forever.
+				topics = current;
+				continue;
+			}
+			await st.channel.publish(toUint8Array(embedded.bytes()));
+			if (
+				this.isFanoutChannelCurrent(shardTopic, st.channel, lifecycleRevision)
+			) {
+				this.touchFanoutChannel(shardTopic, st.channel, lifecycleRevision);
+			}
+			return;
+		}
+	}
+
+	private async announceDirectSubscriptions(
+		topics: string[],
+		peers = [...this.peers.values()],
+		subscribed = true,
+	) {
+		const revision = this.topicControlPlaneLifecycleRevision;
+		const signal = this.topicRootResolutionAbortController.signal;
+		const subscriptions = new Map(
+			topics.map((topic) => [topic, this.subscriptions.get(topic)]),
+		);
+		const isCurrentTopic = (topic: string) =>
+			subscribed
+				? subscriptions.get(topic) != null &&
+					this.subscriptions.get(topic) === subscriptions.get(topic)
+				: !this.subscriptions.has(topic) &&
+					!this.pendingSubscriptions.has(topic);
+		await Promise.all(
+			peers
+				.map(async (peer) => {
+					const isCurrent = () =>
+						this.isTopicControlPlaneActive(revision) &&
+						this.peers.get(peer.publicKey.hashcode()) === peer &&
+						peer.isWritable;
+					let currentTopics = topics.filter(isCurrentTopic);
+					while (isCurrent() && currentTopics.length > 0) {
+						const embedded = await this.createMessage(
+							this.encodePubSubMessage(
+								subscribed
+									? new Subscribe({
+											topics: currentTopics,
+											requestSubscribers: true,
+										})
+									: new Unsubscribe({ topics: currentTopics }),
+							),
+							{
+								mode: new SilentDelivery({
+									to: [peer.publicKey.hashcode()],
+									redundancy: 1,
+								}),
+								priority: 1,
+								skipRecipientValidation: true,
+							} as any,
+						);
+						if (!isCurrent()) return;
+						const remaining = currentTopics.filter(isCurrentTopic);
+						if (remaining.length !== currentTopics.length) {
+							currentTopics = remaining;
+							continue;
+						}
+						await this.publishMessage(
+							this.publicKey,
+							embedded,
+							[peer],
+							undefined,
+							signal,
+						);
+						return;
+					}
+				})
+				.map((task) => task.catch(logErrorIfStarted)),
+		);
+	}
+
 	private async _subscribe(
 		topics: { key: string; counter: number }[],
 		lifecycleRevision = this.topicControlPlaneLifecycleRevision,
@@ -3227,7 +3398,6 @@ export class TopicControlPlane
 		if (topics.length === 0) return;
 
 		const byShard = new Map<string, string[]>();
-		const joins: Promise<void>[] = [];
 		for (const { key: topic, counter } of topics) {
 			let prev = this.subscriptions.get(topic);
 			if (prev) {
@@ -3245,46 +3415,26 @@ export class TopicControlPlane
 				shardTopic,
 				(this.shardRefCounts.get(shardTopic) ?? 0) + 1,
 			);
-			joins.push(this.ensureFanoutChannel(shardTopic));
 		}
 
-		await Promise.all(joins);
-		if (!this.isTopicControlPlaneActive(lifecycleRevision)) return;
+		// Neighbours can use different root policies. Discover them independently
+		// of shard joins, without adopting or overriding either peer's root policy.
+		void this.announceDirectSubscriptions([...byShard.values()].flat()).catch(
+			logErrorIfStarted,
+		);
 
-		// Announce subscriptions per shard overlay.
-		await Promise.all(
-			[...byShard.entries()].map(async ([shardTopic, userTopics]) => {
-				if (userTopics.length === 0) return;
-				const st = this.fanoutChannels.get(shardTopic);
-				if (!st)
-					throw new Error(`Fanout channel missing for shard: ${shardTopic}`);
-				const msg = new Subscribe({
-					topics: userTopics,
-					requestSubscribers: true,
-				});
-				const embedded = await this.createMessage(
-					this.encodePubSubMessage(msg),
-					{
-						mode: new AnyWhere(),
-						priority: 1,
-						skipRecipientValidation: true,
-					} as any,
-				);
-				if (
-					!this.isFanoutChannelCurrent(
-						shardTopic,
-						st.channel,
-						lifecycleRevision,
-					)
-				)
-					return;
-				await st.channel.publish(toUint8Array(embedded.bytes()));
-				if (
-					this.isFanoutChannelCurrent(shardTopic, st.channel, lifecycleRevision)
-				)
-					this.touchFanoutChannel(shardTopic, st.channel, lifecycleRevision);
+		const results = await Promise.allSettled(
+			[...byShard.keys()].map(async (shardTopic) => {
+				await this.ensureFanoutChannel(shardTopic);
+				await this.announceShardSubscriptions(shardTopic, lifecycleRevision);
 			}),
 		);
+		const failure = results.find((result) => result.status === "rejected");
+		if (failure?.status === "rejected") {
+			if (this.isTopicControlPlaneActive(lifecycleRevision))
+				this.scheduleReconcileShardOverlays();
+			throw failure.reason;
+		}
 	}
 
 	async unsubscribe(
@@ -3346,11 +3496,17 @@ export class TopicControlPlane
 		const byShard = new Map<string, string[]>();
 		for (const { key: topic } of topics) {
 			// If the topic got re-subscribed before this debounced batch ran, skip.
-			if (this.subscriptions.has(topic)) continue;
+			if (this.subscriptions.has(topic) || this.pendingSubscriptions.has(topic))
+				continue;
 			const shardTopic = this.getShardTopicForUserTopic(topic);
 			byShard.set(shardTopic, [...(byShard.get(shardTopic) ?? []), topic]);
 		}
 
+		void this.announceDirectSubscriptions(
+			[...byShard.values()].flat(),
+			undefined,
+			false,
+		).catch(logErrorIfStarted);
 		await Promise.all(
 			[...byShard.entries()].map(async ([shardTopic, userTopics]) => {
 				if (userTopics.length === 0) return;
@@ -4206,16 +4362,24 @@ export class TopicControlPlane
 		stream: PeerStreams;
 	}): Promise<void> {
 		const { pubsubMessage, message, from, stream } = input;
-		const isDirectRootControl =
+		if (
+			(pubsubMessage instanceof Subscribe ||
+				pubsubMessage instanceof Unsubscribe) &&
+			this.peers.get(stream.publicKey.hashcode()) !== stream
+		)
+			return;
+		const isBoundDirectControl =
 			pubsubMessage instanceof TopicRootCandidates ||
 			pubsubMessage instanceof TopicRootCandidateClaims ||
 			pubsubMessage instanceof TopicRootQuery ||
-			pubsubMessage instanceof TopicRootQueryResponse;
-		const directRootSigner = isDirectRootControl
+			pubsubMessage instanceof TopicRootQueryResponse ||
+			pubsubMessage instanceof Subscribe ||
+			pubsubMessage instanceof Unsubscribe;
+		const directRootSigner = isBoundDirectControl
 			? message.header.signatures?.publicKeys[0]
 			: undefined;
 		if (
-			isDirectRootControl &&
+			isBoundDirectControl &&
 			(!directRootSigner || !directRootSigner.equals(stream.publicKey))
 		) {
 			return;
@@ -4238,6 +4402,8 @@ export class TopicControlPlane
 				return;
 			}
 			const imported: Uint8Array[] = [];
+			const batchUpdate = { immediate: false };
+			const revision = this.topicControlPlaneLifecycleRevision;
 			const outerPeerHash = stream.publicKey.hashcode();
 			for (const claim of pubsubMessage.claims) {
 				if (
@@ -4245,13 +4411,24 @@ export class TopicControlPlane
 						claim,
 						outerPeerHash,
 						stream,
+						batchUpdate,
 					)
 				) {
 					imported.push(claim);
 				}
 			}
+			if (
+				!this.isTopicControlPlaneActive(revision) ||
+				this.peers.get(outerPeerHash) !== stream
+			)
+				return;
+			if (imported.length > 0 || batchUpdate.immediate) {
+				this.rebuildAutoTopicRootCandidatesFromClaims(
+					BigInt(Date.now()),
+					batchUpdate,
+				);
+			}
 			if (imported.length > 0) {
-				this.rebuildAutoTopicRootCandidatesFromClaims();
 				// Relay the exact nested claims; no relay signature is substituted for
 				// their origin signatures.
 				void this.sendSignedTopicRootCandidateClaims(
@@ -4351,6 +4528,11 @@ export class TopicControlPlane
 			return;
 		}
 
+		if (pubsubMessage instanceof Unsubscribe) {
+			this.processUnsubscribeMessage(message, pubsubMessage, from);
+			return;
+		}
+
 		if (pubsubMessage instanceof GetSubscribers) {
 			const overlap = this.getSubscriptionOverlap(pubsubMessage.topics);
 			if (overlap.length === 0) return;
@@ -4373,6 +4555,45 @@ export class TopicControlPlane
 				}),
 			);
 			return;
+		}
+	}
+
+	private processUnsubscribeMessage(
+		message: DataMessage,
+		unsubscribe: Unsubscribe,
+		from: PublicSignKey,
+	) {
+		const senderKey = from.hashcode();
+		const relevantTopics = unsubscribe.topics.filter((topic) =>
+			this.isTrackedTopic(topic),
+		);
+		if (
+			!relevantTopics.length ||
+			!this.subscriptionMessageIsLatest(message, unsubscribe, relevantTopics)
+		)
+			return;
+		const changed: string[] = [];
+		for (const topic of relevantTopics) {
+			if (this.topics.get(topic)?.delete(senderKey)) {
+				changed.push(topic);
+				this.peerToTopic.get(senderKey)?.delete(topic);
+			}
+		}
+		if (!this.peerToTopic.get(senderKey)?.size) {
+			this.peerToTopic.delete(senderKey);
+		}
+		// Independent direct/shard paths may deliver an older Subscribe later.
+		// Retain recent unsubscribe floors, bounded separately from live subscribers.
+		const messages = this.lastSubscriptionMessages.get(senderKey)!;
+		this.lastSubscriptionMessages.delete(senderKey);
+		this.lastSubscriptionMessages.set(senderKey, messages);
+		for (const topic of relevantTopics) this.pruneUnsubscribedWatermarks(topic);
+		if (changed.length > 0) {
+			this.dispatchEvent(
+				new CustomEvent<UnsubcriptionEvent>("unsubscribe", {
+					detail: new UnsubcriptionEvent(from, changed, "remote-unsubscribe"),
+				}),
+			);
 		}
 	}
 
@@ -4462,41 +4683,7 @@ export class TopicControlPlane
 		}
 
 		if (pubsubMessage instanceof Unsubscribe) {
-			const sender = from;
-			const senderKey = sender.hashcode();
-			const relevantTopics = pubsubMessage.topics.filter((t) =>
-				this.isTrackedTopic(t),
-			);
-
-			if (
-				relevantTopics.length > 0 &&
-				this.subscriptionMessageIsLatest(message, pubsubMessage, relevantTopics)
-			) {
-				const changed: string[] = [];
-				for (const topic of relevantTopics) {
-					const peers = this.topics.get(topic);
-					if (!peers) continue;
-					if (peers.delete(senderKey)) {
-						changed.push(topic);
-						this.peerToTopic.get(senderKey)?.delete(topic);
-					}
-				}
-				if (!this.peerToTopic.get(senderKey)?.size) {
-					this.peerToTopic.delete(senderKey);
-					this.lastSubscriptionMessages.delete(senderKey);
-				}
-				if (changed.length > 0) {
-					this.dispatchEvent(
-						new CustomEvent<UnsubcriptionEvent>("unsubscribe", {
-							detail: new UnsubcriptionEvent(
-								sender,
-								changed,
-								"remote-unsubscribe",
-							),
-						}),
-					);
-				}
-			}
+			this.processUnsubscribeMessage(message, pubsubMessage, from);
 			return;
 		}
 
@@ -4615,6 +4802,7 @@ export class TopicControlPlane
 			!(pubsubMessage instanceof TopicRootQuery) &&
 			!(pubsubMessage instanceof GetSubscribers) &&
 			!(pubsubMessage instanceof Subscribe) &&
+			!(pubsubMessage instanceof Unsubscribe) &&
 			!(pubsubMessage instanceof TopicRootQueryResponse)
 		) {
 			return true;
