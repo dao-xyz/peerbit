@@ -766,6 +766,8 @@ export type FanoutTreeChannelMetrics = {
 	reparentUpgradeSkipProbeOverloaded: number;
 	reparentUpgradeSkipProbeCooldown: number;
 	parentProbeReqSent: number;
+	/** Subset of parentProbeReqSent used to check the current idle parent. */
+	parentHealthProbeReqSent: number;
 	parentProbeReqReceived: number;
 	parentProbeReplySent: number;
 	parentProbeReplyReceived: number;
@@ -1309,6 +1311,7 @@ const createEmptyMetrics = (): InternalFanoutTreeChannelMetrics => ({
 	reparentUpgradeSkipProbeOverloaded: 0,
 	reparentUpgradeSkipProbeCooldown: 0,
 	parentProbeReqSent: 0,
+	parentHealthProbeReqSent: 0,
 	parentProbeReqReceived: 0,
 	parentProbeReplySent: 0,
 	parentProbeReplyReceived: 0,
@@ -4002,7 +4005,11 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		return m;
 	}
 
-	private recordControlSend(bytes: Uint8Array, transmissions: number) {
+	private recordControlSend(
+		bytes: Uint8Array,
+		transmissions: number,
+		probePurpose: "upgrade" | "health" = "upgrade",
+	) {
 		if (transmissions <= 0) return;
 		if (bytes.length < 1 + 24) return;
 		const kind = bytes[0]!;
@@ -4062,6 +4069,9 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 				break;
 			case MSG_PARENT_PROBE_REQ:
 				m.parentProbeReqSent += transmissions;
+				if (probePurpose === "health") {
+					m.parentHealthProbeReqSent += transmissions;
+				}
 				m.controlBytesSentJoin += sentBytes;
 				break;
 			case MSG_PARENT_PROBE_REPLY:
@@ -4214,13 +4224,14 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		to: string,
 		bytes: Uint8Array,
 		signal?: AbortSignal,
+		probePurpose: "upgrade" | "health" = "upgrade",
 	) {
 		if (signal?.aborted) {
 			throw signal.reason ?? new AbortError("fanout control send aborted");
 		}
 		const stream = this.peers.get(to);
 		if (!stream) return;
-		this.recordControlSend(bytes, 1);
+		this.recordControlSend(bytes, 1, probePurpose);
 		const message = await this.createMessage(bytes, {
 			mode: new AnyWhere(),
 			priority: CONTROL_PRIORITY,
@@ -5903,6 +5914,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		signal: AbortSignal,
 		minFreeSlots = 0,
 		reserveRootCapacity = true,
+		purpose: "upgrade" | "health" = "upgrade",
 	): Promise<ParentProbeReply | undefined> {
 		const peer = this.peers.get(parentHash);
 		if (!peer) return;
@@ -5941,6 +5953,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 						reserveRootCapacity,
 					),
 					controller.signal,
+					purpose,
 				).catch(() => resolve(undefined));
 			});
 		} finally {
@@ -6184,6 +6197,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 							signal,
 							0,
 							false,
+							"health",
 						);
 						if (
 							ch.closed ||

@@ -18,6 +18,7 @@ import {
 	defaultEvidenceLimitsForPreset,
 	fmt,
 	maxFinite,
+	parentUpgradeProbeReqSent,
 	parentUpgradeRuntimeOptions,
 	parseBool01,
 	parseCsvNumbers,
@@ -248,6 +249,7 @@ type TreeResult = {
 	publishActiveParentShadowStartTotal: number;
 	publishActiveParentShadowPromoteTotal: number;
 	parentProbeReqSentTotal: number;
+	parentHealthProbeReqSentTotal: number;
 	parentShadowStartTotal: number;
 	parentShadowPromoteTotal: number;
 	maxReparentUpgradePerPeer: number;
@@ -276,6 +278,7 @@ type MultiWriterResult = {
 	secondBatchLatencyP95: number;
 	reparentUpgradeTotal: number;
 	parentProbeReqSentTotal: number;
+	parentHealthProbeReqSentTotal: number;
 	parentShadowStartTotal: number;
 	parentShadowPromoteTotal: number;
 	publishActiveReparentUpgradeTotal: number;
@@ -1488,6 +1491,7 @@ const runMultiWriterSim = async (
 			let dataPayloadBytesSent = 0;
 			let reparentUpgradeTotal = 0;
 			let parentProbeReqSentTotal = 0;
+			let parentHealthProbeReqSentTotal = 0;
 			let parentShadowStartTotal = 0;
 			let parentShadowPromoteTotal = 0;
 			let maxReparentUpgradePerPeer = 0;
@@ -1505,6 +1509,7 @@ const runMultiWriterSim = async (
 				dataPayloadBytesSent += m.dataPayloadBytesSent;
 				reparentUpgradeTotal += m.reparentUpgrade;
 				parentProbeReqSentTotal += m.parentProbeReqSent;
+				parentHealthProbeReqSentTotal += m.parentHealthProbeReqSent;
 				parentShadowStartTotal += m.parentShadowStart;
 				parentShadowPromoteTotal += m.parentShadowPromote;
 				maxReparentUpgradePerPeer = Math.max(
@@ -1575,6 +1580,7 @@ const runMultiWriterSim = async (
 				publishActiveParentShadowStartTotal: active.parentShadowStart,
 				publishActiveParentShadowPromoteTotal: active.parentShadowPromote,
 				parentProbeReqSentTotal,
+				parentHealthProbeReqSentTotal,
 				parentShadowStartTotal,
 				parentShadowPromoteTotal,
 				maxReparentUpgradePerPeer,
@@ -1665,6 +1671,10 @@ const runMultiWriterSim = async (
 			),
 			parentProbeReqSentTotal: treeResults.reduce(
 				(sum, tree) => sum + tree.parentProbeReqSentTotal,
+				0,
+			),
+			parentHealthProbeReqSentTotal: treeResults.reduce(
+				(sum, tree) => sum + tree.parentHealthProbeReqSentTotal,
 				0,
 			),
 			parentShadowStartTotal: treeResults.reduce(
@@ -1867,13 +1877,15 @@ const evaluateRun = (
 	args: EvalArgs,
 ) => {
 	const failures: Failure[] = [];
+	parentUpgradeProbeReqSent(baseline);
+	const upgradeProbes = parentUpgradeProbeReqSent(upgrade);
 	const useful = analyzeUsefulPromotions(scenario, baseline, upgrade, args);
 	const costRatio = isHotspotIdleScenario(scenario)
 		? Math.max(args.maxCostRatio, 1.2)
 		: args.maxCostRatio;
 	const sentProactiveUpgradeTraffic =
 		upgrade.reparentUpgradeTotal > 0 ||
-		upgrade.parentProbeReqSentTotal > 0 ||
+		upgradeProbes > 0 ||
 		upgrade.parentShadowStartTotal > 0;
 	const usefulIdleDeadlineSlack =
 		isIdleScenario(scenario) && useful.usefulPromotedTrees > 0
@@ -1883,7 +1895,7 @@ const evaluateRun = (
 		isIdleScenario(scenario) &&
 		useful.usefulPromotedTrees === 0 &&
 		upgrade.reparentUpgradeTotal === 0
-			? upgrade.parentProbeReqSentTotal / Math.max(1, upgrade.subscriberSlots)
+			? upgradeProbes / Math.max(1, upgrade.subscriberSlots)
 			: 0;
 	const guardedIdleDeadlineSlack =
 		guardedIdleProbePerSlot > 0 &&
@@ -1974,9 +1986,9 @@ const evaluateRun = (
 		);
 		failIfGreater(
 			failures,
-			"totalProbes",
+			"totalUpgradeProbes",
 			0,
-			upgrade.parentProbeReqSentTotal,
+			upgradeProbes,
 			0,
 		);
 		failIfGreater(
@@ -2015,7 +2027,7 @@ const evaluateRun = (
 				failures,
 				"probePerSubscriberSlot",
 				0,
-				upgrade.parentProbeReqSentTotal / Math.max(1, upgrade.subscriberSlots),
+				upgradeProbes / Math.max(1, upgrade.subscriberSlots),
 				0.125,
 			);
 		} else {
@@ -2023,7 +2035,7 @@ const evaluateRun = (
 				failures,
 				"probePerUpgrade",
 				0,
-				upgrade.parentProbeReqSentTotal / upgrade.reparentUpgradeTotal,
+				upgradeProbes / upgrade.reparentUpgradeTotal,
 				args.maxProbePerUpgrade,
 			);
 		}
@@ -2070,7 +2082,7 @@ const evaluateRun = (
 			0,
 		);
 		const inactiveProbes = inactiveTrees.reduce(
-			(sum, tree) => sum + tree.parentProbeReqSentTotal,
+			(sum, tree) => sum + parentUpgradeProbeReqSent(tree),
 			0,
 		);
 		const inactiveShadowStarts = inactiveTrees.reduce(
@@ -2309,6 +2321,7 @@ const compactTreeResult = (tree: TreeResult) => ({
 	secondBatchLatencyP95: tree.secondBatchLatencyP95,
 	reparentUpgradeTotal: tree.reparentUpgradeTotal,
 	parentProbeReqSentTotal: tree.parentProbeReqSentTotal,
+	parentHealthProbeReqSentTotal: tree.parentHealthProbeReqSentTotal,
 	parentShadowStartTotal: tree.parentShadowStartTotal,
 	parentShadowPromoteTotal: tree.parentShadowPromoteTotal,
 	publishActiveGuardSkipsTotal:
@@ -2350,6 +2363,7 @@ const compactResult = (result: MultiWriterResult) => ({
 	secondBatchLatencyP95: result.secondBatchLatencyP95,
 	reparentUpgradeTotal: result.reparentUpgradeTotal,
 	parentProbeReqSentTotal: result.parentProbeReqSentTotal,
+	parentHealthProbeReqSentTotal: result.parentHealthProbeReqSentTotal,
 	parentShadowStartTotal: result.parentShadowStartTotal,
 	parentShadowPromoteTotal: result.parentShadowPromoteTotal,
 	publishActiveGuardSkipsTotal: result.publishActiveGuardSkipsTotal,

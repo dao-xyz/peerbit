@@ -7,3 +7,5 @@ Recover idle fanout channels whose parent stops responding while its transport s
 Bound parent probes across signing, sending and reply waits; cancel outstanding work and reject replies from the wrong or superseded stream.
 
 Ignore delayed kicks from former parents or superseded streams so they cannot detach a replacement attachment.
+
+Distinguish current-parent health probes from proactive upgrade probes in diagnostic counters and benchmark policy checks, while retaining total traffic and control-cost accounting.

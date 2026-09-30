@@ -277,6 +277,8 @@ describe("fanout parent liveness", () => {
 			);
 			expect(leaf.getChannelStats(topic, rootId)?.parent).to.equal(rootId);
 			const metrics = leaf.getChannelMetrics(topic, rootId);
+			expect(metrics.parentHealthProbeReqSent).to.be.at.least(1);
+			expect(metrics.parentProbeReqSent).to.equal(metrics.parentHealthProbeReqSent);
 			expect(metrics.reparentStale).to.equal(0);
 			expect(metrics.reparentDisconnect).to.equal(0);
 			expect(metrics.joinAcceptReceived).to.equal(1);
