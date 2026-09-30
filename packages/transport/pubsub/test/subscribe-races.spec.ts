@@ -1096,6 +1096,7 @@ describe("pubsub (subscribe race regressions)", function () {
 
 		expect(await resolving).to.deep.equal({
 			authoritative: false,
+			autoCandidate: true,
 			root: currentRoot,
 		});
 	});
@@ -1355,6 +1356,7 @@ describe("pubsub (subscribe race regressions)", function () {
 				return {
 					root: pubsub.publicKeyHash,
 					candidateGeneration: currentGeneration,
+					autoCandidate: true,
 				};
 			};
 
@@ -1415,6 +1417,7 @@ describe("pubsub (subscribe race regressions)", function () {
 						? staleRoot
 						: pubsub.publicKeyHash,
 				candidateGeneration,
+				autoCandidate: true,
 			};
 		};
 		const staleJoin = stubFirstFanoutJoinUntilAbort(staleRoot);
@@ -1476,6 +1479,7 @@ describe("pubsub (subscribe race regressions)", function () {
 				root:
 					candidateGeneration === staleGeneration ? staleRoot : addedCandidate,
 				candidateGeneration,
+				autoCandidate: true,
 			};
 		};
 
@@ -1554,6 +1558,7 @@ describe("pubsub (subscribe race regressions)", function () {
 		internals.resolveShardRootState = async () => ({
 			root: staleRoot,
 			candidateGeneration: internals.getTopicRootCandidateGeneration(),
+			autoCandidate: internals.autoTopicRootCandidates,
 		});
 
 		const waitFor = sinon.stub(fanout, "waitFor").resolves([]);
@@ -1736,6 +1741,7 @@ describe("pubsub (subscribe race regressions)", function () {
 			return {
 				root: currentRoot,
 				candidateGeneration: currentGeneration,
+				autoCandidate: false,
 			};
 		};
 		let confirmationCalls = 0;
@@ -1777,6 +1783,7 @@ describe("pubsub (subscribe race regressions)", function () {
 			internals.normalizePeerTopicRootState(shardTopic, autoPeer),
 		).to.deep.equal({
 			authoritative: false,
+			autoCandidate: true,
 			root: deterministicRoot,
 		});
 	});
@@ -1792,6 +1799,7 @@ describe("pubsub (subscribe race regressions)", function () {
 		expect(internals.autoTopicRootCandidates).to.equal(true);
 		expect(await internals.resolveTopicRootState(shardTopic)).to.deep.equal({
 			authoritative: true,
+			autoCandidate: false,
 			root: configuredRoot,
 		});
 	});
@@ -3669,6 +3677,7 @@ describe("pubsub (subscribe race regressions)", function () {
 		const started = performance.now();
 		expect(await internals.resolveTopicRootState(topic)).to.deep.equal({
 			authoritative: true,
+			autoCandidate: false,
 			root: resolvedRoot,
 		});
 		expect(performance.now() - started).to.be.lessThan(500);
@@ -3756,6 +3765,7 @@ describe("pubsub (subscribe race regressions)", function () {
 
 		expect(await resolving).to.deep.equal({
 			authoritative: true,
+			autoCandidate: false,
 			root: earlier.publicKeyHash,
 		});
 		expect(internals.pendingTopicRootQueries.size).to.equal(0);
@@ -3825,6 +3835,7 @@ describe("pubsub (subscribe race regressions)", function () {
 
 			expect(await resolving).to.deep.equal({
 				authoritative: true,
+				autoCandidate: false,
 				root: later.publicKeyHash,
 			});
 			expect(settledAt! - startedAt).to.be.at.most(3_001);
@@ -3869,6 +3880,7 @@ describe("pubsub (subscribe race regressions)", function () {
 
 			expect(await resolving).to.deep.equal({
 				authoritative: false,
+				autoCandidate: true,
 				root: pubsub.publicKeyHash,
 			});
 			expect(settledAt! - startedAt).to.be.at.most(12_001);
@@ -3907,6 +3919,7 @@ describe("pubsub (subscribe race regressions)", function () {
 			await clock.tickAsync(1_051);
 			expect(await resolving).to.deep.equal({
 				authoritative: true,
+				autoCandidate: false,
 				root: warming.publicKeyHash,
 			});
 			expect(query.callCount).to.equal(5);
@@ -4198,6 +4211,7 @@ describe("pubsub (subscribe race regressions)", function () {
 		internals.shardRootCache.set("/peerbit/pubsub-shard/1/0", {
 			root: liveLaterHash,
 			authoritative: true,
+			autoCandidate: false,
 		});
 		const connectedTrackers = sinon
 			.stub(internals, "getConnectedTopicRootTrackers")
@@ -4325,7 +4339,11 @@ describe("pubsub (subscribe race regressions)", function () {
 				const shardTopic = args[0] as string;
 				const options = args[1] as { signal?: AbortSignal } | undefined;
 				if (shardTopic.endsWith("/0")) {
-					return { root: pubsub.publicKeyHash, candidateGeneration };
+					return {
+						root: pubsub.publicKeyHash,
+						candidateGeneration,
+						autoCandidate: true,
+					};
 				}
 				if (shardTopic.endsWith("/1")) {
 					const signal = options?.signal;
@@ -4372,7 +4390,11 @@ describe("pubsub (subscribe race regressions)", function () {
 		internals.resolveShardRootState = async () => {
 			resolutionEntered.resolve();
 			await resolutionGate.promise;
-			return { root: pubsub.publicKeyHash, candidateGeneration };
+			return {
+				root: pubsub.publicKeyHash,
+				candidateGeneration,
+				autoCandidate: true,
+			};
 		};
 
 		const opening = internals.ensureFanoutChannel(shardTopic);
