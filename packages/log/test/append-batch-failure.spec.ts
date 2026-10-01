@@ -196,13 +196,31 @@ describe("appendMany persistent metadata failure", () => {
 				const failure = new Error(`injected ${mode} rejection`);
 				const db = indexer!.properties.db;
 				const exec = db.exec.bind(db);
+				const index = log!.entryIndex.properties.index;
+				const putBatch = index.putBatch!.bind(index);
+				let measuredBatches = 0;
+				let insideInitialBatch = false;
 				let chunks = 0;
 				let releases = 0;
 				let injected = false;
 				let chunksAtFailure: number | undefined;
 				let releasesAtFailure: number | undefined;
+				sinon.stub(index, "putBatch").callsFake(async (rows) => {
+					if (measuredBatches > 0) return putBatch(rows);
+					expect(rows).to.have.length(65);
+					measuredBatches++;
+					insideInitialBatch = true;
+					try {
+						return await putBatch(rows);
+					} finally {
+						insideInitialBatch = false;
+					}
+				});
 				sinon.stub(db, "exec").callsFake(async (sql) => {
-					if (sql.startsWith("SAVEPOINT peerbit_put_batch_")) {
+					if (
+						insideInitialBatch &&
+						sql.startsWith("SAVEPOINT peerbit_put_batch_")
+					) {
 						chunks++;
 						if (mode === "second chunk" && chunks === 2) {
 							injected = true;
@@ -212,11 +230,13 @@ describe("appendMany persistent metadata failure", () => {
 						}
 					}
 					const result = await exec(sql);
-					if (sql.startsWith("RELEASE SAVEPOINT peerbit_put_batch_"))
+					if (
+						insideInitialBatch &&
+						sql.startsWith("RELEASE SAVEPOINT peerbit_put_batch_")
+					)
 						releases++;
 					return result;
 				});
-				const index = log!.entryIndex.properties.index;
 				if (mode === "post-apply head") {
 					const put = index.put.bind(index);
 					sinon.stub(index, "put").callsFake(async (row) => {
@@ -252,18 +272,21 @@ describe("appendMany persistent metadata failure", () => {
 				expect(batch.callCount).to.equal(1);
 				const entries = batch.firstCall.args[0] as Entry<Uint8Array>[];
 				sinon.restore();
+				expect(measuredBatches).to.equal(1);
 				expect(entries.length).to.equal(65);
 				expect(authorized).to.deep.equal(
 					Array.from({ length: 65 }, (_, i) => i),
 				);
 				expect(injected).to.equal(mode !== "success");
 				expect(result.error).to.equal(mode === "success" ? undefined : failure);
+				// Measure only the 65-row batch. The later predecessor scalar put
+				// may or may not use its own SQLite savepoint on a given backend.
 				if (mode !== "success") {
-					// The predecessor's scalar put has its own one-row SQLite chunk.
-					expect(chunksAtFailure).to.equal(mode === "second chunk" ? 2 : 3);
-					expect(releasesAtFailure).to.equal(mode === "second chunk" ? 1 : 3);
+					expect(chunksAtFailure).to.equal(2);
+					expect(releasesAtFailure).to.equal(mode === "second chunk" ? 1 : 2);
 				} else {
-					expect(chunks).to.equal(3);
+					expect(chunks).to.equal(2);
+					expect(releases).to.equal(2);
 				}
 				const allEntries = [...prior, ...entries];
 				const live = await snapshot(allEntries);
