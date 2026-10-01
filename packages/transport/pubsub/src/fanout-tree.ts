@@ -1464,6 +1464,11 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		this.topicRootControlPlane =
 			topicRootControlPlane ?? new TopicRootControlPlane();
 
+		this.registerUnderlayPeerDisconnectHandler();
+	}
+
+	private registerUnderlayPeerDisconnectHandler() {
+		if (this.underlayPeerDisconnectHandler) return;
 		const onPeerDisconnect = (ev: any) => {
 			const peerId = ev?.detail;
 			if (!peerId) return;
@@ -1480,6 +1485,15 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 			"peer:disconnect",
 			onPeerDisconnect as any,
 		);
+	}
+
+	public override async start() {
+		await super.start();
+		// stop() removes the listener, so a restarted instance must add it again
+		// (but not while a stop that raced this start is still tearing down).
+		if (this.started && !this.stopping) {
+			this.registerUnderlayPeerDisconnectHandler();
+		}
 	}
 
 	private createLoopCloseController(): AbortController {
