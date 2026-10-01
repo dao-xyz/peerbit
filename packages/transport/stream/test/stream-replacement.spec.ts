@@ -145,6 +145,28 @@ describe("stream same-identity replacement ownership", () => {
 		}
 	});
 
+	it("removes routes when a disconnected peer has no outbound streams", async () => {
+		const node = await createNode();
+		const subject = node.services.directstream;
+		const key = (await Ed25519Keypair.create()).publicKey;
+		subject.addPeer(key.toPeerId(), key, protocol, "closed");
+		const unreachable = sinon.spy(subject, "onPeerUnreachable");
+		try {
+			expect(
+				subject.routes.isReachable(subject.publicKeyHash, key.hashcode()),
+			).to.equal(true);
+			await subject["onPeerDisconnected"](key.toPeerId());
+			expect(subject.peers.has(key.hashcode())).to.equal(false);
+			expect(
+				subject.routes.isReachable(subject.publicKeyHash, key.hashcode()),
+			).to.equal(false);
+			expect(unreachable.calledOnceWithExactly(key.hashcode())).to.equal(true);
+		} finally {
+			unreachable.restore();
+			await node.stop();
+		}
+	});
+
 	it("does not remove replacement routes after an awaited old disconnect", async () => {
 		const node = await createNode();
 		const subject = node.services.directstream;
