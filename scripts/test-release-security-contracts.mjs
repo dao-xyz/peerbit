@@ -932,37 +932,66 @@ assert.match(
 	publicPackagePublisher,
 	/await discoverPublishableWorkspacePackages\(/,
 );
-const registryVerificationSchedules = [
-	...publicPackagePublisher.matchAll(
-		/^const REGISTRY_VERIFICATION_DELAYS_MS = Object\.freeze\(\[\s*((?:\d[\d_]*\s*,\s*)+)\]\);$/gm,
-	),
-];
+const readPublisherDurationDefault = (constant, envName) => {
+	const defaults = [
+		...publicPackagePublisher.matchAll(
+			new RegExp(
+				`^const ${constant} = readDurationEnv\\(\\s*"${envName}",\\s*(\\d[\\d_]*),?\\s*\\);$`,
+				"gm",
+			),
+		),
+	];
+	assert.equal(
+		defaults.length,
+		1,
+		`the publisher must retain one explicit ${constant} default`,
+	);
+	return Number(defaults[0][1].replaceAll("_", ""));
+};
+const registryVerificationWindowMs = readPublisherDurationDefault(
+	"REGISTRY_VERIFICATION_TIMEOUT_MS",
+	"PUBLISH_VERIFY_TIMEOUT_MS",
+);
+assert(
+	registryVerificationWindowMs >= 1_500_000,
+	"the publisher must tolerate at least 25 minutes of npm processing and propagation delay",
+);
+assert(
+	registryVerificationWindowMs <= 7_200_000,
+	"registry verification must remain bounded to at most two hours",
+);
+const registryVerificationPollMs = readPublisherDurationDefault(
+	"REGISTRY_VERIFICATION_POLL_MS",
+	"PUBLISH_VERIFY_POLL_MS",
+);
+assert(
+	registryVerificationPollMs > 0 &&
+		registryVerificationPollMs < registryVerificationWindowMs,
+	"registry verification must poll within its window",
+);
 assert.equal(
-	registryVerificationSchedules.length,
+	[
+		...publicPackagePublisher.matchAll(
+			/^await verifyPublished\(published\);$/gm,
+		),
+	].length,
 	1,
-	"the publisher must retain one explicit, immutable registry verification schedule",
+	"the publisher must verify every handed-off version after the publish loop",
 );
-const registryVerificationDelays = registryVerificationSchedules[0][1]
-	.split(",")
-	.map((delay) => delay.trim())
-	.filter(Boolean)
-	.map((delay) => Number(delay.replaceAll("_", "")));
-assert.equal(
-	registryVerificationDelays[0],
-	0,
-	"the publisher must verify immediately after a successful publish",
+assert.match(
+	publicPackagePublisher,
+	/if \(handed\.brandNew\) \{[\s\S]*?await verifyPublished\(\[pkg\]\);/,
+	"a brand-new package must be verified before anything after it is published",
 );
-const registryVerificationWindowMs = registryVerificationDelays.reduce(
-	(total, delay) => total + delay,
-	0,
+assert.match(
+	publicPackagePublisher,
+	/^const PUBLISH_CONFLICT_PATTERN =\s*\/cannot publish over the previously published version\|EPUBLISHCONFLICT\/i;$/m,
+	"only an upload npm already holds may be treated as accepted",
 );
-assert(
-	registryVerificationWindowMs >= 420_000,
-	"the publisher must tolerate at least seven minutes of npm processing and propagation delay",
-);
-assert(
-	registryVerificationWindowMs <= 600_000,
-	"registry verification must remain bounded to at most ten minutes",
+assert.match(
+	publicPackagePublisher,
+	/publish was accepted but the version never appeared on the registry/,
+	"a silent non-publish must still fail the release",
 );
 assert.doesNotMatch(
 	publicPackagePublisher,
