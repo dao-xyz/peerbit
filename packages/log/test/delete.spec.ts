@@ -8,6 +8,7 @@ import { JSON_ENCODING } from "./utils/encoding.js";
 
 describe("delete", function () {
 	let store: BlockStore;
+	const logs = new Set<Pick<Log<unknown>, "close">>();
 	const deferred = () => {
 		let resolve!: () => void;
 		const promise = new Promise<void>((done) => {
@@ -22,7 +23,12 @@ describe("delete", function () {
 	});
 
 	afterEach(async () => {
-		await store.stop();
+		try {
+			await Promise.all([...logs].map((log) => log.close()));
+		} finally {
+			logs.clear();
+			await store.stop();
+		}
 	});
 
 	const blockExists = async (hash: string): Promise<boolean> => {
@@ -36,6 +42,7 @@ describe("delete", function () {
 	describe("in-flight reads", () => {
 		it("does not republish a deleted entry after a single store read", async () => {
 			const log = new Log<Uint8Array>();
+			logs.add(log);
 			await log.open(store, signKey);
 			const { entry } = await log.append(new Uint8Array([1]));
 			(log.entryIndex as any).cache.clear();
@@ -72,6 +79,7 @@ describe("delete", function () {
 
 		it("does not publish a store read started during deletion", async () => {
 			const log = new Log<Uint8Array>();
+			logs.add(log);
 			await log.open(store, signKey);
 			const { entry } = await log.append(new Uint8Array([1]));
 
@@ -110,6 +118,7 @@ describe("delete", function () {
 
 		it("does not publish batched reads started during bulk deletion", async () => {
 			const log = new Log<Uint8Array>();
+			logs.add(log);
 			await log.open(store, signKey);
 			const { entry: firstDeleted } = await log.append(new Uint8Array([1]));
 			const { entry: secondDeleted } = await log.append(new Uint8Array([2]));
@@ -170,6 +179,7 @@ describe("delete", function () {
 
 		it("does not publish a batched read invalidated by native trim", async () => {
 			const log = new Log<Uint8Array>();
+			logs.add(log);
 			await log.open(store, signKey);
 			const { entry: trimmedEntry } = await log.append(new Uint8Array([1]));
 			const { entry: retainedEntry } = await log.append(new Uint8Array([2]));
@@ -229,6 +239,7 @@ describe("delete", function () {
 
 		it("keeps overlapping cache invalidations active until all settle", async () => {
 			const log = new Log<Uint8Array>();
+			logs.add(log);
 			await log.open(store, signKey);
 			const { entry } = await log.append(new Uint8Array([1]));
 			const shallow = (await log.getShallow(entry.hash))!;
@@ -361,6 +372,7 @@ describe("delete", function () {
 
 		it("only skips deleted entries when publishing a batched store read", async () => {
 			const log = new Log<Uint8Array>();
+			logs.add(log);
 			await log.open(store, signKey);
 			const { entry: deletedEntry } = await log.append(new Uint8Array([1]));
 			const { entry: retainedEntry } = await log.append(new Uint8Array([2]));
@@ -408,6 +420,7 @@ describe("delete", function () {
 	describe("deleteRecursively", () => {
 		it("deleted unreferences", async () => {
 			const log = new Log();
+			logs.add(log);
 			await log.open(store, signKey);
 			const { entry: e1 } = await log.append(new Uint8Array([1]));
 			const { entry: e2 } = await log.append(new Uint8Array([2]));
@@ -429,6 +442,7 @@ describe("delete", function () {
 
 		it("processes as long as allowed", async () => {
 			const log = new Log();
+			logs.add(log);
 			await log.open(store, signKey, { encoding: JSON_ENCODING });
 			const { entry: e1 } = await log.append(new Uint8Array([1]));
 			const { entry: e2 } = await log.append("hello2a");
@@ -458,6 +472,7 @@ describe("delete", function () {
 
 		it("keeps references", async () => {
 			const log = new Log();
+			logs.add(log);
 			await log.open(store, signKey, { encoding: JSON_ENCODING });
 			const { entry: e1 } = await log.append(new Uint8Array([1]));
 			const { entry: e2a } = await log.append("hello2a", {
@@ -484,6 +499,7 @@ describe("delete", function () {
 	describe("remove", () => {
 		it("can resolve the full entry from deleted", async () => {
 			const log = new Log();
+			logs.add(log);
 			let deleted: number = 0;
 
 			await log.open(store, signKey, {
@@ -504,6 +520,7 @@ describe("delete", function () {
 
 		it("if already removed no change", async () => {
 			const log = new Log();
+			logs.add(log);
 			let deleted: number = 0;
 
 			await log.open(store, signKey, {
@@ -534,7 +551,9 @@ describe("delete", function () {
 
 		it("concurrently after join", async () => {
 			const log1 = new Log();
+			logs.add(log1);
 			const log2 = new Log();
+			logs.add(log2);
 			await log1.open(store, signKey, { encoding: JSON_ENCODING });
 			await log2.open(store, signKey, { encoding: JSON_ENCODING });
 
@@ -560,7 +579,9 @@ describe("delete", function () {
 
 		it("concurrently delete same after join", async () => {
 			const log1 = new Log();
+			logs.add(log1);
 			const log2 = new Log();
+			logs.add(log2);
 			await log1.open(store, signKey, { encoding: JSON_ENCODING });
 			await log2.open(store, signKey, { encoding: JSON_ENCODING });
 
@@ -584,6 +605,7 @@ describe("delete", function () {
 	describe("delete", () => {
 		it("updates for new heads", async () => {
 			const log = new Log();
+			logs.add(log);
 			await log.open(store, signKey, { encoding: JSON_ENCODING });
 			const { entry: e1 } = await log.append(new Uint8Array([2]));
 			const { entry: e2 } = await log.append(new Uint8Array([3]));
