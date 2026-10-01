@@ -2041,37 +2041,72 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 				>();
 			this.pendingProviderQueryBySuffixKey.set(id.suffixKey, byReq);
 
-			const results = await Promise.all(
-				trackerPeers.map(async (trackerHash) => {
-					const reqId = this.nextProviderReqId(id.suffixKey);
-					const p = new Promise<FanoutProviderCandidate[]>((resolve) => {
-						byReq.set(reqId, { resolve });
-					});
-					void this._sendControl(
-						trackerHash,
-						this.codec.encodeProviderQuery(id.key, reqId, want, seed),
-					);
+			const queryController = new AbortController();
+			const querySignal = anySignal([signal, queryController.signal]);
+			let results: FanoutProviderCandidate[][];
+			try {
+				results = await Promise.all(
+					trackerPeers.map(async (trackerHash) => {
+						const reqId = this.nextProviderReqId(id.suffixKey);
+						const controller = new AbortController();
+						let pending:
+							| { resolve: (providers: FanoutProviderCandidate[]) => void }
+							| undefined;
+						let timer: ReturnType<typeof setTimeout> | undefined;
+						let onAbort!: () => void;
+						const remainingMs =
+							deadlineAt > 0
+								? Math.max(0, deadlineAt - Date.now())
+								: perTrackerTimeout;
+						const timeoutMs =
+							deadlineAt > 0
+								? Math.min(perTrackerTimeout, remainingMs)
+								: perTrackerTimeout;
 
-					const remainingMs =
-						deadlineAt > 0
-							? Math.max(0, deadlineAt - Date.now())
-							: perTrackerTimeout;
-					const timeoutMs =
-						deadlineAt > 0
-							? Math.min(perTrackerTimeout, remainingMs)
-							: perTrackerTimeout;
-
-					const res = await Promise.race([
-						p,
-						delay(timeoutMs, { signal }).then((): null => null),
-					]);
-					if (res == null) {
-						byReq.delete(reqId);
-						return [];
-					}
-					return res;
-				}),
-			);
+						try {
+							return await new Promise<FanoutProviderCandidate[]>(
+								(resolve, reject) => {
+									pending = { resolve };
+									byReq.set(reqId, pending);
+									onAbort = () => {
+										const error = new AbortError(
+											"fanout provider query aborted",
+										);
+										controller.abort(error);
+										reject(error);
+									};
+									querySignal.addEventListener("abort", onAbort, {
+										once: true,
+									});
+									if (querySignal.aborted) return onAbort();
+									// Bound signing as well as the reply and fence a signer that
+									// completes in the same turn as the deadline.
+									timer = setTimeout(() => {
+										controller.abort(
+											new AbortError("fanout provider query timed out"),
+										);
+										resolve([]);
+									}, timeoutMs);
+									void this._sendControl(
+										trackerHash,
+										this.codec.encodeProviderQuery(id.key, reqId, want, seed),
+										controller.signal,
+									).catch(reject);
+								},
+							);
+						} finally {
+							clearTimeout(timer);
+							querySignal.removeEventListener("abort", onAbort);
+							if (byReq.get(reqId) === pending) byReq.delete(reqId);
+							controller.abort(new AbortError("fanout provider query settled"));
+						}
+					}),
+				);
+			} finally {
+				// A failed tracker must also retire the still-pending siblings.
+				queryController.abort();
+				querySignal.clear();
+			}
 
 			const fresh = results.flat();
 			const merged: FanoutProviderCandidate[] = [...cached, ...fresh];
