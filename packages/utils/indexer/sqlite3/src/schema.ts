@@ -2237,8 +2237,8 @@ const resolveTableToQuery = (
 		for (const currentTable of currentTables.map((x) => x.table)) {
 			const schema = getSchema(currentTable.ctor);
 			const field = schema.fields.find((x) => x.key === key)!;
-			if (!field && currentTable.children.length > 0) {
-				// second arg is needed because of polymorphic fields we might end up here intentially to check what tables to query
+			if (!field && currentTable.children.length > 0 && _i < path.length - 1) {
+				// Terminal fields are selected across all variants below.
 				throw new MissingFieldError(
 					`Property with key "${key}" is not found in the schema ${JSON.stringify(schema.fields.map((x) => x.key))} `,
 				);
@@ -2300,7 +2300,9 @@ const resolveTableToQuery = (
 	}
 
 	let foreignTables: JoinTable[] = currentTables.filter((x) =>
-		x.table.fields.find((x) => x.key === path[path.length - 1]),
+		getSchema(x.table.ctor).fields.some(
+			(field) => field.key === path[path.length - 1],
+		),
 	);
 	if (foreignTables.length === 0) {
 		throw new MissingFieldError("Failed to find field to join");
@@ -2356,17 +2358,20 @@ const convertStateFieldQuery = (
 		let bindableBuilder: any[][] = [];
 
 		for (const ftable of foreignTables) {
-			if (ftable.table === table) {
+			const physicalTable = getNonInlinedTable(ftable.table);
+			if (physicalTable === table) {
 				throw new Error("Unexpected");
 			}
 
 			const { where, bindable } = convertQueryToSQLQuery(
 				query,
 				tables,
-				ftable.table,
+				physicalTable,
 				join,
 				path,
-				ftable.as,
+				ftable.table.inline
+					? createQueryTableReferenceName(physicalTable)
+					: ftable.as,
 				skipKeys,
 			);
 			whereBuilder.push(where);
