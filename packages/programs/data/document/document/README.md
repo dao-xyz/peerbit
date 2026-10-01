@@ -23,6 +23,21 @@ Persisted data and wire formats are unchanged. These checks authorize query
 responses, not all replication or direct block access, and do not by themselves
 provide store confidentiality.
 
+With `remote: { throwOnMissing: true }`, a responding peer's `NoAccess` rejects
+`search()`, `iterate().next()` and `iterate().all()` with the exported
+`AccessDeniedError`. Its `peers: string[]` reports the first denial encountered
+while processing received responses and need not list every denying peer. The
+RPC may wait for other requested peers before processing those responses. This
+also applies when permission is revoked before a continuation request. Healthy
+responses from other peers do not turn an observed denial into success.
+Omitting the option or setting it to `false` preserves best-effort behavior.
+Public response callbacks still run and their errors propagate unchanged.
+`search()` and `.all()` close their iterators on failure; manual iteration still
+requires `close()` in `finally`. Already returned pages are not rolled back.
+This query-level denial handling does not report `canRead`-filtered rows or
+establish cursor-loss detection, old-peer strict-protocol support, or a complete
+listing/snapshot guarantee. Wire formats are unchanged.
+
 ## Query timing diagnostics
 
 The existing `Documents.open({ type, sync: { profile } })` callback also receives

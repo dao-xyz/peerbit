@@ -5,6 +5,7 @@ import sinon from "sinon";
 import {
 	type AbstractSearchRequest,
 	type AbstractSearchResult,
+	AccessDeniedError,
 	type CanSearch,
 	CloseIteratorRequest,
 	CollectNextRequest,
@@ -108,6 +109,7 @@ describe("remote query authorization", () => {
 
 	const remoteSearch = async (
 		request: SearchRequest | SearchRequestIndexed | IterationRequest,
+		expectDenied = false,
 	) => {
 		const responses: AbstractSearchResult[] = [];
 		const expectedReplicationIntent =
@@ -127,12 +129,17 @@ describe("remote query authorization", () => {
 				},
 			},
 		};
+		let error: unknown;
 		const rows = await bounded(
 			request instanceof SearchRequestIndexed
 				? observer.docs.index.search(request, { ...options, resolve: false })
 				: observer.docs.index.search(request, { ...options, resolve: true }),
 			"authenticated remote search",
-		);
+		).catch((caught: unknown) => {
+			if (!expectDenied) throw caught;
+			error = caught;
+			return [];
+		});
 		expect(responses).to.have.length(1);
 		expect(searched).to.have.length(1);
 		// These are decoded wire requests, not a normalized/fabricated request.
@@ -149,7 +156,7 @@ describe("remote query authorization", () => {
 		}
 		expect(await observer.docs.index.getSize()).to.equal(0);
 		expect(observer.docs.log.log.length).to.equal(0);
-		return { rows, response: responses[0] };
+		return { rows, error, response: responses[0] };
 	};
 
 	for (const [name, create] of [
@@ -165,9 +172,12 @@ describe("remote query authorization", () => {
 			searchPolicy = () => false;
 			const processQuery = sinon.spy(donor.docs.index, "processQuery");
 			const request = create();
-			const { rows, response } = await remoteSearch(request);
+			const { error, response } = await remoteSearch(request, true);
 			expect(response).to.be.instanceOf(NoAccess);
-			expect(rows).to.be.empty;
+			expect(error).to.be.instanceOf(AccessDeniedError);
+			expect(error)
+				.to.have.property("peers")
+				.that.deep.equals([donorKey.hashcode()]);
 			expect(read).to.be.empty;
 			expect(processQuery.called).to.be.false;
 			expect((donor.docs.index as any)._resultQueue.has(request.idString)).to.be
