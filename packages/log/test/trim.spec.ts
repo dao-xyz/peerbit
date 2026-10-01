@@ -220,7 +220,6 @@ describe("trim", function () {
 			}, // bytelength is 15 so for every new helloX we hav eto delete the previous helloY
 		);
 
-		let t0 = +new Date();
 		const { entry: a1, removed: r1 } = await log.append(new Uint8Array([1]));
 		expect(r1).to.be.empty;
 		expect(await log.blocks.get(a1.hash)).to.exist;
@@ -230,7 +229,12 @@ describe("trim", function () {
 		const { entry: a2, removed: r2 } = await log.append(new Uint8Array([2]));
 		expect(r2.map((x) => x.hash)).to.have.members([]);
 
-		await waitFor(() => +new Date() - t0 > maxAge);
+		// Expire the newest entry, not a timer started before either append.
+		await waitFor(
+			() =>
+				BigInt(Date.now()) * 1_000_000n >
+				a2.meta.clock.timestamp.wallTime + BigInt(maxAge) * 1_000_000n,
+		);
 		// @ts-ignore
 		const { entry: _a3, removed: r3 } = await log.append(new Uint8Array([2]));
 		expect(r3.map((x) => x.hash)).to.have.members([a1.hash, a2.hash]);

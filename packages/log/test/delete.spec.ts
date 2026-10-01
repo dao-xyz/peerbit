@@ -227,39 +227,39 @@ describe("delete", function () {
 			);
 		});
 
-		it("keeps overlapping deletion invalidations active until all settle", async () => {
+		it("keeps overlapping cache invalidations active until all settle", async () => {
 			const log = new Log<Uint8Array>();
 			await log.open(store, signKey);
 			const { entry } = await log.append(new Uint8Array([1]));
 			const shallow = (await log.getShallow(entry.hash))!;
 			(log.entryIndex as any).cache.clear();
 
-			const removeStarted = [deferred(), deferred()];
-			const releaseRemove = [deferred(), deferred()];
-			const originalRm = store.rm.bind(store);
-			let removeCalls = 0;
-			store.rm = async (cid) => {
-				if (cid !== entry.hash || removeCalls >= removeStarted.length) {
-					return originalRm(cid);
-				}
-				const call = removeCalls++;
-				removeStarted[call]!.resolve();
-				await releaseRemove[call]!.promise;
-				if (call === 1) {
-					return originalRm(cid);
-				}
-			};
+			const guardStarted = [deferred(), deferred()];
+			const releaseGuard = [deferred(), deferred()];
+			const withCacheInvalidation = (
+				log.entryIndex as any
+			).withCacheInvalidation.bind(log.entryIndex);
 
-			let firstDeletion: Promise<unknown> | undefined;
-			let secondDeletion: Promise<unknown> | undefined;
+			let firstGuard: Promise<unknown> | undefined;
+			let secondGuard: Promise<unknown> | undefined;
 			try {
-				firstDeletion = log.entryIndex.delete(entry.hash, shallow);
-				await removeStarted[0]!.promise;
-				secondDeletion = log.entryIndex.delete(entry.hash, shallow);
-				await removeStarted[1]!.promise;
+				firstGuard = withCacheInvalidation([entry.hash], async () => {
+					guardStarted[0]!.resolve();
+					await releaseGuard[0]!.promise;
+				});
+				await guardStarted[0]!.promise;
+				secondGuard = withCacheInvalidation([entry.hash], async () => {
+					guardStarted[1]!.resolve();
+					await releaseGuard[1]!.promise;
+					await log.entryIndex.delete(entry.hash, shallow);
+				});
+				await guardStarted[1]!.promise;
+				expect(
+					(log.entryIndex as any).activeCacheInvalidations.get(entry.hash),
+				).to.equal(2);
 
-				releaseRemove[0]!.resolve();
-				await firstDeletion;
+				releaseGuard[0]!.resolve();
+				await firstGuard;
 				expect(
 					(log.entryIndex as any).activeCacheInvalidations.get(entry.hash),
 				).to.equal(1);
@@ -270,15 +270,13 @@ describe("delete", function () {
 					undefined,
 				);
 
-				releaseRemove[1]!.resolve();
-				await secondDeletion;
+				releaseGuard[1]!.resolve();
+				await secondGuard;
 			} finally {
-				for (const release of releaseRemove) {
+				for (const release of releaseGuard) {
 					release.resolve();
 				}
-				store.rm = originalRm;
-				await firstDeletion;
-				await secondDeletion;
+				await Promise.allSettled([firstGuard, secondGuard]);
 			}
 
 			expect((log.entryIndex as any).activeCacheInvalidations.size).to.equal(0);
@@ -286,6 +284,79 @@ describe("delete", function () {
 				0,
 			);
 			expect(await log.get(entry.hash)).to.equal(undefined);
+		});
+
+		it("serializes same-hash deletions without publishing reads into the cache", async () => {
+			const log = new Log<Uint8Array>();
+			logs.add(log);
+			await log.open(store, signKey);
+			const { entry } = await log.append(new Uint8Array([1]));
+			const shallow = (await log.getShallow(entry.hash))!;
+			(log.entryIndex as any).cache.clear();
+
+			const removeStarted = deferred();
+			const releaseRemove = deferred();
+			const secondAdmission = deferred();
+			const originalRm = store.rm.bind(store);
+			const originalAcquire = log.entryIndex.acquireHashMutationLocks.bind(
+				log.entryIndex,
+			);
+			let admissions = 0;
+			let removeCalls = 0;
+			let secondAcquired = false;
+			log.entryIndex.acquireHashMutationLocks = (hashes) => {
+				const pending = originalAcquire(hashes);
+				if (++admissions === 2) {
+					secondAdmission.resolve();
+					return pending.then((owner) => {
+						secondAcquired = true;
+						return owner;
+					});
+				}
+				return pending;
+			};
+			store.rm = async (cid) => {
+				if (cid === entry.hash && ++removeCalls === 1) {
+					removeStarted.resolve();
+					await releaseRemove.promise;
+				}
+				return originalRm(cid);
+			};
+
+			let firstDeletion: Promise<unknown> | undefined;
+			let secondDeletion: Promise<unknown> | undefined;
+			try {
+				firstDeletion = log.entryIndex.delete(entry.hash, shallow);
+				await removeStarted.promise;
+				secondDeletion = log.entryIndex.delete(entry.hash, shallow);
+				// A missing lease must fail the assertions, not strand this gate.
+				await Promise.race([secondAdmission.promise, secondDeletion]);
+				expect(removeCalls).to.equal(1);
+				expect((await log.get(entry.hash))?.hash).to.equal(entry.hash);
+				expect((log.entryIndex as any).cache.get(entry.hash)).to.equal(
+					undefined,
+				);
+				expect(secondAcquired).to.equal(false);
+				expect(removeCalls).to.equal(1);
+				releaseRemove.resolve();
+				await Promise.all([firstDeletion, secondDeletion]);
+				expect(secondAcquired).to.equal(true);
+				expect(removeCalls).to.equal(2);
+			} finally {
+				releaseRemove.resolve();
+				await Promise.allSettled([firstDeletion, secondDeletion]);
+				store.rm = originalRm;
+				log.entryIndex.acquireHashMutationLocks = originalAcquire;
+			}
+
+			expect(log.length).to.equal(0);
+			expect(await log.has(entry.hash)).to.equal(false);
+			expect(await log.get(entry.hash)).to.equal(undefined);
+			expect((log.entryIndex as any).cache.get(entry.hash)).to.equal(undefined);
+			expect((log.entryIndex as any).activeCacheInvalidations.size).to.equal(0);
+			expect((log.entryIndex as any).inFlightCachePublications.size).to.equal(
+				0,
+			);
 		});
 
 		it("only skips deleted entries when publishing a batched store read", async () => {
