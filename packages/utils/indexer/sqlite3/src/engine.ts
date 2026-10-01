@@ -1031,13 +1031,16 @@ export class SQLiteIndex<T extends Record<string, any>>
 			return [] as IndexedResult<types.ReturnTypeFromShape<T, S>>[];
 		};
 
-		/* let totalCount: undefined | number = undefined; */
-		const fetch = async (
-			amount: number,
-			pageOptions?: { offset?: number; advance?: boolean },
-		) => {
+		const withPagedRead = async <R>(
+			read: () => Promise<R>,
+			closedValue: R,
+		): Promise<R> => {
+			const closed = () => {
+				closeAsDone();
+				return closedValue;
+			};
 			if (explicitlyClosed || this.isClosing()) {
-				return closeAsDone();
+				return closed();
 			}
 			this.assertOpen();
 			try {
@@ -1062,103 +1065,89 @@ export class SQLiteIndex<T extends Record<string, any>>
 					await planningScope.beforePrepare();
 				}
 				if (explicitlyClosed || this.closed) {
-					return closeAsDone();
+					return closed();
 				}
 
 				const page = await this.withDatabaseBarrier(async () => {
 					if (explicitlyClosed || this.isClosing()) {
-						return closeAsDone();
+						return closed();
 					}
 					this.assertOpen();
-					if (!pagedInitialized) {
-						stmt = await this.properties.db.prepare(sqlFetch!, sqlFetch!);
-						if (explicitlyClosed) return closeAsDone();
-
-						// Bump timeout timer
-						iterator.expire = Date.now() + this.iteratorTimeout;
-						pagedInitialized = true;
-					}
-
-					started = true;
-
-					const allResults = await planningScope.perform(async () => {
-						const allResults: Record<string, any>[] = await stmt.all([
-							...bindable,
-							amount,
-							pageOptions?.offset ?? offset,
-						]);
-						return allResults;
-					});
-					if (explicitlyClosed) return closeAsDone();
-
-					/* const allResults: Record<string, any>[] = await stmt.all([
-					...bindable,
-					...(amount !== "all" ? [amount,
-						offset] : [])
-				]);
-		*/
-					let results: IndexedResult<types.ReturnTypeFromShape<T, S>>[] =
-						await Promise.all(
-							allResults.map(async (row: any) => {
-								let selectedTable = this._rootTables.find(
-									(table) =>
-										row[getTablePrefixedField(table, this.primaryKeyString)] !=
-										null,
-								)!;
-
-								const value = await resolveInstanceFromValue<T, S>(
-									row,
-									this.tables,
-									selectedTable,
-									this.resolveDependencies.bind(this),
-									true,
-									options?.shape,
-								);
-
-								return {
-									value,
-									id: types.toId(
-										convertFromSQLType(
-											row[
-												getTablePrefixedField(
-													selectedTable,
-													this.primaryKeyString,
-												)
-											],
-											selectedTable.primaryField!.from!.type,
-										),
-									),
-								};
-							}),
-						);
-
-					if (explicitlyClosed) return closeAsDone();
-					if (pageOptions?.advance !== false) {
-						offset += results.length;
-					}
-
-					/* const uniqueIds = new Set(results.map((x) => x.id.primitive));
-				if (uniqueIds.size !== results.length) {
-					throw new Error("Duplicate ids in result set");
-				} */
-
-					if (results.length < amount) {
-						hasMore = false;
-						await this.clearupIterator(requestId);
-					}
-					return results;
+					return read();
 				});
-				return explicitlyClosed ? closeAsDone() : page;
+				return explicitlyClosed ? closed() : page;
 			} catch (error) {
 				if (explicitlyClosed || this.isClosing()) {
-					return closeAsDone();
+					return closed();
 				}
 				throw error;
 			}
 		};
+		// Every page of one scan uses the same admission. Planning above may
+		// acquire admission for DDL, so it must remain outside this page reader.
+		const fetchPage = async (
+			amount: number,
+			pageOffset = offset,
+		): Promise<Record<string, any>[]> => {
+			if (explicitlyClosed || this.isClosing()) return closeAsDone();
+			this.assertOpen();
+			if (!pagedInitialized) {
+				stmt = await this.properties.db.prepare(sqlFetch!, sqlFetch!);
+				if (explicitlyClosed) return closeAsDone();
+				iterator.expire = Date.now() + this.iteratorTimeout;
+				pagedInitialized = true;
+			}
+			started = true;
+			const allResults: Record<string, any>[] = await planningScope.perform(
+				async () => stmt.all([...bindable, amount, pageOffset]),
+			);
+			if (explicitlyClosed) return closeAsDone();
+			return allResults;
+		};
+		const rowTable = (row: Record<string, any>) =>
+			this._rootTables.find(
+				(table) =>
+					row[getTablePrefixedField(table, this.primaryKeyString)] != null,
+			)!;
+		const rowId = (row: Record<string, any>, table = rowTable(row)) =>
+			types.toId(
+				convertFromSQLType(
+					row[getTablePrefixedField(table, this.primaryKeyString)],
+					table.primaryField!.from!.type,
+				),
+			);
+		const resolveRows = (
+			rows: Record<string, any>[],
+		): Promise<IndexedResult<types.ReturnTypeFromShape<T, S>>[]> =>
+			Promise.all(
+				rows.map(async (row) => {
+					const table = rowTable(row);
+					const value = await resolveInstanceFromValue<T, S>(
+						row,
+						this.tables,
+						table,
+						this.resolveDependencies.bind(this),
+						true,
+						options?.shape,
+					);
+					return { value, id: rowId(row, table) };
+				}),
+			);
+		const fetch = async (amount: number) => {
+			const page = await fetchPage(amount);
+			if (explicitlyClosed) return closeAsDone();
+			const results = await resolveRows(page);
+			if (explicitlyClosed) return closeAsDone();
+			offset += results.length;
+			if (results.length < amount) {
+				hasMore = false;
+				await this.clearupIterator(requestId);
+			}
+			return results;
+		};
 
 		const iterator = {
-			fetch,
+			fetch: (amount: number) => withPagedRead(() => fetch(amount), []),
 			/* countStatement: countStmt, */
 			expire: Date.now() + this.iteratorTimeout,
 		};
@@ -1200,40 +1189,7 @@ export class SQLiteIndex<T extends Record<string, any>>
 							freshStatement.all(toBind),
 						);
 					if (explicitlyClosed) return closeAsDone();
-					const results: IndexedResult<types.ReturnTypeFromShape<T, S>>[] =
-						await Promise.all(
-							allResults.map(async (row: any) => {
-								let selectedTable = this._rootTables.find(
-									(table) =>
-										row[getTablePrefixedField(table, this.primaryKeyString)] !=
-										null,
-								)!;
-
-								const value = await resolveInstanceFromValue<T, S>(
-									row,
-									this.tables,
-									selectedTable,
-									this.resolveDependencies.bind(this),
-									true,
-									options?.shape,
-								);
-
-								return {
-									value,
-									id: types.toId(
-										convertFromSQLType(
-											row[
-												getTablePrefixedField(
-													selectedTable,
-													this.primaryKeyString,
-												)
-											],
-											selectedTable.primaryField!.from!.type,
-										),
-									),
-								};
-							}),
-						);
+					const results = await resolveRows(allResults);
 					if (explicitlyClosed) return closeAsDone();
 					started = true;
 					hasMore = false;
@@ -1261,66 +1217,76 @@ export class SQLiteIndex<T extends Record<string, any>>
 			if (amount <= 0) {
 				return [];
 			}
-			if (!mutationMode && this.mutationVersion === iteratorMutationVersion) {
-				const results = await fetch(amount);
-				if (explicitlyClosed) return [];
-				markYielded(results);
-				return results;
-			}
+			return withPagedRead(async () => {
+				// A queued write may have committed while admission was pending.
+				if (!mutationMode && this.mutationVersion === iteratorMutationVersion) {
+					const results = await fetch(amount);
+					if (explicitlyClosed) return [];
+					markYielded(results);
+					return results;
+				}
 
-			mutationMode = true;
-			iteratorMutationVersion = this.mutationVersion;
-			kept = undefined;
+				mutationMode = true;
+				iteratorMutationVersion = this.mutationVersion;
+				kept = undefined;
 
-			const results: IndexedResult<types.ReturnTypeFromShape<T, S>>[] = [];
-			const pageSize = Number.isFinite(amount)
-				? Math.max(Math.floor(amount), 128)
-				: 1024;
-			let scanOffset = 0;
-			let exhausted = false;
-			let hasAdditionalUnseen = false;
-			while (results.length < amount) {
-				const page = await fetch(pageSize, {
-					offset: scanOffset,
-					advance: false,
-				});
+				const results: IndexedResult<types.ReturnTypeFromShape<T, S>>[] = [];
+				const selected = new Set<string>();
+				const pageSize = Number.isFinite(amount)
+					? Math.max(Math.floor(amount), 128)
+					: 1024;
+				let scanOffset = 0;
+				let exhausted = false;
+				let hasAdditionalUnseen = false;
+				while (results.length < amount) {
+					const page = await fetchPage(pageSize, scanOffset);
+					if (explicitlyClosed) return [];
+					scanOffset += page.length;
+					if (page.length < pageSize) {
+						exhausted = true;
+					}
+					// Revisited prefix rows need only their IDs, not reconstruction.
+					const toResolve: Record<string, any>[] = [];
+					for (const row of page) {
+						const key = idKey(rowId(row));
+						if (yielded.has(key) || selected.has(key)) {
+							continue;
+						}
+						if (results.length + toResolve.length < amount) {
+							selected.add(key);
+							toResolve.push(row);
+						} else {
+							hasAdditionalUnseen = true;
+						}
+					}
+					results.push(...(await resolveRows(toResolve)));
+					if (explicitlyClosed) return [];
+					if (page.length === 0 || exhausted) {
+						break;
+					}
+				}
+				if (exhausted) await this.clearupIterator(requestId);
 				if (explicitlyClosed) return [];
-				scanOffset += page.length;
-				if (page.length < pageSize) {
-					exhausted = true;
-				}
-				for (const result of page) {
-					const key = idKey(result.id);
-					if (yielded.has(key)) {
-						continue;
-					}
-					if (results.length < amount) {
-						yielded.add(key);
-						results.push(result);
-					} else {
-						hasAdditionalUnseen = true;
-					}
-				}
-				if (page.length === 0 || exhausted) {
-					break;
-				}
-			}
-			hasMore = !exhausted || hasAdditionalUnseen;
-			return results;
+				hasMore = !exhausted || hasAdditionalUnseen;
+				// A failed scan owns no rows; externally claimed rows remain consumed.
+				const unclaimed = results.filter(
+					(result) => !yielded.has(idKey(result.id)),
+				);
+				markYielded(unclaimed);
+				return unclaimed;
+			}, []);
 		};
 		const pendingUnseen = async () => {
 			let count = 0;
-			const pageSize = 128;
+			// Reuse the bounded next(Infinity) scan size to avoid repeated aggregation.
+			const pageSize = 1024;
 			let scanOffset = 0;
 			while (true) {
-				const page = await fetch(pageSize, {
-					offset: scanOffset,
-					advance: false,
-				});
+				const page = await fetchPage(pageSize, scanOffset);
 				if (explicitlyClosed) return 0;
 				scanOffset += page.length;
-				for (const result of page) {
-					if (!yielded.has(idKey(result.id))) {
+				for (const row of page) {
+					if (!yielded.has(idKey(rowId(row)))) {
 						count++;
 					}
 				}
@@ -1328,6 +1294,8 @@ export class SQLiteIndex<T extends Record<string, any>>
 					break;
 				}
 			}
+			await this.clearupIterator(requestId);
+			if (explicitlyClosed) return 0;
 			hasMore = count > 0;
 			kept = count;
 			return count;
@@ -1376,23 +1344,32 @@ export class SQLiteIndex<T extends Record<string, any>>
 					return 0;
 				}
 				this.assertOpen();
-				if (mutationMode || this.mutationVersion !== iteratorMutationVersion) {
+				const unchanged = await this.withDatabaseIfOpen<number | undefined>(
+					0,
+					async () => {
+						if (explicitlyClosed) return 0;
+						if (
+							mutationMode ||
+							this.mutationVersion !== iteratorMutationVersion
+						) {
+							return undefined;
+						}
+						if (!hasMore) return 0;
+						if (kept != null) return kept;
+						totalCount = totalCount ?? (await this.countAdmitted(request));
+						if (explicitlyClosed) return 0;
+						if (mutationMode) return undefined;
+						kept = Math.max(totalCount - offset, 0);
+						hasMore = kept > 0;
+						return kept;
+					},
+				);
+				if (unchanged !== undefined) return unchanged;
+				return withPagedRead(async () => {
 					mutationMode = true;
 					iteratorMutationVersion = this.mutationVersion;
 					return pendingUnseen();
-				}
-				if (!hasMore) {
-					return 0;
-				}
-				if (kept != null) {
-					return kept;
-				}
-				totalCount = totalCount ?? (await this.count(request));
-				if (explicitlyClosed) return 0;
-
-				kept = Math.max(totalCount - offset, 0); // this could potentially be negative if new records are added and we iterate concurrently, so we do Math.max here
-				hasMore = kept > 0;
-				return kept;
+				}, 0);
 			},
 			done: () => {
 				if (explicitlyClosed || this.isClosing()) {
@@ -1586,38 +1563,40 @@ export class SQLiteIndex<T extends Record<string, any>>
 	}
 
 	async count(request?: types.CountOptions): Promise<number> {
-		return this.withDatabaseIfOpen(0, async () => {
-			let ret: number = 0;
-			let once = false;
-			let lastError: Error | undefined = undefined;
-			for (const table of this._rootTables) {
-				try {
-					const { sql, bindable } = convertCountRequestToQuery(
-						request,
-						this.tables,
-						table,
-					);
-					const stmt = await this.properties.db.prepare(sql, sql);
-					const result = await stmt.get(bindable);
-					if (result != null) {
-						ret += Number(result.count);
-						once = true;
-					}
-				} catch (error) {
-					if (error instanceof MissingFieldError) {
-						lastError = error;
-						continue;
-					}
+		return this.withDatabaseIfOpen(0, () => this.countAdmitted(request));
+	}
 
-					throw error;
+	private async countAdmitted(request?: types.CountOptions): Promise<number> {
+		let ret: number = 0;
+		let once = false;
+		let lastError: Error | undefined = undefined;
+		for (const table of this._rootTables) {
+			try {
+				const { sql, bindable } = convertCountRequestToQuery(
+					request,
+					this.tables,
+					table,
+				);
+				const stmt = await this.properties.db.prepare(sql, sql);
+				const result = await stmt.get(bindable);
+				if (result != null) {
+					ret += Number(result.count);
+					once = true;
 				}
-			}
+			} catch (error) {
+				if (error instanceof MissingFieldError) {
+					lastError = error;
+					continue;
+				}
 
-			if (!once) {
-				throw lastError!;
+				throw error;
 			}
-			return ret;
-		});
+		}
+
+		if (!once) {
+			throw lastError!;
+		}
+		return ret;
 	}
 
 	get cursorCount(): number {

@@ -63,6 +63,15 @@ describe("SQLite in-flight iterator close", () => {
 					if (isSelect) await holdSelect?.();
 					return result;
 				});
+				if (/\bcount\s*\(/i.test(sql)) {
+					const get = statement.get.bind(statement);
+					sinon.stub(statement, "get").callsFake(async (...args) => {
+						selects++;
+						const result = await get(...args);
+						await holdSelect?.();
+						return result;
+					});
+				}
 			}
 			return statement;
 		});
@@ -103,20 +112,15 @@ describe("SQLite in-flight iterator close", () => {
 		const entered = gate(),
 			release = gate();
 		releases.push(release.resolve);
-		const barrier = index["withDatabaseBarrier"].bind(index);
 		let pages = 0;
-		// Preserve real SQLite, decoding and barrier release. Hold only delivery
-		// of one completed page to the iterator's rescan loop.
-		sinon
-			.stub(index as any, "withDatabaseBarrier")
-			.callsFake(async (operation: any) => {
-				const result = await barrier(operation);
-				if (Array.isArray(result) && ++pages === pageNumber) {
-					entered.resolve();
-					await release.promise;
-				}
-				return result;
-			});
+		// Preserve real SQLite and admission. Hold one completed SQL page before
+		// delivering it, without depending on the number of admission windows.
+		holdSelect = async () => {
+			if (++pages === pageNumber) {
+				entered.resolve();
+				await release.promise;
+			}
+		};
 		return { entered: entered.promise, release: release.resolve };
 	};
 	const waitEntered = async (
@@ -215,13 +219,10 @@ describe("SQLite in-flight iterator close", () => {
 		const entered = gate(),
 			release = gate();
 		releases.push(release.resolve);
-		const count = index.count.bind(index);
-		sinon.stub(index, "count").callsFake(async (request) => {
-			const result = await count(request);
+		holdSelect = async () => {
 			entered.resolve();
 			await release.promise;
-			return result;
-		});
+		};
 		const operation = track(Promise.resolve(iterator.pending()));
 		await waitEntered(entered.promise, operation);
 		await iterator.close();
