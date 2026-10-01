@@ -1255,6 +1255,11 @@ export class Documents<
 		return this._index;
 	}
 
+	override get events() {
+		this.trackDocumentChangeListeners();
+		return super.events;
+	}
+
 	private isNativeMode(): boolean {
 		return this._mode === "native";
 	}
@@ -2154,6 +2159,8 @@ export class Documents<
 		if (this._documentChangeListenerTrackingInitialized) {
 			return;
 		}
+		// Set the guard before reading events: deserialized instances initialize
+		// through the accessor, which can re-enter here once without wrapping twice.
 		this._documentChangeListenerTrackingInitialized = true;
 		this._documentChangeListeners ??= [];
 		this._documentChangeListenerCount ??= 0;
