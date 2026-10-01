@@ -2872,6 +2872,8 @@ export class EntryIndex<T> {
 				const nativeGraphPutAppendChain =
 					!nativeGraphUpdated &&
 					!this.properties.onGidRemoved &&
+					(!properties.heads ||
+						(entries.length === 1 && properties.heads[0] === true)) &&
 					properties.externalNextHashes &&
 					this.properties.nativeGraph?.graph.putAppendChain
 						? this.properties.nativeGraph.graph.putAppendChain.bind(
@@ -3170,6 +3172,8 @@ export class EntryIndex<T> {
 				const nativeGraphUpdated = properties.nativeGraphUpdated === true;
 				const nativeGraphPutAppendChain =
 					!nativeGraphUpdated &&
+					(!properties.heads ||
+						(entries.length === 1 && properties.heads[0] === true)) &&
 					properties.externalNextHashes &&
 					this.properties.nativeGraph?.graph.putAppendChain
 						? this.properties.nativeGraph.graph.putAppendChain.bind(

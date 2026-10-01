@@ -839,6 +839,7 @@ type TrustedDocumentSharedLogAppendProperties = {
 };
 
 type TrustedDocumentSharedLogAppendManyProperties = {
+	requireAuthorization?: boolean;
 	resolveTrimmedEntries?: boolean;
 	nexts?: ShallowOrFullEntry<Operation>[][];
 	nativeBackboneDocumentIndexes?: NativeBackboneDocumentIndexCommitInput[];
@@ -1132,6 +1133,7 @@ type NativeDocumentAppendCommitInput<
 
 type NativeDocumentAppendManyCommitInput<T, I extends Record<string, any>> = {
 	puts: NativeDocumentAppendCommitFactsInput<T, I>[];
+	requireAuthorization?: boolean;
 	resolveTrimmedEntries: boolean;
 	options?: DocumentPutOptions;
 	useNativeExistingDocumentContext?: boolean;
@@ -3632,7 +3634,7 @@ export class Documents<
 					);
 				}
 				// Capture every encoded value and key before the first asynchronous
-				// operation, then reuse these bytes in the ordinary native batch path.
+				// operation, then reuse these bytes in the independent batch path.
 				batch.prepared = docs.map((doc) => this.preparePlainPut(doc, true));
 				docs = batch.prepared.map(({ document }) => document);
 			}
@@ -3693,7 +3695,8 @@ export class Documents<
 		if (docs.length === 0) {
 			return { entries: [], removed: [] };
 		}
-		if (!this.canUsePlainPutManyFastPath(docs, options)) {
+		const requiredAutoBatch = !!batch && this._mode === "auto";
+		if (!this.canUsePlainPutManyFastPath(docs, options, requiredAutoBatch)) {
 			if (batch)
 				throw new Error(
 					"Required putMany batching requires the independent batched document path",
@@ -3720,6 +3723,10 @@ export class Documents<
 		}
 
 		const documentAppendCommit = await this.commitNativeDocumentAppendMany({
+			requireAuthorization:
+				requiredAutoBatch &&
+				!!this._optionCanPerform &&
+				!this._optionCanPerformNativePolicy,
 			puts: prepared.map((item) => ({
 				document: item.document,
 				key: item.key,
@@ -3735,7 +3742,7 @@ export class Documents<
 		if (!documentAppendCommit) {
 			if (batch)
 				throw new Error(
-					"Required putMany batching requires native batched payload append support",
+					"Required putMany batching requires batched payload append support",
 				);
 			if (hasPersistedDelivery(options)) {
 				throw new Error(
@@ -3786,11 +3793,13 @@ export class Documents<
 	private canUsePlainPutFastPath(
 		doc: T,
 		options?: DocumentPutOptions,
+		requiredAutoBatch = false,
 	): boolean {
 		const persistedDelivery = hasPersistedDelivery(options);
 		return (
 			this._mode !== "compat" &&
-			this.canPerformAllowsPlainPutFastPath(doc) &&
+			((requiredAutoBatch && !this._optionCanPerformNativePolicy) ||
+				this.canPerformAllowsPlainPutFastPath(doc)) &&
 			!this.immutable &&
 			!this.strictHistory &&
 			!Program.isPrototypeOf(this._clazz) &&
@@ -3810,7 +3819,8 @@ export class Documents<
 			options?.replicate !== true &&
 			(!options?.target ||
 				options.target === "none" ||
-				(persistedDelivery && options.target === "replicators")) &&
+				((persistedDelivery || requiredAutoBatch) &&
+					options.target === "replicators")) &&
 			(options?.delivery === undefined ||
 				options.delivery === false ||
 				persistedDelivery) &&
@@ -3822,19 +3832,22 @@ export class Documents<
 	private canUsePlainPutManyFastPath(
 		docs: T[],
 		options?: DocumentPutOptions,
+		requiredAutoBatch = false,
 	): boolean {
 		const persistedDelivery = hasPersistedDelivery(options);
 		return (
 			options?.unique === true &&
 			options?.replicate !== true &&
 			(options?.target === "none" ||
-				(persistedDelivery &&
+				((persistedDelivery || requiredAutoBatch) &&
 					(options.target === undefined ||
 						options.target === "replicators"))) &&
 			(options?.delivery === undefined ||
 				options.delivery === false ||
 				persistedDelivery) &&
-			docs.every((doc) => this.canUsePlainPutFastPath(doc, options))
+			docs.every((doc) =>
+				this.canUsePlainPutFastPath(doc, options, requiredAutoBatch),
+			)
 		);
 	}
 
@@ -4274,8 +4287,9 @@ export class Documents<
 		localCommitEvidence: TrustedLocalCommitEvidence | undefined,
 	): Promise<DocumentAppendManyCommitFacts<T, I> | undefined> {
 		const trustedLog = asTrustedDocumentSharedLog(this.log);
-		const nativeBackboneDocumentIndexes =
-			await this.prepareNativeBackboneDocumentIndexCommitBatch(input.puts);
+		const nativeBackboneDocumentIndexes = input.requireAuthorization
+			? undefined
+			: await this.prepareNativeBackboneDocumentIndexCommitBatch(input.puts);
 		const nativeBackboneDocumentIndexInputs =
 			nativeBackboneDocumentIndexes?.map((commit, index) =>
 				this.toNativeBackboneDocumentIndexCommitInput(
@@ -4310,6 +4324,7 @@ export class Documents<
 				payloads,
 				appendOptions,
 				{
+					requireAuthorization: input.requireAuthorization,
 					resolveTrimmedEntries: input.resolveTrimmedEntries,
 					nexts,
 					nativeBackboneDocumentIndexes: nativeBackboneDocumentIndexInputs,
