@@ -36,6 +36,10 @@ describe("encryption", function () {
 		let log1: Log<string>, log2: Log<string>;
 		let receiverKey: X25519Keypair;
 
+		afterEach(async () => {
+			await Promise.all([log1?.close(), log2?.close()]);
+		});
+
 		beforeEach(async () => {
 			store = new AnyBlockStore();
 			await store.start();

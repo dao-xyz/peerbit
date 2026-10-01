@@ -6,6 +6,15 @@ import { JSON_ENCODING } from "./utils/encoding.js";
 
 describe("signature", function () {
 	let store: BlockStore;
+	const logs = new Set<Pick<Log<unknown>, "close">>();
+
+	afterEach(async () => {
+		try {
+			await Promise.all([...logs].map((log) => log.close()));
+		} finally {
+			logs.clear();
+		}
+	});
 
 	before(async () => {
 		store = new AnyBlockStore();
@@ -18,30 +27,35 @@ describe("signature", function () {
 
 	it("has the correct identity", async () => {
 		const log = new Log();
+		logs.add(log);
 		await log.open(store, signKey);
 		expect(log.identity.publicKey).to.equal(signKey.publicKey);
 	});
 
 	it("has the correct public key", async () => {
 		const log = new Log();
+		logs.add(log);
 		await log.open(store, signKey);
 		expect(log.identity.publicKey).equal(signKey.publicKey);
 	});
 
 	it("has the correct pkSignature", async () => {
 		const log = new Log();
+		logs.add(log);
 		await log.open(store, signKey);
 		expect(log.identity.publicKey).equal(signKey.publicKey);
 	});
 
 	it("has the correct signature", async () => {
 		const log = new Log();
+		logs.add(log);
 		await log.open(store, signKey);
 		expect(log.identity.publicKey).equal(signKey.publicKey);
 	});
 
 	it("entries contain an identity", async () => {
 		const log = new Log();
+		logs.add(log);
 		await log.open(store, signKey, { encoding: JSON_ENCODING });
 		await log.append("one");
 		expect((await log.toArray())[0].signatures).to.exist;
@@ -54,6 +68,7 @@ describe("signature", function () {
 
 	it("can sign with multiple identities", async () => {
 		const log = new Log();
+		logs.add(log);
 		await log.open(store, signKey, { encoding: JSON_ENCODING });
 		const signers = [signKey.sign.bind(signKey), signKey2.sign.bind(signKey2)];
 
@@ -100,8 +115,10 @@ describe("signature", function () {
 	// We dont check signatues during join anymore
 	it("throws an error if log is signed but the signature doesn't verify", async () => {
 		const log1 = new Log<Uint8Array>();
+		logs.add(log1);
 		await log1.open(store, signKey);
 		const log2 = new Log<Uint8Array>();
+		logs.add(log2);
 		await log2.open(store, signKey2);
 		let err;
 

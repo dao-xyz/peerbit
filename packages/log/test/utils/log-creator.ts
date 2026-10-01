@@ -28,17 +28,22 @@ export class LogCreator {
 			"entryA9",
 			"entryA10",
 		];
+		const logs: Log<string>[] = [];
 
 		const create = async (): Promise<Log<string>> => {
 			const id = randomBytes(32);
 			const logOptions = { encoding: JSON_ENCODING };
 			const logA = new Log<string>({ id });
+			logs.push(logA);
 			await logA.open(store, signKeys[0], logOptions);
 			const logB = new Log<string>({ id });
+			logs.push(logB);
 			await logB.open(store, signKeys[1], logOptions);
 			const log3 = new Log<string>({ id });
+			logs.push(log3);
 			await log3.open(store, signKeys[2], logOptions);
 			const log4 = new Log<string>({ id });
+			logs.push(log4);
 			await log4.open(store, signKeys[3], logOptions);
 			for (let i = 1; i <= 5; i++) {
 				await logA.append("entryA" + i);
@@ -68,7 +73,16 @@ export class LogCreator {
 			return log4;
 		};
 
-		return { log: await create(), expectedData: expectedData };
+		try {
+			const log = await create();
+			await Promise.all(
+				logs.filter((other) => other !== log).map((other) => other.close()),
+			);
+			return { log, expectedData };
+		} catch (error) {
+			await Promise.allSettled(logs.map((log) => log.close()));
+			throw error;
+		}
 	}
 
 	static async createLogWithTwoHundredEntries(
@@ -79,13 +93,16 @@ export class LogCreator {
 
 		const expectedData: string[] = [];
 		const id = randomBytes(32);
+		const logs: Log<string>[] = [];
 
 		const create = async (): Promise<Log<string>> => {
 			const logOptions = { encoding: JSON_ENCODING };
 
 			const logA = new Log<string>({ id });
+			logs.push(logA);
 			await logA.open(store, signKeys[0], logOptions);
 			const logB = new Log<string>({ id });
+			logs.push(logB);
 			await logB.open(store, signKeys[1], logOptions);
 			for (let i = 1; i <= amount; i++) {
 				await logA.append("entryA" + i);
@@ -98,7 +115,15 @@ export class LogCreator {
 			return logA;
 		};
 
-		const log = await create();
-		return { log: log, expectedData: expectedData };
+		try {
+			const log = await create();
+			await Promise.all(
+				logs.filter((other) => other !== log).map((other) => other.close()),
+			);
+			return { log, expectedData };
+		} catch (error) {
+			await Promise.allSettled(logs.map((log) => log.close()));
+			throw error;
+		}
 	}
 }

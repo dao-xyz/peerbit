@@ -15,6 +15,16 @@ import { JSON_ENCODING } from "./utils/encoding.js";
 
 describe("properties", function () {
 	let store: BlockStore;
+	const logs = new Set<Pick<Log<unknown>, "close">>();
+
+	afterEach(async () => {
+		try {
+			await Promise.all([...logs].map((log) => log.close()));
+		} finally {
+			logs.clear();
+		}
+	});
+
 	before(async () => {
 		store = new AnyBlockStore();
 		await store.start();
@@ -27,6 +37,7 @@ describe("properties", function () {
 	describe("constructor", () => {
 		it("creates an empty log with default params", async () => {
 			const log = new Log();
+			logs.add(log);
 			await log.open(store, signKey, undefined);
 			assert.notStrictEqual(log.entryIndex, null);
 			assert.notStrictEqual(log.id, null);
@@ -239,12 +250,14 @@ describe("properties", function () {
 		});
 		it("sets an id", async () => {
 			const log = new Log({ id: new Uint8Array(1) });
+			logs.add(log);
 			await log.open(store, signKey);
 			expect(log.id).to.deep.equal(new Uint8Array(1));
 		});
 
 		it("generates if id is not passed as an argument", async () => {
 			const log = new Log();
+			logs.add(log);
 			await log.open(store, signKey);
 			expect(log.id).to.be.instanceOf(Uint8Array);
 		});
@@ -257,6 +270,7 @@ describe("properties", function () {
 
 		beforeEach(async () => {
 			log = new Log<string>();
+			logs.add(log);
 			await log.open(store, signKey, { encoding: JSON_ENCODING });
 			await log.append("one", { meta: { gidSeed: Buffer.from("a") } });
 			await log.append("two", { meta: { gidSeed: Buffer.from("a") } });
@@ -277,6 +291,7 @@ describe("properties", function () {
 
 		beforeEach(async () => {
 			log = new Log<Uint8Array>();
+			logs.add(log);
 			await log.open(store, signKey, { encoding: JSON_ENCODING });
 			await log.append("one", {
 				meta: {
@@ -434,6 +449,7 @@ describe("properties", function () {
 			};
 
 			const logWithResolver = new Log<Uint8Array>();
+			logs.add(logWithResolver);
 			await logWithResolver.open(store, signKey, {
 				encoding: JSON_ENCODING,
 				indexer: new HashmapIndices(),
@@ -556,6 +572,7 @@ describe("properties", function () {
 
 		beforeEach(async () => {
 			log = new Log();
+			logs.add(log);
 			await log.open(store, signKey, { encoding: JSON_ENCODING });
 			await log.append("one", { meta: { gidSeed: Buffer.from("a") } });
 		});
@@ -584,6 +601,7 @@ describe("properties", function () {
 
 		beforeEach(async () => {
 			log = new Log();
+			logs.add(log);
 			await log.open(store, signKey, { encoding: JSON_ENCODING });
 			await log.append("one", { meta: { gidSeed: Buffer.from("a") } });
 		});
@@ -606,6 +624,7 @@ describe("properties", function () {
 	describe("values", () => {
 		it("returns all entries in the log", async () => {
 			const log = new Log<Uint8Array>();
+			logs.add(log);
 			await log.open(store, signKey);
 			expect((await log.toArray()) instanceof Array).equal(true);
 			expect(log.length).equal(0);
@@ -629,6 +648,7 @@ describe("properties", function () {
 	describe("size", () => {
 		it("returns the sum of payloads", async () => {
 			const log = new Log<Uint8Array>();
+			logs.add(log);
 			await log.open(store, signKey);
 			await log.append(new Uint8Array([1]));
 			await log.append(new Uint8Array([2, 3]));
@@ -651,9 +671,11 @@ describe("properties", function () {
 			let indices = new HashmapIndices();
 
 			const log1 = new Log();
+			logs.add(log1);
 			await log1.open(store, signKey, { indexer: await indices.scope("x") });
 
 			const log2 = new Log();
+			logs.add(log2);
 			await log2.open(store, signKey, { indexer: await indices.scope("y") });
 			await log1.append(new Uint8Array([0]));
 
