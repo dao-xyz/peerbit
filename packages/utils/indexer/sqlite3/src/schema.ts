@@ -1718,6 +1718,19 @@ export const convertSearchRequestToQuery = (
 
 	const selectsPerTable = selectAllFieldsFromTables(rootTables, options?.shape);
 	let bindableBuilder: any[] = [];
+	// Page root IDs before reconstructing arrays. Keep custom sorts and
+	// polymorphic results on the general path; their ordering spans projections.
+	// Deep child filters can also depend on reconstruction joins for parent aliases.
+	const pageBeforeHydration =
+		rootTables.length === 1 &&
+		rootTables[0].primary !== false &&
+		rootTables[0].children.every((child) => child.children.length === 0) &&
+		[...flattenQuery(normalizedRequest)].length === 1 &&
+		!!selectsPerTable[0].groupBy &&
+		!options?.fetchAll &&
+		(!normalizedRequest?.sort ||
+			(Array.isArray(normalizedRequest.sort) &&
+				normalizedRequest.sort.length === 0));
 
 	for (const [i, table] of rootTables.entries()) {
 		const { selects, joins, groupBy } = selectsPerTable[i];
@@ -1752,7 +1765,9 @@ export const convertSearchRequestToQuery = (
 			throw error;
 		}
 
-		const selectQuery = generateSelectQuery(table, selects);
+		const selectQuery = pageBeforeHydration
+			? `select DISTINCT ${table.name}.${escapeColumnName(table.primary as string)} as '${getTablePrefixedField(table, table.primary as string)}' FROM ${table.name}`
+			: generateSelectQuery(table, selects);
 
 		for (const flattenRequest of flattenQuery(normalizedRequest)) {
 			try {
@@ -1761,12 +1776,12 @@ export const convertSearchRequestToQuery = (
 					flattenRequest,
 					tables,
 					table,
-					new Map(joins), // copy the map, else we might might do unececessary joins
+					pageBeforeHydration ? new Map() : new Map(joins),
 					[],
 					options,
 				);
 
-				unionBuilder += `${unionBuilder.length > 0 ? " UNION " : ""} ${selectQuery} ${query} ${groupBy ? "GROUP BY " + groupBy : ""}`;
+				unionBuilder += `${unionBuilder.length > 0 ? " UNION " : ""} ${selectQuery} ${query} ${groupBy && !pageBeforeHydration ? "GROUP BY " + groupBy : ""}`;
 				matchedOnce = true;
 				bindableBuilder.push(...bindable);
 			} catch (error) {
@@ -1783,9 +1798,19 @@ export const convertSearchRequestToQuery = (
 	if (!matchedOnce) {
 		throw lastError!;
 	}
+	const sql = `${unionBuilder} ${orderByClause ? "ORDER BY " + orderByClause : ""} ${options?.fetchAll ? "" : "limit ? offset ?"}`;
+	if (pageBeforeHydration) {
+		const table = rootTables[0];
+		const { selects, joins, groupBy } = selectsPerTable[0];
+		const { join } = buildJoin(joins, options);
+		return {
+			sql: `${generateSelectQuery(table, selects)} ${join} WHERE ${table.name}.${escapeColumnName(table.primary as string)} IN (${sql}) GROUP BY ${groupBy} ORDER BY ${orderByClause}`,
+			bindable: bindableBuilder,
+		};
+	}
 
 	return {
-		sql: `${unionBuilder} ${orderByClause ? "ORDER BY " + orderByClause : ""} ${options?.fetchAll ? "" : "limit ? offset ?"}`,
+		sql,
 		bindable: bindableBuilder,
 	};
 };
