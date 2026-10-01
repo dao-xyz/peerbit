@@ -2104,6 +2104,7 @@ type SharedAppendBaseOptions<T> = AppendOptions<T> & {
 };
 
 type TrustedLogAppendOptions<T> = AppendOptions<T> & {
+	__peerbitProfile?: SyncProfileFn;
 	__peerbitCanAppendAlreadyValidated?: boolean;
 	__peerbitOnLocalCommit?: (
 		hashes: readonly string[],
@@ -2647,6 +2648,7 @@ export class SharedLog<
 	private _logProperties?: LogProperties<T> &
 		LogEvents<T> &
 		SharedLogOptions<T, D, R>;
+	private _appendProfiles?: WeakMap<object, SyncProfileFn>;
 	// A successful native signature batch is only an authorization input for the
 	// receive operation that requested it. Facts retain the exact verified bytes
 	// and are leased around the lower-log join; byte comparison prevents an
@@ -13140,6 +13142,28 @@ export class SharedLog<
 		checkedPruneCoordinator.setRetry(hash, state);
 	}
 
+	// Documents supplies fresh owned options and an already-isolated trace sink.
+	// Keep this outside the public option snapshot and preserve append overrides.
+	private appendWithProfile(
+		data: T,
+		options: SharedAppendOptions<T>,
+		profile: SyncProfileFn,
+	) {
+		const profiles = (this._appendProfiles ??= new WeakMap());
+		profiles.set(options, profile);
+		try {
+			const result = this.append(data, options);
+			void result.then(
+				() => profiles.delete(options),
+				() => profiles.delete(options),
+			);
+			return result;
+		} catch (error) {
+			profiles.delete(options);
+			throw error;
+		}
+	}
+
 	async append(
 		data: T,
 		options?: SharedAppendOptions<T> | undefined,
@@ -13148,6 +13172,7 @@ export class SharedLog<
 		removed: ShallowOrFullEntry<T>[];
 	}> {
 		this.throwIfNativeDurableCommitFailed();
+		const profile = options ? this._appendProfiles?.get(options) : undefined;
 		const persistedInvocation = this.capturePersistedAppendInvocation(options);
 		options = persistedInvocation?.options ?? options;
 		const persistedDelivery = persistedInvocation?.delivery;
@@ -13161,6 +13186,9 @@ export class SharedLog<
 			options,
 			ownershipLifecycleController,
 		);
+		if (profile) {
+			(appendOptions as TrustedLogAppendOptions<T>).__peerbitProfile = profile;
+		}
 		let committedHashes: readonly string[] | undefined;
 		let persistedAppendCommit: PreparedLocalAppendCommit<R> | undefined;
 		let persistedPlanningRecord:
@@ -13222,19 +13250,37 @@ export class SharedLog<
 			throwIfDeliveryAborted();
 			const processingEntry =
 				persistedPlanningRecord?.createFullPlanningSource?.() ?? result.entry;
-			await this.processLocalAppend(processingEntry, result.removed, options, {
-				minReplicasValue,
-				appendFacts: persistedAppendCommit,
-				// Persisted settlement must confirm each exact receiver generation before
-				// using its transfer as receipt evidence. Keep the optimistic append path
-				// out of that ordering decision.
-				captureDeferredBackfillSource: persistedDelivery
-					? (source) => {
-							persistedBackfillSource = source;
-						}
-					: undefined,
-				ownershipLifecycleController,
-			});
+			const processingStartedAt = syncProfileStart(profile);
+			let processingOutcome = "error";
+			try {
+				await this.processLocalAppend(
+					processingEntry,
+					result.removed,
+					options,
+					{
+						minReplicasValue,
+						appendFacts: persistedAppendCommit,
+						// Persisted settlement must confirm each exact receiver generation before
+						// using its transfer as receipt evidence. Keep the optimistic append path
+						// out of that ordering decision.
+						captureDeferredBackfillSource: persistedDelivery
+							? (source) => {
+									persistedBackfillSource = source;
+								}
+							: undefined,
+						ownershipLifecycleController,
+					},
+				);
+				processingOutcome = "success";
+			} finally {
+				if (profile) {
+					emitSyncProfileDuration(profile, processingStartedAt, {
+						name: "sharedLog.append.localProcessing",
+						component: "shared-log",
+						details: { outcome: processingOutcome, inclusive: true },
+					});
+				}
+			}
 			localAppendProcessed = true;
 			throwIfDeliveryAborted();
 			if (persistedDelivery && persistedDeadline) {
