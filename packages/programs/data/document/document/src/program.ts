@@ -749,7 +749,6 @@ class NativeDocumentBackend<T, I extends Record<string, any>>
 type PreparedPut<T> = {
 	document: T;
 	encodedDocument: Uint8Array;
-	encodedOperation?: Uint8Array;
 	keyValue: indexerTypes.Ideable;
 	key: indexerTypes.IdKey;
 	operation: PutOperation | PutWithKeyOperation;
@@ -3389,28 +3388,32 @@ export class Documents<
 	private preparePut(doc: T): PreparedPut<T> {
 		const keyValue = this.idResolver(doc);
 		indexerTypes.checkId(keyValue);
-		let encodedDocument = serialize(doc);
-		if (encodedDocument.length > MAX_BATCH_SIZE) {
+		const serializedDocument = serialize(doc);
+		if (serializedDocument.length > MAX_BATCH_SIZE) {
 			throw new Error(
 				`Document is too large (${
-					encodedDocument.length * 1e-6
+					serializedDocument.length * 1e-6
 				}) mb). Needs to be less than ${MAX_BATCH_SIZE * 1e-6} mb`,
 			);
 		}
+		// Keep plain Uint8Array semantics without exposing a pooled Buffer's
+		// unrelated bytes. Dedicated payload buffers do not need another copy.
+		const encodedDocument =
+			serializedDocument.byteOffset === 0 &&
+			serializedDocument.byteLength === serializedDocument.buffer.byteLength
+				? new Uint8Array(serializedDocument.buffer)
+				: new Uint8Array(serializedDocument);
 
 		const key = indexerTypes.toId(keyValue);
 		// B12: writes always encode PutOperation. The compatibility-6
 		// PutWithKeyOperation ENCODE branch is retired; the tag-0 DECODE stays
 		// forever (see operation-tombstone pins).
-		const encodedOperation = encodePutOperationPayload(encodedDocument);
-		encodedDocument = encodedOperation.subarray(PUT_OPERATION_PREFIX_LENGTH);
 		const operation = new PutOperation({
 			data: encodedDocument,
 		});
 		return {
 			document: doc,
 			encodedDocument,
-			encodedOperation,
 			keyValue,
 			key,
 			operation,
@@ -3871,8 +3874,7 @@ export class Documents<
 			payloadData:
 				"operationPayloadBytes" in prepared
 					? prepared.operationPayloadBytes
-					: (prepared.encodedOperation ??
-						encodePutOperationPayload(prepared.operation.data)),
+					: encodePutOperationPayload(prepared.operation.data),
 			key: prepared.key,
 			operation: "operation" in prepared ? prepared.operation : undefined,
 			next,
