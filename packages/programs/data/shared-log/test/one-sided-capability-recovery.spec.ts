@@ -109,17 +109,50 @@ describe("receive admission replication-info V2 one-sided topic recovery", funct
 		await pair.receiverLog._onSubscription(event);
 	};
 
-	for (const missDeparture of [false, true]) {
-		it(`recovers a fresh receiver after ${missDeparture ? "a lost authenticated departure" : "normal close"} on the same transport`, async () => {
+	for (const departure of [
+		{ name: "normal close", missDeparture: false, missReset: false },
+		{ name: "only Unsubscribe lost", missDeparture: true, missReset: false },
+		{
+			name: "both negative announcements lost",
+			missDeparture: true,
+			missReset: true,
+		},
+	]) {
+		it(`recovers a fresh receiver after ${departure.name} on the same transport`, async () => {
 			const pair = await openPair();
+			const membershipEvents: string[] = [];
+			for (const event of ["replicator:join", "replicator:leave"] as const) {
+				pair.sender.log.events.addEventListener(event, ({ detail }) => {
+					if (detail.publicKey.hashcode() === pair.receiverHash) {
+						membershipEvents.push(event);
+					}
+				});
+			}
+			expect([...(await pair.sender.log.getReplicators())]).to.have.members([
+				pair.senderHash,
+				pair.receiverHash,
+			]);
+			const remoteRangeIds = async () =>
+				(
+					await pair.sender.log.replicationIndex
+						.iterate({ query: { hash: pair.receiverHash } })
+						.all()
+				)
+					.map(({ value }) => value.idString)
+					.sort();
+			const previousRangeIds = await remoteRangeIds();
+			expect(previousRangeIds).not.to.be.empty;
+			let closing = true;
 			let droppedDepartures = 0;
-			if (missDeparture) {
+			let droppedResets = 0;
+			if (departure.missDeparture) {
 				const pubsub = pair.sender.node.services.pubsub as any;
 				const original = pubsub.processUnsubscribeMessage.bind(pubsub);
 				sinon
 					.stub(pubsub, "processUnsubscribeMessage")
 					.callsFake((message: any, unsubscribe: any, from: any) => {
 						if (
+							closing &&
 							from.hashcode() === pair.receiverHash &&
 							unsubscribe.topics.includes(pair.senderLog.topic)
 						) {
@@ -131,12 +164,53 @@ describe("receive admission replication-info V2 one-sided topic recovery", funct
 						return original(message, unsubscribe, from);
 					});
 			}
+			if (departure.missReset) {
+				const onMessage = pair.sender.log.onMessage.bind(pair.sender.log);
+				sinon
+					.stub(pair.sender.log, "onMessage")
+					.callsFake(async (message, context) => {
+						// This log's authenticated receive seam: discard only the closing
+						// peer's empty Full, never positive Fulls or recovery traffic.
+						if (
+							closing &&
+							context.from?.hashcode() === pair.receiverHash &&
+							message instanceof FullReplicationInfoV2Message &&
+							message.segments.length === 0
+						) {
+							droppedResets++;
+							return;
+						}
+						return onMessage(message, context);
+					});
+			}
 			const receiverPeer = session!.peers[1];
 			const transportSession = (receiverPeer.services.pubsub as any).session;
 			const previousSenderSession = pair.senderLog._peerSessions.current(
 				pair.receiverHash,
 			);
+			expect(previousSenderSession?.phase).to.equal("open");
 			expect(await pair.receiver.close()).to.equal(true);
+			await waitForResolved(
+				async () => {
+					expect(droppedDepartures > 0).to.equal(departure.missDeparture);
+					expect(droppedResets > 0).to.equal(departure.missReset);
+					expect([...(await pair.sender.log.getReplicators())]).to.have.members(
+						departure.missReset
+							? [pair.senderHash, pair.receiverHash]
+							: [pair.senderHash],
+					);
+					expect(await remoteRangeIds()).to.deep.equal(
+						departure.missReset ? previousRangeIds : [],
+					);
+					expect(membershipEvents).to.deep.equal(
+						departure.missReset ? [] : ["replicator:leave"],
+					);
+				},
+				{ timeout: 10_000 },
+			);
+			closing = false;
+			// A fresh program/topic instance, not a new transport generation or
+			// process restart. The events above describe committed membership.
 			const reopened = await EventStore.open<EventStore<string, any>>(
 				pair.sender.address!,
 				receiverPeer,
@@ -154,11 +228,11 @@ describe("receive admission replication-info V2 one-sided topic recovery", funct
 			);
 			const reopenedLog = reopened.log as any;
 			await waitForResolved(
-				() => {
+				async () => {
 					const currentSenderSession = pair.senderLog._peerSessions.current(
 						pair.receiverHash,
 					);
-					if (missDeparture) {
+					if (departure.missDeparture) {
 						expect(droppedDepartures).to.be.greaterThan(0);
 						expect(currentSenderSession).to.equal(previousSenderSession);
 					} else {
@@ -175,10 +249,27 @@ describe("receive admission replication-info V2 one-sided topic recovery", funct
 						expect(log._v2Receive._receiveStates.get(hash)?.phase).to.equal(
 							"active",
 						);
+						expect(log._v2Send._sendStates.get(hash)?.established).to.equal(
+							true,
+						);
 						expect(log.uniqueReplicators.has(hash)).to.equal(true);
+						expect([...(await log.getReplicators())]).to.have.members([
+							pair.senderHash,
+							pair.receiverHash,
+						]);
 					}
 				},
 				{ timeout: 5_000 },
+			);
+			const { entry } = await reopened.add("after program reopen");
+			await waitForResolved(
+				async () => {
+					expect(await pair.sender.log.log.has(entry.hash)).to.equal(true);
+				},
+				{ timeout: 10_000 },
+			);
+			expect(membershipEvents).to.deep.equal(
+				departure.missReset ? [] : ["replicator:leave", "replicator:join"],
 			);
 		});
 	}

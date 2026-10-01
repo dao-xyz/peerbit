@@ -67,6 +67,26 @@ Windows, browsers, and custom persistence backends keep their existing behavior.
 
 ## Replication status
 
+### Membership and peer sessions
+
+`replicator:join` and `replicator:leave` describe changes to this log's local
+replication membership, not every connection or program open. A same-key return
+can retain membership and emit no new join; after removal, a later admission can
+emit join again. `getReplicators()` lists known indexed replicators, not a live
+connection inventory or a bounded crash detector.
+
+For authenticated topic subscription changes, use the pubsub `subscribe` event,
+filtered by this log's topic. Its optional `session` identifies the signed
+transport generation; reopening a program on the same transport does not imply
+a new generation or a new subscription event. For receipt preflight, use
+`persisted-receipt:readiness` with `getPersistedReceiptPeerReadiness()` or
+`waitForPersistedReceiptPeerReadiness()`, which track replacement generations.
+Neither membership, subscription, nor readiness events prove that a peer is
+caught up or has durably stored an entry. Only an exact-entry persisted receipt
+provides the latter proof.
+
+### Local resource telemetry
+
 `SharedLog.getReplicationStatus()` returns a detached, local snapshot of the
 current storage use, minimum range coverage, and active-replicator count. The
 local `replication:status` event is emitted for the first snapshot and then only
