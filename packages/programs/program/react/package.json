@@ -1,6 +1,6 @@
 {
 	"name": "@peerbit/program-react",
-	"version": "0.4.69",
+	"version": "0.4.70",
 	"description": "React hooks for Peerbit programs",
 	"sideEffects": false,
 	"type": "module",

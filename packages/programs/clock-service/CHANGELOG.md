@@ -1,5 +1,16 @@
 # Changelog
 
+## 3.2.164
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @peerbit/shared-log@16.0.38
+  - @peerbit/program@6.0.66
+  - @peerbit/rpc@6.2.2
+  - @peerbit/log@6.2.36
+  - @peerbit/trusted-network@6.0.140
+
 ## 3.2.163
 
 ### Patch Changes

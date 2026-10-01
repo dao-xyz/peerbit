@@ -1,5 +1,13 @@
 # Changelog
 
+## 5.4.8
+
+### Patch Changes
+
+- Updated dependencies [[`3ba8a8b`](https://github.com/dao-xyz/peerbit/commit/3ba8a8b8eb259839a6f20ecab7a05a0abac3fd39)]:
+  - @peerbit/pubsub@5.4.11
+  - @peerbit/program@6.0.66
+
 ## 5.4.7
 
 ### Patch Changes
