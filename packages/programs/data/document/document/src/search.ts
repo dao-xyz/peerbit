@@ -5939,6 +5939,9 @@ export class DocumentIndex<
 													e?.message,
 											);
 											peerBufferMap.delete(peer);
+											if (remoteRequestOptions?.throwOnMissing) {
+												throw e;
+											}
 										});
 								}),
 						);
