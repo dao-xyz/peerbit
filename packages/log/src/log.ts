@@ -52,6 +52,12 @@ import {
 	type ShallowOrFullEntry,
 } from "./entry.js";
 import { findUniques } from "./find-uniques.js";
+import {
+	type InternalProfileSink,
+	emitInternalProfileDuration,
+	internalProfileStart,
+	withInternalProfile,
+} from "./internal-profile.js";
 import * as LogError from "./log-errors.js";
 import * as Sorting from "./log-sorting.js";
 import { logger as baseLogger } from "./logger.js";
@@ -145,18 +151,6 @@ const hasNativeCommitOwnershipAck = (
 
 type MaybePromise<T> = T | Promise<T>;
 
-type InternalProfileValue = string | number | boolean | undefined;
-type InternalProfileEvent = {
-	name: string;
-	component?: string;
-	durationMs?: number;
-	entries?: number;
-	bytes?: number;
-	messages?: number;
-	count?: number;
-	details?: Record<string, InternalProfileValue>;
-};
-type InternalProfileSink = (event: InternalProfileEvent) => void;
 type InternalAppendHashesSink = (hashes: string[]) => void | Promise<void>;
 // Private cross-package seam used by SharedLog to bind a post-commit delivery
 // proof to the exact lower-log mutation. Hash-only callers remain supported;
@@ -223,22 +217,6 @@ const createLogDropProgress = (): LogDropProgress => ({
 	indexerStopped: false,
 });
 
-const internalProfileNow = () => globalThis.performance?.now?.() ?? Date.now();
-const internalProfileStart = (sink: InternalProfileSink | undefined) =>
-	sink ? internalProfileNow() : 0;
-const emitInternalProfileDuration = (
-	sink: InternalProfileSink | undefined,
-	startedAt: number,
-	event: Omit<InternalProfileEvent, "durationMs">,
-) => {
-	if (!sink) {
-		return;
-	}
-	sink({
-		...event,
-		durationMs: internalProfileNow() - startedAt,
-	});
-};
 const EMPTY_NEXT_HASHES: string[] = [];
 const EMPTY_NEXT_ENTRIES: Sorting.SortableEntry[] = [];
 const normalizedUniqueStrings = (values: string[]): string[] =>
@@ -378,6 +356,28 @@ const isRecoverableJoinResolveError = (error: unknown): boolean => {
 	);
 };
 
+// Keep cancellation distinguishable inside shared joins. A live borrower can
+// retry after a cancelled owner physically settles, without swallowing a real
+// storage/callback failure or cancelling work owned by somebody else.
+class JoinCancelledError extends Error {
+	constructor(readonly signal: AbortSignal) {
+		super("Join cancelled");
+	}
+}
+
+const throwIfJoinCancelled = (signal?: AbortSignal) => {
+	if (signal?.aborted) throw new JoinCancelledError(signal);
+};
+
+const rethrowJoinCancellation = (error: unknown, signal?: AbortSignal) => {
+	if (
+		signal?.aborted &&
+		(error === signal.reason || getErrorName(error) === "AbortError")
+	) {
+		throw new JoinCancelledError(signal);
+	}
+};
+
 type CreateSqliteIndexer = typeof import("@peerbit/indexer-sqlite3").create;
 let sqliteCreate: CreateSqliteIndexer | undefined;
 const createDefaultIndexer = async (): Promise<Indices> => {
@@ -451,6 +451,17 @@ export type AppendOptions<T> = {
 type TrustedAppendOptions<T> = AppendOptions<T> & {
 	__peerbitCanAppendAlreadyValidated?: boolean;
 	__peerbitOnLocalCommit?: InternalLocalCommitEvidenceSink;
+	__peerbitProfile?: InternalProfileSink;
+};
+
+const appendProfile = (options: unknown): InternalProfileSink | undefined => {
+	// Only an owned data property carries this internal sink. Do not evaluate an
+	// unrelated caller getter on the public append options.
+	const profile = Object.getOwnPropertyDescriptor(
+		options,
+		"__peerbitProfile",
+	)?.value;
+	return typeof profile === "function" ? profile : undefined;
 };
 
 const canAppendAlreadyValidated = (options?: unknown): boolean =>
@@ -483,6 +494,12 @@ export type JoinOptions<T> = {
 	verifySignatures?: boolean;
 	trim?: TrimOptions;
 	timeout?: number;
+	/**
+	 * Cancel resolution and admission of new entries. Already-started storage
+	 * mutations and callbacks are drained; cancellation does not undo a committed
+	 * prefix. Rejects with this signal's reason after owned work settles.
+	 */
+	signal?: AbortSignal;
 	onChange?: OnChange<T>;
 	reset?: boolean;
 };
@@ -1385,6 +1402,7 @@ export class Log<T> {
 		options: AppendOptions<T>,
 	): Promise<{ entry: Entry<T>; removed: ShallowOrFullEntry<T>[] }> {
 		const onLocalCommit = localCommitEvidenceSink(options);
+		const profile = appendProfile(options);
 		const nexts = await this.getNextsForAppend(options);
 		const deferBlockStore = hasPutMany(this._storage);
 		type MutationResult = {
@@ -1451,9 +1469,29 @@ export class Log<T> {
 		}
 
 		if (!mutation) {
-			const entry = await this.createAppendEntry(data, options, nexts);
+			const createStartedAt = internalProfileStart(profile);
+			let createOutcome = "error";
+			let entry: Entry<T>;
+			try {
+				entry = await this.createAppendEntry(
+					data,
+					options,
+					nexts,
+					undefined,
+					profile,
+				);
+				createOutcome = "success";
+			} finally {
+				if (profile) {
+					emitInternalProfileDuration(profile, createStartedAt, {
+						name: "log.append.createEntry",
+						component: "log",
+						details: { outcome: createOutcome },
+					});
+				}
+			}
 			await this.joinMissingNexts(entry, nexts);
-			await this.putAppendEntry(entry, options);
+			await this.putAppendEntry(entry, options, profile);
 			mutation = await finishMutation(entry);
 		}
 
@@ -4078,13 +4116,14 @@ export class Log<T> {
 		storeOptions?: {
 			deferStore?: boolean;
 		},
+		profile?: InternalProfileSink,
 	): Promise<Entry<T>> {
 		const clock = new Clock({
 			id: this._identity.publicKey.bytes,
 			timestamp: options?.meta?.timestamp || this._hlc.now(),
 		});
 
-		const entry = await EntryV0.create<T>({
+		const properties = {
 			store: this._storage,
 			identity: options.identity || this._identity,
 			signers: options.signers?.map((signer) =>
@@ -4110,13 +4149,16 @@ export class Log<T> {
 			canAppend: canAppendAlreadyValidated(options)
 				? undefined
 				: options.canAppend
-					? (entry) =>
+					? (entry: Entry<T>) =>
 							this.runWithMutationCallback(() => options.canAppend!(entry))
 					: this._hasCustomCanAppend
 						? this._canAppend
 						: undefined,
 			deferStore: storeOptions?.deferStore,
-		});
+		};
+		const entry = await EntryV0.create<T>(
+			withInternalProfile(properties, profile),
+		);
 
 		if (!entry.hash) {
 			throw new Error("Unexpected");
@@ -4150,27 +4192,46 @@ export class Log<T> {
 		}
 	}
 
-	private async putAppendEntry(entry: Entry<T>, options: AppendOptions<T>) {
+	private async putAppendEntry(
+		entry: Entry<T>,
+		options: AppendOptions<T>,
+		profile?: InternalProfileSink,
+	) {
 		const onLocalCommit = localCommitEvidenceSink(options);
+		const startedAt = internalProfileStart(profile);
+		let outcome = "error";
 		try {
-			await this.entryIndex.put(entry, {
-				unique: true,
-				isHead: true,
-				toMultiHash: false,
-				deferIndexWrite:
-					options.deferIndexWrite ??
-					(options.durability
-						? options.durability === "buffered"
-						: this._appendDurability === "buffered"),
-			});
-		} catch (error) {
-			if (error instanceof EntryIndexPostCommitError) {
-				onLocalCommit?.([error.committedHash], [entry]);
-				throw error.cause;
+			try {
+				await this.entryIndex.put(entry, {
+					unique: true,
+					isHead: true,
+					toMultiHash: false,
+					deferIndexWrite:
+						options.deferIndexWrite ??
+						(options.durability
+							? options.durability === "buffered"
+							: this._appendDurability === "buffered"),
+				});
+			} catch (error) {
+				if (error instanceof EntryIndexPostCommitError) {
+					onLocalCommit?.([error.committedHash], [entry]);
+					throw error.cause;
+				}
+				throw error;
 			}
-			throw error;
+			onLocalCommit?.([entry.hash], [entry]);
+			outcome = "success";
+		} finally {
+			if (profile) {
+				// Include trusted evidence binding: no application observer may run
+				// between the irreversible mutation and its canonical commit capture.
+				emitInternalProfileDuration(profile, startedAt, {
+					name: "log.append.entryIndex",
+					component: "log",
+					details: { outcome },
+				});
+			}
 		}
-		onLocalCommit?.([entry.hash], [entry]);
 	}
 
 	private async putAppendEntries(
@@ -4527,12 +4588,35 @@ export class Log<T> {
 			| ResultsIterator<Entry<any>>,
 		options?: TrustedJoinOptions<T>,
 	): Promise<void> {
+		const closeSignal = this._closeController.signal;
+		const signal = options?.signal
+			? AbortSignal.any([closeSignal, options.signal])
+			: closeSignal;
+		try {
+			await this.joinWithSignal(entriesOrLog, options, signal);
+			throwIfJoinCancelled(signal);
+		} catch (error) {
+			if (error instanceof JoinCancelledError) throw error.signal.reason;
+			throw error;
+		}
+	}
+
+	private async joinWithSignal(
+		entriesOrLog:
+			| (string | Entry<T> | ShallowEntry | EntryWithRefs<T>)[]
+			| Log<T>
+			| ResultsIterator<Entry<any>>,
+		options: TrustedJoinOptions<T> | undefined,
+		signal: AbortSignal,
+	): Promise<void> {
+		throwIfJoinCancelled(signal);
 		this.throwIfDurableWritesFailed();
 		let entries: Entry<T>[];
 		const references: Map<string, Entry<T>> = new Map();
 
 		const fromCache = new Map<string, string[] | null>();
 		const resolveRemoteFrom = async (hash: string, signal?: AbortSignal) => {
+			throwIfJoinCancelled(signal);
 			const cached = fromCache.get(hash);
 			if (cached !== undefined) return cached === null ? undefined : cached;
 
@@ -4544,6 +4628,7 @@ export class Log<T> {
 			} catch {
 				from = undefined;
 			}
+			throwIfJoinCancelled(signal);
 			const normalized = from && from.length > 0 ? from : undefined;
 			fromCache.set(hash, normalized ?? null);
 			return normalized;
@@ -4551,7 +4636,7 @@ export class Log<T> {
 
 		const remote: NonNullable<Exclude<GetOptions["remote"], boolean>> = {
 			timeout: options?.timeout,
-			signal: this._closeController.signal,
+			signal,
 		};
 
 		if (entriesOrLog instanceof Log) {
@@ -4577,6 +4662,7 @@ export class Log<T> {
 
 			entries = [];
 			for (const element of entriesOrLog) {
+				throwIfJoinCancelled(signal);
 				if (isFullEntry(element)) {
 					const fullEntry = normalizeFullEntry<T>(element);
 					if (existingHashes.has(fullEntry.hash)) {
@@ -4592,10 +4678,7 @@ export class Log<T> {
 						continue; // already in log
 					}
 
-					const from = await resolveRemoteFrom(
-						element,
-						this._closeController.signal,
-					);
+					const from = await resolveRemoteFrom(element, signal);
 					let entry: Entry<T>;
 					try {
 						entry = await Entry.fromMultihash<T>(this._storage, element, {
@@ -4606,11 +4689,13 @@ export class Log<T> {
 							},
 						});
 					} catch (error) {
+						rethrowJoinCancellation(error, signal);
 						if (isRecoverableJoinResolveError(error)) {
 							continue;
 						}
 						throw error;
 					}
+					throwIfJoinCancelled(signal);
 					entries.push(entry);
 					references.set(entry.hash, entry);
 					continue;
@@ -4621,10 +4706,7 @@ export class Log<T> {
 						continue; // already in log
 					}
 
-					const from = await resolveRemoteFrom(
-						element.hash,
-						this._closeController.signal,
-					);
+					const from = await resolveRemoteFrom(element.hash, signal);
 					let entry: Entry<T>;
 					try {
 						entry = await Entry.fromMultihash<T>(this._storage, element.hash, {
@@ -4635,11 +4717,13 @@ export class Log<T> {
 							},
 						});
 					} catch (error) {
+						rethrowJoinCancellation(error, signal);
 						if (isRecoverableJoinResolveError(error)) {
 							continue;
 						}
 						throw error;
 					}
+					throwIfJoinCancelled(signal);
 					entries.push(entry);
 					references.set(entry.hash, entry);
 					continue;
@@ -4658,6 +4742,7 @@ export class Log<T> {
 			entries = all;
 		}
 
+		throwIfJoinCancelled(signal);
 		const profile = options?.__peerbitProfile;
 		const headsStartedAt = internalProfileStart(profile);
 		const heads: Map<string, boolean> = new Map();
@@ -4670,6 +4755,7 @@ export class Log<T> {
 					: await entry.getNext();
 			for (const next of nexts) heads.set(next, false);
 		}
+		throwIfJoinCancelled(signal);
 		emitInternalProfileDuration(profile, headsStartedAt, {
 			name: "log.join.prepareHeads",
 			component: "log",
@@ -4683,17 +4769,26 @@ export class Log<T> {
 
 		if (
 			options?.__peerbitBatchIndependent === true &&
-			(await this.tryJoinIndependentAppendBatch(entries, heads, options))
+			(await this.tryJoinIndependentAppendBatch(
+				entries,
+				heads,
+				options,
+				signal,
+			))
 		) {
+			throwIfJoinCancelled(signal);
 			return;
 		}
 
-		for (const entry of entries) {
+		entryLoop: for (const entry of entries) {
+			throwIfJoinCancelled(signal);
 			const isHead = heads.get(entry.hash)!;
-			const prev = this._joining.get(entry.hash);
-			if (prev) {
-				await prev;
-				continue;
+			for (
+				let prev = this._joining.get(entry.hash);
+				prev;
+				prev = this._joining.get(entry.hash)
+			) {
+				if (await this.waitForBorrowedJoin(prev, signal)) continue entryLoop;
 			}
 
 			const p = this.joinRecursively(entry, {
@@ -4708,7 +4803,35 @@ export class Log<T> {
 			});
 			this.trackJoining(entry.hash, p);
 			await p;
+			throwIfJoinCancelled(signal);
 		}
+	}
+
+	private waitForBorrowedJoin(
+		joining: Promise<unknown>,
+		signal?: AbortSignal,
+	): Promise<boolean> {
+		throwIfJoinCancelled(signal);
+		return new Promise((resolve, reject) => {
+			let settled = false;
+			const finish = (callback: () => void) => {
+				if (settled) return;
+				settled = true;
+				signal?.removeEventListener("abort", abort);
+				callback();
+			};
+			const abort = () => finish(() => reject(new JoinCancelledError(signal!)));
+			signal?.addEventListener("abort", abort, { once: true });
+			if (signal?.aborted) abort();
+			joining.then(
+				() => finish(() => resolve(true)),
+				(error) =>
+					finish(() => {
+						if (error instanceof JoinCancelledError) resolve(false);
+						else reject(error);
+					}),
+			);
+		});
 	}
 
 	// Registers an in-flight join in the `_joining` dedup map and removes it again
@@ -4725,7 +4848,7 @@ export class Log<T> {
 	private trackJoining(hash: string, p: Promise<any>): void {
 		this._joining.set(hash, p);
 		p.finally(() => {
-			this._joining.delete(hash);
+			if (this._joining.get(hash) === p) this._joining.delete(hash);
 		}).catch(() => {
 			// Ownership of this rejection belongs to whoever awaits `p`.
 		});
@@ -5046,6 +5169,7 @@ export class Log<T> {
 		entries: Entry<T>[],
 		heads: Map<string, boolean>,
 		options: TrustedJoinOptions<T>,
+		signal: AbortSignal,
 	): Promise<boolean> {
 		if (
 			entries.length < 2 ||
@@ -5125,6 +5249,7 @@ export class Log<T> {
 			});
 		}
 
+		throwIfJoinCancelled(signal);
 		const preparedBatch = this.takePreparedIndependentAppendBatch(
 			entries,
 			headFlags,
@@ -5294,6 +5419,9 @@ export class Log<T> {
 			) => Promise<string[] | undefined>;
 		},
 	): Promise<boolean> {
+		const signal =
+			typeof options.remote === "object" ? options.remote.signal : undefined;
+		throwIfJoinCancelled(signal);
 		if (this.entryIndex.length > (options.length ?? Number.MAX_SAFE_INTEGER)) {
 			return false;
 		}
@@ -5303,6 +5431,7 @@ export class Log<T> {
 		}
 
 		const joinPlan = await this.entryIndex.planJoin(entry, options.reset);
+		throwIfJoinCancelled(signal);
 		if (joinPlan.skip) {
 			return false;
 		}
@@ -5314,6 +5443,7 @@ export class Log<T> {
 				throw new Error(`Invalid signature entry with hash "${entry.hash}"`);
 			}
 		}
+		throwIfJoinCancelled(signal);
 
 		if (joinPlan.coveredByCut) {
 			return false;
@@ -5344,11 +5474,15 @@ export class Log<T> {
 			const parents: Array<{ hash: string; entry?: Entry<T> }> = [];
 			const unresolvedParentHashes: string[] = [];
 
-			for (const a of joinPlan.missingParents) {
-				const prev = this._joining.get(a);
-				if (prev) {
-					await prev;
-					continue;
+			parentPlanLoop: for (const a of joinPlan.missingParents) {
+				throwIfJoinCancelled(signal);
+				for (
+					let prev = this._joining.get(a);
+					prev;
+					prev = this._joining.get(a)
+				) {
+					if (await this.waitForBorrowedJoin(prev, signal))
+						continue parentPlanLoop;
 				}
 
 				const referenced = options.references?.get(a);
@@ -5366,18 +5500,22 @@ export class Log<T> {
 						})
 					: [];
 			const localParentByHash = new Map<string, Entry<T>>();
+			throwIfJoinCancelled(signal);
 			for (const parent of localParents) {
 				if (parent) {
 					localParentByHash.set(parent.hash, parent);
 				}
 			}
 
-			for (const parent of parents) {
+			parentLoop: for (const parent of parents) {
+				throwIfJoinCancelled(signal);
 				const a = parent.hash;
-				const prev = this._joining.get(a);
-				if (prev) {
-					await prev;
-					continue;
+				for (
+					let prev = this._joining.get(a);
+					prev;
+					prev = this._joining.get(a)
+				) {
+					if (await this.waitForBorrowedJoin(prev, signal)) continue parentLoop;
 				}
 
 				let nested = parent.entry ?? localParentByHash.get(a);
@@ -5393,11 +5531,13 @@ export class Log<T> {
 						});
 					}
 				} catch (error) {
+					rethrowJoinCancellation(error, signal);
 					if (isRecoverableJoinResolveError(error)) {
 						return false;
 					}
 					throw error;
 				}
+				throwIfJoinCancelled(signal);
 
 				const p = this.joinRecursively(
 					nested,
@@ -5408,11 +5548,14 @@ export class Log<T> {
 			}
 		}
 
-		if (this._canAppend && !(await this._canAppend(entry))) {
-			return false;
+		if (this._canAppend) {
+			const allowed = await this._canAppend(entry);
+			throwIfJoinCancelled(signal);
+			if (!allowed) return false;
 		}
 
 		const clock = await entry.getClock();
+		throwIfJoinCancelled(signal);
 		this._hlc.update(clock.timestamp);
 
 		await this._entryIndex.put(entry, {

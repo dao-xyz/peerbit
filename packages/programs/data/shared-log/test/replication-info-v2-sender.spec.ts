@@ -650,6 +650,78 @@ describe("receive admission replication-info V2 sender streams", () => {
 		).to.equal(1n);
 	});
 
+	it("fences pre-recovery in-flight Full and Applied while retaining its stream", async () => {
+		const peerSession = {};
+		openSessions.add(peerSession);
+		expect(accept(peerA, peerSession, challenge(91))).to.be.true;
+		await coordinator.drain();
+		const target = {
+			peerHash: peerA.hashcode(),
+			peerSession,
+			receiverTransportSession: 2n,
+		};
+		const state = coordinator._sendStates.get(target.peerHash)!;
+		const inFlight = pDefer<void>();
+		const release = pDefer<void>();
+		let oldFull: FullReplicationInfoV2Message | undefined;
+		const queries: RequestReplicationInfoV2AppliedMessage[] = [];
+		rpcSend.callsFake(async (message) => {
+			if (message instanceof FullReplicationInfoV2Message && !oldFull) {
+				oldFull = message;
+				inFlight.resolve();
+				await release.promise;
+			}
+			if (message instanceof RequestReplicationInfoV2AppliedMessage) {
+				queries.push(message);
+			}
+			return [];
+		});
+		const confirmation = coordinator.confirmLatestForPeer(target, {
+			timeout: 1_000,
+		});
+		void confirmation.catch(() => {});
+		try {
+			await inFlight.promise;
+			coordinator.reconfirmAfterPeerRecovery(target.peerHash);
+			expect(coordinator._sendStates.get(target.peerHash)).to.equal(state);
+			expect(state.minimumConfirmationSequence).to.equal(
+				oldFull!.sequence + 1n,
+			);
+			release.resolve();
+			await coordinator.drain();
+			expect(queries).to.have.length(1);
+			expect(queries[0]!.sequence > oldFull!.sequence).to.equal(true);
+			const properties = { from: peerA, receiverTransportSession: 2n };
+			expect(
+				coordinator.acceptApplied(
+					new ReplicationInfoV2AppliedMessage({
+						receiverChallenge: oldFull!.receiverChallenge,
+						senderEpoch: oldFull!.senderEpoch,
+						sequence: oldFull!.sequence,
+						revision: queries[0]!.revision,
+					}),
+					properties,
+				),
+			).to.equal(false);
+			expect(coordinator.isLatestConfirmedForPeer(target)).to.equal(false);
+			expect(
+				coordinator.acceptApplied(
+					new ReplicationInfoV2AppliedMessage({
+						receiverChallenge: queries[0]!.receiverChallenge,
+						senderEpoch: queries[0]!.senderEpoch,
+						sequence: queries[0]!.sequence,
+						revision: queries[0]!.revision,
+					}),
+					properties,
+				),
+			).to.equal(true);
+			await confirmation;
+			expect(coordinator.isLatestConfirmedForPeer(target)).to.equal(true);
+		} finally {
+			release.resolve();
+		}
+	});
+
 	it("coalesces rapid revisions and a newer apply satisfies older waiters", async () => {
 		const peerSession = {};
 		openSessions.add(peerSession);

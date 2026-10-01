@@ -6,13 +6,13 @@
 // coercions are permanent decode tombstones. These pins freeze the wire bytes
 // and prove a store containing tag-0/tag-2 entries opens and reads back
 // WITHOUT any compatibility option.
-import { readFileSync, readdirSync } from "fs";
-import path from "path";
 import { deserialize, serialize } from "@dao-xyz/borsh";
 import { Entry } from "@peerbit/log";
 import { TestSession } from "@peerbit/test-utils";
 import { waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
+import { readFileSync, readdirSync } from "fs";
+import path from "path";
 import {
 	DeleteByStringKeyOperation,
 	Operation,
@@ -166,6 +166,64 @@ describe("document operation tombstones", () => {
 			// PutWithKeyOperation's frozen tag pair is [0, 0]; a default put must
 			// never produce it.
 			expect([...serialize(payload).slice(0, 2)]).to.deep.equal([0, 3]);
+		});
+
+		it("preserves canonical operation bytes and copying slices through authorized puts", async () => {
+			let authorized = 0;
+			store = new TestStore({ docs: new Documents<Document>() });
+			await session.peers[0].open(store, {
+				args: {
+					replicate: false,
+					canPerform: () => {
+						authorized++;
+						return true;
+					},
+				},
+			});
+			const doc = new Document({
+				id: "encode-authorized",
+				data: new Uint8Array([90, 1, 2, 3, 4, 91]).subarray(1, 5),
+			});
+			const documentBytes = new Uint8Array(serialize(doc));
+			const operationBytes = new Uint8Array(
+				serialize(new PutOperation({ data: documentBytes })),
+			);
+			const { entry } = await store.docs.put(doc, {
+				unique: true,
+				replicate: false,
+				target: "none",
+			});
+			expect(authorized).to.equal(1);
+			const operation = (await entry.getPayloadValue()) as PutOperation;
+			expect(operation).to.be.instanceOf(PutOperation);
+			expect(operation.data.constructor).to.equal(Uint8Array);
+			expect(operation.data.buffer.byteLength).to.be.at.most(
+				operationBytes.byteLength,
+			);
+			const slice = operation.data.slice();
+			slice[0] ^= 0xff;
+			expect(operation.data).to.deep.equal(documentBytes);
+			expect(new Uint8Array(serialize(operation))).to.deep.equal(
+				operationBytes,
+			);
+			expect(new Uint8Array(entry.payload.data)).to.deep.equal(operationBytes);
+
+			const blocks = store.docs.log.log.blocks;
+			const storedBytes = await blocks.get(entry.hash, { remote: false });
+			expect(storedBytes).to.exist;
+			const reloaded = deserialize(storedBytes!, Entry) as Entry<Operation>;
+			expect(new Uint8Array(reloaded.getStorageBytes())).to.deep.equal(
+				new Uint8Array(storedBytes!),
+			);
+			expect(await Entry.prepareMultihash(reloaded)).to.equal(entry.hash);
+			reloaded.init({
+				encoding: store.docs.log.log.encoding,
+				keychain: store.docs.log.log.keychain,
+			});
+			expect(
+				new Uint8Array(serialize(await reloaded.getPayloadValue())),
+			).to.deep.equal(operationBytes);
+			expect(await reloaded.verifySignatures()).to.equal(true);
 		});
 
 		it("has zero deprecated-operation construction sites in src", () => {

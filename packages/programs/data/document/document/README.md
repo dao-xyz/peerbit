@@ -23,6 +23,43 @@ Persisted data and wire formats are unchanged. These checks authorize query
 responses, not all replication or direct block access, and do not by themselves
 provide store confidentiality.
 
+## Waiting for a remote query candidate
+
+To gate the first query on a non-self cover candidate and reject when the wait
+expires, use the existing blocking policy:
+
+```typescript
+const iterator = store.docs.index.iterate({}, {
+	remote: {
+		wait: {
+			behavior: "block",
+			until: "any",
+			timeout: 5_000,
+			onTimeout: "error",
+		},
+	},
+});
+try {
+	const results = await iterator.next(100);
+} finally {
+	await iterator.close();
+}
+```
+
+The blocking wait and its deadline start when `iterate()` creates the iterator,
+not at the first `next()`. The wait listens for replication changes; it does not
+poll. Its positive timeout bounds the readiness phase, including the initial
+cover lookup, not the whole query. Closing the iterator or aborting its top-level
+`signal` cancels the wait. A lookup already in progress may finish later; its late
+result is ignored.
+With `behavior: "block"`, a zero timeout leaves the wait untimed.
+
+This is only candidate discovery: a non-self `getCover` result is not proof of
+reachability, complete query coverage, authorization, catch-up, or persistence.
+It can include peers with synchronization in flight. Persisted delivery receipts
+remain the durability proof. Defaults are unchanged: `remote.wait: true` uses
+`"keep-open"`, not this blocking gate; an omitted `onTimeout` proceeds on timeout.
+
 ## Query timing diagnostics
 
 The existing `Documents.open({ type, sync: { profile } })` callback also receives
@@ -52,6 +89,32 @@ These query/RPC emitters contain callback exceptions and async rejections withou
 awaiting observers, and suppress late events after the terminal. Keep any external
 collector bounded too. The precommit immutable lookup is separate from persisted
 receipt settlement, so its time must not be attributed to receipt latency.
+
+## Put timing diagnostics
+
+The same `sync.profile` callback receives invocation-local `documents.put:*`
+traces for single `put` calls, with one `documents.put.settle` terminal after
+the call succeeds or fails (including any requested persisted delivery).
+Preparation and the selected `prepared`/`compatibility` path are reported.
+The JavaScript append path additionally times authorization, payload/signable
+encoding, signing, log indexing (including trusted commit-evidence capture),
+document projection/change dispatch, and shared-log local processing. Optimized
+native paths do not fabricate these finer spans.
+
+Durations are inclusive and overlap; do not sum them. `entry.create.storage`
+combines serialization, CID calculation and block storage, not an isolated fsync.
+`documents.put.authorize` includes entry decoding and the policy callback;
+`sharedLog.append.localProcessing` includes coordinate/planning work and ordinary
+delivery. Phase `outcome: "success"` means the phase returned, not that permission
+was granted or a durable receipt exists. Only the normal write/receipt contract
+provides durability evidence.
+
+These traces use the same 256-detail-event bound and isolated observer delivery
+as query traces, with no document IDs, contents, hashes or raw errors. Disabled
+tracing adds no phase clock reads. Keep observers cheap and filter on the trace
+prefix when relying on this isolation: older uncorrelated `sync.profile` events
+have their existing behavior. Strict native mode's existing rejection of
+`sync.profile` is unchanged. No write options or storage/wire formats change.
 
 ## Durable remote delivery
 

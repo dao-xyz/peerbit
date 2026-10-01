@@ -359,6 +359,8 @@ jobs:
           packages/transport/stream/dist/test/stream-replacement.spec.js
           packages/transport/stream/dist/test/ack-wait-ownership.spec.js
           packages/transport/pubsub/dist/test/subscribe-races.spec.js
+          packages/transport/pubsub/dist/test/unsubscribe-order.spec.js
+          packages/transport/pubsub/dist/test/unsubscribe-reason.spec.js
           packages/transport/pubsub/dist/test/fanout-idle-close.spec.js
           packages/transport/pubsub/dist/test/fanout-parent-liveness.spec.js
           packages/transport/pubsub/dist/test/fanout-parent-probe.spec.js
@@ -376,7 +378,9 @@ jobs:
           --timeout 60000 --retries 0 --no-exit
           packages/programs/data/shared-log/dist/test/lifecycle.spec.js
           packages/programs/data/shared-log/dist/test/receive-drain-cancellation.spec.js
+          packages/programs/data/shared-log/dist/test/receive-parent-cancellation.spec.js
           packages/programs/data/shared-log/dist/test/receive-admission.spec.js
+          packages/log/dist/test/join-cancellation.spec.js
           packages/programs/data/shared-log/dist/test/sync-memory-pins.spec.js
           packages/programs/data/shared-log/dist/test/rateless-iblt.spec.js
           packages/programs/data/shared-log/dist/test/rateless-iblt-cache.spec.js
@@ -951,6 +955,19 @@ jobs:
         # catalogued in test/NATIVE_CONFORMANCE.md; this curated parity gate is
         # blocking.
         run: pnpm --filter @peerbit/shared-log run test:shared-log-rust-core
+      - name: Test native session recovery and parent cancellation without retries
+        timeout-minutes: 3
+        env:
+          AEGIR_RUNNER: node
+          NODE_ENV: test
+          PEERBIT_SHARED_LOG_RUST_CORE: "1"
+        run: >-
+          node scripts/ci/assert-tests-ran.mjs node ./node_modules/mocha/bin/mocha.js
+          --no-config --no-package --require chai-extend/chai-global.js
+          --timeout 60000 --retries 0 --no-exit
+          packages/programs/data/shared-log/dist/test/one-sided-capability-recovery.spec.js
+          packages/programs/data/shared-log/dist/test/receive-parent-cancellation.spec.js
+          packages/programs/data/shared-log/dist/test/receive-drain-cancellation.spec.js
       - name: Test @peerbit/document conformance in rust-core mode
         # Curated [default,native] conformance leg for the DOCUMENT layer: re-runs
         # an allowlist of the EXISTING document suites with the native (rust) data

@@ -1023,19 +1023,20 @@ export class SQLiteIndex<T extends Record<string, any>>
 			sort: coerceLocalSorts(request?.sort),
 		});
 		let planningScope: ReturnType<QueryPlanner["scope"]>;
+		// Closing retires this cursor, not database work already under the barrier.
+		const closeAsDone = () => {
+			started = true;
+			hasMore = false;
+			kept = 0;
+			return [] as IndexedResult<types.ReturnTypeFromShape<T, S>>[];
+		};
 
 		/* let totalCount: undefined | number = undefined; */
 		const fetch = async (
 			amount: number,
 			pageOptions?: { offset?: number; advance?: boolean },
 		) => {
-			const closeAsDone = () => {
-				started = true;
-				hasMore = false;
-				kept = 0;
-				return [] as IndexedResult<types.ReturnTypeFromShape<T, S>>[];
-			};
-			if (this.isClosing()) {
+			if (explicitlyClosed || this.isClosing()) {
 				return closeAsDone();
 			}
 			this.assertOpen();
@@ -1060,17 +1061,18 @@ export class SQLiteIndex<T extends Record<string, any>>
 
 					await planningScope.beforePrepare();
 				}
-				if (this.closed) {
+				if (explicitlyClosed || this.closed) {
 					return closeAsDone();
 				}
 
-				return await this.withDatabaseBarrier(async () => {
-					if (this.isClosing()) {
+				const page = await this.withDatabaseBarrier(async () => {
+					if (explicitlyClosed || this.isClosing()) {
 						return closeAsDone();
 					}
 					this.assertOpen();
 					if (!pagedInitialized) {
 						stmt = await this.properties.db.prepare(sqlFetch!, sqlFetch!);
+						if (explicitlyClosed) return closeAsDone();
 
 						// Bump timeout timer
 						iterator.expire = Date.now() + this.iteratorTimeout;
@@ -1087,6 +1089,7 @@ export class SQLiteIndex<T extends Record<string, any>>
 						]);
 						return allResults;
 					});
+					if (explicitlyClosed) return closeAsDone();
 
 					/* const allResults: Record<string, any>[] = await stmt.all([
 					...bindable,
@@ -1129,6 +1132,7 @@ export class SQLiteIndex<T extends Record<string, any>>
 							}),
 						);
 
+					if (explicitlyClosed) return closeAsDone();
 					if (pageOptions?.advance !== false) {
 						offset += results.length;
 					}
@@ -1144,8 +1148,9 @@ export class SQLiteIndex<T extends Record<string, any>>
 					}
 					return results;
 				});
+				return explicitlyClosed ? closeAsDone() : page;
 			} catch (error) {
-				if (this.isClosing()) {
+				if (explicitlyClosed || this.isClosing()) {
 					return closeAsDone();
 				}
 				throw error;
@@ -1162,13 +1167,7 @@ export class SQLiteIndex<T extends Record<string, any>>
 		let totalCount: number | undefined = undefined;
 		/* 			return fetch(request.fetch); */
 		const fetchAllFresh = async () => {
-			const closeAsDone = () => {
-				started = true;
-				hasMore = false;
-				kept = 0;
-				return [] as IndexedResult<types.ReturnTypeFromShape<T, S>>[];
-			};
-			if (this.isClosing()) {
+			if (explicitlyClosed || this.isClosing()) {
 				return closeAsDone();
 			}
 			this.assertOpen();
@@ -1185,20 +1184,22 @@ export class SQLiteIndex<T extends Record<string, any>>
 					},
 				);
 				await freshPlanningScope.beforePrepare();
-				if (this.closed) {
+				if (explicitlyClosed || this.closed) {
 					return closeAsDone();
 				}
-				return await this.withDatabaseBarrier(async () => {
-					if (this.isClosing()) {
+				const page = await this.withDatabaseBarrier(async () => {
+					if (explicitlyClosed || this.isClosing()) {
 						return closeAsDone();
 					}
 					this.assertOpen();
 					const freshStatement = await this.properties.db.prepare(sql, sql);
+					if (explicitlyClosed) return closeAsDone();
 					iterator.expire = Date.now() + this.iteratorTimeout;
 					const allResults: Record<string, any>[] =
 						await freshPlanningScope.perform(async () =>
 							freshStatement.all(toBind),
 						);
+					if (explicitlyClosed) return closeAsDone();
 					const results: IndexedResult<types.ReturnTypeFromShape<T, S>>[] =
 						await Promise.all(
 							allResults.map(async (row: any) => {
@@ -1233,16 +1234,19 @@ export class SQLiteIndex<T extends Record<string, any>>
 								};
 							}),
 						);
+					if (explicitlyClosed) return closeAsDone();
 					started = true;
 					hasMore = false;
 					kept = 0;
 					offset += results.length;
 					await this.clearupIterator(requestId);
+					if (explicitlyClosed) return closeAsDone();
 					markYielded(results);
 					return results;
 				});
+				return explicitlyClosed ? closeAsDone() : page;
 			} catch (error) {
-				if (this.isClosing()) {
+				if (explicitlyClosed || this.isClosing()) {
 					return closeAsDone();
 				}
 				throw error;
@@ -1259,6 +1263,7 @@ export class SQLiteIndex<T extends Record<string, any>>
 			}
 			if (!mutationMode && this.mutationVersion === iteratorMutationVersion) {
 				const results = await fetch(amount);
+				if (explicitlyClosed) return [];
 				markYielded(results);
 				return results;
 			}
@@ -1279,6 +1284,7 @@ export class SQLiteIndex<T extends Record<string, any>>
 					offset: scanOffset,
 					advance: false,
 				});
+				if (explicitlyClosed) return [];
 				scanOffset += page.length;
 				if (page.length < pageSize) {
 					exhausted = true;
@@ -1311,6 +1317,7 @@ export class SQLiteIndex<T extends Record<string, any>>
 					offset: scanOffset,
 					advance: false,
 				});
+				if (explicitlyClosed) return 0;
 				scanOffset += page.length;
 				for (const result of page) {
 					if (!yielded.has(idKey(result.id))) {
@@ -1341,6 +1348,7 @@ export class SQLiteIndex<T extends Record<string, any>>
 				const results: IndexedResult<types.ReturnTypeFromShape<T, S>>[] = [];
 				while (true) {
 					const res = await next(1024);
+					if (explicitlyClosed) return [];
 					results.push(...res);
 					if (res.length === 0 || hasMore === false) {
 						break;
@@ -1380,6 +1388,7 @@ export class SQLiteIndex<T extends Record<string, any>>
 					return kept;
 				}
 				totalCount = totalCount ?? (await this.count(request));
+				if (explicitlyClosed) return 0;
 
 				kept = Math.max(totalCount - offset, 0); // this could potentially be negative if new records are added and we iterate concurrently, so we do Math.max here
 				hasMore = kept > 0;
