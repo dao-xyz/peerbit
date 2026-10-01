@@ -1,7 +1,7 @@
 import { field, variant, vec } from "@dao-xyz/borsh";
 import { StringMatch, id, toId } from "@peerbit/indexer-interface";
 import { expect } from "chai";
-import { SQLiteIndices } from "../src/engine.js";
+import { SQLiteIndex, SQLiteIndices } from "../src/engine.js";
 import { create } from "../src/index.js";
 import type { Database } from "../src/types.js";
 import { setup } from "./utils.js";
@@ -47,6 +47,23 @@ const expectRejected = async (promise: Promise<unknown>) => {
 	throw new Error("Expected promise to reject");
 };
 
+const within = async <T>(promise: Promise<T>, label: string): Promise<T> => {
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	try {
+		return await Promise.race([
+			promise,
+			new Promise<never>((_, reject) => {
+				timer = setTimeout(
+					() => reject(new Error(`Timed out: ${label}`)),
+					5_000,
+				);
+			}),
+		]);
+	} finally {
+		clearTimeout(timer);
+	}
+};
+
 const pauseFirstSavepoint = (database: Database) => {
 	const originalExec = database.exec.bind(database);
 	let release!: () => void;
@@ -75,6 +92,210 @@ const pauseFirstSavepoint = (database: Database) => {
 		},
 	};
 };
+
+describe("SQLite single put", () => {
+	it("rolls back a new row when a later nested field fails", async () => {
+		const { store } = await setup<BatchDocument>({ schema: BatchDocument });
+		const failure = new Error("later nested field failed");
+		const value = new BatchDocument({ id: "failed", tags: ["first-child"] });
+		Object.defineProperty(value, "values", {
+			get: () => {
+				throw failure;
+			},
+		});
+
+		expect(await expectRejected(Promise.resolve(store.put(value)))).to.equal(
+			failure,
+		);
+		expect(await store.get(toId(value.id))).to.equal(undefined);
+		expect(await store.getSize()).to.equal(0);
+
+		const valid = new BatchDocument({
+			id: value.id,
+			tags: ["complete"],
+			values: [1, 2],
+		});
+		await store.put(valid);
+		expect((await store.get(toId(value.id)))?.value).to.deep.equal(valid);
+	});
+
+	for (const replace of [true, false]) {
+		it(`restores the full previous row after a failed replacement (replace=${replace})`, async () => {
+			const { store } = await setup<BatchDocument>({ schema: BatchDocument });
+			const previous = new BatchDocument({
+				id: "existing",
+				label: "previous",
+				bytes: new Uint8Array([1, 2]),
+				tags: ["previous-child"],
+				values: [3, 4],
+			});
+			await store.put(previous);
+			const failure = new Error("replacement nested field failed");
+			const replacement = new BatchDocument({
+				id: previous.id,
+				label: "replacement",
+				bytes: new Uint8Array([5]),
+				tags: ["replacement-child"],
+			});
+			Object.defineProperty(replacement, "values", {
+				get: () => {
+					throw failure;
+				},
+			});
+
+			expect(
+				await expectRejected(
+					Promise.resolve(store.put(replacement, undefined, { replace })),
+				),
+			).to.equal(failure);
+			expect((await store.get(toId(previous.id)))?.value).to.deep.equal(
+				previous,
+			);
+			expect(await store.getSize()).to.equal(1);
+		});
+	}
+});
+
+describe("SQLite nested write ownership", () => {
+	for (const mode of ["put", "putBatch"] as const) {
+		it(`${mode} drains a pending child before rollback and releasing another scope`, async () => {
+			const { indices, store } = await setup<BatchDocument>({
+				schema: BatchDocument,
+			});
+			const other = await (
+				await indices.scope("competitor")
+			).init<BatchDocument, never>({ schema: BatchDocument, indexBy: ["id"] });
+			const database = (indices as SQLiteIndices).properties.db;
+			const tables = [...(store as SQLiteIndex<BatchDocument>).tables.values()];
+			const tags = tables.find((table) => table.parentPath?.at(-1) === "tags");
+			expect(tags).not.to.equal(undefined);
+			const statement = database.statements.get(`${tags!.name}_put`)!;
+			expect(statement).not.to.equal(undefined);
+			const originalGet = statement.get;
+			const originalExec = database.exec;
+			let release!: () => void;
+			const gate = new Promise<void>((resolve) => (release = resolve));
+			let started!: () => void;
+			const childStarted = new Promise<void>((resolve) => (started = resolve));
+			let finished!: () => void;
+			const childFinished = new Promise<void>(
+				(resolve) => (finished = resolve),
+			);
+			let childCalls = 0;
+			statement.get = async (...args) => {
+				childCalls++;
+				started();
+				try {
+					await gate;
+					return await originalGet.apply(statement, args);
+				} finally {
+					finished();
+				}
+			};
+			let rollbackStarted = false;
+			database.exec = (sql) => {
+				if (sql.startsWith("ROLLBACK TO SAVEPOINT")) rollbackStarted = true;
+				return originalExec.call(database, sql);
+			};
+			const failure = new Error("sibling failed while child was pending");
+			const value = new BatchDocument({
+				id: "failed",
+				tags: ["pending-child"],
+			});
+			let failureSeen = false;
+			Object.defineProperty(value, "values", {
+				get: () => {
+					failureSeen = true;
+					throw failure;
+				},
+			});
+			let operationSettled = false;
+			const operation = Promise.resolve(
+				mode === "put" ? store.put(value) : store.putBatch!([value]),
+			).then(
+				() => {
+					operationSettled = true;
+					return undefined;
+				},
+				(error) => {
+					operationSettled = true;
+					return error;
+				},
+			);
+			let competitor: Promise<unknown> | undefined;
+			try {
+				await within(childStarted, "nested child statement starting");
+				expect(childCalls).to.equal(1);
+				expect(failureSeen).to.equal(true);
+				let competitorSettled = false;
+				const otherValue = new BatchDocument({
+					id: "other",
+					tags: ["complete"],
+					values: [1, 2],
+				});
+				competitor = Promise.resolve(other.put(otherValue)).then(
+					() => {
+						competitorSettled = true;
+						return undefined;
+					},
+					(error) => {
+						competitorSettled = true;
+						return error;
+					},
+				);
+				await new Promise((resolve) => setTimeout(resolve, 20));
+				expect({
+					operationSettled,
+					rollbackStarted,
+					competitorSettled,
+				}).to.deep.equal({
+					operationSettled: false,
+					rollbackStarted: false,
+					competitorSettled: false,
+				});
+				release();
+				expect(await within(operation, "failed write settling")).to.equal(
+					failure,
+				);
+				expect(await within(competitor, "competing write settling")).to.equal(
+					undefined,
+				);
+				expect(rollbackStarted).to.equal(true);
+				expect(await store.get(toId(value.id))).to.equal(undefined);
+				for (const table of tables.filter(
+					(table) => table.parent && !table.inline,
+				)) {
+					const count = await database.prepare(
+						`select count(*) as count from ${table.name} where __parent_id = ?`,
+					);
+					try {
+						expect(Number((await count.get([value.id]))?.count)).to.equal(0);
+					} finally {
+						await count.finalize?.();
+					}
+				}
+				expect((await other.get(toId(otherValue.id)))?.value).to.deep.equal(
+					otherValue,
+				);
+			} finally {
+				release();
+				try {
+					await within(
+						Promise.allSettled([
+							operation,
+							competitor,
+							childCalls > 0 ? childFinished : undefined,
+						]),
+						"nested write cleanup",
+					);
+				} finally {
+					statement.get = originalGet;
+					database.exec = originalExec;
+				}
+			}
+		});
+	}
+});
 
 describe("SQLite putBatch", () => {
 	it("writes nested rows in order and keeps the last duplicate id", async () => {
