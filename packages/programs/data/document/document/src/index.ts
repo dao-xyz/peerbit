@@ -1,5 +1,6 @@
 export * from "@peerbit/indexer-interface";
 export * from "@peerbit/document-interface";
+export { EntryType } from "@peerbit/log";
 export * from "./program.js";
 export * from "./batch-error.js";
 export type {
