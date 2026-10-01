@@ -16,6 +16,8 @@ import { Documents } from "../src/index.js";
 // Build, then run in separate processes for each matched cohort:
 // node --expose-gc dist/benchmark/document-put-durable.js
 // DOC_DURABLE_SINGLES=60 DOC_DURABLE_ROUNDS=30
+// DOC_DURABLE_RESOLVER_CACHE=default selects normal caching; unset retains the
+// cache-disabled configuration used by earlier matched runs.
 // Ordinary disk-backed Peerbit, JS authorization, default targeting, FULL/sync
 // durability, no retries. Four concurrent puts are NOT an atomic putMany batch.
 // Raw samples exclude input construction and reopen verification. This is a
@@ -28,6 +30,8 @@ const positiveInteger = (name: string, fallback: number): number => {
 };
 const singles = positiveInteger("DOC_DURABLE_SINGLES", 60);
 const rounds = positiveInteger("DOC_DURABLE_ROUNDS", 30);
+const resolverCache = process.env.DOC_DURABLE_RESOLVER_CACHE ?? "0";
+assert(resolverCache === "0" || resolverCache === "default");
 const digest = (bytes: Uint8Array): string =>
 	createHash("sha256").update(bytes).digest("hex");
 
@@ -74,7 +78,10 @@ class Store extends Program {
 			type: BlobDocument,
 			replicate: { factor: 1 },
 			canPerform: () => true,
-			index: { type: BlobProjection, cache: { resolver: 0 } },
+			index: {
+				type: BlobProjection,
+				...(resolverCache === "0" ? { cache: { resolver: 0 } } : {}),
+			},
 		});
 	}
 }
@@ -215,7 +222,7 @@ console.log(
 			target: "default",
 			durability: "default (SQLite FULL / Level sync)",
 			canPerform: "JavaScript allow-all callback",
-			resolverCache: 0,
+			resolverCache: resolverCache === "0" ? 0 : "default",
 			unique: true,
 		},
 	}),
