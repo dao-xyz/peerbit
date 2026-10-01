@@ -2189,6 +2189,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		if (!this.started) {
 			throw new Error("FanoutTree must be started before watching providers");
 		}
+		const serviceSignal = this.closeController.signal;
 
 		const id = this.getProviderNamespaceId(namespace);
 		const ttlMs = Math.max(1_000, Math.floor(options.ttlMs ?? 10_000));
@@ -2258,6 +2259,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 				void this._sendControl(
 					trackerHash,
 					this.codec.encodeProviderUnsubscribe(id.key),
+					serviceSignal,
 				).catch(dontThrowIfDeliveryError);
 			}
 			watch.trackerPeers = [];
@@ -2284,11 +2286,13 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 									watch.bootstrapMaxPeers,
 								)
 							: [];
+					if (watch.closed || loopSignal.aborted) return;
 					watch.trackerPeers = trackerPeers;
 					for (const trackerHash of trackerPeers) {
 						void this._sendControl(
 							trackerHash,
 							this.codec.encodeProviderSubscribe(id.key, watch.want, watch.ttlMs),
+							loopSignal,
 						).catch(dontThrowIfDeliveryError);
 					}
 				} catch (error) {
@@ -4350,6 +4354,10 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		}
 		const stream = this.peers.get(to);
 		if (!stream) return;
+		const lifetime = this.closeController.signal;
+		if (lifetime.aborted || this.stopping || !this.started) {
+			throw new AbortError("fanout control service stopped");
+		}
 		this.recordControlSend(bytes, 1, probePurpose);
 		const message = await this.createMessage(bytes, {
 			mode: new AnyWhere(),
@@ -4357,6 +4365,10 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		} as any);
 		if (signal?.aborted) {
 			throw signal.reason ?? new AbortError("fanout control send aborted");
+		}
+		// Signing can outlive stop (or a later restart) of this service.
+		if (lifetime.aborted || this.stopping || !this.started) {
+			throw new AbortError("fanout control service stopped");
 		}
 		await this.publishMessageMaybe(
 			this.publicKey,
@@ -4373,11 +4385,18 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 			.map((t) => this.peers.get(t))
 			.filter((s): s is PeerStreams => Boolean(s));
 		if (streams.length === 0) return false;
+		const lifetime = this.closeController.signal;
+		if (lifetime.aborted || this.stopping || !this.started) {
+			throw new AbortError("fanout control service stopped");
+		}
 		this.recordControlSend(bytes, streams.length);
 		const message = await this.createMessage(bytes, {
 			mode: new AnyWhere(),
 			priority: CONTROL_PRIORITY,
 		} as any);
+		if (lifetime.aborted || this.stopping || !this.started) {
+			throw new AbortError("fanout control service stopped");
+		}
 		return this.publishMessageMaybe(this.publicKey, message, streams);
 	}
 
