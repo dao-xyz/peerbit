@@ -1064,7 +1064,14 @@ export const insert = async (
 	if (table.primary === false && nestedCallbacks.length > 0) {
 		throw new Error("Unexpected");
 	}
-	await Promise.all(nestedCallbacks.map((x) => x(thisId)));
+	const nestedWrites = nestedCallbacks.map((write) => write(thisId));
+	try {
+		await Promise.all(nestedWrites);
+	} catch (error) {
+		// Do not release the caller's transaction while a sibling can still write.
+		await Promise.allSettled(nestedWrites);
+		throw error;
+	}
 
 	/* return [result, ...ret]; */
 };
