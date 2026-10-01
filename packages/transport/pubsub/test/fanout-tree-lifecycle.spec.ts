@@ -68,8 +68,11 @@ describe("fanout-tree background loop lifecycle", () => {
 			const handle = consumer.watchProviders("restart-watch", {
 				want: 1,
 				ttlMs: 60_000,
+				// One subscribe only (no re-subscribe after hangUp), so give its
+				// bootstrap dial plenty of time.
 				renewIntervalMs: 30_000,
 				bootstrapMaxPeers: 1,
+				bootstrapDialTimeoutMs: 10_000,
 				onProviders: () => {},
 			});
 			const watchers = (
@@ -79,7 +82,9 @@ describe("fanout-tree background loop lifecycle", () => {
 			).providerWatchersBySuffixKey;
 
 			try {
-				await waitForResolved(() => expect(watchers.size).to.equal(1));
+				await waitForResolved(() => expect(watchers.size).to.equal(1), {
+					timeout: 20_000,
+				});
 				// The watch stays open, so only the tracker's disconnect handling
 				// can drop the registration.
 				await session.peers[1]!.hangUp(session.peers[0]!.peerId);

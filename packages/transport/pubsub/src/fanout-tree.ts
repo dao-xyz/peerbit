@@ -1489,8 +1489,9 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 
 	public override async start() {
 		await super.start();
-		// stop() removes the listener, so a restarted instance must add it again.
-		if (this.started) {
+		// stop() removes the listener, so a restarted instance must add it again
+		// (but not while a stop that raced this start is still tearing down).
+		if (this.started && !this.stopping) {
 			this.registerUnderlayPeerDisconnectHandler();
 		}
 	}
