@@ -475,11 +475,27 @@ export const runPubsubTopicSim = async (
 		if (!progressEnabled) return;
 		const agg = new Map<string, number>();
 		for (const p of peers) {
-			const bySuffix = (p.fanout as any).metricsBySuffixKey as
-				| Map<string, Record<string, unknown>>
-				| undefined;
-			if (!bySuffix) continue;
-			for (const m of bySuffix.values()) {
+			const fanout = p.fanout as any;
+			// Detached keys, open channels and the provider aggregate are disjoint
+			// (an open channel's metrics are never in metricsBySuffixKey).
+			const sources: Record<string, unknown>[] = [
+				...((
+					fanout.metricsBySuffixKey as
+						| Map<string, Record<string, unknown>>
+						| undefined
+				)?.values() ?? []),
+				...[
+					...((
+						fanout.channelsBySuffixKey as
+							| Map<string, { metrics: Record<string, unknown> }>
+							| undefined
+					)?.values() ?? []),
+				].map((ch) => ch.metrics),
+				...(typeof fanout.getProviderControlMetrics === "function"
+					? [fanout.getProviderControlMetrics()]
+					: []),
+			];
+			for (const m of sources) {
 				for (const [k, v] of Object.entries(m)) {
 					if (typeof v === "number" && v !== 0) {
 						agg.set(k, (agg.get(k) ?? 0) + v);
