@@ -679,8 +679,11 @@ describe("waitForReplicator", () => {
 		});
 
 		const promise = checkBounded(1, 1, 1, db as any);
+		const rejection = expect(promise).to.be.rejectedWith(
+			"Log length did not converge",
+		);
 		await clock.tickAsync(120_000);
-		await expect(promise).to.be.rejectedWith("Log length did not converge");
+		await rejection;
 	});
 
 	it("covers checkBounded lower-bound failure reporting", async () => {
@@ -688,10 +691,11 @@ describe("waitForReplicator", () => {
 		const db = createFakeBoundedDb({ id: "db-lower", length: 0 });
 
 		const promise = checkBounded(1, 1, 1, db as any);
-		await clock.tickAsync(120_000);
-		await expect(promise).to.be.rejectedWith(
+		const rejection = expect(promise).to.be.rejectedWith(
 			"Log did not reach lower bound length of 1 got 0",
 		);
+		await clock.tickAsync(120_000);
+		await rejection;
 	});
 
 	it("covers checkBounded upper-bound failure reporting", async () => {
@@ -699,9 +703,10 @@ describe("waitForReplicator", () => {
 		const db = createFakeBoundedDb({ id: "db-upper", length: 2 });
 
 		const promise = checkBounded(1, 0, 1, db as any);
-		await clock.tickAsync(120_000);
-		await expect(promise).to.be.rejectedWith(
+		const rejection = expect(promise).to.be.rejectedWith(
 			"Log did not conform to upper bound length of 1 got 2",
 		);
+		await clock.tickAsync(120_000);
+		await rejection;
 	});
 });
