@@ -12,12 +12,13 @@ const pnpmCmd = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
 const npmCmd = process.platform === "win32" ? "npm.cmd" : "npm";
 // npm can accept a publish and keep returning 404 while the package version is
 // still being processed. Processing has been observed to take more than twenty
-// minutes (2026-09-30, 2026-10-01), so every package is published first and all
-// of them are verified together afterwards, within one shared window, instead of
-// blocking the next publish on the previous one becoming visible.
+// minutes (2026-09-30, 2026-10-01). Versions of packages that already exist on
+// npm are therefore published first and verified together afterwards, within
+// one shared window, instead of blocking the next publish on each one. A
+// brand-new package is still verified before anything after it is published.
 const REGISTRY_VERIFICATION_TIMEOUT_MS = readDurationEnv(
 	"PUBLISH_VERIFY_TIMEOUT_MS",
-	60 * 60_000,
+	3_600_000,
 );
 const REGISTRY_VERIFICATION_POLL_MS = readDurationEnv(
 	"PUBLISH_VERIFY_POLL_MS",
@@ -25,8 +26,15 @@ const REGISTRY_VERIFICATION_POLL_MS = readDurationEnv(
 );
 
 function readDurationEnv(name, fallback) {
-	const value = Number(process.env[name]);
-	return Number.isFinite(value) && value >= 0 ? value : fallback;
+	const raw = process.env[name];
+	if (raw === undefined || raw.trim() === "") {
+		return fallback;
+	}
+	const value = Number(raw);
+	if (!Number.isInteger(value) || value <= 0 || value > 2_147_483_647) {
+		throw new Error(`${name} must be a positive number of milliseconds`);
+	}
+	return value;
 }
 
 // A re-run while npm is still processing an earlier upload of the same version
@@ -49,7 +57,8 @@ function runTee(command, commandArgs, cwd) {
 		const child = spawn(command, commandArgs, {
 			cwd,
 			env: process.env,
-			stdio: ["ignore", "pipe", "pipe"],
+			// stdin stays interactive so a manual release can answer npm's OTP prompt.
+			stdio: ["inherit", "pipe", "pipe"],
 		});
 		let output = "";
 		child.stdout.on("data", (chunk) => {
@@ -60,7 +69,8 @@ function runTee(command, commandArgs, cwd) {
 			output += chunk.toString();
 			process.stderr.write(chunk);
 		});
-		child.on("exit", (code) => {
+		// "close" fires after both output streams have ended, unlike "exit".
+		child.on("close", (code) => {
 			resolve({ code: code ?? 1, output });
 		});
 		child.on("error", (error) => {
@@ -84,13 +94,34 @@ function capture(command, commandArgs, cwd) {
 		child.stderr.on("data", (chunk) => {
 			stderr += chunk.toString();
 		});
-		child.on("exit", (code) => {
+		child.on("close", (code) => {
 			resolve({ code: code ?? 1, stdout, stderr });
 		});
 		child.on("error", (error) => {
 			resolve({ code: 1, stdout, stderr: `${stderr}\n${String(error)}` });
 		});
 	});
+}
+
+function isMissingOnRegistry(result) {
+	const combinedOutput = `${result.stdout}\n${result.stderr}`;
+	return (
+		combinedOutput.includes("E404") ||
+		combinedOutput.includes("No match found for version")
+	);
+}
+
+async function isNewPackage({ name }) {
+	const result = await capture(npmCmd, ["view", name, "name"], rootDir);
+	if (result.code === 0) {
+		return false;
+	}
+	if (isMissingOnRegistry(result)) {
+		return true;
+	}
+	throw new Error(
+		`Failed to query npm for ${name}\n${result.stdout}\n${result.stderr}`,
+	);
 }
 
 async function isPublished({ name, version }) {
@@ -102,15 +133,11 @@ async function isPublished({ name, version }) {
 	if (result.code === 0) {
 		return true;
 	}
-	const combinedOutput = `${result.stdout}\n${result.stderr}`;
-	if (
-		combinedOutput.includes("E404") ||
-		combinedOutput.includes("No match found for version")
-	) {
+	if (isMissingOnRegistry(result)) {
 		return false;
 	}
 	throw new Error(
-		`Failed to query npm for ${name}@${version}\n${combinedOutput}`,
+		`Failed to query npm for ${name}@${version}\n${result.stdout}\n${result.stderr}`,
 	);
 }
 
@@ -120,15 +147,23 @@ async function verifyPublished(packages) {
 	// when the npm token / org lacks permission to create it. A silent
 	// non-publish must fail the release loudly, not leave a green run that
 	// shipped nothing. Re-query until every version is visible or the shared
-	// window for registry processing and propagation runs out.
+	// window for registry processing and propagation runs out. Unexpected
+	// registry errors are retried within the same window, since everything has
+	// already been handed to npm at this point.
 	let pending = packages;
+	let lastError;
 	const deadline = Date.now() + REGISTRY_VERIFICATION_TIMEOUT_MS;
 	for (;;) {
 		const stillPending = [];
 		for (const pkg of pending) {
-			if (!(await isPublished(pkg))) {
-				stillPending.push(pkg);
+			try {
+				if (await isPublished(pkg)) {
+					continue;
+				}
+			} catch (error) {
+				lastError = error;
 			}
+			stillPending.push(pkg);
 		}
 		pending = stillPending;
 		if (pending.length === 0) {
@@ -146,20 +181,33 @@ async function verifyPublished(packages) {
 			setTimeout(r, Math.min(REGISTRY_VERIFICATION_POLL_MS, remainingMs)),
 		);
 	}
+	const conflictedPending = pending.filter((pkg) => conflicted.has(pkg));
 	throw new Error(
 		`${pending.map((pkg) => `${pkg.name}@${pkg.version}`).join(", ")}: publish was accepted but the version never appeared on the registry. ` +
 			`For a brand-new package this usually means the npm token/org cannot create it — check the token scope ` +
-			`(needs @peerbit scope-level publish, not just per-package access) and the org's new-package permissions.`,
+			`(needs @peerbit scope-level publish, not just per-package access) and the org's new-package permissions.` +
+			(conflictedPending.length > 0
+				? ` npm rejected ${conflictedPending.map((pkg) => `${pkg.name}@${pkg.version}`).join(", ")} as already published; ` +
+					`if that version was unpublished or deleted earlier, npm will never accept it again and it needs a new version.`
+				: "") +
+			(lastError ? `\nLast registry error: ${lastError.message}` : ""),
 	);
 }
 
-/** Returns true when a version was handed to the registry and must be verified. */
+const conflicted = new Set();
+
+/**
+ * Returns undefined when nothing was handed to the registry, otherwise whether
+ * the package is brand new on npm (checked before publishing; afterwards a
+ * still-processing upload would make it ambiguous).
+ */
 async function publishPackage(pkg) {
 	const alreadyPublished = await isPublished(pkg);
 	if (alreadyPublished) {
 		console.log(`skip ${pkg.name}@${pkg.version} (already published)`);
-		return false;
+		return undefined;
 	}
+	const brandNew = !dryRun && (await isNewPackage(pkg));
 
 	const publishArgs = ["publish", "--no-git-checks", "--access", "public"];
 	if (dryRun) {
@@ -175,13 +223,14 @@ async function publishPackage(pkg) {
 			console.log(
 				`${pkg.name}@${pkg.version} was already accepted by the registry and is still processing`,
 			);
-			return true;
+			conflicted.add(pkg);
+			return { brandNew };
 		}
 		throw new Error(
 			`${pnpmCmd} ${publishArgs.join(" ")} exited with code ${result.code}`,
 		);
 	}
-	return !dryRun;
+	return dryRun ? undefined : { brandNew };
 }
 
 const workspacePackages = await discoverPublishableWorkspacePackages({
@@ -191,7 +240,15 @@ const publishOrder = sortPublishablePackages(workspacePackages);
 
 const published = [];
 for (const pkg of publishOrder) {
-	if (await publishPackage(pkg)) {
+	const handed = await publishPackage(pkg);
+	if (!handed) {
+		continue;
+	}
+	if (handed.brandNew) {
+		// A brand-new package that silently fails to land must stop the release
+		// before any package depending on it is published.
+		await verifyPublished([pkg]);
+	} else {
 		published.push(pkg);
 	}
 }
