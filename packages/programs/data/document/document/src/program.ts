@@ -8,6 +8,10 @@ import {
 } from "@dao-xyz/borsh";
 import { AccessError, type PublicSignKey } from "@peerbit/crypto";
 import {
+	type DiagnosticSink,
+	createDiagnosticTrace,
+} from "@peerbit/diagnostics";
+import {
 	Context,
 	NotFoundError,
 	type ResultIndexedValue,
@@ -160,6 +164,42 @@ const mapMaybePromise = <T, R>(
 	value: MaybePromise<T>,
 	fn: (value: T) => MaybePromise<R>,
 ): MaybePromise<R> => (isPromiseLike(value) ? value.then(fn) : fn(value));
+
+type PutTrace = NonNullable<ReturnType<typeof createDiagnosticTrace>>;
+
+// Observe completion without replacing a callback's value/promise or adding an
+// await to the write path. Nested phase durations are inclusive, not additive.
+const profilePutCallback = <A extends unknown[], R>(
+	trace: PutTrace | undefined,
+	name: string,
+	callback: (...args: A) => R,
+): ((...args: A) => R) => {
+	if (!trace) return callback;
+	return (...args) => {
+		const startedAt = trace.now();
+		const finish = (outcome: string) =>
+			trace.emit({
+				name,
+				durationMs: trace.now() - startedAt,
+				details: { outcome, inclusive: true },
+			});
+		try {
+			const result = callback(...args);
+			if (isPromiseLike(result)) {
+				void result.then(
+					() => finish("success"),
+					() => finish("error"),
+				);
+			} else {
+				finish("success");
+			}
+			return result;
+		} catch (error) {
+			finish("error");
+			throw error;
+		}
+	};
+};
 
 const bytesEqual = (left: Uint8Array, right: Uint8Array): boolean => {
 	if (left.byteLength !== right.byteLength) {
@@ -371,7 +411,11 @@ type DocumentPutManyResult = {
 type DocumentDeleteResult = DocumentPutResult;
 
 interface DocumentBackend<T> {
-	put(doc: T, options?: DocumentPutOptions): MaybePromise<DocumentPutResult>;
+	put(
+		doc: T,
+		options?: DocumentPutOptions,
+		trace?: PutTrace,
+	): MaybePromise<DocumentPutResult>;
 	putMany(
 		docs: T[],
 		options?: DocumentPutOptions,
@@ -447,6 +491,7 @@ type NativeDocumentBackendContext<T, I extends Record<string, any>> = {
 type DocumentBackendPut<T> = (
 	doc: T,
 	options?: DocumentPutOptions,
+	trace?: PutTrace,
 ) => MaybePromise<DocumentPutResult>;
 
 type DocumentBackendPutMany<T> = (
@@ -466,8 +511,12 @@ class CompatDocumentBackend<T> implements DocumentBackend<T> {
 		private readonly deleteImpl: DocumentBackendDelete,
 	) {}
 
-	put(doc: T, options?: DocumentPutOptions): MaybePromise<DocumentPutResult> {
-		return this.putImpl(doc, options);
+	put(
+		doc: T,
+		options?: DocumentPutOptions,
+		trace?: PutTrace,
+	): MaybePromise<DocumentPutResult> {
+		return this.putImpl(doc, options, trace);
 	}
 
 	putMany(
@@ -871,6 +920,11 @@ const persistedDocumentDeleteDelivery = new WeakMap<
 >();
 
 type TrustedDocumentSharedLog = {
+	appendWithProfile(
+		data: Operation,
+		options: SharedAppendOptions<Operation>,
+		profile: DiagnosticSink,
+	): Promise<DocumentPutResult>;
 	finishNativeStrictDurableDocumentRecovery(): Promise<void>;
 	snapshotDocumentAppendOptions(
 		options?: DocumentPutOptions,
@@ -1200,6 +1254,7 @@ export class Documents<
 	private _clazz!: AbstractType<T>;
 
 	private _optionCanPerform?: CanPerform<T>;
+	private _putProfile?: DiagnosticSink;
 	private _optionCanPerformNativePolicy?: CanPerformPolicyDescriptor;
 	private _optionCanPerformNativeFastPath?: CanPerformPolicyEvaluator;
 	private _nativeBackboneDocumentIndexEnabled = false;
@@ -2563,6 +2618,7 @@ export class Documents<
 			options.replicate !== undefined &&
 			options.replicate !== false;
 		this.assertNativeModeOpenOptions(options);
+		this._putProfile = options.sync?.profile;
 
 		if (Program.isPrototypeOf(this._clazz)) {
 			if (!this.canOpen) {
@@ -3456,31 +3512,48 @@ export class Documents<
 		doc: T,
 		options?: DocumentPutOptions,
 	): Promise<DocumentPutResult> {
-		options = asTrustedDocumentSharedLog(
-			this.log,
-		).snapshotDocumentAppendOptions(
-			options,
-			this.isNativeMode()
-				? (capturedOptions) => {
-						if (capturedOptions.encryption) {
-							this.assertNativeModePlainPutSupported(doc, capturedOptions);
-						}
-					}
-				: undefined,
+		const trace = createDiagnosticTrace(
+			this._putProfile,
+			"document",
+			"documents.put",
 		);
-		const persistedRequested = hasPersistedDelivery(options);
-		const result = await this._documentBackend.put(doc, options);
-		if (!persistedRequested || persistedDeliveryAlreadySettled.has(result)) {
-			return result;
+		const startedAt = trace?.now();
+		let outcome = "error";
+		try {
+			options = asTrustedDocumentSharedLog(
+				this.log,
+			).snapshotDocumentAppendOptions(
+				options,
+				this.isNativeMode()
+					? (capturedOptions) => {
+							if (capturedOptions.encryption) {
+								this.assertNativeModePlainPutSupported(doc, capturedOptions);
+							}
+						}
+					: undefined,
+			);
+			const persistedRequested = hasPersistedDelivery(options);
+			const result = await this._documentBackend.put(doc, options, trace);
+			if (!persistedRequested || persistedDeliveryAlreadySettled.has(result)) {
+				outcome = "success";
+				return result;
+			}
+			const entry = result.entry;
+			await this.deliverPersistedDocumentEntries([entry], options!);
+			outcome = "success";
+			return {
+				get entry() {
+					return entry;
+				},
+				removed: result.removed,
+			};
+		} finally {
+			trace?.finish({
+				name: "documents.put.settle",
+				durationMs: trace.now() - startedAt!,
+				details: { outcome, inclusive: true },
+			});
 		}
-		const entry = result.entry;
-		await this.deliverPersistedDocumentEntries([entry], options!);
-		return {
-			get entry() {
-				return entry;
-			},
-			removed: result.removed,
-		};
 	}
 
 	private deliverPersistedDocumentEntries(
@@ -3507,11 +3580,24 @@ export class Documents<
 	private async putCompatDocumentBackend(
 		doc: T,
 		options?: DocumentPutOptions,
+		trace?: PutTrace,
 	): Promise<DocumentPutResult> {
 		const putOptions = this.normalizeNativeModePutOptions(options);
-		const prepared = this.canUsePlainPutFastPath(doc, putOptions)
-			? this.preparePlainPut(doc)
-			: this.preparePut(doc);
+		const prepareStartedAt = trace?.now();
+		let prepared: PreparedPlainPut<T> | PreparedPut<T>;
+		let prepareOutcome = "error";
+		try {
+			prepared = this.canUsePlainPutFastPath(doc, putOptions)
+				? this.preparePlainPut(doc)
+				: this.preparePut(doc);
+			prepareOutcome = "success";
+		} finally {
+			trace?.emit({
+				name: "documents.put.prepare",
+				durationMs: trace.now() - prepareStartedAt!,
+				details: { outcome: prepareOutcome, inclusive: true },
+			});
+		}
 		let existingLocalContext:
 			| indexerTypes.IndexedResult<IndexedContextOnly<I>>
 			| null
@@ -3540,55 +3626,78 @@ export class Documents<
 			putOptions,
 		);
 		if (plainPutPlan) {
+			trace?.emit({
+				name: "documents.put.path",
+				details: { path: "prepared" },
+			});
 			return this.commitPlainPutPlan(plainPutPlan, putOptions);
 		}
+		trace?.emit({
+			name: "documents.put.path",
+			details: { path: "compatibility" },
+		});
 
 		const operation =
 			"operation" in prepared
 				? prepared.operation
 				: new PutOperation({ data: prepared.encodedDocument });
 		const persistedDelivery = hasPersistedDelivery(putOptions);
-		const appended = await this.log.append(operation, {
+		const appendOptions: SharedAppendOptions<Operation> = {
 			...putOptions,
 			meta: {
 				next: existingHead ? [await this._resolveEntry(existingHead)] : [],
 				...putOptions?.meta,
 			},
-			canAppend: (entry) => {
-				return this.canAppend(entry, {
-					document: prepared.document,
-					operation,
-				});
-			},
-			onChange: persistedDelivery
-				? (change) =>
-						runAfterDocumentCommit(
-							putOptions,
-							() => change.added.map(({ entry }) => entry.hash),
-							() =>
-								mapMaybePromise(
-									this.handleChanges(change, {
-										document: prepared.document,
-										operation,
-										key: prepared.key,
-										unique: putOptions?.unique,
-										existing: existingLocalContext,
-									}),
-									() => {
-										this.keepCache?.add(change.added[0]!.entry.hash);
-									},
-								),
-						)
-				: (change) =>
-						this.handleChanges(change, {
-							document: prepared.document,
-							operation,
-							key: prepared.key,
-							unique: putOptions?.unique,
-							existing: existingLocalContext,
-						}),
+			canAppend: profilePutCallback(
+				trace,
+				"documents.put.authorize",
+				(entry) => {
+					return this.canAppend(entry, {
+						document: prepared.document,
+						operation,
+					});
+				},
+			),
+			onChange: profilePutCallback(
+				trace,
+				"documents.put.projection",
+				persistedDelivery
+					? (change) =>
+							runAfterDocumentCommit(
+								putOptions,
+								() => change.added.map(({ entry }) => entry.hash),
+								() =>
+									mapMaybePromise(
+										this.handleChanges(change, {
+											document: prepared.document,
+											operation,
+											key: prepared.key,
+											unique: putOptions?.unique,
+											existing: existingLocalContext,
+										}),
+										() => {
+											this.keepCache?.add(change.added[0]!.entry.hash);
+										},
+									),
+							)
+					: (change) =>
+							this.handleChanges(change, {
+								document: prepared.document,
+								operation,
+								key: prepared.key,
+								unique: putOptions?.unique,
+								existing: existingLocalContext,
+							}),
+			),
 			replicate: putOptions?.replicate,
-		});
+		};
+		const appended = trace
+			? await asTrustedDocumentSharedLog(this.log).appendWithProfile(
+					operation,
+					appendOptions,
+					trace.emit,
+				)
+			: await this.log.append(operation, appendOptions);
 		this.keepCache?.add(appended.entry.hash);
 		if (persistedDelivery) {
 			persistedDeliveryAlreadySettled.add(appended);
