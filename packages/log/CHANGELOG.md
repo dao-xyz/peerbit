@@ -1,5 +1,11 @@
 # Changelog
 
+## 6.2.37
+
+### Patch Changes
+
+- [#1506](https://github.com/dao-xyz/peerbit/pull/1506) [`224a1f4`](https://github.com/dao-xyz/peerbit/commit/224a1f4675762705986bfaba2ae424f00ae81b77) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Preserve the signed native entry image in ordinary append results so returned entries can be verified, serialized, joined and read independently of the source store's lifetime. Initialize their payload encoding and keep the separate commit-only fast path unchanged.
+
 ## 6.2.36
 
 ### Patch Changes

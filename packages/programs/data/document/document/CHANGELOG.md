@@ -1,5 +1,19 @@
 # Changelog
 
+## 15.1.10
+
+### Patch Changes
+
+- [#1505](https://github.com/dao-xyz/peerbit/pull/1505) [`2702d72`](https://github.com/dao-xyz/peerbit/commit/2702d729eed01d60f1f739a5bd90a4d89ccd9252) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Honor change listeners registered on cloned or deserialized Documents before opening the store.
+
+- Updated dependencies [[`224a1f4`](https://github.com/dao-xyz/peerbit/commit/224a1f4675762705986bfaba2ae424f00ae81b77), [`0005cda`](https://github.com/dao-xyz/peerbit/commit/0005cda2dd65c22657e9c9587a0061f2829e033e)]:
+  - @peerbit/log@6.2.37
+  - @peerbit/pubsub@5.4.12
+  - @peerbit/document-interface@3.2.81
+  - @peerbit/shared-log@16.0.39
+  - @peerbit/program@6.0.67
+  - @peerbit/rpc@6.2.3
+
 ## 15.1.9
 
 ### Patch Changes

@@ -1,6 +1,6 @@
 {
 	"name": "@peerbit/test-utils",
-	"version": "3.1.47",
+	"version": "3.1.48",
 	"description": "Test utils for Peerbit",
 	"sideEffects": false,
 	"type": "module",
