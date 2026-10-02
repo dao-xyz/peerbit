@@ -102,6 +102,13 @@ const createMockDatabase = (
 };
 
 describe("engine", () => {
+	let resource: Pick<SQLiteIndices, "stop"> | undefined;
+	afterEach(async () => {
+		const current = resource;
+		resource = undefined;
+		await current?.stop();
+	});
+
 	it("uses WITHOUT ROWID for non-integer primary-key root tables", async () => {
 		@variant("root")
 		class RootDoc {
@@ -121,6 +128,7 @@ describe("engine", () => {
 			schema: RootDoc,
 		});
 
+		resource = index;
 		await index.start();
 		await index.stop();
 
@@ -151,6 +159,7 @@ describe("engine", () => {
 			schema: RootDoc,
 		});
 
+		resource = index;
 		await index.start();
 		await index.stop();
 
@@ -170,6 +179,7 @@ describe("engine", () => {
 			directory: "repo/test/index",
 		});
 
+		resource = indices;
 		await indices.start();
 
 		expect(db.openCalls).to.equal(0);
@@ -194,6 +204,7 @@ describe("engine", () => {
 			schema: RootDoc,
 		});
 
+		resource = index;
 		await index.start();
 
 		expect(db.prepareCalls).to.equal(4);
@@ -219,6 +230,7 @@ describe("engine", () => {
 			schema: RootDoc,
 		});
 
+		resource = index;
 		await index.start();
 
 		expect(db.prepareManyCalls).to.equal(1);
@@ -244,6 +256,7 @@ describe("engine", () => {
 			schema: RootDoc,
 		});
 
+		resource = index;
 		await index.start();
 
 		expect(
@@ -263,6 +276,7 @@ describe("engine", () => {
 			directory: "repo/test/index",
 		});
 
+		resource = indices;
 		await indices.start();
 
 		expect(db.openCalls).to.equal(1);
