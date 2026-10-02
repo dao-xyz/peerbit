@@ -1,5 +1,11 @@
 # Changelog
 
+## 5.4.13
+
+### Patch Changes
+
+- [#1479](https://github.com/dao-xyz/peerbit/pull/1479) [`8d7eac9`](https://github.com/dao-xyz/peerbit/commit/8d7eac9e5dd7e1ebcb51b80bf7d7d97b9fb03359) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Ignore relayed unavailability hints for subscribers with a live bidirectional direct stream, while preserving explicit unsubscribe and disconnected-peer cleanup.
+
 ## 5.4.12
 
 ### Patch Changes

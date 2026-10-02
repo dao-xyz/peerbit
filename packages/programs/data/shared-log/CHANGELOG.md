@@ -1,5 +1,27 @@
 # Changelog
 
+## 16.0.40
+
+### Patch Changes
+
+- [#1479](https://github.com/dao-xyz/peerbit/pull/1479) [`8d7eac9`](https://github.com/dao-xyz/peerbit/commit/8d7eac9e5dd7e1ebcb51b80bf7d7d97b9fb03359) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Keep persisted-receipt response waits bounded independently of confirmation and
+  transfer work, so a dropped request can retry before the delivery deadline.
+  Adapt the response wait only after an unanswered request, and back off repeated
+  valid responses that make no receipt progress without changing ingress limits,
+  session and ownership checks, or durable receipt requirements.
+
+- [#1479](https://github.com/dao-xyz/peerbit/pull/1479) [`8d7eac9`](https://github.com/dao-xyz/peerbit/commit/8d7eac9e5dd7e1ebcb51b80bf7d7d97b9fb03359) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Allow callers to cancel log joins without cancelling another caller's shared join, while draining already-started writes and callbacks. Cancel missing-parent receives when their SharedLog receive generation closes so shutdown does not wait for the remote block timeout.
+
+- [#1479](https://github.com/dao-xyz/peerbit/pull/1479) [`8d7eac9`](https://github.com/dao-xyz/peerbit/commit/8d7eac9e5dd7e1ebcb51b80bf7d7d97b9fb03359) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Yield to transport and lifecycle work between rebalance scan pages instead of draining synchronously resolved SQLite pages in one event-loop turn. This does not change iterator ordering or replace OFFSET paging.
+
+- [#1479](https://github.com/dao-xyz/peerbit/pull/1479) [`8d7eac9`](https://github.com/dao-xyz/peerbit/commit/8d7eac9e5dd7e1ebcb51b80bf7d7d97b9fb03359) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Recover replication capability exchange after a one-sided topic-session reopening, including a fresh instance whose departure announcement was lost, without requiring an application readiness waiter. Reuse the authenticated, bounded rearm handshake and require a fresh Full sequence before an old stream can confirm readiness again.
+
+- Updated dependencies [[`8d7eac9`](https://github.com/dao-xyz/peerbit/commit/8d7eac9e5dd7e1ebcb51b80bf7d7d97b9fb03359), [`8d7eac9`](https://github.com/dao-xyz/peerbit/commit/8d7eac9e5dd7e1ebcb51b80bf7d7d97b9fb03359), [`95e6803`](https://github.com/dao-xyz/peerbit/commit/95e680332e870a8a4929702de4d24cc31c5d24de)]:
+  - @peerbit/pubsub@5.4.13
+  - @peerbit/log@6.2.38
+  - @peerbit/program@6.0.68
+  - @peerbit/rpc@6.2.4
+
 ## 16.0.39
 
 ### Patch Changes
