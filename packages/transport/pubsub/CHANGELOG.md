@@ -1,5 +1,11 @@
 # Changelog
 
+## 5.4.12
+
+### Patch Changes
+
+- [#1502](https://github.com/dao-xyz/peerbit/pull/1502) [`0005cda`](https://github.com/dao-xyz/peerbit/commit/0005cda2dd65c22657e9c9587a0061f2829e033e) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Re-register the fanout tree's underlay `peer:disconnect` listener when the service starts again after `stop()`, so a restarted instance handles peer disconnects again.
+
 ## 5.4.11
 
 ### Patch Changes
