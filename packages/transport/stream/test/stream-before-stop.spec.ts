@@ -19,9 +19,14 @@ import { DirectStream, type DirectStreamComponents } from "../src/index.js";
 class GuardedStream extends DirectStream {
 	cleanupCount = 0;
 
-	constructor(components: DirectStreamComponents) {
-		super(components, ["/before-stop/1.0.0"], {
+	constructor(
+		components: DirectStreamComponents,
+		protocol = "/before-stop/1.0.0",
+		sharedRouting = true,
+	) {
+		super(components, [protocol], {
 			connectionManager: false,
+			sharedRouting,
 		});
 	}
 
@@ -41,6 +46,21 @@ const createNode = (start = true) =>
 		connectionMonitor: { enabled: false },
 		connectionManager: { reconnectRetries: 0 },
 		services: { directstream: (components) => new GuardedStream(components) },
+	});
+
+const createSharedNode = (sharedRouting = true) =>
+	createLibp2p<{ first: GuardedStream; second: GuardedStream }>({
+		transports: [tcp()],
+		streamMuxers: [yamux()],
+		connectionEncrypters: [noise()],
+		connectionMonitor: { enabled: false },
+		connectionManager: { reconnectRetries: 0 },
+		services: {
+			first: (components) =>
+				new GuardedStream(components, "/shared-first/1.0.0", sharedRouting),
+			second: (components) =>
+				new GuardedStream(components, "/shared-second/1.0.0", sharedRouting),
+		},
 	});
 
 const createRaw = (id: string): Stream =>
@@ -197,6 +217,177 @@ describe("stream outbound negotiation recovery", () => {
 });
 
 describe("stream before-stop barrier", () => {
+	it("keeps unreachable notifications local when routing is not shared", async () => {
+		const node = await createSharedNode(false);
+		const { first, second } = node.services;
+		const key = (await Ed25519Keypair.create()).publicKey;
+		const hash = key.hashcode();
+		const firstLost = sinon.spy(first, "onPeerUnreachable");
+		const secondLost = sinon.spy(second, "onPeerUnreachable");
+		try {
+			expect(first.routes).not.to.equal(second.routes);
+			for (const consumer of [first, second]) {
+				consumer.routes.updateSession(hash, 1);
+				consumer.addRouteConnection(consumer.publicKeyHash, hash, key, 1, 1, 1);
+			}
+			first.removePeerFromRoutes(hash);
+			expect(firstLost.calledOnceWithExactly(hash)).to.equal(true);
+			expect(secondLost.called).to.equal(false);
+			expect(first.peerKeyHashToPublicKey.has(hash)).to.equal(false);
+			expect(second.peerKeyHashToPublicKey.get(hash)).to.equal(key);
+			expect(second.routes.isReachable(second.publicKeyHash, hash)).to.equal(
+				true,
+			);
+		} finally {
+			firstLost.restore();
+			secondLost.restore();
+			await node.stop();
+		}
+	});
+
+	for (const outcome of ["restores the route", "throws"] as const) {
+		it(`finishes shared loss notification safely when the first consumer ${outcome}`, async () => {
+			const node = await createSharedNode();
+			const { first, second } = node.services;
+			const key = (await Ed25519Keypair.create()).publicKey;
+			const hash = key.hashcode();
+			const failure = new Error("unreachable callback failed");
+			const firstLost = sinon.stub(first, "onPeerUnreachable").callsFake(() => {
+				if (outcome === "throws") throw failure;
+				first.routes.updateSession(hash, 2);
+				first.addRouteConnection(first.publicKeyHash, hash, key, 1, 2, 2);
+			});
+			const secondLost = sinon.spy(second, "onPeerUnreachable");
+			try {
+				expect(first.routes).to.equal(second.routes);
+				first.routes.updateSession(hash, 1);
+				for (const consumer of [first, second]) {
+					consumer.addRouteConnection(
+						consumer.publicKeyHash,
+						hash,
+						key,
+						1,
+						1,
+						1,
+					);
+				}
+				if (outcome === "throws") {
+					let caught: unknown;
+					try {
+						second.removePeerFromRoutes(hash);
+					} catch (error) {
+						caught = error;
+					}
+					expect(caught).to.equal(failure);
+					expect(secondLost.calledOnceWithExactly(hash)).to.equal(true);
+					for (const consumer of [first, second]) {
+						expect(consumer.peerKeyHashToPublicKey.has(hash)).to.equal(false);
+					}
+				} else {
+					second.removePeerFromRoutes(hash);
+					expect(secondLost.called).to.equal(false);
+					expect(first.routes.isReachable(first.publicKeyHash, hash)).to.equal(
+						true,
+					);
+					expect(first.routes.getSession(hash)).to.equal(2);
+					for (const consumer of [first, second]) {
+						expect(consumer.peerKeyHashToPublicKey.get(hash)).to.equal(key);
+					}
+				}
+				expect(firstLost.calledOnceWithExactly(hash)).to.equal(true);
+			} finally {
+				firstLost.restore();
+				secondLost.restore();
+				await node.stop();
+			}
+		});
+	}
+
+	it("excludes quiescing and stopped routing consumers and notifies a restarted consumer once", async () => {
+		const node = await createSharedNode();
+		const { first, second } = node.services;
+		const key = (await Ed25519Keypair.create()).publicKey;
+		const hash = key.hashcode();
+		const lost = sinon.spy(first, "onPeerUnreachable");
+		const otherLost = sinon.spy(second, "onPeerUnreachable");
+		const addRoute = (subject: GuardedStream) => {
+			subject.routes.updateSession(hash, 1);
+			subject.addRouteConnection(
+				subject.publicKeyHash,
+				hash,
+				key,
+				1,
+				Date.now(),
+				1,
+			);
+		};
+		try {
+			expect(first.routes).to.equal(second.routes);
+			addRoute(first);
+			addRoute(second);
+			await first.beforeStop();
+			second.removePeerFromRoutes(hash);
+			expect(lost.called).to.equal(false);
+			expect(otherLost.calledOnceWithExactly(hash)).to.equal(true);
+
+			await first.stop();
+			addRoute(second);
+			second.removePeerFromRoutes(hash);
+			expect(lost.called).to.equal(false);
+			expect(otherLost.callCount).to.equal(2);
+
+			await first.start();
+			expect(first.routes).to.equal(second.routes);
+			addRoute(first);
+			addRoute(second);
+			expect(first.peerKeyHashToPublicKey.has(hash)).to.equal(true);
+			second.removePeerFromRoutes(hash);
+			expect(lost.calledOnceWithExactly(hash)).to.equal(true);
+			expect(otherLost.callCount).to.equal(3);
+			expect(first.peerKeyHashToPublicKey.has(hash)).to.equal(false);
+		} finally {
+			lost.restore();
+			otherLost.restore();
+			await node.stop();
+		}
+	});
+
+	it("releases shared routing ownership even when final stop reports a teardown failure", async () => {
+		const node = await createSharedNode();
+		const { first, second } = node.services;
+		const key = (await Ed25519Keypair.create()).publicKey;
+		const sharedRoutes = first.routes;
+		const failure = new Error(
+			"final teardown failed after the network drained",
+		);
+		let failStop: sinon.SinonStub | undefined;
+		try {
+			expect(sharedRoutes).to.equal(second.routes);
+			first.addRouteConnection(
+				first.publicKeyHash,
+				key.hashcode(),
+				key,
+				1,
+				1,
+				1,
+			);
+			expect(sharedRoutes.countAll()).to.be.greaterThan(0);
+			// Drain the real network first so the injected error owns no live handles.
+			await first.beforeStop();
+			failStop = sinon.stub(first as any, "stopNetwork").rejects(failure);
+			expect(await first.stop().catch((error) => error)).to.equal(failure);
+			expect(first.isStarted()).to.equal(false);
+			failStop.restore();
+			await second.stop();
+			expect(sharedRoutes.countAll()).to.equal(0);
+			await first.start();
+			expect(first.routes).not.to.equal(sharedRoutes);
+		} finally {
+			failStop?.restore();
+			await node.stop();
+		}
+	});
+
 	it("preserves guarded subclass cleanup and permits a complete restart", async () => {
 		const node = await createNode();
 		const subject = node.services.directstream;
