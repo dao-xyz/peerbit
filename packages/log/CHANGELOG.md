@@ -1,5 +1,13 @@
 # Changelog
 
+## 6.2.38
+
+### Patch Changes
+
+- [#1479](https://github.com/dao-xyz/peerbit/pull/1479) [`8d7eac9`](https://github.com/dao-xyz/peerbit/commit/8d7eac9e5dd7e1ebcb51b80bf7d7d97b9fb03359) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Allow callers to cancel log joins without cancelling another caller's shared join, while draining already-started writes and callbacks. Cancel missing-parent receives when their SharedLog receive generation closes so shutdown does not wait for the remote block timeout.
+
+- [#1491](https://github.com/dao-xyz/peerbit/pull/1491) [`95e6803`](https://github.com/dao-xyz/peerbit/commit/95e680332e870a8a4929702de4d24cc31c5d24de) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Close the log's indexer when `Log.fromEntry` replay fails before returning ownership to its caller. Preserve the replay error, and report both errors if cleanup also fails, without deleting the caller's blocks.
+
 ## 6.2.37
 
 ### Patch Changes
