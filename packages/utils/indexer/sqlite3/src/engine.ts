@@ -687,7 +687,7 @@ export class SQLiteIndex<T extends Record<string, any>>
 		options?: { replace?: boolean },
 	): Promise<void> {
 		return this.withDatabaseIfOpen(undefined, async () => {
-			await this.putUnlocked(value, options);
+			await this.withPutSavepoint(() => this.putUnlocked(value, options));
 			this.mutationVersion++;
 		});
 	}
@@ -789,13 +789,11 @@ export class SQLiteIndex<T extends Record<string, any>>
 		);
 	}
 
-	private async putBatchChunk(values: readonly T[]): Promise<void> {
+	private async withPutSavepoint(write: () => Promise<void>): Promise<void> {
 		const savepoint = `peerbit_put_batch_${this.databaseCoordinator.nextSavepointId++}`;
 		await this.properties.db.exec(`SAVEPOINT ${savepoint}`);
 		try {
-			for (const value of values) {
-				await this.putUnlocked(value);
-			}
+			await write();
 			await this.properties.db.exec(`RELEASE SAVEPOINT ${savepoint}`);
 		} catch (error) {
 			try {
@@ -804,7 +802,7 @@ export class SQLiteIndex<T extends Record<string, any>>
 			} catch (rollbackError) {
 				throw new AggregateError(
 					[error, rollbackError],
-					"SQLite batch write and rollback both failed",
+					"SQLite write and rollback both failed",
 				);
 			}
 			throw error;
@@ -818,9 +816,14 @@ export class SQLiteIndex<T extends Record<string, any>>
 				offset < values.length;
 				offset += PUT_BATCH_CHUNK_SIZE
 			) {
-				await this.putBatchChunk(
-					values.slice(offset, offset + PUT_BATCH_CHUNK_SIZE),
-				);
+				await this.withPutSavepoint(async () => {
+					for (const value of values.slice(
+						offset,
+						offset + PUT_BATCH_CHUNK_SIZE,
+					)) {
+						await this.putUnlocked(value);
+					}
+				});
 				this.mutationVersion++;
 			}
 		});
