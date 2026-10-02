@@ -417,6 +417,7 @@ export type RemoteQueryOptions<Q, R, D> = RPCRequestAllOptions<Q, R> & {
 	replicate?: boolean;
 	from?: string[]; // if specified, only query these peers
 	minAge?: number;
+	/** Reject missing responses, query-level denials and page-processing errors. */
 	throwOnMissing?: boolean;
 	retryMissingResponses?: boolean;
 	strategy?: "fallback";
@@ -588,6 +589,17 @@ const coerceQuery = <Resolve extends boolean | undefined>(
 	});
 };
 
+/** A query-level denial from one or more observed remote responders. */
+export class AccessDeniedError extends Error {
+	readonly peers: string[];
+
+	constructor(peers: string[]) {
+		super(`Remote query access denied by: ${peers.join(", ")}`);
+		this.name = "AccessDeniedError";
+		this.peers = [...peers];
+	}
+}
+
 const introduceEntries = async <
 	T,
 	I,
@@ -647,6 +659,14 @@ const introduceEntries = async <
 				(await options.onResponse(response.response, response.from!)); // TODO fix types
 			results.push(response as RPCResponse<types.Results<any>>);
 		} else if (response.response instanceof types.NoAccess) {
+			if (
+				typeof options?.remote === "object" &&
+				options.remote.throwOnMissing
+			) {
+				throw new AccessDeniedError(
+					response.from ? [response.from.hashcode()] : [],
+				);
+			}
 			logger.error("Search resulted in access error");
 		} else {
 			throw new Error("Unsupported");
@@ -5908,6 +5928,9 @@ export class DocumentIndex<
 													e?.message,
 											);
 											peerBufferMap.delete(peer);
+											if (remoteRequestOptions?.throwOnMissing) {
+												throw e;
+											}
 										});
 								}),
 						);
