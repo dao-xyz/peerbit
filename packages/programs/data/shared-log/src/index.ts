@@ -4134,6 +4134,7 @@ export class SharedLog<
 		receiveEpoch: object | null;
 		signal: AbortSignal;
 		requestRemoteFullRearm?: boolean;
+		acknowledgeRearm?: boolean;
 	}): Promise<
 		{ receiverTransportSession: bigint; requestNotBeforeMs: number } | undefined
 	> {
@@ -4148,15 +4149,16 @@ export class SharedLog<
 						: 0),
 			}),
 			{
-				// The transient rearm is only a bounded recovery hint. The ensuing
-				// authenticated Full/Applied exchange is the readiness proof, so do not
-				// let an ACK-delivery promise park the recovery scheduler itself.
-				mode: properties.requestRemoteFullRearm
-					? new SilentDelivery({ redundancy: 1, to: [properties.target] })
-					: new AcknowledgeDelivery({
-							redundancy: 1,
-							to: [properties.target],
-						}),
+				// Watchdog hints stay silent so ACK latency cannot park that scheduler.
+				// Opening adverts still need an ACK before granting local receive
+				// readiness, even when they also solicit reciprocal recovery.
+				mode:
+					properties.requestRemoteFullRearm && !properties.acknowledgeRearm
+						? new SilentDelivery({ redundancy: 1, to: [properties.target] })
+						: new AcknowledgeDelivery({
+								redundancy: 1,
+								to: [properties.target],
+							}),
 				priority: CONVERGENCE_MESSAGE_PRIORITY,
 				signal: properties.signal,
 			},
@@ -4218,6 +4220,7 @@ export class SharedLog<
 					receiveEpoch: properties.receiveEpoch,
 					signal: properties.signal,
 					requestRemoteFullRearm: properties.requestRemoteFullRearm,
+					acknowledgeRearm: properties.acknowledgeRearm,
 				}),
 			onRequestError: (error) => {
 				if (
@@ -6461,7 +6464,9 @@ export class SharedLog<
 					});
 			}
 		};
-		let maxAttemptMs = MAX_PERSISTED_RECEIPT_ATTEMPT_MS;
+		let maxPrerequisiteAttemptMs = MAX_PERSISTED_RECEIPT_ATTEMPT_MS;
+		let maxReceiptResponseAttemptMs = MAX_PERSISTED_RECEIPT_ATTEMPT_MS;
+		let noProgressRetryMs = PERSISTED_RECEIPT_RETRY_MS;
 		let initialTransferPending = transferOnFirstRound;
 		let needsInitialLeaderCheck = true;
 		const carriedAcknowledgements = new Map<
@@ -6653,16 +6658,19 @@ export class SharedLog<
 				);
 				const roundController = new AbortController();
 				const roundSignal = AbortSignal.any([signal, roundController.signal]);
-				const getAttemptTimeout = () =>
+				const getAttemptTimeout = (maxMs = maxPrerequisiteAttemptMs) =>
 					Math.max(
 						1,
 						Math.min(
-							maxAttemptMs,
+							maxMs,
 							Math.floor((deadline.deadline - Date.now()) / candidateWaves),
 						),
 					);
 				const requests = new Set<Promise<void>>();
 				const transferAllOnRound = initialTransferPending;
+				let receivedValidReceipt = false;
+				let receivedNewReceipt = false;
+				let missedReceiptResponse = false;
 				try {
 					for (const [peer, hashes] of hashesByPeer) {
 						let request!: Promise<void>;
@@ -6850,6 +6858,7 @@ export class SharedLog<
 									break;
 								}
 								let responses;
+								let requestIssued = false;
 								const attempt = offset / PERSISTED_RECEIPT_CHUNK_SIZE + 1;
 								let requestStartedAt: number | undefined;
 								let endRequest:
@@ -6875,11 +6884,16 @@ export class SharedLog<
 										throw error;
 									}
 									if (!isPeerRoundCurrent()) break;
-									const attemptTimeout = getAttemptTimeout();
 									responses =
 										(await operationQueue.add(async () => {
 											if (!isPeerRoundCurrent()) return [];
+											// Only a missed response grows this bounded wait. Valid empty
+											// receipts instead back off polling while durability catches up.
+											const attemptTimeout = getAttemptTimeout(
+												maxReceiptResponseAttemptMs,
+											);
 											requestStartedAt = profile?.now();
+											requestIssued = true;
 											const pending = this.rpc.request(
 												new RequestPersistedEntriesV1({
 													expectedReceiverSession: captured.capabilitySession,
@@ -6909,6 +6923,7 @@ export class SharedLog<
 								} catch {
 									endRequest?.("rejected", 0);
 									if (roundSignal.aborted) break;
+									if (requestIssued) missedReceiptResponse = true;
 									// A peer can disconnect or miss this retry while the overall
 									// quorum deadline remains active. Replan on the next round.
 									break;
@@ -6947,10 +6962,16 @@ export class SharedLog<
 										continue;
 									}
 									receivedValidConfirmation = true;
+									receivedValidReceipt = true;
 									for (const hash of unique) {
 										confirmed.add(hash);
-										carriedAcknowledgements.get(hash)?.set(peer, captured);
+										const acknowledgements = carriedAcknowledgements.get(hash)!;
+										if (!acknowledgements.has(peer)) receivedNewReceipt = true;
+										acknowledgements.set(peer, captured);
 									}
+								}
+								if (requestIssued && !receivedValidConfirmation) {
+									missedReceiptResponse = true;
 								}
 								if (receivedValidConfirmation) {
 									const state = ensureRepairState();
@@ -7064,21 +7085,34 @@ export class SharedLog<
 				if (isRoundOwnershipCurrent()) {
 					initialTransferPending = false;
 				}
-				// Keep early retries fair and responsive, then let a caller's longer
-				// overall deadline accommodate a genuinely slow durability barrier.
-				maxAttemptMs = Math.min(
+				// Confirmation and transfer can need a growing preparation window, but
+				// receipt response waits stay bounded independently of that work.
+				maxPrerequisiteAttemptMs = Math.min(
 					MAX_PERSISTED_DELIVERY_TIMEOUT_MS,
-					maxAttemptMs * 2,
+					maxPrerequisiteAttemptMs * 2,
 				);
+				// A genuinely slow receiver may need more than one response window.
+				// Grow on any issued request's miss, even if another peer replied empty,
+				// preserving the existing timer maximum and caller-deadline clamp.
+				if (missedReceiptResponse) {
+					maxReceiptResponseAttemptMs = Math.min(
+						MAX_PERSISTED_DELIVERY_TIMEOUT_MS,
+						maxReceiptResponseAttemptMs * 2,
+					);
+				}
+				// A valid empty/unchanged receipt should reduce polling, not grow the
+				// next RPC's response timeout. New receipts or a round without a valid
+				// response reset this backoff; readiness recovery gets no extra pause.
+				const noReceiptProgress = receivedValidReceipt && !receivedNewReceipt;
+				const retryMs = noReceiptProgress
+					? noProgressRetryMs
+					: PERSISTED_RECEIPT_RETRY_MS;
+				noProgressRetryMs = noReceiptProgress
+					? Math.min(1_000, noProgressRetryMs * 2)
+					: PERSISTED_RECEIPT_RETRY_MS;
 				await this.waitPersistedReceiptRetry(
 					signal,
-					Math.max(
-						0,
-						Math.min(
-							PERSISTED_RECEIPT_RETRY_MS,
-							deadline.deadline - Date.now(),
-						),
-					),
+					Math.max(0, Math.min(retryMs, deadline.deadline - Date.now())),
 				);
 			}
 		} catch (error) {
@@ -23350,6 +23384,7 @@ export class SharedLog<
 									));
 								if (!joinedPreparedFacts) {
 									await trustedLowerLog.join(materializeAllToMergeEntries(), {
+										signal: releasePeerReceiveLease.signal,
 										__peerbitBatchIndependent: true,
 										__peerbitEntriesAlreadyMissing: true,
 										__peerbitCanAppendAlreadyValidated:
@@ -23788,23 +23823,18 @@ export class SharedLog<
 									capabilityTimestamp > previousCapabilityTimestamp;
 								if (
 									freshExactRearm &&
-									this._v2Receive.isCurrentActive({
+									this._v2Receive.acceptRemoteRearm({
 										peerHash: receiveFromHash,
 										peerSession: receiveSession,
 										receiveEpoch:
 											this._peerSessions.receiveEpoch(receiveFromHash),
-										senderTransportSession: capabilityTransportSession,
 									})
 								) {
-									// Rotate the receiver grant/challenge before requesting Full. A
-									// sender rebuilt from no state starts at sequence one, which an
-									// active receiver's old sequence fence must otherwise reject.
-									this._v2Receive.advanceRecovery({
-										peerHash: receiveFromHash,
-										peerSession: receiveSession,
-										receiveEpoch:
-											this._peerSessions.receiveEpoch(receiveFromHash),
-									});
+									// A one-sided topic reopening can discard the opposite receive
+									// stream without changing transport. Retire its old Applied proof
+									// before refreshing our capability and requesting a new Full.
+									this._v2Send.reconfirmAfterPeerRecovery(receiveFromHash);
+									this.dispatchPersistedReceiptReadinessChange(receiveFromHash);
 								}
 							} else if (observed && receiveSession === null) {
 								// A capability can arrive before the sender's topic Subscribe after
@@ -28880,6 +28910,11 @@ export class SharedLog<
 			peerSession: expectedSubscriptionEpoch,
 			receiveEpoch,
 			signal: replicationLifecycleController.signal,
+			// Without a signed remote binding, even a fresh local instance may
+			// face a peer that still considers its old topic session fully active.
+			// Solicit one steady capability through the receiver-led Full handshake;
+			// ordinary timestamp refreshes do not themselves request another reply.
+			requestRemoteFullRearm: !this._peerSyncCapabilitySessions.has(peerHash),
 		});
 		this.scheduleReplicationInfoV2Recovery(
 			publicKey,

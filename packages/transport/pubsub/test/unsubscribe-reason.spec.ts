@@ -6,12 +6,14 @@ import type {
 	UnsubscriptionReason,
 } from "@peerbit/pubsub-interface";
 import {
+	PeerUnavailable,
 	Subscribe,
 	SubscriptionData,
 	Unsubscribe,
 } from "@peerbit/pubsub-interface";
 import { waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
+import sinon from "sinon";
 import {
 	FanoutTree,
 	TopicControlPlane,
@@ -247,6 +249,54 @@ describe("pubsub (unsubscribe reason)", function () {
 					reason: "peer-unreachable",
 				});
 			} finally {
+				a.removeEventListener("unsubscribe", onUnsubscribe as any);
+			}
+		} finally {
+			await session.stop();
+		}
+	});
+
+	it("keeps a direct subscriber when a signed relay loss arrives over the shard", async () => {
+		const topic = "unsubscribe-reason-relay-path-loss";
+		const session = await createDisconnectedSession(3);
+		try {
+			const { a, b } = await setupTrackedSubscribersViaRelay(topic, session);
+			const relay = session.peers[2]!.services.pubsub;
+			await session.connect([[session.peers[0], session.peers[1]]]);
+			await waitForResolved(() => {
+				const direct = a.peers.get(b.publicKeyHash);
+				expect(direct?.isReadable && direct.isWritable).to.equal(true);
+			});
+			const events: UnsubcriptionEvent[] = [];
+			const onUnsubscribe = (event: CustomEvent<UnsubcriptionEvent>) =>
+				events.push(event.detail);
+			const internals = a as any;
+			const process = internals.processShardPubSubMessage.bind(a);
+			let processedHint = false;
+			const receive = sinon
+				.stub(internals, "processShardPubSubMessage")
+				.callsFake(async (input: any) => {
+					await process(input);
+					if (
+						input.pubsubMessage instanceof PeerUnavailable &&
+						input.pubsubMessage.publicKeyHash === b.publicKeyHash &&
+						input.from.equals(relay.publicKey)
+					) {
+						processedHint = true;
+					}
+				});
+			a.addEventListener("unsubscribe", onUnsubscribe as any);
+			try {
+				await (relay as any).announcePeerUnavailableOnShard(
+					b.publicKeyHash,
+					internals.getShardTopicForUserTopic(topic),
+				);
+				await waitForResolved(() => expect(processedHint).to.equal(true));
+				expect(a.topics.get(topic)?.has(b.publicKeyHash)).to.equal(true);
+				expect(events.filter((event) => event.from.equals(b.publicKey))).to.be
+					.empty;
+			} finally {
+				receive.restore();
 				a.removeEventListener("unsubscribe", onUnsubscribe as any);
 			}
 		} finally {

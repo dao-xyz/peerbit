@@ -378,6 +378,28 @@ const isRecoverableJoinResolveError = (error: unknown): boolean => {
 	);
 };
 
+// Keep cancellation distinguishable inside shared joins. A live borrower can
+// retry after a cancelled owner physically settles, without swallowing a real
+// storage/callback failure or cancelling work owned by somebody else.
+class JoinCancelledError extends Error {
+	constructor(readonly signal: AbortSignal) {
+		super("Join cancelled");
+	}
+}
+
+const throwIfJoinCancelled = (signal?: AbortSignal) => {
+	if (signal?.aborted) throw new JoinCancelledError(signal);
+};
+
+const rethrowJoinCancellation = (error: unknown, signal?: AbortSignal) => {
+	if (
+		signal?.aborted &&
+		(error === signal.reason || getErrorName(error) === "AbortError")
+	) {
+		throw new JoinCancelledError(signal);
+	}
+};
+
 type CreateSqliteIndexer = typeof import("@peerbit/indexer-sqlite3").create;
 let sqliteCreate: CreateSqliteIndexer | undefined;
 const createDefaultIndexer = async (): Promise<Indices> => {
@@ -483,6 +505,12 @@ export type JoinOptions<T> = {
 	verifySignatures?: boolean;
 	trim?: TrimOptions;
 	timeout?: number;
+	/**
+	 * Cancel resolution and admission of new entries. Already-started storage
+	 * mutations and callbacks are drained; cancellation does not undo a committed
+	 * prefix. Rejects with this signal's reason after owned work settles.
+	 */
+	signal?: AbortSignal;
 	onChange?: OnChange<T>;
 	reset?: boolean;
 };
@@ -4527,12 +4555,35 @@ export class Log<T> {
 			| ResultsIterator<Entry<any>>,
 		options?: TrustedJoinOptions<T>,
 	): Promise<void> {
+		const closeSignal = this._closeController.signal;
+		const signal = options?.signal
+			? AbortSignal.any([closeSignal, options.signal])
+			: closeSignal;
+		try {
+			await this.joinWithSignal(entriesOrLog, options, signal);
+			throwIfJoinCancelled(signal);
+		} catch (error) {
+			if (error instanceof JoinCancelledError) throw error.signal.reason;
+			throw error;
+		}
+	}
+
+	private async joinWithSignal(
+		entriesOrLog:
+			| (string | Entry<T> | ShallowEntry | EntryWithRefs<T>)[]
+			| Log<T>
+			| ResultsIterator<Entry<any>>,
+		options: TrustedJoinOptions<T> | undefined,
+		signal: AbortSignal,
+	): Promise<void> {
+		throwIfJoinCancelled(signal);
 		this.throwIfDurableWritesFailed();
 		let entries: Entry<T>[];
 		const references: Map<string, Entry<T>> = new Map();
 
 		const fromCache = new Map<string, string[] | null>();
 		const resolveRemoteFrom = async (hash: string, signal?: AbortSignal) => {
+			throwIfJoinCancelled(signal);
 			const cached = fromCache.get(hash);
 			if (cached !== undefined) return cached === null ? undefined : cached;
 
@@ -4544,6 +4595,7 @@ export class Log<T> {
 			} catch {
 				from = undefined;
 			}
+			throwIfJoinCancelled(signal);
 			const normalized = from && from.length > 0 ? from : undefined;
 			fromCache.set(hash, normalized ?? null);
 			return normalized;
@@ -4551,7 +4603,7 @@ export class Log<T> {
 
 		const remote: NonNullable<Exclude<GetOptions["remote"], boolean>> = {
 			timeout: options?.timeout,
-			signal: this._closeController.signal,
+			signal,
 		};
 
 		if (entriesOrLog instanceof Log) {
@@ -4577,6 +4629,7 @@ export class Log<T> {
 
 			entries = [];
 			for (const element of entriesOrLog) {
+				throwIfJoinCancelled(signal);
 				if (isFullEntry(element)) {
 					const fullEntry = normalizeFullEntry<T>(element);
 					if (existingHashes.has(fullEntry.hash)) {
@@ -4592,10 +4645,7 @@ export class Log<T> {
 						continue; // already in log
 					}
 
-					const from = await resolveRemoteFrom(
-						element,
-						this._closeController.signal,
-					);
+					const from = await resolveRemoteFrom(element, signal);
 					let entry: Entry<T>;
 					try {
 						entry = await Entry.fromMultihash<T>(this._storage, element, {
@@ -4606,11 +4656,13 @@ export class Log<T> {
 							},
 						});
 					} catch (error) {
+						rethrowJoinCancellation(error, signal);
 						if (isRecoverableJoinResolveError(error)) {
 							continue;
 						}
 						throw error;
 					}
+					throwIfJoinCancelled(signal);
 					entries.push(entry);
 					references.set(entry.hash, entry);
 					continue;
@@ -4621,10 +4673,7 @@ export class Log<T> {
 						continue; // already in log
 					}
 
-					const from = await resolveRemoteFrom(
-						element.hash,
-						this._closeController.signal,
-					);
+					const from = await resolveRemoteFrom(element.hash, signal);
 					let entry: Entry<T>;
 					try {
 						entry = await Entry.fromMultihash<T>(this._storage, element.hash, {
@@ -4635,11 +4684,13 @@ export class Log<T> {
 							},
 						});
 					} catch (error) {
+						rethrowJoinCancellation(error, signal);
 						if (isRecoverableJoinResolveError(error)) {
 							continue;
 						}
 						throw error;
 					}
+					throwIfJoinCancelled(signal);
 					entries.push(entry);
 					references.set(entry.hash, entry);
 					continue;
@@ -4658,6 +4709,7 @@ export class Log<T> {
 			entries = all;
 		}
 
+		throwIfJoinCancelled(signal);
 		const profile = options?.__peerbitProfile;
 		const headsStartedAt = internalProfileStart(profile);
 		const heads: Map<string, boolean> = new Map();
@@ -4670,6 +4722,7 @@ export class Log<T> {
 					: await entry.getNext();
 			for (const next of nexts) heads.set(next, false);
 		}
+		throwIfJoinCancelled(signal);
 		emitInternalProfileDuration(profile, headsStartedAt, {
 			name: "log.join.prepareHeads",
 			component: "log",
@@ -4683,17 +4736,26 @@ export class Log<T> {
 
 		if (
 			options?.__peerbitBatchIndependent === true &&
-			(await this.tryJoinIndependentAppendBatch(entries, heads, options))
+			(await this.tryJoinIndependentAppendBatch(
+				entries,
+				heads,
+				options,
+				signal,
+			))
 		) {
+			throwIfJoinCancelled(signal);
 			return;
 		}
 
-		for (const entry of entries) {
+		entryLoop: for (const entry of entries) {
+			throwIfJoinCancelled(signal);
 			const isHead = heads.get(entry.hash)!;
-			const prev = this._joining.get(entry.hash);
-			if (prev) {
-				await prev;
-				continue;
+			for (
+				let prev = this._joining.get(entry.hash);
+				prev;
+				prev = this._joining.get(entry.hash)
+			) {
+				if (await this.waitForBorrowedJoin(prev, signal)) continue entryLoop;
 			}
 
 			const p = this.joinRecursively(entry, {
@@ -4708,7 +4770,35 @@ export class Log<T> {
 			});
 			this.trackJoining(entry.hash, p);
 			await p;
+			throwIfJoinCancelled(signal);
 		}
+	}
+
+	private waitForBorrowedJoin(
+		joining: Promise<unknown>,
+		signal?: AbortSignal,
+	): Promise<boolean> {
+		throwIfJoinCancelled(signal);
+		return new Promise((resolve, reject) => {
+			let settled = false;
+			const finish = (callback: () => void) => {
+				if (settled) return;
+				settled = true;
+				signal?.removeEventListener("abort", abort);
+				callback();
+			};
+			const abort = () => finish(() => reject(new JoinCancelledError(signal!)));
+			signal?.addEventListener("abort", abort, { once: true });
+			if (signal?.aborted) abort();
+			joining.then(
+				() => finish(() => resolve(true)),
+				(error) =>
+					finish(() => {
+						if (error instanceof JoinCancelledError) resolve(false);
+						else reject(error);
+					}),
+			);
+		});
 	}
 
 	// Registers an in-flight join in the `_joining` dedup map and removes it again
@@ -4725,7 +4815,7 @@ export class Log<T> {
 	private trackJoining(hash: string, p: Promise<any>): void {
 		this._joining.set(hash, p);
 		p.finally(() => {
-			this._joining.delete(hash);
+			if (this._joining.get(hash) === p) this._joining.delete(hash);
 		}).catch(() => {
 			// Ownership of this rejection belongs to whoever awaits `p`.
 		});
@@ -5046,6 +5136,7 @@ export class Log<T> {
 		entries: Entry<T>[],
 		heads: Map<string, boolean>,
 		options: TrustedJoinOptions<T>,
+		signal: AbortSignal,
 	): Promise<boolean> {
 		if (
 			entries.length < 2 ||
@@ -5125,6 +5216,7 @@ export class Log<T> {
 			});
 		}
 
+		throwIfJoinCancelled(signal);
 		const preparedBatch = this.takePreparedIndependentAppendBatch(
 			entries,
 			headFlags,
@@ -5294,6 +5386,9 @@ export class Log<T> {
 			) => Promise<string[] | undefined>;
 		},
 	): Promise<boolean> {
+		const signal =
+			typeof options.remote === "object" ? options.remote.signal : undefined;
+		throwIfJoinCancelled(signal);
 		if (this.entryIndex.length > (options.length ?? Number.MAX_SAFE_INTEGER)) {
 			return false;
 		}
@@ -5303,6 +5398,7 @@ export class Log<T> {
 		}
 
 		const joinPlan = await this.entryIndex.planJoin(entry, options.reset);
+		throwIfJoinCancelled(signal);
 		if (joinPlan.skip) {
 			return false;
 		}
@@ -5314,6 +5410,7 @@ export class Log<T> {
 				throw new Error(`Invalid signature entry with hash "${entry.hash}"`);
 			}
 		}
+		throwIfJoinCancelled(signal);
 
 		if (joinPlan.coveredByCut) {
 			return false;
@@ -5344,11 +5441,15 @@ export class Log<T> {
 			const parents: Array<{ hash: string; entry?: Entry<T> }> = [];
 			const unresolvedParentHashes: string[] = [];
 
-			for (const a of joinPlan.missingParents) {
-				const prev = this._joining.get(a);
-				if (prev) {
-					await prev;
-					continue;
+			parentPlanLoop: for (const a of joinPlan.missingParents) {
+				throwIfJoinCancelled(signal);
+				for (
+					let prev = this._joining.get(a);
+					prev;
+					prev = this._joining.get(a)
+				) {
+					if (await this.waitForBorrowedJoin(prev, signal))
+						continue parentPlanLoop;
 				}
 
 				const referenced = options.references?.get(a);
@@ -5366,18 +5467,22 @@ export class Log<T> {
 						})
 					: [];
 			const localParentByHash = new Map<string, Entry<T>>();
+			throwIfJoinCancelled(signal);
 			for (const parent of localParents) {
 				if (parent) {
 					localParentByHash.set(parent.hash, parent);
 				}
 			}
 
-			for (const parent of parents) {
+			parentLoop: for (const parent of parents) {
+				throwIfJoinCancelled(signal);
 				const a = parent.hash;
-				const prev = this._joining.get(a);
-				if (prev) {
-					await prev;
-					continue;
+				for (
+					let prev = this._joining.get(a);
+					prev;
+					prev = this._joining.get(a)
+				) {
+					if (await this.waitForBorrowedJoin(prev, signal)) continue parentLoop;
 				}
 
 				let nested = parent.entry ?? localParentByHash.get(a);
@@ -5393,11 +5498,13 @@ export class Log<T> {
 						});
 					}
 				} catch (error) {
+					rethrowJoinCancellation(error, signal);
 					if (isRecoverableJoinResolveError(error)) {
 						return false;
 					}
 					throw error;
 				}
+				throwIfJoinCancelled(signal);
 
 				const p = this.joinRecursively(
 					nested,
@@ -5408,11 +5515,14 @@ export class Log<T> {
 			}
 		}
 
-		if (this._canAppend && !(await this._canAppend(entry))) {
-			return false;
+		if (this._canAppend) {
+			const allowed = await this._canAppend(entry);
+			throwIfJoinCancelled(signal);
+			if (!allowed) return false;
 		}
 
 		const clock = await entry.getClock();
+		throwIfJoinCancelled(signal);
 		this._hlc.update(clock.timestamp);
 
 		await this._entryIndex.put(entry, {

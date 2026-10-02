@@ -132,6 +132,7 @@ export type ReplicationInfoV2SendState = {
 	worker?: Promise<void>;
 	applicationConfirmationRequest?: ApplicationConfirmationRequest;
 	appliedRevision?: bigint;
+	minimumConfirmationSequence?: bigint;
 };
 
 export type ReplicationInfoV2SendDeps<R extends "u32" | "u64"> = {
@@ -256,6 +257,22 @@ export class ReplicationInfoV2SendCoordinator<R extends "u32" | "u64"> {
 		if (state) {
 			this.clearState(state);
 		}
+	}
+
+	/** Re-prove an unchanged transport stream after an authenticated recovery hint. */
+	reconfirmAfterPeerRecovery(peerHash: string): void {
+		const state = this._sendStates.get(peerHash);
+		if (!state || !this.isCurrent(state)) return;
+		state.appliedRevision = undefined;
+		state.minimumConfirmationSequence = state.nextSequence;
+		state.applicationConfirmationRequest?.controller.abort(
+			new AbortError("Replication confirmation peer recovery"),
+		);
+		state.applicationConfirmationRequest = undefined;
+		// Keep the stream: older rearm callers may still own its receive grant.
+		// A new Full sequence fences even an old Applied packet arriving after a
+		// replacement confirmation query has been registered for the same revision.
+		this.enqueueState(state, { kind: "snapshot", revision: this._revision });
 	}
 
 	private clearState(state: ReplicationInfoV2SendState): void {
@@ -1264,6 +1281,8 @@ export class ReplicationInfoV2SendCoordinator<R extends "u32" | "u64"> {
 			!bytesEqual(message.receiverChallenge, state.receiverChallenge) ||
 			!bytesEqual(message.senderEpoch, state.senderEpoch) ||
 			message.sequence !== requested.sequence ||
+			(state.minimumConfirmationSequence !== undefined &&
+				message.sequence < state.minimumConfirmationSequence) ||
 			message.revision !== requested.revision ||
 			message.revision > this._revision
 		) {
@@ -1359,6 +1378,8 @@ export class ReplicationInfoV2SendCoordinator<R extends "u32" | "u64"> {
 			if (
 				this.hasConfirmationFor(state, request.revision) &&
 				this.supportsApplicationConfirmation(state) &&
+				(state.minimumConfirmationSequence === undefined ||
+					message.sequence >= state.minimumConfirmationSequence) &&
 				this.isCurrent(state)
 			) {
 				// Keep one outstanding query until answered or no longer needed. A
