@@ -5481,7 +5481,9 @@ testSetups.forEach((setup) => {
 				});
 
 				it("distribute", async () => {
-					const maxDiv3 = Math.round(Number(numbers.maxValue) / 3);
+					const maxDiv3 = numbers.divRound(numbers.maxValue, 3);
+					const secondOffset =
+						typeof maxDiv3 === "bigint" ? maxDiv3 * 2n : maxDiv3 * 2;
 					const db1 = await session.peers[0].open(
 						new EventStore<string, any>(),
 						{
@@ -5536,9 +5538,12 @@ testSetups.forEach((setup) => {
 					))!;
 
 					let entryCount = 300;
+					const entries: Entry<Operation<string>>[] = [];
 
 					for (let i = 0; i < entryCount; i++) {
-						await db1.add("hello" + i, { meta: { next: [] } });
+						entries.push(
+							(await db1.add("hello" + i, { meta: { next: [] } })).entry,
+						);
 					}
 
 					await waitForResolved(() =>
@@ -5551,6 +5556,23 @@ testSetups.forEach((setup) => {
 						expect(db3.log.log.length).equal(entryCount),
 					);
 
+					// Random independent GIDs need not split evenly. Determine exact
+					// ownership from the declared thirds, not the leader/prune planner.
+					const expectedHashes: string[][] = [[], [], []];
+					for (const entry of entries) {
+						const offset = await db1.log.domain.fromEntry(entry);
+						const coordinate =
+							typeof offset === "bigint"
+								? offset % BigInt(numbers.maxValue)
+								: offset % Number(numbers.maxValue);
+						const owner =
+							coordinate < maxDiv3 ? 0 : coordinate < secondOffset ? 1 : 2;
+						expectedHashes[owner].push(entry.hash);
+					}
+					for (const hashes of expectedHashes) {
+						hashes.sort();
+					}
+
 						await Promise.all([
 							db1.log.replicate(
 								{ factor: maxDiv3, offset: 0, normalized: false },
@@ -5561,7 +5583,7 @@ testSetups.forEach((setup) => {
 								{ reset: true },
 							),
 							db3.log.replicate(
-								{ factor: maxDiv3, offset: maxDiv3 * 2, normalized: false },
+								{ factor: maxDiv3, offset: secondOffset, normalized: false },
 								{ reset: true },
 							),
 						]);
@@ -5573,9 +5595,12 @@ testSetups.forEach((setup) => {
 									db2.log.rebalanceAll({ clearCache: true }),
 									db3.log.rebalanceAll({ clearCache: true }),
 								]);
-								expect(db1.log.log.length).to.closeTo(entryCount / 3, 30);
-								expect(db2.log.log.length).to.closeTo(entryCount / 3, 30);
-								expect(db3.log.log.length).to.closeTo(entryCount / 3, 30);
+								for (const [index, db] of [db1, db2, db3].entries()) {
+									const hashes = (await db.log.log.getHeads(true).all())
+										.map((entry) => entry.hash)
+										.sort();
+									expect(hashes).to.deep.equal(expectedHashes[index]);
+								}
 								expect(
 									db1.log.log.length + db2.log.log.length + db3.log.log.length,
 								).to.equal(entryCount);
