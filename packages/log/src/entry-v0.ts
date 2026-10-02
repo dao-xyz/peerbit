@@ -37,6 +37,11 @@ import {
 	type PreparedAppendCommitOnlyChain,
 	type PreparedNativeLogEntry,
 } from "./entry.js";
+import {
+	emitInternalProfileDuration,
+	getInternalProfile,
+	internalProfileStart,
+} from "./internal-profile.js";
 import type { SortableEntry } from "./log-sorting.js";
 import { logger as baseLogger } from "./logger.js";
 import { Payload } from "./payload.js";
@@ -1914,6 +1919,7 @@ export class EntryV0<T>
 			data: Uint8Array,
 		) => Promise<SignatureWithKey> | SignatureWithKey)[];
 	}): Promise<Entry<T>> {
+		const profile = getInternalProfile(properties);
 		if (!properties.encoding || !properties?.meta?.next) {
 			properties = {
 				...properties,
@@ -1936,11 +1942,25 @@ export class EntryV0<T>
 		// Clean the next objects and convert to hashes
 		const nexts = properties.meta?.next;
 
-		const payloadToSave = new Payload<T>({
-			data: properties.encoding.encoder(properties.data),
-			value: properties.data,
-			encoding: properties.encoding,
-		});
+		let phaseStartedAt = internalProfileStart(profile);
+		let phaseOutcome = "error";
+		let payloadToSave: Payload<T>;
+		try {
+			payloadToSave = new Payload<T>({
+				data: properties.encoding.encoder(properties.data),
+				value: properties.data,
+				encoding: properties.encoding,
+			});
+			phaseOutcome = "success";
+		} finally {
+			if (profile) {
+				emitInternalProfileDuration(profile, phaseStartedAt, {
+					name: "entry.create.payload",
+					component: "log",
+					details: { outcome: phaseOutcome },
+				});
+			}
+		}
 
 		let clock: Clock | undefined = properties.meta?.clock;
 		if (!clock) {
@@ -2045,18 +2065,46 @@ export class EntryV0<T>
 			createdLocally: true,
 		});
 
-		const signableBytes =
-			nativeEncoder && nativePlainInput
-				? await nativeEncoder.encodeEntryV0Signable(nativePlainInput)
-				: entry.getSignableBytes();
-		let signatures = properties.signers
-			? properties.signers.length === 1
-				? [await properties.signers[0]!(signableBytes)]
-				: await Promise.all(
-						properties.signers.map((signer) => signer(signableBytes)),
-					)
-			: [await properties.identity.sign(signableBytes)];
-		signatures = signatures.sort((a, b) => compare(a.signature, b.signature));
+		phaseStartedAt = internalProfileStart(profile);
+		phaseOutcome = "error";
+		let signableBytes: Uint8Array;
+		try {
+			signableBytes =
+				nativeEncoder && nativePlainInput
+					? await nativeEncoder.encodeEntryV0Signable(nativePlainInput)
+					: entry.getSignableBytes();
+			phaseOutcome = "success";
+		} finally {
+			if (profile) {
+				emitInternalProfileDuration(profile, phaseStartedAt, {
+					name: "entry.create.signable",
+					component: "log",
+					details: { outcome: phaseOutcome },
+				});
+			}
+		}
+		phaseStartedAt = internalProfileStart(profile);
+		phaseOutcome = "error";
+		let signatures: SignatureWithKey[];
+		try {
+			signatures = properties.signers
+				? properties.signers.length === 1
+					? [await properties.signers[0]!(signableBytes)]
+					: await Promise.all(
+							properties.signers.map((signer) => signer(signableBytes)),
+						)
+				: [await properties.identity.sign(signableBytes)];
+			signatures = signatures.sort((a, b) => compare(a.signature, b.signature));
+			phaseOutcome = "success";
+		} finally {
+			if (profile) {
+				emitInternalProfileDuration(profile, phaseStartedAt, {
+					name: "entry.create.sign",
+					component: "log",
+					details: { outcome: phaseOutcome },
+				});
+			}
+		}
 
 		const encryptedSignatures: MaybeEncrypted<SignatureWithKey>[] = [];
 		const encryptAllSignaturesWithSameKey = isMaybeEryptionPublicKey(
@@ -2081,58 +2129,88 @@ export class EntryV0<T>
 			signatures: encryptedSignatures,
 		});
 
-		if (properties.canAppend && !(await properties.canAppend(entry))) {
-			throw new AccessError("Not allowed to append");
+		if (properties.canAppend) {
+			phaseStartedAt = internalProfileStart(profile);
+			phaseOutcome = "error";
+			try {
+				if (!(await properties.canAppend(entry))) {
+					throw new AccessError("Not allowed to append");
+				}
+				phaseOutcome = "success";
+			} finally {
+				if (profile) {
+					emitInternalProfileDuration(profile, phaseStartedAt, {
+						name: "entry.create.authorize",
+						component: "log",
+						details: { outcome: phaseOutcome },
+					});
+				}
+			}
 		}
 
-		let nativeStorage:
-			| {
-					bytes: Uint8Array;
-					cid: string;
-			  }
-			| undefined;
-		if (
-			nativeEncoder &&
-			nativePlainInput &&
-			!properties.canAppend &&
-			signatures.length === 1 &&
-			signatures[0]!.publicKey instanceof Ed25519PublicKey
-		) {
-			const storageInput = {
-				...nativePlainInput,
-				signature: signatures[0]!.signature,
-				signaturePublicKey: signatures[0]!.publicKey.publicKey,
-				prehash: signatures[0]!.prehash,
-			};
-			nativeStorage = nativeEncoder.encodeEntryV0StorageWithCid
-				? await nativeEncoder.encodeEntryV0StorageWithCid(storageInput)
-				: await (async () => {
-						const storageBytes =
-							await nativeEncoder.encodeEntryV0Storage(storageInput);
-						return {
-							bytes: storageBytes,
-							cid: await nativeEncoder.calculateRawCidV1(storageBytes),
-						};
-					})();
-		}
+		phaseStartedAt = internalProfileStart(profile);
+		phaseOutcome = "error";
+		try {
+			let nativeStorage:
+				| {
+						bytes: Uint8Array;
+						cid: string;
+				  }
+				| undefined;
+			if (
+				nativeEncoder &&
+				nativePlainInput &&
+				!properties.canAppend &&
+				signatures.length === 1 &&
+				signatures[0]!.publicKey instanceof Ed25519PublicKey
+			) {
+				const storageInput = {
+					...nativePlainInput,
+					signature: signatures[0]!.signature,
+					signaturePublicKey: signatures[0]!.publicKey.publicKey,
+					prehash: signatures[0]!.prehash,
+				};
+				nativeStorage = nativeEncoder.encodeEntryV0StorageWithCid
+					? await nativeEncoder.encodeEntryV0StorageWithCid(storageInput)
+					: await (async () => {
+							const storageBytes =
+								await nativeEncoder.encodeEntryV0Storage(storageInput);
+							return {
+								bytes: storageBytes,
+								cid: await nativeEncoder.calculateRawCidV1(storageBytes),
+							};
+						})();
+			}
 
-		// Append hash
-		entry.hash = properties.deferStore
-			? nativeStorage
-				? Entry.prepareMultihashBytes(
-						entry,
-						nativeStorage.bytes,
-						nativeStorage.cid,
-					)
-				: await Entry.prepareMultihash(entry)
-			: nativeStorage
-				? await Entry.toMultihashBytes(
-						properties.store,
-						entry,
-						nativeStorage.bytes,
-						nativeStorage.cid,
-					)
-				: await Entry.toMultihash(properties.store, entry);
+			// Append hash
+			entry.hash = properties.deferStore
+				? nativeStorage
+					? Entry.prepareMultihashBytes(
+							entry,
+							nativeStorage.bytes,
+							nativeStorage.cid,
+						)
+					: await Entry.prepareMultihash(entry)
+				: nativeStorage
+					? await Entry.toMultihashBytes(
+							properties.store,
+							entry,
+							nativeStorage.bytes,
+							nativeStorage.cid,
+						)
+					: await Entry.toMultihash(properties.store, entry);
+			phaseOutcome = "success";
+		} finally {
+			if (profile) {
+				// This existing boundary includes storage serialization, CID
+				// calculation and block put; it is not a pure hash or fsync timer.
+				emitInternalProfileDuration(profile, phaseStartedAt, {
+					name: "entry.create.storage",
+					component: "log",
+					details: { outcome: phaseOutcome },
+				});
+			}
+		}
 
 		entry.init({ encoding: properties.encoding });
 
