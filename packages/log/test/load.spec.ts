@@ -12,8 +12,10 @@ describe("load", () => {
 	let log: Log<Uint8Array>;
 	let store: AnyBlockStore;
 	let indexer: HashmapIndices;
+	const logs = new Set<Pick<Log<unknown>, "close">>();
 	beforeEach(async () => {
 		log = new Log();
+		logs.add(log);
 		store = new AnyBlockStore();
 		await store.start();
 		indexer = new HashmapIndices();
@@ -21,8 +23,12 @@ describe("load", () => {
 	});
 
 	afterEach(async () => {
-		await log.close();
-		await store.stop();
+		try {
+			await Promise.all([...logs].map((log) => log.close()));
+		} finally {
+			logs.clear();
+			await store.stop();
+		}
 	});
 	it("can reload", async () => {
 		await log.append(new Uint8Array([1]));
@@ -53,6 +59,7 @@ describe("load", () => {
 		expect(log.length).equal(1);
 		expect(await log.getHeads().all()).to.have.length(1);
 		log = new Log({ id: log.id });
+		logs.add(log);
 		await log.open(store, await Ed25519Keypair.create(), { indexer });
 		await log.load();
 		expect(log.length).equal(1);
@@ -125,6 +132,7 @@ describe("load", () => {
 
 	it("custom heads", async () => {
 		const log = new Log();
+		logs.add(log);
 		let deleted: ShallowOrFullEntry<any>[] = [];
 		let added: Entry<any>[] = [];
 		await log.open(store, signKey, {
@@ -158,6 +166,7 @@ describe("load", () => {
 	describe("events", () => {
 		it("will emit events on reset", async () => {
 			const log = new Log();
+			logs.add(log);
 			let deleted: ShallowOrFullEntry<any>[] = [];
 			let added: Entry<any>[] = [];
 			await log.open(store, signKey, {
@@ -188,6 +197,7 @@ describe("load", () => {
 
 		it("will not emit if no changes", async () => {
 			const log = new Log();
+			logs.add(log);
 			let deleted: ShallowOrFullEntry<any>[] = [];
 			let added: Entry<any>[] = [];
 			await log.open(store, signKey, {

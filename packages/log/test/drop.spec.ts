@@ -429,12 +429,11 @@ describe("drop", () => {
 		const index = log.entryIndex.properties.index;
 		const originalDrop = index.drop.bind(index);
 		const failure = new Error("post-apply entry-index drop failure");
-		const innerDrop = sinon.stub(index, "drop");
+		const innerDrop = sinon.stub(index, "drop").callsFake(originalDrop);
 		innerDrop.onFirstCall().callsFake(async () => {
 			await originalDrop();
 			throw failure;
 		});
-		innerDrop.onSecondCall().callsFake(originalDrop);
 
 		expect(
 			await log.drop().then(

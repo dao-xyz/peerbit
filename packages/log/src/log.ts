@@ -5899,12 +5899,28 @@ export class Log<T> {
 	): Promise<Log<T>> {
 		const log = new Log<T>(options.id && { id: options.id });
 		await log.open(store, identity, options);
-		await log.join(!Array.isArray(entryOrHash) ? [entryOrHash] : entryOrHash, {
-			timeout: options.timeout,
-			trim: options.trim,
-			verifySignatures: true,
-		});
-		return log;
+		try {
+			await log.join(
+				!Array.isArray(entryOrHash) ? [entryOrHash] : entryOrHash,
+				{
+					timeout: options.timeout,
+					trim: options.trim,
+					verifySignatures: true,
+				},
+			);
+			return log;
+		} catch (error) {
+			// Ownership transfers only after replay succeeds.
+			try {
+				await log.close();
+			} catch (cleanupError) {
+				throw new AggregateError(
+					[error, cleanupError],
+					"Log replay and cleanup both failed",
+				);
+			}
+			throw error;
+		}
 	}
 
 	/**

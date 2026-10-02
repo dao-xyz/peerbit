@@ -56,23 +56,36 @@ describe("join", function () {
 			log2: Log<Uint8Array>,
 			log3: Log<Uint8Array>,
 			log4: Log<Uint8Array>;
+		const logs = new Set<Pick<Log<unknown>, "close">>();
 
 		beforeEach(async () => {
 			const logOptions = {};
 			log1 = new Log<Uint8Array>();
+			logs.add(log1);
 			await log1.open(session.peers[0].services.blocks, signKey, logOptions);
 			log2 = new Log<Uint8Array>();
+			logs.add(log2);
 			await log2.open(session.peers[1].services.blocks, signKey2, {
 				...logOptions,
 			});
 			log3 = new Log<Uint8Array>();
+			logs.add(log3);
 			await log3.open(session.peers[2].services.blocks, signKey3, logOptions);
 			log4 = new Log<Uint8Array>();
+			logs.add(log4);
 			await log4.open(
 				session.peers[2].services.blocks, // [2] because we cannot create more than 3 peers when running tests in CI
 				signKey4,
 				logOptions,
 			);
+		});
+
+		afterEach(async () => {
+			try {
+				await Promise.all([...logs].map((log) => log.close()));
+			} finally {
+				logs.clear();
+			}
 		});
 
 		it("joins logs", async () => {
@@ -133,6 +146,7 @@ describe("join", function () {
 				last(items2),
 				{ timeout: 3000 },
 			);
+			logs.add(logA);
 
 			// Here we're creating a log from entries signed by peer A, B and C
 			// "logA" accepts entries from peer C so we can join logs A and B
@@ -143,6 +157,7 @@ describe("join", function () {
 				last(items3),
 				{ timeout: 3000 },
 			);
+			logs.add(logB);
 			expect(logA.length).equal(items2.length + items1.length);
 			expect(logB.length).equal(items3.length + items2.length + items1.length);
 
