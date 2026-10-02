@@ -4049,15 +4049,12 @@ export class DocumentIndex<
 			return cover.some((hash) => hash !== selfHash);
 		};
 
-		if (await ready()) {
-			return;
-		}
-
 		const deferred = pDefer<void>();
 		let settled = false;
 		let cleaned = false;
 		let timer: ReturnType<typeof setTimeout> | undefined;
 		let checking = false;
+		let checkRequested = false;
 
 		const cleanup = () => {
 			if (cleaned) {
@@ -4095,13 +4092,20 @@ export class DocumentIndex<
 		const onAbort = () => reject(new AbortError());
 
 		const onEvent = async () => {
+			if (settled) return;
+			checkRequested = true;
 			if (checking) {
 				return;
 			}
 			checking = true;
 			try {
-				if (await ready()) {
-					resolve();
+				while (checkRequested && !settled) {
+					checkRequested = false;
+					const isReady = await ready();
+					if (settled) return;
+					if (isReady) {
+						resolve();
+					}
 				}
 			} catch (error) {
 				reject(error instanceof Error ? error : new Error(String(error)));
@@ -4129,6 +4133,10 @@ export class DocumentIndex<
 		this._log.events.addEventListener("replicator:join", onEvent);
 		this._log.events.addEventListener("replication:change", onEvent);
 		this._log.events.addEventListener("replicator:mature", onEvent);
+
+		// Listen before checking, and bound the initial read by the same deadline.
+		if (signal?.aborted) onAbort();
+		else void onEvent();
 
 		try {
 			await deferred.promise;
@@ -5301,6 +5309,10 @@ export class DocumentIndex<
 					: blockPromise;
 			}
 		}
+
+		// Warmup starts eagerly; keep its rejection observed even before next().
+		// Retain the original promise so fetchFirst still propagates the error.
+		void warmupPromise?.catch(() => {});
 
 		const fetchFirst = async (
 			n: number,
