@@ -8,6 +8,15 @@ import { JSON_ENCODING } from "./utils/encoding.js";
 
 describe("trim", function () {
 	let store: BlockStore;
+	const logs = new Set<Pick<Log<unknown>, "close">>();
+
+	afterEach(async () => {
+		try {
+			await Promise.all([...logs].map((log) => log.close()));
+		} finally {
+			logs.clear();
+		}
+	});
 
 	before(async () => {
 		store = new AnyBlockStore();
@@ -21,11 +30,13 @@ describe("trim", function () {
 	let log: Log<Uint8Array>;
 	beforeEach(async () => {
 		log = new Log<Uint8Array>();
+		logs.add(log);
 		await log.open(store, signKey);
 	});
 
 	it("cut back to max oplog length", async () => {
 		const log = new Log<Uint8Array>();
+		logs.add(log);
 		await log.open(store, signKey, {
 			trim: {
 				type: "length",
@@ -101,6 +112,7 @@ describe("trim", function () {
 
 	it("cut back to cut length", async () => {
 		const log = new Log<Uint8Array>();
+		logs.add(log);
 		await log.open(
 			store,
 			signKey,
@@ -132,6 +144,7 @@ describe("trim", function () {
 			// TODO is this test really neccessary
 			let canTrimInvocations = 0;
 			const log = new Log<string>();
+			logs.add(log);
 			await log.open(
 				store,
 				signKey,
@@ -163,6 +176,7 @@ describe("trim", function () {
 
 	it("cut back to bytelength", async () => {
 		const log = new Log<Uint8Array>();
+		logs.add(log);
 		await log.open(
 			store,
 			signKey,
@@ -212,6 +226,7 @@ describe("trim", function () {
 	it("trim to time", async () => {
 		const maxAge = 3000;
 		const log = new Log<Uint8Array>();
+		logs.add(log);
 		await log.open(
 			store,
 			signKey,
@@ -220,7 +235,6 @@ describe("trim", function () {
 			}, // bytelength is 15 so for every new helloX we hav eto delete the previous helloY
 		);
 
-		let t0 = +new Date();
 		const { entry: a1, removed: r1 } = await log.append(new Uint8Array([1]));
 		expect(r1).to.be.empty;
 		expect(await log.blocks.get(a1.hash)).to.exist;
@@ -230,7 +244,12 @@ describe("trim", function () {
 		const { entry: a2, removed: r2 } = await log.append(new Uint8Array([2]));
 		expect(r2.map((x) => x.hash)).to.have.members([]);
 
-		await waitFor(() => +new Date() - t0 > maxAge);
+		// Expire the newest entry, not a timer started before either append.
+		await waitFor(
+			() =>
+				BigInt(Date.now()) * 1_000_000n >
+				a2.meta.clock.timestamp.wallTime + BigInt(maxAge) * 1_000_000n,
+		);
 		// @ts-ignore
 		const { entry: _a3, removed: r3 } = await log.append(new Uint8Array([2]));
 		expect(r3.map((x) => x.hash)).to.have.members([a1.hash, a2.hash]);
@@ -622,6 +641,7 @@ describe("trim", function () {
 
 		it("trims on middle insertion", async () => {
 			const log2 = new Log<Uint8Array>();
+			logs.add(log2);
 			await log2.open(store, signKey);
 			const e1 = await log.append(new Uint8Array([1]));
 			const e2 = await log2.append(new Uint8Array([2]));

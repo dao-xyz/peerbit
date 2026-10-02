@@ -107,6 +107,15 @@ The default behavior is unchanged. This requires the existing independent batch
 append path, not an all-or-none storage transaction or a particular number of
 fsync calls. Backend durability configuration still applies.
 
+In `mode: "auto"`, required batching supports JavaScript `canPerform` policies
+and the default replication target (omit `target: "none"`). Each independent
+signed entry is authorized in input order before this batch stores any entries.
+Callbacks cannot observe an earlier prefix of this batch, but can observe other
+commits, including their own awaited nested writes. Callback views are detached
+from the captured input bytes. Explicit compatibility mode and unsupported
+options still reject required batching; unflagged `putMany` keeps its existing
+sequential behavior for JavaScript policies.
+
 `DocumentBatchCommitError.committedItems` is an immutable array of `{ index, hash }`
 pairs: indexes refer to the captured input array, not a later mutated array.
 The local outcome is separate from projection and remote delivery:
@@ -116,7 +125,7 @@ The local outcome is separate from projection and remote delivery:
 - `committed`: the complete ordered local append is confirmed. Do not replay it;
   projection, change-event, or remote-receipt work may still have failed. Inspect
   `cause` to determine the failed phase.
-- `indeterminate`: native preparation/append may have changed state without a
+- `indeterminate`: append preparation/storage may have changed state without a
   complete success acknowledgment, or native durable persistence failed.
   `recoveryRequired` is true and automatic replay is unsafe. An empty evidence
   array does **not** mean nothing committed. Exact indexes are exposed only when
