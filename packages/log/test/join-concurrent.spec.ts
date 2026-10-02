@@ -33,6 +33,11 @@ describe("concurrency", function () {
 			});
 		});
 
+		after(async () => {
+			await log1.close();
+			await log2.close();
+		});
+
 		it("joins consistently", async () => {
 			// joins consistently
 			for (let i = 0; i < 10; i++) {
