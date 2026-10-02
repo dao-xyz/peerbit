@@ -42,24 +42,51 @@ class Statement implements IStatement {
 		}
 	}
 
-	get(values?: BindableValue[]) {
-		if (values && values?.length > 0) {
-			this.statement.bind(values);
+	private withReset<T>(operation: () => T): T {
+		let result: T;
+		try {
+			result = operation();
+		} catch (error) {
+			try {
+				this.statement.reset();
+			} catch (resetError) {
+				// OO1 resets the statement before reporting the previous step's code.
+				const SQLite3Error = sqlite3!.SQLite3Error;
+				if (
+					!(error instanceof SQLite3Error) ||
+					!(resetError instanceof SQLite3Error) ||
+					!Number.isInteger(error.resultCode) ||
+					error.resultCode <= 0 ||
+					resetError.resultCode !== error.resultCode
+				) {
+					throw new AggregateError(
+						[error, resetError],
+						"SQLite statement execution and reset both failed",
+					);
+				}
+			}
+			throw error;
 		}
-		let step = this.statement.step();
-		if (!step) {
-			// no data available
-			this.statement.reset();
-			return undefined;
-		}
-		const results = this.statement.get({});
 		this.statement.reset();
-		return results as StatementGetResult;
+		return result;
+	}
+
+	get(values?: BindableValue[]) {
+		return this.withReset(() => {
+			if (values && values.length > 0) {
+				this.statement.bind(values);
+			}
+			return this.statement.step()
+				? (this.statement.get({}) as StatementGetResult)
+				: undefined;
+		});
 	}
 
 	run(values: BindableValue[]) {
-		this.statement.bind(values as any);
-		this.statement.stepReset();
+		this.withReset(() => {
+			this.statement.bind(values as any);
+			this.statement.step();
+		});
 	}
 
 	async reset() {
@@ -90,16 +117,16 @@ class Statement implements IStatement {
 	}
 
 	all(values: BindableValue[]) {
-		if (values && values.length > 0) {
-			this.statement.bind(values as any);
-		}
-
-		let results = [];
-		while (this.statement.step()) {
-			results.push(this.statement.get({}));
-		}
-		this.statement.reset();
-		return results;
+		return this.withReset(() => {
+			if (values && values.length > 0) {
+				this.statement.bind(values as any);
+			}
+			const results = [];
+			while (this.statement.step()) {
+				results.push(this.statement.get({}));
+			}
+			return results;
+		});
 	}
 
 	step() {
