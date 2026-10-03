@@ -5216,39 +5216,35 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		for (const a of shuffled) {
 			if (signal.aborted) break;
 			if (target > 0 && out.length >= target) break;
-			const attempt = diagnostics
-				? this.createBoundedDialAttempt(
-						signal,
-						timeoutMs,
-						diagnostics.deadlineAt,
-					)
-				: undefined;
-			if (diagnostics && !attempt) break;
+			const attempt = this.createBoundedDialAttempt(
+				signal,
+				timeoutMs,
+				diagnostics?.deadlineAt,
+			);
+			if (!attempt) break;
 			if (diagnostics) diagnostics.metrics.joinBootstrapDialAttempts += 1;
 			let ready = false;
 			let skippedExcluded = false;
 			try {
-				const conn = attempt
-					? await this.components.connectionManager.openConnection(a, {
-							signal: attempt.signal,
-						})
-					: await this.components.connectionManager.openConnection(a);
+				const conn = await this.components.connectionManager.openConnection(a, {
+					signal: attempt.signal,
+				});
+				attempt.signal.throwIfAborted();
 				const h = getPublicKeyFromPeerId(conn.remotePeer).hashcode();
 				await this.waitFor(h, {
 					seek: "present",
-					timeout: attempt?.timeoutMs ?? timeoutMs,
-					signal: attempt?.signal ?? signal,
+					timeout: attempt.timeoutMs,
+					signal: attempt.signal,
 				});
-				skippedExcluded =
-					diagnostics?.excludeReadyPeerHashes?.has(h) === true;
+				attempt.signal.throwIfAborted();
+				skippedExcluded = diagnostics?.excludeReadyPeerHashes?.has(h) === true;
 				ready =
-					!skippedExcluded &&
-					(diagnostics ? this.isPeerReadyForJoin(h) : true);
+					!skippedExcluded && (diagnostics ? this.isPeerReadyForJoin(h) : true);
 				if (ready) out.push(h);
 			} catch {
 				// ignore dial failures
 			} finally {
-				attempt?.clear();
+				attempt.clear();
 				if (!ready && !skippedExcluded && diagnostics) {
 					diagnostics.metrics.joinBootstrapDialFailures += 1;
 				}
@@ -5692,34 +5688,30 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		if (this.isPeerReadyForJoin(hash)) return true;
 		for (const a of addrs) {
 			if (signal.aborted) return false;
-			const attempt = diagnostics
-				? this.createBoundedDialAttempt(
-						signal,
-						timeoutMs,
-						diagnostics.deadlineAt,
-					)
-				: undefined;
-			if (diagnostics && !attempt) return false;
+			const attempt = this.createBoundedDialAttempt(
+				signal,
+				timeoutMs,
+				diagnostics?.deadlineAt,
+			);
+			if (!attempt) return false;
 			if (diagnostics) diagnostics.metrics.joinCandidateDialAttempts += 1;
 			let ready = false;
 			try {
-				if (attempt) {
-					await this.components.connectionManager.openConnection(a, {
-						signal: attempt.signal,
-					});
-				} else {
-					await this.components.connectionManager.openConnection(a);
-				}
+				await this.components.connectionManager.openConnection(a, {
+					signal: attempt.signal,
+				});
+				attempt.signal.throwIfAborted();
 				await this.waitFor(hash, {
 					seek: "present",
-					timeout: attempt?.timeoutMs ?? timeoutMs,
-					signal: attempt?.signal ?? signal,
+					timeout: attempt.timeoutMs,
+					signal: attempt.signal,
 				});
+				attempt.signal.throwIfAborted();
 				ready = diagnostics ? this.isPeerReadyForJoin(hash) : true;
 			} catch {
 				// ignore and try next
 			} finally {
-				attempt?.clear();
+				attempt.clear();
 				if (!ready && diagnostics) {
 					diagnostics.metrics.joinCandidateDialFailures += 1;
 				}
