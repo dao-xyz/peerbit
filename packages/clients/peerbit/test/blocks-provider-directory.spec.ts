@@ -1,3 +1,4 @@
+import { multiaddr } from "@multiformats/multiaddr";
 import { expect } from "chai";
 import sinon from "sinon";
 import { Peerbit } from "../src/index.js";
@@ -5,6 +6,65 @@ import { Peerbit } from "../src/index.js";
 const isNode = typeof process !== "undefined" && !!process.versions?.node;
 
 describe("blocks provider discovery", () => {
+	(isNode ? it : it.skip)(
+		"finishes a local block put when a provider bootstrap dial times out",
+		async function () {
+			this.timeout(12_000);
+			const peer = await Peerbit.create();
+			const fanout = peer.services.fanout;
+			const pendingDials = new Set<(error: Error) => void>();
+			const dialSignals: Array<AbortSignal | undefined> = [];
+			const dial = sinon
+				.stub((fanout as any).components.connectionManager, "openConnection")
+				.callsFake((_address, options: { signal?: AbortSignal } = {}) => {
+					dialSignals.push(options.signal);
+					return new Promise((_resolve, reject) => {
+						const finish = (error: Error) => {
+							options.signal?.removeEventListener("abort", onAbort);
+							pendingDials.delete(finish);
+							reject(error);
+						};
+						const onAbort = () => finish(options.signal!.reason);
+						pendingDials.add(finish);
+						if (options.signal?.aborted) onAbort();
+						else
+							options.signal?.addEventListener("abort", onAbort, {
+								once: true,
+							});
+					});
+				});
+			let deadline: ReturnType<typeof setTimeout> | undefined;
+			let putting: Promise<string> | undefined;
+			try {
+				fanout.addBootstraps([multiaddr("/ip4/127.0.0.1/tcp/1")]);
+				const bytes = new Uint8Array([7, 11, 13]);
+				putting = peer.services.blocks.put(bytes);
+				// The production announcement uses a 2-second dial budget. Allow
+				// scheduling headroom, but do not release the mocked dial to pass.
+				const cid = await Promise.race([
+					putting,
+					new Promise<never>((_resolve, reject) => {
+						deadline = setTimeout(
+							() =>
+								reject(new Error("local put is stuck on provider discovery")),
+							4_000,
+						);
+					}),
+				]);
+				expect(dialSignals.length).greaterThan(0);
+				expect(dialSignals.every((signal) => signal?.aborted)).equal(true);
+				expect(pendingDials.size).equal(0);
+				expect(await peer.services.blocks.get(cid)).deep.equal(bytes);
+			} finally {
+				clearTimeout(deadline);
+				for (const reject of pendingDials) reject(new Error("test cleanup"));
+				await putting?.catch((): void => undefined);
+				dial.restore();
+				await peer.stop();
+			}
+		},
+	);
+
 	(isNode ? it : it.skip)(
 		"preserves connected and directory evidence under saturation",
 		async function () {
