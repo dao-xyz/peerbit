@@ -26,6 +26,7 @@ const PUBSUB_SUITE_SPECS = [
 	"unsubscribe-reason.spec.js",
 	"fanout-topics.spec.js",
 	"fanout-tree.spec.js",
+	"fanout-tree-bootstrap-dials.spec.js",
 	"fanout-tree-parent-upgrade.spec.js",
 	"fanout-parent-liveness.spec.js",
 	"fanout-parent-probe.spec.js",
