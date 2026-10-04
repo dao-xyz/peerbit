@@ -1375,12 +1375,15 @@ export abstract class DirectStream<
 		string,
 		{
 			promise: Promise<void>;
+			shared: boolean;
 			callback: (
 				ack: ACK,
 				messageThrough: PeerStreams,
 				messageFrom?: PeerStreams,
 			) => void;
 			clear: () => void;
+			bindDirectAttempt?: (peer: PeerStreams) => void;
+			onPeerReplacement?: (current: PeerStreams) => void;
 		}
 	>;
 
@@ -2437,8 +2440,21 @@ export abstract class DirectStream<
 
 		// Propagate per-peer stream readiness events to the parent emitter
 			const isCurrentPeer = () => this.peers.get(publicKeyHash) === peerStreams;
+			let replacementNotified = false;
 			const forwardOutbound = () => {
-				if (isCurrentPeer()) this.dispatchEvent(new CustomEvent("stream:outbound"));
+				if (!isCurrentPeer()) return;
+				if (
+					existing &&
+					!replacementNotified &&
+					!peerStreams.isClosed &&
+					peerStreams.isWritable
+				) {
+					replacementNotified = true;
+					for (const callback of this._ackCallbacks.values()) {
+						callback.onPeerReplacement?.(peerStreams);
+					}
+				}
+				this.dispatchEvent(new CustomEvent("stream:outbound"));
 			};
 			const forwardInbound = () => {
 				if (isCurrentPeer()) this.dispatchEvent(new CustomEvent("stream:inbound"));
@@ -3436,6 +3452,7 @@ export abstract class DirectStream<
 		promise: Promise<void>;
 		startTimeout: () => void;
 		clear: () => void;
+		bindDirectAttempt?: (peer: PeerStreams) => void;
 	}> {
 		if (isAnyWhereDeliveryMode(message.header.mode)) {
 			return {
@@ -3450,10 +3467,14 @@ export abstract class DirectStream<
 
 		const existing = this._ackCallbacks.get(idString);
 		if (existing) {
+			// Another same-ID publish may use viable relay/explicit paths. The shared
+			// wait must then retain normal ACK/timeout semantics, not one direct owner.
+			existing.shared = true;
 			return {
 				promise: existing.promise,
 				startTimeout: () => {},
 				clear: existing.clear,
+				bindDirectAttempt: existing.bindDirectAttempt,
 			};
 		}
 
@@ -3466,6 +3487,17 @@ export abstract class DirectStream<
 			}
 		}
 		const haveReceivers = messageToSet.size > 0;
+		const directTarget =
+			!relayed &&
+			from.hashcode() === this.publicKeyHash &&
+			message instanceof DataMessage &&
+			isAcknowledgeDeliveryMode(message.header.mode) &&
+			message.header.mode.redundancy === 1 &&
+			message.header.mode.to.length === 1 &&
+			messageToSet.size === 1
+				? message.header.mode.to[0]
+				: undefined;
+		let directAttempt: PeerStreams | undefined;
 
 		if (haveReceivers && this.peers.size === 0) {
 			return {
@@ -3550,6 +3582,7 @@ export abstract class DirectStream<
 				return;
 			}
 			cleared = true;
+			directAttempt = undefined;
 			timeout && clearTimeout(timeout);
 			onUnreachable &&
 				this.removeEventListener("peer:unreachable", onUnreachable);
@@ -3644,8 +3677,53 @@ export abstract class DirectStream<
 			return false;
 		};
 
+		const onPeerReplacement = (current: PeerStreams): void => {
+			if (
+				!directTarget ||
+				cleared ||
+				ackCallback.shared ||
+				this._ackCallbacks.get(idString) !== ackCallback ||
+				uniqueAcks.has(directTarget) ||
+				!directAttempt?.isClosed ||
+				current === directAttempt ||
+				current.publicKey.hashcode() !== directTarget ||
+				this.peers.get(directTarget) !== current ||
+				current.isClosed ||
+				!current.isWritable
+			) {
+				return;
+			}
+			// A replacement may skip an intermediate object that never became writable.
+			// Fail only the wait bound to the closed direct attempt, not the peer session.
+			clear();
+			deliveryDeferredPromise.reject(
+				new DeliveryError(
+					"Direct delivery stream was replaced before acknowledgement",
+				),
+			);
+		};
+		const bindDirectAttempt = (peer: PeerStreams): void => {
+			if (
+				!directTarget ||
+				cleared ||
+				ackCallback.shared ||
+				this._ackCallbacks.get(idString) !== ackCallback ||
+				uniqueAcks.has(directTarget) ||
+				peer.publicKey.hashcode() !== directTarget
+			) {
+				return;
+			}
+			directAttempt ??= peer;
+			// Readiness may have fired while publishMessage was awaiting earlier work.
+			const current = this.peers.get(directTarget);
+			if (current) onPeerReplacement(current);
+		};
+
 		const ackCallback = {
 			promise: deliveryDeferredPromise.promise,
+			shared: false,
+			bindDirectAttempt: directTarget ? bindDirectAttempt : undefined,
+			onPeerReplacement: directTarget ? onPeerReplacement : undefined,
 			callback: (
 				ack: ACK,
 				messageThrough: PeerStreams,
@@ -3736,6 +3814,7 @@ export abstract class DirectStream<
 			promise: deliveryDeferredPromise.promise,
 			startTimeout,
 			clear: ackCallback.clear,
+			bindDirectAttempt: ackCallback.bindDirectAttempt,
 		};
 	}
 
@@ -3754,6 +3833,7 @@ export abstract class DirectStream<
 		let delivereyPromise: Promise<void> | undefined = undefined as any;
 		let startDeliveryTimeout: (() => void) | undefined;
 		let clearDelivery: (() => void) | undefined;
+		let bindDirectAttempt: ((peer: PeerStreams) => void) | undefined;
 
 		if (
 			(!message.header.signatures ||
@@ -3781,6 +3861,7 @@ export abstract class DirectStream<
 			delivereyPromise = deliveryDeferredPromise.promise;
 			startDeliveryTimeout = deliveryDeferredPromise.startTimeout;
 			clearDelivery = deliveryDeferredPromise.clear;
+			bindDirectAttempt = deliveryDeferredPromise.bindDirectAttempt;
 		}
 
 		try {
@@ -3833,6 +3914,9 @@ export abstract class DirectStream<
 									),
 								);
 							} else {
+								if (fanout.size === 1) {
+									bindDirectAttempt?.(stream);
+								}
 								promises.push(
 									this.waitForPeerWrite(
 										stream,
