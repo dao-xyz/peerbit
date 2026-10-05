@@ -3,6 +3,7 @@ import fs from "node:fs/promises";
 import { createServer as createHttpServer } from "node:http";
 import os from "node:os";
 import path from "node:path";
+import { gzipSync } from "node:zlib";
 import {
 	type InlineConfig,
 	type ViteDevServer,
@@ -326,6 +327,59 @@ describe("Vite literal asset integration", () => {
 					upstream.close((error) => (error ? reject(error) : resolve()));
 				});
 			}
+		});
+	});
+
+	it("uses destination MIME types for renamed and newly added fallback assets", async () => {
+		await withProject(async (root, peerbit) => {
+			const source = path.join(root, "source");
+			await write(path.join(source, "module.bin"), "wasm-bytes");
+			await serve(
+				config(
+					root,
+					peerbit({
+						assets: [
+							{ src: source, dest: "custom" },
+							{ src: path.join(source, "module.bin"), dest: "renamed.wasm" },
+						],
+					}),
+				),
+				async (_server, origin) => {
+					await fs.rm(path.join(root, "public", "renamed.wasm"));
+					await write(
+						path.join(source, "added.mts"),
+						"export const value = 1;",
+					);
+					for (const [url, type] of [
+						["/renamed.wasm", "application/wasm"],
+						["/custom/added.mts", "text/javascript"],
+					]) {
+						const response = await fetch(origin + url);
+						expect(response.status).to.equal(200);
+						expect(response.headers.get("content-type")).to.equal(type);
+						await response.arrayBuffer();
+					}
+				},
+			);
+		});
+	});
+
+	it("serves compressed custom assets as opaque bytes unless encoding is configured", async () => {
+		await withProject(async (root, peerbit) => {
+			const source = path.join(root, "source");
+			await fs.mkdir(source);
+			await serve(
+				config(root, peerbit({ assets: [{ src: source, dest: "custom" }] })),
+				async (_server, origin) => {
+					const bytes = gzipSync("opaque-compressed-file");
+					await fs.writeFile(path.join(source, "added.gz"), bytes);
+					const response = await fetch(origin + "/custom/added.gz");
+					expect(response.status).to.equal(200);
+					expect(Buffer.from(await response.arrayBuffer())).to.deep.equal(
+						bytes,
+					);
+				},
+			);
 		});
 	});
 

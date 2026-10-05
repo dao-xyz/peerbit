@@ -67,6 +67,7 @@
 	"license": "MIT",
 	"dependencies": {
 		"@peerbit/build-assets": "workspace:*",
+		"mrmime": "^2.0.1",
 		"sirv": "^3.0.2",
 		"vite": "^7.3.6"
 	},

@@ -7,6 +7,7 @@ import {
 } from "@peerbit/build-assets";
 import fs from "fs";
 import { createRequire } from "module";
+import { lookup } from "mrmime";
 import path from "path";
 import sirv from "sirv";
 import {
@@ -163,7 +164,17 @@ function copyToPublicPlugin(
 						dev: true,
 						etag: true,
 						extensions: [],
-						setHeaders(res) {
+						setHeaders(res, pathname) {
+							const destination = directory ? pathname : dest;
+							res.setHeader(
+								"Content-Type",
+								/\.(?:[tj]sx?|[cm][tj]s)$/.test(destination)
+									? "text/javascript"
+									: lookup(destination) || "",
+							);
+							// Custom .gz/.br files are opaque assets, not negotiated encodings.
+							if (/\.(?:gz|br)$/.test(pathname))
+								res.setHeader("Content-Encoding", "identity");
 							for (const [name, value] of Object.entries(
 								server.config.server.headers ?? {},
 							)) {
