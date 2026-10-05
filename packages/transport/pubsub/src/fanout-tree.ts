@@ -2147,8 +2147,8 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 				}),
 			);
 
-			const merged: FanoutProviderCandidate[] = [...cached];
-			for (const r of results) merged.push(...r);
+			const fresh = results.flat();
+			const merged: FanoutProviderCandidate[] = [...cached, ...fresh];
 
 			const seen = new Set<string>();
 			const deduped = merged.filter((c) => {
@@ -2159,9 +2159,9 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 				return true;
 			});
 
-			// Cache (best-effort) to avoid repeated tracker lookups.
+			// Only fresh replies renew expiry; reading cached hints is not new evidence.
 			if (cacheTtlMs > 0) {
-				this.rememberProviderCandidates(id, deduped, Date.now() + cacheTtlMs);
+				this.rememberProviderCandidates(id, fresh, Date.now() + cacheTtlMs);
 			}
 
 			const ordered = orderCandidates(deduped);
