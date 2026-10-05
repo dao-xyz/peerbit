@@ -2768,6 +2768,7 @@ export class Log<T> {
 			resolveTrimmedEntries?: boolean;
 			payloadDatas?: Uint8Array[];
 			nexts?: Sorting.SortableEntry[][];
+			requireAuthorization?: boolean;
 		},
 	): Promise<
 		| {
@@ -2795,6 +2796,7 @@ export class Log<T> {
 			resolveTrimmedEntries?: boolean;
 			payloadDatas?: Uint8Array[];
 			nexts?: Sorting.SortableEntry[][];
+			requireAuthorization?: boolean;
 		},
 	): Promise<
 		| {
@@ -2824,26 +2826,70 @@ export class Log<T> {
 		}
 
 		const onLocalCommit = localCommitEvidenceSink(options);
-		const appendOptions = withCanAppendAlreadyValidated(options);
+		const requireAuthorization = properties?.requireAuthorization === true;
+		const appendOptions = requireAuthorization
+			? options
+			: withCanAppendAlreadyValidated(options);
 		const deferBlockStore = hasPutMany(this._storage);
-		const nativeAppendBatch = await this.createNativePlainAppendEntriesBatch(
-			data,
-			appendOptions,
-			deferBlockStore,
-			properties?.payloadDatas,
-			properties?.nexts,
-		);
-		if (!nativeAppendBatch) {
-			return undefined;
+		let nativeAppendBatch: PreparedAppendChain<T> | undefined;
+		let entries: Entry<T>[];
+		if (requireAuthorization) {
+			if (
+				!deferBlockStore ||
+				typeof this.entryIndex.properties.index.putBatch !== "function" ||
+				this.entryIndex.properties.onGidRemoved ||
+				options.encryption ||
+				options.signers ||
+				options.meta?.timestamp ||
+				options.meta?.gidSeed ||
+				options.meta?.next ||
+				(properties?.nexts && properties.nexts.length !== data.length) ||
+				(properties?.payloadDatas &&
+					properties.payloadDatas.length !== data.length)
+			) {
+				return undefined;
+			}
+			entries = [];
+			for (let i = 0; i < data.length; i++) {
+				const payloadData = properties?.payloadDatas?.[i];
+				const item = payloadData
+					? this._encoding.decoder(payloadData.slice())
+					: data[i]!;
+				// Authorization runs after signing, before storage or index locks.
+				// Captured payload bytes remain authoritative for the signed entry.
+				entries.push(
+					await this.createAppendEntry(
+						item,
+						appendOptions,
+						properties?.nexts?.[i] ?? [],
+						{
+							deferStore: true,
+							payloadData,
+							requireAuthorization: true,
+						},
+					),
+				);
+			}
+		} else {
+			nativeAppendBatch = await this.createNativePlainAppendEntriesBatch(
+				data,
+				appendOptions,
+				deferBlockStore,
+				properties?.payloadDatas,
+				properties?.nexts,
+			);
+			if (!nativeAppendBatch) {
+				return undefined;
+			}
+			entries = nativeAppendBatch.entries;
 		}
 
-		const entries = nativeAppendBatch.entries;
 		const externalNextHashes =
 			properties?.nexts?.flatMap((nexts) => nexts.map((next) => next.hash)) ??
 			[];
 		try {
-			if (deferBlockStore && !nativeAppendBatch.nativeBlocksCommitted) {
-				await this.putAppendEntryBlocks(entries, nativeAppendBatch.blocks);
+			if (deferBlockStore && !nativeAppendBatch?.nativeBlocksCommitted) {
+				await this.putAppendEntryBlocks(entries, nativeAppendBatch?.blocks);
 			}
 			await this.putAppendEntries(
 				entries,
@@ -2853,10 +2899,10 @@ export class Log<T> {
 				entries.map(() => true),
 			);
 		} catch (error) {
-			if (nativeAppendBatch.nativeGraphUpdated) {
+			if (nativeAppendBatch?.nativeGraphUpdated) {
 				this.rollbackNativeAppendGraph(entries);
 			}
-			if (nativeAppendBatch.nativeBlocksCommitted) {
+			if (nativeAppendBatch?.nativeBlocksCommitted) {
 				await this.rollbackNativeAppendBlocks(entries);
 			}
 			throw error;
@@ -4105,6 +4151,8 @@ export class Log<T> {
 		nexts: Sorting.SortableEntry[],
 		storeOptions?: {
 			deferStore?: boolean;
+			payloadData?: Uint8Array;
+			requireAuthorization?: boolean;
 		},
 	): Promise<Entry<T>> {
 		const clock = new Clock({
@@ -4112,6 +4160,7 @@ export class Log<T> {
 			timestamp: options?.meta?.timestamp || this._hlc.now(),
 		});
 
+		const payloadData = storeOptions?.payloadData;
 		const entry = await EntryV0.create<T>({
 			store: this._storage,
 			identity: options.identity || this._identity,
@@ -4126,7 +4175,12 @@ export class Log<T> {
 				data: options.meta?.data,
 				next: nexts,
 			},
-			encoding: this._encoding,
+			encoding: payloadData
+				? {
+						encoder: () => payloadData.slice(),
+						decoder: (bytes: Uint8Array) => this._encoding.decoder(bytes),
+					}
+				: this._encoding,
 			encryption: options.encryption
 				? {
 						keypair: options.encryption.keypair,
@@ -4135,14 +4189,16 @@ export class Log<T> {
 						},
 					}
 				: undefined,
-			canAppend: canAppendAlreadyValidated(options)
-				? undefined
-				: options.canAppend
-					? (entry) =>
-							this.runWithMutationCallback(() => options.canAppend!(entry))
-					: this._hasCustomCanAppend
-						? this._canAppend
-						: undefined,
+			canAppend: storeOptions?.requireAuthorization
+				? this._canAppend
+				: canAppendAlreadyValidated(options)
+					? undefined
+					: options.canAppend
+						? (entry: Entry<T>) =>
+								this.runWithMutationCallback(() => options.canAppend!(entry))
+						: this._hasCustomCanAppend
+							? this._canAppend
+							: undefined,
 			deferStore: storeOptions?.deferStore,
 		});
 

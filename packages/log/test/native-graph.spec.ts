@@ -4,6 +4,7 @@ import { HashmapIndices } from "@peerbit/indexer-simple";
 import { expect } from "chai";
 import sinon from "sinon";
 import { EntryType } from "../src/entry-type.js";
+import { EntryV0 } from "../src/entry-v0.js";
 import { Log } from "../src/log.js";
 
 const absoluteReplicaData = (value: number) =>
@@ -29,6 +30,97 @@ describe("native graph", () => {
 		await store.stop();
 	});
 
+	for (const path of ["entries", "facts"] as const) {
+		it(`preserves independent heads, gids, and children for explicit-head ${path} batches`, async () => {
+			const log = new Log<Uint8Array>();
+			await log.open(store, signKey, {
+				appendDurability: "strict",
+				indexer: new HashmapIndices(),
+				nativeGraph: true,
+			});
+			const graph = log.entryIndex.properties.nativeGraph!.graph;
+			const chainSpy = sinon.spy(graph, "putAppendChain");
+			const batchSpy = sinon.spy(graph, "putBatch");
+			try {
+				const entries = await Promise.all(
+					["first", "second", "third"].map((gid, index) =>
+						EntryV0.create({
+							store,
+							identity: signKey,
+							data: new Uint8Array([index]),
+							meta: { gid, next: [] },
+						}),
+					),
+				);
+				const properties = {
+					unique: true,
+					externalNextHashes: [],
+					heads: entries.map(() => true),
+				};
+				if (path === "entries") {
+					await log.entryIndex.putAppendBatch(entries, properties);
+				} else {
+					await log.entryIndex.putAppendFactsBatch(
+						entries.map((entry) => ({
+							hash: entry.hash,
+							meta: entry.meta,
+							shallowEntry: entry.toShallow(true),
+						})),
+						properties,
+					);
+				}
+				expect(
+					(await log.getHeads().all()).map((entry) => entry.hash),
+				).to.have.members(entries.map((entry) => entry.hash));
+				for (const entry of entries) {
+					expect(graph.heads(entry.meta.gid)).to.deep.equal([entry.hash]);
+					expect(graph.childJoinEntries(entry.hash)).to.deep.equal([]);
+				}
+				expect(chainSpy.callCount).equal(0);
+				expect(batchSpy.callCount).equal(1);
+			} finally {
+				chainSpy.restore();
+				batchSpy.restore();
+				await log.close();
+			}
+		});
+	}
+
+	it("keeps the native graph chain optimization for authorized appendMany", async () => {
+		const log = new Log<Uint8Array>();
+		await log.open(store, signKey, {
+			appendDurability: "strict",
+			indexer: new HashmapIndices(),
+			nativeGraph: true,
+			canAppend: () => true,
+		});
+		const graph = log.entryIndex.properties.nativeGraph!.graph;
+		const chainSpy = sinon.spy(graph, "putAppendChain");
+		const batchSpy = sinon.spy(graph, "putBatch");
+		try {
+			const { entries } = await log.appendMany([
+				new Uint8Array([1]),
+				new Uint8Array([2]),
+				new Uint8Array([3]),
+			]);
+			expect(
+				(await log.getHeads().all()).map((entry) => entry.hash),
+			).to.deep.equal([entries[2]!.hash]);
+			expect(
+				graph.childJoinEntries(entries[0]!.hash).map((entry) => entry.hash),
+			).to.deep.equal([entries[1]!.hash]);
+			expect(
+				graph.childJoinEntries(entries[1]!.hash).map((entry) => entry.hash),
+			).to.deep.equal([entries[2]!.hash]);
+			expect(chainSpy.callCount).equal(1);
+			expect(batchSpy.callCount).equal(0);
+		} finally {
+			chainSpy.restore();
+			batchSpy.restore();
+			await log.close();
+		}
+	});
+
 	it("serves heads from the native graph without forcing buffered index flush", async () => {
 		const log = new Log<Uint8Array>();
 		await log.open(store, signKey, {
@@ -36,10 +128,7 @@ describe("native graph", () => {
 			nativeGraph: true,
 		});
 		const putSpy = sinon.spy(log.entryIndex.properties.index, "put");
-		const putBatchSpy = sinon.spy(
-			log.entryIndex.properties.index,
-			"putBatch",
-		);
+		const putBatchSpy = sinon.spy(log.entryIndex.properties.index, "putBatch");
 		const { entry } = await log.append(new Uint8Array([1]), {
 			meta: { next: [] },
 		});
@@ -247,7 +336,10 @@ describe("native graph", () => {
 		);
 		const nativeGraph = log.entryIndex.properties.nativeGraph!.graph;
 		const maxHeadDataU32Spy = sinon.spy(nativeGraph, "maxHeadDataU32");
-		const maxHeadDataU32BatchSpy = sinon.spy(nativeGraph, "maxHeadDataU32Batch");
+		const maxHeadDataU32BatchSpy = sinon.spy(
+			nativeGraph,
+			"maxHeadDataU32Batch",
+		);
 		try {
 			expect(await log.entryIndex.getMaxHeadDataU32()).equal(5);
 			expect(
@@ -475,8 +567,9 @@ describe("native graph", () => {
 		const oldestEntriesSpy = sinon.spy(nativeGraph, "oldestEntries");
 		const iterateSpy = sinon.spy(log.entryIndex.properties.index, "iterate");
 		try {
-			const first = (await log.append(new Uint8Array([1]), { meta: { next: [] } }))
-				.entry;
+			const first = (
+				await log.append(new Uint8Array([1]), { meta: { next: [] } })
+			).entry;
 			await log.append(new Uint8Array([2]));
 			await log.append(new Uint8Array([3]));
 

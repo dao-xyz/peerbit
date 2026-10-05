@@ -97,7 +97,12 @@ describe("durable native commit acknowledgement", function () {
 			if (!(error instanceof NativeDurableCommitError)) {
 				throw error;
 			}
+			// Intentional poison can reject program close before Peerbit reaches its
+			// owned transport/indexer teardown. Finish that same client's cleanup;
+			// a repeated failure must fail the fixture, not discard the live peer.
+			await client?.stop();
 		}
+		if (client) expect(client.libp2p.status).to.equal("stopped");
 		client = undefined;
 		if (directory) {
 			await fs.rm(directory, { recursive: true, force: true });

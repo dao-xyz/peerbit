@@ -1054,6 +1054,7 @@ type PreparedPayloadCommitOnlyProperties =
 	};
 
 type PreparedPayloadsManyIndependentProperties<T> = {
+	requireAuthorization?: boolean;
 	resolveTrimmedEntries?: boolean;
 	payloadDatas?: Uint8Array[];
 	nexts?: ShallowOrFullEntry<T>[][];
@@ -2330,6 +2331,7 @@ type TrustedLowerLog<T> = {
 		data: T[],
 		options?: TrustedLogAppendOptions<T>,
 		properties?: {
+			requireAuthorization?: boolean;
 			resolveTrimmedEntries?: boolean;
 			payloadDatas?: Uint8Array[];
 			nexts?: ShallowOrFullEntry<T>[][];
@@ -16174,20 +16176,25 @@ export class SharedLog<
 
 		const { appendOptions, minReplicasValue } =
 			this.createLogAppendOptions(options);
-		appendOptions.__peerbitCanAppendAlreadyValidated = true;
+		if (!properties?.requireAuthorization) {
+			appendOptions.__peerbitCanAppendAlreadyValidated = true;
+		}
 		attachTrustedLocalCommitEvidence(
 			appendOptions,
 			properties?.localCommitEvidence,
 		);
-		const nativeBackboneBatch =
-			await this.appendLocallyPreparedPayloadsManyNativeBackboneDocumentIndexBatch(
-				data,
-				appendOptions,
-				options,
-				properties,
-				minReplicasValue,
-				ownershipLifecycleController,
-			);
+		// JavaScript policy must authorize the actual signed entries before any
+		// native precommit or storage mutation, through the installed canAppend.
+		const nativeBackboneBatch = properties?.requireAuthorization
+			? undefined
+			: await this.appendLocallyPreparedPayloadsManyNativeBackboneDocumentIndexBatch(
+					data,
+					appendOptions,
+					options,
+					properties,
+					minReplicasValue,
+					ownershipLifecycleController,
+				);
 		this.throwIfReplicationOwnershipLifecycleInactive(
 			ownershipLifecycleController,
 		);
@@ -16197,6 +16204,7 @@ export class SharedLog<
 		const result = await asTrustedLowerLog(
 			this.log,
 		).appendLocallyPreparedManyIndependent(data, appendOptions, {
+			requireAuthorization: properties?.requireAuthorization,
 			resolveTrimmedEntries: properties?.resolveTrimmedEntries,
 			payloadDatas: properties?.payloadDatas,
 			nexts: properties?.nexts,
@@ -16329,6 +16337,7 @@ export class SharedLog<
 			new Array(payloadDatas.length) as T[],
 			options,
 			{
+				requireAuthorization: properties?.requireAuthorization,
 				resolveTrimmedEntries: properties?.resolveTrimmedEntries,
 				payloadDatas,
 				nexts: properties?.nexts,
