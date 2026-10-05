@@ -126,8 +126,10 @@ describe("stream same-identity replacement ownership", () => {
 		const session = sinon.spy(subject, "onPeerSession");
 		const outbound = sinon.spy();
 		const inbound = sinon.spy();
+		const writable = sinon.spy();
 		(subject as EventTarget).addEventListener("stream:outbound", outbound);
 		(subject as EventTarget).addEventListener("stream:inbound", inbound);
+		subject.addEventListener("peer:stream-ready", writable);
 		try {
 			const current = subject.addPeer(key.toPeerId(), key, protocol, "new");
 			expect(subject.routes.getSession(key.hashcode())).to.equal(123);
@@ -137,10 +139,41 @@ describe("stream same-identity replacement ownership", () => {
 			expect(outbound.called || inbound.called).to.equal(false);
 			current.dispatchEvent(new CustomEvent("stream:outbound"));
 			expect(outbound.calledOnce).to.equal(true);
+			expect(writable.called).to.equal(false);
+			await current.attachOutboundStream(raw("replacement"));
+			expect(writable.calledOnce).to.equal(true);
+			expect(writable.firstCall.args[0].detail).to.equal(key);
+			current.dispatchEvent(new CustomEvent("stream:outbound"));
+			old.dispatchEvent(new CustomEvent("stream:outbound"));
+			expect(writable.calledOnce).to.equal(true);
 		} finally {
 			session.restore();
 			release();
 			await closing;
+			await node.stop();
+		}
+	});
+
+	it("announces first writable readiness again after complete peer removal", async () => {
+		const node = await createNode();
+		const subject = node.services.directstream;
+		const key = (await Ed25519Keypair.create()).publicKey;
+		const writable = sinon.spy();
+		subject.addEventListener("peer:stream-ready", writable);
+		try {
+			const old = subject.addPeer(key.toPeerId(), key, protocol, "first");
+			expect(writable.called).to.equal(false);
+			await old.attachOutboundStream(raw("first"));
+			expect(writable.calledOnce).to.equal(true);
+			await subject["onPeerDisconnected"](key.toPeerId());
+			expect(subject.peers.has(key.hashcode())).to.equal(false);
+			const current = subject.addPeer(key.toPeerId(), key, protocol, "next");
+			await current.attachOutboundStream(raw("next"));
+			expect(writable.calledTwice).to.equal(true);
+			expect(writable.secondCall.args[0].detail).to.equal(key);
+			current.dispatchEvent(new CustomEvent("stream:outbound"));
+			expect(writable.calledTwice).to.equal(true);
+		} finally {
 			await node.stop();
 		}
 	});

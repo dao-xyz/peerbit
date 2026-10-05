@@ -15,13 +15,21 @@ import { EventStore } from "./utils/stores/index.js";
 describe("receive admission replication-info V2 partition recovery", function () {
 	this.timeout(30_000);
 
-	for (const MessageType of [
+	for (const { MessageType, partitionDuration } of [
 		FullReplicationInfoV2Message,
 		SyncCapabilitiesMessage,
-	]) {
-		it(`retires a pending ${MessageType.name} ACK on real disconnect and recovers after redial`, async () => {
+	].flatMap((MessageType) =>
+		[0, 25_000].map((partitionDuration) => ({
+			MessageType,
+			partitionDuration,
+		})),
+	)) {
+		it(`retires a pending ${MessageType.name} ACK and recovers after a ${partitionDuration}ms real partition`, async function () {
+			// The longer case adds only fault duration, never recovery time.
+			this.timeout(30_000 + partitionDuration);
 			const peers: Peerbit[] = [];
 			const sandbox = sinon.createSandbox();
+			const listeners: Array<() => void> = [];
 			let partitioned = false;
 			let phase = "create peers and open programs";
 			try {
@@ -170,6 +178,29 @@ describe("receive admission replication-info V2 partition recovery", function ()
 					{ timeout: 2_000 },
 				);
 
+				phase = "hold the complete partition";
+				if (partitionDuration) {
+					await new Promise((resolve) =>
+						setTimeout(resolve, partitionDuration),
+					);
+					for (const peer of peers)
+						expect(peer.libp2p.getConnections()).to.have.length(0);
+				}
+				let writableAt: number | undefined;
+				const observeWritable = () => {
+					if (
+						writableAt === undefined &&
+						sourcePubsub.peers.get(receiverHash)?.isWritable &&
+						targetPubsub.peers.get(senderHash)?.isWritable
+					)
+						writableAt = performance.now();
+				};
+				sourcePubsub.addEventListener("peer:stream-ready", observeWritable);
+				targetPubsub.addEventListener("peer:stream-ready", observeWritable);
+				for (const pubsub of [sourcePubsub, targetPubsub])
+					listeners.push(() =>
+						pubsub.removeEventListener("peer:stream-ready", observeWritable),
+					);
 				// No synthetic subscription or coordinator reset: recovery must come
 				// from the actual renewed protocol streams and signed subscription.
 				drop = false;
@@ -195,6 +226,9 @@ describe("receive admission replication-info V2 partition recovery", function ()
 				);
 				phase = "heal dial";
 				await sender.dial(receiver.getMultiaddrs());
+				await waitForResolved(() => expect(writableAt).to.be.a("number"), {
+					timeout: 5_000,
+				});
 				phase = "renewed handshake";
 				await waitForResolved(
 					async () => {
@@ -213,8 +247,9 @@ describe("receive admission replication-info V2 partition recovery", function ()
 								receiverHash,
 							]);
 						}
+						expect(performance.now() - writableAt!).to.be.lessThan(2_000);
 					},
-					{ timeout: 5_000 },
+					{ timeout: Math.max(1, 2_000 - (performance.now() - writableAt!)) },
 				);
 				phase = "replicate after heal";
 				const { entry } = await source.add("after actual partition and redial");
@@ -230,6 +265,7 @@ describe("receive admission replication-info V2 partition recovery", function ()
 				throw error;
 			} finally {
 				partitioned = false;
+				for (const remove of listeners) remove();
 				sandbox.restore();
 				await Promise.all(peers.map((peer) => peer.stop()));
 			}

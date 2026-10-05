@@ -1662,6 +1662,184 @@ describe("receive admission replication-info V2 sender streams", () => {
 		expect(rpcSend.callCount).to.equal(2);
 	});
 
+	for (const authenticatedHint of [false, true]) {
+		it(`preempts default escalated backoff after ${authenticatedHint ? "authenticated" : "transport"} recovery`, async () => {
+			const clock = sinon.useFakeTimers();
+			const peerSession = {};
+			openSessions.add(peerSession);
+			const attemptedAt: number[] = [];
+			let healthy = false;
+			rpcSend.callsFake(async () => {
+				attemptedAt.push(clock.now);
+				if (!healthy) throw new Error("partitioned");
+				return [];
+			});
+			expect(accept(peerA, peerSession, challenge(92))).to.be.true;
+			await coordinator.drain();
+			for (const elapsed of [1_000, 2_000, 4_000]) {
+				await clock.tickAsync(elapsed);
+				await coordinator.drain();
+			}
+			expect(attemptedAt).to.deep.equal([0, 1_000, 3_000, 7_000]);
+			const state = coordinator._sendStates.get(peerA.hashcode())!;
+			const first = rpcSend.firstCall.args[0] as FullReplicationInfoV2Message;
+			expect(state.nextSequence).to.equal(5n);
+			expect(state.retryAttempts).to.equal(4);
+			expect((state.retryTimer as any).hasRef()).to.be.false;
+			state.appliedRevision = 0n;
+			for (let index = 0; index < 100; index++) {
+				coordinator.enqueue({ added: { segments: [] } });
+			}
+			healthy = true;
+			if (authenticatedHint) {
+				coordinator.reconfirmAfterPeerRecovery(peerA.hashcode());
+				expect(state.appliedRevision).to.be.undefined;
+				expect(state.minimumConfirmationSequence).to.equal(5n);
+			} else {
+				for (let index = 0; index < 100; index++) {
+					coordinator.resumeAfterTransportRecovery(
+						peerA.hashcode(),
+						peerSession,
+					);
+				}
+				expect(state.appliedRevision).to.equal(0n);
+				expect(state.minimumConfirmationSequence).to.be.undefined;
+			}
+			expect(state.pending).to.deep.equal({ kind: "snapshot", revision: 100n });
+			await coordinator.drain();
+			expect(attemptedAt).to.deep.equal([0, 1_000, 3_000, 7_000, 7_000]);
+			expect(coordinator._sendStates.get(peerA.hashcode())).to.equal(state);
+			expect(state.peerSession).to.equal(peerSession);
+			const resumed = rpcSend.lastCall.args[0] as FullReplicationInfoV2Message;
+			expect(resumed).to.be.instanceOf(FullReplicationInfoV2Message);
+			expect(resumed.sequence).to.equal(5n);
+			expect(resumed.senderEpoch).to.deep.equal(first.senderEpoch);
+			expect(resumed.receiverChallenge).to.deep.equal(first.receiverChallenge);
+			expect(state.retryTimer).to.be.undefined;
+			await clock.tickAsync(8_000);
+			await coordinator.drain();
+			expect(rpcSend.callCount).to.equal(5);
+		});
+	}
+
+	it("ignores a queued old retry callback after recovery arms a new timer", async () => {
+		const clock = sinon.useFakeTimers();
+		const timeouts = sinon.spy(globalThis, "setTimeout");
+		const peerSession = {};
+		openSessions.add(peerSession);
+		rpcSend.onFirstCall().rejects(new Error("first ambiguous send"));
+		rpcSend.onSecondCall().rejects(new Error("recovery attempt failed"));
+		expect(accept(peerA, peerSession, challenge(93))).to.be.true;
+		await coordinator.drain();
+		const staleCallback = timeouts.lastCall.args[0] as () => void;
+		const state = coordinator._sendStates.get(peerA.hashcode())!;
+		const oldTimer = state.retryTimer;
+		coordinator.resumeAfterTransportRecovery(peerA.hashcode(), peerSession);
+		await coordinator.drain();
+		const currentTimer = state.retryTimer;
+		expect(currentTimer).to.exist.and.not.equal(oldTimer);
+		expect(state.retryAttempts).to.equal(1);
+		staleCallback();
+		await coordinator.drain();
+		expect(state.retryTimer).to.equal(currentTimer);
+		expect(state.suspended).to.be.true;
+		expect(rpcSend.callCount).to.equal(2);
+		await clock.tickAsync(999);
+		expect(rpcSend.callCount).to.equal(2);
+		await clock.tickAsync(1);
+		await coordinator.drain();
+		expect(rpcSend.thirdCall.args[0].sequence).to.equal(3n);
+		staleCallback();
+		await coordinator.drain();
+		expect(rpcSend.callCount).to.equal(3);
+		expect(state.retryTimer).to.be.undefined;
+	});
+
+	for (const unavailable of [
+		"wrong session",
+		"stale session",
+		"closed",
+		"closed readiness",
+		"inactive ownership",
+		"exhausted",
+		"healthy",
+	] as const) {
+		it(`does not wake ${unavailable} state on transport recovery`, async () => {
+			sinon.useFakeTimers();
+			const peerSession = {};
+			openSessions.add(peerSession);
+			if (unavailable !== "healthy") rpcSend.rejects(new Error("partitioned"));
+			expect(accept(peerA, peerSession, challenge(94))).to.be.true;
+			await coordinator.drain();
+			const state = coordinator._sendStates.get(peerA.hashcode())!;
+			if (unavailable === "stale session") openSessions.delete(peerSession);
+			if (unavailable === "closed") closed = true;
+			if (unavailable === "closed readiness")
+				closedReadinessGates.add(peerSession);
+			if (unavailable === "inactive ownership") ownershipController.abort();
+			if (unavailable === "exhausted") state.nextSequence = 1n << 64n;
+			state.appliedRevision = 0n;
+			const { retryTimer, retryAttempts, pending, nextSequence } = state;
+			coordinator.resumeAfterTransportRecovery(
+				peerA.hashcode(),
+				unavailable === "wrong session" ? {} : peerSession,
+			);
+			await coordinator.drain();
+			expect(rpcSend.callCount).to.equal(1);
+			expect(state.retryTimer).to.equal(retryTimer);
+			expect(state.retryAttempts).to.equal(retryAttempts);
+			expect(state.pending).to.equal(pending);
+			expect(state.nextSequence).to.equal(nextSequence);
+			expect(state.appliedRevision).to.equal(0n);
+		});
+	}
+
+	it("resets backoff without duplicating an in-flight attempt that rejects after recovery", async () => {
+		const clock = sinon.useFakeTimers();
+		const peerSession = {};
+		openSessions.add(peerSession);
+		const held = pDefer<never>();
+		rpcSend.callsFake(async () => {
+			if (rpcSend.callCount < 5) throw new Error("partitioned");
+			if (rpcSend.callCount === 5) return held.promise;
+			return [];
+		});
+		expect(accept(peerA, peerSession, challenge(95))).to.be.true;
+		await coordinator.drain();
+		for (const elapsed of [1_000, 2_000, 4_000]) {
+			await clock.tickAsync(elapsed);
+			await coordinator.drain();
+		}
+		await clock.tickAsync(8_000);
+		const state = coordinator._sendStates.get(peerA.hashcode())!;
+		expect(rpcSend.callCount).to.equal(5);
+		expect(state.inFlightSequence).to.equal(5n);
+		const worker = state.worker;
+		try {
+			for (let index = 0; index < 100; index++) {
+				coordinator.resumeAfterTransportRecovery(peerA.hashcode(), peerSession);
+			}
+			expect(state.worker).to.equal(worker);
+			expect(state.pending).to.be.undefined;
+			expect(state.retryAttempts).to.equal(0);
+			expect(rpcSend.callCount).to.equal(5);
+		} finally {
+			held.reject(new Error("old attempt rejected after recovery"));
+		}
+		await coordinator.drain();
+		expect(state.retryAttempts).to.equal(1);
+		expect(state.nextSequence).to.equal(6n);
+		await clock.tickAsync(999);
+		expect(rpcSend.callCount).to.equal(5);
+		await clock.tickAsync(1);
+		await coordinator.drain();
+		expect(rpcSend.callCount).to.equal(6);
+		expect(rpcSend.lastCall.args[0]).to.be.instanceOf(
+			FullReplicationInfoV2Message,
+		);
+		expect(rpcSend.lastCall.args[0].sequence).to.equal(6n);
+	});
+
 	it("fences retry timers on peer, reopen, session and ownership teardown", async () => {
 		const clock = sinon.useFakeTimers();
 		coordinator.clearForClose();

@@ -544,7 +544,8 @@ export class ReplicationInfoV2ReceiveCoordinator {
 		if (!this.isLocalCapabilityAdvertisementGenerationCurrent(state)) {
 			return;
 		}
-		state.timer = setTimeout(() => {
+		const timer = setTimeout(() => {
+			if (state.timer !== timer) return;
 			state.timer = undefined;
 			if (!this.isLocalCapabilityAdvertisementOwnerCurrent(state)) {
 				this.clearLocalCapabilityAdvertisement(state);
@@ -559,7 +560,8 @@ export class ReplicationInfoV2ReceiveCoordinator {
 			}
 			void this.runLocalCapabilityAdvertisement(state);
 		}, this.localCapabilityRetryDelay(state));
-		state.timer.unref?.();
+		state.timer = timer;
+		timer.unref?.();
 	}
 
 	private async runLocalCapabilityAdvertisement(
@@ -1501,6 +1503,68 @@ export class ReplicationInfoV2ReceiveCoordinator {
 		return this.nudgeRequest(properties, false);
 	}
 
+	/** A writable transport hint changes retry scheduling, never receive authority. */
+	resumeAfterTransportRecovery(properties: {
+		peerHash: string;
+		peerSession: object;
+		receiveEpoch: object | null;
+	}): boolean {
+		if (
+			this.deps.isClosed() ||
+			!this.deps.isPeerStateCurrent(
+				properties.peerHash,
+				properties.peerSession,
+				properties.receiveEpoch,
+			) ||
+			this._reservedAdmissionsByPeer.has(properties.peerHash)
+		) {
+			return false;
+		}
+		let resumed = false;
+		const advertisement = this._localCapabilityAdvertisementsByPeer.get(
+			properties.peerHash,
+		);
+		if (
+			advertisement &&
+			advertisement.peerSession === properties.peerSession &&
+			advertisement.receiveEpoch === properties.receiveEpoch &&
+			!advertisement.ready &&
+			this.isLocalCapabilityAdvertisementGenerationCurrent(advertisement)
+		) {
+			advertisement.attempts = 0;
+			if (advertisement.timer) {
+				clearTimeout(advertisement.timer);
+				advertisement.timer = undefined;
+			}
+			// An in-flight ACK may reject after this hint; its finally uses this
+			// reset backoff and retains ownership of the only advertisement worker.
+			this.armLocalCapabilityAdvertisement(advertisement);
+			resumed = true;
+		}
+		const state = this._receiveStates.get(properties.peerHash);
+		if (
+			state &&
+			state.peerSession === properties.peerSession &&
+			state.receiveEpoch === properties.receiveEpoch &&
+			this.isStateCurrent(state) &&
+			state.phase !== "active" &&
+			state.receiverBinding !== undefined &&
+			state.lastSequence !== MAX_U64
+		) {
+			this.requireLocalCapabilityRefreshIfStale(state);
+			state.requestAttempts = 0;
+			state.requestsSinceCapabilityRefresh = 0;
+			state.requestParked = false;
+			if (state.requestTimer) {
+				clearTimeout(state.requestTimer);
+				state.requestTimer = undefined;
+			}
+			if (!state.requestInFlight) this.armRequest(state, this.requestRetryMs);
+			resumed = true;
+		}
+		return resumed;
+	}
+
 	/**
 	 * Resume only a request generation that exhausted its bounded retries.
 	 * Wait/liveness callers may nudge recovery without invalidating an active,
@@ -1544,27 +1608,26 @@ export class ReplicationInfoV2ReceiveCoordinator {
 			state.requestAttempts = 0;
 			state.requestsSinceCapabilityRefresh = 0;
 		}
-		if (restartBoundedCycle && !state.capabilityRefreshRequired) {
-			// Only rotate the grant when it is genuinely stale: the peer's
-			// capability rotation paths already flagged a refresh, and a missing
-			// or transport-outdated local grant cannot authorize a request. A
-			// still-current grant must keep its challenge so a Full already in
-			// flight for the pre-park request generation still applies.
-			const ready = this._localCapabilityReadyBySession.get(state.peerSession);
-			const grantCurrent =
-				ready !== undefined &&
-				ready.peerHash === state.peerHash &&
-				ready.receiveEpoch === state.receiveEpoch &&
-				ready.receiverTransportSession === state.receiverTransportSession &&
-				ready.receiverTransportSession ===
-					this.deps.getReceiverTransportSession();
-			if (!grantCurrent) {
-				state.capabilityRefreshRequired = true;
-			}
-		}
+		if (restartBoundedCycle) this.requireLocalCapabilityRefreshIfStale(state);
 		state.requestParked = false;
 		this.armRequest(state, 0);
 		return true;
+	}
+
+	private requireLocalCapabilityRefreshIfStale(
+		state: ReplicationInfoV2ReceiveState,
+	): void {
+		if (state.capabilityRefreshRequired) return;
+		// Keep a current grant's challenge so an already in-flight Full still
+		// applies. A missing or transport-outdated grant must be re-advertised.
+		const ready = this._localCapabilityReadyBySession.get(state.peerSession);
+		const grantCurrent =
+			ready !== undefined &&
+			ready.peerHash === state.peerHash &&
+			ready.receiveEpoch === state.receiveEpoch &&
+			ready.receiverTransportSession === state.receiverTransportSession &&
+			ready.receiverTransportSession === this.deps.getReceiverTransportSession();
+		if (!grantCurrent) state.capabilityRefreshRequired = true;
 	}
 
 	private transitionToResync(
@@ -1937,14 +2000,16 @@ export class ReplicationInfoV2ReceiveCoordinator {
 			state.requestTimer = undefined;
 			return;
 		}
-		state.requestTimer = setTimeout(
+		const timer = setTimeout(
 			() => {
+				if (state.requestTimer !== timer) return;
 				state.requestTimer = undefined;
 				void this.runRequest(state);
 			},
 			Math.max(0, delayMs),
 		);
-		state.requestTimer.unref?.();
+		state.requestTimer = timer;
+		timer.unref?.();
 	}
 
 	private requestRetryDelay(state: ReplicationInfoV2ReceiveState): number {
