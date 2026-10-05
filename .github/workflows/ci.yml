@@ -356,6 +356,7 @@ jobs:
           node scripts/ci/assert-tests-ran.mjs node ./node_modules/mocha/bin/mocha.js
           --no-config --no-package --require chai-extend/chai-global.js
           --timeout 60000 --retries 0 --no-exit
+          packages/transport/stream/dist/test/stream-before-stop.spec.js
           packages/transport/stream/dist/test/stream-replacement.spec.js
           packages/transport/stream/dist/test/ack-wait-ownership.spec.js
           packages/transport/pubsub/dist/test/subscribe-races.spec.js

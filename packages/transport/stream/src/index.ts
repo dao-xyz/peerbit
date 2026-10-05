@@ -1242,7 +1242,7 @@ type SharedRoutingState = {
 	session: number;
 	routes: RoutesLike;
 	controller: AbortController;
-	refs: number;
+	consumers: Set<DirectStream<any>>;
 };
 
 type DeliveryHealthCheck = {
@@ -1288,6 +1288,7 @@ export abstract class DirectStream<
 	public peers: Map<string, PeerStreams>;
 	// Replacements must not orphan teardown that beforeStop still needs to drain.
 	private readonly retiredPeerStreams = new Set<PeerStreams>();
+	private readonly removingPeerStreams = new WeakSet<PeerStreams>();
 	public peerKeyHashToPublicKey: Map<string, PublicSignKey>;
 	public routes: RoutesLike;
 	/**
@@ -1701,7 +1702,7 @@ export abstract class DirectStream<
 					session: Date.now(),
 					controller,
 					routes: this.createRoutes(controller.signal),
-					refs: 0,
+					consumers: new Set(),
 				};
 				sharedRoutingByPrivateKey.set(key, state);
 			} else {
@@ -1712,7 +1713,7 @@ export abstract class DirectStream<
 				);
 			}
 
-			state.refs += 1;
+			state.consumers.add(this);
 			this.sharedRoutingState = state;
 			this.session = state.session;
 			this.routes = state.routes;
@@ -1966,7 +1967,29 @@ export abstract class DirectStream<
 		const sharedKey = this.sharedRoutingKey;
 		this.started = false;
 		logger.trace("stopping");
-		await this.stopNetwork();
+		try {
+			await this.stopNetwork();
+		} finally {
+			// Failed teardown must not retain a stopped service in the shared owners.
+			this.sharedRoutingState = undefined;
+			this.sharedRoutingKey = undefined;
+			if (sharedState && sharedKey) {
+				sharedState.consumers.delete(this);
+				if (sharedState.consumers.size === 0) {
+					try {
+						sharedState.routes.clear();
+					} catch {
+						// ignore
+					}
+					try {
+						sharedState.controller.abort();
+					} catch {
+						// ignore
+					}
+					sharedRoutingByPrivateKey.delete(sharedKey);
+				}
+			}
+		}
 		this.prunedConnectionsCache?.clear();
 
 		this.queue.clear();
@@ -1989,24 +2012,6 @@ export abstract class DirectStream<
 		}
 
 		this._ackCallbacks.clear();
-		this.sharedRoutingState = undefined;
-		this.sharedRoutingKey = undefined;
-		if (sharedState && sharedKey) {
-			sharedState.refs = Math.max(0, sharedState.refs - 1);
-			if (sharedState.refs === 0) {
-				try {
-					sharedState.routes.clear();
-				} catch {
-					// ignore
-				}
-				try {
-					sharedState.controller.abort();
-				} catch {
-					// ignore
-				}
-				sharedRoutingByPrivateKey.delete(sharedKey);
-			}
-		}
 		logger.trace("stopped");
 	}
 
@@ -2260,9 +2265,37 @@ export abstract class DirectStream<
 		}
 
 		const unreachable = this.routes.remove(hash);
+		const state = this.sharedRoutingState;
+		const consumers = [...(state?.consumers ?? [this])];
+		const failures: unknown[] = [];
 		for (const node of unreachable) {
-			this.onPeerUnreachable(node); // TODO types
-			this.peerKeyHashToPublicKey.delete(node);
+			// Removing a shared route is one transition for every active protocol,
+			// not just the first service to observe the disconnect.
+			for (const consumer of consumers) {
+				if (
+					!consumer.started ||
+					consumer.stopping ||
+					consumer.routes !== this.routes ||
+					(state && consumer.sharedRoutingState !== state) ||
+					this.routes.isReachable(this.publicKeyHash, node)
+				) {
+					continue;
+				}
+				try {
+					consumer.onPeerUnreachable(node);
+				} catch (error) {
+					failures.push(error);
+				} finally {
+					// A synchronous listener may already have established a new route.
+					if (!this.routes.isReachable(this.publicKeyHash, node)) {
+						consumer.peerKeyHashToPublicKey.delete(node);
+					}
+				}
+			}
+		}
+		if (failures.length === 1) throw failures[0];
+		if (failures.length > 1) {
+			throw new AggregateError(failures, "Route notification failed");
 		}
 	}
 
@@ -2463,18 +2496,22 @@ export abstract class DirectStream<
 		const peerStreams = this.peers.get(hash);
 		this.clearHealthcheckTimer(hash);
 
-		if (peerStreams == null) {
+		if (peerStreams == null || this.removingPeerStreams.has(peerStreams)) {
 			return;
 		}
 
-		// close peer streams
-		await peerStreams.close();
-		if (this.peers.get(hash) !== peerStreams) return;
-
-		// delete peer streams
-		logger.trace("delete peer" + publicKey.toString());
-		this.peers.delete(hash);
-		return peerStreams;
+		// close() may synchronously emit close before yielding. Its callback must
+		// not steal this removal and make the disconnect skip route cleanup.
+		this.removingPeerStreams.add(peerStreams);
+		try {
+			await peerStreams.close();
+			if (this.peers.get(hash) !== peerStreams) return;
+			logger.trace("delete peer" + publicKey.toString());
+			this.peers.delete(hash);
+			return peerStreams;
+		} finally {
+			this.removingPeerStreams.delete(peerStreams);
+		}
 	}
 
 	// MESSAGE METHODS
