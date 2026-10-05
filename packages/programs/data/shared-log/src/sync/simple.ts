@@ -3354,7 +3354,11 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 							return;
 						}
 						if (has) {
-							this.clearPendingSyncAdmissionIdentity(identity);
+							// A removal may have settled this lookup and admitted a newer
+							// request. Its stale result must not settle that replacement.
+							if (admission!.identities.has(identity)) {
+								this.clearPendingSyncAdmissionIdentity(identity);
+							}
 							continue;
 						}
 						const consumption = this.consumePendingSyncAdmission(
@@ -3896,12 +3900,18 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 		if (!this.hasSyncProcessState()) {
 			return;
 		}
+		// A lookup started before removal must not requeue the removed entry
+		// when it eventually reports the now-missing hash.
+		this.clearPendingSyncAdmissionIdentity(hash);
 		return this.clearSyncProcess(hash);
 	}
 
 	onEntryRemovedHashes(hashes: string[]): void {
 		if (hashes.length === 0 || !this.hasSyncProcessState()) {
 			return;
+		}
+		for (const hash of hashes) {
+			this.clearPendingSyncAdmissionIdentity(hash);
 		}
 		return this.clearSyncProcesses(hashes);
 	}

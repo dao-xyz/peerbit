@@ -109,6 +109,21 @@ the objective. `range-coverage-underfilled` reports minimum ring coverage below
 `replicas.min`, while `default-replica-target-unattainable` reports fewer active
 replicators than that target.
 
+## Pending synchronization
+
+The simple synchronizer's `pending` count tracks queued hash/coordinate requests;
+rateless sync uses the same simple queue for missing entries. It is not a
+convergence check or durable receipt. Each retained key has a 60-second absolute
+lifetime from its first admission: repeated advertisements and additional peers
+do not extend it, but a new advertisement after expiration can create new work.
+Expiration clears retry state without reporting successful replication.
+
+An entry-removal notification cancels its queued requests and hash-identified
+lookups already in progress. Those lookups retain their resource quota until
+they settle. A CUT referring to a parent never stored locally produces no parent
+removal notification, so that parent's request can remain pending. Matching heads
+alone does not prove the request safe to discard.
+
 ## Opt-in synchronization profiling
 
 The existing `sync.profile(event)` callback receives local diagnostic summaries.
