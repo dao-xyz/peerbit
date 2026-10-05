@@ -3370,7 +3370,9 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 			mutationMode = true;
 		};
 
-		const fetch = async (
+		// Native reads and cloning are synchronous; keep queued mutations outside
+		// the OFFSET pages belonging to one public next/pending call.
+		const fetch = (
 			n: number,
 			options?: {
 				offset?: number;
@@ -3378,12 +3380,12 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 				ignoreDone?: boolean;
 				liveLimit?: boolean;
 			},
-		): Promise<types.IndexedResults<types.ReturnTypeFromShape<T, S>>> => {
+		): types.IndexedResults<types.ReturnTypeFromShape<T, S>> => {
 			const closeAsDone = () => {
 				done = true;
 				return [] as types.IndexedResults<types.ReturnTypeFromShape<T, S>>;
 			};
-			if (this.isClosing()) {
+			if (explicitlyClosed || this.isClosing()) {
 				return closeAsDone();
 			}
 			this.assertOpen();
@@ -3409,11 +3411,14 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 				offset: pageOffset,
 				limit: wanted,
 			});
+			if (explicitlyClosed || this.isClosing()) return closeAsDone();
+			const results = clonePage(batch);
+			if (explicitlyClosed || this.isClosing()) return closeAsDone();
 			if (options?.advance !== false) {
 				offset += batch.length;
 				done = offset >= getTotal();
 			}
-			return clonePage(batch);
+			return results;
 		};
 		const next = async (
 			n: number,
@@ -3425,37 +3430,38 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 				return [] as types.IndexedResults<types.ReturnTypeFromShape<T, S>>;
 			}
 			if (!mutationMode && this.mutationVersion === iteratorMutationVersion) {
-				const results = await fetch(n);
+				const results = fetch(n);
 				markYielded(results);
 				return results;
 			}
 
 			mutationMode = true;
 			iteratorMutationVersion = this.mutationVersion;
-			const results: types.IndexedResults<types.ReturnTypeFromShape<T, S>> =
-				[];
+			const results: types.IndexedResults<types.ReturnTypeFromShape<T, S>> = [];
+			const selected = new Set<string>();
 			const pageSize = Number.isFinite(n) ? Math.max(Math.floor(n), 128) : 1024;
 			let scanOffset = 0;
 			let exhausted = false;
 			let hasAdditionalUnseen = false;
 			while (results.length < n) {
-				const page = await fetch(pageSize, {
+				const page = fetch(pageSize, {
 					offset: scanOffset,
 					advance: false,
 					ignoreDone: true,
 					liveLimit: true,
 				});
+				if (explicitlyClosed || this.isClosing()) return [];
 				scanOffset += page.length;
 				if (page.length < pageSize) {
 					exhausted = true;
 				}
 				for (const result of page) {
 					const key = idKey(result.id);
-					if (yielded.has(key)) {
+					if (yielded.has(key) || selected.has(key)) {
 						continue;
 					}
 					if (results.length < n) {
-						yielded.add(key);
+						selected.add(key);
 						results.push(result);
 					} else {
 						hasAdditionalUnseen = true;
@@ -3466,19 +3472,24 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 				}
 			}
 			done = exhausted && !hasAdditionalUnseen;
-			return results;
+			const unclaimed = results.filter(
+				(result) => !yielded.has(idKey(result.id)),
+			);
+			markYielded(unclaimed);
+			return unclaimed;
 		};
-		const pendingUnseen = async () => {
+		const pendingUnseen = () => {
 			let count = 0;
 			const pageSize = 128;
 			let scanOffset = 0;
 			while (true) {
-				const page = await fetch(pageSize, {
+				const page = fetch(pageSize, {
 					offset: scanOffset,
 					advance: false,
 					ignoreDone: true,
 					liveLimit: true,
 				});
+				if (explicitlyClosed || this.isClosing()) return 0;
 				scanOffset += page.length;
 				for (const result of page) {
 					if (!yielded.has(idKey(result.id))) {
