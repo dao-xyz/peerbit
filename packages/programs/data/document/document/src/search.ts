@@ -2315,8 +2315,22 @@ export class DocumentIndex<
 		return false;
 	}
 
+	private releaseClosedResolverCache(): void {
+		if (this.closed) {
+			this._resolverCache?.clear();
+			// Late projection work must not retain values again after shutdown.
+			this._resolverCache = undefined;
+		}
+	}
+
 	async close(from?: Program): Promise<boolean> {
-		const closed = await super.close(from);
+		let closed: boolean;
+		try {
+			closed = await super.close(from);
+		} finally {
+			// A terminal callback can reject after the closed state has committed.
+			this.releaseClosedResolverCache();
+		}
 		if (closed) {
 			this._queryProfile = undefined;
 			if (this._joinListener) {
@@ -2351,7 +2365,12 @@ export class DocumentIndex<
 	}
 
 	async drop(from?: Program): Promise<boolean> {
-		const dropped = await super.drop(from);
+		let dropped: boolean;
+		try {
+			dropped = await super.drop(from);
+		} finally {
+			this.releaseClosedResolverCache();
+		}
 		if (dropped) {
 			this._queryProfile = undefined;
 			this.documentEvents?.removeEventListener(
