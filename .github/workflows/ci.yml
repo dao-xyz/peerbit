@@ -949,6 +949,19 @@ jobs:
         run: pnpm --filter @peerbit/network-rust run test
       - name: Test @peerbit/stream suite in rust-core mode
         run: pnpm --filter @peerbit/network-rust run test:stream-rust-core
+      - name: Test real-peer reconnect recovery with the native transport
+        timeout-minutes: 3
+        env:
+          AEGIR_RUNNER: node
+          NODE_ENV: test
+        run: >-
+          node scripts/ci/assert-tests-ran.mjs node ./node_modules/mocha/bin/mocha.js
+          --no-config --no-package --require chai-extend/chai-global.js
+          --require ./scripts/ci/use-rust-stream-core.mjs
+          --timeout 60000 --retries 0 --no-exit
+          packages/programs/data/shared-log/dist/test/transport-recovery-hint.spec.js
+          packages/programs/data/shared-log/dist/test/partition-recovery.spec.js
+          packages/programs/data/shared-log/dist/test/partition-stream-renewal.spec.js
       - name: Test @peerbit/shared-log conformance in rust-core mode
         # Curated [default,native] conformance leg: re-runs an allowlist of the
         # EXISTING shared-log suites with the native (rust) data plane engaged
