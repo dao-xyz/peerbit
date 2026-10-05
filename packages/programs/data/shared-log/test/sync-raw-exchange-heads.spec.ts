@@ -185,10 +185,6 @@ describe("raw exchange-head sync", () => {
 				coordinateIndex,
 				"putSharedLogCoordinateFieldsAndDeleteHashesBatchNoReturn",
 			);
-			const persistBatchSpy = sinon.spy(
-				(db2.log as any)._coordinates,
-				"persistCoordinatesBatch",
-			);
 			const coordinatePrepareSpy = sinon.spy(
 				(db2.log as any)._coordinates,
 				"createCoordinatePersistenceEntryFromNativePlan",
@@ -290,8 +286,12 @@ describe("raw exchange-head sync", () => {
 					),
 				).to.equal(true);
 			}
-			expect(persistBatchSpy.callCount).to.be.greaterThan(0);
 			expect(coordinateBatchSpy.callCount).to.be.greaterThan(0);
+			expect(
+				coordinateBatchSpy.getCalls().some(
+					(call) => call.args[0].length === entryCount,
+				),
+			).to.equal(true);
 			expect(
 				coordinatePrepareSpy.callCount +
 					coordinatePrepareFromLeaderPlanSpy.callCount,
@@ -353,7 +353,6 @@ describe("raw exchange-head sync", () => {
 			sharedOnChangeSpy.restore();
 			coordinatePrepareFromLeaderPlanSpy.restore();
 			coordinatePrepareSpy.restore();
-			persistBatchSpy.restore();
 			coordinateBatchSpy.restore();
 			lowerPutAppendBatchSpy.restore();
 			planJoinSpy.restore();
@@ -678,6 +677,202 @@ describe("raw exchange-head sync", () => {
 		} finally {
 			await session.stop();
 		}
+	});
+
+	describe("native receive coordinate completion", () => {
+		let session: TestSession;
+		let source: EventStore<string, any>;
+		let target: EventStore<string, any>;
+		let parent: Entry<any>;
+		let child: Entry<any>;
+		let message: RawExchangeHeadsMessage;
+		let shared: any;
+		let coordinates: any;
+		let completion: any;
+		let nativeCommits: sinon.SinonSpy[];
+		let lowerCommit: sinon.SinonSpy;
+		let finish: sinon.SinonSpy;
+		let genericPersist: sinon.SinonSpy;
+		let confirmation: sinon.SinonSpy;
+		const sandbox = sinon.createSandbox();
+
+		beforeEach(async () => {
+			session = await TestSession.disconnected(2, {
+				indexer: (directory) => createRustIndexer(directory),
+			});
+			const args = {
+				replicate: false as const,
+				setup: {
+					domain: createReplicationDomainHash("u32"),
+					type: "u32" as const,
+					syncronizer: SimpleSyncronizer,
+					name: "native-coordinate-completion",
+				},
+				nativeGraph: true,
+				nativeBackbone: { optional: false },
+				sync: { rawExchangeHeads: true },
+				keep: () => true,
+				timeUntilRoleMaturity: 0,
+			};
+			source = await session.peers[0].open(new EventStore<string, any>(), {
+				args,
+			});
+			parent = (await source.add("parent", { meta: { next: [] } })).entry;
+			child = (await source.add("child", { meta: { next: [parent] } })).entry;
+			target = await session.peers[1].open(source.clone(), {
+				args: {
+					...args,
+					replicate: { factor: 1 },
+					nativeBackbone: {
+						optional: false,
+						coordinatePersistence: new NativeBackboneCoordinatePersistence(
+							new NativeBackboneMemoryCoordinatePersistenceStore(),
+						),
+					},
+				},
+			});
+			message = new RawExchangeHeadsMessage({
+				heads: await Promise.all(
+					[child, parent].map(async (entry) => {
+						const bytes = await source.log.log.blocks.get(entry.hash);
+						expect(bytes).to.be.instanceOf(Uint8Array);
+						return new RawEntryWithRefs({
+							hash: entry.hash,
+							bytes: bytes!,
+							gidRefrences: [],
+						});
+					}),
+				),
+			});
+			shared = target.log as any;
+			coordinates = shared._coordinates;
+			expect(shared._nativeBackbone).to.exist;
+			expect(coordinates.canUseBackboneOnlyCoordinatePersistence()).to.equal(
+				true,
+			);
+			const prepare =
+				coordinates.prepareReceiveCoordinateCompletion.bind(coordinates);
+			completion = undefined;
+			sandbox
+				.stub(coordinates, "prepareReceiveCoordinateCompletion")
+				.callsFake((items: any) => {
+					completion = prepare(items);
+					return completion;
+				});
+			nativeCommits = [
+				"commitPreparedRawReceiveJoinBatch",
+				"commitVerifiedPreparedRawReceiveJoinBatch",
+				"commitVerifiedAllPreparedRawReceiveJoinBatch",
+			]
+				.filter(
+					(name) => typeof shared._nativeBackbone.graph[name] === "function",
+				)
+				.map((name) => sandbox.spy(shared._nativeBackbone.graph, name));
+			lowerCommit = sandbox.spy(
+				shared.log.entryIndex,
+				"putNativeCommittedAppendFactsBatch",
+			);
+			finish = sandbox.spy(
+				coordinates,
+				"finishBackboneOnlyReceiveCoordinateBatch",
+			);
+			genericPersist = sandbox.spy(coordinates, "persistCoordinatesBatch");
+			confirmation = sandbox.spy(shared, "sendRepairConfirmation");
+		});
+
+		afterEach(async () => {
+			sandbox.restore();
+			await session?.stop();
+		});
+
+		const assertNativeCommittedHeads = async () => {
+			expect(
+				nativeCommits.reduce((sum, spy) => sum + spy.callCount, 0),
+			).to.equal(1);
+			expect(lowerCommit.callCount).to.equal(1);
+			expect(
+				lowerCommit.firstCall.args[0].map((row: { hash: string }) => row.hash),
+			).to.have.members([parent.hash, child.hash]);
+			expect(finish.callCount).to.equal(1);
+			expect(
+				finish.firstCall.args[0].rows.map((row: any) => row.item.entry.hash),
+			).to.deep.equal([child.hash]);
+			for (const entry of [parent, child]) {
+				expect(await shared.log.has(entry.hash)).to.equal(true);
+				expect(await shared.log.blocks.has(entry.hash)).to.equal(true);
+			}
+			expect(shared._nativeBackbone.getEntryCoordinateHashes()).to.deep.equal([
+				child.hash,
+			]);
+			expect([...shared._residentEntryCoordinatesByHash.keys()]).to.deep.equal([
+				child.hash,
+			]);
+			expect(
+				await coordinates.getAuthoritativeCoordinateEntryForReceipt(
+					parent.hash,
+				),
+			).to.equal(undefined);
+			expect(
+				(
+					await coordinates.getAuthoritativeCoordinateEntryForReceipt(
+						child.hash,
+					)
+				)?.hash,
+			).to.equal(child.hash);
+			expect(genericPersist.callCount).to.equal(0);
+			expect(
+				await target.log.entryCoordinatesIndex.iterate({}).all(),
+			).to.have.length(0);
+		};
+
+		it("handles native coordinate rows and obsolete parents without generic repersistence", async () => {
+			await target.log.onMessage(message, {
+				from: source.node.identity.publicKey,
+			} as any);
+			await assertNativeCommittedHeads();
+			expect([...completion.handledHashes]).to.have.members([
+				child.hash,
+				parent.hash,
+			]);
+		});
+
+		it("fails closed after a post-commit coordinate flush failure without rolling back admitted metadata", async () => {
+			const failure = new Error("injected receive coordinate flush failure");
+			const expectRecoveryRequired = async (operation: () => unknown) => {
+				const rejected = await Promise.resolve()
+					.then(operation)
+					.then(
+						() => undefined,
+						(error: unknown) => error,
+					);
+				expect(rejected).to.be.instanceOf(Error);
+				expect((rejected as Error).message).to.include("recovery is required");
+				expect((rejected as Error).cause).to.equal(failure);
+			};
+			const flush = sandbox
+				.stub(coordinates, "flushNativeBackboneCoordinateJournalOnAppend")
+				.callsFake(async () => {
+					// Fail only after the genuine native callback and lower index commit.
+					expect(lowerCommit.callCount).to.equal(1);
+					expect(await shared.log.has(child.hash)).to.equal(true);
+					throw failure;
+				});
+			await expectRecoveryRequired(() =>
+				target.log.onMessage(message, {
+					from: source.node.identity.publicKey,
+				} as any),
+			);
+			expect(flush.callCount).to.equal(1);
+			await assertNativeCommittedHeads();
+			expect(shared._replicationRangeMutationFailure).to.equal(failure);
+			await expectRecoveryRequired(() =>
+				shared.captureReplicationOwnershipLifecycle(),
+			);
+			await expectRecoveryRequired(() =>
+				target.add("after-coordinate-failure", { target: "none" }),
+			);
+			expect(confirmation.callCount).to.equal(0);
+		});
 	});
 
 	it("reports committed hashes from the generic native raw receive fallback", async () => {
@@ -1677,10 +1872,6 @@ describe("raw exchange-head sync", () => {
 						target.log.log.entryIndex as any,
 						"putNativeCommittedAppendFactsBatch",
 					);
-					const persistCoordinatesBatchSpy = sinon.spy(
-						(sharedLog as any)._coordinates,
-						"persistCoordinatesBatch",
-				);
 				const finishBackboneOnlyCoordinateSpy = sinon.spy(
 					(sharedLog as any)._coordinates,
 					"finishBackboneOnlyReceiveCoordinateBatch",
@@ -1838,9 +2029,6 @@ describe("raw exchange-head sync", () => {
 									.nativePreparedCoordinatesFinished,
 								row.name,
 							).to.equal(true);
-							expect(persistCoordinatesBatchSpy.callCount, row.name).to.equal(
-								0,
-							);
 							expect(coordinateIndexBatchPutSpy?.callCount ?? 0, row.name).to.equal(
 								0,
 							);
@@ -1872,6 +2060,16 @@ describe("raw exchange-head sync", () => {
 							0,
 						);
 					}
+					if (!row.coordinateWal) {
+						expect(coordinateIndexBatchPutSpy?.callCount, row.name).to.equal(1);
+						expect(
+							coordinateIndexBatchPutSpy!.firstCall.args[0].map(
+								(write: any) => write.fields.hash,
+							),
+							row.name,
+						).to.have.members(hashes);
+						expect(coordinateIndexPutSpy?.callCount ?? 0, row.name).to.equal(0);
+					}
 				} finally {
 					nativeBlocksGraphCommitSpy?.restore();
 					nativeVerifiedAllPreparedJoinCommitSpy?.restore();
@@ -1880,7 +2078,6 @@ describe("raw exchange-head sync", () => {
 					coordinateIndexPutSpy?.restore();
 					coordinateIndexBatchPutSpy?.restore();
 						finishBackboneOnlyCoordinateSpy.restore();
-						persistCoordinatesBatchSpy.restore();
 						lowerPutNativeCommittedAppendFactsBatchSpy.restore();
 						lowerPutAppendFactsBatchSpy.restore();
 					lowerPutAppendBatchSpy.restore();

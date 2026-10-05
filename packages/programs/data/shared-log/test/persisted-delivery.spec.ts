@@ -3231,8 +3231,8 @@ describe("append delivery options — persisted receipts", function () {
 		const entryIndex = (writer.log.log as any).entryIndex;
 		const nativeGraph = entryIndex.properties.nativeGraph;
 		entryIndex.properties.nativeGraph = undefined;
-		const notifyShadowedGids = sinon
-			.stub(entryIndex, "notifyShadowedGids")
+		const prepareShadowedGidNotification = sinon
+			.stub(entryIndex, "prepareShadowedGidNotification")
 			.rejects(postCommitFailure);
 		let failure: unknown;
 
@@ -3249,7 +3249,7 @@ describe("append delivery options — persisted receipts", function () {
 		} catch (error) {
 			failure = error;
 		} finally {
-			notifyShadowedGids.restore();
+			prepareShadowedGidNotification.restore();
 			entryIndex.properties.nativeGraph = nativeGraph;
 		}
 
@@ -3950,6 +3950,92 @@ describe("append delivery options — persisted receipts", function () {
 			},
 		);
 		expect(responses).to.deep.equal([]);
+	});
+
+	it("receipts a committed receive after live generation cancellation and disk barriers", async () => {
+		const { writer, receiver } = await openPair(true);
+		await waitForPersistedCapability(writer, receiver);
+		const receiverLog = receiver.log as any;
+		const oldOnChange = receiverLog._logProperties.onChange;
+		const gate = pDefer<void>();
+		let receivedHash: string | undefined;
+		const pending: Promise<unknown>[] = [];
+		const track = <T>(promise: Promise<T>) => {
+			void promise.catch(() => {});
+			pending.push(promise);
+			return promise;
+		};
+		receiverLog._logProperties.onChange = async (change: {
+			added: Array<{ entry: { hash: string } }>;
+		}) => {
+			if (receivedHash === undefined && change.added.length > 0) {
+				receivedHash = change.added[0]!.entry.hash;
+				await gate.promise;
+			}
+		};
+		const lowerJoin = sinon.spy(receiver.log.log, "join");
+		try {
+			const append = track(
+				writer.add("cancelled-but-committed", {
+					target: "replicators",
+					meta: { next: [] },
+				}),
+			);
+			await waitForResolved(() => expect(receivedHash).to.be.a("string"), {
+				timeout: 5_000,
+			});
+			expect(await receiver.log.log.has(receivedHash!)).to.equal(true);
+			const receiveSignal = lowerJoin.firstCall.args[1]?.signal;
+			expect(receiveSignal).to.be.instanceOf(AbortSignal);
+			const lowerOutcome = track(
+				Promise.resolve(lowerJoin.firstCall.returnValue).then(
+					() => undefined,
+					(error: unknown) => error,
+				),
+			);
+			const draining = track(
+				receiverLog.drainPeerReceiveHandlers(
+					writer.node.identity.publicKey.hashcode(),
+				),
+			);
+			expect(receiveSignal!.aborted).to.equal(true);
+			gate.resolve();
+			const [{ entry }] = await Promise.all([append, draining]);
+			expect(await lowerOutcome).to.equal(receiveSignal!.reason);
+			expect(entry.hash).to.equal(receivedHash);
+			expect(await receiver.log.log.has(entry.hash)).to.equal(true);
+			expect(await receiver.log.log.blocks.has(entry.hash)).to.equal(true);
+			expect(
+				(await receiver.log.entryCoordinatesIndex.get(toId(entry.hash)))?.value
+					.hash,
+			).to.equal(entry.hash);
+			const receiverHash = receiver.node.identity.publicKey.hashcode();
+			const current = (writer.log as any).persistedReceiptPeerSession(
+				receiverHash,
+			);
+			expect(current).to.exist;
+			const responses = await writer.log.rpc.request(
+				new RequestPersistedEntriesV1({
+					expectedReceiverSession: current.capabilitySession,
+					hashes: [entry.hash],
+				}),
+				{
+					mode: new SilentDelivery({ to: [receiverHash], redundancy: 1 }),
+					amount: 1,
+					timeout: 5_000,
+				},
+			);
+			expect(responses).to.have.length(1);
+			expect(responses[0]!.response).to.be.instanceOf(ConfirmEntriesMessage);
+			expect(
+				(responses[0]!.response as ConfirmEntriesMessage).hashes,
+			).to.deep.equal([entry.hash]);
+		} finally {
+			gate.resolve();
+			await Promise.allSettled(pending);
+			receiverLog._logProperties.onChange = oldOnChange;
+			lowerJoin.restore();
+		}
 	});
 
 	it("reissues an idempotent receipt after the first durable response is lost", async () => {

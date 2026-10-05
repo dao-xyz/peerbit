@@ -28,6 +28,7 @@ import {
 import { type Encoding, NO_ENCODING } from "./encoding.js";
 import {
 	EntryIndex,
+	type EntryIndexDeleteOptions,
 	type EntryIndexHashMutationLockOwner,
 	EntryIndexPostCommitError,
 	type MaybeResolveOptions,
@@ -57,10 +58,21 @@ import * as Sorting from "./log-sorting.js";
 import { logger as baseLogger } from "./logger.js";
 import type { Payload } from "./payload.js";
 import { canUseOptionalNativeModuleImports } from "./runtime.js";
-import { Trim, type TrimOptions } from "./trim.js";
+import { Trim, type TrimOptions, type TrimProperties } from "./trim.js";
 
 const { LastWriteWins } = Sorting;
 const warn = baseLogger.newScope("warn");
+
+type OwnedNativeAppend<T> = T & {
+	hashMutationLockOwner?: EntryIndexHashMutationLockOwner;
+};
+
+type PreparedAppendTrimCompletion<T> = (properties: {
+	entry: Entry<T>;
+	appendFacts: PreparedAppendFacts;
+	removed: ShallowEntry[];
+	hashMutationLockOwner: EntryIndexHashMutationLockOwner;
+}) => MaybePromise<boolean>;
 
 type BlocksWithPutMany = Blocks & {
 	putMany?: (blocks: PreparedEntryBlock[]) => Promise<string[]> | string[];
@@ -291,11 +303,10 @@ type PreparedJoinNativeCommitInput = {
 	validatePlan?: boolean;
 };
 
-type PreparedJoinCommittedInput = {
-	entries: PreparedAppendJoinFacts[];
+type JoinCommittedInput = {
 	hashes: string[];
-	headFlags: boolean[];
 	nativePreparedCommitted: boolean;
+	hashMutationLockOwner?: EntryIndexHashMutationLockOwner;
 };
 
 export type PreparedAppendJoinFacts = PreparedAppendIndexFacts & {
@@ -443,6 +454,10 @@ export type LogProperties<T> = {
 
 export type LogOptions<T> = LogProperties<T> & LogEvents<T> & MemoryProperties;
 
+type InternalLogOptions<T> = LogOptions<T> & {
+	__peerbitOnDeleteCommitted?: EntryIndex<T>["properties"]["onDeleteCommitted"];
+};
+
 export type AppendDurability = "strict" | "buffered";
 
 export type AppendOptions<T> = {
@@ -520,6 +535,7 @@ type TrustedJoinOptions<T> = JoinOptions<T> & {
 	__peerbitEntriesAlreadyMissing?: boolean;
 	__peerbitCanAppendAlreadyValidated?: boolean;
 	__peerbitOnAppendHashes?: InternalAppendHashesSink;
+	__peerbitOnJoinCommitted?: (input: JoinCommittedInput) => MaybePromise<void>;
 	__peerbitDeferIndexWrite?: boolean;
 	__peerbitProfile?: InternalProfileSink;
 };
@@ -534,9 +550,7 @@ type TrustedPreparedAppendFactsBatchJoinOptions = {
 		input: PreparedJoinNativeCommitInput,
 	) => MaybePromise<boolean>;
 	__peerbitNativePreparedJoinCommitValidatesPlan?: boolean;
-	__peerbitOnPreparedJoinCommitted?: (
-		input: PreparedJoinCommittedInput,
-	) => MaybePromise<void>;
+	__peerbitOnJoinCommitted?: (input: JoinCommittedInput) => MaybePromise<void>;
 };
 
 export type JoinableEntry = {
@@ -912,6 +926,8 @@ export class Log<T> {
 			store: this._storage,
 			init: (e) => e.init(this),
 			onGidRemoved,
+			onDeleteCommitted: (options as InternalLogOptions<T>)
+				.__peerbitOnDeleteCommitted,
 			nativeGraph: nativeGraph || undefined,
 			index: await (
 				await this._indexer.scope("heads")
@@ -933,14 +949,15 @@ export class Log<T> {
 				index: this._entryIndex,
 				deleteNode: async (
 					node: ShallowEntry,
-					options?: { resolveDeletedEntry?: boolean },
+					options?: EntryIndexDeleteOptions & { resolveDeletedEntry?: boolean },
 				) => {
 					const shouldResolve = options?.resolveDeletedEntry !== false;
 					const resolved = shouldResolve
 						? await this.get(node.hash)
 						: undefined;
-					const deleted = await this._entryIndex.delete(node.hash, node);
-					await this._storage.rm(node.hash);
+					const deleted = options?.onDeleteCommitted
+						? (await this._entryIndex.deleteMany([node], options))[0]
+						: await this._entryIndex.delete(node.hash, node);
 					if (!deleted) {
 						return resolved;
 					}
@@ -949,9 +966,8 @@ export class Log<T> {
 				deleteNodes: this._entryIndex.canDeleteMany()
 					? (
 							nodes: ShallowEntry[],
-							options?: {
+							options?: EntryIndexDeleteOptions & {
 								resolveDeletedEntry?: boolean;
-								skipNextHeadUpdates?: boolean;
 							},
 						): MaybePromise<(Entry<T> | ShallowEntry)[]> => {
 							if (nodes.length === 0) {
@@ -959,9 +975,7 @@ export class Log<T> {
 							}
 							const shouldResolve = options?.resolveDeletedEntry !== false;
 							if (!shouldResolve) {
-								return this._entryIndex.deleteManyMaybe(nodes, {
-									skipNextHeadUpdates: options?.skipNextHeadUpdates,
-								});
+								return this._entryIndex.deleteManyMaybe(nodes, options);
 							}
 							return (async () => {
 								const resolvedByHash = new Map<string, Entry<T>>();
@@ -974,9 +988,10 @@ export class Log<T> {
 										resolvedByHash.set(entry.hash, entry);
 									}
 								}
-								const deleted = await this._entryIndex.deleteMany(nodes, {
-									skipNextHeadUpdates: options?.skipNextHeadUpdates,
-								});
+								const deleted = await this._entryIndex.deleteMany(
+									nodes,
+									options,
+								);
 								return deleted
 									.map((node) => resolvedByHash.get(node.hash))
 									.filter((entry): entry is Entry<T> => !!entry);
@@ -1454,7 +1469,8 @@ export class Log<T> {
 			if (nativeAppendChain) {
 				const entry = nativeAppendChain.entries[0]!;
 				try {
-					await this.joinMissingNexts(entry, nexts);
+					if (!nativeAppendChain.hashMutationLockOwner)
+						await this.joinMissingNexts(entry, nexts);
 					if (deferBlockStore && !nativeAppendChain.nativeBlocksCommitted) {
 						await this.putAppendEntryBlocks([entry], nativeAppendChain.blocks);
 					}
@@ -1472,6 +1488,8 @@ export class Log<T> {
 						await this.rollbackNativeAppendBlocks([entry]);
 					}
 					throw error;
+				} finally {
+					this.releaseNativeAppendMutation(nativeAppendChain);
 				}
 				onLocalCommit?.([entry.hash], [entry]);
 				mutation = await finishMutation(entry);
@@ -1507,6 +1525,7 @@ export class Log<T> {
 			payloadData?: Uint8Array;
 			includeMaterializationBytes?: boolean;
 			includeAppendFactsBytes?: boolean;
+			onTrimCommitted?: PreparedAppendTrimCompletion<T>;
 		},
 	): Promise<{
 		entry: Entry<T>;
@@ -1529,6 +1548,7 @@ export class Log<T> {
 			payloadData?: Uint8Array;
 			includeMaterializationBytes?: boolean;
 			includeAppendFactsBytes?: boolean;
+			onTrimCommitted?: PreparedAppendTrimCompletion<T>;
 		},
 	): Promise<{
 		entry: Entry<T>;
@@ -1558,13 +1578,17 @@ export class Log<T> {
 					nexts,
 					deferBlockStore,
 					properties?.payloadData ? [properties.payloadData] : undefined,
+					properties?.skipMissingNextJoin,
 				)
 			: undefined;
 		let entry: Entry<T>;
 		if (nativeAppendChain) {
 			entry = nativeAppendChain.entries[0]!;
 			try {
-				if (!properties?.skipMissingNextJoin) {
+				if (
+					!properties?.skipMissingNextJoin &&
+					!nativeAppendChain.hashMutationLockOwner
+				) {
 					await this.joinMissingNexts(entry, nexts);
 				}
 				if (deferBlockStore && !nativeAppendChain.nativeBlocksCommitted) {
@@ -1584,6 +1608,8 @@ export class Log<T> {
 					await this.rollbackNativeAppendBlocks([entry]);
 				}
 				throw error;
+			} finally {
+				this.releaseNativeAppendMutation(nativeAppendChain);
 			}
 			onLocalCommit?.([entry.hash], [entry]);
 		} else {
@@ -1601,19 +1627,32 @@ export class Log<T> {
 
 		entry.init({ encoding: this._encoding, keychain: this._keychain });
 
+		const appendFacts = this.createPreparedAppendFacts(
+			[entry],
+			nativeAppendChain,
+		)[0]!;
+		const onTrimCommitted = properties?.onTrimCommitted;
 		const trimmed = await this.trimIfConfigured(appendOptions.trim, {
 			resolveDeletedEntries: properties?.resolveTrimmedEntries,
+			...(onTrimCommitted && {
+				mutationHashes: [entry.hash, ...entry.meta.next],
+				onDeleteCommitted: (
+					removed: ShallowEntry[],
+					hashMutationLockOwner: EntryIndexHashMutationLockOwner,
+				) =>
+					onTrimCommitted({
+						entry,
+						appendFacts,
+						removed,
+						hashMutationLockOwner,
+					}),
+			}),
 		});
 		const removed = trimmed ?? [];
 		const change: Change<T> = {
 			added: [{ head: true, entry }],
 			removed,
 		};
-		const appendFacts = this.createPreparedAppendFacts(
-			[entry],
-			nativeAppendChain,
-		)[0]!;
-
 		return { entry, removed, change, appendFacts };
 	}
 
@@ -2563,6 +2602,7 @@ export class Log<T> {
 			properties?.includeMaterializationBytes,
 			properties?.includeAppendFactsBytes,
 			nativeTrimLengthTo,
+			properties?.skipMissingNextJoin,
 		);
 		return mapMaybePromise(nativeAppendChainResult, (nativeAppendChain) =>
 			this.finishLocallyPreparedCommitOnlyAppend(
@@ -2576,7 +2616,9 @@ export class Log<T> {
 	}
 
 	private finishLocallyPreparedCommitOnlyAppend(
-		nativeAppendChain: PreparedAppendCommitOnlyChain<T> | undefined,
+		nativeAppendChain:
+			| OwnedNativeAppend<PreparedAppendCommitOnlyChain<T>>
+			| undefined,
 		appendOptions: AppendOptions<T>,
 		nexts: Sorting.SortableEntry[],
 		deferBlockStore: boolean,
@@ -2615,6 +2657,7 @@ export class Log<T> {
 								skipNextHeadUpdates: true,
 								deleteBlocks: false,
 								nativeBlocksDeleted: true,
+								hashMutationLockOwner: nativeAppendChain.hashMutationLockOwner,
 							},
 						);
 					if (consumedNoReturn !== undefined) {
@@ -2640,6 +2683,7 @@ export class Log<T> {
 								nativeAppendChain.trimmedNativeBlocksDeleted !== true,
 							nativeBlocksDeleted:
 								nativeAppendChain.trimmedNativeBlocksDeleted === true,
+							hashMutationLockOwner: nativeAppendChain.hashMutationLockOwner,
 						},
 					);
 				return mapMaybePromise(consumedResult, (removed) => ({
@@ -2665,6 +2709,7 @@ export class Log<T> {
 						deleteBlocks: nativeAppendChain.trimmedNativeBlocksDeleted !== true,
 						nativeBlocksDeleted:
 							nativeAppendChain.trimmedNativeBlocksDeleted === true,
+						hashMutationLockOwner: nativeAppendChain.hashMutationLockOwner,
 					},
 				);
 				return mapMaybePromise(consumedResult, (removed) => ({
@@ -2677,30 +2722,28 @@ export class Log<T> {
 					shallowEntry,
 				}));
 			}
-			const trimmedResult = this.trimIfConfigured(appendOptions.trim, {
-				resolveDeletedEntries: properties?.resolveTrimmedEntries,
-			});
-			return mapMaybePromise(trimmedResult, (trimmed) => {
-				const removed = trimmed ?? [];
-				return {
-					get entry() {
-						return materializeEntry();
-					},
-					materializeEntry,
-					removed,
-					appendFacts,
-					shallowEntry,
-				};
-			});
+			return {
+				get entry() {
+					return materializeEntry();
+				},
+				materializeEntry,
+				removed: [],
+				appendFacts,
+				shallowEntry,
+			};
 		};
 		const finishFacts = (): MaybePromise<PreparedCommitOnlyAppendResult<T>> => {
-			const putFactsResult = this.entryIndex.putNativeCommittedAppendFacts({
-				hash: appendFacts.hash,
-				unique: true,
-				externalNextHashes: nexts.map((next) => next.hash),
-				shallowEntry,
-				isHead: true,
-			});
+			const putFactsResult = this.entryIndex.putNativeCommittedAppendFacts(
+				{
+					hash: appendFacts.hash,
+					unique: true,
+					externalNextHashes: nexts.map((next) => next.hash),
+					shallowEntry,
+					isHead: true,
+				},
+				undefined,
+				nativeAppendChain.hashMutationLockOwner,
+			);
 			return mapMaybePromise(putFactsResult, finishTrim);
 		};
 		const finishBlocks = (): MaybePromise<
@@ -2740,7 +2783,11 @@ export class Log<T> {
 		let settled: MaybePromise<PreparedCommitOnlyAppendResult<T>>;
 		try {
 			let result: MaybePromise<PreparedCommitOnlyAppendResult<T>>;
-			if (!properties?.skipMissingNextJoin && nexts.length > 0) {
+			if (
+				!properties?.skipMissingNextJoin &&
+				!nativeAppendChain.hashMutationLockOwner &&
+				nexts.length > 0
+			) {
 				result = mapMaybePromise(
 					this.joinMissingNexts(materializeEntry(), nexts),
 					finishBlocks,
@@ -2750,7 +2797,35 @@ export class Log<T> {
 			}
 			settled = isPromiseLike(result) ? result.catch(rollback) : result;
 		} catch (error) {
-			return rollback(error);
+			try {
+				const compensation = rollback(error);
+				return isPromiseLike(compensation)
+					? compensation.finally(() =>
+							this.releaseNativeAppendMutation(nativeAppendChain),
+						)
+					: compensation;
+			} catch (failure) {
+				this.releaseNativeAppendMutation(nativeAppendChain);
+				throw failure;
+			}
+		}
+		if (isPromiseLike(settled))
+			settled = settled.finally(() =>
+				this.releaseNativeAppendMutation(nativeAppendChain),
+			);
+		else this.releaseNativeAppendMutation(nativeAppendChain);
+		if (
+			!nativeAppendChain.trimmedNativeEntryHashes &&
+			!nativeAppendChain.trimmedNativeEntries
+		) {
+			settled = mapMaybePromise(settled, (result) =>
+				mapMaybePromise(
+					this.trimIfConfigured(appendOptions.trim, {
+						resolveDeletedEntries: properties?.resolveTrimmedEntries,
+					}),
+					(trimmed) => Object.assign(result, { removed: trimmed ?? [] }),
+				),
+			);
 		}
 		if (!onLocalCommit) {
 			return settled;
@@ -2860,6 +2935,8 @@ export class Log<T> {
 				await this.rollbackNativeAppendBlocks(entries);
 			}
 			throw error;
+		} finally {
+			this.releaseNativeAppendMutation(nativeAppendBatch);
 		}
 		if (onLocalCommit) {
 			onLocalCommit(entries.map((entry) => entry.hash));
@@ -3351,7 +3428,8 @@ export class Log<T> {
 		if (nativeAppendChain) {
 			const entries = nativeAppendChain.entries;
 			try {
-				await this.joinMissingNexts(entries[0]!, initialNexts);
+				if (!nativeAppendChain.hashMutationLockOwner)
+					await this.joinMissingNexts(entries[0]!, initialNexts);
 				if (deferBlockStore && !nativeAppendChain.nativeBlocksCommitted) {
 					await this.putAppendEntryBlocks(entries, nativeAppendChain.blocks);
 				}
@@ -3369,6 +3447,8 @@ export class Log<T> {
 					await this.rollbackNativeAppendBlocks(entries);
 				}
 				throw error;
+			} finally {
+				this.releaseNativeAppendMutation(nativeAppendChain);
 			}
 			mutation = await finishMutation(entries);
 		}
@@ -3411,7 +3491,8 @@ export class Log<T> {
 		nexts: Sorting.SortableEntry[],
 		deferBlockStore: boolean,
 		payloadDatas?: Uint8Array[],
-	): Promise<PreparedAppendChain<T> | undefined> {
+		skipMissingNextJoin?: boolean,
+	): Promise<OwnedNativeAppend<PreparedAppendChain<T>> | undefined> {
 		const canAppendAlreadyValidatedForOptions =
 			canAppendAlreadyValidated(options);
 		if (
@@ -3438,30 +3519,40 @@ export class Log<T> {
 					.prepareEntryV0PlainEntryAndPut)
 				? this.entryIndex.properties.nativeGraph.graph
 				: undefined;
-		return EntryV0.createPlainAppendChainBatch<T>({
-			data,
-			meta: {
-				clocks: () =>
-					data.map(
-						() =>
-							new Clock({
-								id: this._identity.publicKey.bytes,
-								timestamp: this._hlc.now(),
-							}),
-					),
-				type: options.meta?.type,
-				gidSeed: options.meta?.gidSeed,
-				data: options.meta?.data,
-				next: nexts,
-			},
-			encoding: this._encoding,
-			payloadDatas,
-			identity: options.identity || this._identity,
-			deferStore: deferBlockStore,
-			cachePreparedEntries: false,
-			nativeGraph,
-			nativeBlockStore: this._storage,
-		});
+		payloadDatas ??= data.map((value) => this._encoding.encoder(value));
+		return Promise.resolve(
+			this.prepareOwnedNativeAppend(
+				!!nativeGraph,
+				nexts,
+				skipMissingNextJoin,
+				options,
+				() =>
+					EntryV0.createPlainAppendChainBatch<T>({
+						data,
+						meta: {
+							clocks: () =>
+								data.map(
+									() =>
+										new Clock({
+											id: this._identity.publicKey.bytes,
+											timestamp: this._hlc.now(),
+										}),
+								),
+							type: options.meta?.type,
+							gidSeed: options.meta?.gidSeed,
+							data: options.meta?.data,
+							next: nexts,
+						},
+						encoding: this._encoding,
+						payloadDatas,
+						identity: options.identity || this._identity,
+						deferStore: deferBlockStore,
+						cachePreparedEntries: false,
+						nativeGraph,
+						nativeBlockStore: this._storage,
+					}),
+			),
+		);
 	}
 
 	private createNativePlainAppendCommitOnly(
@@ -3473,7 +3564,10 @@ export class Log<T> {
 		includeMaterializationBytes?: boolean,
 		includeAppendFactsBytes?: boolean,
 		nativeTrimLengthTo?: number,
-	): MaybePromise<PreparedAppendCommitOnlyChain<T> | undefined> {
+		skipMissingNextJoin?: boolean,
+	): MaybePromise<
+		OwnedNativeAppend<PreparedAppendCommitOnlyChain<T>> | undefined
+	> {
 		const canAppendAlreadyValidatedForOptions =
 			canAppendAlreadyValidated(options);
 		if (
@@ -3500,30 +3594,38 @@ export class Log<T> {
 		if (!nativeGraph) {
 			return undefined;
 		}
-		return EntryV0.createPlainAppendChainCommitOnly<T>({
-			data,
-			meta: {
-				clocks: () => [
-					new Clock({
-						id: this._identity.publicKey.bytes,
-						timestamp: this._hlc.now(),
-					}),
-				],
-				type: options.meta?.type,
-				gidSeed: options.meta?.gidSeed,
-				data: options.meta?.data,
-				next: nexts,
-			},
-			encoding: this._encoding,
-			payloadDatas,
-			identity: options.identity || this._identity,
-			deferStore: deferBlockStore,
-			nativeGraph,
-			nativeBlockStore: this._storage,
-			includeMaterializationBytes,
-			includeAppendFactsBytes,
-			nativeTrimLengthTo,
-		});
+		payloadDatas ??= data.map((value) => this._encoding.encoder(value));
+		return this.prepareOwnedNativeAppend(
+			true,
+			nexts,
+			skipMissingNextJoin,
+			options,
+			() =>
+				EntryV0.createPlainAppendChainCommitOnly<T>({
+					data,
+					meta: {
+						clocks: () => [
+							new Clock({
+								id: this._identity.publicKey.bytes,
+								timestamp: this._hlc.now(),
+							}),
+						],
+						type: options.meta?.type,
+						gidSeed: options.meta?.gidSeed,
+						data: options.meta?.data,
+						next: nexts,
+					},
+					encoding: this._encoding,
+					payloadDatas,
+					identity: options.identity || this._identity,
+					deferStore: deferBlockStore,
+					nativeGraph,
+					nativeBlockStore: this._storage,
+					includeMaterializationBytes,
+					includeAppendFactsBytes,
+					nativeTrimLengthTo,
+				}),
+		);
 	}
 
 	private async createNativePlainAppendEntriesBatch(
@@ -3532,7 +3634,7 @@ export class Log<T> {
 		deferBlockStore: boolean,
 		payloadDatas?: Uint8Array[],
 		nexts?: Sorting.SortableEntry[][],
-	): Promise<PreparedAppendChain<T> | undefined> {
+	): Promise<OwnedNativeAppend<PreparedAppendChain<T>> | undefined> {
 		const canAppendAlreadyValidatedForOptions =
 			canAppendAlreadyValidated(options);
 		if (
@@ -3557,109 +3659,215 @@ export class Log<T> {
 			this.entryIndex.properties.nativeGraph?.graph
 				? this.entryIndex.properties.nativeGraph.graph
 				: undefined;
-
-		const generatedGids = EntryV0.createGids(data.length);
-		const gids = generatedGids.map((generatedGid, index) => {
-			const entryNexts = nexts?.[index];
-			if (!entryNexts || entryNexts.length === 0) {
-				return generatedGid;
-			}
-			let gid = entryNexts[0]!.meta.gid;
-			for (let i = 1; i < entryNexts.length; i++) {
-				const nextGid = entryNexts[i]!.meta.gid;
-				if (nextGid < gid) {
-					gid = nextGid;
+		payloadDatas ??= data.map((value) => this._encoding.encoder(value));
+		return this.prepareOwnedNativeAppend(
+			!!nativeGraph,
+			nexts?.flat() ?? [],
+			false,
+			undefined,
+			async () => {
+				const generatedGids = EntryV0.createGids(data.length);
+				const gids = generatedGids.map((generatedGid, index) => {
+					const entryNexts = nexts?.[index];
+					if (!entryNexts || entryNexts.length === 0) {
+						return generatedGid;
+					}
+					let gid = entryNexts[0]!.meta.gid;
+					for (let i = 1; i < entryNexts.length; i++) {
+						const nextGid = entryNexts[i]!.meta.gid;
+						if (nextGid < gid) {
+							gid = nextGid;
+						}
+					}
+					return gid;
+				});
+				const clockId = this._identity.publicKey.bytes;
+				const clocks = this._hlc.nowBatch(data.length).map(
+					(timestamp) =>
+						new Clock({
+							id: clockId,
+							timestamp,
+						}),
+				);
+				const metaDatas = Array.from(
+					{ length: data.length },
+					() => options.meta?.data,
+				);
+				const directBatch = nativeGraph?.prepareEntryV0PlainEntriesCommit
+					? await EntryV0.createPlainAppendEntriesBatch<T>({
+							data,
+							payloadDatas,
+							meta: {
+								clocks: () => clocks,
+								gids,
+								nexts,
+								type: options.meta?.type,
+								datas: metaDatas,
+							},
+							encoding: this._encoding,
+							identity: options.identity || this._identity,
+							deferStore: deferBlockStore,
+							cachePreparedEntries: false,
+							nativeGraph,
+							nativeBlockStore: this._storage,
+						})
+					: undefined;
+				if (directBatch) {
+					return directBatch;
 				}
-			}
-			return gid;
-		});
-		const clockId = this._identity.publicKey.bytes;
-		const clocks = this._hlc.nowBatch(data.length).map(
-			(timestamp) =>
-				new Clock({
-					id: clockId,
-					timestamp,
-				}),
-		);
-		const metaDatas = Array.from(
-			{ length: data.length },
-			() => options.meta?.data,
-		);
-		const directBatch = nativeGraph?.prepareEntryV0PlainEntriesCommit
-			? await EntryV0.createPlainAppendEntriesBatch<T>({
-					data,
-					payloadDatas,
-					meta: {
-						clocks: () => clocks,
-						gids,
-						nexts,
-						type: options.meta?.type,
-						datas: metaDatas,
-					},
-					encoding: this._encoding,
-					identity: options.identity || this._identity,
-					deferStore: deferBlockStore,
-					cachePreparedEntries: false,
-					nativeGraph,
-					nativeBlockStore: this._storage,
-				})
-			: undefined;
-		if (directBatch) {
-			return directBatch;
-		}
 
-		const entries: Entry<T>[] = [];
-		const blocks: PreparedEntryBlock[] = [];
-		const shallowEntries: PreparedAppendChain<T>["shallowEntries"] = [];
-		const nativeEntries: NonNullable<PreparedAppendChain<T>["nativeEntries"]> =
-			[];
-		let nativeGraphUpdated = false;
-		let nativeBlocksCommitted = true;
-		for (let i = 0; i < data.length; i++) {
-			const entryNexts = nexts?.[i] ?? [];
-			const prepared = await EntryV0.createPlainAppendChainBatch<T>({
-				data: [data[i]!],
-				payloadDatas: payloadDatas ? [payloadDatas[i]!] : undefined,
-				meta: {
-					clocks: () => [clocks[i]!],
-					gid: entryNexts.length === 0 ? gids[i]! : undefined,
-					type: options.meta?.type,
-					data: metaDatas[i],
-					next: entryNexts,
+				const entries: Entry<T>[] = [];
+				const blocks: PreparedEntryBlock[] = [];
+				const shallowEntries: PreparedAppendChain<T>["shallowEntries"] = [];
+				const nativeEntries: NonNullable<
+					PreparedAppendChain<T>["nativeEntries"]
+				> = [];
+				let nativeGraphUpdated = false;
+				let nativeBlocksCommitted = true;
+				for (let i = 0; i < data.length; i++) {
+					const entryNexts = nexts?.[i] ?? [];
+					const prepared = await EntryV0.createPlainAppendChainBatch<T>({
+						data: [data[i]!],
+						payloadDatas: payloadDatas ? [payloadDatas[i]!] : undefined,
+						meta: {
+							clocks: () => [clocks[i]!],
+							gid: entryNexts.length === 0 ? gids[i]! : undefined,
+							type: options.meta?.type,
+							data: metaDatas[i],
+							next: entryNexts,
+						},
+						encoding: this._encoding,
+						identity: options.identity || this._identity,
+						deferStore: deferBlockStore,
+						cachePreparedEntries: false,
+						nativeGraph,
+						nativeBlockStore: this._storage,
+					});
+					if (!prepared) {
+						if (entries.length > 0)
+							throw new Error(
+								"Native append batch preparation stopped after a partial commit",
+							);
+						return undefined;
+					}
+					entries.push(prepared.entries[0]!);
+					if (prepared.blocks) {
+						blocks.push(...prepared.blocks);
+					}
+					shallowEntries.push(...prepared.shallowEntries);
+					if (prepared.nativeEntries) {
+						nativeEntries.push(...prepared.nativeEntries);
+					}
+					nativeGraphUpdated ||= prepared.nativeGraphUpdated === true;
+					nativeBlocksCommitted &&= prepared.nativeBlocksCommitted === true;
+				}
+
+				if (!nativeBlocksCommitted && blocks.length !== entries.length) {
+					return undefined;
+				}
+				return {
+					entries,
+					blocks: blocks.length > 0 ? blocks : undefined,
+					shallowEntries,
+					nativeEntries,
+					nativeGraphUpdated,
+					nativeBlocksCommitted,
+				};
+			},
+		);
+	}
+
+	/** Native prepare may mutate before returning its hashes. Resolve parent joins
+	 * first, then own the index until the caller publishes or compensates. */
+	private prepareOwnedNativeAppend<TPrepared extends object>(
+		native: boolean,
+		nexts: Sorting.SortableEntry[],
+		skipMissingNextJoin: boolean | undefined,
+		options: AppendOptions<T> | undefined,
+		prepare: () => MaybePromise<TPrepared | undefined>,
+	): MaybePromise<OwnedNativeAppend<TPrepared> | undefined> {
+		if (!native) return prepare();
+		const acquire = () =>
+			mapMaybePromise(
+				this.entryIndex.acquireExclusiveMutationLockMaybe(),
+				(owner) => {
+					const release = () => this.entryIndex.releaseHashMutationLocks(owner);
+					const fail = (error: unknown): never => {
+						// A native throw can occur after graph/storage mutation without exposing
+						// the affected hashes. Do not admit another write into uncertain state.
+						this.entryIndex.poisonNativeDurableTransactionMutations(error);
+						release();
+						throw error;
+					};
+					const run = (): MaybePromise<
+						OwnedNativeAppend<TPrepared> | undefined
+					> => {
+						let result: MaybePromise<TPrepared | undefined>;
+						try {
+							result = prepare();
+						} catch (error) {
+							return fail(error);
+						}
+						const finish = (prepared: TPrepared | undefined) => {
+							if (!prepared) {
+								release();
+								return undefined;
+							}
+							return Object.assign(prepared, { hashMutationLockOwner: owner });
+						};
+						return isPromiseLike(result)
+							? result.then(finish, fail)
+							: finish(result);
+					};
+					if (options && options.meta?.next == null) {
+						let currentResult: MaybePromise<Sorting.SortableEntry[]>;
+						try {
+							currentResult = this.getNextsForAppend(options, owner);
+						} catch (error) {
+							release();
+							throw error;
+						}
+						const withNexts = (current: Sorting.SortableEntry[]) => {
+							nexts.splice(0, nexts.length, ...current);
+							return run();
+						};
+						return isPromiseLike(currentResult)
+							? currentResult.then(withNexts, (error) => {
+									release();
+									throw error;
+								})
+							: withNexts(currentResult);
+					}
+					if (skipMissingNextJoin || nexts.length === 0) return run();
+					return Promise.all(nexts.map((next) => this.has(next.hash))).then(
+						(present) => {
+							if (present.some((value) => !value)) {
+								release();
+								throw new Error(
+									"Append parent disappeared while waiting for native mutation ownership",
+								);
+							}
+							return run();
+						},
+						(error) => {
+							release();
+							throw error;
+						},
+					);
 				},
-				encoding: this._encoding,
-				identity: options.identity || this._identity,
-				deferStore: deferBlockStore,
-				cachePreparedEntries: false,
-				nativeGraph,
-				nativeBlockStore: this._storage,
-			});
-			if (!prepared) {
-				return undefined;
-			}
-			entries.push(prepared.entries[0]!);
-			if (prepared.blocks) {
-				blocks.push(...prepared.blocks);
-			}
-			shallowEntries.push(...prepared.shallowEntries);
-			if (prepared.nativeEntries) {
-				nativeEntries.push(...prepared.nativeEntries);
-			}
-			nativeGraphUpdated ||= prepared.nativeGraphUpdated === true;
-			nativeBlocksCommitted &&= prepared.nativeBlocksCommitted === true;
-		}
+			);
+		return !skipMissingNextJoin && nexts.length > 0
+			? this.joinMissingAppendNexts(nexts).then(acquire)
+			: acquire();
+	}
 
-		if (!nativeBlocksCommitted && blocks.length !== entries.length) {
-			return undefined;
+	private releaseNativeAppendMutation(prepared: {
+		hashMutationLockOwner?: EntryIndexHashMutationLockOwner;
+	}) {
+		if (prepared.hashMutationLockOwner) {
+			this.entryIndex.releaseHashMutationLocks(prepared.hashMutationLockOwner);
+			prepared.hashMutationLockOwner = undefined;
 		}
-		return {
-			entries,
-			blocks: blocks.length > 0 ? blocks : undefined,
-			shallowEntries,
-			nativeEntries,
-			nativeGraphUpdated,
-			nativeBlocksCommitted,
-		};
 	}
 
 	private rollbackNativeAppendGraph(entries: Entry<T>[]) {
@@ -3926,7 +4134,7 @@ export class Log<T> {
 					// The durable strict intent is now the recovery authority. Finalize
 					// in-memory ownership and locks so close cannot roll back a lower
 					// marker that may still be durably true; reopen finishes any trim debt.
-					this.entryIndex.acknowledgeNativeCommittedAppendFacts(
+					this.entryIndex.retainNativeCommittedAppendFactsForRecovery(
 						properties.transaction,
 					);
 				} catch (error) {
@@ -3934,7 +4142,6 @@ export class Log<T> {
 				}
 				state = "acknowledged";
 				this._nativeCommittedAppendFinalizers?.delete(finalizer);
-				properties.onLocalCommit?.(properties.hashes);
 				if (failures.length > 0) {
 					throw new AggregateError(
 						failures,
@@ -4088,15 +4295,22 @@ export class Log<T> {
 
 	private getNextsForAppend(
 		options: AppendOptions<T>,
+		hashMutationLockOwner?: EntryIndexHashMutationLockOwner,
 	): MaybePromise<Sorting.SortableEntry[]> {
 		this.validateExplicitNexts(options);
-		return (
-			options.meta?.next ||
-			this.entryIndex.getHeadsForAppend() ||
+		const known = options.meta?.next || this.entryIndex.getHeadsForAppend();
+		if (known) return known;
+		const readHeads = () =>
 			this.entryIndex
 				.getHeads(undefined, { type: "shape", shape: Sorting.ENTRY_SORT_SHAPE })
-				.all()
-		);
+				.all();
+		// Revalidation runs under exclusive native admission. Drain buffered rows
+		// using that owner before the ordinary iterator's ownerless flush.
+		return hashMutationLockOwner
+			? this.entryIndex
+					.flushPendingWrites(undefined, hashMutationLockOwner)
+					.then(readHeads)
+			: readHeads();
 	}
 
 	private async createAppendEntry(
@@ -4159,6 +4373,10 @@ export class Log<T> {
 		if (entry.meta.type === EntryType.CUT) {
 			return;
 		}
+		return this.joinMissingAppendNexts(nexts);
+	}
+
+	private async joinMissingAppendNexts(nexts: Sorting.SortableEntry[]) {
 		for (const e of nexts) {
 			if (await this.has(e.hash)) {
 				continue;
@@ -4205,7 +4423,7 @@ export class Log<T> {
 		entries: Entry<T>[],
 		options: AppendOptions<T>,
 		externalNextHashes: string[],
-		preparedAppendChain?: PreparedAppendChain<T>,
+		preparedAppendChain?: OwnedNativeAppend<PreparedAppendChain<T>>,
 		heads?: boolean[],
 	) {
 		const prepared =
@@ -4234,6 +4452,7 @@ export class Log<T> {
 				externalNextHashes,
 				shallowEntry: prepared.shallowEntries[0],
 				isHead: heads?.[0] ?? true,
+				hashMutationLockOwner: preparedAppendChain?.hashMutationLockOwner,
 			});
 			return;
 		}
@@ -4243,6 +4462,7 @@ export class Log<T> {
 			externalNextHashes,
 			heads,
 			prepared,
+			hashMutationLockOwner: preparedAppendChain?.hashMutationLockOwner,
 			deferIndexWrite:
 				options.deferIndexWrite ??
 				(options.durability
@@ -4504,7 +4724,7 @@ export class Log<T> {
 
 	async trim(
 		option: TrimOptions | undefined = this._trim.options,
-		properties?: { resolveDeletedEntries?: boolean },
+		properties?: TrimProperties,
 	) {
 		this.throwIfDurableWritesFailed();
 		return this._trim.trim(option, properties);
@@ -4512,7 +4732,7 @@ export class Log<T> {
 
 	private trimIfConfigured(
 		option?: TrimOptions,
-		properties?: { resolveDeletedEntries?: boolean },
+		properties?: TrimProperties,
 	): MaybePromise<ShallowOrFullEntry<T>[] | undefined> {
 		const resolved = option
 			? this.wrapTrimCallbacks(option)
@@ -4765,6 +4985,7 @@ export class Log<T> {
 				verifySignatures: options?.verifySignatures,
 				trim: options?.trim,
 				onChange: options?.onChange,
+				__peerbitOnJoinCommitted: options?.__peerbitOnJoinCommitted,
 				remote,
 				resolveRemoteFrom,
 			});
@@ -4952,7 +5173,19 @@ export class Log<T> {
 		}
 
 		let nativeValidatedCommitRejected = false;
+		let hashMutationLockOwner: EntryIndexHashMutationLockOwner | undefined;
+		let coordinateCompletionPending = false;
 		const batchPromise = (async () => {
+			if (
+				resolvedOptions.__peerbitNativePreparedJoinCommit ||
+				resolvedOptions.__peerbitOnJoinCommitted
+			) {
+				// Native graph/coordinate publication precedes index mirroring. Own
+				// conflicts before that publication, not only during the later mirror.
+				hashMutationLockOwner = await this.entryIndex.acquireHashMutationLocks(
+					entries.flatMap((entry) => [entry.hash, ...entry.meta.next]),
+				);
+			}
 			const clockStartedAt = internalProfileStart(profile);
 			for (const entry of entries) {
 				this._hlc.update(entry.meta.clock.timestamp);
@@ -4970,6 +5203,8 @@ export class Log<T> {
 			let nativePreparedCommitted = false;
 			if (resolvedOptions.__peerbitNativePreparedJoinCommit) {
 				const nativeCommitStartedAt = internalProfileStart(profile);
+				coordinateCompletionPending =
+					!!resolvedOptions.__peerbitOnJoinCommitted;
 				nativePreparedCommitted =
 					(await this.runWithMutationCallback(() =>
 						resolvedOptions.__peerbitNativePreparedJoinCommit!({
@@ -4981,6 +5216,7 @@ export class Log<T> {
 							validatePlan: nativeCommitValidatesPlan,
 						}),
 					)) === true;
+				if (!nativePreparedCommitted) coordinateCompletionPending = false;
 				emitInternalProfileDuration(profile, nativeCommitStartedAt, {
 					name: "log.joinPreparedFacts.nativePreparedCommit",
 					component: "log",
@@ -5018,6 +5254,7 @@ export class Log<T> {
 
 			const indexStartedAt = internalProfileStart(profile);
 			let nativeCommittedFactsIndexed = false;
+			coordinateCompletionPending = !!resolvedOptions.__peerbitOnJoinCommitted;
 			if (
 				nativePreparedCommitted &&
 				resolvedOptions.__peerbitDeferIndexWrite === true
@@ -5045,7 +5282,11 @@ export class Log<T> {
 						isHead,
 					};
 				});
-				await this.entryIndex.putNativeCommittedAppendFactsBatch(indexRows);
+				await this.entryIndex.putNativeCommittedAppendFactsBatch(
+					indexRows,
+					undefined,
+					hashMutationLockOwner,
+				);
 				nativeCommittedFactsIndexed = true;
 			} else {
 				const externalNextHashes =
@@ -5057,6 +5298,7 @@ export class Log<T> {
 					deferIndexWrite: resolvedOptions.__peerbitDeferIndexWrite,
 					nativeGraphUpdated: nativePreparedCommitted,
 					profile,
+					hashMutationLockOwner,
 				});
 			}
 			emitInternalProfileDuration(profile, indexStartedAt, {
@@ -5067,16 +5309,16 @@ export class Log<T> {
 				details: { trustedMissing, nativeCommittedFactsIndexed },
 			});
 
-			if (resolvedOptions.__peerbitOnPreparedJoinCommitted) {
+			if (resolvedOptions.__peerbitOnJoinCommitted) {
 				const committedStartedAt = internalProfileStart(profile);
 				await this.runWithMutationCallback(() =>
-					resolvedOptions.__peerbitOnPreparedJoinCommitted!({
-						entries,
+					resolvedOptions.__peerbitOnJoinCommitted!({
 						hashes: entryHashes,
-						headFlags,
 						nativePreparedCommitted,
+						hashMutationLockOwner,
 					}),
 				);
+				coordinateCompletionPending = false;
 				emitInternalProfileDuration(profile, committedStartedAt, {
 					name: "log.joinPreparedFacts.committed",
 					component: "log",
@@ -5086,6 +5328,10 @@ export class Log<T> {
 				});
 			}
 
+			if (hashMutationLockOwner) {
+				this.entryIndex.releaseHashMutationLocks(hashMutationLockOwner);
+				hashMutationLockOwner = undefined;
+			}
 			const changeStartedAt = internalProfileStart(profile);
 			if (resolvedOptions.__peerbitOnAppendHashes) {
 				await this.runWithMutationCallback(() =>
@@ -5116,11 +5362,22 @@ export class Log<T> {
 				messages: 1,
 				details: { hashOnly: !!resolvedOptions.__peerbitOnAppendHashes },
 			});
-		})().finally(() => {
-			for (const entry of entries) {
-				this._joining.delete(entry.hash);
-			}
-		});
+		})()
+			.catch((error) => {
+				if (coordinateCompletionPending) {
+					this.entryIndex.poisonNativeDurableTransactionMutations(error);
+				}
+				throw error;
+			})
+			.finally(() => {
+				if (hashMutationLockOwner) {
+					this.entryIndex.releaseHashMutationLocks(hashMutationLockOwner);
+					hashMutationLockOwner = undefined;
+				}
+				for (const entry of entries) {
+					this._joining.delete(entry.hash);
+				}
+			});
 
 		for (const entry of entries) {
 			this._joining.set(entry.hash, batchPromise);
@@ -5225,7 +5482,14 @@ export class Log<T> {
 			return false;
 		}
 
+		let hashMutationLockOwner: EntryIndexHashMutationLockOwner | undefined;
+		let coordinateCompletionPending = false;
 		const batchPromise = (async () => {
+			if (options.__peerbitOnJoinCommitted) {
+				hashMutationLockOwner = await this.entryIndex.acquireHashMutationLocks(
+					entries.flatMap((entry) => [entry.hash, ...entry.meta.next]),
+				);
+			}
 			const clockStartedAt = internalProfileStart(profile);
 			for (const entry of entries) {
 				this._hlc.update(entry.meta.clock.timestamp);
@@ -5250,12 +5514,14 @@ export class Log<T> {
 			const trustedMissing =
 				options.__peerbitEntriesAlreadyMissing === true &&
 				batchHashes.size === entries.length;
+			coordinateCompletionPending = !!options.__peerbitOnJoinCommitted;
 			await this.entryIndex.putAppendBatch(entries, {
 				unique: trustedMissing,
 				heads: headFlags,
 				prepared: preparedBatch.prepared,
 				deferIndexWrite: options.__peerbitDeferIndexWrite,
 				profile,
+				hashMutationLockOwner,
 			});
 			emitInternalProfileDuration(profile, indexStartedAt, {
 				name: "log.joinIndependent.entryIndex",
@@ -5264,6 +5530,20 @@ export class Log<T> {
 				messages: 1,
 				details: { trustedMissing },
 			});
+			if (options.__peerbitOnJoinCommitted) {
+				await this.runWithMutationCallback(() =>
+					options.__peerbitOnJoinCommitted!({
+						hashes: entries.map((entry) => entry.hash),
+						nativePreparedCommitted: false,
+						hashMutationLockOwner,
+					}),
+				);
+				coordinateCompletionPending = false;
+			}
+			if (hashMutationLockOwner) {
+				this.entryIndex.releaseHashMutationLocks(hashMutationLockOwner);
+				hashMutationLockOwner = undefined;
+			}
 
 			const changeStartedAt = internalProfileStart(profile);
 			if (options.__peerbitOnAppendHashes && !options.onChange) {
@@ -5292,11 +5572,19 @@ export class Log<T> {
 					hashOnly: !!options.__peerbitOnAppendHashes && !options.onChange,
 				},
 			});
-		})().finally(() => {
-			for (const entry of entries) {
-				this._joining.delete(entry.hash);
-			}
-		});
+		})()
+			.catch((error) => {
+				if (coordinateCompletionPending)
+					this.entryIndex.poisonNativeDurableTransactionMutations(error);
+				throw error;
+			})
+			.finally(() => {
+				if (hashMutationLockOwner)
+					this.entryIndex.releaseHashMutationLocks(hashMutationLockOwner);
+				for (const entry of entries) {
+					this._joining.delete(entry.hash);
+				}
+			});
 
 		for (const entry of entries) {
 			this._joining.set(entry.hash, batchPromise);
@@ -5379,6 +5667,7 @@ export class Log<T> {
 			isHead: boolean;
 			reset?: boolean;
 			onChange?: OnChange<T>;
+			__peerbitOnJoinCommitted?: TrustedJoinOptions<T>["__peerbitOnJoinCommitted"];
 			remote?: GetOptions["remote"];
 			resolveRemoteFrom?: (
 				hash: string,
@@ -5525,11 +5814,36 @@ export class Log<T> {
 		throwIfJoinCancelled(signal);
 		this._hlc.update(clock.timestamp);
 
-		await this._entryIndex.put(entry, {
-			unique: false,
-			isHead: options.isHead,
-			toMultiHash: true,
-		});
+		const hashMutationLockOwner = options.__peerbitOnJoinCommitted
+			? await this.entryIndex.acquireHashMutationLocks([
+					entry.hash,
+					...entry.meta.next,
+				])
+			: undefined;
+		try {
+			await this._entryIndex.put(entry, {
+				unique: false,
+				isHead: options.isHead,
+				toMultiHash: true,
+				hashMutationLockOwner,
+			});
+			if (options.__peerbitOnJoinCommitted) {
+				await this.runWithMutationCallback(() =>
+					options.__peerbitOnJoinCommitted!({
+						hashes: [entry.hash],
+						nativePreparedCommitted: false,
+						hashMutationLockOwner,
+					}),
+				);
+			}
+		} catch (error) {
+			if (options.__peerbitOnJoinCommitted)
+				this.entryIndex.poisonNativeDurableTransactionMutations(error);
+			throw error;
+		} finally {
+			if (hashMutationLockOwner)
+				this.entryIndex.releaseHashMutationLocks(hashMutationLockOwner);
+		}
 
 		const pendingDeletes: (
 			| PendingDelete<T>
@@ -5784,7 +6098,12 @@ export class Log<T> {
 				this._closeProgress.rollbacksRetried = true;
 			}
 			if (!this._closeProgress.pendingWritesFlushed) {
-				await this._entryIndex?.flushPendingWrites();
+				// Admission and compensation have settled. Drain already-committed lower
+				// writes even when coupled metadata poisoned further mutation admission;
+				// this neither clears that failure nor acknowledges the missing metadata.
+				await this._entryIndex?.withExclusiveMutationRecovery((owner) =>
+					this._entryIndex.flushPendingWrites(undefined, owner),
+				);
 				this._closeProgress.pendingWritesFlushed = true;
 			}
 			if (!this._closeProgress.blockHashesRetained && this._entryIndex) {

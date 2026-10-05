@@ -332,7 +332,7 @@ jobs:
         run: >-
           node scripts/ci/assert-tests-ran.mjs node ./node_modules/aegir/src/index.js run test
           --roots ./packages/programs/data/shared-log -- -t node --no-build
-          --grep "^(append delivery options|receive admission replication-info V2|replicator liveness|waitForReplicator)"
+          --grep "^(append delivery options|receive admission (replication-info V2|(cancelled )?coordinate)|receive coordinate|replicator liveness|waitForReplicator)"
           -- --retries 0
       - name: Verify default peers exit naturally after replication
         run: node --test scripts/ci/peerbit-shutdown-lifecycle.test.mjs scripts/ci/peerbit-shutdown.test.mjs
@@ -985,6 +985,10 @@ jobs:
           packages/programs/data/shared-log/dist/test/one-sided-capability-recovery.spec.js
           packages/programs/data/shared-log/dist/test/receive-parent-cancellation.spec.js
           packages/programs/data/shared-log/dist/test/receive-drain-cancellation.spec.js
+          packages/programs/data/shared-log/dist/test/receive-coordinate-cancellation.spec.js
+          packages/programs/data/shared-log/dist/test/receive-coordinate-notifications.spec.js
+          packages/programs/data/shared-log/dist/test/receive-coordinate-reopen.spec.js
+          packages/programs/data/shared-log/dist/test/receive-coordinate-profile-failure.spec.js
       - name: Test @peerbit/document conformance in rust-core mode
         # Curated [default,native] conformance leg for the DOCUMENT layer: re-runs
         # an allowlist of the EXISTING document suites with the native (rust) data
