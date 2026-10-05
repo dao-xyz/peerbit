@@ -798,17 +798,29 @@ testSetups.forEach((setup) => {
 					it("it does not fetch missing entries from remotes when exchanging heads to remote", async () => {
 						const first = await db1.add("a", { meta: { next: [] } });
 						const second = await db1.add("b", { meta: { next: [] } });
+						const coordinates = (db1.log as any)._coordinates;
+						const staleCoordinate =
+							await coordinates.getAuthoritativeCoordinateEntryForReceipt(
+								second.entry.hash,
+							);
+						expect(staleCoordinate).to.not.be.undefined;
 						await db1.log.log.entryIndex.delete(second.entry.hash);
-
-						db2 = (await EventStore.open<EventStore<string, any>>(
-							db1.address!,
-							session.peers[1],
-							{
-								args: {
-									setup,
-								},
-							},
-						))!;
+						expect(
+							await coordinates.getAuthoritativeCoordinateEntryForReceipt(
+								second.entry.hash,
+							),
+						).to.be.undefined;
+						// Deletion completes coordinate cleanup. Explicitly restore only the
+						// stale advertisement to exercise a missing local entry during exchange.
+						await coordinates.persistCoordinate({
+							entry: second.entry,
+							coordinates: staleCoordinate.coordinates,
+							replicas: staleCoordinate.coordinates.length,
+							assignedToRangeBoundary: staleCoordinate.assignedToRangeBoundary,
+							leaders: false,
+						});
+						expect(await db1.log.log.entryIndex.getShallow(second.entry.hash))
+							.to.be.undefined;
 
 						let remoteFetchOptions: any[] = [];
 						const db1LogGet = db1.log.log.get.bind(db1.log.log);
@@ -820,6 +832,16 @@ testSetups.forEach((setup) => {
 							}
 							return db1LogGet(hash, options);
 						};
+
+						db2 = (await EventStore.open<EventStore<string, any>>(
+							db1.address!,
+							session.peers[1],
+							{
+								args: {
+									setup,
+								},
+							},
+						))!;
 
 						await waitForResolved(async () => {
 							expect(
