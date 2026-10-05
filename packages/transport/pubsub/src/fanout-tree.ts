@@ -2115,37 +2115,72 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 				>();
 			this.pendingProviderQueryBySuffixKey.set(id.suffixKey, byReq);
 
-			const results = await Promise.all(
-				trackerPeers.map(async (trackerHash) => {
-					const reqId = this.nextProviderReqId(id.suffixKey);
-					const p = new Promise<FanoutProviderCandidate[]>((resolve) => {
-						byReq.set(reqId, { resolve });
-					});
-					void this._sendControl(
-						trackerHash,
-						this.codec.encodeProviderQuery(id.key, reqId, want, seed),
-					);
+			const queryController = new AbortController();
+			const querySignal = anySignal([signal, queryController.signal]);
+			let results: FanoutProviderCandidate[][];
+			try {
+				results = await Promise.all(
+					trackerPeers.map(async (trackerHash) => {
+						const reqId = this.nextProviderReqId(id.suffixKey);
+						const controller = new AbortController();
+						let pending:
+							| { resolve: (providers: FanoutProviderCandidate[]) => void }
+							| undefined;
+						let timer: ReturnType<typeof setTimeout> | undefined;
+						let onAbort!: () => void;
+						const remainingMs =
+							deadlineAt > 0
+								? Math.max(0, deadlineAt - Date.now())
+								: perTrackerTimeout;
+						const timeoutMs =
+							deadlineAt > 0
+								? Math.min(perTrackerTimeout, remainingMs)
+								: perTrackerTimeout;
 
-					const remainingMs =
-						deadlineAt > 0
-							? Math.max(0, deadlineAt - Date.now())
-							: perTrackerTimeout;
-					const timeoutMs =
-						deadlineAt > 0
-							? Math.min(perTrackerTimeout, remainingMs)
-							: perTrackerTimeout;
-
-					const res = await Promise.race([
-						p,
-						delay(timeoutMs, { signal }).then((): null => null),
-					]);
-					if (res == null) {
-						byReq.delete(reqId);
-						return [];
-					}
-					return res;
-				}),
-			);
+						try {
+							return await new Promise<FanoutProviderCandidate[]>(
+								(resolve, reject) => {
+									pending = { resolve };
+									byReq.set(reqId, pending);
+									onAbort = () => {
+										const error = new AbortError(
+											"fanout provider query aborted",
+										);
+										controller.abort(error);
+										reject(error);
+									};
+									querySignal.addEventListener("abort", onAbort, {
+										once: true,
+									});
+									if (querySignal.aborted) return onAbort();
+									// Bound signing as well as the reply and fence a signer that
+									// completes in the same turn as the deadline.
+									timer = setTimeout(() => {
+										controller.abort(
+											new AbortError("fanout provider query timed out"),
+										);
+										resolve([]);
+									}, timeoutMs);
+									void this._sendControl(
+										trackerHash,
+										this.codec.encodeProviderQuery(id.key, reqId, want, seed),
+										controller.signal,
+									).catch(reject);
+								},
+							);
+						} finally {
+							clearTimeout(timer);
+							querySignal.removeEventListener("abort", onAbort);
+							if (byReq.get(reqId) === pending) byReq.delete(reqId);
+							controller.abort(new AbortError("fanout provider query settled"));
+						}
+					}),
+				);
+			} finally {
+				// A failed tracker must also retire the still-pending siblings.
+				queryController.abort();
+				querySignal.clear();
+			}
 
 			const merged: FanoutProviderCandidate[] = [...cached];
 			for (const r of results) merged.push(...r);
@@ -2189,6 +2224,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		if (!this.started) {
 			throw new Error("FanoutTree must be started before watching providers");
 		}
+		const serviceSignal = this.closeController.signal;
 
 		const id = this.getProviderNamespaceId(namespace);
 		const ttlMs = Math.max(1_000, Math.floor(options.ttlMs ?? 10_000));
@@ -2258,6 +2294,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 				void this._sendControl(
 					trackerHash,
 					this.codec.encodeProviderUnsubscribe(id.key),
+					serviceSignal,
 				).catch(dontThrowIfDeliveryError);
 			}
 			watch.trackerPeers = [];
@@ -2284,11 +2321,13 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 									watch.bootstrapMaxPeers,
 								)
 							: [];
+					if (watch.closed || loopSignal.aborted) return;
 					watch.trackerPeers = trackerPeers;
 					for (const trackerHash of trackerPeers) {
 						void this._sendControl(
 							trackerHash,
 							this.codec.encodeProviderSubscribe(id.key, watch.want, watch.ttlMs),
+							loopSignal,
 						).catch(dontThrowIfDeliveryError);
 					}
 				} catch (error) {
@@ -4350,6 +4389,10 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		}
 		const stream = this.peers.get(to);
 		if (!stream) return;
+		const lifetime = this.closeController.signal;
+		if (lifetime.aborted || this.stopping || !this.started) {
+			throw new AbortError("fanout control service stopped");
+		}
 		this.recordControlSend(bytes, 1, probePurpose);
 		const message = await this.createMessage(bytes, {
 			mode: new AnyWhere(),
@@ -4357,6 +4400,10 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		} as any);
 		if (signal?.aborted) {
 			throw signal.reason ?? new AbortError("fanout control send aborted");
+		}
+		// Signing can outlive stop (or a later restart) of this service.
+		if (lifetime.aborted || this.stopping || !this.started) {
+			throw new AbortError("fanout control service stopped");
 		}
 		await this.publishMessageMaybe(
 			this.publicKey,
@@ -4373,11 +4420,18 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 			.map((t) => this.peers.get(t))
 			.filter((s): s is PeerStreams => Boolean(s));
 		if (streams.length === 0) return false;
+		const lifetime = this.closeController.signal;
+		if (lifetime.aborted || this.stopping || !this.started) {
+			throw new AbortError("fanout control service stopped");
+		}
 		this.recordControlSend(bytes, streams.length);
 		const message = await this.createMessage(bytes, {
 			mode: new AnyWhere(),
 			priority: CONTROL_PRIORITY,
 		} as any);
+		if (lifetime.aborted || this.stopping || !this.started) {
+			throw new AbortError("fanout control service stopped");
+		}
 		return this.publishMessageMaybe(this.publicKey, message, streams);
 	}
 
