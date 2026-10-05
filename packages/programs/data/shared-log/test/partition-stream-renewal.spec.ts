@@ -15,11 +15,13 @@ import { EventStore } from "./utils/stores/index.js";
 
 describe("receive admission replication-info V2 retained-session stream renewal", function () {
 	this.timeout(30_000);
-	for (const droppedType of [
+	for (const { droppedType, backoff } of [
 		FullReplicationInfoV2Message,
 		SyncCapabilitiesMessage,
-	]) {
-		it(`resumes a lost ${droppedType.name} when writable replacements precede old retirement`, async () => {
+	].flatMap((droppedType) =>
+		[false, true].map((backoff) => ({ droppedType, backoff })),
+	)) {
+		it(`resumes ${backoff ? "armed backoff for" : "a lost"} ${droppedType.name} when writable replacements precede old retirement`, async () => {
 			const peers: Peerbit[] = [];
 			const sandbox = sinon.createSandbox();
 			const retirement = pDefer<void>();
@@ -54,6 +56,7 @@ describe("receive admission replication-info V2 retained-session stream renewal"
 				const pubsubs = peers.map((peer) => peer.services.pubsub as any);
 				const hashes = peers.map((peer) => peer.identity.publicKey.hashcode());
 				let signal: AbortSignal | undefined;
+				let failedAttempts = 0;
 				const fullAttempts: FullReplicationInfoV2Message[] = [];
 				const send = logs[0].rpc.send.bind(logs[0].rpc);
 				sandbox
@@ -65,10 +68,37 @@ describe("receive admission replication-info V2 retained-session stream renewal"
 						if (message instanceof FullReplicationInfoV2Message) {
 							fullAttempts.push(message);
 						}
+						if (
+							backoff &&
+							message instanceof droppedType &&
+							failedAttempts < 4
+						) {
+							failedAttempts++;
+							return Promise.reject(new Error("injected failure before write"));
+						}
 						return send(message, options);
 					});
 				let droppedId: string | undefined;
-				let drop = true;
+				let drop = !backoff;
+				const pendingBackoff = () => {
+					if (droppedType === FullReplicationInfoV2Message) {
+						const state = logs[0]._v2Send._sendStates.get(hashes[1]);
+						expect(state?.retryAttempts).to.be.at.least(4);
+						expect(state.retryTimer).to.exist;
+						expect(state.worker).to.equal(undefined);
+						expect(state.established).to.equal(false);
+					} else {
+						const state =
+							logs[0]._v2Receive._localCapabilityAdvertisementsByPeer.get(
+								hashes[1],
+							);
+						expect(state?.attempts).to.be.at.least(4);
+						expect(state.timer).to.exist;
+						expect(state.inFlight).to.equal(undefined);
+						expect(state.ready).to.equal(false);
+						expect(state.acknowledgedReady).to.equal(undefined);
+					}
+				};
 				const onData = pubsubs[1]._onDataMessage.bind(pubsubs[1]);
 				sandbox
 					.stub(pubsubs[1], "_onDataMessage")
@@ -101,20 +131,29 @@ describe("receive admission replication-info V2 retained-session stream renewal"
 						}
 						return onData(...parameters);
 					});
-				phase = "initial dial and pending Full";
+				phase = backoff
+					? "initial dial and four failed sends"
+					: "initial dial and pending ACK";
 				await sender.dial(receiver.getMultiaddrs());
 				await waitForResolved(
 					() => {
-						expect(droppedId).to.exist;
-						expect(pubsubs[0]._ackCallbacks.has(droppedId)).to.equal(true);
+						if (backoff) {
+							expect(failedAttempts).to.equal(4);
+							pendingBackoff();
+						} else {
+							expect(droppedId).to.exist;
+							expect(pubsubs[0]._ackCallbacks.has(droppedId)).to.equal(true);
+						}
 						expect(signal?.aborted).to.equal(false);
 					},
-					{ timeout: 5_000 },
+					{ timeout: backoff ? 10_000 : 5_000 },
 				);
 				const sessions = logs.map((log, i) =>
 					log._peerSessions.current(hashes[1 - i]),
 				);
 				const sendState = logs[0]._v2Send._sendStates.get(hashes[1]);
+				const lastFailedFull = fullAttempts.at(-1);
+				const beforeRecoveryAttempts = fullAttempts.length;
 				for (const session of sessions) expect(session?.phase).to.equal("open");
 				const oldStreams = peers.flatMap((peer, i) =>
 					[
@@ -190,7 +229,8 @@ describe("receive admission replication-info V2 retained-session stream renewal"
 							expect(log._peerSessions.current(hashes[1 - i])).to.equal(
 								sessions[i],
 							);
-						expect(pubsubs[0]._ackCallbacks.has(droppedId)).to.equal(true);
+						if (backoff) pendingBackoff();
+						else expect(pubsubs[0]._ackCallbacks.has(droppedId)).to.equal(true);
 						expect(signal!.aborted).to.equal(false);
 					},
 					{ timeout: 2_000 },
@@ -251,15 +291,15 @@ describe("receive admission replication-info V2 retained-session stream renewal"
 					expect(logs[0]._v2Send._sendStates.get(hashes[1])).to.equal(
 						sendState,
 					);
-					expect(fullAttempts.length).to.be.greaterThan(1);
+					expect(fullAttempts.length).to.be.greaterThan(beforeRecoveryAttempts);
 					expect(
-						fullAttempts.at(-1)!.sequence > fullAttempts[0].sequence,
+						fullAttempts.at(-1)!.sequence > lastFailedFull!.sequence,
 					).to.equal(true);
 					expect(fullAttempts.at(-1)!.senderEpoch).to.deep.equal(
-						fullAttempts[0].senderEpoch,
+						lastFailedFull!.senderEpoch,
 					);
 					expect(fullAttempts.at(-1)!.receiverChallenge).to.deep.equal(
-						fullAttempts[0].receiverChallenge,
+						lastFailedFull!.receiverChallenge,
 					);
 				}
 				phase = "replicate after retained-session recovery";

@@ -2440,19 +2440,25 @@ export abstract class DirectStream<
 
 		// Propagate per-peer stream readiness events to the parent emitter
 			const isCurrentPeer = () => this.peers.get(publicKeyHash) === peerStreams;
-			let replacementNotified = false;
+			let writableNotified = false;
 			const forwardOutbound = () => {
 				if (!isCurrentPeer()) return;
 				if (
-					existing &&
-					!replacementNotified &&
+					!writableNotified &&
 					!peerStreams.isClosed &&
 					peerStreams.isWritable
 				) {
-					replacementNotified = true;
-					for (const callback of this._ackCallbacks.values()) {
-						callback.onPeerReplacement?.(peerStreams);
+					writableNotified = true;
+					if (existing) {
+						for (const callback of this._ackCallbacks.values()) {
+							callback.onPeerReplacement?.(peerStreams);
+						}
 					}
+					// Wake peer-scoped recovery, including when the predecessor was
+					// already removed. This does not establish an authenticated session.
+					this.dispatchEvent(
+						new CustomEvent("peer:stream-ready", { detail: publicKey }),
+					);
 				}
 				this.dispatchEvent(new CustomEvent("stream:outbound"));
 			};

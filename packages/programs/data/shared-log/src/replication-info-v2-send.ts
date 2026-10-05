@@ -263,6 +263,7 @@ export class ReplicationInfoV2SendCoordinator<R extends "u32" | "u64"> {
 	reconfirmAfterPeerRecovery(peerHash: string): void {
 		const state = this._sendStates.get(peerHash);
 		if (!state || !this.isCurrent(state)) return;
+		this.resetRetryBackoff(state);
 		state.appliedRevision = undefined;
 		state.minimumConfirmationSequence = state.nextSequence;
 		state.applicationConfirmationRequest?.controller.abort(
@@ -273,6 +274,34 @@ export class ReplicationInfoV2SendCoordinator<R extends "u32" | "u64"> {
 		// A new Full sequence fences even an old Applied packet arriving after a
 		// replacement confirmation query has been registered for the same revision.
 		this.enqueueState(state, { kind: "snapshot", revision: this._revision });
+	}
+
+	/** Wake pending work on an exact recovered transport without revoking proof. */
+	resumeAfterTransportRecovery(peerHash: string, peerSession: object): void {
+		const state = this._sendStates.get(peerHash);
+		if (
+			!state ||
+			state.peerSession !== peerSession ||
+			!this.isCurrent(state) ||
+			state.nextSequence > MAX_U64
+		) {
+			return;
+		}
+		const retryPending = state.suspended || state.retryTimer !== undefined;
+		if (!retryPending && !state.worker && !state.pending) return;
+		// If the previous attempt rejects after this hint, its normal retry starts
+		// from the base delay. Never start a second worker or replay its sequence.
+		this.resetRetryBackoff(state);
+		if (retryPending) {
+			this.enqueueState(state, { kind: "snapshot", revision: this._revision });
+		}
+	}
+
+	private resetRetryBackoff(state: ReplicationInfoV2SendState): void {
+		if (state.retryTimer) clearTimeout(state.retryTimer);
+		state.retryTimer = undefined;
+		state.retryAttempts = 0;
+		state.suspended = false;
 	}
 
 	private clearState(state: ReplicationInfoV2SendState): void {
@@ -1150,7 +1179,8 @@ export class ReplicationInfoV2SendCoordinator<R extends "u32" | "u64"> {
 			state.retryAttempts + 1,
 			MAX_BACKOFF_EXPONENT + 1,
 		);
-		state.retryTimer = setTimeout(() => {
+		const timer = setTimeout(() => {
+			if (state.retryTimer !== timer) return;
 			state.retryTimer = undefined;
 			if (state.nextSequence > MAX_U64 || !this.isCurrent(state)) {
 				this.parkSnapshotForRetry(state);
@@ -1163,7 +1193,8 @@ export class ReplicationInfoV2SendCoordinator<R extends "u32" | "u64"> {
 				revision: this._revision,
 			});
 		}, this.retryDelay(state));
-		state.retryTimer.unref?.();
+		state.retryTimer = timer;
+		timer.unref?.();
 	}
 
 	private async createMessage(

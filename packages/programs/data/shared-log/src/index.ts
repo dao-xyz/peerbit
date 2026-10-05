@@ -18692,6 +18692,26 @@ export class SharedLog<
 				);
 			});
 		const communicationStartedAt = syncProfileStart(openProfile);
+		const membershipController =
+			this._instanceLifecycle!.membershipLifecycleController!;
+		this.node.services.pubsub.addEventListener(
+			"peer:stream-ready",
+			({ detail }) => {
+				if (!this.isReplicationLifecycleActive(membershipController)) return;
+				const peerHash = detail.hashcode();
+				const peerSession = this._peerSessions.current(peerHash);
+				if (peerSession?.phase !== "open" || !peerSession.isActive()) return;
+				// Connectivity only wakes already-owned work. It never grants a
+				// capability, confirms replication, or renews the topic session.
+				this._v2Send.resumeAfterTransportRecovery(peerHash, peerSession);
+				this._v2Receive.resumeAfterTransportRecovery({
+					peerHash,
+					peerSession,
+					receiveEpoch: this._peerSessions.receiveEpoch(peerHash),
+				});
+			},
+			{ signal: membershipController.signal },
+		);
 		await Promise.all([
 			this.rpc.open({
 				queryType: TransportMessage,

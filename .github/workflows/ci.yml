@@ -361,6 +361,7 @@ jobs:
           packages/transport/stream/dist/test/ack-wait-ownership.spec.js
           packages/programs/data/shared-log/dist/test/partition-recovery.spec.js
           packages/programs/data/shared-log/dist/test/partition-stream-renewal.spec.js
+          packages/programs/data/shared-log/dist/test/transport-recovery-hint.spec.js
           packages/transport/pubsub/dist/test/subscribe-races.spec.js
           packages/transport/pubsub/dist/test/unsubscribe-order.spec.js
           packages/transport/pubsub/dist/test/unsubscribe-reason.spec.js

@@ -146,6 +146,315 @@ describe("receive admission replication-info V2 receiver state", () => {
 		sinon.restore();
 	});
 
+	describe("transport retry recovery", () => {
+		const resume = () =>
+			coordinator.resumeAfterTransportRecovery({
+				peerHash,
+				peerSession: currentSession,
+				receiveEpoch: currentReceiveEpoch,
+			});
+		const advertise = (signal = new AbortController().signal) =>
+			coordinator.advertiseLocalCapability({
+				target: sender,
+				peerSession: currentSession,
+				receiveEpoch: currentReceiveEpoch,
+				signal,
+			}).firstAttempt;
+
+		it("shortens capability backoff and ignores a queued superseded timer", async () => {
+			const clock = sinon.useFakeTimers({ now: 1_000 });
+			const timers = sinon.spy(globalThis, "setTimeout");
+			refreshLocalCapability.rejects(new Error("ACK missing"));
+			await advertise();
+			await clock.tickAsync(5);
+			const advertisement =
+				coordinator._localCapabilityAdvertisementsByPeer.get(peerHash)!;
+			expect(advertisement.attempts).to.equal(2);
+			const oldTimer = advertisement.timer;
+			const stale = timers
+				.getCalls()
+				.find((call) => call.returnValue === oldTimer)!.args[0] as () => void;
+			const controller = advertisement.controller;
+			expect(resume()).to.be.true;
+			const replacementTimer = advertisement.timer;
+			expect(replacementTimer).not.to.equal(oldTimer);
+			stale();
+			expect(advertisement.timer).to.equal(replacementTimer);
+			expect(advertisement.controller).to.equal(controller);
+			expect(advertisement.ready).to.be.false;
+			expect(coordinator._localCapabilityReadyBySession.has(currentSession)).to
+				.be.false;
+			await clock.tickAsync(4);
+			expect(refreshLocalCapability.callCount).to.equal(2);
+			await clock.tickAsync(1);
+			expect(refreshLocalCapability.callCount).to.equal(3);
+			expect(advertisement.attempts).to.equal(1);
+		});
+
+		it("resets capability backoff before an in-flight ACK failure without a second worker", async () => {
+			const clock = sinon.useFakeTimers({ now: 1_000 });
+			const pending = pDefer<undefined>();
+			refreshLocalCapability.rejects(new Error("ACK missing"));
+			refreshLocalCapability.onThirdCall().returns(pending.promise);
+			await advertise();
+			await clock.tickAsync(15);
+			const advertisement =
+				coordinator._localCapabilityAdvertisementsByPeer.get(peerHash)!;
+			const inFlight = advertisement.inFlight;
+			expect(advertisement.attempts).to.equal(3);
+			expect(inFlight).to.exist;
+			expect(resume()).to.be.true;
+			expect(advertisement.inFlight).to.equal(inFlight);
+			expect(advertisement.timer).to.be.undefined;
+			await clock.tickAsync(100);
+			expect(refreshLocalCapability.callCount).to.equal(3);
+			pending.reject(new Error("old direct stream replaced"));
+			await inFlight;
+			expect(advertisement.timer).to.exist;
+			await clock.tickAsync(4);
+			expect(refreshLocalCapability.callCount).to.equal(3);
+			await clock.tickAsync(1);
+			expect(refreshLocalCapability.callCount).to.equal(4);
+			expect(advertisement.attempts).to.equal(1);
+		});
+
+		it("shortens RequestV2 backoff without changing its grant and fences the old timer", async () => {
+			const clock = sinon.useFakeTimers({ now: 1_000 });
+			const timers = sinon.spy(globalThis, "setTimeout");
+			expect(markLocalReady(999)).to.be.true;
+			expect(observeSender()).to.be.true;
+			await clock.tickAsync(5);
+			const state = coordinator._receiveStates.get(peerHash)!;
+			expect(state.requestAttempts).to.equal(2);
+			const oldTimer = state.requestTimer;
+			const stale = timers
+				.getCalls()
+				.find((call) => call.returnValue === oldTimer)!.args[0] as () => void;
+			const binding = state.receiverBinding;
+			const challenge = state.receiverRequestChallenge;
+			const version = state.version;
+			const grant =
+				coordinator._localCapabilityReadyBySession.get(currentSession);
+			expect(resume()).to.be.true;
+			const replacementTimer = state.requestTimer;
+			expect(replacementTimer).not.to.equal(oldTimer);
+			stale();
+			expect(state.requestTimer).to.equal(replacementTimer);
+			expect(state.receiverBinding).to.equal(binding);
+			expect(state.receiverRequestChallenge).to.equal(challenge);
+			expect(state.version).to.equal(version);
+			expect(
+				coordinator._localCapabilityReadyBySession.get(currentSession),
+			).to.equal(grant);
+			expect(state.capabilityRefreshRequired).to.be.false;
+			await clock.tickAsync(4);
+			expect(sendRequest.callCount).to.equal(2);
+			await clock.tickAsync(1);
+			expect(sendRequest.callCount).to.equal(3);
+			expect(state.requestAttempts).to.equal(1);
+			expect(sendRequest.thirdCall.args[0].receiverChallenge).to.deep.equal(
+				challenge,
+			);
+			expect(refreshLocalCapability.notCalled).to.be.true;
+		});
+
+		it("resets RequestV2 backoff before in-flight failure without parallelizing", async () => {
+			const clock = sinon.useFakeTimers({ now: 1_000 });
+			const pending = pDefer<void>();
+			sendRequest.onSecondCall().returns(pending.promise);
+			expect(markLocalReady(999)).to.be.true;
+			expect(observeSender()).to.be.true;
+			await clock.tickAsync(5);
+			const state = coordinator._receiveStates.get(peerHash)!;
+			const inFlight = state.requestInFlight;
+			expect(state.requestAttempts).to.equal(2);
+			expect(inFlight).to.exist;
+			expect(resume()).to.be.true;
+			expect(state.requestInFlight).to.equal(inFlight);
+			expect(state.requestTimer).to.be.undefined;
+			await clock.tickAsync(100);
+			expect(sendRequest.callCount).to.equal(2);
+			pending.reject(new Error("old direct stream replaced"));
+			await inFlight;
+			expect(state.requestTimer).to.exist;
+			await clock.tickAsync(4);
+			expect(sendRequest.callCount).to.equal(2);
+			await clock.tickAsync(1);
+			expect(sendRequest.callCount).to.equal(3);
+			expect(state.requestAttempts).to.equal(1);
+			expect(refreshLocalCapability.notCalled).to.be.true;
+		});
+
+		it("resumes a parked bounded request cycle without rotating its challenge", async () => {
+			const clock = sinon.useFakeTimers({ now: 1_000 });
+			coordinator = createCoordinator({ requestMaxAttempts: 2 });
+			expect(markLocalReady(999)).to.be.true;
+			expect(observeSender()).to.be.true;
+			await clock.tickAsync(5);
+			const state = coordinator._receiveStates.get(peerHash)!;
+			const challenge = state.receiverRequestChallenge;
+			const binding = state.receiverBinding;
+			expect(state.requestParked).to.be.true;
+			expect(resume()).to.be.true;
+			expect(state.requestParked).to.be.false;
+			expect(state.receiverRequestChallenge).to.equal(challenge);
+			expect(state.receiverBinding).to.equal(binding);
+			await clock.tickAsync(5);
+			expect(sendRequest.callCount).to.equal(3);
+			expect(refreshLocalCapability.notCalled).to.be.true;
+		});
+
+		it("ignores another peer, stale generations, closed gates and lifecycle abort", async () => {
+			const clock = sinon.useFakeTimers({ now: 1_000 });
+			const lifecycle = new AbortController();
+			refreshLocalCapability.rejects(new Error("ACK missing"));
+			await advertise(lifecycle.signal);
+			await clock.tickAsync(5);
+			const advertisement =
+				coordinator._localCapabilityAdvertisementsByPeer.get(peerHash)!;
+			const timer = advertisement.timer;
+			const properties = {
+				peerHash,
+				peerSession: currentSession,
+				receiveEpoch: currentReceiveEpoch,
+			};
+			for (const mismatch of [
+				{ peerHash: key(9).hashcode() },
+				{ peerSession: {} },
+				{ receiveEpoch: {} },
+			]) {
+				expect(
+					coordinator.resumeAfterTransportRecovery({
+						...properties,
+						...mismatch,
+					}),
+				).to.be.false;
+			}
+			peerStateReady = false;
+			expect(resume()).to.be.false;
+			peerStateReady = true;
+			closed = true;
+			expect(resume()).to.be.false;
+			closed = false;
+			currentReceiverTransportSession++;
+			expect(resume()).to.be.false;
+			currentReceiverTransportSession--;
+			expect(advertisement.timer).to.equal(timer);
+			expect(advertisement.attempts).to.equal(2);
+			lifecycle.abort();
+			expect(resume()).to.be.false;
+			await clock.tickAsync(100);
+			expect(refreshLocalCapability.callCount).to.equal(2);
+		});
+
+		it("refreshes a genuinely missing grant when transport resumes a parked request", async () => {
+			const clock = sinon.useFakeTimers({ now: 1_000 });
+			coordinator = createCoordinator({ requestMaxAttempts: 2 });
+			expect(markLocalReady(999)).to.be.true;
+			expect(observeSender()).to.be.true;
+			await clock.tickAsync(5);
+			const state = coordinator._receiveStates.get(peerHash)!;
+			const challenge = state.receiverRequestChallenge.slice();
+			expect(state.requestParked).to.be.true;
+			coordinator._localCapabilityReadyBySession.delete(currentSession);
+			expect(resume()).to.be.true;
+			expect(state.capabilityRefreshRequired).to.be.true;
+			expect(state.receiverRequestChallenge).to.deep.equal(challenge);
+			await clock.tickAsync(5);
+			expect(refreshLocalCapability.calledOnce).to.be.true;
+			expect(state.receiverRequestChallenge).not.to.deep.equal(challenge);
+			expect(state.peerSession).to.equal(currentSession);
+			expect(state.receiveEpoch).to.equal(currentReceiveEpoch);
+		});
+
+		it("does not wake a stale or aborted RequestV2 generation", async () => {
+			const clock = sinon.useFakeTimers({ now: 1_000 });
+			expect(markLocalReady(999)).to.be.true;
+			expect(observeSender()).to.be.true;
+			await clock.tickAsync(5);
+			const state = coordinator._receiveStates.get(peerHash)!;
+			const timer = state.requestTimer;
+			const session = currentSession;
+			const epoch = currentReceiveEpoch;
+			currentSession = {};
+			expect(resume()).to.be.false;
+			currentSession = session;
+			currentReceiveEpoch = {};
+			expect(resume()).to.be.false;
+			currentReceiveEpoch = epoch;
+			currentSenderTransportSession++;
+			expect(resume()).to.be.false;
+			currentSenderTransportSession--;
+			expect(state.requestAttempts).to.equal(2);
+			expect(state.requestTimer).to.equal(timer);
+			state.controller.abort();
+			expect(resume()).to.be.false;
+			await clock.tickAsync(100);
+			expect(sendRequest.callCount).to.equal(2);
+		});
+
+		it("does not disturb reserved Full, active proof or exhausted receive sequence", async () => {
+			const clock = sinon.useFakeTimers({ now: 1_000 });
+			expect(markLocalReady(999)).to.be.true;
+			expect(observeSender()).to.be.true;
+			await clock.tickAsync(5);
+			const state = coordinator._receiveStates.get(peerHash)!;
+			const full = new FullReplicationInfoV2Message({
+				receiverChallenge: state.receiverBinding!.slice(),
+				senderEpoch: bytes(16),
+				sequence: 1n,
+				segments: [],
+			});
+			const admission = coordinator.reserve(full, {
+				from: sender,
+				peerSession: currentSession,
+				receiveEpoch: currentReceiveEpoch,
+				senderTransportSession,
+				transportTimestamp: 2n,
+			})!;
+			expect(admission).to.exist;
+			expect(resume()).to.be.false;
+			expect(state.reservedAdmission).to.equal(admission);
+			expect(state.requestAttempts).to.equal(2);
+			expect(state.requestTimer).to.be.undefined;
+			expect(coordinator.commit(admission)).to.be.true;
+			const activeProperties = {
+				peerHash,
+				peerSession: currentSession,
+				receiveEpoch: currentReceiveEpoch,
+				senderTransportSession,
+			};
+			expect(coordinator.isCurrentActive(activeProperties)).to.be.true;
+			const version = state.version;
+			expect(resume()).to.be.false;
+			expect(state.lastSequence).to.equal(1n);
+			expect(state.senderEpoch).to.deep.equal(bytes(16));
+			expect(state.version).to.equal(version);
+			expect(coordinator.isCurrentActive(activeProperties)).to.be.true;
+			state.phase = "resync";
+			state.lastSequence = (1n << 64n) - 1n;
+			expect(resume()).to.be.false;
+			await clock.tickAsync(100);
+			expect(sendRequest.callCount).to.equal(2);
+		});
+
+		it("keeps an ACKed capability grant ready without readvertising", async () => {
+			const clock = sinon.useFakeTimers({ now: 1_000 });
+			await advertise();
+			const advertisement =
+				coordinator._localCapabilityAdvertisementsByPeer.get(peerHash)!;
+			const grant =
+				coordinator._localCapabilityReadyBySession.get(currentSession);
+			expect(advertisement.ready).to.be.true;
+			expect(resume()).to.be.false;
+			expect(
+				coordinator._localCapabilityReadyBySession.get(currentSession),
+			).to.equal(grant);
+			await clock.tickAsync(100);
+			expect(refreshLocalCapability.calledOnce).to.be.true;
+		});
+	});
+
 	it("waits for ACKed local readiness and retries the exact challenge", async () => {
 		const clock = sinon.useFakeTimers({ now: 1_000 });
 		coordinator = createCoordinator({ requestRetryMs: 5 });
