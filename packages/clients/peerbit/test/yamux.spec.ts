@@ -1,4 +1,4 @@
-import { yamux } from "@chainsafe/libp2p-yamux";
+import { yamux } from "@libp2p/yamux";
 import { sha256Sync } from "@peerbit/crypto";
 import { expect } from "chai";
 import {

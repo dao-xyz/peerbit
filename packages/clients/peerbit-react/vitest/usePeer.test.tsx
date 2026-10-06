@@ -47,7 +47,7 @@ vi.mock("peerbit", () => ({
 	resolveBootstrapAddresses: mocks.resolveBootstrapAddresses,
 }));
 
-vi.mock("@chainsafe/libp2p-noise", () => ({
+vi.mock("@libp2p/noise", () => ({
 	noise: mocks.noise,
 }));
 

@@ -1,5 +1,3 @@
-import { noise } from "@chainsafe/libp2p-noise";
-import { yamux } from "@chainsafe/libp2p-yamux";
 import {
 	type Connection,
 	ConnectionClosedError,
@@ -7,7 +5,9 @@ import {
 	type Stream,
 	StreamResetError,
 } from "@libp2p/interface";
+import { noise } from "@libp2p/noise";
 import { tcp } from "@libp2p/tcp";
+import { yamux } from "@libp2p/yamux";
 import { Cache } from "@peerbit/cache";
 import { Ed25519Keypair } from "@peerbit/crypto";
 import { expect } from "chai";

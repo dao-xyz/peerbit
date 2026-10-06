@@ -1,4 +1,4 @@
-import { yamux } from "@chainsafe/libp2p-yamux";
+import { yamux } from "@libp2p/yamux";
 import { DirectBlock } from "@peerbit/blocks";
 import { createStore, type AnyStore } from "@peerbit/any-store";
 import { keychain } from "@peerbit/keychain";

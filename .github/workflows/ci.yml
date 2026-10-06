@@ -248,33 +248,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Node 24 was dropped from this matrix in #1239 and restored here after
-        # the reason given for dropping it turned out to be false. That reason
-        # was: the published-closure smoke installs packed tarballs with npm,
-        # which "resolves `@libp2p/webrtc@^6.0.15` -> `node-datachannel@^0.29.0`
-        # on its own", and 0.29.0 ships no prebuilds so the install compiles
-        # from source, which is broken on Node 24 (upstream
-        # https://github.com/murat-dogan/node-datachannel/issues/428).
-        #
-        # `^6.0.15` admits 6.0.21+, and npm takes the highest match. A consumer
-        # resolving our published manifests gets `@libp2p/webrtc@6.0.29`, whose
-        # `node-datachannel` range is `^0.32.3` -- which does ship prebuilds.
-        # Verified by running the smoke itself on Node 24: exit 0.
-        #
-        # The mistake was conflating two different resolutions: our OWN lockfile
-        # was held at webrtc 6.0.15, which never constrained a consumer, who
-        # resolves the range fresh and lands on a webrtc new enough to be fine.
-        #
-        # That lockfile gap is now closed too -- the workspace runs webrtc 6.0.29
-        # on the same `@libp2p/interface` 3.2.5 as everything else, so the
-        # `node-datachannel` override that used to force a prebuilt 0.32.3 is
-        # gone: webrtc requires `^0.32.3` on its own. #1235 failed only because
-        # it bumped webrtc alone while the lockfile pinned the rest of the stack
-        # to interface 3.1.1, duplicating a branded type.
-        #
-        # So this lane is not "permanently red for an upstream reason"; it is
-        # exactly the forward-compat signal it looks like, and Node 24 belongs
-        # in it. If it does go red, read the failure before removing the lane.
+        # A packed consumer resolves independently of the workspace lockfile.
+        # Test both supported Node majors and the actual Peerbit -> WebRTC ->
+        # node-datachannel binding, including natural process exit. A workspace
+        # override or a passing browser test cannot establish that guarantee.
         node-version: [22.x, 24.x]
     steps:
       - uses: actions/checkout@v4

@@ -63,10 +63,10 @@
 	"author": "Peerbit contributors",
 	"license": "MIT",
 	"dependencies": {
-		"@chainsafe/libp2p-yamux": "^8.0.1",
 		"@dao-xyz/borsh": "^6.0.0",
-		"@libp2p/interface": "^3.2.5",
-		"@libp2p/tcp": "^11.0.26",
+		"@libp2p/interface": "^3.3.0",
+		"@libp2p/tcp": "^11.0.28",
+		"@libp2p/yamux": "^8.0.3",
 		"@multiformats/multiaddr": "^13.0.3",
 		"@peerbit/cache": "workspace:*",
 		"@peerbit/crypto": "workspace:*",
@@ -91,8 +91,8 @@
 		"@peerbit/document-rust": "workspace:*"
 	},
 	"devDependencies": {
-		"@chainsafe/libp2p-noise": "^17.0.0",
-		"@libp2p/websockets": "^10.1.19",
+		"@libp2p/noise": "^17.0.3",
+		"@libp2p/websockets": "^10.1.21",
 		"@peerbit/log-rust": "workspace:*",
 		"@peerbit/native-backbone": "workspace:*",
 		"@peerbit/test-utils": "workspace:*",

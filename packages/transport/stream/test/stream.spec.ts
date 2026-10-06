@@ -1,10 +1,10 @@
-import { noise } from "@chainsafe/libp2p-noise";
-import { yamux } from "@chainsafe/libp2p-yamux";
 import { deserialize, serialize } from "@dao-xyz/borsh";
 import { keys } from "@libp2p/crypto";
 import { type Connection, type PeerId } from "@libp2p/interface";
+import { noise } from "@libp2p/noise";
 import { tcp } from "@libp2p/tcp";
 import { webSockets } from "@libp2p/websockets";
+import { yamux } from "@libp2p/yamux";
 import { type Multiaddr } from "@multiformats/multiaddr";
 import { Cache } from "@peerbit/cache";
 import {

@@ -510,12 +510,8 @@ assert.doesNotMatch(
 	/max-parallel:/,
 	"supported-runtime proofs must not remain serialized after live audits move out of the matrix",
 );
-// Both supported majors must stay in this matrix. Node 24 was dropped once
-// (#1239) on the incorrect premise that a consumer resolving our published
-// manifests lands on a prebuild-less node-datachannel; it does not (see the
-// ci.yml comment for the resolution walk-through). Dropping a runtime from the
-// published-closure smoke silently narrows what "we support Node 24" means, so
-// it has to be a conscious edit here too.
+// Both supported majors need real packed-consumer resolution and native
+// lifecycle proof. Dropping a runtime silently narrows the support contract.
 assert.match(securityJob, /node-version: \[22\.x, 24\.x\]/);
 assert.match(securityJob, /node-version: \$\{\{ matrix\.node-version \}\}/);
 assert.match(

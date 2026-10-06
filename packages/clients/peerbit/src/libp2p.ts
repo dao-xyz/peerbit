@@ -1,8 +1,8 @@
-import { noise } from "@chainsafe/libp2p-noise";
-import { yamux } from "@chainsafe/libp2p-yamux";
 import type { CircuitRelayService } from "@libp2p/circuit-relay-v2";
 import { identify } from "@libp2p/identify";
 import type { StreamMuxerFactory } from "@libp2p/interface";
+import { noise } from "@libp2p/noise";
+import { yamux } from "@libp2p/yamux";
 import { DirectBlock } from "@peerbit/blocks";
 import { type IPeerbitKeychain, keychain } from "@peerbit/keychain";
 import {
@@ -45,7 +45,7 @@ export type Libp2pCreateOptionsWithServices = Libp2pCreateOptions & {
  * stream with enough credit for the default eight concurrent 512 KiB block
  * responses.
  *
- * This must use a distinct protocol id. `@chainsafe/libp2p-yamux` applies a
+ * This must use a distinct protocol id. `@libp2p/yamux` applies a
  * configured initial window to both send and receive credit without
  * advertising it on `/yamux/1.0.0`, so using a larger value under the standard
  * id can overrun an older peer's 256 KiB receive window. Keeping standard

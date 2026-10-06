@@ -1,7 +1,7 @@
-import { noise } from "@chainsafe/libp2p-noise";
-import { yamux } from "@chainsafe/libp2p-yamux";
 import type { CircuitRelayService } from "@libp2p/circuit-relay-v2";
 import { identify } from "@libp2p/identify";
+import { noise } from "@libp2p/noise";
+import { yamux } from "@libp2p/yamux";
 import type { Multiaddr } from "@multiformats/multiaddr";
 import { waitFor } from "@peerbit/time";
 import { setMaxListeners } from "events";
