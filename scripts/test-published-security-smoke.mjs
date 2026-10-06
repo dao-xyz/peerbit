@@ -334,6 +334,15 @@ try {
 	const lockfile = JSON.parse(
 		await readFile(join(consumerDirectory, "package-lock.json"), "utf8"),
 	);
+	for (const [packagePath, manifest] of Object.entries(lockfile.packages)) {
+		const name = packagePath.split("node_modules/").pop();
+		assert(
+			name !== "vite-plugin-static-copy" &&
+				name !== "braces" &&
+				!(name === "chokidar" && Number(manifest.version.split(".")[0]) < 4),
+			`the retired glob-watching asset dependency returned: ${packagePath}`,
+		);
+	}
 	const forbiddenPeerSubtreePackages = [
 		"react-native",
 		"metro",
