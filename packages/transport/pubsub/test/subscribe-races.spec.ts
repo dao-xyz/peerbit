@@ -2635,11 +2635,11 @@ describe("pubsub (subscribe race regressions)", function () {
 			),
 		];
 		const expected = [...origins].sort().slice(0, TOPIC_ROOT_CANDIDATES_MAX);
-		const record = (index: number) => ({
+		const record = (index: number, timestamp: bigint) => ({
 			acceptUntil: performance.now() + 60_000,
 			bytes: new Uint8Array([index]),
-			expires: BigInt(Date.now() + 60_000),
-			timestamp: BigInt(Date.now()),
+			expires: timestamp + 60_000n,
+			timestamp,
 		});
 
 		for (const [peer, ordered] of [
@@ -2648,8 +2648,18 @@ describe("pubsub (subscribe race regressions)", function () {
 		] as const) {
 			const internals = peer as any;
 			internals.signedTopicRootCandidateClaims.clear();
+			// Startup may have signed self in this same millisecond. Keep its
+			// replay floor, but make these replacement claims strictly newer.
+			const timestamp =
+				[...internals.topicRootCandidateClaimReplayFloors.values()].reduce(
+					(latest: bigint, floor: bigint) => (floor > latest ? floor : latest),
+					BigInt(Date.now()),
+				) + 1n;
 			for (const [index, origin] of ordered.entries()) {
-				internals.retainSignedTopicRootCandidateClaim(origin, record(index));
+				internals.retainSignedTopicRootCandidateClaim(
+					origin,
+					record(index, timestamp),
+				);
 			}
 			expect(internals.signedTopicRootCandidateClaims.size).to.equal(
 				TOPIC_ROOT_CANDIDATES_MAX,
