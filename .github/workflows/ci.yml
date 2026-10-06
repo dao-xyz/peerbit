@@ -372,6 +372,8 @@ jobs:
           packages/transport/pubsub/dist/test/fanout-parent-probe-metrics.spec.js
           packages/transport/pubsub/dist/test/stale-root-recovery.spec.js
           packages/transport/pubsub/dist/test/stale-root-cold-join.spec.js
+          packages/transport/pubsub/dist/test/fanout-tree-bootstrap-dials.spec.js
+          packages/clients/peerbit/dist/test/blocks-provider-directory.spec.js
       - name: Test synchronizer teardown without retries or forced exit
         timeout-minutes: 3
         env:
