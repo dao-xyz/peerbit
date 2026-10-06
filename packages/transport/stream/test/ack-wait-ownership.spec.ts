@@ -491,6 +491,10 @@ describe("stream ACK wait ownership", () => {
 		expect([...f.subject._ackCallbacks.values()]).to.deep.equal([newRecord]);
 		f.controller.abort();
 		expect(await successor).to.be.instanceOf(AbortError);
+		expect(f.subject._ackCallbacks.size).to.equal(0);
+		expect(f.subject.healthChecks.size).to.equal(0);
+		// countTimers includes queued fake jobs; drain them without advancing deadlines.
+		clock.runMicrotasks();
 		expect(clock.countTimers()).to.equal(0);
 	});
 
