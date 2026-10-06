@@ -3089,6 +3089,79 @@ describe("native peerbit backbone", () => {
 		).to.deep.equal([90n, 90n, 5n, 8n]);
 	});
 
+	for (const resolution of ["u32", "u64"] as const) {
+		it(`includes the ${resolution} ring endpoint through all backbone range variants`, async () => {
+			const backbone = await createNativePeerbitBackbone({
+				clockId: publicKey,
+				privateKey,
+				publicKey,
+				resolution,
+			});
+			const max = (1n << (resolution === "u32" ? 32n : 64n)) - 1n;
+			for (const [index, symbol] of [0n, 1n, max - 1n, max, max].entries()) {
+				backbone.putEntryCoordinates(
+					`head-${index}`,
+					`gid-${index}`,
+					[0n],
+					false,
+					1,
+					symbol,
+				);
+			}
+			const cases = [
+				{
+					start1: max,
+					end1: 0n,
+					start2: 0n,
+					end2: 0n,
+					expected: [max, max],
+				},
+				{
+					start1: max - 1n,
+					end1: 0n,
+					start2: 0n,
+					end2: 1n,
+					expected: [max - 1n, max, max, 0n],
+				},
+				{
+					start1: 1n,
+					end1: 0n,
+					start2: 0n,
+					end2: 1n,
+					expected: [1n, max - 1n, max, max, 0n],
+				},
+				{ start1: 0n, end1: 0n, start2: 0n, end2: 0n, expected: [] },
+				{ start1: 2n, end1: 2n, start2: 0n, end2: 0n, expected: [] },
+				{ start1: 5n, end1: 2n, start2: 0n, end2: 0n, expected: [] },
+				{ start1: 0n, end1: 1n, start2: 0n, end2: 0n, expected: [0n] },
+			];
+			for (const { expected, ...range } of cases) {
+				expect(backbone.getEntryHashNumbersInRange(range)).to.deep.equal(
+					expected,
+				);
+				expect(
+					Array.from(backbone.getEntryHashNumbersInRangeU64(range)!),
+				).to.deep.equal(expected);
+				for (const limit of [
+					0,
+					1,
+					2,
+					3,
+					expected.length,
+					expected.length + 1,
+				]) {
+					const limited = { ...range, limit };
+					expect(
+						backbone.getEntryHashNumbersInRangeLimited(limited),
+					).to.deep.equal(expected.slice(0, limit));
+					expect(
+						Array.from(backbone.getEntryHashNumbersInRangeU64Limited(limited)!),
+					).to.deep.equal(expected.slice(0, limit));
+				}
+			}
+		});
+	}
+
 	it("coalesces storage-backed no-next append with shared-log coordinate state", async () => {
 		const backbone = await createNativePeerbitBackbone({
 			clockId: publicKey,

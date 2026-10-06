@@ -107,7 +107,7 @@ describe("riblt", () => {
 		);
 
 		expect(range).to.be.instanceOf(BigUint64Array);
-		expect(Array.from(range)).to.deep.equal([8n, 3n]);
+		expect(Array.from(range)).to.deep.equal([8n, 4n]);
 
 		const decoder = new DecoderWrapper();
 		decoder.add_symbols(BigUint64Array.from(symbols));
@@ -141,15 +141,125 @@ describe("riblt", () => {
 
 		expect(prepared).to.be.instanceOf(BigUint64Array);
 		expect(prepared.length).to.equal(5);
-		expect(Array.from(prepared.subarray(0, 2))).to.deep.equal([8n, 3n]);
+		expect(Array.from(prepared.subarray(0, 2))).to.deep.equal([8n, 4n]);
 
 		const decoder = new DecoderWrapper();
 		decoder.add_symbols(BigUint64Array.from(symbols));
-		expect(decoder.add_coded_symbols_and_try_decode(prepared.subarray(2))).to.equal(
-			true,
-		);
+		expect(
+			decoder.add_coded_symbols_and_try_decode(prepared.subarray(2)),
+		).to.equal(true);
 		expect(Array.from(decoder.get_remote_symbol_values())).to.deep.equal([]);
 		expect(Array.from(decoder.get_local_symbol_values())).to.deep.equal([]);
+	});
+
+	describe("prepared circular ranges", () => {
+		const maxU64 = (1n << 64n) - 1n;
+		const cases = [
+			{
+				name: "standard range",
+				symbols: [6n, 2n, 4n],
+				max: 15n,
+				range: [2n, 7n],
+				receiver: [0n, 1n, 2n, 3n, 4n, 5n, 6n, 7n, 15n],
+			},
+			{
+				name: "wrapped range",
+				symbols: [14n, 1n, 2n],
+				max: 15n,
+				range: [14n, 3n],
+				receiver: [0n, 1n, 2n, 3n, 10n, 14n, 15n],
+			},
+			{
+				name: "maximum u64 endpoint",
+				symbols: [maxU64, maxU64 - 2n],
+				max: maxU64,
+				range: [maxU64 - 2n, 0n],
+				receiver: [0n, maxU64 - 3n, maxU64 - 2n, maxU64 - 1n, maxU64],
+			},
+			{
+				name: "single symbol",
+				symbols: [7n],
+				max: 15n,
+				range: [7n, 8n],
+				receiver: [6n, 7n, 8n],
+			},
+			{
+				name: "single maximum symbol",
+				symbols: [maxU64],
+				max: maxU64,
+				range: [maxU64, 0n],
+				receiver: [0n, maxU64 - 1n, maxU64],
+			},
+			{
+				name: "full tiny ring",
+				symbols: [3n, 0n, 2n, 1n],
+				max: 3n,
+				range: [1n, 1n],
+				receiver: [0n, 1n, 2n, 3n],
+			},
+			{
+				name: "wraparound gap breaks the apparent tie",
+				symbols: [4n, 0n],
+				max: 8n,
+				range: [0n, 5n],
+				receiver: [0n, 1n, 3n, 4n, 5n, 8n],
+			},
+		];
+
+		for (const produce of [false, true]) {
+			for (const fixture of cases) {
+				it(`${produce ? "fused" : "range-only"}: ${fixture.name}`, () => {
+					const encoder = new EncoderWrapper();
+					const decoder = new DecoderWrapper();
+					try {
+						const prepared = produce
+							? encoder.add_symbols_sorted_find_range_and_produce(
+									BigUint64Array.from(fixture.symbols),
+									fixture.max,
+									1,
+								)
+							: encoder.add_symbols_sorted_and_find_range(
+									BigUint64Array.from(fixture.symbols),
+									fixture.max,
+								);
+						const [start, end] = prepared;
+						// Circular ranges include start and exclude end. Equal endpoints
+						// describe the full ring for a nonempty prepared set.
+						const selected = fixture.receiver.filter((symbol) =>
+							start === end
+								? true
+								: start < end
+									? symbol >= start && symbol < end
+									: symbol >= start || symbol < end,
+						);
+						decoder.add_symbols(BigUint64Array.from(selected));
+						let decoded = decoder.add_coded_symbols_and_try_decode(
+							produce
+								? prepared.subarray(2)
+								: encoder.produce_next_coded_symbols(1),
+						);
+						for (let count = 1; !decoded && count < 128; count++) {
+							decoded = decoder.add_coded_symbols_and_try_decode(
+								encoder.produce_next_coded_symbols(1),
+							);
+						}
+						expect(decoded, "bounded decode must complete").to.equal(true);
+						expect(
+							Array.from(decoder.get_remote_symbol_values()),
+						).to.deep.equal([]);
+						expect(
+							Array.from(decoder.get_local_symbol_values()),
+						).to.have.members(
+							selected.filter((symbol) => !fixture.symbols.includes(symbol)),
+						);
+						expect([start, end]).to.deep.equal(fixture.range);
+					} finally {
+						decoder.free();
+						encoder.free();
+					}
+				});
+			}
+		}
 	});
 
 	it("no diff", async () => {

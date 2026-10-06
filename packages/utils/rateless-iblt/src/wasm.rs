@@ -72,7 +72,7 @@ fn smallest_wrapping_range_from_sorted_symbols(symbols: &[u64], max_value: u64) 
         let gap = if next >= current {
             next - current
         } else {
-            max_value - current + next
+            max_value - current + next + 1
         };
 
         if gap > largest_gap {
@@ -84,11 +84,8 @@ fn smallest_wrapping_range_from_sorted_symbols(symbols: &[u64], max_value: u64) 
     let start_index = (largest_gap_index + 1) % symbols.len();
     let end_index = largest_gap_index;
     let start = symbols[start_index];
-    let mut end = symbols[end_index];
-
-    if end == start {
-        end = if end >= max_value { 0 } else { end + 1 };
-    }
+    let end = symbols[end_index];
+    let end = if end >= max_value { 0 } else { end + 1 };
 
     (start, end)
 }
