@@ -1,5 +1,19 @@
 # Changelog
 
+## 4.3.4
+
+### Patch Changes
+
+- [#1514](https://github.com/dao-xyz/peerbit/pull/1514) [`cfd2201`](https://github.com/dao-xyz/peerbit/commit/cfd2201fa66386480caec589465bca8af6033d75) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Update the coordinated libp2p dependency cohort and use the maintained Noise and Yamux package names. Preserve Peerbit's transport configuration, custom Yamux protocol and window sizes, and standard Yamux fallback. Refresh browser fixture dependencies so transport imports do not rely on workspace hoisting.
+
+- Updated dependencies [[`cfd2201`](https://github.com/dao-xyz/peerbit/commit/cfd2201fa66386480caec589465bca8af6033d75), [`137a6a9`](https://github.com/dao-xyz/peerbit/commit/137a6a93dd2aea71729548eeb5a2e6def6b8d221), [`d666bc6`](https://github.com/dao-xyz/peerbit/commit/d666bc6de100c49333323d5a7981a77affcc4d32), [`04d6450`](https://github.com/dao-xyz/peerbit/commit/04d6450c01ecaef4c23c5a299d7e4feb6d2eaf58), [`137a6a9`](https://github.com/dao-xyz/peerbit/commit/137a6a93dd2aea71729548eeb5a2e6def6b8d221)]:
+  - @peerbit/crypto@3.1.7
+  - @peerbit/logger@2.0.3
+  - @peerbit/stream@5.2.5
+  - @peerbit/stream-interface@6.0.17
+  - @peerbit/blocks-interface@2.2.2
+  - @peerbit/any-store@2.2.18
+
 ## 4.3.3
 
 ### Patch Changes

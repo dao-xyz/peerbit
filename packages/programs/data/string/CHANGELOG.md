@@ -1,5 +1,17 @@
 # Changelog
 
+## 6.0.43
+
+### Patch Changes
+
+- Updated dependencies [[`cfd2201`](https://github.com/dao-xyz/peerbit/commit/cfd2201fa66386480caec589465bca8af6033d75), [`6e6c5f7`](https://github.com/dao-xyz/peerbit/commit/6e6c5f7477e3332c3c65e2084db3722b7a0b0488), [`7626f62`](https://github.com/dao-xyz/peerbit/commit/7626f6291f815e7d1b3feaf276ffc1d2427c803c), [`137a6a9`](https://github.com/dao-xyz/peerbit/commit/137a6a93dd2aea71729548eeb5a2e6def6b8d221)]:
+  - @peerbit/crypto@3.1.7
+  - @peerbit/log@6.2.39
+  - @peerbit/logger@2.0.3
+  - @peerbit/program@6.0.69
+  - @peerbit/shared-log@16.0.41
+  - @peerbit/rpc@6.2.5
+
 ## 6.0.42
 
 ### Patch Changes
