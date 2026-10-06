@@ -1,7 +1,7 @@
-import { noise } from "@chainsafe/libp2p-noise";
-import { yamux } from "@chainsafe/libp2p-yamux";
 import type { Connection, Stream } from "@libp2p/interface";
+import { noise } from "@libp2p/noise";
 import { tcp } from "@libp2p/tcp";
+import { yamux } from "@libp2p/yamux";
 import { Ed25519Keypair } from "@peerbit/crypto";
 import { expect } from "chai";
 import { createLibp2p } from "libp2p";

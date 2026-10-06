@@ -1,8 +1,8 @@
-import { noise } from "@chainsafe/libp2p-noise";
-import { yamux } from "@chainsafe/libp2p-yamux";
 import { identify } from "@libp2p/identify";
 import type { Libp2p } from "@libp2p/interface";
+import { noise } from "@libp2p/noise";
 import { webSockets } from "@libp2p/websockets";
+import { yamux } from "@libp2p/yamux";
 import { expect } from "chai";
 import { createLibp2p } from "libp2p";
 import sinon from "sinon";

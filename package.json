@@ -165,7 +165,6 @@
 			"unrs-resolver"
 		],
 		"overrides": {
-			"@libp2p/peer-collections": "7.0.7",
 			"ajv@6": "6.15.0",
 			"axios": "1.19.0",
 			"bn.js@4": "4.12.5",

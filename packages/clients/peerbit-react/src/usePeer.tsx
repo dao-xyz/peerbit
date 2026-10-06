@@ -347,7 +347,7 @@ export const PeerProvider = ({ config, children }: PeerProviderProps) => {
 				import("detectincognitojs"),
 				import("libsodium-wrappers"),
 				import("peerbit"),
-				import("@chainsafe/libp2p-noise"),
+				import("@libp2p/noise"),
 				import("@libp2p/websockets"),
 				import("@libp2p/circuit-relay-v2"),
 				import("@libp2p/webrtc"),
