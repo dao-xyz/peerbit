@@ -10728,6 +10728,12 @@ describe("index", () => {
 		});
 
 		describe("get", () => {
+			let session: TestSession;
+
+			afterEach(async () => {
+				await session?.stop();
+			});
+
 			it("get waitFor existing", async () => {
 				session = await TestSession.connected(1);
 				const store = new TestStore({
@@ -18345,60 +18351,67 @@ describe("index", () => {
 		});
 
 		it("get first entry", async () => {
-			session = await TestSession.connected(1);
+			const session = await TestSession.connected(1);
+			try {
+				const store = new TestStore({
+					docs: new Documents<Document>(),
+				});
 
-			const store = new TestStore({
-				docs: new Documents<Document>(),
-			});
-
-			await session.peers[0].open(store, {
-				args: {
-					replicate: {
-						factor: 1,
+				await session.peers[0].open(store, {
+					args: {
+						replicate: {
+							factor: 1,
+						},
 					},
-				},
-			});
+				});
 
-			const doc = new Document({ id: "1" });
-			const doc2 = new Document({ id: "2" });
-			const doc3 = new Document({ id: "3" });
+				const doc = new Document({ id: "1" });
+				const doc2 = new Document({ id: "2" });
+				const doc3 = new Document({ id: "3" });
 
-			await store.docs.put(doc);
-			await store.docs.put(doc2);
-			await store.docs.put(doc3);
+				await store.docs.put(doc);
+				await store.docs.put(doc2);
+				await store.docs.put(doc3);
 
-			const first = await store.docs.index
-				.iterate({ sort: { key: "id", direction: SortDirection.DESC } })
-				.first();
-			expect(first!.id).to.deep.equal(doc3.id);
+				const first = await store.docs.index
+					.iterate({ sort: { key: "id", direction: SortDirection.DESC } })
+					.first();
+				expect(first!.id).to.deep.equal(doc3.id);
 
-			// expect cleanup
-			expect(store.docs.index.hasPending).to.be.false;
+				// expect cleanup
+				expect(store.docs.index.hasPending).to.be.false;
+			} finally {
+				await session.stop();
+			}
 		});
 
 		it("local only", async () => {
-			session = await TestSession.connected(2);
-			const store = new TestStore({
-				docs: new Documents<Document>(),
-			});
-			await session.peers[0].open(store);
-			const store2 = await session.peers[1].open(store.clone(), {
-				args: {
-					replicate: false,
-				},
-			});
-			const doc = new Document({ id: "1" });
-			await store.docs.put(doc);
-			await store2.docs.index.waitFor(store.node.identity.publicKey);
-			const localOnly = await store2.docs.index
-				.iterate({}, { local: true, remote: false })
-				.first();
-			expect(localOnly).to.be.undefined;
+			const session = await TestSession.connected(2);
+			try {
+				const store = new TestStore({
+					docs: new Documents<Document>(),
+				});
+				await session.peers[0].open(store);
+				const store2 = await session.peers[1].open(store.clone(), {
+					args: {
+						replicate: false,
+					},
+				});
+				const doc = new Document({ id: "1" });
+				await store.docs.put(doc);
+				await store2.docs.index.waitFor(store.node.identity.publicKey);
+				const localOnly = await store2.docs.index
+					.iterate({}, { local: true, remote: false })
+					.first();
+				expect(localOnly).to.be.undefined;
 
-			const localAndRemote = await store2.docs.index
-				.iterate({}, { local: true, remote: true })
-				.first();
-			expect(localAndRemote?.id).to.equal(doc.id);
+				const localAndRemote = await store2.docs.index
+					.iterate({}, { local: true, remote: true })
+					.first();
+				expect(localAndRemote?.id).to.equal(doc.id);
+			} finally {
+				await session.stop();
+			}
 		});
 	});
 
