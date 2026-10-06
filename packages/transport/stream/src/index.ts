@@ -1243,6 +1243,8 @@ type SharedRoutingState = {
 	routes: RoutesLike;
 	controller: AbortController;
 	consumers: Set<DirectStream<any>>;
+	// Exists only during synchronous dispatch; nested route replacement supersedes it.
+	reachableNotifications: Map<string, symbol>;
 };
 
 type DeliveryHealthCheck = {
@@ -1328,6 +1330,7 @@ export abstract class DirectStream<
 	}> = new Set();
 	private sharedRoutingKey?: PrivateKey;
 	private sharedRoutingState?: SharedRoutingState;
+	private reachableNotifications?: Map<string, symbol>;
 	private readonly nativeWire?: NativeWire;
 	protected readonly rustCore?: RustCoreStream;
 	private readonly rustSeenCache?: RustSeenCache;
@@ -1706,6 +1709,7 @@ export abstract class DirectStream<
 					controller,
 					routes: this.createRoutes(controller.signal),
 					consumers: new Set(),
+					reachableNotifications: new Map(),
 				};
 				sharedRoutingByPrivateKey.set(key, state);
 			} else {
@@ -2309,31 +2313,103 @@ export abstract class DirectStream<
 		distance: number,
 		session: number,
 		remoteSession: number,
-		) {
-			const targetHash = typeof target === "string" ? target : target.hashcode();
-			// Best-effort: keep a hash -> public key map for any routed targets so
-			// peer:unreachable events can always carry a PublicSignKey when we have seen it.
-			if (typeof target !== "string") {
-				this.peerKeyHashToPublicKey.set(targetHash, target);
-			}
-
-			const update = this.routes.add(
+	) {
+		const targetHash = target.hashcode();
+		this.peerKeyHashToPublicKey.set(targetHash, target);
+		const update = () => {
+			this.routes.add(
 				from,
 				neighbour,
 				targetHash,
-			distance,
-			session,
-			remoteSession,
-		);
+				distance,
+				session,
+				remoteSession,
+			);
+		};
+		if (from !== this.publicKeyHash) {
+			update();
+			return;
+		}
+		this.updateReachability(target, update);
+	}
 
-			// second condition is that we don't want to emit 'reachable' events for routes where we act only as a relay
-			// in this case, from is != this.publicKeyhash
-			if (from === this.publicKeyHash) {
-				if (update === "new") {
-					this.onPeerReachable(target);
-				}
+	private updateReachability(
+		target: PublicSignKey,
+		update: () => void,
+		afterUpdate?: () => void,
+	) {
+		const targetHash = target.hashcode();
+		const routes = this.routes;
+		const state = this.sharedRoutingState;
+		const from = this.publicKeyHash;
+		const wasReachable = routes.isReachable(from, targetHash);
+		const wasReady = routes.isReachable(from, targetHash, 0);
+		update();
+		const becameReachable = !wasReachable && routes.isReachable(from, targetHash);
+		// waitFor(reachable) requires distance zero, so a better route must also
+		// wake an existing waiter without repeating same-quality path updates.
+		const becameReady = !wasReady && routes.isReachable(from, targetHash, 0);
+		if (!becameReachable && !becameReady) {
+			afterUpdate?.();
+			return;
+		}
+
+		const consumers = [...(state?.consumers ?? [this])].map((consumer) => ({
+			consumer,
+			controller: consumer.closeController,
+		}));
+		const isCurrent = ({ consumer, controller }: (typeof consumers)[number]) =>
+			consumer.started &&
+			!consumer.stopping &&
+			consumer.closeController === controller &&
+			consumer.routes === routes &&
+			(!state || consumer.sharedRoutingState === state);
+		// Seed every owner before callbacks: the first listener may remove the
+		// route synchronously, and all owners need the key for that loss event.
+		for (const owner of consumers) {
+			if (isCurrent(owner)) {
+				owner.consumer.peerKeyHashToPublicKey.set(targetHash, target);
 			}
 		}
+
+		const notifications =
+			state?.reachableNotifications ?? (this.reachableNotifications ??= new Map());
+		const notification = Symbol();
+		notifications.set(targetHash, notification);
+		const failures: unknown[] = [];
+		try {
+			try {
+				afterUpdate?.();
+			} catch (error) {
+				failures.push(error);
+			}
+			for (const owner of consumers) {
+				if (
+					!isCurrent(owner) ||
+					notifications.get(targetHash) !== notification ||
+					!(
+						(becameReachable && routes.isReachable(from, targetHash)) ||
+						(becameReady && routes.isReachable(from, targetHash, 0))
+					)
+				) {
+					continue;
+				}
+				try {
+					owner.consumer.onPeerReachable(target);
+				} catch (error) {
+					failures.push(error);
+				}
+			}
+		} finally {
+			if (notifications.get(targetHash) === notification) {
+				notifications.delete(targetHash);
+			}
+		}
+		if (failures.length === 1) throw failures[0];
+		if (failures.length > 1) {
+			throw new AggregateError(failures, "Route notification failed");
+		}
+	}
 
 	public onPeerReachable(publicKey: PublicSignKey) {
 		// override this fn
@@ -2357,9 +2433,16 @@ export abstract class DirectStream<
 		}
 
 	public updateSession(key: PublicSignKey, session?: number) {
-		if (this.routes.updateSession(key.hashcode(), session)) {
-			return this.onPeerSession(key, session!);
-		}
+		let changed = false;
+		this.updateReachability(
+			key,
+			() => {
+				changed = this.routes.updateSession(key.hashcode(), session);
+			},
+			() => {
+				if (changed) this.onPeerSession(key, session!);
+			},
+		);
 	}
 	public invalidateSession(key: string) {
 		this.routes.updateSession(key, undefined);
@@ -2435,8 +2518,6 @@ export abstract class DirectStream<
 		});
 
 		this.peers.set(publicKeyHash, peerStreams);
-		// Object replacement is not evidence of a new authenticated peer session.
-		if (!existing) this.updateSession(publicKey, -1);
 
 		// Propagate per-peer stream readiness events to the parent emitter
 			const isCurrentPeer = () => this.peers.get(publicKeyHash) === peerStreams;
@@ -2490,6 +2571,9 @@ export abstract class DirectStream<
 				{ once: true },
 			);
 
+			// Install stream forwarding before a session/route transition can wake
+			// recovery listeners. Replacement alone is not a new authenticated session.
+			if (!existing) this.updateSession(publicKey, -1);
 			this.addRouteConnection(
 				this.publicKeyHash,
 				publicKey.hashcode(),
