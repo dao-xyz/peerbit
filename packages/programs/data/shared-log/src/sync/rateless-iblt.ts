@@ -446,7 +446,7 @@ const prepareStartSyncEncoder = (
 			const gap =
 				next >= current
 					? next - current
-					: coerceBigInt(maxValue) - current + next;
+					: coerceBigInt(maxValue) - current + next + 1n;
 			if (gap > largestGap) {
 				largestGap = gap;
 				largestGapIndex = i;
@@ -455,20 +455,10 @@ const prepareStartSyncEncoder = (
 
 		const smallestRangeStartIndex =
 			(largestGapIndex + 1) % sortedEntries.length;
-		const smallestRangeEndIndex = largestGapIndex; /// === (smallRangeStartIndex + 1) % sortedEntries.length
-		let smallestRangeStart = sortedEntries[smallestRangeStartIndex];
-		let smallestRangeEnd = sortedEntries[smallestRangeEndIndex];
-		let start: bigint, end: bigint;
-		if (smallestRangeEnd === smallestRangeStart) {
-			start = smallestRangeEnd;
-			end = smallestRangeEnd + 1n;
-			if (end > maxValue) {
-				end = 0n;
-			}
-		} else {
-			start = smallestRangeStart;
-			end = smallestRangeEnd;
-		}
+		const start = sortedEntries[smallestRangeStartIndex];
+		const last = sortedEntries[largestGapIndex];
+		// StartSync uses a half-open circular range, including for multiple symbols.
+		const end = last === coerceBigInt(maxValue) ? 0n : last + 1n;
 
 		addSymbolsToRiblt(encoder, sortedEntries);
 		complete = true;
@@ -612,18 +602,26 @@ const matchEntriesByHashNumberInRangeQuery = (range: {
 	start2: number | bigint;
 	end2: number | bigint;
 }): Query => {
-	const c1 = new And([
-		new IntegerCompare({
+	const segment = (start: NumberOrBigint, end: NumberOrBigint): Query => {
+		const lower = new IntegerCompare({
 			key: "hashNumber",
 			compare: "gte",
-			value: range.start1,
-		}),
-		new IntegerCompare({
-			key: "hashNumber",
-			compare: "lt",
-			value: range.end1,
-		}),
-	]);
+			value: start,
+		});
+		// A nonzero start ending at zero includes the ring's maximum value.
+		// (0, 0) remains empty; MAX + 1 cannot be encoded as a u64 query bound.
+		return start > 0 && (end === 0 || end === 0n)
+			? lower
+			: new And([
+					lower,
+					new IntegerCompare({
+						key: "hashNumber",
+						compare: "lt",
+						value: end,
+					}),
+				]);
+	};
+	const c1 = segment(range.start1, range.end1);
 
 	// if range2 has length 0 or range 2 is equal to range 1 only make one query
 	if (
@@ -633,21 +631,7 @@ const matchEntriesByHashNumberInRangeQuery = (range: {
 		return c1;
 	}
 
-	return new Or([
-		c1,
-		new And([
-			new IntegerCompare({
-				key: "hashNumber",
-				compare: "gte",
-				value: range.start2,
-			}),
-			new IntegerCompare({
-				key: "hashNumber",
-				compare: "lt",
-				value: range.end2,
-			}),
-		]),
-	]);
+	return new Or([c1, segment(range.start2, range.end2)]);
 };
 
 const buildEncoderOrDecoderFromRange = async <
@@ -2752,12 +2736,16 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 			initializationPending = true;
 			try {
 				decoder = await this.getLocalDecoderForRange(
-					{
-						start1: message.start,
-						end1: wrapped ? this.properties.numbers.maxValue : message.end,
-						start2: 0n,
-						end2: wrapped ? message.end : 0n,
-					},
+					// StartSync always represents a nonempty set: equal circular
+					// endpoints mean the full ring, split into two disjoint segments.
+					message.start === message.end
+						? { start1: 1n, end1: 0n, start2: 0n, end2: 1n }
+						: {
+								start1: message.start,
+								end1: wrapped ? 0n : message.end,
+								start2: 0n,
+								end2: wrapped ? message.end : 0n,
+							},
 					{
 						ownershipLifecycleController,
 						signal: controller.signal,

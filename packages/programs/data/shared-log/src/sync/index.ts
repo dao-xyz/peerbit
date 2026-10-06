@@ -153,6 +153,10 @@ export type HashSymbolHashListResolver = (
 	symbols: HashSymbolInput,
 ) => Iterable<string> | undefined | Promise<Iterable<string> | undefined>;
 
+/**
+ * Each segment is half-open. A nonzero start with end zero includes the ring's
+ * maximum coordinate; (0, 0) is empty. Built-in callers use disjoint segments.
+ */
 export type HashSymbolRangeResolver = (range: {
 	start1: bigint | number;
 	end1: bigint | number;

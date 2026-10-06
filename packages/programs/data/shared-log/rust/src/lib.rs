@@ -5,7 +5,7 @@ use std::cmp::Ordering;
 use std::collections::btree_map::Range as BTreeMapRange;
 use std::collections::btree_set::Iter as BTreeSetIter;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
-use std::ops::Bound::{Excluded, Unbounded};
+use std::ops::Bound::{Excluded, Included, Unbounded};
 use std::ops::ControlFlow;
 use wasm_bindgen::prelude::*;
 
@@ -3253,10 +3253,17 @@ impl NativeSharedLogState {
         end: u64,
         mut remaining: usize,
     ) -> usize {
-        if start >= end || remaining == 0 {
+        if remaining == 0 || start == end || (end != 0 && start > end) {
             return remaining;
         }
-        for (hash_number, hashes) in self.inner.entry_hashes_by_hash_number.range(start..end) {
+        // Zero is the exclusive ring endpoint for a nonzero high leg. Unlike
+        // start..MAX, this includes MAX without representing MAX + 1 in u64.
+        let end_bound = if end == 0 { Unbounded } else { Excluded(end) };
+        for (hash_number, hashes) in self
+            .inner
+            .entry_hashes_by_hash_number
+            .range((Included(start), end_bound))
+        {
             let value = JsValue::from_str(&hash_number.to_string());
             for _ in hashes {
                 if remaining == 0 {
@@ -3276,10 +3283,15 @@ impl NativeSharedLogState {
         end: u64,
         mut remaining: usize,
     ) -> usize {
-        if start >= end || remaining == 0 {
+        if remaining == 0 || start == end || (end != 0 && start > end) {
             return remaining;
         }
-        for (hash_number, hashes) in self.inner.entry_hashes_by_hash_number.range(start..end) {
+        let end_bound = if end == 0 { Unbounded } else { Excluded(end) };
+        for (hash_number, hashes) in self
+            .inner
+            .entry_hashes_by_hash_number
+            .range((Included(start), end_bound))
+        {
             let take = hashes.len().min(remaining);
             out.resize(out.len() + take, *hash_number);
             remaining -= take;

@@ -1254,6 +1254,13 @@ export class SharedLogNativeState {
 		return this.native.entry_hashes_for_hash_numbers_flat_u64(hashNumbers);
 	}
 
+	/**
+	 * Enumerate two hash-number segments, preserving one symbol per entry.
+	 * Segments are [start, end), except nonzero start with end=0 includes the
+	 * high ring endpoint. Equal endpoints remain empty; [1, 0) plus [0, 1)
+	 * represents the full ring. This also applies to the typed/limited variants,
+	 * not replication ownership ranges.
+	 */
 	getEntryHashNumbersInRange(range: {
 		start1: bigint | number | string;
 		end1: bigint | number | string;
