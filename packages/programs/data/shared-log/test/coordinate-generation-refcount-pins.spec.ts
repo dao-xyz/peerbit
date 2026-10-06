@@ -16,8 +16,8 @@
 // G7 pin that shape at two different settle families — the single-append
 // storage-transaction seam and the batch seam.
 //
-// The rollback tokens are minted only on the native-backbone local-append,
-// batch-append and receive paths. The local-append paths are reached through
+// The rollback tokens are minted on the native-backbone local-append,
+// batch-append and standalone coordinate transaction paths. Local appends use
 // the prepared payload commit-only entry point (`target: "none"`), which is
 // how the Documents program appends; a non-replicating log routes it to the
 // commit-only variant and a replicating log to the storage-transaction
@@ -187,8 +187,11 @@ const instrumentSnapshots = (log: any) => {
 	const internals = coordinateInternals(log);
 	const original = internals.snapshotResidentCoordinateEntries.bind(internals);
 	const state = { calls: 0, maxSize: 0, tokens: [] as any[] };
-	internals.snapshotResidentCoordinateEntries = (hashes: Iterable<string>) => {
-		const token = original(hashes);
+	internals.snapshotResidentCoordinateEntries = (
+		hashes: Iterable<string>,
+		owner: any,
+	) => {
+		const token = original(hashes, owner);
 		state.calls++;
 		if (token) {
 			state.tokens.push(token);
@@ -228,8 +231,11 @@ const instrumentSettleBalance = (log: any) => {
 		holdsReleased: 0,
 		redundantSettles: 0,
 	};
-	internals.snapshotResidentCoordinateEntries = (hashes: Iterable<string>) => {
-		const token = originalSnapshot(hashes);
+	internals.snapshotResidentCoordinateEntries = (
+		hashes: Iterable<string>,
+		owner: any,
+	) => {
+		const token = originalSnapshot(hashes, owner);
 		if (token) {
 			state.tokensCreated++;
 			state.holdsTaken += token.hashes.size;
@@ -260,17 +266,26 @@ describe("coordinate persistence mutation-generation refcount", () => {
 	// G5 and the raw refcount mechanics need nothing but the coordinator, so
 	// they run as unit pins against a bare instance.
 	let log: any;
+	const owner = {};
 
 	beforeEach(() => {
 		log = new SharedLog();
+		// Only the hold ledger is under test here; live EntryIndex admission is
+		// exercised by the rollback/independent-write integration pins.
+		coordinateInternals(log).deps.log = () => ({
+			entryIndex: {
+				assertHashMutationLocks: (actual: unknown) =>
+					expect(actual).to.equal(owner),
+			},
+		});
 	});
 
 	it("G5: settling a token twice is a no-op and cannot consume another token's hold", () => {
 		const internals = coordinateInternals(log);
 		const hash = "g5-shared-hash";
 
-		const tokenA = internals.snapshotResidentCoordinateEntries([hash]);
-		const tokenB = internals.snapshotResidentCoordinateEntries([hash]);
+		const tokenA = internals.snapshotResidentCoordinateEntries([hash], owner);
+		const tokenB = internals.snapshotResidentCoordinateEntries([hash], owner);
 		const rows = generationRows(log);
 		// Two tokens hold the same hash; the generation ratcheted twice.
 		expect(rows.get(hash)?.holds).to.equal(2);
@@ -286,8 +301,8 @@ describe("coordinate persistence mutation-generation refcount", () => {
 		// `settled` guard it would consume token B's hold and delete a row B
 		// still needs.
 		internals.settleResidentCoordinateSnapshot(tokenA);
-		expect(rows.has(hash), "token B's row must survive A's double settle").to
-			.be.true;
+		expect(rows.has(hash), "token B's row must survive A's double settle").to.be
+			.true;
 		expect(rows.get(hash)?.holds).to.equal(1);
 
 		// B is the last holder: its settle is what deletes the row.
@@ -302,8 +317,11 @@ describe("coordinate persistence mutation-generation refcount", () => {
 		const onlyA = "g5-only-a";
 		const onlyB = "g5-only-b";
 
-		const tokenA = internals.snapshotResidentCoordinateEntries([shared, onlyA]);
-		internals.snapshotResidentCoordinateEntries([shared, onlyB]);
+		const tokenA = internals.snapshotResidentCoordinateEntries(
+			[shared, onlyA],
+			owner,
+		);
+		internals.snapshotResidentCoordinateEntries([shared, onlyB], owner);
 		const rows = generationRows(log);
 		expect(rows.size).to.equal(3);
 
@@ -455,10 +473,8 @@ describe("coordinate persistence mutation-generation bounds", function () {
 		// probes would show phantom coordinates.
 		for (const hash of committedAtFailure) {
 			expect(await countIndexed(log, hash), `indexed ${hash}`).to.equal(0);
-			expect(
-				log._residentEntryCoordinatesByHash.has(hash),
-				`resident ${hash}`,
-			).to.be.false;
+			expect(log._residentEntryCoordinatesByHash.has(hash), `resident ${hash}`)
+				.to.be.false;
 			expect(backboneHas(log, hash), `backbone ${hash}`).to.be.false;
 		}
 		expect(generationRowCount(log)).to.equal(0);
@@ -611,41 +627,55 @@ describe("coordinate persistence mutation-generation bounds", function () {
 		expect(generationRowCount(log)).to.equal(0);
 
 		// Token A captures the persisted row as its before-image.
-		const tokenA = internals.snapshotResidentCoordinateEntries([hash]);
-		expect(tokenA.entries.has(hash)).to.be.true;
-		// Token B supersedes it on the same hash.
-		const tokenB = internals.snapshotResidentCoordinateEntries([hash]);
-		const rows = generationRows(log);
-		expect(rows.get(hash)?.holds).to.equal(2);
-		expect(rows.get(hash)?.generation).to.equal(2);
+		const index = log.log.entryIndex;
+		const owner = await index.acquireHashMutationLocks([hash]);
+		const tokens: any[] = [];
+		try {
+			const tokenA = internals.snapshotResidentCoordinateEntries([hash], owner);
+			tokens.push(tokenA);
+			expect(tokenA.entries.has(hash)).to.be.true;
+			// Token B supersedes it on the same hash.
+			const tokenB = internals.snapshotResidentCoordinateEntries([hash], owner);
+			tokens.push(tokenB);
+			const rows = generationRows(log);
+			expect(rows.get(hash)?.holds).to.equal(2);
+			expect(rows.get(hash)?.generation).to.equal(2);
 
-		// Settling B must NOT drop the row: A still holds it, and the row is
-		// what remembers that A has been superseded.
-		internals.settleResidentCoordinateSnapshot(tokenB);
-		expect(rows.has(hash), "A's hold must keep the row alive").to.be.true;
-		expect(rows.get(hash)?.holds).to.equal(1);
-		expect(rows.get(hash)?.generation).to.equal(2);
+			// Settling B must NOT drop the row: A still holds it, and the row is
+			// what remembers that A has been superseded.
+			internals.settleResidentCoordinateSnapshot(tokenB);
+			expect(rows.has(hash), "A's hold must keep the row alive").to.be.true;
+			expect(rows.get(hash)?.holds).to.equal(1);
+			expect(rows.get(hash)?.generation).to.equal(2);
 
-		// A newer mutation on the same hash. With a hold-counted row this
-		// ratchets to generation 3; if settling had DELETED the row, numbering
-		// would restart at 1 and collide with A's stale generation (ABA), and
-		// A's rollback would fire and restore the stale row below.
-		internals.snapshotResidentCoordinateEntries([hash]);
-		expect(rows.get(hash)?.generation).to.equal(3);
+			// A newer mutation on the same hash. With a hold-counted row this
+			// ratchets to generation 3; if settling had DELETED the row, numbering
+			// would restart at 1 and collide with A's stale generation (ABA), and
+			// A's rollback would fire and restore the stale row below.
+			tokens.push(internals.snapshotResidentCoordinateEntries([hash], owner));
+			expect(rows.get(hash)?.generation).to.equal(3);
 
-		// Make the newer visible state differ from A's snapshot, so a rollback
-		// that wrongly fires is observable rather than indistinguishable.
-		await internals.deleteCoordinatesForHashes([hash]);
-		expect(await countIndexed(log, hash)).to.equal(0);
-		expect(log._residentEntryCoordinatesByHash.has(hash)).to.be.false;
-		expect(backboneHas(log, hash)).to.be.false;
+			// Make the newer visible state differ from A's snapshot, so a rollback
+			// that wrongly fires is observable rather than indistinguishable.
+			await internals.deleteCoordinatesForHashes([hash], undefined, owner);
+			expect(await countIndexed(log, hash)).to.equal(0);
+			expect(log._residentEntryCoordinatesByHash.has(hash)).to.be.false;
+			expect(backboneHas(log, hash)).to.be.false;
 
-		await internals.rollbackNativeBackboneCoordinateAppendDurably(hash, tokenA);
+			await internals.rollbackNativeBackboneCoordinateAppendDurably(
+				hash,
+				tokenA,
+			);
 
-		// A is superseded: it must restore nothing.
-		expect(await countIndexed(log, hash)).to.equal(0);
-		expect(log._residentEntryCoordinatesByHash.has(hash)).to.be.false;
-		expect(backboneHas(log, hash)).to.be.false;
+			// A is superseded: it must restore nothing.
+			expect(await countIndexed(log, hash)).to.equal(0);
+			expect(log._residentEntryCoordinatesByHash.has(hash)).to.be.false;
+			expect(backboneHas(log, hash)).to.be.false;
+		} finally {
+			for (const token of tokens)
+				internals.settleResidentCoordinateSnapshot(token);
+			index.releaseHashMutationLocks(owner);
+		}
 	});
 
 	it("G6: the durable-recovery replay no longer leaves rows behind", async () => {
@@ -693,9 +723,10 @@ describe("coordinate persistence mutation-generation bounds", function () {
 
 		expect(recovered, "recovery completed").to.be.true;
 		expect(replayCalls, "the coordinate replay ran").to.equal(1);
-		expect(replayedGenerations, "every intent coordinate was replayed").to.equal(
-			coordinateHashes.length,
-		);
+		expect(
+			replayedGenerations,
+			"every intent coordinate was replayed",
+		).to.equal(coordinateHashes.length);
 		expect(generationRowCount(log)).to.equal(0);
 	});
 });
@@ -708,11 +739,7 @@ describe("coordinate persistence mutation-generation receive bounds", function (
 	let directories: string[] = [];
 
 	const createDurablePeer = async () => {
-		// The backbone-only receive path — the only receive path that mints a
-		// rollback token — is gated on an auto-derived durable coordinate
-		// persistence adapter, which is only created when the node has a
-		// directory. A memory-only node never reaches the snapshot at all and
-		// would make this pin vacuous.
+		// Exercise authoritative native coordinates with a durable journal.
 		const directory = await fs.mkdtemp(
 			path.join(os.tmpdir(), "peerbit-coordinate-generation-receive-pins-"),
 		);
@@ -731,7 +758,7 @@ describe("coordinate persistence mutation-generation receive bounds", function (
 		directories = [];
 	});
 
-	it("G2: the receiver's raw map is empty again after a cold sync", async () => {
+	it("G2: native cold sync does not create coordinate-only rollback holds", async () => {
 		const entryCount = 200;
 		peer1 = await createDurablePeer();
 		peer2 = await createDurablePeer();
@@ -760,13 +787,13 @@ describe("coordinate persistence mutation-generation receive bounds", function (
 				},
 				{ timeout: 90_000, timeoutMessage: "receive-path cold sync" },
 			);
-			// Teeth: the receive path really minted tokens and the map really
-			// held rows while the batches were in flight.
-			expect(probe.state.calls, "receive tokens minted").to.be.greaterThan(0);
-			expect(
-				probe.state.maxSize,
-				"rows resident during the sync",
-			).to.be.at.least(1);
+			await waitForResolved(() => {
+				expect(
+					receiver._nativeBackbone.getEntryCoordinateHashes(),
+				).to.have.length(entryCount);
+			});
+			expect(probe.state.calls, "receive tokens minted").to.equal(0);
+			expect(probe.state.maxSize, "rows resident during the sync").to.equal(0);
 			await waitForResolved(() => {
 				expect(generationRowCount(receiver)).to.equal(0);
 			});
@@ -776,56 +803,11 @@ describe("coordinate persistence mutation-generation receive bounds", function (
 	});
 });
 
-// G8 is the COMPLETENESS gate for the settle, as opposed to G1-G7 which pin
-// its correctness. G1/G2 only assert that the map is empty at the end of one
-// workload; that is satisfied by a settle that fires for some seams and leaks
-// for others as long as the leaked seams happen not to run. G8 counts both
-// sides of the hold ledger over a workload that deliberately drives every
-// token-minting seam, and asserts they balance exactly.
-//
-// The map has exactly five writers, and the three legs below drive four:
-//   1 `appendLocallyPreparedPayloadNativeBackboneCommitOnly`
-//     — leg one-a, which MUST open non-replicating. Head-coordinate
-//       persistence is deferred only when `!this._isReplicating` (see
-//       shouldDeferHeadCoordinatePersistence), and a replicating log
-//       short-circuits into writer 2 before this seam's body ever runs. This
-//       is the seam a non-replicating Documents log uses, and it owns four
-//       settle sites of its own, so measuring it separately is the point.
-//   2 `appendLocallyPreparedPayloadNativeBackboneStorageTransaction`
-//   3 `appendLocallyPreparedPayloadsManyNativeBackboneDocumentIndexBatch`
-//     — 2-3 are leg one-b, which opens replicating
-//   4 `CoordinatePersistenceCoordinator.createBackboneOnlyReceiveCoordinateBatch`
-//     — leg two, the receive seam
-//   5 the durable-recovery intent replay, which fabricates its rows inline
-//     instead of calling the snapshot writer. G6 covers that one, and it is
-//     the only known producer of a settle with no matching create, which is
-//     why the balance assertions below would fail loudly rather than silently
-//     absorb it if it ever ran inside this workload.
-//
-// MEASURED at the tip of this branch (see the leg comments for the
-// decomposition): 100% of created tokens settle and the raw map returns to
-// zero rows, on the local-append seams, the batch seam and the receive seam
-// alike. No seam leaks on a succeeding workload, so the bound asserted here
-// is 0 residual rows rather than a non-zero known-residual bound.
-//
-// The bound is 0 for a workload that SUCCEEDS. The durable-commit failure
-// arms that funnel through the shared `rollbackFailedNativeBackboneTransaction`
-// sink deliberately carry no settle, so each failed durable commit can retain
-// its token's rows forever. That is the accepted direction of the asymmetry —
-// a retained row is the pre-refcount behavior, a premature settle is the
-// silent-corruption one — and it is bounded by the number of durable commit
-// failures rather than by throughput, so it is not asserted here.
-//
-// NOT covered by this gate, and measured explicitly rather than assumed: the
-// seeded chaos suites (`test:shared-log:chaos`, and the wider `deterministic`
-// grep behind `test:shared-log:chaos:all`) mint ZERO rollback tokens —
-// 0 created / 0 settled across 12 coordinators, with all 41 settle calls
-// receiving `undefined`. Those suites run memory-session nodes, which have no
-// auto-derived durable coordinate persistence adapter and therefore never
-// reach the backbone-only receive snapshot, and their appends go through the
-// generic `db.add` route rather than the native prepared-payload seams. So the
-// chaos suites are not a completeness signal for this map in either direction,
-// and this pin is where the coverage actually lives.
+// G8 measures both sides of the rollback-token ledger on successful native
+// commit-only, storage-transaction and batch appends. Cold receives instead
+// require zero coordinate-only undo tokens: their lower entries have committed.
+// Standalone coordinate transactions are pinned in coordinate-persistence-pins;
+// durable intent replay is covered by G6. Failure recovery has separate pins.
 describe("coordinate persistence mutation-generation settle balance", function () {
 	this.timeout(240_000);
 
@@ -833,8 +815,7 @@ describe("coordinate persistence mutation-generation settle balance", function (
 	let directories: string[] = [];
 
 	const createDurablePeer = async () => {
-		// Same durability requirement as the receive-bounds describe: a
-		// memory-only node never mints a receive-path token at all.
+		// Match the durable native backend used by the receive-bounds gate.
 		const directory = await fs.mkdtemp(
 			path.join(os.tmpdir(), "peerbit-coordinate-generation-balance-pins-"),
 		);
@@ -963,7 +944,7 @@ describe("coordinate persistence mutation-generation settle balance", function (
 		expect(generationRowCount(log), "residual rows").to.equal(0);
 	});
 
-	it("G8: every token minted by a cold-sync receive settles", async () => {
+	it("G8: a cold-sync receive completes coordinates without rollback holds", async () => {
 		const entryCount = 150;
 		const peer1 = await createDurablePeer();
 		const peer2 = await createDurablePeer();
@@ -977,8 +958,12 @@ describe("coordinate persistence mutation-generation settle balance", function (
 		const receiver = db2.log as any;
 		expect(receiver._nativeBackbone, "peer2 native backbone").to.exist;
 
+		const hashes: string[] = [];
 		for (let index = 0; index < entryCount; index++) {
-			await db1.add(`g8-sync-${index}`, { meta: { next: [] } });
+			const { entry } = await db1.add(`g8-sync-${index}`, {
+				meta: { next: [] },
+			});
+			hashes.push(entry.hash);
 		}
 
 		// Only the receiver is instrumented: the sender's own `db1.add`
@@ -993,23 +978,25 @@ describe("coordinate persistence mutation-generation settle balance", function (
 				},
 				{ timeout: 90_000, timeoutMessage: "receive-path cold sync" },
 			);
-			await waitForResolved(() => {
+			await waitForResolved(async () => {
+				for (const hash of hashes) {
+					expect(
+						await coordinateInternals(
+							receiver,
+						).getAuthoritativeCoordinateEntryForReceipt(hash),
+						`received coordinate ${hash}`,
+					).to.exist;
+				}
 				expect(generationRowCount(receiver)).to.equal(0);
 			});
 		} finally {
 			probe.restore();
 		}
 
-		// MEASURED: the receive seam batches, so the token COUNT is a function
-		// of how the sync chunked (2 tokens covering 150 hashes each in the
-		// reference run, i.e. 300 holds for 150 entries) and is asserted as a
-		// bound rather than an exact number. The balance is exact.
-		expect(probe.state.tokensCreated, "receive tokens minted").to.be.at.least(
-			1,
-		);
-		expect(probe.state.holdsTaken, "receive holds taken").to.be.at.least(
-			entryCount,
-		);
+		// The lower entries are already admitted when their coordinates finish.
+		// A later failure must fail closed, not retain a coordinate-only undo token.
+		expect(probe.state.tokensCreated, "receive tokens minted").to.equal(0);
+		expect(probe.state.holdsTaken, "receive holds taken").to.equal(0);
 		expect(probe.state.tokensSettled, "receive tokens settled").to.equal(
 			probe.state.tokensCreated,
 		);

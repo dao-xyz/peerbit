@@ -9,6 +9,7 @@ import {
 } from "@peerbit/indexer-interface";
 import {
 	Entry,
+	type EntryIndexHashMutationLockOwner,
 	EntryType,
 	type Log,
 	type PreparedAppendJoinFacts,
@@ -72,6 +73,29 @@ export const mapMaybePromise = <T, R>(
 ): MaybePromise<R> => (isPromiseLike(value) ? value.then(fn) : fn(value));
 
 const EMPTY_HASHES: string[] = [];
+// Match the lower entry index's bounded predicate fallback. Exact-ID adapters
+// do not need this limit, but an OR per hash can exceed SQLite expression depth.
+const COORDINATE_DELETE_QUERY_BATCH_SIZE = 64;
+
+const coordinateDeleteOptions = (hashes: string[]): DeleteOptions => ({
+	query:
+		hashes.length === 1
+			? { hash: hashes[0] }
+			: new Or(
+					hashes.map((hash) => new StringMatch({ key: "hash", value: hash })),
+				),
+});
+
+type PreparedCoordinateWrite<R extends "u32" | "u64"> = {
+	prepared: PreparedCoordinatePersistence<R>;
+	hash: string;
+	nextHashes: string[];
+	coordinates: NumberFromType<R>[];
+	replicas: number;
+	commitNative?: boolean;
+	commitNativeBackbone?: boolean;
+	deleteHashes?: string[];
+};
 
 export const normalizedHashValues = (hashes: Iterable<string>): string[] => {
 	if (Array.isArray(hashes)) {
@@ -204,8 +228,9 @@ export class CoordinatePersistenceCoordinator<R extends "u32" | "u64"> {
 	// file-to-file ratchet move; see scripts/ci/check-fence-ratchet.mjs
 	// TARGETS). Per-hash mutation-generation ratchet baseline: rollback
 	// snapshots capture the generation current at snapshot time and later
-	// roll back only while that generation is still current, so a rollback
-	// superseded by a newer mutation is a strict no-op. The map deliberately
+	// roll back only while that generation is still current. Independent
+	// mutations are serialized by the snapshot's owner; generations distinguish
+	// nested before-images within that scope. The map deliberately
 	// survives open/close cycles of the same instance.
 	//
 	// Each row is hold-counted: `snapshotResidentCoordinateEntries` takes one
@@ -230,9 +255,256 @@ export class CoordinatePersistenceCoordinator<R extends "u32" | "u64"> {
 
 	constructor(private readonly deps: CoordinatePersistenceDeps<R>) {}
 
+	withCoordinateMutationOwner<T>(
+		hashes: Iterable<string>,
+		operation: (
+			owner: EntryIndexHashMutationLockOwner,
+			assertOwned: () => void,
+		) => MaybePromise<T>,
+		owner?: EntryIndexHashMutationLockOwner,
+	): MaybePromise<T> {
+		const index = this.deps.log().entryIndex;
+		const values = normalizedHashValues(hashes);
+		const run = (owned: EntryIndexHashMutationLockOwner) => {
+			const assertOwned = () => {
+				if (this.deps.log().entryIndex !== index) {
+					throw new Error(
+						"Coordinate mutation belongs to an old log generation",
+					);
+				}
+				index.assertHashMutationLocks(owned, values);
+			};
+			assertOwned();
+			return operation(owned, assertOwned);
+		};
+		// Borrowing preserves the synchronous native transaction path. Only the
+		// scope that acquired an owner may release it.
+		if (owner) return run(owner);
+		return index.acquireHashMutationLocks(values).then(async (owned) => {
+			try {
+				return await run(owned);
+			} finally {
+				index.releaseHashMutationLocks(owned);
+			}
+		});
+	}
+
+	/** Delete only absent lower rows. The same owner fences receive completion,
+	 * so a delayed trim notification cannot erase a re-admitted coordinate. */
+	prepareLowerLogCoordinateRemoval() {
+		const index = this.deps.log().entryIndex;
+		const resources = this.coordinateWriteResources();
+		return async (
+			hashes: readonly string[],
+			owner?: EntryIndexHashMutationLockOwner,
+		) => {
+			this.deps.throwIfReplicationOwnershipPoisoned();
+			if (this.deps.log().entryIndex !== index) {
+				throw new Error(
+					"Lower coordinate removal belongs to an old log generation",
+				);
+			}
+			const owned = owner ?? (await index.acquireHashMutationLocks(hashes));
+			try {
+				index.assertHashMutationLocks(owned, hashes);
+				const absent: string[] = [];
+				for (const hash of hashes) {
+					if (!(await index.getShallow(hash))) absent.push(hash);
+				}
+				if (absent.length === 0) return;
+				resources.nativeState?.deleteEntryCoordinatesBatch(absent);
+				resources.backbone?.deleteEntryCoordinatesBatch(absent);
+				for (const hash of absent) resources.resident?.delete(hash);
+				await this.deleteCoordinateIndexHashes(resources.index, absent, () => {
+					index.assertHashMutationLocks(owned, absent);
+					this.deps.throwIfReplicationOwnershipPoisoned();
+				});
+				this.deps.throwIfReplicationOwnershipPoisoned();
+			} finally {
+				if (!owner) index.releaseHashMutationLocks(owned);
+			}
+		};
+	}
+
+	private coordinateWriteResources() {
+		return {
+			index: this.deps.entryCoordinatesIndex() as PutAndDeleteIndex<
+				EntryReplicated<R>
+			>,
+			nativeState: this.deps.nativeSharedLogState(),
+			backbone: this.deps.nativeBackbone(),
+			persistence: this._nativeBackboneCoordinatePersistence,
+			resident: this._residentEntryCoordinatesByHash,
+			coordinateToHash: this.deps.coordinateToHash(),
+		};
+	}
+
+	private deleteCoordinateIndexHashes(
+		index: PutAndDeleteIndex<EntryReplicated<R>>,
+		hashes: string[],
+		assertOwned: () => void,
+	): MaybePromise<void> {
+		assertOwned();
+		if (hashes.length === 0) return;
+		if (index.delIdsNoReturn) {
+			return mapMaybePromise(index.delIdsNoReturn(hashes), assertOwned);
+		}
+		if (index.delIds) {
+			return mapMaybePromise(index.delIds(hashes), assertOwned);
+		}
+		let offset = 0;
+		const deleteNext = (): MaybePromise<void> => {
+			while (offset < hashes.length) {
+				assertOwned();
+				const batch = hashes.slice(
+					offset,
+					offset + COORDINATE_DELETE_QUERY_BATCH_SIZE,
+				);
+				offset += batch.length;
+				const result = index.del(coordinateDeleteOptions(batch));
+				if (isPromiseLike(result)) {
+					return result.then(() => {
+						assertOwned();
+						return deleteNext();
+					});
+				}
+				assertOwned();
+			}
+		};
+		return deleteNext();
+	}
+
+	/** Private, receive-scoped completion capability. Preparation grants no
+	 * admission: only the lower committed callback supplies hashes to complete.
+	 * Close drains that physical receive before these captured stores close. */
+	prepareReceiveCoordinateCompletion(items: CoordinatePersistBatchItem<R>[]) {
+		this.deps.captureReplicationOwnershipLifecycle();
+		const index = this.deps.log().entryIndex;
+		const resources = this.coordinateWriteResources();
+		const backboneOnly = this.canUseBackboneOnlyCoordinatePersistence();
+		const plans = new Map<string, PreparedCoordinateWrite<R>>();
+		for (const item of items) {
+			const prepared =
+				item.prepared ?? this.createCoordinatePersistenceEntry(item);
+			if (!prepared) continue;
+			plans.set(item.entry.hash, {
+				hash: item.entry.hash,
+				nextHashes: [...this.deps.getEntryNext(item.entry)],
+				coordinates: [...item.coordinates],
+				replicas: item.replicas,
+				commitNative: item.commitNative,
+				commitNativeBackbone: item.commitNativeBackbone,
+				prepared: {
+					assignedToRangeBoundary: prepared.assignedToRangeBoundary,
+					fields: {
+						...prepared.fields,
+						coordinates: [...prepared.fields.coordinates],
+						coordinateStrings: prepared.fields.coordinateStrings?.slice(),
+						metaBytes: prepared.fields.metaBytes.slice(),
+					},
+				},
+			});
+		}
+		for (const plan of plans.values()) {
+			// Capture the row constructor's result while the generation is live too.
+			this.materializePreparedCoordinateEntry(plan.prepared);
+		}
+		let released = false;
+		const handledHashes = new Set<string>();
+		const assertOwned = () => {
+			this.deps.throwIfReplicationOwnershipPoisoned();
+			if (released || this.deps.log().entryIndex !== index) {
+				throw new Error(
+					"Receive coordinate completion no longer owns its stores",
+				);
+			}
+		};
+		return {
+			handledHashes,
+			complete: async (
+				hashes: readonly string[],
+				owner?: EntryIndexHashMutationLockOwner,
+			) => {
+				assertOwned();
+				const pending = [...new Set(hashes)].filter(
+					(hash) => plans.has(hash) && !handledHashes.has(hash),
+				);
+				if (pending.length === 0) return;
+				const lockedHashes = pending.flatMap((hash) => [
+					hash,
+					...plans.get(hash)!.nextHashes,
+				]);
+				const owned =
+					owner ?? (await index.acquireHashMutationLocks(lockedHashes));
+				try {
+					index.assertHashMutationLocks(owned, lockedHashes);
+					assertOwned();
+					const currentHeads: PreparedCoordinateWrite<R>[] = [];
+					for (const hash of pending) {
+						// getShallow reads pending/physical rows without acquiring another owner.
+						const current = await index.getShallow(hash);
+						if (current?.value.head) {
+							currentHeads.push(plans.get(hash)!);
+						}
+					}
+					await this.persistPreparedCoordinatesOwned(
+						currentHeads,
+						() => {
+							assertOwned();
+							index.assertHashMutationLocks(owned, lockedHashes);
+						},
+						() => resources,
+						backboneOnly,
+					);
+					// Obsolete heads are handled too: the outer pipeline must not upsert them.
+					for (const hash of pending) handledHashes.add(hash);
+				} finally {
+					if (!owner) index.releaseHashMutationLocks(owned);
+				}
+			},
+			release: () => {
+				released = true;
+				plans.clear();
+			},
+		};
+	}
+
+	/** Revalidate delayed cleanup under the same owner as coordinate writes. */
+	async deleteNonHeadCoordinatesForHashes(
+		hashes: Iterable<string>,
+		ownershipLifecycleController?: AbortController,
+		owner?: EntryIndexHashMutationLockOwner,
+	): Promise<void> {
+		const values = normalizedHashValues(hashes);
+		if (values.length === 0) return;
+		await this.withCoordinateMutationOwner(
+			values,
+			async (owned, assertOwned) => {
+				if (ownershipLifecycleController) {
+					this.deps.throwIfReplicationOwnershipLifecycleInactive(
+						ownershipLifecycleController,
+					);
+				}
+				const index = this.deps.log().entryIndex;
+				const nonHeads: string[] = [];
+				for (const hash of values) {
+					if (!(await index.getShallow(hash))?.value.head) nonHeads.push(hash);
+				}
+				assertOwned();
+				await this.deleteCoordinatesForHashes(
+					nonHeads,
+					ownershipLifecycleController,
+					owned,
+				);
+			},
+			owner,
+		);
+	}
+
 	deleteCoordinatesForHashes(
 		hashes: Iterable<string>,
 		ownershipLifecycleController?: AbortController,
+		owner?: EntryIndexHashMutationLockOwner,
 	): MaybePromise<void> {
 		if (ownershipLifecycleController) {
 			this.deps.throwIfReplicationOwnershipLifecycleInactive(
@@ -243,72 +515,67 @@ export class CoordinatePersistenceCoordinator<R extends "u32" | "u64"> {
 		if (values.length === 0) {
 			return;
 		}
-		this.forgetCoordinateStateForHashValues(values);
-		const coordinateIndex = this.deps.entryCoordinatesIndex() as PutAndDeleteIndex<
-			EntryReplicated<R>
-		>;
-		if (coordinateIndex.delIdsNoReturn) {
-			return mapMaybePromise(coordinateIndex.delIdsNoReturn(values), () => {
-				if (ownershipLifecycleController) {
-					this.deps.throwIfReplicationOwnershipLifecycleInactive(
-						ownershipLifecycleController,
-					);
-				}
-			});
+		if (!owner) {
+			return this.withCoordinateMutationOwner(values, (owned) =>
+				this.deleteCoordinatesForHashes(
+					values,
+					ownershipLifecycleController,
+					owned,
+				),
+			);
 		}
-		if (coordinateIndex.delIds) {
-			return mapMaybePromise(coordinateIndex.delIds(values), () => {
-				if (ownershipLifecycleController) {
-					this.deps.throwIfReplicationOwnershipLifecycleInactive(
-						ownershipLifecycleController,
-					);
-				}
-			});
-		}
-		return mapMaybePromise(
-			this.deps.entryCoordinatesIndex().del({
-				query:
-					values.length === 1
-						? { hash: values[0] }
-						: new Or(
-								values.map(
-									(hash) => new StringMatch({ key: "hash", value: hash }),
-								),
-							),
-			}),
-			() => {
-				if (ownershipLifecycleController) {
-					this.deps.throwIfReplicationOwnershipLifecycleInactive(
-						ownershipLifecycleController,
-					);
-				}
-			},
-		);
+		this.forgetCoordinateStateForHashValues(values, owner);
+		const coordinateIndex =
+			this.deps.entryCoordinatesIndex() as PutAndDeleteIndex<
+				EntryReplicated<R>
+			>;
+		return this.deleteCoordinateIndexHashes(coordinateIndex, values, () => {
+			this.deps.log().entryIndex.assertHashMutationLocks(owner, values);
+			if (ownershipLifecycleController) {
+				this.deps.throwIfReplicationOwnershipLifecycleInactive(
+					ownershipLifecycleController,
+				);
+			}
+		});
 	}
 
-	forgetCoordinateStateForHashes(hashes: Iterable<string>) {
+	forgetCoordinateStateForHashes(
+		hashes: Iterable<string>,
+		owner: EntryIndexHashMutationLockOwner,
+	) {
 		const values = normalizedHashValues(hashes);
 		if (values.length === 0) {
 			return;
 		}
-		this.forgetCoordinateStateForHashValues(values);
+		this.forgetCoordinateStateForHashValues(values, owner);
 	}
 
-	forgetCoordinateStateForHashValues(values: string[]) {
+	forgetCoordinateStateForHashValues(
+		values: string[],
+		owner: EntryIndexHashMutationLockOwner,
+	) {
+		this.deps.log().entryIndex.assertHashMutationLocks(owner, values);
 		this.deps.nativeSharedLogState()?.deleteEntryCoordinatesBatch(values);
 		this.deps.nativeBackbone()?.deleteEntryCoordinatesBatch(values);
-		this.forgetResidentCoordinateStateForHashValues(values);
+		this.forgetResidentCoordinateStateForHashValues(values, owner);
 	}
 
-	forgetResidentCoordinateStateForHashes(hashes: Iterable<string>) {
+	forgetResidentCoordinateStateForHashes(
+		hashes: Iterable<string>,
+		owner: EntryIndexHashMutationLockOwner,
+	) {
 		const values = normalizedHashValues(hashes);
 		if (values.length === 0) {
 			return;
 		}
-		this.forgetResidentCoordinateStateForHashValues(values);
+		this.forgetResidentCoordinateStateForHashValues(values, owner);
 	}
 
-	forgetResidentCoordinateStateForHashValues(values: string[]) {
+	forgetResidentCoordinateStateForHashValues(
+		values: string[],
+		owner: EntryIndexHashMutationLockOwner,
+	) {
+		this.deps.log().entryIndex.assertHashMutationLocks(owner, values);
 		if (this._residentEntryCoordinatesByHash) {
 			for (const hash of values) {
 				this._residentEntryCoordinatesByHash.delete(hash);
@@ -342,7 +609,8 @@ export class CoordinatePersistenceCoordinator<R extends "u32" | "u64"> {
 			this.deps.nativeBackbone() ?? this.deps.nativeRangePlanner()
 		)?.getGrid(cursor, minReplicas) as NumberFromType<R>[] | undefined;
 		return (
-			nativeGrid ?? this.deps.indexableDomain().numbers.getGrid(cursor, minReplicas)
+			nativeGrid ??
+			this.deps.indexableDomain().numbers.getGrid(cursor, minReplicas)
 		);
 	}
 
@@ -353,7 +621,8 @@ export class CoordinatePersistenceCoordinator<R extends "u32" | "u64"> {
 		if (nativeCoordinates) {
 			return nativeCoordinates as NumberFromType<R>[];
 		}
-		const result = await this.deps.entryCoordinatesIndex()
+		const result = await this.deps
+			.entryCoordinatesIndex()
 			.iterate({ query: { hash: entry.hash } })
 			.all();
 		return result[0].value.coordinates;
@@ -396,7 +665,10 @@ export class CoordinatePersistenceCoordinator<R extends "u32" | "u64"> {
 		},
 	): Map<string, ReusableReceiveCoordinatePlan<R>> {
 		const reusablePlans = new Map<string, ReusableReceiveCoordinatePlan<R>>();
-		if (this.deps.timeUntilRoleMaturity() > 0 && !options?.allowRoleAgeZeroPlans) {
+		if (
+			this.deps.timeUntilRoleMaturity() > 0 &&
+			!options?.allowRoleAgeZeroPlans
+		) {
 			return reusablePlans;
 		}
 
@@ -455,12 +727,9 @@ export class CoordinatePersistenceCoordinator<R extends "u32" | "u64"> {
 			return undefined;
 		}
 
-		return {
-			rows,
-			rollbackCoordinateEntries: this.snapshotResidentCoordinateEntries(
-				rows.flatMap((row) => [row.item.entry.hash, ...row.deleteHashes]),
-			),
-		};
+		// Only a standalone coordinate batch may roll coordinates back. A fused
+		// receive must not undo them independently of its committed lower entries.
+		return { rows };
 	}
 
 	nativeBackboneReceiveCoordinateRowsToColumns(
@@ -566,26 +835,59 @@ export class CoordinatePersistenceCoordinator<R extends "u32" | "u64"> {
 
 	async persistBackboneOnlyReceiveCoordinateBatch(
 		items: CoordinatePersistBatchItem<R>[],
+		owner?: EntryIndexHashMutationLockOwner,
 	): Promise<Set<string> | undefined> {
-		const backbone = this.deps.nativeBackbone();
-		const batch = this.createBackboneOnlyReceiveCoordinateBatch(items);
-		if (!backbone || !batch) {
+		if (
+			items.length === 0 ||
+			!this.deps.nativeBackbone() ||
+			!this.canUseBackboneOnlyCoordinatePersistence()
+		) {
 			return undefined;
 		}
-		try {
-			backbone.commitEntryCoordinatesColumnsBatch(
-				this.nativeBackboneReceiveCoordinateRowsToColumns(batch.rows),
-			);
-			return await this.finishBackboneOnlyReceiveCoordinateBatch(batch);
-		} catch (error) {
-			this.rollbackBackboneOnlyReceiveCoordinateBatch(batch);
-			throw error;
-		} finally {
-			// The token cannot escape this function: both outcomes are
-			// observed here, and the catch arm has already consumed it by the
-			// time this runs.
-			this.settleResidentCoordinateSnapshot(batch.rollbackCoordinateEntries);
-		}
+		const lifecycle = this.deps.captureReplicationOwnershipLifecycle();
+		return this.withCoordinateMutationOwner(
+			items.flatMap((item) => [
+				item.entry.hash,
+				...this.deps.getEntryNext(item.entry),
+			]),
+			async (owned, assertOwned) => {
+				this.deps.throwIfReplicationOwnershipLifecycleInactive(lifecycle);
+				const backbone = this.deps.nativeBackbone();
+				const batch = this.createBackboneOnlyReceiveCoordinateBatch(items);
+				if (!backbone || !batch) {
+					return undefined;
+				}
+				batch.rollbackCoordinateEntries =
+					this.snapshotResidentCoordinateEntries(
+						batch.rows.flatMap((row) => [
+							row.item.entry.hash,
+							...row.deleteHashes,
+						]),
+						owned,
+					);
+				try {
+					backbone.commitEntryCoordinatesColumnsBatch(
+						this.nativeBackboneReceiveCoordinateRowsToColumns(batch.rows),
+					);
+					const result =
+						await this.finishBackboneOnlyReceiveCoordinateBatch(batch);
+					assertOwned();
+					return result;
+				} catch (error) {
+					this.rollbackBackboneOnlyReceiveCoordinateBatch(batch);
+					await this.flushNativeBackboneCoordinateJournal();
+					throw error;
+				} finally {
+					// The token cannot escape this function: both outcomes are
+					// observed here, and the catch arm has already consumed it by the
+					// time this runs.
+					this.settleResidentCoordinateSnapshot(
+						batch.rollbackCoordinateEntries,
+					);
+				}
+			},
+			owner,
+		);
 	}
 
 	emitNativeBackboneRawCommitProfile(
@@ -1041,11 +1343,13 @@ export class CoordinatePersistenceCoordinator<R extends "u32" | "u64"> {
 
 	snapshotResidentCoordinateEntries(
 		hashes: Iterable<string>,
+		owner: EntryIndexHashMutationLockOwner,
 	): NativeBackboneCoordinateRollback<R> | undefined {
 		const uniqueHashes = new Set([...hashes].filter(Boolean));
 		if (uniqueHashes.size === 0) {
 			return undefined;
 		}
+		this.deps.log().entryIndex.assertHashMutationLocks(owner, uniqueHashes);
 		const entries = new Map<string, ResidentCoordinateEntry<R>>();
 		const generations = new Map<string, number>();
 		const mutationGenerations = (this._nativeCoordinateMutationGenerations ??=
@@ -1065,7 +1369,7 @@ export class CoordinatePersistenceCoordinator<R extends "u32" | "u64"> {
 				entries.set(hash, entry);
 			}
 		}
-		return { hashes: uniqueHashes, entries, generations };
+		return { hashes: uniqueHashes, entries, generations, owner };
 	}
 
 	/**
@@ -1073,10 +1377,9 @@ export class CoordinatePersistenceCoordinator<R extends "u32" | "u64"> {
 	 *
 	 * Call this only where the token is TERMINAL — after the last point at
 	 * which any code path could still roll it back. A premature settle deletes
-	 * a row that a live token still needs, which silently turns that token's
-	 * rollback into a no-op (phantom coordinates) or, if the hash cycles back
-	 * to the same generation, lets it clobber newer state. A missed settle
-	 * only retains the row, which is the pre-refcount behavior.
+	 * a row that a live token still needs; rollback rejects settled tokens
+	 * rather than risking a later generation collision. A missed settle only
+	 * retains the row, which is the pre-refcount behavior.
 	 *
 	 * Idempotent by design: `settled` is set FIRST so a second settle of the
 	 * same token cannot consume another token's hold on a shared hash.
@@ -1109,6 +1412,15 @@ export class CoordinatePersistenceCoordinator<R extends "u32" | "u64"> {
 		appendHash: string,
 		rollback?: NativeBackboneCoordinateRollback<R>,
 	): void {
+		if (!rollback) {
+			throw new Error("Coordinate rollback requires an owned snapshot");
+		}
+		if (rollback.settled) {
+			throw new Error("Coordinate rollback snapshot is already settled");
+		}
+		this.deps
+			.log()
+			.entryIndex.assertHashMutationLocks(rollback.owner, rollback.hashes);
 		const backbone = this.deps.nativeBackbone();
 		if (!backbone) {
 			return;
@@ -1151,14 +1463,16 @@ export class CoordinatePersistenceCoordinator<R extends "u32" | "u64"> {
 				requestedReplicas,
 				fields.hashNumber,
 			);
-			this.deps.nativeSharedLogState()?.putEntryCoordinates(
-				fields.hash,
-				fields.gid,
-				fields.coordinates,
-				fields.assignedToRangeBoundary,
-				requestedReplicas,
-				fields.hashNumber,
-			);
+			this.deps
+				.nativeSharedLogState()
+				?.putEntryCoordinates(
+					fields.hash,
+					fields.gid,
+					fields.coordinates,
+					fields.assignedToRangeBoundary,
+					requestedReplicas,
+					fields.hashNumber,
+				);
 			this._residentEntryCoordinatesByHash?.set(hash, entry);
 		}
 	}
@@ -1168,9 +1482,10 @@ export class CoordinatePersistenceCoordinator<R extends "u32" | "u64"> {
 		rollback?: NativeBackboneCoordinateRollback<R>,
 	): Promise<void> {
 		this.rollbackNativeBackboneCoordinateAppend(appendHash, rollback);
-		const coordinateIndex = this.deps.entryCoordinatesIndex() as PutAndDeleteIndex<
-			EntryReplicated<R>
-		>;
+		const coordinateIndex =
+			this.deps.entryCoordinatesIndex() as PutAndDeleteIndex<
+				EntryReplicated<R>
+			>;
 		const hashes = rollback?.hashes ?? new Set([appendHash]);
 		const mutationGenerations = (this._nativeCoordinateMutationGenerations ??=
 			new Map());
@@ -1202,30 +1517,46 @@ export class CoordinatePersistenceCoordinator<R extends "u32" | "u64"> {
 	}
 
 	persistPreparedCoordinate(
-		properties: {
-			prepared: PreparedCoordinatePersistence<R>;
-			hash: string;
-			nextHashes: string[];
-			coordinates: NumberFromType<R>[];
-			replicas: number;
-			commitNative?: boolean;
-			commitNativeBackbone?: boolean;
-			deleteHashes?: string[];
-		},
+		properties: PreparedCoordinateWrite<R>,
 		ownershipLifecycleController = this.deps.captureReplicationOwnershipLifecycle(),
+		owner?: EntryIndexHashMutationLockOwner,
 	): MaybePromise<boolean> {
-		this.deps.throwIfReplicationOwnershipLifecycleInactive(
-			ownershipLifecycleController,
+		return this.withCoordinateMutationOwner(
+			[
+				properties.hash,
+				...properties.nextHashes,
+				...(properties.deleteHashes ?? []),
+			],
+			(_owned, assertOwned) =>
+				this.persistPreparedCoordinateOwned(
+					properties,
+					() => {
+						assertOwned();
+						this.deps.throwIfReplicationOwnershipLifecycleInactive(
+							ownershipLifecycleController,
+						);
+					},
+					() => this.coordinateWriteResources(),
+				),
+			owner,
 		);
+	}
+
+	private persistPreparedCoordinateOwned(
+		properties: PreparedCoordinateWrite<R>,
+		assertOwned: () => void,
+		resources: () => ReturnType<
+			CoordinatePersistenceCoordinator<R>["coordinateWriteResources"]
+		>,
+	): MaybePromise<boolean> {
+		assertOwned();
 		const { assignedToRangeBoundary, fields } = properties.prepared;
 		const deleteHashes = combineCoordinateDeleteHashes(
 			properties.nextHashes,
 			properties.deleteHashes,
 		);
-		const coordinateIndex = this.deps.entryCoordinatesIndex() as PutAndDeleteIndex<
-			EntryReplicated<R>
-		>;
-		let deleteNextOptions: DeleteOptions | undefined;
+		const coordinateIndex = resources().index;
+		let pendingDeleteHashes = EMPTY_HASHES;
 		let putResult: MaybePromise<unknown>;
 		if (coordinateIndex.putSharedLogCoordinateFieldsAndDeleteHashesNoReturn) {
 			putResult =
@@ -1266,38 +1597,28 @@ export class CoordinatePersistenceCoordinator<R extends "u32" | "u64"> {
 			const coordinateEntry = this.materializePreparedCoordinateEntry(
 				properties.prepared,
 			);
-			deleteNextOptions =
-				deleteHashes.length === 0
-					? undefined
-					: deleteHashes.length === 1
-						? { query: { hash: deleteHashes[0] } }
-						: {
-								query: new Or(
-									deleteHashes.map(
-										(x) => new StringMatch({ key: "hash", value: x }),
-									),
-								),
-							};
-			if (deleteNextOptions && coordinateIndex.putAndDelete) {
+			if (deleteHashes.length > 0 && coordinateIndex.putAndDelete) {
+				const batch = deleteHashes.slice(0, COORDINATE_DELETE_QUERY_BATCH_SIZE);
 				putResult = coordinateIndex.putAndDelete(
 					coordinateEntry,
-					deleteNextOptions,
+					coordinateDeleteOptions(batch),
 				);
+				pendingDeleteHashes = deleteHashes.slice(batch.length);
 			} else {
-				putResult = this.deps.entryCoordinatesIndex().put(coordinateEntry);
+				putResult = coordinateIndex.put(coordinateEntry);
+				pendingDeleteHashes = deleteHashes;
 			}
 		}
 
 		const finish = (): MaybePromise<boolean> => {
-			this.deps.throwIfReplicationOwnershipLifecycleInactive(
-				ownershipLifecycleController,
-			);
+			assertOwned();
+			const current = resources();
 			const nativeDeleteHashes = combineCoordinateDeleteHashes(
 				properties.nextHashes,
 				properties.deleteHashes,
 			);
 			if (properties.commitNative !== false) {
-				this.deps.nativeSharedLogState()?.commitEntryCoordinates(
+				current.nativeState?.commitEntryCoordinates(
 					properties.hash,
 					fields.gid,
 					properties.coordinates,
@@ -1308,7 +1629,7 @@ export class CoordinatePersistenceCoordinator<R extends "u32" | "u64"> {
 				);
 			}
 			if (properties.commitNativeBackbone !== false) {
-				this.deps.nativeBackbone()?.commitEntryCoordinates(
+				current.backbone?.commitEntryCoordinates(
 					properties.hash,
 					fields.gid,
 					properties.coordinates,
@@ -1318,29 +1639,32 @@ export class CoordinatePersistenceCoordinator<R extends "u32" | "u64"> {
 					fields.hashNumber,
 				);
 			}
-			if (this._residentEntryCoordinatesByHash) {
-				this._residentEntryCoordinatesByHash.set(
+			if (current.resident) {
+				current.resident.set(
 					properties.hash,
 					properties.prepared.coordinateEntry ?? fields,
 				);
 				for (const nextHash of nativeDeleteHashes) {
-					this._residentEntryCoordinatesByHash.delete(nextHash);
+					current.resident.delete(nextHash);
 				}
 			}
 
 			for (const coordinate of properties.coordinates) {
-				this.deps.coordinateToHash().add(coordinate, properties.hash);
+				current.coordinateToHash.add(coordinate, properties.hash);
 			}
 
-			if (deleteNextOptions && !coordinateIndex.putAndDelete) {
-				return mapMaybePromise(
-					this.deps.entryCoordinatesIndex().del(deleteNextOptions),
-					() => true,
-				);
-			}
 			return true;
 		};
-		return mapMaybePromise(putResult, finish);
+		return mapMaybePromise(putResult, () =>
+			mapMaybePromise(
+				this.deleteCoordinateIndexHashes(
+					coordinateIndex,
+					pendingDeleteHashes,
+					assertOwned,
+				),
+				finish,
+			),
+		);
 	}
 
 	persistPreparedCoordinateNativeTransaction(
@@ -1355,7 +1679,23 @@ export class CoordinatePersistenceCoordinator<R extends "u32" | "u64"> {
 			commitNativeBackbone?: boolean;
 		},
 		ownershipLifecycleController = this.deps.captureReplicationOwnershipLifecycle(),
+		owner?: EntryIndexHashMutationLockOwner,
 	): MaybePromise<boolean> {
+		const hashes = [
+			properties.hash,
+			...properties.nextHashes,
+			...(properties.deleteHashes ?? []),
+		];
+		if (!owner) {
+			return this.withCoordinateMutationOwner(hashes, (owned) =>
+				this.persistPreparedCoordinateNativeTransaction(
+					properties,
+					ownershipLifecycleController,
+					owned,
+				),
+			);
+		}
+		this.deps.log().entryIndex.assertHashMutationLocks(owner, hashes);
 		this.deps.throwIfReplicationOwnershipLifecycleInactive(
 			ownershipLifecycleController,
 		);
@@ -1377,6 +1717,7 @@ export class CoordinatePersistenceCoordinator<R extends "u32" | "u64"> {
 			),
 		);
 		const finish = () => {
+			this.deps.log().entryIndex.assertHashMutationLocks(owner, hashes);
 			this.deps.throwIfReplicationOwnershipLifecycleInactive(
 				ownershipLifecycleController,
 			);
@@ -1385,26 +1726,30 @@ export class CoordinatePersistenceCoordinator<R extends "u32" | "u64"> {
 				properties.deleteHashes,
 			);
 			if (properties.commitNative !== false) {
-				this.deps.nativeSharedLogState()?.commitEntryCoordinates(
-					properties.hash,
-					fields.gid,
-					properties.coordinates,
-					nativeDeleteHashes,
-					properties.prepared.assignedToRangeBoundary,
-					properties.coordinates.length,
-					fields.hashNumber,
-				);
+				this.deps
+					.nativeSharedLogState()
+					?.commitEntryCoordinates(
+						properties.hash,
+						fields.gid,
+						properties.coordinates,
+						nativeDeleteHashes,
+						properties.prepared.assignedToRangeBoundary,
+						properties.coordinates.length,
+						fields.hashNumber,
+					);
 			}
 			if (properties.commitNativeBackbone !== false) {
-				this.deps.nativeBackbone()?.commitEntryCoordinates(
-					properties.hash,
-					fields.gid,
-					properties.coordinates,
-					nativeDeleteHashes,
-					properties.prepared.assignedToRangeBoundary,
-					properties.coordinates.length,
-					fields.hashNumber,
-				);
+				this.deps
+					.nativeBackbone()
+					?.commitEntryCoordinates(
+						properties.hash,
+						fields.gid,
+						properties.coordinates,
+						nativeDeleteHashes,
+						properties.prepared.assignedToRangeBoundary,
+						properties.coordinates.length,
+						fields.hashNumber,
+					);
 			}
 			if (this._residentEntryCoordinatesByHash) {
 				this._residentEntryCoordinatesByHash.set(
@@ -1433,7 +1778,19 @@ export class CoordinatePersistenceCoordinator<R extends "u32" | "u64"> {
 			skipGenericTransientCoordinateIndex?: boolean;
 		},
 		ownershipLifecycleController = this.deps.captureReplicationOwnershipLifecycle(),
+		owner?: EntryIndexHashMutationLockOwner,
 	): MaybePromise<boolean> {
+		const hashes = [properties.hash, ...properties.deleteHashes];
+		if (!owner) {
+			return this.withCoordinateMutationOwner(hashes, (owned) =>
+				this.persistBackboneCoordinateFieldsNativeTransaction(
+					properties,
+					ownershipLifecycleController,
+					owned,
+				),
+			);
+		}
+		this.deps.log().entryIndex.assertHashMutationLocks(owner, hashes);
 		this.deps.throwIfReplicationOwnershipLifecycleInactive(
 			ownershipLifecycleController,
 		);
@@ -1441,18 +1798,21 @@ export class CoordinatePersistenceCoordinator<R extends "u32" | "u64"> {
 		const useBackboneOnlyCoordinatePersistence =
 			this.canUseBackboneOnlyCoordinatePersistence();
 		const finish = (): MaybePromise<boolean> => {
+			this.deps.log().entryIndex.assertHashMutationLocks(owner, hashes);
 			this.deps.throwIfReplicationOwnershipLifecycleInactive(
 				ownershipLifecycleController,
 			);
-			this.deps.nativeSharedLogState()?.commitEntryCoordinates(
-				properties.hash,
-				fields.gid,
-				properties.coordinates,
-				properties.deleteHashes,
-				fields.assignedToRangeBoundary,
-				properties.coordinates.length,
-				fields.hashNumber,
-			);
+			this.deps
+				.nativeSharedLogState()
+				?.commitEntryCoordinates(
+					properties.hash,
+					fields.gid,
+					properties.coordinates,
+					properties.deleteHashes,
+					fields.assignedToRangeBoundary,
+					properties.coordinates.length,
+					fields.hashNumber,
+				);
 			if (this._residentEntryCoordinatesByHash) {
 				this._residentEntryCoordinatesByHash.set(properties.hash, fields);
 				for (const deletedHash of properties.deleteHashes) {
@@ -1496,9 +1856,10 @@ export class CoordinatePersistenceCoordinator<R extends "u32" | "u64"> {
 		return mapMaybePromise(putResult, finish);
 	}
 
-	flushNativeBackboneCoordinateJournal(): MaybePromise<void> {
-		const backbone = this.deps.nativeBackbone();
-		const persistence = this._nativeBackboneCoordinatePersistence;
+	flushNativeBackboneCoordinateJournal(
+		backbone = this.deps.nativeBackbone(),
+		persistence = this._nativeBackboneCoordinatePersistence,
+	): MaybePromise<void> {
 		if (!backbone || !persistence || this.deps.isDropStarted()) {
 			return undefined;
 		}
@@ -1515,9 +1876,10 @@ export class CoordinatePersistenceCoordinator<R extends "u32" | "u64"> {
 		});
 	}
 
-	flushNativeBackboneCoordinateJournalOnAppend(): MaybePromise<void> {
-		const backbone = this.deps.nativeBackbone();
-		const persistence = this._nativeBackboneCoordinatePersistence;
+	flushNativeBackboneCoordinateJournalOnAppend(
+		backbone = this.deps.nativeBackbone(),
+		persistence = this._nativeBackboneCoordinatePersistence,
+	): MaybePromise<void> {
 		if (!backbone || !persistence || this.deps.isDropStarted()) {
 			return undefined;
 		}
@@ -1530,18 +1892,24 @@ export class CoordinatePersistenceCoordinator<R extends "u32" | "u64"> {
 				return undefined;
 			});
 		}
-		if (!this.shouldFlushNativeBackboneCoordinateJournalOnAppend()) {
+		if (
+			!this.shouldFlushNativeBackboneCoordinateJournalOnAppend(
+				backbone,
+				persistence,
+			)
+		) {
 			return undefined;
 		}
-		return this.flushNativeBackboneCoordinateJournal();
+		return this.flushNativeBackboneCoordinateJournal(backbone, persistence);
 	}
 
-	shouldFlushNativeBackboneCoordinateJournalOnAppend(): boolean {
-		const persistence = this._nativeBackboneCoordinatePersistence;
+	shouldFlushNativeBackboneCoordinateJournalOnAppend(
+		backbone = this.deps.nativeBackbone(),
+		persistence = this._nativeBackboneCoordinatePersistence,
+	): boolean {
 		if (!persistence || persistence.flushOnAppend !== false) {
 			return true;
 		}
-		const backbone = this.deps.nativeBackbone();
 		if (!backbone || backbone.coordinatePendingJournalLength === 0) {
 			return false;
 		}
@@ -1649,6 +2017,7 @@ export class CoordinatePersistenceCoordinator<R extends "u32" | "u64"> {
 			prepared?: PreparedCoordinatePersistence<R>;
 		},
 		ownershipLifecycleController = this.deps.captureReplicationOwnershipLifecycle(),
+		owner?: EntryIndexHashMutationLockOwner,
 	) {
 		this.deps.throwIfReplicationOwnershipLifecycleInactive(
 			ownershipLifecycleController,
@@ -1670,12 +2039,14 @@ export class CoordinatePersistenceCoordinator<R extends "u32" | "u64"> {
 				deleteHashes: properties.deleteHashes,
 			},
 			ownershipLifecycleController,
+			owner,
 		);
 	}
 
 	async persistCoordinatesBatch(
 		items: CoordinatePersistBatchItem<R>[],
 		ownershipLifecycleController = this.deps.captureReplicationOwnershipLifecycle(),
+		owner?: EntryIndexHashMutationLockOwner,
 	): Promise<boolean[]> {
 		this.deps.throwIfReplicationOwnershipLifecycleInactive(
 			ownershipLifecycleController,
@@ -1700,179 +2071,214 @@ export class CoordinatePersistenceCoordinator<R extends "u32" | "u64"> {
 			return items.map(() => false);
 		}
 
-		const coordinateIndex = this.deps.entryCoordinatesIndex() as PutAndDeleteIndex<
-			EntryReplicated<R>
-		>;
-		const canUseGenericPutBatch =
-			typeof coordinateIndex.putBatch === "function" &&
-			changed.every(({ item }) => item.entry.meta.next.length === 0);
-
-		if (
-			coordinateIndex.putSharedLogCoordinateFieldsAndDeleteHashesBatchNoReturn
-		) {
-			await coordinateIndex.putSharedLogCoordinateFieldsAndDeleteHashesBatchNoReturn(
-				changed.map(({ item, prepared }) => ({
-					fields: prepared.fields,
-					deleteHashes: item.entry.meta.next,
-				})),
-			);
-		} else if (
-			coordinateIndex.putSharedLogCoordinateFieldsAndDeleteHashesBatch
-		) {
-			await coordinateIndex.putSharedLogCoordinateFieldsAndDeleteHashesBatch(
-				changed.map(({ item, prepared }) => ({
-					fields: prepared.fields,
-					deleteHashes: item.entry.meta.next,
-				})),
-			);
-		} else if (coordinateIndex.putSharedLogCoordinateFieldsAndDeleteIdsBatch) {
-			await coordinateIndex.putSharedLogCoordinateFieldsAndDeleteIdsBatch(
-				changed.map(({ item, prepared }) => ({
-					fields: prepared.fields,
-					deleteIds: item.entry.meta.next,
-					id: toId(prepared.fields.hash),
-				})),
-			);
-		} else if (coordinateIndex.putSharedLogCoordinatesAndDeleteIdsBatch) {
-			await coordinateIndex.putSharedLogCoordinatesAndDeleteIdsBatch(
-				changed.map(({ item, prepared }) => ({
-					value: this.materializePreparedCoordinateEntry(prepared),
-					fields: prepared.fields,
-					deleteIds: item.entry.meta.next,
-					id: toId(prepared.fields.hash),
-				})),
-			);
-		} else if (canUseGenericPutBatch) {
-			await coordinateIndex.putBatch!(
-				changed.map(({ prepared }) =>
-					this.materializePreparedCoordinateEntry(prepared),
-				),
-			);
-		} else {
-			const results: boolean[] = [];
-			for (const item of items) {
-				results.push(
-					await this.persistCoordinate(item, ownershipLifecycleController),
+		const writes = changed.map(({ item, prepared }) => ({
+			prepared,
+			hash: item.entry.hash,
+			nextHashes: item.entry.meta.next,
+			deleteHashes: item.deleteHashes,
+			coordinates: item.coordinates,
+			replicas: item.replicas,
+			commitNative: item.commitNative,
+			commitNativeBackbone: item.commitNativeBackbone,
+		}));
+		await this.withCoordinateMutationOwner(
+			writes.flatMap((write) => [
+				write.hash,
+				...write.nextHashes,
+				...(write.deleteHashes ?? []),
+			]),
+			(_owned, assertOwned) => {
+				const resources = this.coordinateWriteResources();
+				return this.persistPreparedCoordinatesOwned(
+					writes,
+					() => {
+						assertOwned();
+						this.deps.throwIfReplicationOwnershipLifecycleInactive(
+							ownershipLifecycleController,
+						);
+					},
+					() => resources,
 				);
-				this.deps.throwIfReplicationOwnershipLifecycleInactive(
-					ownershipLifecycleController,
-				);
-			}
-			return results;
-		}
-		this.deps.throwIfReplicationOwnershipLifecycleInactive(
-			ownershipLifecycleController,
+			},
+			owner,
 		);
-
-		const nativeCoordinateCommits = changed.filter(
-			({ item }) => item.commitNative !== false,
-		);
-		const nativeSharedLogState = this.deps.nativeSharedLogState();
-		if (nativeCoordinateCommits.length > 0 && nativeSharedLogState) {
-			if (nativeSharedLogState.commitEntryCoordinatesBatch) {
-				nativeSharedLogState.commitEntryCoordinatesBatch(
-					nativeCoordinateCommits.map(({ item, prepared }) => ({
-						hash: item.entry.hash,
-						gid: prepared.fields.gid,
-						coordinates: item.coordinates,
-						nextHashes: item.entry.meta.next,
-						assignedToRangeBoundary: prepared.assignedToRangeBoundary,
-						requestedReplicas: item.replicas,
-						hashNumber: prepared.fields.hashNumber,
-					})),
-				);
-			} else {
-				for (const { item, prepared } of nativeCoordinateCommits) {
-					nativeSharedLogState.commitEntryCoordinates(
-						item.entry.hash,
-						prepared.fields.gid,
-						item.coordinates,
-						item.entry.meta.next,
-						prepared.assignedToRangeBoundary,
-						item.replicas,
-						prepared.fields.hashNumber,
-					);
-				}
-			}
-		}
-
-		const nativeBackboneCoordinateCommits = changed.filter(
-			({ item }) => item.commitNativeBackbone !== false,
-		);
-		const nativeBackboneForBatch = this.deps.nativeBackbone();
-		if (nativeBackboneCoordinateCommits.length > 0 && nativeBackboneForBatch) {
-			if (nativeBackboneForBatch.commitEntryCoordinatesBatch) {
-				nativeBackboneForBatch.commitEntryCoordinatesBatch(
-					nativeBackboneCoordinateCommits.map(({ item, prepared }) => ({
-						hash: item.entry.hash,
-						gid: prepared.fields.gid,
-						coordinates: item.coordinates,
-						nextHashes: item.entry.meta.next,
-						assignedToRangeBoundary: prepared.assignedToRangeBoundary,
-						requestedReplicas: item.replicas,
-						hashNumber: prepared.fields.hashNumber,
-					})),
-				);
-			} else {
-				for (const { item, prepared } of nativeBackboneCoordinateCommits) {
-					nativeBackboneForBatch.commitEntryCoordinates(
-						item.entry.hash,
-						prepared.fields.gid,
-						item.coordinates,
-						item.entry.meta.next,
-						prepared.assignedToRangeBoundary,
-						item.replicas,
-						prepared.fields.hashNumber,
-					);
-				}
-			}
-		}
-
-		for (const { item, prepared } of changed) {
-			if (this._residentEntryCoordinatesByHash) {
-				this._residentEntryCoordinatesByHash.set(
-					item.entry.hash,
-					prepared.coordinateEntry ?? prepared.fields,
-				);
-				for (const nextHash of item.entry.meta.next) {
-					this._residentEntryCoordinatesByHash.delete(nextHash);
-				}
-			}
-			for (const coordinate of item.coordinates) {
-				this.deps.coordinateToHash().add(coordinate, item.entry.hash);
-			}
-		}
-
 		const changedHashes = new Set(
 			changed.map(({ prepared }) => prepared.fields.hash),
 		);
 		return items.map((item) => changedHashes.has(item.entry.hash));
 	}
 
+	private async persistPreparedCoordinatesOwned(
+		writes: PreparedCoordinateWrite<R>[],
+		assertOwned: () => void,
+		resources: () => ReturnType<
+			CoordinatePersistenceCoordinator<R>["coordinateWriteResources"]
+		>,
+		backboneOnly = false,
+	): Promise<void> {
+		assertOwned();
+		if (writes.length === 0) return;
+		const current = resources();
+		const coordinateIndex = current.index;
+		const deleteHashes = (write: PreparedCoordinateWrite<R>) =>
+			combineCoordinateDeleteHashes(write.nextHashes, write.deleteHashes);
+		const canUseGenericPutBatch =
+			typeof coordinateIndex.putBatch === "function" &&
+			writes.every((write) => deleteHashes(write).length === 0);
+
+		if (backboneOnly) {
+			// The native journal and resident mirror are authoritative in this mode.
+		} else if (
+			coordinateIndex.putSharedLogCoordinateFieldsAndDeleteHashesBatchNoReturn
+		) {
+			await coordinateIndex.putSharedLogCoordinateFieldsAndDeleteHashesBatchNoReturn(
+				writes.map((write) => ({
+					fields: write.prepared.fields,
+					deleteHashes: deleteHashes(write),
+				})),
+			);
+		} else if (
+			coordinateIndex.putSharedLogCoordinateFieldsAndDeleteHashesBatch
+		) {
+			await coordinateIndex.putSharedLogCoordinateFieldsAndDeleteHashesBatch(
+				writes.map((write) => ({
+					fields: write.prepared.fields,
+					deleteHashes: deleteHashes(write),
+				})),
+			);
+		} else if (coordinateIndex.putSharedLogCoordinateFieldsAndDeleteIdsBatch) {
+			await coordinateIndex.putSharedLogCoordinateFieldsAndDeleteIdsBatch(
+				writes.map((write) => ({
+					fields: write.prepared.fields,
+					deleteIds: deleteHashes(write),
+					id: toId(write.prepared.fields.hash),
+				})),
+			);
+		} else if (coordinateIndex.putSharedLogCoordinatesAndDeleteIdsBatch) {
+			await coordinateIndex.putSharedLogCoordinatesAndDeleteIdsBatch(
+				writes.map((write) => ({
+					value: this.materializePreparedCoordinateEntry(write.prepared),
+					fields: write.prepared.fields,
+					deleteIds: deleteHashes(write),
+					id: toId(write.prepared.fields.hash),
+				})),
+			);
+		} else if (canUseGenericPutBatch) {
+			await coordinateIndex.putBatch!(
+				writes.map(({ prepared }) =>
+					this.materializePreparedCoordinateEntry(prepared),
+				),
+			);
+		} else {
+			for (const write of writes) {
+				await this.persistPreparedCoordinateOwned(
+					write,
+					assertOwned,
+					resources,
+				);
+				assertOwned();
+			}
+			return;
+		}
+		assertOwned();
+
+		const nativeCoordinateCommits = writes.filter(
+			(write) => write.commitNative !== false,
+		);
+		const nativeSharedLogState = current.nativeState;
+		if (nativeCoordinateCommits.length > 0 && nativeSharedLogState) {
+			if (nativeSharedLogState.commitEntryCoordinatesBatch) {
+				nativeSharedLogState.commitEntryCoordinatesBatch(
+					nativeCoordinateCommits.map((write) => ({
+						hash: write.hash,
+						gid: write.prepared.fields.gid,
+						coordinates: write.coordinates,
+						nextHashes: deleteHashes(write),
+						assignedToRangeBoundary: write.prepared.assignedToRangeBoundary,
+						requestedReplicas: write.replicas,
+						hashNumber: write.prepared.fields.hashNumber,
+					})),
+				);
+			} else {
+				for (const write of nativeCoordinateCommits) {
+					nativeSharedLogState.commitEntryCoordinates(
+						write.hash,
+						write.prepared.fields.gid,
+						write.coordinates,
+						deleteHashes(write),
+						write.prepared.assignedToRangeBoundary,
+						write.replicas,
+						write.prepared.fields.hashNumber,
+					);
+				}
+			}
+		}
+
+		const nativeBackboneCoordinateCommits = writes.filter(
+			(write) => write.commitNativeBackbone !== false,
+		);
+		const nativeBackboneForBatch = current.backbone;
+		if (nativeBackboneCoordinateCommits.length > 0 && nativeBackboneForBatch) {
+			if (nativeBackboneForBatch.commitEntryCoordinatesBatch) {
+				nativeBackboneForBatch.commitEntryCoordinatesBatch(
+					nativeBackboneCoordinateCommits.map((write) => ({
+						hash: write.hash,
+						gid: write.prepared.fields.gid,
+						coordinates: write.coordinates,
+						nextHashes: deleteHashes(write),
+						assignedToRangeBoundary: write.prepared.assignedToRangeBoundary,
+						requestedReplicas: write.replicas,
+						hashNumber: write.prepared.fields.hashNumber,
+					})),
+				);
+			} else {
+				for (const write of nativeBackboneCoordinateCommits) {
+					nativeBackboneForBatch.commitEntryCoordinates(
+						write.hash,
+						write.prepared.fields.gid,
+						write.coordinates,
+						deleteHashes(write),
+						write.prepared.assignedToRangeBoundary,
+						write.replicas,
+						write.prepared.fields.hashNumber,
+					);
+				}
+			}
+		}
+
+		for (const write of writes) {
+			if (current.resident) {
+				current.resident.set(
+					write.hash,
+					write.prepared.coordinateEntry ?? write.prepared.fields,
+				);
+				for (const nextHash of deleteHashes(write)) {
+					current.resident.delete(nextHash);
+				}
+			}
+			for (const coordinate of write.coordinates) {
+				current.coordinateToHash.add(coordinate, write.hash);
+			}
+		}
+
+		if (backboneOnly) {
+			await this.flushNativeBackboneCoordinateJournalOnAppend(
+				current.backbone,
+				current.persistence,
+			);
+			assertOwned();
+		}
+	}
+
 	async deleteCoordinates(
 		properties: { hash: string },
 		ownershipLifecycleController?: AbortController,
+		owner?: EntryIndexHashMutationLockOwner,
 	) {
-		if (ownershipLifecycleController) {
-			this.deps.throwIfReplicationOwnershipLifecycleInactive(
-				ownershipLifecycleController,
-			);
-		}
-		this.deps.nativeSharedLogState()?.deleteEntryCoordinates(properties.hash);
-		this.deps.nativeBackbone()?.deleteEntryCoordinates(properties.hash);
-		this._residentEntryCoordinatesByHash?.delete(properties.hash);
-		const coordinateIndex = this.deps.entryCoordinatesIndex() as PutAndDeleteIndex<
-			EntryReplicated<R>
-		>;
-		if (coordinateIndex.delIds) {
-			await coordinateIndex.delIds([properties.hash]);
-		} else {
-			await this.deps.entryCoordinatesIndex().del({ query: properties });
-		}
-		if (ownershipLifecycleController) {
-			this.deps.throwIfReplicationOwnershipLifecycleInactive(
-				ownershipLifecycleController,
-			);
-		}
+		await this.deleteCoordinatesForHashes(
+			[properties.hash],
+			ownershipLifecycleController,
+			owner,
+		);
 	}
 }

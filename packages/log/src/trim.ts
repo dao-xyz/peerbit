@@ -1,6 +1,6 @@
 import { Cache } from "@peerbit/cache";
 import PQueue from "p-queue";
-import type { EntryIndex } from "./entry-index.js";
+import type { EntryIndex, EntryIndexDeleteOptions } from "./entry-index.js";
 import type { ShallowEntry } from "./entry-shallow.js";
 import type { Entry } from "./entry.js";
 import type { SortFn } from "./log-sorting.js";
@@ -89,16 +89,20 @@ export type TrimCanAppendOption = {
 };
 export type TrimOptions = TrimCanAppendOption & TrimCondition;
 
+export type TrimProperties = {
+	resolveDeletedEntries?: boolean;
+} & Pick<EntryIndexDeleteOptions, "mutationHashes" | "onDeleteCommitted">;
+
 interface Log<T> {
 	index: EntryIndex<T>;
 	sortFn: SortFn;
 	deleteNode: (
 		node: ShallowEntry,
-		options?: { resolveDeletedEntry?: boolean },
+		options?: EntryIndexDeleteOptions & { resolveDeletedEntry?: boolean },
 	) => MaybePromise<Entry<T> | ShallowEntry | undefined>;
 	deleteNodes?: (
 		nodes: ShallowEntry[],
-		options?: { resolveDeletedEntry?: boolean; skipNextHeadUpdates?: boolean },
+		options?: EntryIndexDeleteOptions & { resolveDeletedEntry?: boolean },
 	) => MaybePromise<(Entry<T> | ShallowEntry)[]>;
 	getLength(): number;
 }
@@ -137,7 +141,7 @@ export class Trim<T> {
 
 	private trimTask(
 		option: TrimOptions | undefined = this._trim,
-		options?: { resolveDeletedEntries?: boolean },
+		options?: TrimProperties,
 	): MaybePromise<(Entry<T> | ShallowEntry)[]> {
 		if (!option) {
 			return [];
@@ -150,7 +154,7 @@ export class Trim<T> {
 
 	private async trimTaskWithFilter(
 		option: TrimOptions,
-		options?: { resolveDeletedEntries?: boolean },
+		options?: TrimProperties,
 	): Promise<(Entry<T> | ShallowEntry)[]> {
 		///  TODO Make this method less ugly
 		const deleted: (Entry<T> | ShallowEntry)[] = [];
@@ -281,6 +285,7 @@ export class Trim<T> {
 				);
 
 				const entry = await this._log.deleteNode(node, {
+					...options,
 					resolveDeletedEntry: options?.resolveDeletedEntries,
 				});
 				if (entry) {
@@ -319,7 +324,7 @@ export class Trim<T> {
 
 	private trimUnfilteredLength(
 		option: TrimToLengthOption,
-		options?: { resolveDeletedEntries?: boolean },
+		options?: TrimProperties,
 	): MaybePromise<(Entry<T> | ShallowEntry)[]> {
 		const to = option.to;
 		const from = option.from ?? to;
@@ -350,6 +355,7 @@ export class Trim<T> {
 						return undefined;
 					}
 					return this._log.deleteNodes!(nodes, {
+						...options,
 						resolveDeletedEntry: options?.resolveDeletedEntries,
 						// Oldest-first trim only removes entries whose next links point
 						// further back into the same deleted prefix.
@@ -388,7 +394,7 @@ export class Trim<T> {
 
 	private async trimUnfilteredLengthOneByOne(
 		option: TrimToLengthOption,
-		options: { resolveDeletedEntries?: boolean } | undefined,
+		options: TrimProperties | undefined,
 		deleted: (Entry<T> | ShallowEntry)[],
 	): Promise<(Entry<T> | ShallowEntry)[]> {
 		const to = option.to;
@@ -398,6 +404,7 @@ export class Trim<T> {
 				break;
 			}
 			const entry = await this._log.deleteNode(node, {
+				...options,
 				resolveDeletedEntry: options?.resolveDeletedEntries,
 			});
 			if (entry) {
@@ -415,7 +422,7 @@ export class Trim<T> {
 	 */
 	async trim(
 		options: TrimOptions | undefined = this._trim,
-		properties?: { resolveDeletedEntries?: boolean },
+		properties?: TrimProperties,
 	): Promise<(Entry<T> | ShallowEntry)[] | undefined> {
 		if (!options) {
 			return;

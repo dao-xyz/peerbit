@@ -78,6 +78,7 @@ describe("append delivery options — persisted receipts", function () {
 	const openPair = async (
 		durable: boolean,
 		receiverCanAppend?: () => boolean,
+		nativeCoordinates?: boolean,
 	) => {
 		if (durable) {
 			directory = await fs.mkdtemp(
@@ -91,8 +92,22 @@ describe("append delivery options — persisted receipts", function () {
 			session = await TestSession.connected(2);
 		}
 
+		const coordinateOptions =
+			nativeCoordinates === undefined
+				? {}
+				: {
+						nativeGraph: nativeCoordinates,
+						nativeRangePlanner: nativeCoordinates
+							? { optional: false }
+							: (false as const),
+						nativeBackbone: nativeCoordinates
+							? { optional: false }
+							: (false as const),
+						sync: { rawExchangeHeads: nativeCoordinates },
+					};
 		const writer = await session.peers[0].open(new EventStore<string, any>(), {
 			args: {
+				...coordinateOptions,
 				replicas: { min: 2 },
 				replicate: { offset: 0, factor: 1 },
 				timeUntilRoleMaturity: 0,
@@ -103,6 +118,7 @@ describe("append delivery options — persisted receipts", function () {
 			session.peers[1],
 			{
 				args: {
+					...coordinateOptions,
 					replicas: { min: 2 },
 					replicate: { offset: 0, factor: 1 },
 					timeUntilRoleMaturity: 0,
@@ -3231,8 +3247,8 @@ describe("append delivery options — persisted receipts", function () {
 		const entryIndex = (writer.log.log as any).entryIndex;
 		const nativeGraph = entryIndex.properties.nativeGraph;
 		entryIndex.properties.nativeGraph = undefined;
-		const notifyShadowedGids = sinon
-			.stub(entryIndex, "notifyShadowedGids")
+		const prepareShadowedGidNotification = sinon
+			.stub(entryIndex, "prepareShadowedGidNotification")
 			.rejects(postCommitFailure);
 		let failure: unknown;
 
@@ -3249,7 +3265,7 @@ describe("append delivery options — persisted receipts", function () {
 		} catch (error) {
 			failure = error;
 		} finally {
-			notifyShadowedGids.restore();
+			prepareShadowedGidNotification.restore();
 			entryIndex.properties.nativeGraph = nativeGraph;
 		}
 
@@ -3951,6 +3967,149 @@ describe("append delivery options — persisted receipts", function () {
 		);
 		expect(responses).to.deep.equal([]);
 	});
+
+	for (const nativeCoordinates of [false, true]) {
+		it(`receipts a committed receive after live generation cancellation and disk barriers (${nativeCoordinates ? "native coordinates" : "SQLite"})`, async () => {
+			const { writer, receiver } = await openPair(
+				true,
+				undefined,
+				nativeCoordinates,
+			);
+			await waitForPersistedCapability(writer, receiver);
+			const receiverLog = receiver.log as any;
+			expect(
+				receiverLog._coordinates.canUseBackboneOnlyCoordinatePersistence(),
+			).to.equal(nativeCoordinates);
+			if (nativeCoordinates) expect(receiverLog._nativeBackbone).to.exist;
+			else expect(receiverLog._nativeBackbone).to.equal(undefined);
+			const oldOnChange = receiverLog._logProperties.onChange;
+			const gate = pDefer<void>();
+			const barrierGate = pDefer<void>();
+			let receivedHash: string | undefined;
+			const pending: Promise<unknown>[] = [];
+			const track = <T>(promise: Promise<T>) => {
+				void promise.catch(() => {});
+				pending.push(promise);
+				return promise;
+			};
+			receiverLog._logProperties.onChange = async (change: {
+				added: Array<{ entry: { hash: string } }>;
+			}) => {
+				if (receivedHash === undefined && change.added.length > 0) {
+					receivedHash = change.added[0]!.entry.hash;
+					await gate.promise;
+				}
+			};
+			const lowerJoin = sinon.spy(receiver.log.log, "join");
+			try {
+				const append = track(
+					writer.add("cancelled-but-committed", {
+						target: "replicators",
+						meta: { next: [] },
+					}),
+				);
+				await waitForResolved(() => expect(receivedHash).to.be.a("string"), {
+					timeout: 5_000,
+				});
+				expect(await receiver.log.log.has(receivedHash!)).to.equal(true);
+				const receiveSignal = lowerJoin.firstCall.args[1]?.signal;
+				expect(receiveSignal).to.be.instanceOf(AbortSignal);
+				const lowerOutcome = track(
+					Promise.resolve(lowerJoin.firstCall.returnValue).then(
+						() => undefined,
+						(error: unknown) => error,
+					),
+				);
+				const draining = track(
+					receiverLog.drainPeerReceiveHandlers(
+						writer.node.identity.publicKey.hashcode(),
+					),
+				);
+				expect(receiveSignal!.aborted).to.equal(true);
+				gate.resolve();
+				const [{ entry }] = await Promise.all([append, draining]);
+				expect(await lowerOutcome).to.equal(receiveSignal!.reason);
+				expect(entry.hash).to.equal(receivedHash);
+				expect(await receiver.log.log.has(entry.hash)).to.equal(true);
+				expect(await receiver.log.log.blocks.has(entry.hash)).to.equal(true);
+				expect(
+					(
+						await receiverLog._coordinates.getAuthoritativeCoordinateEntryForReceipt(
+							entry.hash,
+						)
+					)?.hash,
+				).to.equal(entry.hash);
+				expect(
+					(await receiver.log.entryCoordinatesIndex.get(toId(entry.hash)))
+						?.value.hash,
+				).to.equal(nativeCoordinates ? undefined : entry.hash);
+				const storage = receiverLog.resolvePersistedReceiptStorage();
+				expect(storage).to.exist;
+				sinon
+					.stub(receiverLog, "resolvePersistedReceiptStorage")
+					.returns(storage);
+				const barrierEntered = pDefer<void>();
+				const realBarrier = storage.coordinate.barrier.bind(storage.coordinate);
+				const coordinateBarrier = sinon
+					.stub(storage.coordinate, "barrier")
+					.callsFake(async () => {
+						await realBarrier();
+						barrierEntered.resolve();
+						await barrierGate.promise;
+					});
+				const otherBarriers = [...new Set([storage.block, storage.lower])]
+					.filter((store) => store !== storage.coordinate)
+					.map((store) => sinon.spy(store, "barrier"));
+				const receiverHash = receiver.node.identity.publicKey.hashcode();
+				const current = (writer.log as any).persistedReceiptPeerSession(
+					receiverHash,
+				);
+				expect(current).to.exist;
+				let settled = false;
+				const receipt = track(
+					writer.log.rpc
+						.request(
+							new RequestPersistedEntriesV1({
+								expectedReceiverSession: current.capabilitySession,
+								hashes: [entry.hash],
+							}),
+							{
+								mode: new SilentDelivery({ to: [receiverHash], redundancy: 1 }),
+								amount: 1,
+								timeout: 5_000,
+							},
+						)
+						.then((responses) => {
+							settled = true;
+							return responses;
+						}),
+				);
+				await Promise.race([
+					barrierEntered.promise,
+					receipt.then(() => {
+						throw new Error("receipt settled before its disk barrier");
+					}),
+				]);
+				expect(settled).to.equal(false);
+				barrierGate.resolve();
+				const responses = await receipt;
+				expect(coordinateBarrier.calledOnce).to.equal(true);
+				for (const barrier of otherBarriers)
+					expect(barrier.calledOnce).to.equal(true);
+				expect(responses).to.have.length(1);
+				expect(responses[0]!.response).to.be.instanceOf(ConfirmEntriesMessage);
+				expect(
+					(responses[0]!.response as ConfirmEntriesMessage).hashes,
+				).to.deep.equal([entry.hash]);
+			} finally {
+				gate.resolve();
+				barrierGate.resolve();
+				await Promise.allSettled(pending);
+				receiverLog._logProperties.onChange = oldOnChange;
+				lowerJoin.restore();
+			}
+		});
+	}
 
 	it("reissues an idempotent receipt after the first durable response is lost", async () => {
 		const { writer, receiver } = await openPair(true);
