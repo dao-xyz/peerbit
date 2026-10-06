@@ -31,6 +31,7 @@ const fixture = () => {
 	const subject: any = Object.assign(new EventTarget(), {
 		started: true,
 		stopping: false,
+		closeController: new AbortController(),
 		publicKey: from,
 		publicKeyHash: "self",
 		seekTimeout: 100,
@@ -51,6 +52,10 @@ const fixture = () => {
 		),
 		removePeerFromRoutes: DirectStream.prototype.removePeerFromRoutes,
 		addRouteConnection: DirectStream.prototype.addRouteConnection,
+		updateReachability: Reflect.get(
+			DirectStream.prototype,
+			"updateReachability",
+		),
 	});
 	subject.routes.updateSession("target", 1);
 	subject.routes.add("self", "relay", "target", 0, 1, 1);
