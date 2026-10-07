@@ -20,6 +20,13 @@ Unavailable private observations are named under `state.debt.unobserved`, never
 treated as zero. Reopen may use a warm OS page cache, so it is process-cold,
 not cold-storage.
 
+`nativeBlockRows` is observed in-memory cache occupancy, not durable block
+custody: reopen may leave it at zero and populate it lazily on reads. Seed
+requires one cached block per operation; reopen bounds the cache by its retained
+CUT heads. Every retained head must independently exist in the write-through
+store's durable mirror, even when the native cache is warm. This is a presence
+check, not a byte-integrity or signature audit.
+
 After building `peerbit` and `@peerbit/document`, run the 200-operation smoke
 with `pnpm run bench:shared-log-cut-lifecycle-census`.
 
