@@ -232,26 +232,37 @@ describe("pubsub (unsubscribe reason)", function () {
 
 	for (const fanoutFirst of [true, false]) {
 		it(`removes subscriptions when shared routes are invalidated ${fanoutFirst ? "fanout-first" : "pubsub-first"}`, async () => {
-			const topic = "unsubscribe-shared-routes";
+			const topics = [
+				"unsubscribe-shared-routes-0",
+				"unsubscribe-shared-routes-1",
+			];
 			const session = await createDisconnectedSession(2);
 			try {
-				const { a, b } = await setupTrackedSubscribers(topic, session);
+				const { a, b } = await setupTrackedSubscribers(topics[0]!, session);
+				expect(a["getShardTopicForUserTopic"](topics[0]!)).not.to.equal(
+					a["getShardTopicForUserTopic"](topics[1]!),
+				);
+				await Promise.all([a.subscribe(topics[1]!), b.subscribe(topics[1]!)]);
+				await waitForResolved(() => {
+					for (const [subject, remote] of [[a, b], [b, a]] as const) {
+						expect([
+							...(subject.peerToTopic.get(remote.publicKeyHash) ?? []),
+						]).to.have.members(topics);
+					}
+				});
 				const fanout = session.peers[0]!.services.fanout;
 				expect(fanout.routes).to.equal(a.routes);
 				expect(a.routes.isReachable(a.publicKeyHash, b.publicKeyHash)).to.equal(
 					true,
 				);
-				expect(
-					a.getSubscribers(topic)?.map((key) => key.hashcode()),
-				).to.include(b.publicKeyHash);
-				const reasons: (UnsubscriptionReason | undefined)[] = [];
+				for (const topic of topics) {
+					expect(a.getSubscribers(topic)?.map((key) => key.hashcode())).to.include(
+						b.publicKeyHash,
+					);
+				}
+				const events: UnsubcriptionEvent[] = [];
 				const onUnsubscribe = ({ detail }: CustomEvent<UnsubcriptionEvent>) => {
-					if (
-						detail.from.equals(b.publicKey) &&
-						detail.topics.includes(topic)
-					) {
-						reasons.push(detail.reason);
-					}
+					if (detail.from.equals(b.publicKey)) events.push(detail);
 				};
 				a.addEventListener("unsubscribe", onUnsubscribe);
 				try {
@@ -263,13 +274,19 @@ describe("pubsub (unsubscribe reason)", function () {
 					expect(
 						a.routes.isReachable(a.publicKeyHash, b.publicKeyHash),
 					).to.equal(false);
-					expect(
-						a.getSubscribers(topic)?.map((key) => key.hashcode()) ?? [],
-					).not.to.include(b.publicKeyHash);
-					expect(reasons).to.deep.equal(["peer-unreachable"]);
+					for (const topic of topics) {
+						expect(a.topics.get(topic)?.has(b.publicKeyHash)).to.equal(false);
+						expect(
+							a.getSubscribers(topic)?.map((key) => key.hashcode()) ?? [],
+						).not.to.include(b.publicKeyHash);
+					}
+					expect(a.peerToTopic.has(b.publicKeyHash)).to.equal(false);
+					expect(events).to.have.length(1);
+					expect(events[0]!.reason).to.equal("peer-unreachable");
+					expect(events[0]!.topics).to.have.members(topics);
 					for (const service of services)
 						service.removePeerFromRoutes(b.publicKeyHash, true);
-					expect(reasons).to.deep.equal(["peer-unreachable"]);
+					expect(events).to.have.length(1);
 				} finally {
 					a.removeEventListener("unsubscribe", onUnsubscribe);
 				}
@@ -278,6 +295,78 @@ describe("pubsub (unsubscribe reason)", function () {
 			}
 		});
 	}
+
+	it("removes every shard's subscriptions after a gated transport hang-up", async () => {
+		const topics = [
+			"unsubscribe-shared-routes-0",
+			"unsubscribe-shared-routes-1",
+		];
+		const session = await createDisconnectedSession(2);
+		let partitioned = false;
+		const listeners: Array<() => void> = [];
+		try {
+			for (const peer of session.peers) {
+				// TestSession does not forward connectionGater options. Gate its real
+				// libp2p components so background discovery cannot undo the partition.
+				Object.assign((peer as any).components.connectionGater, {
+					denyDialPeer: () => partitioned,
+					denyInboundConnection: () => partitioned,
+				});
+			}
+			const { a, b } = await setupTrackedSubscribers(topics[0]!, session);
+			expect(a["getShardTopicForUserTopic"](topics[0]!)).not.to.equal(
+				a["getShardTopicForUserTopic"](topics[1]!),
+			);
+			await Promise.all([a.subscribe(topics[1]!), b.subscribe(topics[1]!)]);
+			const directions = [[a, b], [b, a]] as const;
+			const events: UnsubcriptionEvent[][] = [[], []];
+			for (const [index, [subject, remote]] of directions.entries()) {
+				const onUnsubscribe = ({ detail }: CustomEvent<UnsubcriptionEvent>) => {
+					if (detail.from.equals(remote.publicKey)) events[index]!.push(detail);
+				};
+				subject.addEventListener("unsubscribe", onUnsubscribe);
+				listeners.push(() =>
+					subject.removeEventListener("unsubscribe", onUnsubscribe),
+				);
+			}
+			await waitForResolved(() => {
+				for (const [index, [subject, remote]] of directions.entries()) {
+					expect([
+						...(subject.peerToTopic.get(remote.publicKeyHash) ?? []),
+					]).to.have.members(topics);
+					expect(session.peers[index]!.getDialQueue()).to.have.length(0);
+				}
+			});
+			partitioned = true;
+			await Promise.all([
+				session.peers[0]!.hangUp(session.peers[1]!.peerId),
+				session.peers[1]!.hangUp(session.peers[0]!.peerId),
+			]);
+			await waitForResolved(
+				() => {
+					for (const [index, [subject, remote]] of directions.entries()) {
+						expect(session.peers[index]!.getConnections()).to.have.length(0);
+						expect(
+							subject.routes.isReachable(subject.publicKeyHash, remote.publicKeyHash),
+						).to.equal(false);
+						expect(subject.peerToTopic.has(remote.publicKeyHash)).to.equal(false);
+						for (const topic of topics) {
+							expect(subject.topics.get(topic)?.has(remote.publicKeyHash)).to.equal(
+								false,
+							);
+						}
+						expect(events[index]).to.have.length(1);
+						expect(events[index]![0]!.reason).to.equal("peer-unreachable");
+						expect(events[index]![0]!.topics).to.have.members(topics);
+					}
+				},
+				{ timeout: 5_000 },
+			);
+		} finally {
+			for (const remove of listeners) remove();
+			await session.stop();
+		}
+	});
 
 	it("retains subscriptions while shared routes have a surviving alternative", async () => {
 		const topic = "unsubscribe-shared-routes-alternative";

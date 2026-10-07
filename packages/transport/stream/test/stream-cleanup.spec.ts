@@ -42,7 +42,7 @@ describe("peer stream shutdown", () => {
 		try {
 			await streams.close();
 		} finally {
-			clock.restore();
+			sinon.restore();
 		}
 	});
 
