@@ -341,6 +341,7 @@ jobs:
           packages/programs/data/shared-log/dist/test/partition-recovery.spec.js
           packages/programs/data/shared-log/dist/test/partition-stream-renewal.spec.js
           packages/programs/data/shared-log/dist/test/transport-recovery-hint.spec.js
+          packages/transport/stream/dist/test/stream-cleanup.spec.js
           packages/transport/pubsub/dist/test/subscribe-races.spec.js
           packages/transport/pubsub/dist/test/provider-directory.spec.js
           packages/transport/pubsub/dist/test/unsubscribe-order.spec.js
