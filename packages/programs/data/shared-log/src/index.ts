@@ -27,6 +27,7 @@ import {
 } from "@peerbit/crypto";
 import {
 	And,
+	BoolQuery,
 	ByteMatchQuery,
 	type DeleteOptions,
 	type IdKey,
@@ -8389,11 +8390,34 @@ export class SharedLog<
 		this.throwIfReplicationOwnershipLifecycleInactive(
 			ownershipLifecycleController,
 		);
-		const heads = await this.log.getHeads(true).all();
+		const index = this.log.entryIndex;
+		const nativeGraph = index.properties.nativeGraph;
+		const useNativeHeads = nativeGraph?.useHeads === true;
+		const iterator = index.iterate(
+			[new BoolQuery({ key: "head", value: true })],
+			[],
+			{ type: "shape", shape: { hash: true } },
+		);
+		const headHashes = new Set<string>();
+		try {
+			const heads = await iterator.all();
+			this.throwIfReplicationOwnershipLifecycleInactive(
+				ownershipLifecycleController,
+			);
+			// Native pruning can promote a parent without a current lower head row.
+			const nativeHeads = useNativeHeads
+				? new Set(nativeGraph!.graph.heads())
+				: undefined;
+			for (const head of heads) {
+				if (!nativeHeads || nativeHeads.has(head.hash))
+					headHashes.add(head.hash);
+			}
+		} finally {
+			await iterator.close();
+		}
 		this.throwIfReplicationOwnershipLifecycleInactive(
 			ownershipLifecycleController,
 		);
-		const headsByHash = new Map(heads.map((head) => [head.hash, head]));
 		const nativeCoordinateState =
 			this._nativeBackbone ?? this._nativeSharedLogState;
 		const nativeHashes = nativeCoordinateState?.getEntryCoordinateHashes();
@@ -8410,7 +8434,20 @@ export class SharedLog<
 			ownershipLifecycleController,
 		);
 		const staleHashes = [...indexedHashes].filter(
-			(hash) => !headsByHash.has(hash),
+			(hash) => !headHashes.has(hash),
+		);
+		const missingHashes = [...headHashes].filter(
+			(hash) => !indexedHashes.has(hash),
+		);
+		// Resolve required entries before cleanup; indexed heads need no block read.
+		const heads = missingHashes.length
+			? await index.getMany(missingHashes, {
+					type: "full",
+					ignoreMissing: useNativeHeads,
+				})
+			: [];
+		this.throwIfReplicationOwnershipLifecycleInactive(
+			ownershipLifecycleController,
 		);
 
 		if (staleHashes.length > 0) {
@@ -8425,7 +8462,7 @@ export class SharedLog<
 
 		const missingHeads: EntryLeaderBatchItem<R>[] = [];
 		for (const head of heads) {
-			if (indexedHashes.has(head.hash)) {
+			if (!head) {
 				continue;
 			}
 			missingHeads.push({
