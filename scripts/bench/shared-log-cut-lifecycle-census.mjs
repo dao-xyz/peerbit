@@ -8,6 +8,7 @@ import {
 	buildCutLifecycleCensusReport,
 	buildCutLifecycleComparison,
 	deleteHeadMatches,
+	hasDurableCutBlocks,
 	parseCutLifecycleCensusArgs,
 	validateCutLifecycleState,
 } from "./shared-log-cut-lifecycle-census-lib.mjs";
@@ -63,7 +64,7 @@ const collectState = async ({ store, EntryType }) => {
 				Promise.all(
 					hashes.map(async (hash) => (await log.log.getShallow(hash)) != null),
 				),
-				log.remoteBlocks.hasMany(hashes),
+				hasDurableCutBlocks(log.remoteBlocks.localStore, hashes),
 			]);
 			const retainedNativeHashes = backbone.graph.hasMany(hashes);
 			lowerHeadNotNativeRows += deleteHeadMatches(unmatchedNativeHeads, hashes);
