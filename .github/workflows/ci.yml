@@ -335,6 +335,8 @@ jobs:
           --timeout 60000 --retries 0 --no-exit
           packages/transport/stream/dist/test/stream-before-stop.spec.js
           packages/transport/stream/dist/test/stream-replacement.spec.js
+          packages/transport/stream/dist/test/alternate-route-disconnect.spec.js
+          packages/transport/stream/dist/test/routes.spec.js
           packages/transport/stream/dist/test/ack-wait-ownership.spec.js
           packages/programs/data/shared-log/dist/test/partition-recovery.spec.js
           packages/programs/data/shared-log/dist/test/partition-stream-renewal.spec.js
@@ -939,6 +941,7 @@ jobs:
           --no-config --no-package --require chai-extend/chai-global.js
           --require ./scripts/ci/use-rust-stream-core.mjs
           --timeout 60000 --retries 0 --no-exit
+          packages/transport/stream/dist/test/alternate-route-disconnect.spec.js
           packages/programs/data/shared-log/dist/test/transport-recovery-hint.spec.js
           packages/programs/data/shared-log/dist/test/partition-recovery.spec.js
           packages/programs/data/shared-log/dist/test/partition-stream-renewal.spec.js

@@ -1,5 +1,6 @@
 import { delay } from "@peerbit/time";
 import { expect } from "chai";
+import sinon from "sinon";
 import { Routes } from "../src/routes.js";
 import { resolveInjectedRustCore } from "../src/rust-core.js";
 
@@ -187,6 +188,129 @@ describe("routes", () => {
 	});
 
 	describe("remove", () => {
+		for (const neighbourOnly of [false, true]) {
+			it(`does not retain an expired relay after ${neighbourOnly ? "next-hop" : "default identity"} removal of the live direct route`, () => {
+				const clock = sinon.useFakeTimers({ now: 1_000_000, toFake: ["Date"] });
+				const controller = new AbortController();
+				const routeMaxRetentionPeriod = 1_000;
+				const routes =
+					resolveInjectedRustCore()?.createRoutes({
+						me,
+						routeMaxRetentionPeriod,
+						signal: controller.signal,
+					}) ??
+					new Routes(me, {
+						routeMaxRetentionPeriod,
+						signal: controller.signal,
+					});
+				try {
+					routes.add(me, b, a, 1, 10, 123);
+					routes.add(me, a, a, -1, 11, 123);
+					routes.updateSession(a, 123);
+					routes.add(a, b, c, 1, 11, 456);
+					const relay = routes
+						.findNeighbor(me, a)!
+						.list.find((route) => route.hash === b)!;
+					expect(relay.expireAt).to.equal(Date.now() + routeMaxRetentionPeriod);
+					expect(
+						routes.findNeighbor(me, a)!.list.find((route) => route.hash === a)!
+							.expireAt,
+					).to.equal(undefined);
+					// Advance only Date. The real cleanup timer has not run, so removal
+					// must not mistake the physically retained expired row for a route.
+					clock.setSystemTime(Date.now() + routeMaxRetentionPeriod + 1);
+					expect(routes.findNeighbor(me, a)!.list).to.have.length(2);
+					expect(
+						routes.getRouteHints(me, a).map((route) => route.nextHop),
+					).to.deep.equal([a]);
+					expect(routes.isReachable(me, a)).to.equal(true);
+					expect(
+						routes.remove(
+							a,
+							neighbourOnly ? { neighbourOnly: true } : undefined,
+						),
+					).to.deep.equal([a]);
+					expect(routes.isReachable(me, a)).to.equal(false);
+					expect(routes.findNeighbor(me, a)).to.equal(undefined);
+					expect(routes.getSession(a)).to.equal(undefined);
+					expect(routes.routes.has(a)).to.equal(false);
+					expect(routes.routes.has(me)).to.equal(false);
+				} finally {
+					controller.abort();
+					routes.clear();
+					clock.restore();
+				}
+			});
+		}
+
+		it("discards session and source rows when each last direct next hop is removed", () => {
+			const controller = new AbortController();
+			const routes =
+				resolveInjectedRustCore()?.createRoutes({
+					me,
+					routeMaxRetentionPeriod: 10_000,
+					signal: controller.signal,
+				}) ?? new Routes(me, { signal: controller.signal });
+			try {
+				for (const [index, peer] of [a, b, c].entries()) {
+					const session = 123 + index;
+					routes.add(me, peer, peer, -1, Date.now(), session);
+					routes.updateSession(peer, session);
+					routes.add(peer, d, "tail", 1, Date.now(), 456);
+					expect(routes.isReachable(me, peer)).to.equal(true);
+					expect(routes.getSession(peer)).to.equal(session);
+					expect(routes.remove(peer, { neighbourOnly: true })).to.deep.equal([
+						peer,
+					]);
+					expect(routes.isReachable(me, peer)).to.equal(false);
+					expect(routes.getSession(peer)).to.equal(undefined);
+					expect(routes.routes.size).to.equal(0);
+					expect(routes.remove(peer, { neighbourOnly: true })).to.deep.equal(
+						[],
+					);
+				}
+			} finally {
+				controller.abort();
+				routes.clear();
+			}
+		});
+
+		it("distinguishes a lost next hop from a departed identity", () => {
+			const controller = new AbortController();
+			const routes =
+				resolveInjectedRustCore()?.createRoutes({
+					me,
+					routeMaxRetentionPeriod: 10_000,
+					signal: controller.signal,
+				}) ?? new Routes(me, { signal: controller.signal });
+			try {
+				const now = Date.now();
+				for (const relay of [a, b]) routes.add(me, relay, a, 1, now, 123);
+				routes.updateSession(a, 123);
+				routes.add(me, a, c, 1, now, 456);
+				routes.updateSession(c, 456);
+				routes.add(a, b, d, 1, now, 789);
+				const retained = routes
+					.getRouteHints(me, a)
+					.find((x) => x.nextHop === b);
+				expect(routes.remove(a, { neighbourOnly: true })).to.deep.equal([c]);
+				expect(routes.isReachable(me, a)).to.equal(true);
+				expect(routes.getRouteHints(me, a)).to.deep.equal([retained]);
+				expect(routes.getSession(a)).to.equal(123);
+				expect(
+					routes.findNeighbor(a, d)?.list.map((x) => x.hash),
+				).to.deep.equal([b]);
+				expect(routes.remove(a, { neighbourOnly: true })).to.deep.equal([]);
+				// Default full removal still invalidates the identity and its session.
+				expect(routes.remove(a)).to.deep.equal([a]);
+				expect(routes.getSession(a)).to.equal(undefined);
+				expect(routes.findNeighbor(a, d)).to.equal(undefined);
+			} finally {
+				controller.abort();
+				routes.clear();
+			}
+		});
+
 		it("remote", async () => {
 			const routes = new Routes(me);
 			routes.add(me, a, b, 0, +new Date(), +new Date());

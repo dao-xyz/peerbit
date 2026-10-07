@@ -219,8 +219,17 @@ impl DirectStreamRoutes {
         self.inner.route_max_retention_period = ms.max(0.0) as u64;
     }
 
-    pub fn remove(&mut self, target: &str) -> Vec<String> {
-        self.inner.remove(target)
+    pub fn remove(
+        &mut self,
+        target: &str,
+        neighbour_only: Option<bool>,
+        now_ms: Option<f64>,
+    ) -> Vec<String> {
+        self.inner.remove_routes(
+            target,
+            neighbour_only.unwrap_or(false),
+            now_ms.unwrap_or(0.0).max(0.0) as u64,
+        )
     }
 
     pub fn remove_neighbour(&mut self, neighbour: &str) {
