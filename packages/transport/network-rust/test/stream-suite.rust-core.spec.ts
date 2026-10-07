@@ -19,6 +19,7 @@ const STREAM_SUITE_SPECS = [
 	"stream.spec.js",
 	"stream-before-stop.spec.js",
 	"stream-replacement.spec.js",
+	"alternate-route-disconnect.spec.js",
 	"routes.spec.js",
 	"priority-lanes.spec.js",
 	"it-pushable.spec.js",

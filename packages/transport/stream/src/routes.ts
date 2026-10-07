@@ -37,7 +37,7 @@ export interface RoutesLike {
 		session: number,
 		remoteSession: number,
 	): "new" | "updated" | "restart";
-	remove(target: string): string[];
+	remove(target: string, options?: { neighbourOnly?: boolean }): string[];
 	removeNeighbour(neighbour: string): void;
 	findNeighbor(from: string, target: string): RouteInfo | undefined;
 	getRouteHints(from: string, target: string): DirectStreamAckRouteHint[];
@@ -358,19 +358,26 @@ export class Routes {
 	 * @param target
 	 * @returns unreachable nodes (from me) after removal
 	 */
-	remove(target: string) {
-		this.routes.delete(target);
+	remove(target: string, options?: { neighbourOnly?: boolean }) {
+		// Losing one next hop does not mean the target identity left the network.
+		const removeIdentity = !options?.neighbourOnly;
+		const now = Date.now();
+		if (removeIdentity) this.routes.delete(target);
 		const maybeUnreachable: Set<string> = new Set();
 		let targetRemoved = false;
 		for (const [fromMapKey, fromMap] of this.routes) {
 			// delete target
-			const deletedAsTarget = fromMap.delete(target);
+			const deletedAsTarget = removeIdentity && fromMap.delete(target);
 			targetRemoved =
 				targetRemoved || (deletedAsTarget && fromMapKey === this.me);
 
 			// delete this as neighbour
 			for (const [remote, neighbours] of fromMap) {
-				const filtered = neighbours.list.filter((x) => x.hash !== target);
+				const filtered = neighbours.list.filter(
+					(x) =>
+						x.hash !== target &&
+						(removeIdentity || x.expireAt == null || x.expireAt >= now),
+				);
 				neighbours.list = filtered;
 				if (neighbours.list.length === 0) {
 					fromMap.delete(remote);
@@ -387,7 +394,14 @@ export class Routes {
 				this.routes.delete(fromMapKey);
 			}
 		}
-		this.remoteInfo.delete(target);
+		if (removeIdentity || !this.isReachable(this.me, target)) {
+			this.routes.delete(target);
+			this.remoteInfo.delete(target);
+		} else if (this.remoteInfo.get(target)?.session === -1) {
+			// The direct-neighbour sentinel must not freeze later signed sessions.
+			const session = this.routes.get(this.me)!.get(target)!.remoteSession;
+			if (session >= 0) this.remoteInfo.set(target, { session });
+		}
 
 		if (targetRemoved) {
 			maybeUnreachable.add(target);

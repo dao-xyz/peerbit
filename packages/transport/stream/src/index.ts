@@ -2239,10 +2239,13 @@ export abstract class DirectStream<
 			// tell dependent peers that there is a node that might have left
 			const dependent = this.routes.getDependent(peerKeyHash);
 
-			// make neighbour unreachables
-			this.removePeerFromRoutes(peerKeyHash, true);
+			// Retire the lost next hop, not surviving paths to the same identity.
+			this.removePeerFromRoutes(peerKeyHash, true, { neighbourOnly: true });
 
-			if (dependent.length > 0) {
+			if (
+				dependent.length > 0 &&
+				!this.routes.isReachable(this.publicKeyHash, peerKeyHash)
+			) {
 				const goodbye = await new Goodbye({
 					leaving: [peerKeyHash],
 					header: new MessageHeader({
@@ -2250,7 +2253,12 @@ export abstract class DirectStream<
 						mode: new SilentDelivery({ to: dependent, redundancy: 2 }),
 					}),
 				}).sign(this.sign);
-				if (this.stopping || !this.started || this.peers.has(peerKeyHash)) {
+				if (
+					this.stopping ||
+					!this.started ||
+					this.peers.has(peerKeyHash) ||
+					this.routes.isReachable(this.publicKeyHash, peerKeyHash)
+				) {
 					return;
 				}
 				await this.publishMessageMaybe(
@@ -2266,12 +2274,16 @@ export abstract class DirectStream<
 		logger.trace("connection ended:" + peerKey.toString());
 	}
 
-	public removePeerFromRoutes(hash: string, deleteIfNeighbour = false) {
+	public removePeerFromRoutes(
+		hash: string,
+		deleteIfNeighbour = false,
+		options?: { neighbourOnly?: boolean },
+	) {
 		if (this.peers.has(hash) && !deleteIfNeighbour) {
 			return;
 		}
 
-		const unreachable = this.routes.remove(hash);
+		const unreachable = this.routes.remove(hash, options);
 		const state = this.sharedRoutingState;
 		const consumers = [...(state?.consumers ?? [this])];
 		const failures: unknown[] = [];

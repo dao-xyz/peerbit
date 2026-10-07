@@ -399,7 +399,18 @@ impl Routes {
 
     /// Returns unreachable nodes (from me) after removal.
     pub fn remove(&mut self, target: &str) -> Vec<String> {
-        self.routes.shift_remove(target);
+        self.remove_routes(target, false, 0)
+    }
+
+    pub fn remove_routes(
+        &mut self,
+        target: &str,
+        neighbour_only: bool,
+        now_ms: u64,
+    ) -> Vec<String> {
+        if !neighbour_only {
+            self.routes.shift_remove(target);
+        }
         let mut maybe_unreachable: Vec<String> = Vec::new();
         let mut target_removed = false;
         let from_keys: Vec<String> = self.routes.keys().cloned().collect();
@@ -409,7 +420,7 @@ impl Routes {
                 continue;
             };
             // delete target
-            let deleted_as_target = from_map.shift_remove(target).is_some();
+            let deleted_as_target = !neighbour_only && from_map.shift_remove(target).is_some();
             target_removed = target_removed || (deleted_as_target && from_key == me);
 
             // delete this as neighbour
@@ -418,7 +429,10 @@ impl Routes {
                 let Some(neighbours) = from_map.get_mut(&remote) else {
                     continue;
                 };
-                neighbours.list.retain(|x| x.hash != target);
+                neighbours.list.retain(|x| {
+                    x.hash != target
+                        && (!neighbour_only || !matches!(x.expire_at, Some(at) if at < now_ms))
+                });
                 if neighbours.list.is_empty() {
                     from_map.shift_remove(&remote);
                     if from_key == me && !maybe_unreachable.contains(&remote) {
@@ -430,7 +444,20 @@ impl Routes {
                 self.routes.shift_remove(&from_key);
             }
         }
-        self.remote_info.remove(target);
+        if !neighbour_only || !self.is_reachable(&self.me, target, MAX_ROUTE_DISTANCE) {
+            self.routes.shift_remove(target);
+            self.remote_info.remove(target);
+        } else if self.remote_info.get(target) == Some(&-1) {
+            // Retire the direct-only sentinel without inventing a remote epoch.
+            if let Some(session) = self
+                .find_neighbor(&self.me, target)
+                .map(|row| row.remote_session)
+            {
+                if session >= 0 {
+                    self.remote_info.insert(target.to_string(), session);
+                }
+            }
+        }
 
         if target_removed && !maybe_unreachable.contains(&target.to_string()) {
             maybe_unreachable.push(target.to_string());
@@ -987,6 +1014,64 @@ mod tests {
         assert!(unreachable.contains(&"n".to_string()));
         assert!(unreachable.contains(&"t".to_string()));
         assert_eq!(r.count("me"), 0);
+    }
+
+    #[test]
+    fn neighbour_removal_preserves_alternative_routes_and_session() {
+        let mut r = routes("me");
+        for next in ["target", "relay"] {
+            r.add("me", next, "target", 1, 100, 123, NOW);
+        }
+        r.update_session("target", Some(123));
+        r.add("me", "target", "dependent", 1, 100, 456, NOW);
+        r.update_session("dependent", Some(456));
+        r.add("target", "relay", "other", 1, 100, 789, NOW);
+        assert_eq!(r.remove_routes("target", true, NOW), vec!["dependent"]);
+        assert!(r.is_reachable("me", "target", MAX_ROUTE_DISTANCE));
+        assert_eq!(r.get_session("target"), Some(123));
+        let remaining = &r.find_neighbor("me", "target").unwrap().list;
+        assert_eq!(remaining.len(), 1);
+        assert_eq!(remaining[0].hash, "relay");
+        assert_eq!(remaining[0].updated_at, NOW);
+        assert!(r.find_neighbor("target", "other").is_some());
+        assert!(r.remove_routes("target", true, NOW).is_empty());
+        assert_eq!(r.remove("target"), vec!["target"]);
+        assert_eq!(r.get_session("target"), None);
+        assert!(r.find_neighbor("target", "other").is_none());
+    }
+
+    #[test]
+    fn neighbour_removal_retires_only_an_authenticated_direct_sentinel() {
+        for session in [-1, 123] {
+            let mut r = routes("me");
+            for next in ["target", "relay"] {
+                r.add("me", next, "target", 1, 100, session, NOW);
+            }
+            r.update_session("target", Some(-1));
+            assert!(r.remove_routes("target", true, NOW).is_empty());
+            assert_eq!(r.get_session("target"), Some(session));
+            if session >= 0 {
+                assert!(r.update_session("target", Some(session + 1)));
+                assert!(!r.update_session("target", Some(session)));
+            }
+        }
+    }
+
+    #[test]
+    fn neighbour_removal_drops_expired_alternative_and_departed_session() {
+        let mut r = routes("me");
+        r.add("me", "relay", "target", 1, 100, 123, NOW);
+        r.add("me", "target", "target", -1, 101, 123, NOW);
+        r.update_session("target", Some(123));
+        r.add("target", "relay", "other", 1, 100, 456, NOW);
+        assert_eq!(
+            r.remove_routes("target", true, NOW + 10_001),
+            vec!["target"]
+        );
+        assert!(!r.is_reachable("me", "target", MAX_ROUTE_DISTANCE));
+        assert_eq!(r.get_session("target"), None);
+        assert!(r.find_neighbor("target", "other").is_none());
+        assert!(r.remove_routes("target", true, NOW + 10_001).is_empty());
     }
 
     #[test]
