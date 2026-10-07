@@ -9,6 +9,7 @@ import * as types from "@peerbit/indexer-interface";
 import { v4 as uuid } from "uuid";
 import { PlannableQuery, QueryPlanner } from "./query-planner.js";
 import {
+	type BindableValue,
 	MissingFieldError,
 	type Table,
 	buildJoin,
@@ -214,6 +215,18 @@ export class SQLiteIndex<T extends Record<string, any>>
 	private state: "closed" | "open" | "closing" = "closed";
 	private fkMode: FKMode;
 	private mutationVersion = 0;
+	private keyScanGeneration?: symbol;
+	private keyScanMutations = 0;
+
+	private async withKeyMutation<R>(operation: () => Promise<R>): Promise<R> {
+		this.keyScanGeneration = undefined;
+		this.keyScanMutations++;
+		try {
+			return await operation();
+		} finally {
+			this.keyScanMutations--;
+		}
+	}
 
 	id: string;
 	constructor(
@@ -306,6 +319,7 @@ export class SQLiteIndex<T extends Record<string, any>>
 	}
 
 	private setClosing() {
+		this.keyScanGeneration = undefined;
 		this.state = "closing";
 		this.closed = true;
 	}
@@ -316,6 +330,7 @@ export class SQLiteIndex<T extends Record<string, any>>
 	}
 
 	private setOpen() {
+		this.keyScanGeneration = undefined;
 		this.state = "open";
 		this.closed = false;
 	}
@@ -342,6 +357,7 @@ export class SQLiteIndex<T extends Record<string, any>>
 	}
 
 	init(properties: IndexEngineInitProperties<T, any>) {
+		this.keyScanGeneration = undefined;
 		if (properties.indexBy) {
 			this.primaryKeyArr = Array.isArray(properties.indexBy)
 				? properties.indexBy
@@ -686,10 +702,12 @@ export class SQLiteIndex<T extends Record<string, any>>
 		_id?: any,
 		options?: { replace?: boolean },
 	): Promise<void> {
-		return this.withDatabaseIfOpen(undefined, async () => {
-			await this.putUnlocked(value, options);
-			this.mutationVersion++;
-		});
+		return this.withKeyMutation(() =>
+			this.withDatabaseIfOpen(undefined, async () => {
+				await this.putUnlocked(value, options);
+				this.mutationVersion++;
+			}),
+		);
 	}
 
 	private async putUnlocked(
@@ -812,21 +830,29 @@ export class SQLiteIndex<T extends Record<string, any>>
 	}
 
 	async putBatch(values: T[]): Promise<void> {
-		return this.withDatabaseIfOpen(undefined, async () => {
-			for (
-				let offset = 0;
-				offset < values.length;
-				offset += PUT_BATCH_CHUNK_SIZE
-			) {
-				await this.putBatchChunk(
-					values.slice(offset, offset + PUT_BATCH_CHUNK_SIZE),
-				);
-				this.mutationVersion++;
-			}
-		});
+		return this.withKeyMutation(() =>
+			this.withDatabaseIfOpen(undefined, async () => {
+				for (
+					let offset = 0;
+					offset < values.length;
+					offset += PUT_BATCH_CHUNK_SIZE
+				) {
+					await this.putBatchChunk(
+						values.slice(offset, offset + PUT_BATCH_CHUNK_SIZE),
+					);
+					this.mutationVersion++;
+				}
+			}),
+		);
 	}
 
 	async withOrderedWriteSession<R>(
+		operation: (session: types.OrderedIndexWriteSession<T>) => Promise<R> | R,
+	): Promise<R> {
+		return this.withKeyMutation(() => this.orderedWriteSession(operation));
+	}
+
+	private async orderedWriteSession<R>(
 		operation: (session: types.OrderedIndexWriteSession<T>) => Promise<R> | R,
 	): Promise<R> {
 		this.assertOpen();
@@ -969,6 +995,106 @@ export class SQLiteIndex<T extends Record<string, any>>
 			releaseAdmission?.();
 			releaseAdmission = undefined;
 		}
+	}
+
+	get scanKeyPrimitives(): Index<T>["scanKeyPrimitives"] {
+		// Independent variant tables can contain the same key. Do not advertise a
+		// union inventory until it can deduplicate without retaining all keys.
+		if (this._rootTables.length > 1) return undefined;
+		return (options) => this.createKeyScan(options);
+	}
+
+	private createKeyScan({
+		pageSize,
+		signal,
+	}: types.IndexKeyScanOptions): types.IndexKeyScan {
+		if (!Number.isInteger(pageSize) || pageSize < 1 || pageSize > 4096) {
+			throw new RangeError(
+				"Key scan pageSize must be an integer from 1 to 4096",
+			);
+		}
+		this.assertOpen();
+		if (this._rootTables.length !== 1)
+			throw new Error("Key inventory requires one root table");
+		const table = this._rootTables[0]!;
+		const primary = escapeColumnName(table.primary as string);
+		const generation = (this.keyScanGeneration ??= Symbol());
+		let owner: SQLiteIndex<T> | undefined = this;
+		let anchor: BindableValue | undefined;
+		let terminal: Exclude<types.IndexKeyScanPage["status"], "more"> | undefined;
+		const finish = (status: NonNullable<typeof terminal>) => {
+			if (terminal) return;
+			terminal = status;
+			owner = undefined;
+			anchor = undefined;
+			signal?.removeEventListener("abort", onAbort);
+		};
+		const onAbort = () => finish("aborted");
+		const checkOwner = () => {
+			if (terminal) return;
+			if (signal?.aborted) finish("aborted");
+			else if (owner!.state !== "open") finish("closed");
+			else if (
+				owner!.keyScanGeneration !== generation ||
+				owner!.keyScanMutations
+			)
+				finish("invalidated");
+		};
+		checkOwner();
+		if (!terminal) signal?.addEventListener("abort", onAbort, { once: true });
+		return {
+			next: async () => {
+				checkOwner();
+				if (terminal) return { status: terminal, keys: [] };
+				const current = owner!;
+				try {
+					return await current.withDatabaseBarrier(
+						async (): Promise<types.IndexKeyScanPage> => {
+							checkOwner();
+							if (terminal) return { status: terminal, keys: [] };
+							const sql = `select ${primary} as key from ${table.name}${anchor === undefined ? "" : ` where ${primary} > ?`} order by ${primary} limit ?`;
+							const statement = await current.getOrPrepareStatement(sql, sql);
+							checkOwner();
+							if (terminal) return { status: terminal, keys: [] };
+							let rows: { key: any }[];
+							try {
+								rows = await statement.all(
+									anchor === undefined ? [pageSize] : [anchor, pageSize],
+								);
+							} catch (error) {
+								try {
+									await statement.reset?.();
+								} catch {
+									// Preserve the read error if cleanup also fails.
+								}
+								throw error;
+							}
+							await statement.reset?.();
+							checkOwner();
+							if (terminal) return { status: terminal, keys: [] };
+							const keys = rows.map(
+								({ key }) =>
+									types.toId(
+										convertFromSQLType(key, table.primaryField!.unwrappedType),
+									).primitive,
+							);
+							if (rows.length < pageSize) {
+								finish("complete");
+								return { status: "complete", keys };
+							}
+							const last = rows[rows.length - 1]!.key;
+							// Seek with the stored SQL value, not a decoded u64/byte primitive.
+							anchor = last instanceof Uint8Array ? last.slice() : last;
+							return { status: "more", keys };
+						},
+					);
+				} catch (error) {
+					finish("failed");
+					throw error;
+				}
+			},
+			close: () => finish("closed"),
+		};
 	}
 
 	iterate<S extends Shape | undefined>(
@@ -1419,6 +1545,12 @@ export class SQLiteIndex<T extends Record<string, any>>
 	}
 
 	async del(query: types.DeleteOptions): Promise<types.IdKey[]> {
+		return this.withKeyMutation(() => this.deleteWithPlanning(query));
+	}
+
+	private async deleteWithPlanning(
+		query: types.DeleteOptions,
+	): Promise<types.IdKey[]> {
 		if (this.isClosing()) {
 			return [];
 		}
