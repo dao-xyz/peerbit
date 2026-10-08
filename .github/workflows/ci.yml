@@ -313,6 +313,17 @@ jobs:
           -- --retries 0
       - name: Verify default peers exit naturally after replication
         run: node --test scripts/ci/peerbit-shutdown-lifecycle.test.mjs scripts/ci/peerbit-shutdown.test.mjs
+      - name: Test recovery ownership fences without retries
+        timeout-minutes: 3
+        env:
+          AEGIR_RUNNER: node
+          NODE_ENV: test
+        run: >-
+          node scripts/ci/assert-tests-ran.mjs node ./node_modules/mocha/bin/mocha.js
+          --no-config --no-package --require chai-extend/chai-global.js
+          --timeout 60000 --retries 0 --no-exit
+          packages/log/dist/test/mutation-generation.spec.js
+          packages/programs/rpc/dist/test/request-physical-settlement.spec.js
       - name: Test protected recovery without retries or forced exit
         timeout-minutes: 3
         working-directory: packages/programs/acl/trusted-network

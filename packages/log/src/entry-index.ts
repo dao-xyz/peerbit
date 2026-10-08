@@ -715,6 +715,7 @@ export class EntryIndex<T> {
 	private hashMutationLockTails: Map<string, Promise<void>>;
 	private sharedMutationAdmissions = 0;
 	private exclusiveMutationAdmission = false;
+	private mutationGeneration = Symbol();
 	private mutationAdmissionQueue: Array<{
 		exclusive: boolean;
 		grant: () => void;
@@ -891,6 +892,7 @@ export class EntryIndex<T> {
 
 	/** Reject new lower mutations while a durable intent needs recovery. */
 	poisonNativeDurableTransactionMutations(cause: unknown) {
+		this.mutationGeneration = Symbol();
 		this.nativeDurableTransactionMutationFailure ??= cause;
 	}
 
@@ -910,7 +912,26 @@ export class EntryIndex<T> {
 		}
 	}
 
+	/** Internal non-waiting fence for coupled authoritative state inventories. */
+	captureMutationGeneration(): symbol | undefined {
+		this.throwIfNativeDurableTransactionMutationsFailed();
+		return this.initialied &&
+			!this.sharedMutationAdmissions &&
+			!this.exclusiveMutationAdmission &&
+			this.mutationAdmissionQueue.length === 0
+			? this.mutationGeneration
+			: undefined;
+	}
+
+	/** Internal: includes queued admission, not just completed index writes. */
+	isMutationGenerationCurrent(generation: symbol): boolean {
+		return this.captureMutationGeneration() === generation;
+	}
+
 	private acquireMutationAdmission(exclusive: boolean): MutationAdmission {
+		// Invalidate before granting or queueing: an attempted/no-op mutation also
+		// breaks an inventory, and native ownership spans durable finalization.
+		this.mutationGeneration = Symbol();
 		let granted = false;
 		let released = false;
 		const grant = () => {
@@ -4931,6 +4952,7 @@ export class EntryIndex<T> {
 	}
 
 	async init() {
+		this.mutationGeneration = Symbol();
 		this.clearPendingIndexFlushTimer();
 		this.clearIndexRestartPending = false;
 		this.pendingIndexWrites.clear();
