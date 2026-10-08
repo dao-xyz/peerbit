@@ -164,6 +164,7 @@ import {
 	RequestIPruneV2,
 	ResponseIPrune,
 	ResponseIPruneV2,
+	SYNC_CAPABILITY_ENTRY_INVENTORY,
 	SYNC_CAPABILITY_PERSISTED_ENTRY_RECEIPTS,
 	SYNC_CAPABILITY_RAW_EXCHANGE_HEADS,
 	SYNC_CAPABILITY_REPLICATION_INFO_V2_APPLY,
@@ -174,6 +175,7 @@ import {
 	StashBackedRawExchangeHeadsMessage,
 	SyncCapabilitiesMessage,
 	collectRawExchangeHeadSendPlan,
+	createExactExchangeHeadsMessages,
 	createExchangeHeadsMessages,
 	createRawExchangeHeadsMessages,
 	getExchangeHeadHash,
@@ -298,6 +300,10 @@ import {
 } from "./replication.js";
 import { ReplicatorLivenessMonitor } from "./replicator-liveness.js";
 import { SyncReceiveAbortError } from "./sync/dispatch-lifecycle.js";
+import {
+	type EntryInventoryPass,
+	EntryInventoryRecovery,
+} from "./sync/entry-inventory-recovery.js";
 import { createSyncronizer } from "./sync/factory.js";
 import type {
 	SharedLogNativeWireSync,
@@ -318,7 +324,9 @@ import {
 } from "./sync/profile.js";
 import {
 	ConfirmEntriesMessage,
+	ENTRY_INVENTORY_PAGE_SIZE,
 	RECENT_KNOWN_EXCHANGE_HEAD_SUPPRESSION_MS,
+	RequestEntryInventoryV1,
 	RequestPersistedEntriesV1,
 	SYNC_MESSAGE_PRIORITY,
 	SimpleSyncronizer,
@@ -2491,6 +2499,7 @@ export class SharedLog<
 	// compatibility state accessors below re-state the precise R types at their
 	// boundaries, so host-side inference is unchanged.
 	private _coordinates!: CoordinatePersistenceCoordinator<any>;
+	private _entryInventoryRecovery?: EntryInventoryRecovery<PeerSession>;
 	private _completeLowerCoordinateRemoval?: (
 		hashes: readonly string[],
 		owner?: EntryIndexHashMutationLockOwner,
@@ -4209,6 +4218,7 @@ export class SharedLog<
 			SYNC_CAPABILITY_REPLICATION_INFO_V2_SEND |
 			SYNC_CAPABILITY_REPLICATION_INFO_V2_APPLY |
 			SYNC_CAPABILITY_REPLICATION_INFO_V2_CONFIRM |
+			SYNC_CAPABILITY_ENTRY_INVENTORY |
 			(this._persistedReceiptStorage
 				? SYNC_CAPABILITY_PERSISTED_ENTRY_RECEIPTS
 				: 0) |
@@ -7960,6 +7970,7 @@ export class SharedLog<
 	}
 
 	private invalidateLeaderSelectionContextCache() {
+		this._entryInventoryRecovery?.restartActive();
 		if (this._instanceLifecycle) {
 			this._instanceLifecycle._receiveOwnershipRevision++;
 		}
@@ -10882,6 +10893,7 @@ export class SharedLog<
 		target: string,
 		options?: { expectedWarmupSession?: WarmupSession | null },
 	) {
+		this._entryInventoryRecovery?.forget(target);
 		if (
 			options?.expectedWarmupSession === undefined ||
 			(options.expectedWarmupSession !== null &&
@@ -10894,6 +10906,218 @@ export class SharedLog<
 			this._repairFrontierByMode.get(mode)?.delete(target);
 			this._repairFrontierActiveTargetsByMode.get(mode)?.delete(target);
 			this._repairFrontierBypassKnownPeersByMode.get(mode)?.delete(target);
+		}
+	}
+
+	private isEntryInventoryPeerCurrent(
+		peer: string,
+		session: PeerSession,
+	): boolean {
+		return (
+			!this.closed &&
+			session.phase === "open" &&
+			session.isActive() &&
+			this._peerSessions.isCurrent(peer, session)
+		);
+	}
+
+	private recoverPeerEntryInventory(
+		peer: string,
+		session: PeerSession,
+		jobSignal: AbortSignal,
+	): EntryInventoryPass {
+		const terminal = (result: "complete" | "retry"): EntryInventoryPass => ({
+			next: async () => result,
+			close: () => {},
+		});
+		const transportSession = this._peerSyncCapabilitySessions.get(peer);
+		if (transportSession === undefined) return terminal("retry");
+		if (
+			((this._peerSyncCapabilities.get(peer) ?? 0) &
+				SYNC_CAPABILITY_ENTRY_INVENTORY) ===
+			0
+		) {
+			// Old peers keep their existing synchronization behavior. An unsupported
+			// pass is never exposed as a caught-up or durable-replication signal.
+			return terminal("complete");
+		}
+		const lifecycle = this.captureReplicationOwnershipLifecycle();
+		const signal = AbortSignal.any([
+			jobSignal,
+			lifecycle.signal,
+			this._closeController.signal,
+		]);
+		const revision = this._instanceLifecycle?._receiveOwnershipRevision ?? 0;
+		const receiveEpoch = this._peerSessions.receiveEpoch(peer);
+		const lower = this.log.entryIndex;
+		const generation = lower.captureMutationGeneration();
+		const current = () =>
+			!signal.aborted &&
+			generation !== undefined &&
+			lower === this.log.entryIndex &&
+			lower.isMutationGenerationCurrent(generation) &&
+			this.isEntryInventoryPeerCurrent(peer, session) &&
+			!this._peerSessions.isReplicationInfoBlocked(peer) &&
+			this._peerSessions.isReceiveCleanupGateOpen(peer) &&
+			this._peerSessions.receiveEpoch(peer) === receiveEpoch &&
+			this._peerSyncCapabilitySessions.get(peer) === transportSession &&
+			this.isReceiveOwnershipSnapshotStable(revision);
+		if (!current()) return terminal("retry");
+		const cursor = this._coordinates.scanAuthoritativeCoordinateKeys({
+			pageSize: ENTRY_INVENTORY_PAGE_SIZE,
+			signal,
+		});
+		if (!cursor) return terminal("complete"); // No unbounded iterate/all fallback.
+		let incomplete = false;
+		return {
+			next: async () => {
+				if (!current()) return "retry";
+				const page = await cursor.next();
+				if (
+					!current() ||
+					(page.status !== "more" && page.status !== "complete")
+				)
+					return "retry";
+				const hashes: string[] = [];
+				for (const key of page.keys) {
+					if (typeof key !== "string")
+						throw new Error("Coordinate inventory key is not a hash");
+					const coordinate =
+						await this._coordinates.getAuthoritativeCoordinateEntryForInventory(
+							key,
+						);
+					if (!current()) return "retry";
+					if (!coordinate) return "retry";
+					const leaders = await this.findLeadersFromEntry(
+						coordinate,
+						decodeReplicas(coordinate).getValue(this),
+						{ roleAge: 0, freshLeaderPlan: true },
+						lifecycle,
+					);
+					if (!current()) return "retry";
+					if (leaders.has(peer)) hashes.push(key);
+				}
+				if (
+					hashes.length > 0 &&
+					!(await this.recoverEntryInventoryPage(
+						peer,
+						transportSession,
+						hashes,
+						signal,
+						current,
+					))
+				) {
+					// A missed page is not proof of presence. Keep walking so loss or
+					// an authorization rejection near the start cannot starve the tail.
+					incomplete = true;
+				}
+				if (!current()) return "retry";
+				if (page.status === "complete")
+					return incomplete ? "retry" : "complete";
+				// Page-local arrays fall out of scope before the scheduler parks this
+				// pass. Only cursor position, fences and `incomplete` survive a turn.
+				return "more";
+			},
+			close: () => cursor.close(),
+		};
+	}
+
+	private async recoverEntryInventoryPage(
+		peer: string,
+		transportSession: bigint,
+		hashes: string[],
+		signal: AbortSignal,
+		isCurrent: () => boolean,
+	): Promise<boolean> {
+		const deadline = new AbortController();
+		const timer = setTimeout(() => deadline.abort(), 2_000);
+		const pageSignal = AbortSignal.any([signal, deadline.signal]);
+		const current = () => !pageSignal.aborted && isCurrent();
+		const requested = new Set(hashes);
+		let sent = false;
+		try {
+			while (current()) {
+				await this.waitForPersistedReceiptEgressAdmission(
+					peer,
+					transportSession,
+					hashes.length,
+					pageSignal,
+				);
+				if (!current()) return false;
+				let physical: Promise<void> | undefined;
+				let responses: Awaited<ReturnType<typeof this.rpc.request>>;
+				try {
+					responses = await this.rpc.request(
+						new RequestEntryInventoryV1({
+							expectedReceiverSession: transportSession,
+							hashes,
+						}),
+						{
+							mode: new SilentDelivery({ to: [peer], redundancy: 1 }),
+							amount: 1,
+							priority: SYNC_MESSAGE_PRIORITY,
+							timeout: 1_000,
+							signal: pageSignal,
+							isCurrent: current,
+							onPhysicalSettlement: (settled) => {
+								physical = settled;
+							},
+						},
+					);
+				} finally {
+					// RPC timeout/abort can precede publish settlement. Keep this worker
+					// charged until the physical operation actually relinquishes ownership.
+					await physical;
+				}
+				if (!current() || responses.length !== 1) return false;
+				const result = responses[0]!;
+				if (
+					!(result.response instanceof ConfirmEntriesMessage) ||
+					result.from?.hashcode() !== peer ||
+					result.message.header.session !== transportSession ||
+					result.response.hashes.length > hashes.length
+				)
+					return false;
+				const present = new Set(result.response.hashes);
+				if (
+					present.size !== result.response.hashes.length ||
+					[...present].some((hash) => !requested.has(hash))
+				)
+					return false;
+				const missing = hashes.filter((hash) => !present.has(hash));
+				if (missing.length === 0) return true;
+				if (!sent) {
+					// Do not consult old uncorrelated confirmation hints. Only this fresh
+					// response determines the payload subset, through normal canAppend.
+					for await (const message of createExactExchangeHeadsMessages(
+						this.log,
+						missing,
+						current,
+					)) {
+						if (!current()) return false;
+						message.reserved[0] |= EXCHANGE_HEADS_REPAIR_HINT;
+						await this.rpc.send(message, {
+							mode: new SilentDelivery({ to: [peer], redundancy: 1 }),
+							priority: SYNC_MESSAGE_PRIORITY,
+							signal: pageSignal,
+							isCurrent: current,
+						});
+					}
+					sent = true;
+				}
+				await delay(100, { signal: pageSignal });
+			}
+			return false;
+		} catch (error) {
+			if (
+				!current() ||
+				error instanceof AbortError ||
+				error instanceof TimeoutError
+			)
+				return false;
+			throw error;
+		} finally {
+			clearTimeout(timer);
 		}
 	}
 
@@ -17635,7 +17859,9 @@ export class SharedLog<
 				await this._coordinates.withCoordinateMutationOwner(
 					coordinateHashes,
 					async (owner) => {
-						if (!(await this.log.entryIndex.getShallow(entry.hash))?.value.head) {
+						if (
+							!(await this.log.entryIndex.getShallow(entry.hash))?.value.head
+						) {
 							await deleteSupersededCoordinates(owner);
 							return;
 						}
@@ -18917,6 +19143,16 @@ export class SharedLog<
 		const communicationStartedAt = syncProfileStart(openProfile);
 		const membershipController =
 			this._instanceLifecycle!.membershipLifecycleController!;
+		this._entryInventoryRecovery?.close();
+		this._entryInventoryRecovery = new EntryInventoryRecovery({
+			signal: membershipController.signal,
+			isCurrent: (peer, session) =>
+				this.isEntryInventoryPeerCurrent(peer, session),
+			create: (peer, session, signal) =>
+				this.recoverPeerEntryInventory(peer, session, signal),
+			onError: (error) =>
+				logger.trace("Reconnect entry inventory interrupted", error),
+		});
 		this.node.services.pubsub.addEventListener(
 			"peer:stream-ready",
 			({ detail }) => {
@@ -18932,6 +19168,7 @@ export class SharedLog<
 					peerSession,
 					receiveEpoch: this._peerSessions.receiveEpoch(peerHash),
 				});
+				this._entryInventoryRecovery?.wake(peerHash, peerSession);
 			},
 			{ signal: membershipController.signal },
 		);
@@ -22291,6 +22528,7 @@ export class SharedLog<
 				!context.from.equals(this.node.identity.publicKey) &&
 				!(msg instanceof RequestReplicationInfoV2Message) &&
 				!(msg instanceof RequestPersistedEntriesV1) &&
+				!(msg instanceof RequestEntryInventoryV1) &&
 				!isReplicationInfoV2Message(msg)
 			) {
 				this._liveness.markReplicatorActivity(receiveFromHash);
@@ -24007,7 +24245,13 @@ export class SharedLog<
 				};
 				// The prelude already threw when `context.from` was missing.
 				const laneRequestContext = context as ReceiveRequestContext;
-				if (msg instanceof RequestPersistedEntriesV1) {
+				if (msg instanceof RequestEntryInventoryV1) {
+					return await this.handleRequestEntryInventoryV1(
+						msg,
+						laneRequestContext,
+						lane,
+					);
+				} else if (msg instanceof RequestPersistedEntriesV1) {
 					return await this.handleRequestPersistedEntriesV1(
 						msg,
 						laneRequestContext,
@@ -24266,9 +24510,19 @@ export class SharedLog<
 		context: ReceiveRequestContext,
 		lane: ReceiveLaneContext,
 	): boolean {
-		const session = lane.session;
 		return (
 			!!this._persistedReceiptStorage &&
+			this.isEntryPresenceRequestSessionCurrent(request, context, lane)
+		);
+	}
+
+	private isEntryPresenceRequestSessionCurrent(
+		request: { expectedReceiverSession: bigint },
+		context: ReceiveRequestContext,
+		lane: ReceiveLaneContext,
+	): boolean {
+		const session = lane.session;
+		return (
 			!context.from.equals(this.node.identity.publicKey) &&
 			request.expectedReceiverSession === this.ownTransportSession() &&
 			session !== null &&
@@ -24367,6 +24621,91 @@ export class SharedLog<
 		peerBudget.requestTokens -= 1;
 		peerBudget.hashTokens -= hashCost;
 		return true;
+	}
+
+	private async handleRequestEntryInventoryV1(
+		request: RequestEntryInventoryV1,
+		context: ReceiveRequestContext,
+		lane: ReceiveLaneContext,
+	): Promise<ConfirmEntriesMessage | undefined> {
+		if (
+			!this.isEntryPresenceRequestSessionCurrent(request, context, lane) ||
+			((this._peerSyncCapabilities.get(lane.fromHash) ?? 0) &
+				SYNC_CAPABILITY_ENTRY_INVENTORY) ===
+				0 ||
+			// Both request variants share ingress credits: switching variants cannot
+			// double the work available to an authenticated peer.
+			!this.admitPersistedReceiptIngress(
+				lane.fromHash,
+				context.message.header.session,
+				request.hashes.length,
+			)
+		)
+			return undefined;
+		if (
+			request.hashes.length === 0 ||
+			request.hashes.length > ENTRY_INVENTORY_PAGE_SIZE
+		)
+			return undefined;
+		let bytes = 0;
+		for (const hash of request.hashes) {
+			// Canonical CIDs are ASCII. Bound work before parsing or allocating reads.
+			if (hash.length === 0) return undefined;
+			bytes += hash.length;
+			if (bytes > 16 * 1024) return undefined;
+		}
+		if (!this.hasValidPersistedReceiptHashes(request)) return undefined;
+		const inFlight =
+			this._persistedReceiptRequestsInFlight.get(lane.fromHash) ?? 0;
+		if (
+			inFlight >= MAX_PERSISTED_RECEIPT_REQUESTS_PER_PEER ||
+			this._persistedReceiptRequestsInFlightTotal >=
+				MAX_PERSISTED_RECEIPT_REQUESTS_GLOBAL
+		)
+			return undefined;
+		this._persistedReceiptRequestsInFlight.set(lane.fromHash, inFlight + 1);
+		this._persistedReceiptRequestsInFlightTotal++;
+		try {
+			const lower = this.log.entryIndex;
+			const generation = lower.captureMutationGeneration();
+			const revision = this._instanceLifecycle?._receiveOwnershipRevision ?? 0;
+			const current = () =>
+				generation !== undefined &&
+				lower === this.log.entryIndex &&
+				lower.isMutationGenerationCurrent(generation) &&
+				this.isReceiveOwnershipSnapshotStable(revision) &&
+				this.isEntryPresenceRequestSessionCurrent(request, context, lane);
+			if (!current()) return new ConfirmEntriesMessage({ hashes: [] });
+			this.throwIfNativeDurableCommitFailed();
+			const blocks = await this.remoteBlocks.localStore.hasMany(request.hashes);
+			if (!current()) return new ConfirmEntriesMessage({ hashes: [] });
+			const present: string[] = [];
+			for (let i = 0; i < request.hashes.length; i++) {
+				if (!blocks[i]) continue;
+				const hash = request.hashes[i]!;
+				const [row, coordinate] = await Promise.all([
+					lower.getShallow(hash),
+					this._coordinates.getAuthoritativeCoordinateEntryForInventory(hash),
+				]);
+				if (!current()) return new ConfirmEntriesMessage({ hashes: [] });
+				if (row && coordinate && !this._checkedPrune.hasActiveWork(hash))
+					present.push(hash);
+			}
+			this.throwIfNativeDurableCommitFailed();
+			// No barriers, fsync or durable acknowledgment: only a fresh presence
+			// answer to this exact RPC request. Never feed this into delivery receipts.
+			return new ConfirmEntriesMessage({ hashes: current() ? present : [] });
+		} finally {
+			const remaining =
+				(this._persistedReceiptRequestsInFlight.get(lane.fromHash) ?? 1) - 1;
+			if (remaining <= 0)
+				this._persistedReceiptRequestsInFlight.delete(lane.fromHash);
+			else this._persistedReceiptRequestsInFlight.set(lane.fromHash, remaining);
+			this._persistedReceiptRequestsInFlightTotal = Math.max(
+				0,
+				this._persistedReceiptRequestsInFlightTotal - 1,
+			);
+		}
 	}
 
 	private async handleRequestPersistedEntriesV1(
