@@ -14,7 +14,27 @@ describe("receive admission three-peer held entry recovery", function () {
 			const listeners = new AbortController();
 			const transitions: object[] = [];
 			const deniedDials: object[] = [];
+			const diagnostics: object[] = [];
+			const restoreObservers: (() => void)[] = [];
+			const lastLocalReads = new Map<number, object>();
+			const startedAt = performance.now();
+			let diagnosticsActive = false;
+			let diagnosticsDropped = 0;
+			let entryHash: string | undefined;
+			let exactState: ((index: number) => object) | undefined;
 			let phase = "open three full replicas";
+			const record = (detail: object) => {
+				if (!diagnosticsActive) return;
+				if (diagnostics.length === 128) {
+					diagnostics.shift();
+					diagnosticsDropped++;
+				}
+				diagnostics.push({
+					elapsedMs: performance.now() - startedAt,
+					phase,
+					...detail,
+				});
+			};
 			let failure: unknown;
 			let failed = false;
 			try {
@@ -57,12 +77,32 @@ describe("receive admission three-peer held entry recovery", function () {
 				const hashes = peers.map((peer) => peer.identity.publicKey.hashcode());
 				const template = new EventStore<string, any>();
 				const stores = await Promise.all(
-					peers.map((peer) =>
+					peers.map((peer, index) =>
 						peer.open(template.clone(), {
 							args: {
 								replicate: 1,
 								replicas: { min: 3 },
 								timeUntilRoleMaturity: 0,
+								sync: {
+									profile: (event) => {
+										if (!diagnosticsActive) return;
+										if (
+											event.name === "sharedLog.repair.dispatch" ||
+											event.name.startsWith("sharedLog.receive.")
+										)
+											record({
+												index,
+												...event,
+												details: event.details
+													? { ...event.details }
+													: undefined,
+												state:
+													event.name === "sharedLog.repair.dispatch"
+														? exactState?.(index)
+														: undefined,
+											});
+									},
+								},
 								...(nativeStorage
 									? { nativeGraph: true, nativeBackbone: { optional: false } }
 									: {}),
@@ -71,6 +111,87 @@ describe("receive admission three-peer held entry recovery", function () {
 					),
 				);
 				const logs = stores.map((store) => store.log as any);
+				exactState = (index) => {
+					const log = logs[index];
+					let generationAvailable: boolean | undefined;
+					let generationReadError = false;
+					try {
+						generationAvailable =
+							log.log.entryIndex.captureMutationGeneration() !== undefined;
+					} catch {
+						// A poisoned native lower store must not make diagnostics throw.
+						generationReadError = true;
+					}
+					return {
+						index,
+						entryHash,
+						pendingIndexWrite:
+							log.log.entryIndex.pendingIndexWrites.has(entryHash),
+						generationAvailable,
+						generationReadError,
+						ownershipRevision: log._instanceLifecycle._receiveOwnershipRevision,
+						ownershipAdmissions:
+							log._instanceLifecycle._receiveOwnershipMutationAdmissions,
+						peers: hashes.flatMap((hash, other) =>
+							index === other
+								? []
+								: [
+										{
+											index: other,
+											sessionPhase: log._peerSessions.current(hash)?.phase,
+											sendEstablished:
+												log._v2Send._sendStates.get(hash)?.established,
+											receivePhase:
+												log._v2Receive._receiveStates.get(hash)?.phase,
+											known:
+												log._entryKnownPeers.get(entryHash)?.has(hash) === true,
+											appendPending:
+												log._appendBackfillPendingByTarget
+													.get(hash)
+													?.has(entryHash) === true,
+											frontiers: [
+												"append-backfill",
+												"churn",
+												"join-warmup",
+												"join-authoritative",
+											].filter((mode) =>
+												log._repairFrontierByMode
+													.get(mode)
+													?.get(hash)
+													?.has(entryHash),
+											),
+										},
+									],
+						),
+					};
+				};
+				// Observe existing notifications without installing canAppend/onChange,
+				// which would select a different receive implementation. Return the exact
+				// original result, without awaiting or altering optional hook presence.
+				for (const [index, log] of logs.entries()) {
+					const sync = log.syncronizer;
+					for (const name of [
+						"onEntryAdded",
+						"onEntryAddedHash",
+						"onEntryAddedHashes",
+						"onEntryRemoved",
+						"onEntryRemovedHashes",
+					]) {
+						const original = sync[name];
+						if (typeof original !== "function") continue;
+						sync[name] = (...args: any[]) => {
+							const value = args[0];
+							const observed = Array.isArray(value)
+								? value.slice(0, 4)
+								: [typeof value === "string" ? value : value?.hash];
+							record({ index, name, hashes: observed });
+							return Reflect.apply(original, sync, args);
+						};
+						restoreObservers.push(() => {
+							sync[name] = original;
+						});
+					}
+				}
 				// Passive diagnostics only: no close, notice, liveness or recovery path
 				// is stubbed. Membership-driven repair is legitimate in this topology
 				// test; the separate settled-session fixture excludes that alternative.
@@ -174,6 +295,7 @@ describe("receive admission three-peer held entry recovery", function () {
 					})),
 				);
 				phase = "partition B from A+C";
+				diagnosticsActive = true;
 				isolated.add(1);
 				await Promise.all([disconnect(0, 1), disconnect(1, 2)]);
 				await waitForResolved(() =>
@@ -182,6 +304,8 @@ describe("receive admission three-peer held entry recovery", function () {
 				const value =
 					"C's signed independent head, relayed by A after partition";
 				const { entry } = await stores[2].add(value, { meta: { next: [] } });
+				entryHash = entry.hash;
+				record({ name: "source.append.returned", state: exactState(2) });
 				const exactLocalEntry = async (index: number) => {
 					const log = stores[index].log.log;
 					const local = await log.get(entry.hash, { remote: false });
@@ -189,9 +313,16 @@ describe("receive admission three-peer held entry recovery", function () {
 					expect((await local!.getPayloadValue()).value).to.equal(value);
 					expect(await local!.verifySignatures()).to.equal(true);
 					expect(local!.meta.next).to.deep.equal([]);
-					expect(
-						(await log.entryIndex.getShallow(entry.hash))?.value.head,
-					).to.equal(true);
+					const shallow = await log.entryIndex.getShallow(entry.hash);
+					lastLocalReads.set(index, {
+						elapsedMs: performance.now() - startedAt,
+						rowExists: shallow != null,
+						valueExists: shallow?.value != null,
+						head: shallow?.value?.head ?? null,
+						headType: typeof shallow?.value?.head,
+						state: exactState?.(index),
+					});
+					expect(shallow?.value.head).to.equal(true);
 					const coordinate = await logs[
 						index
 					]._coordinates.getAuthoritativeCoordinateEntryForInventory(
@@ -276,9 +407,15 @@ describe("receive admission three-peer held entry recovery", function () {
 						nativeStorage,
 						transitions,
 						deniedDials,
+						entryHash,
+						diagnosticsDropped,
+						lastLocalReads: [...lastLocalReads],
+						diagnostics,
 					}),
 				);
 			} finally {
+				diagnosticsActive = false;
+				for (const restore of restoreObservers) restore();
 				listeners.abort();
 				const stopped = await Promise.allSettled(
 					peers.map((peer) => peer.stop()),

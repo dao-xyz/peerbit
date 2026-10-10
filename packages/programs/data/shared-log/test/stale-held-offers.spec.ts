@@ -231,75 +231,107 @@ describe("sync-repair-session stale held offers", () => {
 				expect(h.sent).to.deep.equal([[entry.hash]]);
 			});
 
-			it("retries append backfill after a concurrent lower mutation releases", async () => {
-				const entry = await append();
-				const h = harness([entry.hash]);
-				const controller =
-					h.host._instanceLifecycle.ownershipLifecycleController;
-				const sleeping = pDefer<void>();
-				const resume = pDefer<void>();
-				const retried = pDefer<void>();
-				releases.push(() => {
-					controller.abort();
-					resume.resolve();
-				});
-				const mode = "append-backfill";
-				h.host._repairFrontierByMode = new Map([
-					[mode, new Map([["peer", h.frontier]])],
-				]);
-				let sleeps = 0;
-				Object.assign(h.host, {
-					_repairFrontierActiveTargetsByMode: new Map([[mode, new Map()]]),
-					_recentRepairDispatch: new Map(),
-					_repairMetrics: {
-						[mode]: {
-							dispatches: 0,
-							entries: 0,
-							simpleFallbackPasses: 0,
-							ratelessFirstPasses: 0,
-						},
-					},
-					isFrontierTrackedRepairMode: methods.isFrontierTrackedRepairMode,
-					shouldBypassKnownPeerHints: methods.shouldBypassKnownPeerHints,
-					sendRepairEntriesWithTransport:
-						methods.sendRepairEntriesWithTransport,
-					sendMaybeMissingEntriesNow: methods.sendMaybeMissingEntriesNow,
-					isRepairLifecycleActive: () => !controller.signal.aborted,
-					sleepTracked: async () => {
-						if (sleeps++ === 0) {
-							sleeping.resolve();
-							await resume.promise;
-							return true;
-						}
+			for (const boundary of ["before presence read", "during presence read"]) {
+				it(`retries append backfill after a lower mutation ${boundary}`, async () => {
+					const entry = await append();
+					const h = harness([entry.hash]);
+					const controller =
+						h.host._instanceLifecycle.ownershipLifecycleController;
+					const sleeping = pDefer<void>();
+					const resume = pDefer<void>();
+					const retried = pDefer<void>();
+					const presenceRead = pDefer<void>();
+					const releasePresence = pDefer<void>();
+					releases.push(() => {
 						controller.abort();
-						retried.resolve();
-						return false;
-					},
-				});
-				const owner = await lower.entryIndex.acquireHashMutationLocks([
-					entry.hash,
-				]);
-				try {
-					methods.ensureRepairFrontierRunner.call(
-						h.host,
-						mode,
-						"peer",
-						[0, 1],
-						controller,
-					);
-					await sleeping.promise;
-					expect(h.sent).to.deep.equal([]);
+						resume.resolve();
+						releasePresence.resolve();
+					});
+					if (boundary === "during presence read") {
+						const hasMany = lower.hasMany.bind(lower);
+						let first = true;
+						sinon.stub(lower, "hasMany").callsFake(async (hashes) => {
+							const present = await hasMany(hashes);
+							if (first) {
+								first = false;
+								presenceRead.resolve();
+								await releasePresence.promise;
+							}
+							return present;
+						});
+					}
+					const mode = "append-backfill";
+					h.host._repairFrontierByMode = new Map([
+						[mode, new Map([["peer", h.frontier]])],
+					]);
+					let sleeps = 0;
+					const scheduledDelays: number[] = [];
+					Object.assign(h.host, {
+						_repairFrontierActiveTargetsByMode: new Map([[mode, new Map()]]),
+						_recentRepairDispatch: new Map(),
+						_repairMetrics: {
+							[mode]: {
+								dispatches: 0,
+								entries: 0,
+								simpleFallbackPasses: 0,
+								ratelessFirstPasses: 0,
+							},
+						},
+						isFrontierTrackedRepairMode: methods.isFrontierTrackedRepairMode,
+						shouldBypassKnownPeerHints: methods.shouldBypassKnownPeerHints,
+						sendRepairEntriesWithTransport:
+							methods.sendRepairEntriesWithTransport,
+						sendMaybeMissingEntriesNow: methods.sendMaybeMissingEntriesNow,
+						isRepairLifecycleActive: () => !controller.signal.aborted,
+						sleepTracked: async (delay: number) => {
+							scheduledDelays.push(delay);
+							if (sleeps++ === 0) {
+								sleeping.resolve();
+								await resume.promise;
+								return true;
+							}
+							controller.abort();
+							retried.resolve();
+							return false;
+						},
+					});
+					const owner =
+						boundary === "before presence read"
+							? await lower.entryIndex.acquireHashMutationLocks([entry.hash])
+							: undefined;
+					try {
+						methods.ensureRepairFrontierRunner.call(
+							h.host,
+							mode,
+							"peer",
+							undefined,
+							controller,
+						);
+						if (boundary === "during presence read") {
+							await presenceRead.promise;
+							const unrelated = await append();
+							expect(unrelated.hash).not.to.equal(entry.hash);
+							releasePresence.resolve();
+						}
+						await sleeping.promise;
+						expect(h.sent).to.deep.equal([]);
+						expect([...h.frontier.keys()]).to.deep.equal([entry.hash]);
+						expect(
+							(h.host as any)._recentRepairDispatch.get("peer").has(entry.hash),
+						).to.equal(true);
+						expect(scheduledDelays).to.deep.equal([1_000]);
+					} finally {
+						if (owner) lower.entryIndex.releaseHashMutationLocks(owner);
+					}
+					resume.resolve();
+					await retried.promise;
+					expect(h.sent).to.deep.equal([[entry.hash]]);
+					expect(scheduledDelays).to.deep.equal([1_000, 2_000]);
+					// Dispatch is not an acknowledgement: the still-held obligation remains.
 					expect([...h.frontier.keys()]).to.deep.equal([entry.hash]);
-				} finally {
-					lower.entryIndex.releaseHashMutationLocks(owner);
-				}
-				resume.resolve();
-				await retried.promise;
-				expect(h.sent).to.deep.equal([[entry.hash]]);
-				// Dispatch is not an acknowledgement: the still-held obligation remains.
-				expect([...h.frontier.keys()]).to.deep.equal([entry.hash]);
-				expect(h.host.markEntriesKnownByPeer.called).to.equal(false);
-			});
+					expect(h.host.markEntriesKnownByPeer.called).to.equal(false);
+				});
+			}
 		});
 	}
 });
