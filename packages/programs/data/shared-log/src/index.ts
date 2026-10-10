@@ -11283,8 +11283,21 @@ export class SharedLog<
 		},
 		mode?: RepairDispatchMode,
 	) {
-		const isStillCurrent = options?.isStillCurrent ?? (() => true);
-		if (!isStillCurrent()) {
+		const ownerIsCurrent = options?.isStillCurrent ?? (() => true);
+		if (!ownerIsCurrent()) return;
+		const lower = this.log.entryIndex;
+		const generation = lower.captureMutationGeneration();
+		const session = this._peerSessions.current(target);
+		const receiveEpoch = this._peerSessions.receiveEpoch(target);
+		const isStillCurrent = () =>
+			ownerIsCurrent() &&
+			!options?.signal?.aborted &&
+			generation !== undefined &&
+			lower === this.log.entryIndex &&
+			lower.isMutationGenerationCurrent(generation) &&
+			this._peerSessions.current(target) === session &&
+			this._peerSessions.receiveEpoch(target) === receiveEpoch;
+		if (generation === undefined || options?.signal?.aborted) {
 			return;
 		}
 		const unknownEntries = new Map<string, RepairDispatchEntry<R>>();
@@ -11311,12 +11324,31 @@ export class SharedLog<
 					knownHashes.push(hash);
 				}
 			}
+			// A repair frontier can outlive local CUT/prune removal. Recheck the
+			// authoritative lower log before offering those hashes, in bounded reads.
+			// Absence retires only our stale send obligation, never remote presence.
+			const candidates = unknownEntries.keys();
+			while (unknownEntries.size > 0) {
+				const chunk: string[] = [];
+				while (chunk.length < REPAIR_SWEEP_ENTRY_BATCH_SIZE) {
+					const next = candidates.next();
+					if (next.done) break;
+					chunk.push(next.value);
+				}
+				if (chunk.length === 0) break;
+				const present = await this.log.hasMany(chunk);
+				if (!isStillCurrent()) return;
+				const absent = chunk.filter((hash) => !present.has(hash));
+				for (const hash of absent) unknownEntries.delete(hash);
+				if (absent.length > 0) this.clearRepairFrontierHashes(target, absent);
+			}
 			// A custom synchronizer may mutate the Map once it receives it.
 			if (profile) selectedEntries = unknownEntries.size;
 			if (!isStillCurrent()) return;
 			this.clearRepairFrontierHashes(target, knownHashes);
 			if (unknownEntries.size === 0) {
-				outcome = "known-suppressed";
+				outcome =
+					knownHashes.length === entries.size ? "known-suppressed" : "not-held";
 				return;
 			}
 			if (transport === "simple") {
