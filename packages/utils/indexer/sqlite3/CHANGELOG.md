@@ -1,5 +1,17 @@
 # Changelog
 
+## 3.0.23
+
+### Patch Changes
+
+- [#1524](https://github.com/dao-xyz/peerbit/pull/1524) [`f902c41`](https://github.com/dao-xyz/peerbit/commit/f902c41b9402428daa4089c3f0a0d113fde92eaa) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Implement bounded key-only inventory pages through the existing `scanKeyPrimitives` capability. Scans invalidate on admitted writes or lifecycle changes and release cursor resources on completion, cancellation, or failure. SQLite uses primary-key seeks; Rust visits native keys directly without decoding documents or retaining a whole-inventory key set. SQLite multi-root schemas and non-authoritative Rust backbone mirrors remain unsupported. This is an inventory primitive, not a replication-completeness or durability guarantee.
+
+- [#1490](https://github.com/dao-xyz/peerbit/pull/1490) [`a919a34`](https://github.com/dao-xyz/peerbit/commit/a919a341fa35479958d60c7db99be94d34d6cd8b) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Resolve terminal fields against their declaring schema variant, excluding unrelated flattened child fields, and bind explicit nested inline-field queries to their physical table. Preserve missing-field validation.
+
+- Updated dependencies [[`82fae14`](https://github.com/dao-xyz/peerbit/commit/82fae14b6718aaa1581234a042f765bea9594d0c)]:
+  - @peerbit/crypto@3.1.8
+  - @peerbit/indexer-interface@3.1.2
+
 ## 3.0.22
 
 ### Patch Changes

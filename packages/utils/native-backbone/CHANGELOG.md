@@ -1,5 +1,12 @@
 # @peerbit/native-backbone
 
+## 0.2.19
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @peerbit/blocks-interface@2.2.3
+
 ## 0.2.18
 
 ### Patch Changes

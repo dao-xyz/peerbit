@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.1.76
+
+### Patch Changes
+
+- [#1528](https://github.com/dao-xyz/peerbit/pull/1528) [`82fae14`](https://github.com/dao-xyz/peerbit/commit/82fae14b6718aaa1581234a042f765bea9594d0c) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Update the coordinated libp2p dependency cohort to include buffered-stream close/reset and listener cleanup fixes. Preserve Peerbit's transport configuration, custom Yamux profile and standard Yamux fallback; WebRTC Direct is not enabled by this update.
+
+- Updated dependencies [[`82fae14`](https://github.com/dao-xyz/peerbit/commit/82fae14b6718aaa1581234a042f765bea9594d0c)]:
+  - @peerbit/canonical-client@1.1.73
+  - @peerbit/crypto@3.1.8
+  - @peerbit/logger@2.0.4
+  - @peerbit/program@6.0.70
+  - peerbit@5.4.12
+  - @peerbit/program-react@0.4.74
+  - @peerbit/indexer-interface@3.1.2
+
 ## 1.1.75
 
 ### Patch Changes

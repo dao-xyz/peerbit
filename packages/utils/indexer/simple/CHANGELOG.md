@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.3.2
+
+### Patch Changes
+
+- Updated dependencies [[`82fae14`](https://github.com/dao-xyz/peerbit/commit/82fae14b6718aaa1581234a042f765bea9594d0c)]:
+  - @peerbit/logger@2.0.4
+  - @peerbit/indexer-interface@3.1.2
+
 ## 1.3.1
 
 ### Patch Changes

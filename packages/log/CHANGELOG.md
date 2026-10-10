@@ -1,5 +1,26 @@
 # Changelog
 
+## 6.2.40
+
+### Patch Changes
+
+- [#1528](https://github.com/dao-xyz/peerbit/pull/1528) [`82fae14`](https://github.com/dao-xyz/peerbit/commit/82fae14b6718aaa1581234a042f765bea9594d0c) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Update the coordinated libp2p dependency cohort to include buffered-stream close/reset and listener cleanup fixes. Preserve Peerbit's transport configuration, custom Yamux profile and standard Yamux fallback; WebRTC Direct is not enabled by this update.
+
+- [#1523](https://github.com/dao-xyz/peerbit/pull/1523) [`d9f09f8`](https://github.com/dao-xyz/peerbit/commit/d9f09f80352bf32d6c23ad5047a58a72f433e3e8) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Expose non-waiting lower-log mutation fences and optional RPC ownership checks for bounded recovery work. RPC callers can track physical setup/publish settlement after logical cancellation without treating it as a remote delivery acknowledgment.
+
+- Updated dependencies [[`f902c41`](https://github.com/dao-xyz/peerbit/commit/f902c41b9402428daa4089c3f0a0d113fde92eaa), [`82fae14`](https://github.com/dao-xyz/peerbit/commit/82fae14b6718aaa1581234a042f765bea9594d0c), [`a919a34`](https://github.com/dao-xyz/peerbit/commit/a919a341fa35479958d60c7db99be94d34d6cd8b)]:
+  - @peerbit/indexer-sqlite3@3.0.23
+  - @peerbit/blocks@4.3.5
+  - @peerbit/crypto@3.1.8
+  - @peerbit/keychain@1.2.19
+  - @peerbit/logger@2.0.4
+  - @peerbit/pubsub-interface@5.2.4
+  - @peerbit/stream-interface@6.0.18
+  - @peerbit/blocks-interface@2.2.3
+  - @peerbit/indexer-interface@3.1.2
+  - @peerbit/indexer-simple@1.3.2
+  - @peerbit/any-store@2.2.19
+
 ## 6.2.39
 
 ### Patch Changes
