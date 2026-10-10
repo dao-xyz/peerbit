@@ -27,6 +27,8 @@ const DEFAULT_MAX_SEND_RETRY_MS = 30_000;
 const DEFAULT_CONFIRM_RETRY_MS = 1_000;
 const DEFAULT_CONFIRM_TIMEOUT_MS = 30_000;
 const DEFAULT_MAX_CONFIRMATION_WAITERS = 1_024;
+const MAX_PHYSICAL_CONFIRMATIONS_PER_PEER = 2;
+const MAX_PHYSICAL_CONFIRMATIONS_GLOBAL = 64;
 const MAX_TIMER_MS = 2_147_483_647;
 const MAX_BACKOFF_EXPONENT = 20;
 
@@ -194,6 +196,17 @@ export class ReplicationInfoV2SendCoordinator<R extends "u32" | "u64"> {
 	private readonly maxSendRetryMs: number;
 	private readonly confirmationRetryMs: number;
 	private readonly maxConfirmationWaiters: number;
+	// Logical cancellation must not release a transport that ignores abort.
+	// These charges survive close/open and sender-state replacement.
+	private readonly physicalConfirmations = new Map<
+		string,
+		Set<{
+			state: ReplicationInfoV2SendState;
+			minimumSequence?: bigint;
+			revision: bigint;
+		}>
+	>();
+	private physicalConfirmationCount = 0;
 
 	constructor(private readonly deps: ReplicationInfoV2SendDeps<R>) {
 		this.sendRetryMs = Math.max(1, deps.sendRetryMs ?? DEFAULT_SEND_RETRY_MS);
@@ -1245,6 +1258,40 @@ export class ReplicationInfoV2SendCoordinator<R extends "u32" | "u64"> {
 		state: ReplicationInfoV2SendState,
 		signal: AbortSignal,
 	): Promise<void> {
+		let pending = this.physicalConfirmations.get(state.peerHash);
+		if (
+			this.physicalConfirmationCount >= MAX_PHYSICAL_CONFIRMATIONS_GLOBAL ||
+			(pending?.size ?? 0) >= MAX_PHYSICAL_CONFIRMATIONS_PER_PEER ||
+			[...(pending ?? [])].some(
+				(charge) =>
+					charge.state === state &&
+					charge.minimumSequence === state.minimumConfirmationSequence &&
+					charge.revision === request.revision,
+			)
+		) {
+			// No proof is produced. The current request remains outstanding, and
+			// its existing confirmation retry can send after a charge is released.
+			return Promise.resolve();
+		}
+		if (!pending)
+			this.physicalConfirmations.set(state.peerHash, (pending = new Set()));
+		const charged = pending;
+		const charge = {
+			state,
+			minimumSequence: state.minimumConfirmationSequence,
+			revision: request.revision,
+		};
+		charged.add(charge); // Reserve before scheduling or invoking transport.
+		this.physicalConfirmationCount++;
+		const release = () => {
+			if (!charged.delete(charge)) return;
+			this.physicalConfirmationCount--;
+			if (
+				charged.size === 0 &&
+				this.physicalConfirmations.get(state.peerHash) === charged
+			)
+				this.physicalConfirmations.delete(state.peerHash);
+		};
 		return new Promise<void>((resolve, reject) => {
 			let settled = false;
 			const cleanup = () => signal.removeEventListener("abort", onAbort);
@@ -1268,6 +1315,7 @@ export class ReplicationInfoV2SendCoordinator<R extends "u32" | "u64"> {
 				);
 			signal.addEventListener("abort", onAbort, { once: true });
 			if (signal.aborted) {
+				release(); // No physical operation was started.
 				onAbort();
 				return;
 			}
@@ -1287,7 +1335,16 @@ export class ReplicationInfoV2SendCoordinator<R extends "u32" | "u64"> {
 						signal,
 					});
 				})
-				.then(succeed, fail);
+				.then(
+					() => {
+						release();
+						succeed();
+					},
+					(error) => {
+						release();
+						fail(error);
+					},
+				);
 		});
 	}
 
