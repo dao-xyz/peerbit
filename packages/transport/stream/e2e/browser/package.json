@@ -28,11 +28,11 @@
 		"@peerbit/stream": "workspace:*"
 	},
 	"devDependencies": {
-		"@libp2p/circuit-relay-v2": "^4.2.13",
-		"@libp2p/identify": "^4.1.14",
-		"@libp2p/noise": "^17.0.3",
-		"@libp2p/websockets": "^10.1.21",
-		"@libp2p/yamux": "^8.0.3",
-		"libp2p": "^3.3.11"
+		"@libp2p/circuit-relay-v2": "^4.2.14",
+		"@libp2p/identify": "^4.1.15",
+		"@libp2p/noise": "^17.0.4",
+		"@libp2p/websockets": "^10.1.22",
+		"@libp2p/yamux": "^8.0.4",
+		"libp2p": "^3.3.12"
 	}
 }

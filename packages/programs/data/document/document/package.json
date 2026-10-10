@@ -64,9 +64,9 @@
 	"license": "MIT",
 	"dependencies": {
 		"@dao-xyz/borsh": "^6.0.0",
-		"@libp2p/interface": "^3.3.0",
-		"@libp2p/tcp": "^11.0.28",
-		"@libp2p/yamux": "^8.0.3",
+		"@libp2p/interface": "^3.3.1",
+		"@libp2p/tcp": "^11.0.29",
+		"@libp2p/yamux": "^8.0.4",
 		"@multiformats/multiaddr": "^13.0.3",
 		"@peerbit/cache": "workspace:*",
 		"@peerbit/crypto": "workspace:*",
@@ -91,8 +91,8 @@
 		"@peerbit/document-rust": "workspace:*"
 	},
 	"devDependencies": {
-		"@libp2p/noise": "^17.0.3",
-		"@libp2p/websockets": "^10.1.21",
+		"@libp2p/noise": "^17.0.4",
+		"@libp2p/websockets": "^10.1.22",
 		"@peerbit/log-rust": "workspace:*",
 		"@peerbit/native-backbone": "workspace:*",
 		"@peerbit/test-utils": "workspace:*",
