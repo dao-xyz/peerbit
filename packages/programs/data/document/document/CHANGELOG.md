@@ -1,5 +1,26 @@
 # Changelog
 
+## 15.1.13
+
+### Patch Changes
+
+- [#1528](https://github.com/dao-xyz/peerbit/pull/1528) [`82fae14`](https://github.com/dao-xyz/peerbit/commit/82fae14b6718aaa1581234a042f765bea9594d0c) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Update the coordinated libp2p dependency cohort to include buffered-stream close/reset and listener cleanup fixes. Preserve Peerbit's transport configuration, custom Yamux profile and standard Yamux fallback; WebRTC Direct is not enabled by this update.
+
+- Updated dependencies [[`f902c41`](https://github.com/dao-xyz/peerbit/commit/f902c41b9402428daa4089c3f0a0d113fde92eaa), [`82fae14`](https://github.com/dao-xyz/peerbit/commit/82fae14b6718aaa1581234a042f765bea9594d0c), [`a919a34`](https://github.com/dao-xyz/peerbit/commit/a919a341fa35479958d60c7db99be94d34d6cd8b), [`d9f09f8`](https://github.com/dao-xyz/peerbit/commit/d9f09f80352bf32d6c23ad5047a58a72f433e3e8), [`2375d4b`](https://github.com/dao-xyz/peerbit/commit/2375d4b723f1bfc17601120bc996bfe6ae840c5f)]:
+  - @peerbit/indexer-sqlite3@3.0.23
+  - @peerbit/crypto@3.1.8
+  - @peerbit/log@6.2.40
+  - @peerbit/logger@2.0.4
+  - @peerbit/program@6.0.70
+  - @peerbit/pubsub@5.4.15
+  - @peerbit/shared-log@16.0.42
+  - @peerbit/stream-interface@6.0.18
+  - @peerbit/rpc@6.2.6
+  - @peerbit/document-interface@3.2.84
+  - @peerbit/indexer-cache@0.3.2
+  - @peerbit/indexer-interface@3.1.2
+  - @peerbit/indexer-simple@1.3.2
+
 ## 15.1.12
 
 ### Patch Changes

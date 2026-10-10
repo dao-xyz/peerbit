@@ -1,5 +1,19 @@
 # Changelog
 
+## 6.2.6
+
+### Patch Changes
+
+- [#1523](https://github.com/dao-xyz/peerbit/pull/1523) [`d9f09f8`](https://github.com/dao-xyz/peerbit/commit/d9f09f80352bf32d6c23ad5047a58a72f433e3e8) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Expose non-waiting lower-log mutation fences and optional RPC ownership checks for bounded recovery work. RPC callers can track physical setup/publish settlement after logical cancellation without treating it as a remote delivery acknowledgment.
+
+- Updated dependencies [[`82fae14`](https://github.com/dao-xyz/peerbit/commit/82fae14b6718aaa1581234a042f765bea9594d0c)]:
+  - @peerbit/crypto@3.1.8
+  - @peerbit/logger@2.0.4
+  - @peerbit/program@6.0.70
+  - @peerbit/pubsub@5.4.15
+  - @peerbit/pubsub-interface@5.2.4
+  - @peerbit/stream-interface@6.0.18
+
 ## 6.2.5
 
 ### Patch Changes

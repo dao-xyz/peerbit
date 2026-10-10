@@ -1,5 +1,15 @@
 # Changelog
 
+## 3.0.16
+
+### Patch Changes
+
+- [#1490](https://github.com/dao-xyz/peerbit/pull/1490) [`a919a34`](https://github.com/dao-xyz/peerbit/commit/a919a341fa35479958d60c7db99be94d34d6cd8b) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Keep polymorphism setup inside its suite, register scope-test fixtures with per-test cleanup, and await the iterator-completion assertion. This prevents indexer conformance tests from leaking resources or completing before their assertions settle.
+
+- Updated dependencies [[`82fae14`](https://github.com/dao-xyz/peerbit/commit/82fae14b6718aaa1581234a042f765bea9594d0c)]:
+  - @peerbit/crypto@3.1.8
+  - @peerbit/indexer-interface@3.1.2
+
 ## 3.0.15
 
 ### Patch Changes
