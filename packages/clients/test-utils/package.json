@@ -77,8 +77,8 @@
 	"author": "Peerbit contributors",
 	"license": "MIT",
 	"dependencies": {
-		"@libp2p/interface": "^3.3.0",
-		"@libp2p/yamux": "^8.0.3",
+		"@libp2p/interface": "^3.3.1",
+		"@libp2p/yamux": "^8.0.4",
 		"@multiformats/multiaddr": "^13.0.3",
 		"@peerbit/any-store": "workspace:*",
 		"@peerbit/blocks": "workspace:*",
@@ -91,7 +91,7 @@
 		"@peerbit/stream": "workspace:*",
 		"cli-table3": "^0.6.5",
 		"it-pushable": "^3.1.4",
-		"libp2p": "^3.3.11",
+		"libp2p": "^3.3.12",
 		"libsodium-wrappers": "^0.7.15",
 		"peerbit": "workspace:*",
 		"wrap-ansi": "^8.1.0"

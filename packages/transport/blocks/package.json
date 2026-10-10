@@ -81,9 +81,9 @@
 	"dependencies": {
 		"@dao-xyz/borsh": "^6.0.0",
 		"@ipld/dag-cbor": "^9.2.1",
-		"@libp2p/interface": "^3.3.0",
-		"@libp2p/tcp": "^11.0.28",
-		"@libp2p/websockets": "^10.1.21",
+		"@libp2p/interface": "^3.3.1",
+		"@libp2p/tcp": "^11.0.29",
+		"@libp2p/websockets": "^10.1.22",
 		"@peerbit/any-store": "workspace:*",
 		"@peerbit/any-store-interface": "workspace:*",
 		"@peerbit/blocks-interface": "workspace:*",
