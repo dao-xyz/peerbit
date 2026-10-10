@@ -824,6 +824,11 @@ testSetups.forEach((setup) => {
 
 						let remoteFetchOptions: any[] = [];
 						const db1LogGet = db1.log.log.get.bind(db1.log.log);
+						const presence = sinon.spy(db1.log.log, "hasMany");
+						const retireFrontier = sinon.spy(
+							db1.log as any,
+							"clearRepairFrontierHashes",
+						);
 
 						db1.log.log.get = async (hash, options) => {
 							if (hash === second.entry.hash) {
@@ -850,10 +855,25 @@ testSetups.forEach((setup) => {
 									.map((x) => x.hash),
 							).to.deep.equal([first.entry.hash]);
 						});
-						await waitForResolved(() =>
-							expect(remoteFetchOptions).to.have.length(1),
-						);
-						expect(remoteFetchOptions[0]).to.be.undefined;
+						// Wait for authoritative rejection, not a quiet period: the stale
+						// offer must be retired before any payload lookup is needed.
+						await waitForResolved(async () => {
+							const results = await Promise.all(
+								presence
+									.getCalls()
+									.filter((call) => [...call.args[0]].includes(second.entry.hash))
+									.map((call) => call.returnValue),
+							);
+							expect(results.some((present) => !present.has(second.entry.hash)))
+								.to.be.true;
+							expect(
+								retireFrontier.calledWith(
+									session.peers[1].identity.publicKey.hashcode(),
+									[second.entry.hash],
+								),
+							).to.be.true;
+						});
+						expect(remoteFetchOptions).to.be.empty;
 					});
 				});
 				describe("two way", () => {
