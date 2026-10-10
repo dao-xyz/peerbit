@@ -336,9 +336,22 @@ jobs:
           packages/programs/data/shared-log/dist/test/coordinate-key-scan.spec.js
           packages/programs/data/shared-log/dist/test/coordinate-key-scan-durable.spec.js
           packages/programs/data/shared-log/dist/test/entry-inventory-presence.spec.js
-          packages/programs/data/shared-log/dist/test/entry-inventory-progress.spec.js
-          packages/programs/data/shared-log/dist/test/entry-inventory-recovery.spec.js
           packages/programs/data/shared-log/dist/test/exact-entry-inventory-offer.spec.js
+      # Fake-clock timer ownership must exclude delayed real-peer store work.
+      - name: Test inventory clock ownership in isolated processes
+        timeout-minutes: 3
+        shell: bash
+        env:
+          AEGIR_RUNNER: node
+          NODE_ENV: test
+        run: |
+          set -euo pipefail
+          for spec in entry-inventory-progress entry-inventory-recovery; do
+            node scripts/ci/assert-tests-ran.mjs node ./node_modules/mocha/bin/mocha.js \
+              --no-config --no-package --require chai-extend/chai-global.js \
+              --timeout 60000 --retries 0 --no-exit \
+              "packages/programs/data/shared-log/dist/test/${spec}.spec.js"
+          done
       - name: Test settled-session reconnect with default and native storage
         timeout-minutes: 3
         env:
