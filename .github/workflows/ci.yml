@@ -324,6 +324,41 @@ jobs:
           --timeout 60000 --retries 0 --no-exit
           packages/log/dist/test/mutation-generation.spec.js
           packages/programs/rpc/dist/test/request-physical-settlement.spec.js
+      - name: Test bounded reconnect inventory without retries
+        timeout-minutes: 3
+        env:
+          AEGIR_RUNNER: node
+          NODE_ENV: test
+        run: >-
+          node scripts/ci/assert-tests-ran.mjs node ./node_modules/mocha/bin/mocha.js
+          --no-config --no-package --require chai-extend/chai-global.js
+          --timeout 60000 --retries 0 --no-exit
+          packages/programs/data/shared-log/dist/test/coordinate-key-scan.spec.js
+          packages/programs/data/shared-log/dist/test/coordinate-key-scan-durable.spec.js
+          packages/programs/data/shared-log/dist/test/entry-inventory-presence.spec.js
+          packages/programs/data/shared-log/dist/test/entry-inventory-progress.spec.js
+          packages/programs/data/shared-log/dist/test/entry-inventory-recovery.spec.js
+          packages/programs/data/shared-log/dist/test/exact-entry-inventory-offer.spec.js
+      - name: Test settled-session reconnect with default and native storage
+        timeout-minutes: 3
+        env:
+          AEGIR_RUNNER: node
+          NODE_ENV: test
+        run: >-
+          node scripts/ci/assert-tests-ran.mjs node ./node_modules/mocha/bin/mocha.js
+          --no-config --no-package --require chai-extend/chai-global.js
+          --timeout 60000 --retries 0 --no-exit
+          packages/programs/data/shared-log/dist/test/settled-session-entry-recovery.spec.js
+      - name: Test real three-peer partitions with default and native storage
+        timeout-minutes: 3
+        env:
+          AEGIR_RUNNER: node
+          NODE_ENV: test
+        run: >-
+          node scripts/ci/assert-tests-ran.mjs node ./node_modules/mocha/bin/mocha.js
+          --no-config --no-package --require chai-extend/chai-global.js
+          --timeout 60000 --retries 0 --no-exit
+          packages/programs/data/shared-log/dist/test/three-peer-held-entry-recovery.spec.js
       - name: Test protected recovery without retries or forced exit
         timeout-minutes: 3
         working-directory: packages/programs/acl/trusted-network

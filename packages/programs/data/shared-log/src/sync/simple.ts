@@ -113,6 +113,24 @@ export class RequestPersistedEntriesV1 extends TransportMessage {
 	}
 }
 
+/** Fresh, correlated presence only: this is not a persisted delivery receipt. */
+@variant([0, 14])
+export class RequestEntryInventoryV1 extends TransportMessage {
+	@field({ type: "u64" })
+	expectedReceiverSession: bigint;
+
+	@field({ type: vec("string") })
+	hashes: string[];
+
+	constructor(props: { expectedReceiverSession: bigint; hashes: string[] }) {
+		super();
+		this.expectedReceiverSession = props.expectedReceiverSession;
+		this.hashes = props.hashes;
+	}
+}
+
+export const ENTRY_INVENTORY_PAGE_SIZE = 128;
+
 export const SIMPLE_SYNC_RAW_EXCHANGE_HEADS_CAPABILITY = 1;
 
 @variant([0, 8])
