@@ -335,6 +335,32 @@ jobs:
           --no-config --no-package --require chai-extend/chai-global.js
           --timeout 90000 --retries 0 --no-exit
           dist/test/v2-protected-recovery.spec.js
+      # Global fake-clock assertions must not capture delayed peer-store work
+      # from the real-node lifecycle tests in another suite.
+      - name: Test ACK wait ownership in an isolated process
+        timeout-minutes: 3
+        env:
+          AEGIR_RUNNER: node
+          NODE_ENV: test
+        run: >-
+          node scripts/ci/assert-tests-ran.mjs node ./node_modules/mocha/bin/mocha.js
+          --no-config --no-package --require chai-extend/chai-global.js
+          --timeout 60000 --retries 0 --no-exit
+          packages/transport/stream/dist/test/ack-wait-ownership.spec.js
+      - name: Test pubsub clock ownership in isolated processes
+        timeout-minutes: 3
+        shell: bash
+        env:
+          AEGIR_RUNNER: node
+          NODE_ENV: test
+        run: |
+          set -euo pipefail
+          for spec in stale-root-recovery fanout-parent-probe; do
+            node scripts/ci/assert-tests-ran.mjs node ./node_modules/mocha/bin/mocha.js \
+              --no-config --no-package --require chai-extend/chai-global.js \
+              --timeout 60000 --retries 0 --no-exit \
+              "packages/transport/pubsub/dist/test/${spec}.spec.js"
+          done
       - name: Test stream replacement and pubsub ownership without retries
         timeout-minutes: 3
         env:
@@ -346,7 +372,6 @@ jobs:
           --timeout 60000 --retries 0 --no-exit
           packages/transport/stream/dist/test/stream-before-stop.spec.js
           packages/transport/stream/dist/test/stream-replacement.spec.js
-          packages/transport/stream/dist/test/ack-wait-ownership.spec.js
           packages/programs/data/shared-log/dist/test/partition-recovery.spec.js
           packages/programs/data/shared-log/dist/test/partition-stream-renewal.spec.js
           packages/programs/data/shared-log/dist/test/transport-recovery-hint.spec.js
@@ -356,9 +381,7 @@ jobs:
           packages/transport/pubsub/dist/test/unsubscribe-reason.spec.js
           packages/transport/pubsub/dist/test/fanout-idle-close.spec.js
           packages/transport/pubsub/dist/test/fanout-parent-liveness.spec.js
-          packages/transport/pubsub/dist/test/fanout-parent-probe.spec.js
           packages/transport/pubsub/dist/test/fanout-parent-probe-metrics.spec.js
-          packages/transport/pubsub/dist/test/stale-root-recovery.spec.js
           packages/transport/pubsub/dist/test/stale-root-cold-join.spec.js
           packages/transport/pubsub/dist/test/fanout-tree-bootstrap-dials.spec.js
           packages/clients/peerbit/dist/test/blocks-provider-directory.spec.js
@@ -940,6 +963,21 @@ jobs:
         run: pnpm --filter @peerbit/network-rust run test
       - name: Test @peerbit/stream suite in rust-core mode
         run: pnpm --filter @peerbit/network-rust run test:stream-rust-core
+      - name: Test pubsub clock ownership with the native transport in isolated processes
+        timeout-minutes: 3
+        env:
+          AEGIR_RUNNER: node
+          NODE_ENV: test
+          PEERBIT_STREAM_RUST_CORE: "1"
+        run: |
+          set -euo pipefail
+          for spec in stale-root-recovery fanout-parent-probe; do
+            node scripts/ci/assert-tests-ran.mjs node ./node_modules/mocha/bin/mocha.js \
+              --no-config --no-package --require chai-extend/chai-global.js \
+              --require ./scripts/ci/use-rust-stream-core.mjs \
+              --timeout 60000 --retries 0 --no-exit \
+              "packages/transport/pubsub/dist/test/${spec}.spec.js"
+          done
       - name: Test real-peer reconnect recovery with the native transport
         timeout-minutes: 3
         env:
