@@ -247,6 +247,13 @@ describe("sync-repair-session", () => {
 			const log = new SharedLog<unknown>();
 			log.closed = false;
 			const internals = log as any;
+			internals.log = {
+				entryIndex: {
+					captureMutationGeneration: () => 0,
+					isMutationGenerationCurrent: () => true,
+				},
+				hasMany: async (hashes: string[]) => new Set(hashes),
+			};
 			internals._assumeSyncedRepairSuppressedUntil = 0;
 			internals._repairMetrics = {
 				"join-warmup": {
