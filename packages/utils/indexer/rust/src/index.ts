@@ -206,6 +206,7 @@ type NativeRustIndex<T extends Record<string, any>> = {
 	get: (key: string) => [types.IdKey, T] | undefined;
 	clear: () => void;
 	len: () => number;
+	key_page?: (offset: number, limit: number) => string[];
 	entries: () => Array<[types.IdKey, T]>;
 	query: (query: Uint8Array, sort: Uint8Array) => Array<[types.IdKey, T]>;
 	query_page: (
@@ -514,6 +515,17 @@ const storeKeyToIdKey = (key: string): types.IdKey | undefined => {
 		}
 	}
 	return;
+};
+
+const storeKeyToPrimitive = (key: string): types.IdPrimitive => {
+	const separator = key.indexOf(":");
+	const type = key.slice(0, separator);
+	const value = key.slice(separator + 1);
+	// Byte primitives are already canonical base64; do not decode/re-encode them.
+	if (type === "string" || type === "bytes") return value;
+	if (type === "number") return Number(value);
+	if (type === "bigint") return BigInt(value);
+	throw new Error("Invalid native key in key scan");
 };
 
 const stringToStoreKey = (key: string): string => `string:${key}`;
@@ -1931,6 +1943,49 @@ const isPromiseLike = <T>(value: MaybePromise<T>): value is Promise<T> => {
 	return value != null && typeof (value as Promise<T>).then === "function";
 };
 
+type KeyScanOwnerState = { generation: symbol | undefined; mutations: number };
+const keyScanOwners = new WeakMap<object, KeyScanOwnerState>();
+const keyScanOwner = (owner: object): KeyScanOwnerState => {
+	let state = keyScanOwners.get(owner);
+	if (!state) {
+		state = { generation: undefined, mutations: 0 };
+		keyScanOwners.set(owner, state);
+	}
+	return state;
+};
+
+/** Reserve before argument extraction; release only after async work settles. */
+function keyMutation<This extends object, Args extends unknown[], Result>(
+	method: (this: This, ...args: Args) => Result,
+	_context: ClassMethodDecoratorContext<This, (this: This, ...args: Args) => Result>,
+): (this: This, ...args: Args) => Result {
+	return function (this: This, ...args: Args): Result {
+		const state = keyScanOwner(this);
+		state.generation = undefined;
+		state.mutations++;
+		try {
+			const result = method.apply(this, args);
+			if (isPromiseLike(result)) {
+				return result.then(
+					(value) => {
+						state.mutations--;
+						return value;
+					},
+					(error: unknown) => {
+						state.mutations--;
+						throw error;
+					},
+				) as Result;
+			}
+			state.mutations--;
+			return result;
+		} catch (error) {
+			state.mutations--;
+			throw error;
+		}
+	};
+}
+
 export class RustIndex<T extends Record<string, any>, NestedType = any>
 	implements types.Index<T, NestedType>
 {
@@ -1960,6 +2015,8 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 	private mutationQueue: Promise<void> = Promise.resolve();
 	private state: "closed" | "open" | "closing" = "closed";
 	private mutationVersion = 0;
+	// A detached primary backbone does not repopulate its native mirror.
+	private keyScanNativeAuthoritative = false;
 
 	constructor(
 		private readonly directory?: string,
@@ -1990,17 +2047,21 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 	}
 
 	private setClosing() {
+		keyScanOwner(this).generation = undefined;
 		this.state = "closing";
 	}
 
 	private setClosed() {
+		keyScanOwner(this).generation = undefined;
 		this.state = "closed";
 	}
 
 	private setOpen() {
+		keyScanOwner(this).generation = undefined;
 		this.state = "open";
 	}
 
+	@keyMutation
 	async init(properties: types.IndexEngineInitProperties<T, NestedType>) {
 		this.properties = properties;
 		if (properties.indexBy) {
@@ -2021,6 +2082,7 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 
 		const wasm = await loadWasm();
 		this.native = new wasm.NativeRustIndex<T>();
+		this.keyScanNativeAuthoritative = !this.nativeBackboneDocumentIndexPrimary;
 		this.fieldDictionary = createNativeFieldDictionary();
 		this.byteElementIndexLimit =
 			this.options.byteElementIndexLimit ?? DEFAULT_BYTE_ELEMENT_INDEX_LIMIT;
@@ -2066,6 +2128,7 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 		return this;
 	}
 
+	@keyMutation
 	attachNativeBackboneDocumentIndex(
 		backbone: NativeBackboneDocumentIndexTarget | undefined,
 		options?: { preserveExisting?: boolean },
@@ -2110,6 +2173,9 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 				this.nativeBackboneDocumentIndex = backbone;
 			this.nativeBackboneDocumentIndexPrimary =
 				this.canUseNativeBackboneDocumentIndexAsPrimary(backbone);
+			if (this.nativeBackboneDocumentIndexPrimary) {
+				this.keyScanNativeAuthoritative = false;
+			}
 			return true;
 		} catch {
 			backbone.clearDocumentIndex?.();
@@ -2299,6 +2365,7 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 		return this.getNativeExactStringFirst(field, head)?.id;
 	}
 
+	@keyMutation
 	put(
 		value: T,
 		id?: types.IdKey,
@@ -2324,6 +2391,7 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 		);
 	}
 
+	@keyMutation
 	putWithContext(
 		value: Record<string, any>,
 		id: types.IdKey,
@@ -2352,6 +2420,7 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 		return this.put(contextualValue, id, options);
 	}
 
+	@keyMutation
 	async putWithContextBatch(
 		values: Array<{
 			value: Record<string, any>;
@@ -2397,6 +2466,7 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 		this.mutationVersion++;
 	}
 
+	@keyMutation
 	async putBatch(values: T[]): Promise<void> {
 		if (values.length === 0) {
 			return;
@@ -2559,6 +2629,7 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 		});
 	}
 
+	@keyMutation
 	async putAndDelete(
 		value: T,
 		deleteOptions: types.DeleteOptions,
@@ -2655,6 +2726,7 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 		});
 	}
 
+	@keyMutation
 	async putAndDeleteIds(
 		value: T,
 		deleteIds: Array<types.IdKey | types.Ideable>,
@@ -2670,6 +2742,7 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 		);
 	}
 
+	@keyMutation
 	putSharedLogCoordinateAndDeleteIds(
 		value: T,
 		fields: SharedLogCoordinateNativeFields,
@@ -2686,6 +2759,7 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 		);
 	}
 
+	@keyMutation
 	putSharedLogCoordinateFieldsAndDeleteIds(
 		fields: SharedLogCoordinateNativeFields,
 		deleteIds: Array<types.IdKey | types.Ideable> = [],
@@ -2701,6 +2775,7 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 		);
 	}
 
+	@keyMutation
 	putSharedLogCoordinateFieldsAndDeleteHashes(
 		fields: SharedLogCoordinateNativeFields,
 		deleteHashes: string[] = [],
@@ -2719,6 +2794,7 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 		);
 	}
 
+	@keyMutation
 	putSharedLogCoordinateFieldsAndDeleteHashesNoReturn(
 		fields: SharedLogCoordinateNativeFields,
 		deleteHashes: string[] = [],
@@ -2737,6 +2813,7 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 		);
 	}
 
+	@keyMutation
 	putSharedLogCoordinateFieldsEncodedAndDeleteHashesNoReturn(
 		fields: SharedLogCoordinateNativeFields,
 		deleteHashes: string[] = [],
@@ -2792,6 +2869,7 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 		);
 	}
 
+	@keyMutation
 	putSharedLogCoordinatesAndDeleteIdsBatch(
 		values: Array<{
 			value: T;
@@ -2825,6 +2903,7 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 		);
 	}
 
+	@keyMutation
 	putSharedLogCoordinateFieldsAndDeleteHashesBatch(
 		values: Array<{
 			fields: SharedLogCoordinateNativeFields;
@@ -2895,6 +2974,7 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 		);
 	}
 
+	@keyMutation
 	putSharedLogCoordinateFieldsAndDeleteHashesBatchNoReturn(
 		values: Array<{
 			fields: SharedLogCoordinateNativeFields;
@@ -2992,6 +3072,7 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 		});
 	}
 
+	@keyMutation
 	putSharedLogCoordinateFieldsAndDeleteIdsBatch(
 		values: Array<{
 			fields: SharedLogCoordinateNativeFields;
@@ -3009,6 +3090,7 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 		);
 	}
 
+	@keyMutation
 	delIds(
 		deleteIds: Array<types.IdKey | types.Ideable>,
 	): MaybePromise<types.IdKey[]> {
@@ -3062,6 +3144,7 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 		);
 	}
 
+	@keyMutation
 	delIdsNoReturn(deleteIds: Array<types.IdKey | types.Ideable>): MaybePromise<void> {
 		const deleteKeys = deleteIds.map(keyToStoreKey);
 		if (deleteKeys.length === 0) {
@@ -3116,6 +3199,7 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 		);
 	}
 
+	@keyMutation
 	delIdsCount(deleteIds: Array<types.IdKey | types.Ideable>): MaybePromise<number> {
 		const deleteKeys = deleteIds.map(keyToStoreKey);
 		if (deleteKeys.length === 0) {
@@ -3159,6 +3243,7 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 		);
 	}
 
+	@keyMutation
 	async del(query: types.DeleteOptions): Promise<types.IdKey[]> {
 		if (this.isClosing()) {
 			return [];
@@ -3213,6 +3298,90 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 			}
 			return deletedEntries.map((entry) => entry.id);
 		});
+	}
+
+	get scanKeyPrimitives():
+		| ((options: types.IndexKeyScanOptions) => types.IndexKeyScan)
+		| undefined {
+		// The mirror is not an inventory of a backbone-primary document store.
+		if (
+			!this.keyScanNativeAuthoritative ||
+			this.nativeBackboneDocumentIndexPrimary ||
+			!this.native?.key_page
+		) {
+			return undefined;
+		}
+		return this.createKeyScan.bind(this);
+	}
+
+	private createKeyScan({
+		pageSize,
+		signal,
+	}: types.IndexKeyScanOptions): types.IndexKeyScan {
+		if (!Number.isInteger(pageSize) || pageSize < 1 || pageSize > 4096) {
+			throw new RangeError("Key scan pageSize must be an integer from 1 to 4096");
+		}
+		this.assertOpen();
+		// Never reset the busy count at init/start; old admitted work may settle later.
+		const mutation = keyScanOwner(this);
+		const generation = (mutation.generation ??= Symbol());
+		let owner: RustIndex<T, NestedType> | undefined = this;
+		let native = this.native;
+		let offset = 0;
+		let size = 0;
+		let terminal: Exclude<types.IndexKeyScanPage["status"], "more"> | undefined;
+		const finish = (status: NonNullable<typeof terminal>) => {
+			if (terminal) return;
+			terminal = status;
+			owner = undefined;
+			native = undefined;
+			signal?.removeEventListener("abort", onAbort);
+		};
+		const onAbort = () => finish("aborted");
+		const checkOwner = () => {
+			if (terminal) return;
+			if (signal?.aborted) finish("aborted");
+			else if (owner!.state !== "open") finish("closed");
+			else if (
+				mutation.generation !== generation ||
+				mutation.mutations ||
+				owner!.native !== native ||
+				!owner!.keyScanNativeAuthoritative ||
+				owner!.nativeBackboneDocumentIndexPrimary ||
+				!native?.key_page
+			) {
+				finish("invalidated");
+			}
+		};
+		checkOwner();
+		if (!terminal) {
+			size = native!.len();
+			signal?.addEventListener("abort", onAbort, { once: true });
+		}
+		return {
+			next: () => {
+				checkOwner();
+				if (terminal) return { status: terminal, keys: [] };
+				try {
+					const amount = Math.min(pageSize, size - offset);
+					const raw = native!.key_page!(offset, amount);
+					if (raw.length !== amount) throw new Error("Key scan page size changed");
+					const keys = raw.map(storeKeyToPrimitive);
+					checkOwner();
+					if (terminal) return { status: terminal, keys: [] };
+					offset += amount;
+					if (offset === size) {
+						finish("complete");
+						return { status: "complete", keys };
+					}
+					return { status: "more", keys };
+				} catch (error) {
+					finish("failed");
+					throw error;
+				}
+			},
+			close: () => finish("closed"),
+		};
 	}
 
 	getSize(): number {
@@ -4998,6 +5167,7 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 		});
 	}
 
+	@keyMutation
 	putStoredContextualEncodedValue(
 		id: types.IdKey,
 		encodedValueParts: NativeEncodedValueParts,
@@ -5011,6 +5181,7 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 		return result === false ? false : this.trackMutation(result);
 	}
 
+	@keyMutation
 	persistStoredContextualEncodedValue(
 		id: types.IdKey,
 		encodedValueParts: NativeEncodedValueParts,
@@ -5023,6 +5194,7 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 		return this.persistEncodedValuePartsStored(id, encodedValueParts);
 	}
 
+	@keyMutation
 	putStoredContextualEncodedValueBatch(
 		values: Array<{
 			id: types.IdKey;
