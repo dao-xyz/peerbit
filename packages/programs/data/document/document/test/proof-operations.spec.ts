@@ -224,7 +224,7 @@ describe("proof operations authenticated owner history", () => {
 				expect(Entry.getPreparedStorageBytes(transport)).equal(undefined);
 				const before = serialize(transport);
 				const captured = await checked.incoming({ entry: transport });
-				expect(captured).deep.equal({ ...block, source: "reconstructed" });
+				expect(captured).deep.equal(block);
 				expect(captured.bytes).not.equal(block.bytes);
 				expect(serialize(transport)).deep.equal(before);
 			}
@@ -244,7 +244,7 @@ describe("proof operations authenticated owner history", () => {
 			prepared.fill(0);
 			entry.hash = "mutated";
 			const captured = await pending;
-			expect(captured).deep.equal({ ...block, source: "prepared" });
+			expect(captured).deep.equal(block);
 			expect(Entry.hasPreparedBlock(entry)).equal(true);
 		});
 
@@ -270,10 +270,7 @@ describe("proof operations authenticated owner history", () => {
 				(transport as EntryV0<ProofOperation>)._meta.decrypted._data!.fill(0);
 				release();
 				const captured = await pending;
-				expect(captured).deep.equal({
-					...block,
-					source: found ? "stored" : "reconstructed",
-				});
+				expect(captured).deep.equal(block);
 				captured.bytes.fill(0);
 				expect(block.bytes[0]).equal(0);
 				expect(block.bytes.some((byte) => byte !== 0)).equal(true);

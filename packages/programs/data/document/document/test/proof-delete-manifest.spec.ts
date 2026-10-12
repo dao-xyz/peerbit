@@ -59,43 +59,10 @@ const rawLogEnvelope = (
 	return writer.finalize();
 };
 
-const createFixtureDocuments = () => {
-	@variant(0)
-	class FixtureProgram {}
-
-	@variant("documents")
-	class FixtureDocuments extends FixtureProgram {
-		@field(logCodec)
-		log: SharedLog<any>;
-
-		@field({ type: "bool" })
-		immutable: boolean;
-
-		@field({ type: DocumentIndex })
-		_index: DocumentIndex<any, any, any>;
-
-		constructor(original: Documents<any>, contract?: Contract) {
-			super();
-			this.log = contract ? createProofDeleteLog(contract) : original.log;
-			this.immutable = original.immutable;
-			this._index = original.index;
-		}
-	}
-	return FixtureDocuments;
-};
-const FixtureDocuments = createFixtureDocuments();
-type FixtureDocuments = InstanceType<typeof FixtureDocuments>;
-
 @variant("test_nested_proof_manifest")
 class OldParent {
 	@field({ type: OldDocuments })
 	docs: OldDocuments;
-}
-
-@variant("test_nested_proof_manifest")
-class NewParent {
-	@field({ type: FixtureDocuments })
-	docs: FixtureDocuments;
 }
 
 @variant("test_nested_proof_manifest")
@@ -111,14 +78,13 @@ const contract = (): Contract => ({
 	owner: new Uint8Array(32).fill(7),
 	keyKind: 0,
 });
-const proof = () => new FixtureDocuments(legacy(), contract());
-const actualProof = (keyType: "string" | "bytes" = "string") =>
+const proof = (value = contract()) =>
 	new Documents({
-		id: contract().nonce,
+		id: value.nonce,
 		format: {
 			version: "owner-proofs-v1",
-			owner: new Ed25519PublicKey({ publicKey: contract().owner }),
-			keyType,
+			owner: new Ed25519PublicKey({ publicKey: value.owner }),
+			keyType: value.keyKind === 0 ? "string" : "bytes",
 		},
 	});
 const cid = async (bytes: Uint8Array) =>
@@ -139,15 +105,15 @@ describe("proof-delete manifest compatibility", () => {
 			"zb2rhaEZWQkJGcz9u9ffn3bg56tk5uLbKjUdgJRMkSCwLE2Fr",
 		);
 		expect(serialize(deserialize(bytes, OldDocuments))).to.deep.equal(bytes);
-		const decoded = deserialize(bytes, FixtureDocuments);
-		expect(serialize(new FixtureDocuments(original))).to.deep.equal(bytes);
+		const decoded = deserialize(bytes, Documents);
 		expect(serialize(decoded)).to.deep.equal(bytes);
+		expect(serialize(decoded.clone())).to.deep.equal(bytes);
 		expect(await cid(serialize(decoded))).to.equal(
 			(await original.calculateAddress()).address,
 		);
-		expect(getSchema(FixtureDocuments).variant).to.equal("documents");
-		expect(getSchema(FixtureDocuments).fields.map((f) => f.key)).to.deep.equal(
-			getSchema(Documents).fields.map((f) => f.key),
+		expect(getSchema(Documents).variant).to.equal("documents");
+		expect(getSchema(Documents).fields.map((f) => f.key)).to.deep.equal(
+			getSchema(OldDocuments).fields.map((f) => f.key),
 		);
 		expect(getProofDeleteContract(decoded.log)).to.equal(undefined);
 		expect(deserialize(serialize(decoded), Documents)).to.be.instanceOf(
@@ -159,27 +125,24 @@ describe("proof-delete manifest compatibility", () => {
 		const original = Object.assign(new OldParent(), {
 			docs: new OldDocuments(),
 		});
-		const decoded = deserialize(serialize(original), NewParent);
+		const decoded = deserialize(serialize(original), CurrentParent);
 		expect(serialize(decoded)).to.deep.equal(serialize(original));
-		expect(serialize(deserialize(serialize(decoded), NewParent))).to.deep.equal(
-			serialize(original),
-		);
 		expect(
-			serialize(deserialize(serialize(original), CurrentParent)),
+			serialize(deserialize(serialize(decoded), CurrentParent)),
 		).to.deep.equal(serialize(original));
+		expect(serialize(decoded.docs.clone())).to.deep.equal(
+			serialize(original.docs),
+		);
 	});
 
 	for (const keyType of ["string", "bytes"] as const) {
 		it(`roundtrips the real ${keyType}-key constructor, clone and nested manifest`, async () => {
-			const original = actualProof(keyType);
-			const bytes = serialize(original);
 			const expected: Contract = {
 				...contract(),
 				keyKind: keyType === "string" ? 0 : 1,
 			};
-			expect(bytes).to.deep.equal(
-				serialize(new FixtureDocuments(legacy(), expected)),
-			);
+			const original = proof(expected);
+			const bytes = serialize(original);
 			const parent = Object.assign(new CurrentParent(), { docs: original });
 			for (const decoded of [
 				deserialize(bytes, Documents),
@@ -188,6 +151,8 @@ describe("proof-delete manifest compatibility", () => {
 				deserialize(serialize(parent), CurrentParent).docs,
 			]) {
 				expect(decoded).to.be.instanceOf(Documents);
+				expect(decoded.log).to.be.instanceOf(SharedLog);
+				expect(decoded.index).to.be.instanceOf(DocumentIndex);
 				expect(serialize(decoded)).to.deep.equal(bytes);
 				expect(getProofDeleteContract(decoded.log)).to.deep.equal(expected);
 				expect(decoded.programs).to.deep.equal([decoded.log, decoded.index]);
@@ -199,11 +164,14 @@ describe("proof-delete manifest compatibility", () => {
 			}
 			expect(original.log.log.id).not.to.deep.equal(expected.nonce);
 			expect(() => deserialize(bytes, OldDocuments)).to.throw();
+			expect(() => deserialize(bytes, OldProgram)).to.throw();
 			expect(() => deserialize(serialize(parent), OldParent)).to.throw();
 		});
 	}
 
 	it("owns real constructor inputs and decoded source bytes", () => {
+		const existing = legacy();
+		const oldBytes = serialize(existing);
 		const nonce = contract().nonce;
 		const owner = new Ed25519PublicKey({ publicKey: contract().owner });
 		const original = new Documents({
@@ -211,9 +179,12 @@ describe("proof-delete manifest compatibility", () => {
 			format: { version: "owner-proofs-v1", owner, keyType: "string" },
 		});
 		const bytes = serialize(original);
+		expect(original.log).not.to.equal(existing.log);
+		expect(getProofDeleteContract(existing.log)).to.equal(undefined);
 		nonce.fill(0);
 		owner.publicKey.fill(0);
 		expect(serialize(original)).to.deep.equal(bytes);
+		expect(serialize(existing)).to.deep.equal(oldBytes);
 		const source = new Uint8Array(bytes);
 		const decoded = deserialize(source, Documents);
 		source.fill(0);
@@ -245,32 +216,15 @@ describe("proof-delete manifest compatibility", () => {
 		}
 	});
 
-	it("binds owner/key kind to new bytes while keeping real child programs", async () => {
+	it("binds owner, key kind and nonce to distinct manifests, namespaces and scopes", async () => {
 		const value = proof();
 		const bytes = serialize(value);
-		const decoded = deserialize(bytes, FixtureDocuments);
-		expect(decoded.log).to.be.instanceOf(SharedLog);
-		expect(decoded._index).to.be.instanceOf(DocumentIndex);
-		expect(getProofDeleteContract(decoded.log)).to.deep.equal(contract());
-		expect(serialize(deserialize(bytes, FixtureDocuments))).to.deep.equal(
-			bytes,
-		);
-		const clone = Program.prototype.clone.call(
-			decoded as never,
-		) as unknown as FixtureDocuments;
-		expect(serialize(clone)).to.deep.equal(bytes);
-		expect(getProofDeleteContract(clone.log)).to.deep.equal(contract());
-		const programs = Object.getOwnPropertyDescriptor(
-			Program.prototype,
-			"programs",
-		)!.get!.call(decoded);
-		expect(programs).to.deep.equal([decoded.log, decoded._index]);
 		for (const different of [
 			{ ...contract(), owner: new Uint8Array(32).fill(8) },
 			{ ...contract(), keyKind: 1 as const },
 			{ ...contract(), nonce: new Uint8Array(32).fill(12) },
 		]) {
-			const other = new FixtureDocuments(legacy(), different);
+			const other = proof(different);
 			expect(await cid(serialize(other))).not.to.equal(await cid(bytes));
 			expect(other.log.log.id).not.to.deep.equal(value.log.log.id);
 			expect(other.log.topic).not.to.equal(value.log.topic);
@@ -288,45 +242,16 @@ describe("proof-delete manifest compatibility", () => {
 	it("stripping the contract changes the outer manifest address", async () => {
 		const value = proof();
 		const scopedAddress = await cid(serialize(value));
-		const stripped = new FixtureDocuments(legacy());
-		stripped.log = deserialize(serialize(value.log), SharedLog);
-		stripped._index = value._index;
+		const stripped = new Documents({ index: value.index });
+		stripped.log = deserialize(
+			serialize(value.log),
+			SharedLog,
+		) as typeof stripped.log;
 		expect(getProofDeleteContract(stripped.log)).to.equal(undefined);
 		expect(await cid(serialize(stripped))).not.to.equal(scopedAddress);
 		// The missing descriptor cannot activate proof admission. Legacy Operation
 		// rejects scoped operation bytes; the operations-module tests cover that
 		// separate boundary. An outer address is NOT the signed protocol scope.
-	});
-
-	it("the explicit old Documents and Program layouts reject the new generation", () => {
-		const bytes = serialize(proof());
-		expect(() => deserialize(bytes, OldDocuments)).to.throw();
-		expect(() => deserialize(bytes, OldProgram)).to.throw();
-		const parent = Object.assign(new NewParent(), { docs: proof() });
-		expect(() => deserialize(serialize(parent), OldParent)).to.throw();
-	});
-
-	it("owns construction, decode and exposed contract bytes", () => {
-		const original = legacy();
-		const existing = new FixtureDocuments(original);
-		const oldBytes = serialize(existing);
-		const input = contract();
-		const value = new FixtureDocuments(original, input);
-		const before = serialize(value);
-		expect(value.log).not.to.equal(original.log);
-		expect(getProofDeleteContract(original.log)).to.equal(undefined);
-		expect(serialize(existing)).to.deep.equal(oldBytes);
-		input.owner.fill(0);
-		input.nonce.fill(0);
-		expect(serialize(value)).to.deep.equal(before);
-		const bytes = new Uint8Array(before);
-		const decoded = deserialize(bytes, FixtureDocuments);
-		bytes.fill(0);
-		expect(serialize(decoded)).to.deep.equal(before);
-		const exposed = getProofDeleteContract(value.log)!;
-		exposed.owner.fill(0);
-		exposed.nonce.fill(0);
-		expect(serialize(value)).to.deep.equal(before);
 	});
 
 	it("rejects unrelated, invalid and truncated nested manifests", () => {
@@ -344,10 +269,10 @@ describe("proof-delete manifest compatibility", () => {
 		).to.throw("Unsupported proof-delete owner/key contract");
 		const bytes = serialize(proof());
 		expect(() =>
-			deserialize(bytes.subarray(0, bytes.length - 1), FixtureDocuments),
+			deserialize(bytes.subarray(0, bytes.length - 1), Documents),
 		).to.throw();
 		expect(() =>
-			deserialize(new Uint8Array([...bytes, 0]), FixtureDocuments),
+			deserialize(new Uint8Array([...bytes, 0]), Documents),
 		).to.throw();
 	});
 
@@ -459,6 +384,7 @@ import { Ed25519PublicKey } from '@peerbit/crypto';
 import { SharedLog } from '@peerbit/shared-log';
 import { Documents } from './dist/src/program.js';
 import { DocumentIndex } from './dist/src/search.js';
+import { deriveProofDeleteScope, getProofDeleteContract } from './dist/src/proof-delete-manifest.js';
 class OldProgram {}
 variant(0)(OldProgram);
 class OldDocuments extends OldProgram {
@@ -491,10 +417,19 @@ if (!(decoded instanceof Custom) || decoded.label !== docs.label) throw Error('O
 class CurrentCustom extends Documents {}
 variant('test_app_documents')(CurrentCustom);
 field({ type: 'string' })(CurrentCustom.prototype, 'label');
+class CurrentParent {}
+variant('test_nested_proof_manifest')(CurrentParent);
+field({ type: Documents })(CurrentParent.prototype, 'docs');
 const currentLegacy = new CurrentCustom({ id: new Uint8Array(32).fill(42) });
 currentLegacy.label = docs.label;
 if (!Buffer.from(serialize(currentLegacy)).equals(Buffer.from(bytes))) throw Error('Current subclass changed old bytes');
-if (deserialize(bytes, CurrentCustom).label !== docs.label) throw Error('Current subclass cannot read old bytes');
+const legacyDecoded = deserialize(bytes, CurrentCustom);
+if (!(legacyDecoded instanceof CurrentCustom) || legacyDecoded.label !== docs.label) throw Error('Current subclass cannot read old bytes');
+if (!Buffer.from(serialize(legacyDecoded)).equals(Buffer.from(bytes))) throw Error('Current subclass roundtrip changed old bytes');
+const oldParentBytes = serialize(parent);
+const nestedLegacy = deserialize(oldParentBytes, CurrentParent);
+if (!(nestedLegacy.docs instanceof CurrentCustom) || nestedLegacy.docs.label !== docs.label) throw Error('Current nested subclass lost');
+if (!Buffer.from(serialize(nestedLegacy)).equals(Buffer.from(oldParentBytes))) throw Error('Current nested subclass changed old bytes');
 const currentProof = new CurrentCustom({
   id: new Uint8Array(32).fill(11),
   format: { version: 'owner-proofs-v1', owner: new Ed25519PublicKey({ publicKey: new Uint8Array(32).fill(7) }), keyType: 'string' }
@@ -502,51 +437,22 @@ const currentProof = new CurrentCustom({
 currentProof.label = docs.label;
 const proofBytes = serialize(currentProof);
 if (!Buffer.from(serialize(currentProof.clone())).equals(Buffer.from(proofBytes))) throw Error('Current proof subclass clone changed bytes');
-if (deserialize(proofBytes, CurrentCustom).label !== docs.label) throw Error('Current proof subclass field lost');
-console.log(JSON.stringify({ bytes: [...bytes], parent: [...serialize(parent)] }));
+const proofDecoded = deserialize(proofBytes, CurrentCustom);
+if (proofDecoded.label !== docs.label) throw Error('Current proof subclass field lost');
+if (!Buffer.from(serialize(proofDecoded)).equals(Buffer.from(proofBytes))) throw Error('Current proof subclass roundtrip changed bytes');
+const nestedProof = Object.assign(new CurrentParent(), { docs: currentProof });
+if (!Buffer.from(serialize(deserialize(serialize(nestedProof), CurrentParent))).equals(Buffer.from(serialize(nestedProof)))) throw Error('Current nested proof subclass changed bytes');
+const otherView = deserialize(proofBytes, CurrentCustom);
+otherView.label = 'another presentation of the same protocol store';
+if ((await otherView.calculateAddress()).address === (await currentProof.calculateAddress()).address) throw Error('Outer field did not change address');
+if (otherView.log.topic !== currentProof.log.topic) throw Error('Outer field changed protocol topic');
+if (!Buffer.from(deriveProofDeleteScope(getProofDeleteContract(otherView.log))).equals(Buffer.from(deriveProofDeleteScope(getProofDeleteContract(currentProof.log))))) throw Error('Outer field changed signed scope');
+console.log('actual subclass compatibility preserved');
 `,
 				JSON.stringify([...serialize(proof())]),
 			],
 			{ cwd: new URL("../..", import.meta.url), timeout: 10_000 },
 		);
-		const old = JSON.parse(stdout) as { bytes: number[]; parent: number[] };
-		// Separate module-style class graph: all subclasses register before the
-		// first Borsh decoder is compiled, just as in the old-code child process.
-		const CustomDocuments = createFixtureDocuments();
-		@variant("test_app_documents")
-		class Custom extends CustomDocuments {
-			@field({ type: "string" })
-			label: string;
-		}
-		@variant("test_nested_proof_manifest")
-		class CustomParent {
-			@field({ type: CustomDocuments })
-			docs: InstanceType<typeof CustomDocuments>;
-		}
-		const bytes = new Uint8Array(old.bytes);
-		const value = deserialize(bytes, Custom);
-		expect(value).to.be.instanceOf(Custom);
-		expect(value.label).to.equal("preserved application field");
-		expect(serialize(value)).to.deep.equal(bytes);
-		expect(await cid(serialize(value))).to.equal(await cid(bytes));
-		expect(
-			serialize(deserialize(new Uint8Array(old.parent), CustomParent)),
-		).to.deep.equal(new Uint8Array(old.parent));
-		const newGeneration = new Custom(legacy(), contract());
-		newGeneration.label = value.label;
-		const upgraded = deserialize(serialize(newGeneration), Custom);
-		expect(upgraded.label).to.equal(value.label);
-		expect(getProofDeleteContract(upgraded.log)).to.deep.equal(contract());
-		const otherView = deserialize(serialize(upgraded), Custom);
-		otherView.label = "another presentation of the same protocol store";
-		expect(await cid(serialize(otherView))).not.to.equal(
-			await cid(serialize(upgraded)),
-		);
-		expect(otherView.log.topic).to.equal(upgraded.log.topic);
-		expect(
-			deriveProofDeleteScope(getProofDeleteContract(otherView.log)!),
-		).to.deep.equal(
-			deriveProofDeleteScope(getProofDeleteContract(upgraded.log)!),
-		);
+		expect(stdout.trim()).to.equal("actual subclass compatibility preserved");
 	});
 });

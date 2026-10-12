@@ -155,6 +155,38 @@ per-entry timer or background proof-fetch service. This does not provide compact
 tombstones, secure erasure, physical reclamation, authenticated mutable revocation
 history, or shared-fs's changing trust-graph policy. Those remain separate work.
 
+## Compact-marker design comparison
+
+Full original-byte evidence is a choice for the complete-history contract, not a
+minimum requirement for every fixed-owner deletion design. An owner-signed marker
+containing scope, typed key, selected root and a bounded canonical set of retired
+version IDs could authorize exact removal of the listed versions. Every present
+or later-arriving original must authenticate to that scope/key before any effect.
+
+That alternative does not independently prove that the set contains all continuous
+same-document ancestors. If A1 descends from A0 but its delete lists only A1, A0
+can remain eligible to reappear after an independent replacement is also deleted.
+Trusting the owner's list would therefore change the currently enforced contract,
+even if the normal local writer attempts to collect complete history.
+
+The list also cannot simply replace witnesses inside the existing CUT: inserting
+its `next` links affects parent head bookkeeping, and exact retirement/recovery
+uses authenticated parent metadata. A cold peer receiving a later child still
+needs a rule for verifying a physically removed parent's key, type and clock.
+Hash-only markers need key-safe retirement lookup/head bookkeeping and explicit
+missing-parent rules; they do not remove durability, receipt or lifecycle obligations.
+
+Independently signed compact PUT headers could make ancestry evidence independent
+of application payload size, but require a new authenticated identity/commitment
+design and payload-availability rules. Current EntryV0 signatures cover the full
+serialized payload, and its CID identifies the full block: neither can validate
+a redacted header alone. This is not a wire-compatible encoding optimization.
+
+Decision: do not replace complete proofs with hash-only markers as cleanup. Keep
+the existing guarantees and format unchanged; a compact-header design would need
+a separate protocol decision and the same adversarial/recovery validation. Neither
+alternative supplies authenticated mutable trust history or revocation by itself.
+
 ## Validation and release gate
 
 Local public tests use disk-backed Documents with JS and native graphs: arrival

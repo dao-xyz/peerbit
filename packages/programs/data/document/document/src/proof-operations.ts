@@ -486,9 +486,7 @@ export const createProofOperationVerifier = (properties: {
 		async incoming(input: {
 			entry: Entry<ProofOperation>;
 			resolveLocal?: (hash: string) => Promise<Uint8Array | undefined>;
-		}): Promise<
-			OriginalProofEntry & { source: "prepared" | "stored" | "reconstructed" }
-		> {
+		}): Promise<OriginalProofEntry> {
 			const { entry: supplied, resolveLocal } = input;
 			const cid = supplied.hash;
 			requireFact(
@@ -500,14 +498,10 @@ export const createProofOperationVerifier = (properties: {
 			let bytes = prepared
 				? copyBytes(prepared)
 				: captureTransportCandidate(supplied);
-			let source: "prepared" | "stored" | "reconstructed" = prepared
-				? "prepared"
-				: "reconstructed";
 			if (!prepared && resolveLocal) {
 				const stored = await resolveLocal(cid);
 				if (stored !== undefined) {
 					bytes = copyBytes(stored);
-					source = "stored";
 				}
 			}
 			const block = { cid, bytes };
@@ -527,7 +521,7 @@ export const createProofOperationVerifier = (properties: {
 				);
 				await deletionHistory(entry, operation);
 			}
-			return { ...block, source };
+			return block;
 		},
 		/** Parent kind/scope must also be resolved at ordinary admission. */
 		async put(input: OriginalProofEntry): Promise<VerifiedProofPut> {

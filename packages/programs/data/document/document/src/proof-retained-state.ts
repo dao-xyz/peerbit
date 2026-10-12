@@ -160,29 +160,25 @@ export const createProofRetainedState = (properties: {
 				{ type: "shape", shape: { hash: true } },
 			);
 			try {
-				for (;;) {
-					const page = await wait(() => iterator.next(PAGE_SIZE));
-					if (page.length === 0) return undefined;
-					for (const row of page) {
-						if (++heldBudget.markers > MAX_MARKER_CANDIDATES) {
-							throw new Error("Proof retained-state marker budget exceeded");
-						}
-						const bytes = await read(row.hash);
-						const proof = await wait(() =>
-							verifier.deletion({ cid: row.hash, bytes }),
-						);
-						const fact = proof.targets.find((target) => target.hash === hash);
-						if (!fact)
-							throw new Error("Indexed proof marker does not retire target");
-						if (
-							requiredKey &&
-							!equals(serialize(requiredKey), serialize(fact.key))
-						) {
-							throw new Error("Wrong retained proof target key");
-						}
-						return fact;
-					}
+				const [row] = await wait(() => iterator.next(1));
+				if (!row) return undefined;
+				if (++heldBudget.markers > MAX_MARKER_CANDIDATES) {
+					throw new Error("Proof retained-state marker budget exceeded");
 				}
+				const bytes = await read(row.hash);
+				const proof = await wait(() =>
+					verifier.deletion({ cid: row.hash, bytes }),
+				);
+				const fact = proof.targets.find((target) => target.hash === hash);
+				if (!fact)
+					throw new Error("Indexed proof marker does not retire target");
+				if (
+					requiredKey &&
+					!equals(serialize(requiredKey), serialize(fact.key))
+				) {
+					throw new Error("Wrong retained proof target key");
+				}
+				return fact;
 			} finally {
 				await iterator.close();
 				check();

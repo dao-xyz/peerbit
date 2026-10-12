@@ -1,10 +1,12 @@
 import { deserialize, serialize } from "@dao-xyz/borsh";
 import { toId } from "@peerbit/indexer-interface";
 import { EntryType } from "@peerbit/log";
+import { ClosedError } from "@peerbit/program";
 import { expect } from "chai";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import pDefer from "p-defer";
 import { Peerbit } from "peerbit";
 import sinon from "sinon";
 import { Documents } from "../src/program.js";
@@ -47,6 +49,7 @@ describe("owner-proofs Documents public lifecycle", () => {
 
 			it("deletes same-key history, preserves another key and reopens offline", async () => {
 				const manifest = serialize(docs);
+				const address = docs.address;
 				const events: { added: string[]; removed: string[] }[] = [];
 				docs.events.addEventListener("change", (event) => {
 					events.push({
@@ -89,9 +92,67 @@ describe("owner-proofs Documents public lifecycle", () => {
 				]);
 				await peer.stop();
 				peer = await Peerbit.create({ directory });
-				docs = await peer.open(
-					deserialize(manifest, Documents) as unknown as Documents<Document>,
-					{ args },
+				docs = deserialize(
+					manifest,
+					Documents,
+				) as unknown as Documents<Document>;
+				const entered = pDefer();
+				const release = pDefer();
+				const putWithContext = docs.index.putWithContext.bind(docs.index);
+				const projection = sinon
+					.stub(docs.index, "putWithContext")
+					.callsFake(async (...values) => {
+						// Actual owner recovery clears and rebuilds this derived projection.
+						expect(await docs.index.index.getSize()).equal(0);
+						const result = await putWithContext(...values);
+						entered.resolve();
+						await release.promise;
+						return result;
+					});
+				const queryOpen = sinon.spy(docs.index._query, "open");
+				const queryListeners = sinon.spy(
+					docs.index._query.events,
+					"addEventListener",
+				);
+				const logRpcOpen = sinon.spy(docs.log.rpc, "open");
+				const opening = peer.open(docs, { args });
+				try {
+					await Promise.race([
+						entered.promise,
+						opening.then(() => {
+							throw new Error("Owner recovery completed without pausing");
+						}),
+					]);
+					expect(docs.log.log.closed).false;
+					expect(await docs.log.log.has(survivor.entry.hash)).true;
+					expect(await docs.index.index.getSize()).equal(1);
+					expect(
+						(await docs.index.index.get(toId("b")))?.value.__context.head,
+					).equal(survivor.entry.hash);
+					expect(() => docs.index.getSize()).throw(ClosedError);
+					await expect(docs.index.get("b", { remote: false })).rejectedWith(
+						ClosedError,
+					);
+					await expect(docs.get("b", { local: true, remote: false })).rejected;
+					await expect(docs.count()).rejected;
+					expect(queryOpen.called).false;
+					expect(
+						queryListeners.getCalls().filter((call) => call.args[0] === "join"),
+					).to.have.length(0);
+					expect(logRpcOpen.called).false;
+					expect(docs.log.syncronizer).undefined;
+				} finally {
+					release.resolve();
+					await opening.catch(() => undefined);
+					projection.restore();
+				}
+				docs = await opening;
+				expect(docs.address).equal(address);
+				expect(queryOpen.calledOnce).true;
+				expect(logRpcOpen.calledOnce).true;
+				expect(await docs.index.getSize()).equal(1);
+				expect((await docs.index.get("b", { remote: false }))?.name).equal(
+					"keep",
 				);
 				expect(peer.libp2p.getConnections()).to.have.length(0);
 				expect(await docs.get("a", { local: true, remote: false })).undefined;

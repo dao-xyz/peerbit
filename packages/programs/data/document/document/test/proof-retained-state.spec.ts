@@ -431,6 +431,41 @@ describe("proof retained owner state", () => {
 				expect(get.callCount).equal(1);
 			});
 
+			it("requests one marker candidate and closes its iterator after success or key rejection", async () => {
+				const target = await put("a", 1n);
+				await marker(target, [target], 2n);
+				await marker(target, [target], 3n);
+				const iterate = log.entryIndex.iterate.bind(log.entryIndex);
+				const cursors: { next: sinon.SinonSpy; close: sinon.SinonSpy }[] = [];
+				sinon.stub(log.entryIndex, "iterate").callsFake(((
+					...args: Parameters<typeof iterate>
+				) => {
+					const iterator = iterate(...args);
+					cursors.push({
+						next: sinon.spy(iterator, "next"),
+						close: sinon.spy(iterator, "close"),
+					});
+					return iterator;
+				}) as typeof iterate);
+				await owned(async (owner) => {
+					expect(
+						await state.retiredOriginal({ hash: target.hash, owner }),
+					).deep.equal(await raw(target));
+					await expect(
+						state.retiredOriginal({
+							hash: target.hash,
+							key: new StringKey("b"),
+							owner,
+						}),
+					).rejectedWith("Wrong retained proof target key");
+				});
+				expect(cursors).to.have.length(2);
+				for (const cursor of cursors) {
+					expect(cursor.next.args).deep.equal([[1]]);
+					expect(cursor.close.callCount).equal(1);
+				}
+			});
+
 			it("does not mistake an indexed-but-missing block for an absent document", async () => {
 				const candidate = await put();
 				await peer.services.blocks.rm(candidate.hash);
