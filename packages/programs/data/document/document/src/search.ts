@@ -4353,9 +4353,12 @@ export class DocumentIndex<
 				entries: results.results.length,
 				details: { edge: "end" },
 			});
-			if (results.results.length > 0) {
+			if (results.results.length > 0 || results.kept > 0n) {
 				options?.onResponse &&
 					(await options.onResponse(results, this.node.identity.publicKey));
+			}
+			// A pending local cursor must not suppress remote fallback.
+			if (results.results.length > 0) {
 				allResults.push(results);
 			}
 		}
@@ -5375,6 +5378,7 @@ export class DocumentIndex<
 					resolve,
 					signal: fetchSignal,
 					onResponse: async (response, from) => {
+						if (closeStarted) return;
 						if (!from) {
 							logger.error("Missing response from");
 							return;
@@ -5617,22 +5621,22 @@ export class DocumentIndex<
 								true,
 							)
 								.then(async (results) => {
+									const peerBuffer = peerBufferMap.get(peer);
+									if (!peerBuffer) {
+										return;
+									}
+									peerBuffer.kept = Number(results.kept);
 									resultsLeft += Number(results.kept);
 
 									if (results.results.length === 0) {
 										if (
 											!keepRemoteAlive &&
-											peerBufferMap.get(peer)?.buffer.length === 0
+											results.kept === 0n &&
+											peerBuffer.buffer.length === 0
 										) {
 											peerBufferMap.delete(peer); // No more results
 										}
 									} else {
-										const peerBuffer = peerBufferMap.get(peer);
-										if (!peerBuffer) {
-											return;
-										}
-										peerBuffer.kept = Number(results.kept);
-
 										for (const result of results.results) {
 											const keyPrimitive = indexerTypes.toId(
 												this.indexByResolver(result.value),
