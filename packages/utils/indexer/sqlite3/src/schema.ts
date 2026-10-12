@@ -1721,6 +1721,7 @@ export const convertSearchRequestToQuery = (
 
 	for (const [i, table] of rootTables.entries()) {
 		const { selects, joins, groupBy } = selectsPerTable[i];
+		let tableOrderByClause: string;
 
 		try {
 			const { orderByBuilder } = buildOrderBy(
@@ -1733,17 +1734,7 @@ export const convertSearchRequestToQuery = (
 				options,
 			);
 
-			if (!orderByClause && orderByBuilder) {
-				// assume all order by clauses will be the same
-				orderByClause =
-					orderByBuilder.length > 0
-						? orderByClause.length > 0
-							? orderByClause + ", " + orderByBuilder
-							: orderByBuilder
-						: orderByClause;
-			}
-
-			//orderByAddedOnce = true;
+			tableOrderByClause = orderByBuilder ?? "";
 		} catch (error) {
 			if (error instanceof MissingFieldError) {
 				lastError = error;
@@ -1767,12 +1758,15 @@ export const convertSearchRequestToQuery = (
 				);
 
 				unionBuilder += `${unionBuilder.length > 0 ? " UNION " : ""} ${selectQuery} ${query} ${groupBy ? "GROUP BY " + groupBy : ""}`;
+				if (!matchedOnce) {
+					// Use an alias from a participating SELECT, never a skipped root.
+					orderByClause = tableOrderByClause;
+				}
 				matchedOnce = true;
 				bindableBuilder.push(...bindable);
 			} catch (error) {
 				if (error instanceof MissingFieldError) {
 					lastError = error;
-					orderByClause = "";
 					continue;
 				}
 				throw error;
