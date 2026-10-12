@@ -1125,6 +1125,247 @@ describe("receive admission replication-info V2 sender streams", () => {
 		blockedQuery.resolve([]);
 	});
 
+	it("retains a physical confirmation charge across repeated waiter timeouts", async () => {
+		const clock = sinon.useFakeTimers();
+		coordinator.clearForClose();
+		coordinator = createCoordinator({ confirmationRetryMs: 50 });
+		const peerSession = {};
+		openSessions.add(peerSession);
+		expect(accept(peerA, peerSession, challenge(57))).to.be.true;
+		await coordinator.drain();
+		const physical: ReturnType<typeof pDefer<never[]>>[] = [];
+		rpcSend.callsFake((message) => {
+			if (!(message instanceof RequestReplicationInfoV2AppliedMessage))
+				return Promise.resolve([]);
+			const blocked = pDefer<never[]>();
+			physical.push(blocked);
+			return blocked.promise; // Deliberately ignores logical waiter cancellation.
+		});
+		try {
+			for (let attempt = 0; attempt < 8; attempt++) {
+				const result = coordinator
+					.confirmLatestForPeer(
+						{
+							peerHash: peerA.hashcode(),
+							peerSession,
+							receiverTransportSession: 2n,
+						},
+						{ timeout: 20 },
+					)
+					.catch((error) => error);
+				await clock.tickAsync(25);
+				expect(await result).to.be.instanceOf(TimeoutError);
+				await coordinator.drain();
+			}
+			expect(physical).to.have.length(1);
+		} finally {
+			for (const blocked of physical) blocked.resolve([]);
+			await clock.tickAsync(0);
+		}
+	});
+
+	for (const transition of [
+		"session replacement",
+		"coordinator reopen",
+		"authenticated rearm",
+		"committed revision",
+	] as const) {
+		it(`bounds physical queries across ${transition} and resumes after settlement`, async () => {
+			const clock = sinon.useFakeTimers();
+			coordinator.clearForClose();
+			coordinator = createCoordinator({ confirmationRetryMs: 50 });
+			let peerSession = {};
+			openSessions.add(peerSession);
+			expect(accept(peerA, peerSession, challenge(57))).to.be.true;
+			await coordinator.drain();
+			const physical: {
+				request: RequestReplicationInfoV2AppliedMessage;
+				blocked: ReturnType<typeof pDefer<never[]>>;
+			}[] = [];
+			rpcSend.callsFake((message) => {
+				if (!(message instanceof RequestReplicationInfoV2AppliedMessage))
+					return Promise.resolve([]);
+				const blocked = pDefer<never[]>();
+				physical.push({ request: message, blocked });
+				return blocked.promise;
+			});
+			const confirm = (timeout: number) =>
+				coordinator
+					.confirmLatestForPeer(
+						{
+							peerHash: peerA.hashcode(),
+							peerSession,
+							receiverTransportSession: 2n,
+						},
+						{ timeout },
+					)
+					.then(
+						() => "confirmed",
+						(error) => error,
+					);
+			const respond = (request: RequestReplicationInfoV2AppliedMessage) =>
+				coordinator.acceptApplied(
+					new ReplicationInfoV2AppliedMessage({
+						receiverChallenge: request.receiverChallenge.slice(),
+						senderEpoch: request.senderEpoch.slice(),
+						sequence: request.sequence,
+						revision: request.revision,
+					}),
+					{ from: peerA, receiverTransportSession: 2n },
+				);
+			const rotate = async (number: number) => {
+				if (transition === "committed revision")
+					coordinator.enqueue({ added: { segments: [] } });
+				else if (transition === "authenticated rearm")
+					coordinator.reconfirmAfterPeerRecovery(peerA.hashcode());
+				else {
+					if (transition === "session replacement") {
+						coordinator.clearPeer(peerA.hashcode(), peerSession);
+						openSessions.delete(peerSession);
+						peerSession = {};
+						openSessions.add(peerSession);
+					} else coordinator.resetForOpen();
+					await coordinator.drain();
+					expect(accept(peerA, peerSession, challenge(57 + number))).to.be.true;
+				}
+				await coordinator.drain();
+			};
+			try {
+				const first = confirm(20);
+				await clock.tickAsync(25);
+				expect(await first).to.be.instanceOf(TimeoutError);
+				await coordinator.drain();
+				expect(physical).to.have.length(1);
+				await rotate(1);
+				const replacement = confirm(20);
+				await clock.tickAsync(25);
+				expect(await replacement).to.be.instanceOf(TimeoutError);
+				await coordinator.drain();
+				expect(physical).to.have.length(2); // One replacement has physical headroom.
+				await rotate(2);
+				const current = confirm(300);
+				await clock.tickAsync(25);
+				await coordinator.drain();
+				expect(physical).to.have.length(2); // Another generation cannot evade the cap.
+				expect(respond(physical[0].request)).to.equal(false);
+				expect(
+					coordinator.isLatestConfirmedForPeer({
+						peerHash: peerA.hashcode(),
+						peerSession,
+						receiverTransportSession: 2n,
+					}),
+				).to.equal(false);
+				physical[0].blocked.resolve([]);
+				await clock.tickAsync(50);
+				expect(physical).to.have.length(3); // Existing waiter/retry resumes, no new wake.
+				expect((coordinator as any).physicalConfirmationCount).to.equal(2);
+				physical[1].blocked.reject(
+					new Error("late obsolete transport rejection"),
+				);
+				await clock.tickAsync(0);
+				expect((coordinator as any).physicalConfirmationCount).to.equal(1);
+				expect(respond(physical[1].request)).to.equal(false);
+				expect(respond(physical[2].request)).to.equal(true);
+				expect(await current).to.equal("confirmed");
+				await coordinator.drain();
+				expect((coordinator as any).physicalConfirmationCount).to.equal(1); // Logical success is not physical release.
+			} finally {
+				for (const { blocked } of physical) blocked.resolve([]);
+				await clock.tickAsync(0);
+			}
+			expect((coordinator as any).physicalConfirmationCount).to.equal(0);
+			expect((coordinator as any).physicalConfirmations.size).to.equal(0);
+		});
+	}
+
+	it("caps physical confirmation queries globally without blocking other peers below the cap", async () => {
+		const clock = sinon.useFakeTimers();
+		coordinator.clearForClose();
+		coordinator = createCoordinator({ confirmationRetryMs: 50 });
+		const physical: {
+			request: RequestReplicationInfoV2AppliedMessage;
+			blocked: ReturnType<typeof pDefer<never[]>>;
+		}[] = [];
+		rpcSend.callsFake((message) => {
+			if (!(message instanceof RequestReplicationInfoV2AppliedMessage))
+				return Promise.resolve([]);
+			const blocked = pDefer<never[]>();
+			physical.push({ request: message, blocked });
+			return blocked.promise;
+		});
+		try {
+			for (let i = 0; i < 64; i++) {
+				const peer = key(i + 2);
+				const peerSession = {};
+				openSessions.add(peerSession);
+				expect(accept(peer, peerSession, challenge(i + 1))).to.be.true;
+				await coordinator.drain();
+				const confirmation = coordinator
+					.confirmLatestForPeer(
+						{
+							peerHash: peer.hashcode(),
+							peerSession,
+							receiverTransportSession: BigInt(i + 2),
+						},
+						{ timeout: 20 },
+					)
+					.catch((error) => error);
+				await clock.tickAsync(25);
+				expect(await confirmation).to.be.instanceOf(TimeoutError);
+				await coordinator.drain();
+				expect(physical).to.have.length(i + 1);
+			}
+			expect((coordinator as any).physicalConfirmationCount).to.equal(64);
+			const waitingPeer = key(66);
+			const waitingSession = {};
+			openSessions.add(waitingSession);
+			expect(accept(waitingPeer, waitingSession, challenge(65))).to.be.true;
+			await coordinator.drain();
+			const waiting = coordinator
+				.confirmLatestForPeer(
+					{
+						peerHash: waitingPeer.hashcode(),
+						peerSession: waitingSession,
+						receiverTransportSession: 66n,
+					},
+					{ timeout: 300 },
+				)
+				.then(
+					() => "confirmed",
+					(error) => error,
+				);
+			await clock.tickAsync(25);
+			await coordinator.drain();
+			expect(physical).to.have.length(64);
+			physical[0].blocked.resolve([]);
+			await clock.tickAsync(50);
+			expect(physical).to.have.length(65);
+			const fresh = physical[64].request;
+			expect(
+				coordinator.acceptApplied(
+					new ReplicationInfoV2AppliedMessage({
+						receiverChallenge: fresh.receiverChallenge.slice(),
+						senderEpoch: fresh.senderEpoch.slice(),
+						sequence: fresh.sequence,
+						revision: fresh.revision,
+					}),
+					{ from: waitingPeer, receiverTransportSession: 66n },
+				),
+			).to.equal(true);
+			expect(await waiting).to.equal("confirmed");
+			await coordinator.drain();
+			expect((coordinator as any).physicalConfirmationCount).to.equal(64);
+			coordinator.clearForClose();
+			coordinator.resetForOpen();
+			expect((coordinator as any).physicalConfirmationCount).to.equal(64);
+		} finally {
+			for (const { blocked } of physical) blocked.resolve([]);
+			await clock.tickAsync(0);
+		}
+		expect((coordinator as any).physicalConfirmationCount).to.equal(0);
+		expect((coordinator as any).physicalConfirmations.size).to.equal(0);
+	});
+
 	it("rejects confirmation waiter overflow without retaining timers or listeners", async () => {
 		coordinator.clearForClose();
 		coordinator = createCoordinator({
