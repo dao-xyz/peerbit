@@ -1,5 +1,32 @@
 # Changelog
 
+## 16.0.42
+
+### Patch Changes
+
+- [#1530](https://github.com/dao-xyz/peerbit/pull/1530) [`7c089f1`](https://github.com/dao-xyz/peerbit/commit/7c089f1edf904113984565d59c2977e8c229f425) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Keep replication-confirmation transport work bounded when an RPC ignores cancellation. Logical timeout, close, or session replacement no longer releases the physical query's charge before its send settles. Permit one successor session, authenticated recovery, or committed revision while preserving exact confirmation binding and fail-closed limits.
+
+- [#1528](https://github.com/dao-xyz/peerbit/pull/1528) [`82fae14`](https://github.com/dao-xyz/peerbit/commit/82fae14b6718aaa1581234a042f765bea9594d0c) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Update the coordinated libp2p dependency cohort to include buffered-stream close/reset and listener cleanup fixes. Preserve Peerbit's transport configuration, custom Yamux profile and standard Yamux fallback; WebRTC Direct is not enabled by this update.
+
+- [#1529](https://github.com/dao-xyz/peerbit/pull/1529) [`8e9fb70`](https://github.com/dao-xyz/peerbit/commit/8e9fb70793d160311b6ba0a26083323a2eaf5aad) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Stop advertising repair hashes removed from the local log and retire their stale sender obligations. Local absence does not count as remote presence or a persisted delivery receipt.
+
+- [#1525](https://github.com/dao-xyz/peerbit/pull/1525) [`2375d4b`](https://github.com/dao-xyz/peerbit/commit/2375d4b723f1bfc17601120bc996bfe6ae840c5f) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Recover eligible held entries after a writable transport replacement without requiring a new topic session. Bound recovery to small authoritative inventory pages, check fresh session-bound presence before sending payloads, and invalidate interrupted passes across local mutations or ownership changes. Presence checks are not persisted delivery receipts. Legacy peers keep their existing synchronization protocol.
+
+- Updated dependencies [[`f902c41`](https://github.com/dao-xyz/peerbit/commit/f902c41b9402428daa4089c3f0a0d113fde92eaa), [`82fae14`](https://github.com/dao-xyz/peerbit/commit/82fae14b6718aaa1581234a042f765bea9594d0c), [`a919a34`](https://github.com/dao-xyz/peerbit/commit/a919a341fa35479958d60c7db99be94d34d6cd8b), [`9b28a3e`](https://github.com/dao-xyz/peerbit/commit/9b28a3e3ef99851a7d6f48fa939614b9766b0d27), [`d9f09f8`](https://github.com/dao-xyz/peerbit/commit/d9f09f80352bf32d6c23ad5047a58a72f433e3e8)]:
+  - @peerbit/indexer-sqlite3@3.0.23
+  - @peerbit/blocks@4.3.5
+  - @peerbit/crypto@3.1.8
+  - @peerbit/log@6.2.40
+  - @peerbit/logger@2.0.4
+  - @peerbit/program@6.0.70
+  - @peerbit/pubsub@5.4.15
+  - @peerbit/pubsub-interface@5.2.4
+  - @peerbit/stream-interface@6.0.18
+  - @peerbit/rpc@6.2.6
+  - @peerbit/blocks-interface@2.2.3
+  - @peerbit/indexer-interface@3.1.2
+  - @peerbit/any-store@2.2.19
+
 ## 16.0.41
 
 ### Patch Changes

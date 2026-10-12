@@ -1,5 +1,18 @@
 # Changelog
 
+## 3.2.168
+
+### Patch Changes
+
+- Updated dependencies [[`7c089f1`](https://github.com/dao-xyz/peerbit/commit/7c089f1edf904113984565d59c2977e8c229f425), [`edf55a0`](https://github.com/dao-xyz/peerbit/commit/edf55a065490b4d428310735f303f0840bc208d2), [`82fae14`](https://github.com/dao-xyz/peerbit/commit/82fae14b6718aaa1581234a042f765bea9594d0c), [`8e9fb70`](https://github.com/dao-xyz/peerbit/commit/8e9fb70793d160311b6ba0a26083323a2eaf5aad), [`d9f09f8`](https://github.com/dao-xyz/peerbit/commit/d9f09f80352bf32d6c23ad5047a58a72f433e3e8), [`2375d4b`](https://github.com/dao-xyz/peerbit/commit/2375d4b723f1bfc17601120bc996bfe6ae840c5f), [`2d4c08e`](https://github.com/dao-xyz/peerbit/commit/2d4c08e29b012ca8a8c898bde138834c2f480d2f)]:
+  - @peerbit/shared-log@16.0.42
+  - @peerbit/trusted-network@6.0.144
+  - @peerbit/crypto@3.1.8
+  - @peerbit/log@6.2.40
+  - @peerbit/logger@2.0.4
+  - @peerbit/program@6.0.70
+  - @peerbit/rpc@6.2.6
+
 ## 3.2.167
 
 ### Patch Changes

@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.0.92
+
+### Patch Changes
+
+- Updated dependencies [[`82fae14`](https://github.com/dao-xyz/peerbit/commit/82fae14b6718aaa1581234a042f765bea9594d0c)]:
+  - @peerbit/canonical-client@1.1.73
+  - @peerbit/canonical-host@1.0.92
+
 ## 1.0.91
 
 ### Patch Changes
