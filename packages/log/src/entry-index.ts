@@ -4003,6 +4003,69 @@ export class EntryIndex<T> {
 		);
 	}
 
+	/**
+	 * Internal completion of an already-authorized exact deletion. The caller
+	 * retains its exclusive lease and durable redo evidence until all coupled
+	 * work completes. This neither authenticates targets nor retires that evidence.
+	 */
+	async completeExactDelete(
+		targets: readonly ShallowEntry[],
+		owner: EntryIndexHashMutationLockOwner,
+	): Promise<void> {
+		if (!this.getHashMutationLockOwnerState(owner).exclusive) {
+			throw new Error("Exact deletion completion requires exclusive ownership");
+		}
+		const nodes = [
+			...new Map(
+				targets.map((target) => {
+					const copied = deserialize(serialize(target), ShallowEntry);
+					return [copied.hash, copied] as const;
+				}),
+			).values(),
+		];
+		if (nodes.length === 0) return;
+		const hashes = nodes.map((node) => node.hash);
+		try {
+			if (hashes.some((hash) => this.isPendingIndexWriteRetained(hash))) {
+				throw new Error("Recover retained append facts before exact deletion");
+			}
+			await this.flushPendingWrites(undefined, owner);
+			await this.withCacheInvalidation(hashes, async () => {
+				for (let offset = 0; offset < hashes.length; offset += 64) {
+					const page = hashes.slice(offset, offset + 64);
+					const deleted = hasExactDelete(this.properties.index)
+						? await this.properties.index.delIds(page)
+						: await this.properties.index.del({
+								query: createHashMatchQuery(page),
+							});
+					// Update before any later fallible cleanup so retrying absent rows
+					// cannot decrement twice. An ambiguous row-delete failure needs reopen.
+					this._length -= deleted.length;
+				}
+				const store = this.properties.store;
+				if (hasRmMany(store) && store.rmMany) await store.rmMany(hashes);
+				else for (const hash of hashes) await store.rm(hash);
+				const graph = this.properties.nativeGraph?.graph;
+				if (graph?.deleteMany) graph.deleteMany(hashes);
+				else for (const hash of hashes) graph?.delete(hash);
+				await this.privateUpdateNextHeadHashes(
+					nodes.flatMap((node) =>
+						node.meta.type === EntryType.CUT ? [] : node.meta.next,
+					),
+					true,
+					owner,
+				);
+				// Run for every target, including absent rows: a previous attempt may
+				// have stopped after row deletion but before blocks or coordinates.
+				await this.properties.onDeleteCommitted?.(nodes, owner);
+			});
+		} catch (error) {
+			const failure = error ?? new Error("Exact deletion completion failed");
+			this.poisonNativeDurableTransactionMutations(failure);
+			throw failure;
+		}
+	}
+
 	async deleteMany(
 		from: ShallowEntry[],
 		options?: EntryIndexDeleteOptions,

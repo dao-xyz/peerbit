@@ -144,6 +144,7 @@ import {
 	type DebouncedAccumulatorMap,
 	debouncedAccumulatorMap,
 } from "./debounce.js";
+import { claimEntryOwnerNamespace } from "./entry-owner-namespace.js";
 import {
 	CompatibilityModeRetiredError,
 	NativeDurableCommitError,
@@ -2907,6 +2908,9 @@ export class SharedLog<
 
 	private throwIfNativeDurableCommitFailed(): void {
 		this.throwIfReplicationOwnershipPoisoned();
+		if (this._ownerRecoveryPending) {
+			throw new Error("Shared-log owner recovery has not completed");
+		}
 		if (this._nativeStrictDurableTransactionFailure !== undefined) {
 			throw new Error(
 				"Native durable transaction recovery is required before another mutation",
@@ -8835,6 +8839,9 @@ export class SharedLog<
 			) => void;
 		},
 	) {
+		if (this._entryOwnerProtected && rangeOrEntry !== 1) {
+			throw new Error("Entry ownership requires fixed full replication");
+		}
 		this.throwIfCheckedPruneRemoveBlocksLocalOperation(
 			"replication range mutation",
 		);
@@ -8982,6 +8989,9 @@ export class SharedLog<
 		rangeOrEntry: Entry<T> | { id: Uint8Array }[] | undefined,
 		replicationOwnershipLifecycleController: AbortController,
 	) {
+		if (this._entryOwnerProtected) {
+			throw new Error("Entry ownership cannot relinquish retained history");
+		}
 		this.throwIfReplicationOwnershipLifecycleInactive(
 			replicationOwnershipLifecycleController,
 		);
@@ -18211,7 +18221,82 @@ export class SharedLog<
 		return this.createPreparedLocalAppendCommits(entries, nativeAppendPlans);
 	}
 
+	// Private owner recovery runs before replication exposes opened storage.
+	// Like Handler, a protected opening owns its lifecycle until it settles;
+	// direct terminal calls must retry afterwards, not tear down beneath recovery.
+	private _ordinaryOpenings?: number;
+	private _ownerRecoveryPending?: boolean;
+	private _ownerRecoveryOpening?: boolean;
+	private _requiresOwnerRecovery?: boolean;
+	private _entryOwnerNamespaceClaim?: ReturnType<
+		typeof claimEntryOwnerNamespace
+	>;
+	private claimEntryOwnerNamespace(
+		protectedStore: boolean,
+		projectionOwner?: object,
+	) {
+		return claimEntryOwnerNamespace(
+			this.node,
+			this,
+			this.log.id,
+			protectedStore,
+			projectionOwner,
+		);
+	}
+	private claimRuntimeEntryOwnerNamespace(protectedStore: boolean) {
+		const claim = this._entryOwnerNamespaceClaim;
+		if (claim) {
+			if (
+				claim.namespace !== toHexString(this.log.id) ||
+				claim.protectedStore !== protectedStore
+			) {
+				throw new Error(
+					"Shared-log namespace must finish terminal cleanup first",
+				);
+			}
+			return;
+		}
+		this._entryOwnerNamespaceClaim =
+			this.claimEntryOwnerNamespace(protectedStore);
+	}
+	private async openWithRecovery(
+		options: Args<T, D, R> | undefined,
+		recover: (signal: AbortSignal) => Promise<void>,
+	): Promise<void> {
+		if (
+			this._ordinaryOpenings ||
+			this._ownerRecoveryOpening ||
+			!this.log.closed
+		) {
+			throw new Error("Shared-log owner recovery requires a closed lower log");
+		}
+		this._requiresOwnerRecovery = true;
+		this._ownerRecoveryOpening = true;
+		this._ownerRecoveryPending = true;
+		try {
+			await this.openInternal(options, recover);
+		} finally {
+			this._ownerRecoveryOpening = false;
+			this._ownerRecoveryPending = false;
+		}
+	}
+
 	async open(options?: Args<T, D, R>): Promise<void> {
+		if (this._requiresOwnerRecovery) {
+			throw new Error("Shared-log must reopen through its recovery owner");
+		}
+		this._ordinaryOpenings = (this._ordinaryOpenings ?? 0) + 1;
+		try {
+			await this.openInternal(options);
+		} finally {
+			this._ordinaryOpenings--;
+		}
+	}
+
+	private async openInternal(
+		options?: Args<T, D, R>,
+		recover?: (signal: AbortSignal) => Promise<void>,
+	): Promise<void> {
 		// B12: replication-info network compatibility modes are retired. Read the
 		// RAW argument value (the option no longer exists on the type) so untyped
 		// JS callers cannot smuggle a value past the removed field, and reject
@@ -18223,6 +18308,7 @@ export class SharedLog<
 		if (rawCompatibility !== undefined) {
 			throw new CompatibilityModeRetiredError(rawCompatibility);
 		}
+		this.claimRuntimeEntryOwnerNamespace(Boolean(recover));
 		this.ensureNativeDurabilityRuntimeState();
 		this._nativeStrictDurableTransactionsClosing = false;
 		this._replicationRangeMutationsClosing = false;
@@ -18252,6 +18338,7 @@ export class SharedLog<
 		// _receiveOwnershipRevision and _receiveOwnershipMutationAdmissions
 		// all start at 0 on the incoming lifecycle.
 		this.startRepairLifecycle();
+		const openingLifecycle = this._instanceLifecycle!;
 		this.resetReplicationStatusLifecycle();
 		// Guard: between startRepairLifecycle() and
 		// resetSubscriptionChangeCallbackTracking() the fresh lifecycle's
@@ -19133,6 +19220,27 @@ export class SharedLog<
 			this._nativeDurableCommitFailure = undefined;
 			this._nativeDurableRecoveryReadyForReopen = false;
 			this._nativeDurableRecoveryCids.clear();
+		}
+		if (recover) {
+			const controller = openingLifecycle.ownershipLifecycleController;
+			if (!this.isRepairLifecycleActive(controller)) {
+				throw new Error("Shared-log recovery opening was superseded");
+			}
+			try {
+				await recover(controller.signal);
+			} catch (error) {
+				const failure = error ?? new Error("Shared-log owner recovery failed");
+				if (this._instanceLifecycle === openingLifecycle) {
+					this.poisonReplicationOwnership(failure);
+					this.log.entryIndex.poisonNativeDurableTransactionMutations(failure);
+				}
+				throw failure;
+			} finally {
+				this._ownerRecoveryPending = false;
+			}
+			if (!this.isRepairLifecycleActive(controller)) {
+				throw new Error("Shared-log recovery opening was superseded");
+			}
 		}
 		this.syncronizer = createSyncronizer<R>({
 			numbers: this.indexableDomain.numbers,
@@ -21769,7 +21877,17 @@ export class SharedLog<
 		if (this.classifyTerminalOwnership(from) === "nonterminal") {
 			return super.close(from);
 		}
+		// A rejected alias never acquired storage or initialized its controllers.
+		// Only detach its Program children; never touch the shared lower namespace.
+		if (!this._entryOwnerNamespaceClaim) return super.close(from);
+		this.assertEntryOwnerTerminalAdmission();
+		if (this._ownerRecoveryOpening) {
+			throw new TerminalOperationNotStartedError(
+				"Shared-log owner recovery opening must settle before close",
+			);
+		}
 		this.throwIfCheckedPruneRemoveBlocksLocalOperation("close");
+		const namespaceClaim = this._entryOwnerNamespaceClaim;
 		// Match Program.end()'s synchronous terminal admission fence before any
 		// SharedLog-specific await or observable teardown can admit a new owner.
 		this.preventParentAttachments();
@@ -21796,6 +21914,7 @@ export class SharedLog<
 			await replicationRangeTerminalFence.drained;
 			await pruneRemoveTerminalFence.drained;
 			await this.drainPendingIHaveCallbacks();
+			await this.drainEntryOwnerMutations();
 			this.ensureNativeDurabilityRuntimeState();
 		} catch (error) {
 			// The terminal preamble has already disabled parent attachments and the
@@ -21889,6 +22008,10 @@ export class SharedLog<
 		if (firstError !== undefined) {
 			throw firstError;
 		}
+		namespaceClaim?.releaseAfterTerminalCleanup();
+		if (this._entryOwnerNamespaceClaim === namespaceClaim) {
+			this._entryOwnerNamespaceClaim = undefined;
+		}
 		return true;
 	}
 
@@ -21896,7 +22019,15 @@ export class SharedLog<
 		if (this.classifyTerminalOwnership(from) === "nonterminal") {
 			return super.drop(from);
 		}
+		if (!this._entryOwnerNamespaceClaim) return super.drop(from);
+		this.assertEntryOwnerTerminalAdmission();
+		if (this._ownerRecoveryOpening) {
+			throw new TerminalOperationNotStartedError(
+				"Shared-log owner recovery opening must settle before drop",
+			);
+		}
 		this.throwIfCheckedPruneRemoveBlocksLocalOperation("drop");
+		const namespaceClaim = this._entryOwnerNamespaceClaim;
 		this.ensureNativeDurabilityRuntimeState();
 		const nativePersistence =
 			this._coordinates._nativeBackboneCoordinatePersistence;
@@ -21935,6 +22066,7 @@ export class SharedLog<
 			await replicationRangeTerminalFence.drained;
 			await pruneRemoveTerminalFence.drained;
 			await this.drainPendingIHaveCallbacks();
+			await this.drainEntryOwnerMutations();
 		} catch (error) {
 			// The terminal preamble is not safely reversible. Preserve the fence until
 			// a retry finishes cleanup.
@@ -22093,6 +22225,10 @@ export class SharedLog<
 		await capture(() => this._close());
 		if (firstError !== undefined) {
 			throw firstError;
+		}
+		namespaceClaim?.releaseAfterTerminalCleanup();
+		if (this._entryOwnerNamespaceClaim === namespaceClaim) {
+			this._entryOwnerNamespaceClaim = undefined;
 		}
 		return true;
 	}
@@ -24807,6 +24943,14 @@ export class SharedLog<
 					return undefined;
 				}
 				this.throwIfNativeDurableCommitFailed();
+				// Do not wait for a lower mutation while owning the range queue: its
+				// completion callback may itself need to change replication ranges.
+				if (
+					(this._instanceLifecycle?._receiveOwnershipMutationAdmissions ??
+						0) !== 0
+				) {
+					return new ConfirmEntriesMessage({ hashes: [] });
+				}
 				const storage = this.resolvePersistedReceiptStorage();
 				if (!storage) {
 					return undefined;
@@ -28723,6 +28867,173 @@ export class SharedLog<
 		return result;
 	}
 
+	// Readiness admission only, not queue ownership or a physical-work drain.
+	// Trusted mutation completion can hold this across reentrant program callbacks.
+	private beginReceiveOwnershipMutationAdmission(
+		controller = this.captureReplicationOwnershipLifecycle(),
+	): () => void {
+		this.throwIfReplicationOwnershipLifecycleInactive(controller);
+		if (this._replicationRangeMutationsClosing) {
+			throw new TerminalOperationNotStartedError(
+				"Replication range mutations are closing",
+			);
+		}
+		const lifecycle = this._instanceLifecycle!;
+		lifecycle._receiveOwnershipMutationAdmissions++;
+		this.invalidateLeaderSelectionContextCache();
+		let released = false;
+		return () => {
+			if (released) return;
+			released = true;
+			lifecycle._receiveOwnershipMutationAdmissions--;
+			if (this._instanceLifecycle === lifecycle) {
+				this.invalidateLeaderSelectionContextCache();
+			} else {
+				lifecycle._receiveOwnershipRevision++;
+			}
+		};
+	}
+
+	// Sticky owner protection is registered during protected open, never inferred
+	// from receiving a particular entry. Role reduction needs a custody protocol.
+	private _entryOwnerProtected?: boolean;
+
+	private registerEntryOwner() {
+		if (
+			!this._ownerRecoveryOpening ||
+			!this._ownerRecoveryPending ||
+			this.log.closed ||
+			this._logProperties?.replicate !== 1 ||
+			this._logProperties?.trim
+		) {
+			throw new Error(
+				"Entry ownership requires protected open with replicate: 1 and no trim",
+			);
+		}
+		const controller = this.captureReplicationOwnershipLifecycle();
+		const lifecycle = this._instanceLifecycle!;
+		const index = this.log.entryIndex;
+		const coordinates = this._coordinates;
+		const storage = this.resolvePersistedReceiptStorage();
+		if (!storage || storage.coordinate.crashSafe !== true) {
+			throw new Error("Entry ownership requires crash-safe coordinate storage");
+		}
+		const backbone = this._nativeBackbone;
+		const persistence = coordinates._nativeBackboneCoordinatePersistence;
+		this._entryOwnerProtected = true;
+		const assertCurrent = () => {
+			if (
+				this._instanceLifecycle !== lifecycle ||
+				this.log.entryIndex !== index
+			)
+				throw new Error("Entry ownership belongs to an old lifecycle");
+			this.throwIfReplicationOwnershipPoisoned();
+		};
+		const assertActive = () => {
+			assertCurrent();
+			this.throwIfReplicationOwnershipLifecycleInactive(controller);
+		};
+		return {
+			assertActive,
+			beginAdmission: () => {
+				assertActive();
+				const release = this.beginReceiveOwnershipMutationAdmission(controller);
+				return {
+					release,
+					poison: (error: unknown) => {
+						if (this._instanceLifecycle === lifecycle) {
+							this.poisonReplicationOwnership(error);
+						}
+					},
+				};
+			},
+			prepareCoordinates: async (entry: Entry<T>) => {
+				assertActive();
+				const snapshot = deserialize(
+					serialize(entry.toShallow(true)),
+					ShallowEntry,
+				);
+				const hash = snapshot.hash;
+				const replicas = decodeReplicas(snapshot).getValue(this);
+				const plan = await this.planEntryLeaders(
+					snapshot,
+					replicas,
+					{ roleAge: 0, persist: false },
+					controller,
+				);
+				assertActive();
+				const completion = coordinates.prepareReceiveCoordinateCompletion([
+					{ entry: snapshot, replicas, ...plan },
+				]);
+				let released = false;
+				const assertOwned = () => {
+					assertCurrent();
+					if (released)
+						throw new Error("Entry coordinate completion was released");
+				};
+				return {
+					complete: async ({
+						owner,
+					}: {
+						removed: readonly ShallowEntry[];
+						owner: EntryIndexHashMutationLockOwner;
+					}) => {
+						assertOwned();
+						// completeExactDelete already completes every target's coordinate
+						// removal through the lower committed callback, even absent rows.
+						await completion.complete([hash], owner);
+						assertOwned();
+					},
+					barrier: async () => {
+						assertOwned();
+						// An admitted owner must finish even if drop has begun. The
+						// ordinary journal flush intentionally skips that terminal phase.
+						if (backbone && persistence)
+							await persistence.flushJournal(backbone);
+						await storage.coordinate.barrier();
+						assertOwned();
+					},
+					release: () => {
+						released = true;
+						completion.release();
+					},
+				};
+			},
+		};
+	}
+
+	get terminalLifecycleCallbackRunning(): boolean {
+		return (
+			super.terminalLifecycleCallbackRunning || this.entryOwnerCallbackRunning
+		);
+	}
+
+	private get entryOwnerCallbackRunning(): boolean {
+		return Boolean(
+			this._entryOwnerProtected &&
+				(this.log as unknown as { _mutationCallbacksInFlight: number })
+					._mutationCallbacksInFlight > 0,
+		);
+	}
+
+	private assertEntryOwnerTerminalAdmission(): void {
+		if (this.entryOwnerCallbackRunning) {
+			throw new TerminalOperationNotStartedError(
+				"Entry owner mutation callbacks must settle before terminal operations",
+			);
+		}
+	}
+
+	private async drainEntryOwnerMutations(): Promise<void> {
+		if (this._entryOwnerProtected) {
+			await (
+				this.log as unknown as {
+					settleNativeCommittedAppendAdmissions(): Promise<void>;
+				}
+			).settleNativeCommittedAppendAdmissions();
+		}
+	}
+
 	private withReplicationRangeMutationQueue<T>(
 		fn: () => Promise<T>,
 		replicationOwnershipLifecycleController = this.captureReplicationOwnershipLifecycle(),
@@ -28744,16 +29055,10 @@ export class SharedLog<
 		}
 		let releaseReceiveOwnershipMutationAdmission: (() => void) | undefined;
 		if (options?.affectsReceiveOwnership) {
-			if (this._instanceLifecycle) {
-				this._instanceLifecycle._receiveOwnershipMutationAdmissions++;
-			}
-			this.invalidateLeaderSelectionContextCache();
-			releaseReceiveOwnershipMutationAdmission = () => {
-				if (this._instanceLifecycle) {
-					this._instanceLifecycle._receiveOwnershipMutationAdmissions--;
-				}
-				this.invalidateLeaderSelectionContextCache();
-			};
+			releaseReceiveOwnershipMutationAdmission =
+				this.beginReceiveOwnershipMutationAdmission(
+					replicationOwnershipLifecycleController,
+				);
 		}
 		const run = (this._replicationRangeMutationTail ?? Promise.resolve())
 			.catch(() => {
@@ -29957,6 +30262,7 @@ export class SharedLog<
 		options?: { timeout?: number; unchecked?: boolean },
 		ownershipLifecycleController?: AbortController,
 	): Promise<any>[] {
+		if (this._entryOwnerProtected) return [];
 		if (!options?.unchecked && this.closed) {
 			return [];
 		}

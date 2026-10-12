@@ -540,6 +540,30 @@ type TrustedJoinOptions<T> = JoinOptions<T> & {
 	__peerbitProfile?: InternalProfileSink;
 };
 
+// Internal versioned-store owner. It authenticates original entries before
+// causal traversal and owns exact commit/projection completion. Generic CUT,
+// prepared append and trimming rules must not substitute for that protocol.
+type EntryOwner<T> = {
+	append(
+		data: T,
+		options: AppendOptions<T>,
+		onLocalCommit: (entry: Entry<T>) => void,
+	): ReturnType<Log<T>["append"]>;
+	join(
+		entries: Entry<T>[],
+		context: {
+			references: Map<string, Entry<T>>;
+			options: TrustedJoinOptions<T> | undefined;
+			signal: AbortSignal;
+			remote: NonNullable<Exclude<GetOptions["remote"], boolean>>;
+			resolveRemoteFrom: (
+				hash: string,
+				signal?: AbortSignal,
+			) => Promise<string[] | undefined>;
+		},
+	): Promise<void>;
+};
+
 type TrustedPreparedAppendFactsBatchJoinOptions = {
 	__peerbitEntriesAlreadyMissing?: boolean;
 	__peerbitCanAppendAlreadyValidated?: boolean;
@@ -634,6 +658,8 @@ export class Log<T> {
 
 	// Keeping track of entries
 	private _entryIndex!: EntryIndex<T>;
+	private _entryOwner?: { index: EntryIndex<T>; operations: EntryOwner<T> };
+	private _ordinaryMutationsStarted?: boolean;
 	/* 	private _headsIndex!: HeadsIndex<T>;
 		private _values!: Values<T>;
 	 */
@@ -675,6 +701,54 @@ export class Log<T> {
 	constructor(properties?: { id?: Uint8Array }) {
 		this._id = properties?.id || randomBytes(32);
 		this.ensureRuntimeState();
+	}
+
+	// Bound only by the owning program during its protected open, before it
+	// exposes networking or queries. Reopening the lower log cannot silently
+	// recover ordinary CUT semantics: the old binding stays stale until replaced.
+	private bindEntryOwner(operations: EntryOwner<T>): void {
+		if (
+			this.closed ||
+			this._lifecycleState !== "active" ||
+			this._terminalAdmissionClosed ||
+			this._ordinaryMutationsStarted ||
+			this._entryOwner?.index === this.entryIndex ||
+			(this._nativeCommittedAppendAdmissions?.size ?? 0) > 0 ||
+			this._joining.size > 0 ||
+			this._trim.options
+		) {
+			throw new Error("Cannot bind entry owner to this log generation");
+		}
+		this._entryOwner = {
+			index: this.entryIndex,
+			operations: {
+				append: operations.append.bind(operations),
+				join: operations.join.bind(operations),
+			},
+		};
+	}
+
+	private getEntryOwner(): EntryOwner<T> | undefined {
+		const binding = this._entryOwner;
+		if (binding && binding.index !== this.entryIndex) {
+			throw new Error("Entry owner must recover the new log generation");
+		}
+		return binding?.operations;
+	}
+
+	private assertUnownedEntryMutation(): void {
+		if (this.entryOwnerForMutation()) {
+			throw new Error("This mutation requires the versioned store entry owner");
+		}
+	}
+
+	private entryOwnerForMutation(): EntryOwner<T> | undefined {
+		const owner = this.getEntryOwner();
+		// A versioned owner is installed before the first ordinary mutation, not
+		// retrofitted onto a live/previously used log object. Keep this across reopen:
+		// an old pre-admission async preparation must never resume into a new owner.
+		if (!owner) this._ordinaryMutationsStarted = true;
+		return owner;
 	}
 
 	private ensureRuntimeState(): void {
@@ -1418,6 +1492,24 @@ export class Log<T> {
 		options: AppendOptions<T> = {},
 	): Promise<{ entry: Entry<T>; removed: ShallowOrFullEntry<T>[] }> {
 		this.throwIfDurableWritesFailed();
+		const owner = this.entryOwnerForMutation();
+		if (owner) {
+			const ownedOptions = options.onChange
+				? { ...options, onChange: this.wrapMutationCallback(options.onChange) }
+				: options;
+			return this.withNativeCommittedAppendAdmission(async () => {
+				const result = await owner.append(data, ownedOptions, (entry) => {
+					localCommitEvidenceSink(options)?.([entry.hash], [entry]);
+				});
+				const change = {
+					added: [{ head: true, entry: result.entry }],
+					removed: result.removed,
+				};
+				if (ownedOptions.onChange) await ownedOptions.onChange(change);
+				else await this._onChange?.(change);
+				return result;
+			});
+		}
 		return this.withNativeCommittedAppendAdmission(() =>
 			this.appendAdmitted(data, options),
 		);
@@ -1534,6 +1626,7 @@ export class Log<T> {
 		appendFacts: PreparedAppendFacts;
 	}> {
 		this.throwIfDurableWritesFailed();
+		this.assertUnownedEntryMutation();
 		return this.withNativeCommittedAppendAdmission(() =>
 			this.appendLocallyPreparedAdmitted(data, options, properties),
 		);
@@ -1670,6 +1763,7 @@ export class Log<T> {
 		},
 	): MaybePromise<PreparedCommitOnlyAppendResult<T> | undefined> {
 		this.throwIfDurableWritesFailed();
+		if (this.entryOwnerForMutation()) return undefined;
 		if (
 			options.canAppend ||
 			options.onChange ||
@@ -1711,6 +1805,7 @@ export class Log<T> {
 		) => MaybePromise<NativePreparedNoNextCommit | undefined>,
 	): MaybePromise<PreparedCommitOnlyAppendResult<T> | undefined> {
 		this.throwIfDurableWritesFailed();
+		if (this.entryOwnerForMutation()) return undefined;
 		const directResult = this.appendLocallyPreparedNativeKnownNoNextCommitOnly(
 			data,
 			options,
@@ -1743,6 +1838,7 @@ export class Log<T> {
 		) => MaybePromise<NativePreparedNoNextCommit | undefined>,
 	): MaybePromise<PreparedCommitOnlyAppendResult<T> | undefined> {
 		this.throwIfDurableWritesFailed();
+		if (this.entryOwnerForMutation()) return undefined;
 		if (options.meta?.next == null || options.meta.next.length !== 0) {
 			return undefined;
 		}
@@ -2165,6 +2261,7 @@ export class Log<T> {
 		knownNoNext = false,
 	): MaybePromise<PreparedCommitOnlyAppendResult<T> | undefined> {
 		this.throwIfDurableWritesFailed();
+		if (this.entryOwnerForMutation()) return undefined;
 		const resolvedTrim = options.trim ?? this._trim.options;
 		const supportsNativeTrim =
 			!resolvedTrim ||
@@ -2854,6 +2951,7 @@ export class Log<T> {
 		| undefined
 	> {
 		this.throwIfDurableWritesFailed();
+		if (this.entryOwnerForMutation()) return undefined;
 		return this.withNativeCommittedAppendAdmission(() =>
 			this.appendLocallyPreparedManyIndependentAdmitted(
 				data,
@@ -2979,6 +3077,7 @@ export class Log<T> {
 		>,
 	): MaybePromise<PreparedCommitOnlyAppendBatchResult<T> | undefined> {
 		this.throwIfDurableWritesFailed();
+		if (this.entryOwnerForMutation()) return undefined;
 		if (data.length === 0) {
 			return {
 				entries: [],
@@ -3373,6 +3472,7 @@ export class Log<T> {
 		options: AppendOptions<T> = {},
 	): Promise<{ entries: Entry<T>[]; removed: ShallowOrFullEntry<T>[] }> {
 		this.throwIfDurableWritesFailed();
+		this.assertUnownedEntryMutation();
 		return this.withNativeCommittedAppendAdmission(() =>
 			this.appendManyAdmitted(data, options),
 		);
@@ -4683,6 +4783,7 @@ export class Log<T> {
 		options?: { recursively?: boolean },
 	): Promise<Change<T>> {
 		this.throwIfDurableWritesFailed();
+		this.assertUnownedEntryMutation();
 		/* await this.load({ reload: false }); */
 		const entries = Array.isArray(entry) ? entry : [entry];
 
@@ -4727,6 +4828,12 @@ export class Log<T> {
 		properties?: TrimProperties,
 	) {
 		this.throwIfDurableWritesFailed();
+		if (this.getEntryOwner()) {
+			// Membership changes also call trim() when none is configured.
+			if (!option) return;
+			this.assertUnownedEntryMutation();
+		}
+		if (option) this.assertUnownedEntryMutation();
 		return this._trim.trim(option, properties);
 	}
 
@@ -4798,13 +4905,14 @@ export class Log<T> {
 	): Promise<void> {
 		throwIfJoinCancelled(signal);
 		this.throwIfDurableWritesFailed();
+		const entryOwner = this.entryOwnerForMutation();
 		let entries: Entry<T>[];
 		const references: Map<string, Entry<T>> = new Map();
 
 		const fromCache = new Map<string, string[] | null>();
 		const resolveRemoteFrom = async (hash: string, signal?: AbortSignal) => {
 			throwIfJoinCancelled(signal);
-			const cached = fromCache.get(hash);
+			const cached = entryOwner ? undefined : fromCache.get(hash);
 			if (cached !== undefined) return cached === null ? undefined : cached;
 
 			let from: string[] | undefined;
@@ -4817,7 +4925,9 @@ export class Log<T> {
 			}
 			throwIfJoinCancelled(signal);
 			const normalized = from && from.length > 0 ? from : undefined;
-			fromCache.set(hash, normalized ?? null);
+			// The bounded protocol owner may revisit an evicted ancestry window.
+			// Retaining all provider lookups here would defeat its memory bound.
+			if (!entryOwner) fromCache.set(hash, normalized ?? null);
 			return normalized;
 		};
 
@@ -4930,6 +5040,24 @@ export class Log<T> {
 		}
 
 		throwIfJoinCancelled(signal);
+		if (this.getEntryOwner() !== entryOwner) {
+			throw new Error("Entry owner changed during join resolution");
+		}
+		if (entryOwner) {
+			const onChange = options?.onChange ?? this._onChange;
+			const ownedOptions = onChange
+				? { ...options, onChange: this.wrapMutationCallback(onChange) }
+				: options;
+			return this.withNativeCommittedAppendAdmission(() =>
+				entryOwner.join(entries, {
+					references,
+					options: ownedOptions,
+					signal,
+					remote,
+					resolveRemoteFrom,
+				}),
+			);
+		}
 		const profile = options?.__peerbitProfile;
 		const headsStartedAt = internalProfileStart(profile);
 		const heads: Map<string, boolean> = new Map();
@@ -5048,6 +5176,7 @@ export class Log<T> {
 		options?: TrustedPreparedAppendFactsBatchJoinOptions,
 	): Promise<boolean> {
 		this.throwIfDurableWritesFailed();
+		if (this.entryOwnerForMutation()) return false;
 		return this.withNativeCommittedAppendAdmission(() =>
 			this.joinPreparedAppendFactsBatchAdmitted(entries, options),
 		);
@@ -5912,6 +6041,7 @@ export class Log<T> {
 			| { hash: string; meta: { next: string[] } }[],
 		skipFirst = false,
 	) {
+		this.assertUnownedEntryMutation();
 		const entries = Array.isArray(from) ? [...from] : [from];
 		const nativeDeletePlan = this.entryIndex.planDeleteRecursively(
 			entries,
@@ -5966,6 +6096,7 @@ export class Log<T> {
 		hash: string,
 	): Promise<PendingDelete<T> | { entry: undefined }> {
 		this.throwIfDurableWritesFailed();
+		this.assertUnownedEntryMutation();
 		let entry = await this._entryIndex.getShallow(hash);
 		if (!entry) {
 			return { entry: undefined };
@@ -5974,6 +6105,7 @@ export class Log<T> {
 			entry: entry.value,
 			fn: async () => {
 				this.throwIfDurableWritesFailed();
+				this.assertUnownedEntryMutation();
 				await this._trim.deleteFromCache(hash);
 				const removedEntry = (await this._entryIndex.delete(
 					hash,
@@ -6231,6 +6363,7 @@ export class Log<T> {
 	}
 
 	async recover() {
+		this.assertUnownedEntryMutation();
 		// merge existing
 		const existing = await this.getHeads(true).all();
 
@@ -6273,6 +6406,7 @@ export class Log<T> {
 			reset?: boolean;
 		} = {},
 	) {
+		this.assertUnownedEntryMutation();
 		if (this.closed) {
 			throw new Error("Closed");
 		}
