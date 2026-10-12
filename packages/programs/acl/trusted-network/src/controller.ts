@@ -190,6 +190,8 @@ export class TrustedNetwork extends Program<TrustedNetworkArgs> {
 	}
 
 	async open(options?: TrustedNetworkArgs) {
+		// Deserialization skips field initializers; retain an existing throttle on reopen.
+		this._lastWarmupAt ??= 0;
 		this.trustGraph = this.trustGraph || createIdentityGraphStore();
 		this.trustGraph = await openDocumentsLike(this, this.trustGraph, {
 			type: IdentityRelation,
