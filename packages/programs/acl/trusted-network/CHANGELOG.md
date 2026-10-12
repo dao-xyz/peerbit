@@ -1,5 +1,24 @@
 # Changelog
 
+## 6.0.144
+
+### Patch Changes
+
+- [#1533](https://github.com/dao-xyz/peerbit/pull/1533) [`edf55a0`](https://github.com/dao-xyz/peerbit/commit/edf55a065490b4d428310735f303f0840bc208d2) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Restore throttled background trust-graph warmup after deserialization. Local trust misses remain default-deny while remote recovery runs.
+
+- [#1528](https://github.com/dao-xyz/peerbit/pull/1528) [`82fae14`](https://github.com/dao-xyz/peerbit/commit/82fae14b6718aaa1581234a042f765bea9594d0c) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Update the coordinated libp2p dependency cohort to include buffered-stream close/reset and listener cleanup fixes. Preserve Peerbit's transport configuration, custom Yamux profile and standard Yamux fallback; WebRTC Direct is not enabled by this update.
+
+- [#1534](https://github.com/dao-xyz/peerbit/pull/1534) [`2d4c08e`](https://github.com/dao-xyz/peerbit/commit/2d4c08e29b012ca8a8c898bde138834c2f480d2f) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Reinitialize a closed document child when reopening the same TrustedNetwork or IdentityGraph instance. Already-live shared children remain reused without resetting their runtime or authorization.
+
+- Updated dependencies [[`7c089f1`](https://github.com/dao-xyz/peerbit/commit/7c089f1edf904113984565d59c2977e8c229f425), [`82fae14`](https://github.com/dao-xyz/peerbit/commit/82fae14b6718aaa1581234a042f765bea9594d0c), [`8e9fb70`](https://github.com/dao-xyz/peerbit/commit/8e9fb70793d160311b6ba0a26083323a2eaf5aad), [`d9f09f8`](https://github.com/dao-xyz/peerbit/commit/d9f09f80352bf32d6c23ad5047a58a72f433e3e8), [`2375d4b`](https://github.com/dao-xyz/peerbit/commit/2375d4b723f1bfc17601120bc996bfe6ae840c5f)]:
+  - @peerbit/shared-log@16.0.42
+  - @peerbit/crypto@3.1.8
+  - @peerbit/document@15.1.13
+  - @peerbit/log@6.2.40
+  - @peerbit/program@6.0.70
+  - @peerbit/blocks-interface@2.2.3
+  - @peerbit/any-store@2.2.19
+
 ## 6.0.143
 
 ### Patch Changes

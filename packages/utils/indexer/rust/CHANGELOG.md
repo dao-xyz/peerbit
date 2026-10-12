@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.0.17
+
+### Patch Changes
+
+- [#1524](https://github.com/dao-xyz/peerbit/pull/1524) [`f902c41`](https://github.com/dao-xyz/peerbit/commit/f902c41b9402428daa4089c3f0a0d113fde92eaa) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Implement bounded key-only inventory pages through the existing `scanKeyPrimitives` capability. Scans invalidate on admitted writes or lifecycle changes and release cursor resources on completion, cancellation, or failure. SQLite uses primary-key seeks; Rust visits native keys directly without decoding documents or retaining a whole-inventory key set. SQLite multi-root schemas and non-authoritative Rust backbone mirrors remain unsupported. This is an inventory primitive, not a replication-completeness or durability guarantee.
+
+- Updated dependencies [[`82fae14`](https://github.com/dao-xyz/peerbit/commit/82fae14b6718aaa1581234a042f765bea9594d0c)]:
+  - @peerbit/logger@2.0.4
+  - @peerbit/indexer-interface@3.1.2
+
 ## 1.0.16
 
 ### Patch Changes

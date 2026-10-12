@@ -1,5 +1,20 @@
 # Changelog
 
+## 5.4.15
+
+### Patch Changes
+
+- [#1528](https://github.com/dao-xyz/peerbit/pull/1528) [`82fae14`](https://github.com/dao-xyz/peerbit/commit/82fae14b6718aaa1581234a042f765bea9594d0c) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Update the coordinated libp2p dependency cohort to include buffered-stream close/reset and listener cleanup fixes. Preserve Peerbit's transport configuration, custom Yamux profile and standard Yamux fallback; WebRTC Direct is not enabled by this update.
+
+- [#1532](https://github.com/dao-xyz/peerbit/pull/1532) [`9b28a3e`](https://github.com/dao-xyz/peerbit/commit/9b28a3e3ef99851a7d6f48fa939614b9766b0d27) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Prefer ready bootstrap trackers for provider announcements so unavailable trackers do not delay block admission while a live tracker is available.
+
+- Updated dependencies [[`82fae14`](https://github.com/dao-xyz/peerbit/commit/82fae14b6718aaa1581234a042f765bea9594d0c)]:
+  - @peerbit/crypto@3.1.8
+  - @peerbit/logger@2.0.4
+  - @peerbit/pubsub-interface@5.2.4
+  - @peerbit/stream@5.2.6
+  - @peerbit/stream-interface@6.0.18
+
 ## 5.4.14
 
 ### Patch Changes

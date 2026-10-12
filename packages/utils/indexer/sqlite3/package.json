@@ -1,6 +1,6 @@
 {
 	"name": "@peerbit/indexer-sqlite3",
-	"version": "3.0.22",
+	"version": "3.0.23",
 	"description": "SQLite index for document store",
 	"type": "module",
 	"sideEffects": false,
