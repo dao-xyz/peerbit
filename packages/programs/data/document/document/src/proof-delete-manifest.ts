@@ -38,7 +38,9 @@ const copy32 = (value: Uint8Array): Uint8Array => {
 	copyBytes.call(copy, value);
 	return copy;
 };
-const copyContract = (contract: ProofDeleteContract): ProofDeleteContract => {
+export const copyProofDeleteContract = (
+	contract: ProofDeleteContract,
+): ProofDeleteContract => {
 	const { version, nonce, owner, keyKind } = contract;
 	if (version !== 1 || (keyKind !== 0 && keyKind !== 1)) {
 		throw new Error("Unsupported proof-delete owner/key contract");
@@ -65,7 +67,7 @@ const deriveLogId = (contract: ProofDeleteContract): Uint8Array =>
 // Scope and lower-log IDs bind the same descriptor with separate hash domains.
 export const deriveProofDeleteScope = (
 	contract: ProofDeleteContract,
-): Uint8Array => digestContract(copyContract(contract), "scope");
+): Uint8Array => digestContract(copyProofDeleteContract(contract), "scope");
 const assertLogId = (log: DocumentLog, contract: ProofDeleteContract) => {
 	if (!equals(log.log.id, deriveLogId(contract))) {
 		throw new Error("Proof-delete contract/lower log identity mismatch");
@@ -122,7 +124,7 @@ class ProofLogManifest extends Program {
 	constructor(log: DocumentLog, contract: ProofDeleteContract) {
 		super();
 		this.log = log;
-		Object.assign(this, copyContract(contract));
+		Object.assign(this, copyProofDeleteContract(contract));
 	}
 
 	async open(): Promise<void> {
@@ -149,7 +151,7 @@ export const proofDeleteLogCodec: CustomField<DocumentLog> = {
 		// Restrict dispatch before parsing fields of an unrelated registered Program.
 		// Program's inherited Symbol.hasInstance cannot identify a concrete subtype.
 		const value = deserializeStruct(ProofLogManifest, false)(reader);
-		const contract = copyContract(value);
+		const contract = copyProofDeleteContract(value);
 		assertLogId(value.log, contract);
 		// Borsh may retain slices of the input block; the new contract/log must own
 		// their bytes independently of that caller-owned deserialization buffer.
@@ -162,7 +164,7 @@ export const proofDeleteLogCodec: CustomField<DocumentLog> = {
 export const createProofDeleteLog = (
 	contract: ProofDeleteContract,
 ): DocumentLog => {
-	const owned = copyContract(contract);
+	const owned = copyProofDeleteContract(contract);
 	const log = new SharedLog<Operation>({ id: deriveLogId(owned) });
 	contracts.set(log, owned);
 	return log;
@@ -174,5 +176,5 @@ export const getProofDeleteContract = (
 	const contract = contracts.get(log);
 	if (!contract) return;
 	assertLogId(log, contract);
-	return copyContract(contract);
+	return copyProofDeleteContract(contract);
 };

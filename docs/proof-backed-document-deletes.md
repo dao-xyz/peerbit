@@ -166,9 +166,9 @@ A child-process fault fixture is killed after the marker block/row are durable
 but before target retirement; independent offline reopen completes retirement and
 permits subsequent writes. Tests exit naturally; only the faulted child is killed.
 
-Private tests cover malformed/cross-store/cross-owner evidence, signature aliases,
-budgets, cancellation, nonhead markers and persistent-boundary faults. Historical
-reference models remain test-only and do not confer callback/migration support.
+Production verifier and commit tests cover malformed/cross-store/cross-owner
+evidence, signature aliases, budgets, cancellation, nonhead markers and
+persistent-boundary faults. They do not imply callback or migration support.
 
 Before merge/publication, require affected-package regression coverage and fresh
 cross-platform CI. Local passing tests are not publication evidence. Publishing

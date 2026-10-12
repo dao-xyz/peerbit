@@ -1,4 +1,3 @@
-import { deserialize } from "@dao-xyz/borsh";
 import { type IdKey, toId } from "@peerbit/indexer-interface";
 import {
 	Entry,
@@ -6,13 +5,16 @@ import {
 	type Log,
 	type ShallowEntry,
 } from "@peerbit/log";
-import type { ProofDeleteContract } from "./proof-delete-manifest.js";
 import {
-	BORSH_ENCODING_PROOF_OPERATION,
+	type ProofDeleteContract,
+	copyProofDeleteContract,
+} from "./proof-delete-manifest.js";
+import {
 	type OriginalProofEntry,
 	type ProofOperation,
 	type VerifiedProofPut,
 	createProofOperationVerifier,
+	materializeProofEntry,
 } from "./proof-operations.js";
 import { createProofRetainedState } from "./proof-retained-state.js";
 
@@ -39,23 +41,6 @@ export type ProofCommitResult = Omit<CommitFacts, "owner"> & {
 	changed: boolean;
 	/** False only for an authenticated PUT already covered by retained proof. */
 	admitted: boolean;
-};
-const byteLength = Object.getOwnPropertyDescriptor(
-	Object.getPrototypeOf(Uint8Array.prototype),
-	"byteLength",
-)!.get!;
-const copy32 = (value: Uint8Array) => {
-	if (byteLength.call(value) !== 32)
-		throw new Error("Expected 32-byte proof contract field");
-	const copy = new Uint8Array(32);
-	Uint8Array.prototype.set.call(copy, value);
-	return copy;
-};
-const detached = (block: { hash: string; bytes: Uint8Array }) => {
-	const entry = deserialize(block.bytes, Entry) as Entry<ProofOperation>;
-	entry.hash = Entry.prepareMultihashBytes(entry, block.bytes, block.hash);
-	entry.init({ encoding: BORSH_ENCODING_PROOF_OPERATION });
-	return entry;
 };
 const earlier = (parent: VerifiedProofPut, child: VerifiedProofPut) =>
 	parent.wallTime < child.wallTime ||
@@ -108,13 +93,7 @@ export const createProofCommitCoordinator = (properties: {
 			"Proof commits require crash-safe block and index barriers",
 		);
 	}
-	const { version, nonce, owner: keyOwner, keyKind } = properties.contract;
-	const contract = {
-		version,
-		nonce: copy32(nonce),
-		owner: copy32(keyOwner),
-		keyKind,
-	};
+	const contract = copyProofDeleteContract(properties.contract);
 	const verifier = createProofOperationVerifier({ contract });
 	const lower = log as unknown as {
 		withNativeCommittedAppendAdmission<T>(
@@ -164,7 +143,7 @@ export const createProofCommitCoordinator = (properties: {
 					await validatePutFact(fact as VerifiedProofPut);
 					preflight();
 				}
-				const entry = detached(fact);
+				const entry = materializeProofEntry(fact.bytes, fact.hash);
 				owner = await index.acquireExclusiveMutationLock();
 				preflight();
 				const retained = createProofRetainedState({
@@ -194,7 +173,11 @@ export const createProofCommitCoordinator = (properties: {
 				}
 				const removed =
 					"targets" in fact
-						? fact.targets.map((target) => detached(target).toShallow(false))
+						? fact.targets.map((target) =>
+								materializeProofEntry(target.bytes, target.hash).toShallow(
+									false,
+								),
+							)
 						: [];
 				const existing = await index.properties.index.get(toId(fact.hash));
 				preflight();

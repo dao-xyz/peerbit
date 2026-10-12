@@ -642,32 +642,34 @@ describe("private proof commit coordinator", () => {
 					[2, 0, 1],
 					[2, 1, 0],
 				];
-				for (let i = 0; i < orders.length; i++) {
-					const key = `arrival-${i}`;
-					const victim = await put(key, 1n);
-					const replacement = await put(key, 2n);
-					const cut = await deletion(victim, [victim], [victim], 3n);
-					const actions = [
-						() => coordinator.put(victim.block),
-						() => coordinator.deletion(cut.block),
-						() => coordinator.put(replacement.block),
-					];
-					for (const index of orders[i]!) await actions[index]!();
-					expect(await log.has(victim.entry.hash)).equal(false);
-					expect(await log.has(cut.entry.hash)).equal(true);
-					expect((await projected(key))?.__context.head).equal(
-						replacement.entry.hash,
-					);
-					await coordinator.deletion(cut.block);
-					const removeReplacement = await deletion(
-						replacement,
-						[replacement],
-						[replacement],
-						4n,
-					);
-					await coordinator.deletion(removeReplacement.block);
-					expect((await coordinator.put(victim.block)).admitted).equal(false);
-					expect(await projected(key)).equal(undefined);
+				for (const replacementTime of [2n, 3n]) {
+					for (let i = 0; i < orders.length; i++) {
+						const key = `arrival-${replacementTime}-${i}`;
+						const victim = await put(key, 1n);
+						const replacement = await put(key, replacementTime);
+						const cut = await deletion(victim, [victim], [victim], 3n);
+						const actions = [
+							() => coordinator.put(victim.block),
+							() => coordinator.deletion(cut.block),
+							() => coordinator.put(replacement.block),
+						];
+						for (const index of orders[i]!) await actions[index]!();
+						expect(await log.has(victim.entry.hash)).equal(false);
+						expect(await log.has(cut.entry.hash)).equal(true);
+						expect((await projected(key))?.__context.head).equal(
+							replacement.entry.hash,
+						);
+						await coordinator.deletion(cut.block);
+						const removeReplacement = await deletion(
+							replacement,
+							[replacement],
+							[replacement],
+							4n,
+						);
+						await coordinator.deletion(removeReplacement.block);
+						expect((await coordinator.put(victim.block)).admitted).equal(false);
+						expect(await projected(key)).equal(undefined);
+					}
 				}
 			});
 

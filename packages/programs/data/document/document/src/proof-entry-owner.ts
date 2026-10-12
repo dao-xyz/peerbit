@@ -20,6 +20,7 @@ import {
 import { type createProofCommitCoordinator } from "./proof-commit.js";
 import {
 	type ProofDeleteContract,
+	copyProofDeleteContract,
 	deriveProofDeleteScope,
 } from "./proof-delete-manifest.js";
 import {
@@ -31,6 +32,7 @@ import {
 	ProofPutOperation,
 	createProofOperationVerifier,
 	deriveProofKeyGid,
+	materializeProofEntry,
 } from "./proof-operations.js";
 import { createProofRetainedState } from "./proof-retained-state.js";
 
@@ -54,12 +56,6 @@ const PAGE_SIZE = 32;
 // re-read after a suffix commits; long chains trade extra reads for bounded state.
 const MAX_JOIN_ENTRIES = 4096;
 const MAX_JOIN_BYTES = 32 * 1024 * 1024;
-const materialize = (original: OriginalProofEntry) => {
-	const entry = deserialize(original.bytes, Entry) as Entry<ProofOperation>;
-	entry.hash = Entry.prepareMultihashBytes(entry, original.bytes, original.cid);
-	entry.init({ encoding: BORSH_ENCODING_PROOF_OPERATION });
-	return entry;
-};
 const queryType = (value: EntryType) =>
 	new IntegerCompare({ key: ["meta", "type"], value, compare: Compare.Equal });
 
@@ -84,20 +80,7 @@ export const createProofEntryOwner = (properties: {
 		maxBytes > MAX_JOIN_BYTES
 	)
 		throw new Error("Invalid private proof traversal limits");
-	const copy32 = (value: Uint8Array) => {
-		if (Reflect.get(Uint8Array.prototype, "byteLength", value) !== 32)
-			throw new Error("Expected 32-byte proof contract field");
-		const copy = new Uint8Array(32);
-		Uint8Array.prototype.set.call(copy, value);
-		return copy;
-	};
-	const { version, owner: keyOwner, nonce, keyKind } = properties.contract;
-	const contract = {
-		version,
-		owner: copy32(keyOwner),
-		nonce: copy32(nonce),
-		keyKind,
-	};
+	const contract = copyProofDeleteContract(properties.contract);
 	const scope = deriveProofDeleteScope(contract);
 	const index = log.entryIndex;
 	const verifier = createProofOperationVerifier({ contract });
@@ -210,7 +193,7 @@ export const createProofEntryOwner = (properties: {
 			if (operation instanceof ProofDeleteOperation) {
 				const history = await verifier.history(operation);
 				next = history.targets
-					.map((fact) => materialize({ cid: fact.hash, bytes: fact.bytes }))
+					.map((fact) => materializeProofEntry(fact.bytes, fact.hash))
 					.sort((a, b) => (a.hash < b.hash ? -1 : a.hash > b.hash ? 1 : 0));
 				if (
 					hashes.length !== next.length ||
@@ -226,7 +209,7 @@ export const createProofEntryOwner = (properties: {
 						const bytes = await retained.parentOriginal({ owner, hash });
 						if (!bytes) throw new Error(`Missing proof PUT parent: ${hash}`);
 						await verifier.put({ cid: hash, bytes });
-						parents.push(materialize({ cid: hash, bytes }));
+						parents.push(materializeProofEntry(bytes, hash));
 					}
 					return parents;
 				});
@@ -287,7 +270,7 @@ export const createProofEntryOwner = (properties: {
 				const push = async (original: OriginalProofEntry) => {
 					context.signal.throwIfAborted();
 					requireReady();
-					const entry = materialize(original);
+					const entry = materializeProofEntry(original.bytes, original.cid);
 					const missing =
 						entry.meta.type === EntryType.CUT
 							? []
@@ -310,7 +293,7 @@ export const createProofEntryOwner = (properties: {
 											continue;
 										}
 										await verifier.put({ cid: hash, bytes });
-										checkEdge(entry, materialize({ cid: hash, bytes }));
+										checkEdge(entry, materializeProofEntry(bytes, hash));
 									}
 									return pending;
 								});
@@ -365,7 +348,7 @@ export const createProofEntryOwner = (properties: {
 							const fact = await verifier.put(original);
 							checkEdge(
 								frame.entry,
-								materialize({ cid: fact.hash, bytes: fact.bytes }),
+								materializeProofEntry(fact.bytes, fact.hash),
 							);
 							await push(original);
 							continue;
@@ -400,7 +383,7 @@ export const createProofEntryOwner = (properties: {
 				return {
 					operation,
 					next: winner
-						? [materialize({ cid: winner.hash, bytes: winner.bytes })]
+						? [materializeProofEntry(winner.bytes, winner.hash)]
 						: [],
 				};
 			});
@@ -426,7 +409,7 @@ export const createProofEntryOwner = (properties: {
 						),
 					}),
 					next: history.targets
-						.map((fact) => materialize({ cid: fact.hash, bytes: fact.bytes }))
+						.map((fact) => materializeProofEntry(fact.bytes, fact.hash))
 						.sort((a, b) => (a.hash < b.hash ? -1 : a.hash > b.hash ? 1 : 0)),
 				};
 			});
@@ -470,7 +453,10 @@ export const createProofEntryOwner = (properties: {
 										throw new Error(
 											"Proof recovery row disagrees with signed gid",
 										);
-									const entry = materialize(original);
+									const entry = materializeProofEntry(
+										original.bytes,
+										original.cid,
+									);
 									if (put.gid === previousGid) {
 										await coordinator.validatePut(put);
 										await withLease(async (owner) => {
@@ -484,7 +470,7 @@ export const createProofEntryOwner = (properties: {
 														`Missing proof recovery parent: ${hash}`,
 													);
 												await verifier.put({ cid: hash, bytes });
-												checkEdge(entry, materialize({ cid: hash, bytes }));
+												checkEdge(entry, materializeProofEntry(bytes, hash));
 											}
 										});
 									}

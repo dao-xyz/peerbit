@@ -3,6 +3,7 @@ import {
 	DecryptedThing,
 	Ed25519Keypair,
 	PreHash,
+	Secp256k1Keypair,
 	SignatureWithKey,
 } from "@peerbit/crypto";
 import {
@@ -25,6 +26,7 @@ import { TestSession } from "@peerbit/test-utils";
 import { expect } from "chai";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { compare } from "uint8arrays";
 import { MAX_BATCH_SIZE } from "../src/constants.js";
 import { Operation, PutOperation } from "../src/operation.js";
 import {
@@ -149,6 +151,23 @@ describe("proof operations authenticated owner history", () => {
 		const [cid] = await calculateRawCidV1Batch([bytes]);
 		return { cid: cid!, bytes };
 	};
+	const decode = (block: OriginalProofEntry) =>
+		(deserialize(block.bytes, Entry) as EntryV0<ProofOperation>).init({
+			encoding: BORSH_ENCODING_PROOF_OPERATION,
+		});
+	const rejectPutAndWitness = async (
+		block: OriginalProofEntry,
+		reason: string,
+	) => {
+		await expect(checked.put(block)).rejectedWith(reason);
+		await expect(
+			checked.history({
+				target: block.cid,
+				key: key(),
+				witnesses: [block.bytes],
+			}),
+		).rejectedWith(reason);
+	};
 	before(async () => {
 		session = await TestSession.disconnected(1);
 		owner = await Ed25519Keypair.create();
@@ -165,12 +184,20 @@ describe("proof operations authenticated owner history", () => {
 
 	it("authenticates a scoped ordinary put and preserves original bytes", async () => {
 		const { block } = await put();
+		const original = new Uint8Array(block.bytes);
 		const fact = await checked.put(block);
 		expect(fact.hash).equal(block.cid);
 		expect(fact.bytes).deep.equal(block.bytes);
 		expect(fact.bytes).not.equal(block.bytes);
 		expect(fact.key).deep.equal(key());
 		expect(fact.data).deep.equal(data);
+		fact.bytes.fill(0);
+		fact.data.fill(0);
+		(fact.key as StringKey).key = "caller-owned";
+		expect(block.bytes).deep.equal(original);
+		const rechecked = await checked.put(block);
+		expect(rechecked.key).deep.equal(key());
+		expect(rechecked.data).deep.equal(data);
 	});
 
 	describe("incoming original-byte capture", () => {
@@ -645,6 +672,20 @@ describe("proof operations authenticated owner history", () => {
 		await expect(checked.put(wrongType.block)).rejectedWith(
 			"Expected proof APPEND/PUT",
 		);
+		const wrongDeleteType = await make(
+			new ProofDeleteOperation({
+				scope,
+				key: key(),
+				target: a.entry.hash,
+				witnesses: [a.block.bytes],
+			}),
+			[a.entry],
+			owner,
+			EntryType.APPEND,
+		);
+		await expect(checked.deletion(wrongDeleteType.block)).rejectedWith(
+			"Expected proof CUT/DELETE",
+		);
 	});
 
 	it("accepts separate recreate/delete history without prior CUT witnesses", async () => {
@@ -707,6 +748,38 @@ describe("proof operations authenticated owner history", () => {
 		);
 	});
 
+	it("captures each byte getter once and never invokes a witness-array iterator", async () => {
+		const a = await put();
+		let reads = 0;
+		expect(
+			(
+				await checked.put({
+					cid: a.block.cid,
+					get bytes() {
+						if (++reads > 1) throw new Error("Original bytes read twice");
+						return a.block.bytes;
+					},
+				})
+			).hash,
+		).equal(a.block.cid);
+		expect(reads).equal(1);
+		const witnesses = [a.block.bytes];
+		let iterations = 0;
+		Object.defineProperty(witnesses, Symbol.iterator, {
+			value: () => {
+				iterations++;
+				throw new Error("Untrusted iterator must not run");
+			},
+		});
+		const result = await checked.history({
+			target: a.block.cid,
+			key: key(),
+			witnesses,
+		});
+		expect(iterations).equal(0);
+		expect(result.targets.map((fact) => fact.hash)).deep.equal([a.block.cid]);
+	});
+
 	it("rejects CID mismatch, changed signature and duplicate-signature aliases", async () => {
 		const a = await put();
 		await expect(
@@ -714,7 +787,8 @@ describe("proof operations authenticated owner history", () => {
 		).rejectedWith("Proof CID mismatch");
 		const entry = deserialize(a.block.bytes, Entry) as EntryV0<ProofOperation>;
 		entry._signatures!.signatures.push(entry._signatures!.signatures[0]!);
-		await expect(checked.put(await reencode(entry))).rejectedWith(
+		await rejectPutAndWitness(
+			await reencode(entry),
 			"one Ed25519 owner signature",
 		);
 		const invalid = deserialize(
@@ -727,12 +801,155 @@ describe("proof operations authenticated owner history", () => {
 		invalid._signatures!.signatures = [
 			new DecryptedThing({ data: serialize(signature) }),
 		];
-		await expect(checked.put(await reencode(invalid))).rejectedWith(
+		await rejectPutAndWitness(
+			await reencode(invalid),
 			"Invalid proof signature",
 		);
 	});
 
-	it("rejects owner-produced prehashed signatures outside the immutable profile", async () => {
+	it("rejects sorted attacker countersignatures and either signer order as CID aliases", async () => {
+		const a = await put();
+		const entry = decode(a.block);
+		entry._signatures!.signatures.push(
+			new DecryptedThing({
+				data: serialize(await other.sign(entry.getSignableBytes())),
+			}),
+		);
+		entry._signatures!.signatures.sort((left, right) =>
+			compare(
+				left.decrypted.getValue(SignatureWithKey).signature,
+				right.decrypted.getValue(SignatureWithKey).signature,
+			),
+		);
+		let previous = a.block.cid;
+		for (let order = 0; order < 2; order++) {
+			const alias = await reencode(entry);
+			expect(alias.cid).not.equal(previous);
+			expect(decode(alias).getSignableBytes()).deep.equal(
+				decode(a.block).getSignableBytes(),
+			);
+			expect(await decode(alias).verifySignatures()).equal(true);
+			await rejectPutAndWitness(alias, "one Ed25519 owner signature");
+			previous = alias.cid;
+			entry._signatures!.signatures.reverse();
+		}
+	});
+
+	it("rejects a valid one-signer Secp256k1 hex-case alias outside the concrete owner profile", async () => {
+		const a = await put();
+		const entry = decode(a.block);
+		const signer = await Secp256k1Keypair.create();
+		const signature = await signer.sign(entry.getSignableBytes());
+		entry._signatures!.signatures = [
+			new DecryptedThing({ data: serialize(signature) }),
+		];
+		const base = await reencode(entry);
+		const hex = new TextDecoder().decode(signature.signature);
+		signature.signature = new TextEncoder().encode(
+			`0x${hex.slice(2).toUpperCase()}`,
+		);
+		entry._signatures!.signatures = [
+			new DecryptedThing({ data: serialize(signature) }),
+		];
+		const alias = await reencode(entry);
+		expect(alias.cid).not.equal(base.cid);
+		for (const block of [base, alias]) {
+			expect(await decode(block).verifySignatures()).equal(true);
+			await rejectPutAndWitness(block, "canonical Ed25519 owner");
+		}
+	});
+
+	it("rejects noncanonical Ed25519 S plus the group order", async () => {
+		const entry = decode((await put()).block);
+		const signature = (await entry.getSignatures())[0]!;
+		let scalar = 0n;
+		for (let i = 63; i >= 32; i--)
+			scalar = (scalar << 8n) + BigInt(signature.signature[i]!);
+		scalar += (1n << 252n) + 27742317777372353535851937790883648493n;
+		for (let i = 32; i < 64; i++) {
+			signature.signature[i] = Number(scalar & 255n);
+			scalar >>= 8n;
+		}
+		entry._signatures!.signatures = [
+			new DecryptedThing({ data: serialize(signature) }),
+		];
+		await rejectPutAndWitness(await reencode(entry), "Invalid proof signature");
+	});
+
+	it("rejects nested envelope trailing bytes and embedded hashes, including the empty string", async () => {
+		const a = await put();
+		for (const field of ["signature", "_meta", "_payload"] as const) {
+			const entry = decode(a.block);
+			const envelope =
+				field === "signature"
+					? entry._signatures!.signatures[0]!
+					: entry[field];
+			const original = envelope.decrypted._data!;
+			const bytes = new Uint8Array(original.length + 1);
+			bytes.set(original);
+			envelope.decrypted._data = bytes;
+			expect(
+				Buffer.from(entry.getSignableBytes()).equals(
+					Buffer.from(decode(a.block).getSignableBytes()),
+				),
+			).equal(field === "signature");
+			const block = await reencode(entry);
+			await expect(checked.put(block)).rejected;
+			await expect(
+				checked.history({
+					target: block.cid,
+					key: key(),
+					witnesses: [block.bytes],
+				}),
+			).rejected;
+		}
+		for (const hash of ["", a.block.cid]) {
+			const entry = decode(a.block);
+			entry.hash = hash;
+			await rejectPutAndWitness(await reencode(entry), "Embedded hash");
+		}
+	});
+
+	it("authenticates malformed target, ancestor and cross-key boundary signatures inside a valid signed delete", async () => {
+		for (const position of ["target", "ancestor", "boundary"] as const) {
+			const a = await put(
+				[],
+				position === "boundary" ? new StringKey("other") : key(),
+			);
+			const invalid = decode(a.block);
+			const signature = (await invalid.getSignatures())[0]!;
+			signature.signature[0] ^= 1;
+			invalid._signatures!.signatures = [
+				new DecryptedThing({ data: serialize(signature) }),
+			];
+			const block = await reencode(invalid);
+			invalid.hash = block.cid;
+			const target =
+				position === "target"
+					? { entry: invalid, block }
+					: await put([invalid]);
+			const cut = await make(
+				new ProofDeleteOperation({
+					scope,
+					key: key(),
+					target: target.block.cid,
+					witnesses:
+						position === "target"
+							? [block.bytes]
+							: [target.block.bytes, block.bytes],
+				}),
+				sorted(
+					position === "ancestor" ? [target.entry, invalid] : [target.entry],
+				),
+			);
+			expect(await decode(cut.block).verifySignatures()).equal(true);
+			await expect(checked.deletion(cut.block)).rejectedWith(
+				"Invalid proof signature",
+			);
+		}
+	});
+
+	it("enforces the signature profile on ordinary puts, witnesses and signed deletes", async () => {
 		const a = await put();
 		const entry = deserialize(a.block.bytes, Entry) as EntryV0<ProofOperation>;
 		entry.init({ encoding: BORSH_ENCODING_PROOF_OPERATION });
@@ -743,9 +960,47 @@ describe("proof operations authenticated owner history", () => {
 				),
 			}),
 		];
-		await expect(checked.put(await reencode(entry))).rejectedWith(
-			"without prehash",
-		);
+		await rejectPutAndWitness(await reencode(entry), "without prehash");
+		const cut = await deletion(a.entry, [a.entry], [a.entry]);
+		for (const invalid of ["prehash", "duplicate", "signature"] as const) {
+			const candidate = decode(cut.block);
+			candidate._signatures!.signatures = [
+				new DecryptedThing({
+					data: serialize(
+						await owner.sign(
+							candidate.getSignableBytes(),
+							invalid === "prehash" ? PreHash.SHA_256 : PreHash.NONE,
+						),
+					),
+				}),
+			];
+			if (invalid === "duplicate")
+				candidate._signatures!.signatures.push(
+					candidate._signatures!.signatures[0]!,
+				);
+			if (invalid === "signature") {
+				const signature =
+					candidate._signatures!.signatures[0]!.decrypted.getValue(
+						SignatureWithKey,
+					);
+				signature.signature[0] ^= 1;
+				candidate._signatures!.signatures = [
+					new DecryptedThing({ data: serialize(signature) }),
+				];
+			}
+			const block = await reencode(candidate);
+			Object.assign(block, { createdLocally: true, __alreadyValidated: true });
+			expect(await decode(block).verifySignatures()).equal(
+				invalid !== "signature",
+			);
+			await expect(checked.deletion(block)).rejectedWith(
+				invalid === "duplicate"
+					? "one Ed25519 owner signature"
+					: invalid === "prehash"
+						? "without prehash"
+						: "Invalid proof signature",
+			);
+		}
 	});
 
 	it("rejects an unsigned registered signature-subclass CID alias without polluting other codecs", async () => {
@@ -914,6 +1169,15 @@ console.log('verified alias rejected');
 				target: a.entry.hash,
 				key: key(),
 				witnesses: [new Uint8Array(MAX_BATCH_SIZE), Uint8Array.of(1)],
+			}),
+		).rejectedWith("byte limit");
+		const disguised = new Uint8Array(MAX_BATCH_SIZE + 1);
+		Object.defineProperty(disguised, "byteLength", { value: 0 });
+		await expect(
+			checked.history({
+				target: a.entry.hash,
+				key: key(),
+				witnesses: [disguised],
 			}),
 		).rejectedWith("byte limit");
 	});
@@ -1142,6 +1406,9 @@ console.log('verified alias rejected');
 			const leaf = await put();
 			const parent = await put(new Array(600).fill(leaf.entry));
 			const tip = await put(new Array(600).fill(parent.entry));
+			await expect(
+				history(tip.entry, [tip.entry, parent.entry, leaf.entry]),
+			).rejectedWith("Proof history edge limit");
 			const calls: string[] = [];
 			await expect(
 				checked.collectHistory({

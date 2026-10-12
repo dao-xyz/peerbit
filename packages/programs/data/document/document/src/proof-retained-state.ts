@@ -20,6 +20,7 @@ import { equals } from "uint8arrays";
 import { MAX_BATCH_SIZE } from "./constants.js";
 import {
 	type ProofDeleteContract,
+	copyProofDeleteContract,
 	deriveProofDeleteScope,
 } from "./proof-delete-manifest.js";
 import {
@@ -85,13 +86,8 @@ export const createProofRetainedState = (properties: {
 }) => {
 	const { log, assertActive, assertAdmitted } = properties;
 	const index = log.entryIndex;
-	const { version, nonce, owner, keyKind } = properties.contract;
-	const contract = {
-		version,
-		nonce: copyBytes(nonce, 32),
-		owner: copyBytes(owner, 32),
-		keyKind,
-	};
+	const contract = copyProofDeleteContract(properties.contract);
+	const { keyKind } = contract;
 	const scope = deriveProofDeleteScope(contract);
 	const verifier = createProofOperationVerifier({ contract });
 	// A commit can resolve many retired parents and then select its winner under

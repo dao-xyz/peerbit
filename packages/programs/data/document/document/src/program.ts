@@ -102,6 +102,7 @@ import {
 	type ProofOperation,
 	type VerifiedProofPut,
 	createProofOperationVerifier,
+	materializeProofEntry,
 } from "./proof-operations.js";
 import { isResultIndexedValue } from "./result-shape.js";
 import {
@@ -2715,13 +2716,7 @@ export class Documents<
 		let change: DocumentsChange<T, I> | undefined;
 		if (winner) {
 			const value = this.decodeProofValue(winner);
-			const entry = deserialize(winner.bytes, Entry) as Entry<ProofOperation>;
-			entry.hash = Entry.prepareMultihashBytes(
-				entry,
-				winner.bytes,
-				winner.hash,
-			);
-			entry.init({ encoding: BORSH_ENCODING_PROOF_OPERATION });
+			const entry = materializeProofEntry(winner.bytes, winner.hash);
 			// The new profile derives context from the authenticated winner, not
 			// arrival order or a projection row that recovery will rebuild.
 			const { context } = await this._index.putWithContext(

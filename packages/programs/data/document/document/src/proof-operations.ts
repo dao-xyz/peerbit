@@ -31,6 +31,7 @@ import { equals, toString } from "uint8arrays";
 import { MAX_BATCH_SIZE } from "./constants.js";
 import {
 	type ProofDeleteContract,
+	copyProofDeleteContract,
 	deriveProofDeleteScope,
 } from "./proof-delete-manifest.js";
 
@@ -197,6 +198,14 @@ export class ProofDeleteOperation extends ProofOperation {
 
 export const BORSH_ENCODING_PROOF_OPERATION = BORSH_ENCODING(ProofOperation);
 
+// Materialize already-authenticated original bytes; this is not a verifier.
+export const materializeProofEntry = (bytes: Uint8Array, cid: string) => {
+	const entry = deserialize(bytes, Entry) as Entry<ProofOperation>;
+	entry.hash = Entry.prepareMultihashBytes(entry, bytes, cid);
+	entry.init({ encoding: BORSH_ENCODING_PROOF_OPERATION });
+	return entry;
+};
+
 const copyWitnesses = (supplied: readonly Uint8Array[]): Uint8Array[] => {
 	const count = supplied.length;
 	requireFact(
@@ -286,18 +295,9 @@ const clockAfter = (
 export const createProofOperationVerifier = (properties: {
 	contract: ProofDeleteContract;
 }) => {
-	const { version, nonce, owner: ownerInput, keyKind } = properties.contract;
-	requireFact(
-		version === 1 && (keyKind === 0 || keyKind === 1),
-		"Unsupported proof profile",
-	);
-	const owner = copy32(ownerInput);
-	const scope = deriveProofDeleteScope({
-		version,
-		nonce: copy32(nonce),
-		owner,
-		keyKind,
-	});
+	const contract = copyProofDeleteContract(properties.contract);
+	const { owner, keyKind } = contract;
+	const scope = deriveProofDeleteScope(contract);
 	const checkKey = (key: IdKey) => {
 		requireFact(
 			key.constructor === (keyKind === 0 ? StringKey : Uint8ArrayKey),
