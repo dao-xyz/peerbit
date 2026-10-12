@@ -41,7 +41,8 @@ const openDocumentsLike = async <T, I extends Record<string, any> = any>(
 		parent: owner as any,
 		existing: "reuse",
 	});
-	if (opened instanceof Documents && !(opened as any)._clazz) {
+	// beforeOpen prepares child Programs, but their lower log may still be closed.
+	if (opened instanceof Documents && opened.log.log.closed) {
 		await opened.open(args);
 	}
 	return opened as DocumentsLike<T, I>;
