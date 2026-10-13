@@ -6,7 +6,12 @@ import {
 	serialize,
 	variant,
 } from "@dao-xyz/borsh";
-import { AccessError, type PublicSignKey } from "@peerbit/crypto";
+import {
+	AccessError,
+	Ed25519PublicKey,
+	type PublicSignKey,
+	randomBytes,
+} from "@peerbit/crypto";
 import {
 	Context,
 	NotFoundError,
@@ -27,7 +32,11 @@ import {
 	entryV0PlainPayloadDataFromStorage,
 } from "@peerbit/log";
 import { logger as loggerFn } from "@peerbit/logger";
-import { Program, type ProgramEvents } from "@peerbit/program";
+import {
+	Program,
+	type ProgramEvents,
+	TerminalOperationNotStartedError,
+} from "@peerbit/program";
 import {
 	type EntryReplicated,
 	NativeDurableCommitError,
@@ -37,6 +46,7 @@ import {
 	SharedLog,
 	type SharedLogOptions,
 } from "@peerbit/shared-log";
+import { equals } from "uint8arrays";
 import { DocumentBatchCommitError } from "./batch-error.js";
 import {
 	detachCanPerformCallbackProperties,
@@ -44,6 +54,7 @@ import {
 	detachEntryPayloadForCallback,
 } from "./callback-detachment.js";
 import { MAX_BATCH_SIZE } from "./constants.js";
+import type { DocumentOperation } from "./document-operation.js";
 import type { CustomDocumentDomain } from "./domain.js";
 import type { DocumentEvents, DocumentsChange } from "./events.js";
 import {
@@ -78,6 +89,21 @@ import {
 	createCanPerformPolicyEvaluator,
 	getCanPerformPolicyDescriptor,
 } from "./policy.js";
+import { createProofCommitCoordinator } from "./proof-commit.js";
+import {
+	type ProofDeleteContract,
+	createProofDeleteLog,
+	getProofDeleteContract,
+	proofDeleteLogCodec,
+} from "./proof-delete-manifest.js";
+import { createProofEntryOwner } from "./proof-entry-owner.js";
+import {
+	BORSH_ENCODING_PROOF_OPERATION,
+	type ProofOperation,
+	type VerifiedProofPut,
+	createProofOperationVerifier,
+	materializeProofEntry,
+} from "./proof-operations.js";
 import { isResultIndexedValue } from "./result-shape.js";
 import {
 	type CanRead,
@@ -112,6 +138,20 @@ export class OperationError extends Error {
 }
 
 export type DocumentMode = "auto" | "compat" | "native";
+
+/** A distinct persisted store format; it never upgrades an existing store in place. */
+export type OwnerProofDocumentFormat = {
+	version: "owner-proofs-v1";
+	owner: Ed25519PublicKey;
+	keyType: "string" | "bytes";
+};
+
+type ProofDocumentState = {
+	opening: boolean;
+	failed?: boolean;
+	owner?: ReturnType<typeof createProofEntryOwner>;
+	assertActive?: () => void;
+};
 
 export class NativeDocumentModeError extends Error {
 	constructor(message: string) {
@@ -360,13 +400,13 @@ const cachedNativeLocalPutOptions = (
 const persistedDeliveryAlreadySettled = new WeakSet<object>();
 
 type DocumentPutResult = {
-	readonly entry: Entry<Operation>;
-	removed: ShallowOrFullEntry<Operation>[];
+	readonly entry: Entry<DocumentOperation>;
+	removed: ShallowOrFullEntry<DocumentOperation>[];
 };
 
 type DocumentPutManyResult = {
-	entries: Entry<Operation>[];
-	removed: ShallowOrFullEntry<Operation>[];
+	entries: Entry<DocumentOperation>[];
+	removed: ShallowOrFullEntry<DocumentOperation>[];
 };
 type DocumentDeleteResult = DocumentPutResult;
 
@@ -1188,8 +1228,8 @@ export class Documents<
 	I extends Record<string, any> = T extends Record<string, any> ? T : any,
 	D extends ReplicationDomain<any, Operation, any> = any,
 > extends Program<SetupOptions<T, I, D>, DocumentEvents<T, I> & ProgramEvents> {
-	@field({ type: SharedLog })
-	log: SharedLog<Operation, D, InferR<D>>;
+	@field(proofDeleteLogCodec)
+	log: SharedLog<DocumentOperation, D, InferR<D>>;
 
 	@field({ type: "bool" })
 	immutable: boolean; // "Can I overwrite a document?"
@@ -1198,6 +1238,8 @@ export class Documents<
 	private _index: DocumentIndex<T, I, D>;
 
 	private _clazz!: AbstractType<T>;
+	private _proofState?: ProofDocumentState;
+	private _documentNamespaceClaim?: { releaseAfterTerminalCleanup(): void };
 
 	private _optionCanPerform?: CanPerform<T>;
 	private _optionCanPerformNativePolicy?: CanPerformPolicyDescriptor;
@@ -1241,10 +1283,29 @@ export class Documents<
 		id?: Uint8Array;
 		immutable?: boolean;
 		index?: DocumentIndex<T, I, ExtractArgs<D>>;
+		format?: OwnerProofDocumentFormat;
 	}) {
 		super();
 
-		this.log = new SharedLog(properties);
+		const format = properties?.format;
+		if (
+			format &&
+			(format.version !== "owner-proofs-v1" ||
+				format.owner?.constructor !== Ed25519PublicKey ||
+				(format.keyType !== "string" && format.keyType !== "bytes") ||
+				properties?.immutable ||
+				properties?.index)
+		) {
+			throw new Error("Unsupported owner-proofs document format");
+		}
+		this.log = format
+			? (createProofDeleteLog({
+					version: 1,
+					nonce: properties?.id ?? randomBytes(32),
+					owner: format.owner.publicKey,
+					keyKind: format.keyType === "string" ? 0 : 1,
+				}) as SharedLog<DocumentOperation, D, InferR<D>>)
+			: new SharedLog(properties);
 		this.immutable = properties?.immutable ?? false;
 		this._index = properties?.index || new DocumentIndex();
 		this.trackDocumentChangeListeners();
@@ -1429,7 +1490,7 @@ export class Documents<
 	}
 
 	private assertNativeModeOpenOptions(options: SetupOptions<T, I, D>): void {
-		if (!this.isNativeMode()) {
+		if (options.mode !== "native") {
 			return;
 		}
 		const unsupported: string[] = [];
@@ -2547,16 +2608,217 @@ export class Documents<
 	}
 	private keepCache: Set<string> | undefined = undefined;
 	async open(options: SetupOptions<T, I, D>) {
-		// B12: document compatibility modes are retired. Read the RAW argument
-		// value (the option no longer exists on the type) so untyped JS callers
-		// cannot slip a 6/7 past the removed field and silently reach shared-log
-		// compatibility semantics via the historical 6 -> 8 / 7 -> 9 mapping.
-		// Reject BEFORE any open-time side effect with the DOCUMENT-named error.
-		// An explicitly-present `undefined` stays accepted.
+		// Reject the retired option before any profile validation or storage claim.
 		const rawCompatibility = (options as any)?.compatibility;
-		if (rawCompatibility !== undefined) {
+		if (rawCompatibility !== undefined)
 			throw new DocumentCompatibilityRetiredError(rawCompatibility);
+		const contract = getProofDeleteContract(this.log);
+		if (contract) this.assertProofOpenOptions(options);
+		this.assertNativeModeOpenOptions(options);
+		if (this._proofState || this._documentNamespaceClaim)
+			throw new Error(
+				"Document store requires terminal cleanup before reopening",
+			);
+		// Reserve before opening the derived index: a differently wrapped legacy
+		// view must not acquire or tear down a protected store's shared storage.
+		this._documentNamespaceClaim = (
+			this.log as unknown as {
+				claimEntryOwnerNamespace(
+					protectedStore: boolean,
+					projectionOwner?: object,
+				): {
+					releaseAfterTerminalCleanup(): void;
+				};
+			}
+		).claimEntryOwnerNamespace(Boolean(contract), this);
+		if (!contract) return this.openDocumentStore(options);
+		const state: ProofDocumentState = {
+			opening: true,
+		};
+		this._proofState = state;
+		try {
+			await this.openDocumentStore(options, contract, state);
+		} catch (error) {
+			state.failed = true;
+			throw error;
+		} finally {
+			state.opening = false;
 		}
+	}
+
+	private assertProofOpenOptions(options: SetupOptions<T, I, D>): void {
+		if (
+			this.immutable ||
+			this.canAppend !== Documents.prototype.canAppend ||
+			this._canAppend !== Documents.prototype._canAppend ||
+			options.canPerform ||
+			options.canOpen ||
+			options.id ||
+			options.strictHistory ||
+			options.domain ||
+			options.keep ||
+			options.log?.trim ||
+			options.index?.type ||
+			(options.index as { transform?: unknown } | undefined)?.transform ||
+			options.mode === "native" ||
+			options.nativeBackbone ||
+			(options.appendDurability !== undefined &&
+				options.appendDurability !== "strict") ||
+			(options.replicate !== undefined && options.replicate !== 1) ||
+			Program.isPrototypeOf(options.type)
+		) {
+			throw new Error(
+				"Owner-proofs stores require fixed owner authorization, ordinary values, strict durability and full replication (replicate: 1)",
+			);
+		}
+	}
+
+	private assertProofActive(state = this._proofState): void {
+		if (
+			this.closed ||
+			!state ||
+			state.failed ||
+			state !== this._proofState ||
+			!state.owner
+		)
+			throw new Error("Proof document owner has not recovered");
+		state.assertActive!();
+		state.owner.assertReady();
+	}
+
+	private decodeProofValue(fact: VerifiedProofPut): T {
+		const value = this._index.valueEncoding.decoder(Uint8Array.from(fact.data));
+		const decodedKey = indexerTypes.toId(this.idResolver(value));
+		if (!equals(serialize(decodedKey), serialize(fact.key)))
+			throw new Error("Document value ID disagrees with its signed proof key");
+		return value;
+	}
+
+	private async projectProofWinner(
+		key: indexerTypes.IdKey,
+		winner: VerifiedProofPut | undefined,
+		state: ProofDocumentState,
+	): Promise<void | (() => void)> {
+		if (state !== this._proofState)
+			throw new Error("Stale document projection owner");
+		const existing = await this._index.index.get(key);
+		if (existing?.value.__context.head === winner?.hash) return;
+		const snapshot = (value: T, context: Context) => {
+			const plain = Object.assign(Object.create(this._clazz.prototype), value);
+			const copy = this._index.valueEncoding.decoder(
+				this._index.valueEncoding.encoder(plain),
+			);
+			return coerceWithIndexed(
+				coerceWithContext(copy, deserialize(serialize(context), Context)),
+				copy as unknown as I,
+			);
+		};
+		let change: DocumentsChange<T, I> | undefined;
+		if (winner) {
+			const value = this.decodeProofValue(winner);
+			const entry = materializeProofEntry(winner.bytes, winner.hash);
+			// The new profile derives context from the authenticated winner, not
+			// arrival order or a projection row that recovery will rebuild.
+			const { context } = await this._index.putWithContext(
+				value,
+				key,
+				new Context({
+					created: winner.wallTime,
+					modified: winner.wallTime,
+					head: winner.hash,
+					gid: entry.meta.gid,
+					size: entry.payload.byteLength,
+				}),
+				{
+					replace: existing != null,
+					transformFacts: { entryPublicKeys: entry.publicKeys },
+				},
+			);
+			if (!state.opening)
+				change = { added: [snapshot(value, context)], removed: [] };
+		} else if (existing) {
+			if (!state.opening)
+				change = {
+					added: [],
+					removed: [
+						snapshot(existing.value as unknown as T, existing.value.__context),
+					],
+				};
+			await this._index.del(key);
+		}
+		if (change) return () => this.dispatchDocumentChangeIfObserved(change!);
+	}
+
+	private assertProofWriteOptions(
+		options?: DocumentPutOptions,
+		put = false,
+	): void {
+		this.assertProofActive();
+		if (!options) return;
+		const accepted = new Set([
+			"delivery",
+			"replicas",
+			...(put ? ["unique"] : []),
+		]);
+		for (const [name, value] of Object.entries(options)) {
+			if (value !== undefined && !accepted.has(name))
+				throw new Error(`Owner-proofs writes do not support '${name}'`);
+		}
+	}
+
+	get terminalLifecycleCallbackRunning(): boolean {
+		// Handler checks this synchronously, before queued close/drop calls can
+		// outlive the callback that requested them.
+		return (
+			super.terminalLifecycleCallbackRunning ||
+			Boolean(this._proofState && this.log.terminalLifecycleCallbackRunning)
+		);
+	}
+
+	private assertProofTerminalAdmission(from?: Program): void {
+		if (!this._proofState) return;
+		const parent = this.parents?.findIndex((owner) => owner === from) ?? -1;
+		if (
+			!this.closed &&
+			((from && parent < 0) || (parent >= 0 && this.parents!.length > 1))
+		)
+			return;
+		if (this._proofState.opening)
+			throw new TerminalOperationNotStartedError(
+				"Document owner opening must settle before terminal operations",
+			);
+		(
+			this.log as unknown as { assertEntryOwnerTerminalAdmission(): void }
+		).assertEntryOwnerTerminalAdmission();
+	}
+
+	async close(from?: Program): Promise<boolean> {
+		this.assertProofTerminalAdmission(from);
+		const closed = await super.close(from);
+		if (closed) {
+			this._documentNamespaceClaim?.releaseAfterTerminalCleanup();
+			this._documentNamespaceClaim = undefined;
+			this._proofState = undefined;
+		}
+		return closed;
+	}
+
+	async drop(from?: Program): Promise<boolean> {
+		this.assertProofTerminalAdmission(from);
+		const dropped = await super.drop(from);
+		if (dropped) {
+			this._documentNamespaceClaim?.releaseAfterTerminalCleanup();
+			this._documentNamespaceClaim = undefined;
+			this._proofState = undefined;
+		}
+		return dropped;
+	}
+
+	private async openDocumentStore(
+		options: SetupOptions<T, I, D>,
+		proofContract?: ProofDeleteContract,
+		proofState?: ProofDocumentState,
+	) {
 		this.trackDocumentChangeListeners();
 		// Deserialized instances skip constructor/field initializers (borsh creates
 		// objects via Object.create), so re-establish constructor-only state here.
@@ -2569,8 +2831,6 @@ export class Documents<
 			this.isNativeMode() &&
 			options.replicate !== undefined &&
 			options.replicate !== false;
-		this.assertNativeModeOpenOptions(options);
-
 		if (Program.isPrototypeOf(this._clazz)) {
 			if (!this.canOpen) {
 				throw new Error(
@@ -2600,7 +2860,7 @@ export class Documents<
 		this._hasLogTrim = options.log?.trim != null;
 
 		const changeListenersBeforeIndexOpen = this._documentChangeListenerCount;
-		await this._index.open({
+		const indexOptions = {
 			documentEvents: this.events,
 			log: this.log,
 			canRead: options?.index?.canRead,
@@ -2609,7 +2869,14 @@ export class Documents<
 			transform: options.index,
 			indexBy: idProperty,
 			cache: options?.index?.cache,
-			replicate: async (query, results) => {
+			replicate: async (
+				query: Parameters<
+					import("./search.js").OpenOptions<T, I, D>["replicate"]
+				>[0],
+				results: Parameters<
+					import("./search.js").OpenOptions<T, I, D>["replicate"]
+				>[1],
+			) => {
 				// here we arrive for all the results we want to persist.
 
 				let mergeSegments = this.domain?.canProjectToOneSegment(query);
@@ -2621,7 +2888,9 @@ export class Documents<
 								? x.entries[0]
 								: x.context.head,
 						),
-					{ replicate: { assumeSynced: true, mergeSegments } },
+					proofContract
+						? undefined
+						: { replicate: { assumeSynced: true, mergeSegments } },
 				);
 			},
 			dbType: this.constructor,
@@ -2630,7 +2899,20 @@ export class Documents<
 			includeIndexed: options.index?.includeIndexed,
 			immutable: this.immutable,
 			profile: options.sync?.profile,
-		});
+		};
+		const finishQueries = proofState
+			? await (
+					this._index as unknown as {
+						openWithDeferredQuery(
+							properties: typeof indexOptions,
+							assertOwnerActive: () => void,
+						): Promise<() => Promise<void>>;
+					}
+				).openWithDeferredQuery(indexOptions, () =>
+					this.assertProofActive(proofState),
+				)
+			: undefined;
+		if (!proofState) await this._index.open(indexOptions);
 		this._documentInternalChangeListenerCount = Math.max(
 			0,
 			this._documentChangeListenerCount - changeListenersBeforeIndexOpen,
@@ -2700,17 +2982,34 @@ export class Documents<
 				: undefined;
 		}
 
-		await this.log.open({
-			encoding: BORSH_ENCODING_OPERATION,
+		const logOptions = {
+			encoding: proofContract
+				? BORSH_ENCODING_PROOF_OPERATION
+				: BORSH_ENCODING_OPERATION,
 			canReplicate: options?.canReplicate,
-			canAppend: this.canAppend.bind(this),
-			onChange: this.handleChanges.bind(this),
+			canAppend: proofContract
+				? async (entry: Entry<Operation>) => {
+						try {
+							await createProofOperationVerifier({
+								contract: proofContract,
+							}).incoming({ entry: entry as Entry<ProofOperation> });
+							return true;
+						} catch {
+							return false;
+						}
+					}
+				: this.canAppend.bind(this),
+			onChange: proofContract ? async () => {} : this.handleChanges.bind(this),
 			trim: this.detachTrimEntryCallback(options?.log?.trim),
-			appendDurability: options?.appendDurability,
-			nativeBackbone: options?.nativeBackbone,
+			appendDurability: proofContract
+				? ("strict" as const)
+				: options?.appendDurability,
+			nativeBackbone: proofContract
+				? (false as const)
+				: options?.nativeBackbone,
 			nativeGraph: options?.nativeGraph,
 			nativeRangePlanner: options?.nativeRangePlanner,
-			replicate: options?.replicate,
+			replicate: proofContract ? 1 : options?.replicate,
 			replicas: options?.replicas,
 			respondToIHaveTimeout: options?.respondToIHaveTimeout,
 			sync: options?.sync,
@@ -2729,7 +3028,72 @@ export class Documents<
 			eagerBlocks: options?.eagerBlocks,
 			fanout: options?.fanout,
 			keep: keepFunction,
-		});
+		};
+		if (proofContract && proofState) {
+			const indexDurability = this._index.index.crashSafeDurability;
+			if (indexDurability?.crashSafe !== true || !indexDurability.barrier)
+				throw new Error(
+					"Owner-proofs documents require a crash-safe projection index",
+				);
+			type CoordinatorOptions = Parameters<
+				typeof createProofCommitCoordinator
+			>[0];
+			const shared = this.log as unknown as {
+				openWithRecovery(
+					options: typeof logOptions,
+					recover: (signal: AbortSignal) => Promise<void>,
+				): Promise<void>;
+				registerEntryOwner(): Pick<
+					CoordinatorOptions,
+					"assertActive" | "beginAdmission" | "prepareCoordinates"
+				>;
+			};
+			await shared.openWithRecovery(logOptions, async (signal) => {
+				const integration = shared.registerEntryOwner();
+				const assertActive = () => {
+					if (proofState.failed || this._proofState !== proofState)
+						throw new Error("Inactive document projection owner");
+					integration.assertActive();
+				};
+				proofState.assertActive = assertActive;
+				const log = this.log.log as import("@peerbit/log").Log<ProofOperation>;
+				const coordinator = createProofCommitCoordinator({
+					log,
+					contract: proofContract,
+					assertActive,
+					beginAdmission: integration.beginAdmission,
+					validatePut: (fact) => {
+						this.decodeProofValue(fact);
+					},
+					prepareCoordinates: async (entry) => {
+						const prepared = await integration.prepareCoordinates(entry);
+						return {
+							...prepared,
+							barrier: async () => {
+								await prepared.barrier();
+								await indexDurability.barrier();
+							},
+						};
+					},
+					project: ({ key, winner }) =>
+						this.projectProofWinner(key, winner, proofState),
+				});
+				proofState.owner = createProofEntryOwner({
+					log,
+					contract: proofContract,
+					coordinator,
+					assertActive,
+				});
+				signal.throwIfAborted();
+				await this._index.index.del({ query: [] });
+				await indexDurability.barrier();
+				await proofState.owner.recover();
+				signal.throwIfAborted();
+			});
+			await finishQueries!();
+		} else {
+			await this.log.open(logOptions);
+		}
 		this._nativeBackboneDocumentIndexEnabled = false;
 		if (
 			this._mode !== "compat" &&
@@ -2761,6 +3125,8 @@ export class Documents<
 	}
 
 	async recover() {
+		if (getProofDeleteContract(this.log))
+			throw new Error("Owner-proofs stores recover through close and reopen");
 		return this.log.recover();
 	}
 
@@ -3463,6 +3829,23 @@ export class Documents<
 		doc: T,
 		options?: DocumentPutOptions,
 	): Promise<DocumentPutResult> {
+		if (getProofDeleteContract(this.log)) {
+			this.assertProofWriteOptions(options, true);
+			const captured = asTrustedDocumentSharedLog(
+				this.log,
+			).snapshotDocumentAppendOptions(options);
+			const data = this._index.valueEncoding.encoder(doc);
+			const owned = this._index.valueEncoding.decoder(data);
+			const key = indexerTypes.toId(this.idResolver(owned));
+			const prepared = await this._proofState!.owner!.preparePut(key, data);
+			return this.log.append(prepared.operation, {
+				delivery: captured?.delivery,
+				replicas: captured?.replicas,
+				meta: {
+					next: captured?.unique ? [] : prepared.next,
+				},
+			});
+		}
 		options = asTrustedDocumentSharedLog(
 			this.log,
 		).snapshotDocumentAppendOptions(
@@ -3607,6 +3990,10 @@ export class Documents<
 		docs: T[],
 		options?: DocumentPutManyOptions,
 	): Promise<DocumentPutManyResult> {
+		if (getProofDeleteContract(this.log))
+			throw new Error(
+				"Owner-proofs stores do not yet support putMany; no items were committed",
+			);
 		const batching = options?.batching;
 		if (batching !== undefined && batching !== "required") {
 			throw new Error('Unsupported putMany batching mode; expected "required"');
@@ -5828,6 +6215,22 @@ export class Documents<
 		id: indexerTypes.Ideable | indexerTypes.IdKey,
 		options?: SharedAppendOptions<Operation>,
 	) {
+		if (getProofDeleteContract(this.log)) {
+			this.assertProofWriteOptions(options);
+			const captured = asTrustedDocumentSharedLog(
+				this.log,
+			).snapshotDocumentAppendOptions(options);
+			const key = snapshotPersistedDeleteId(id);
+			const prepared = await this._proofState!.owner!.prepareDelete(key);
+			return this.log.append(prepared.operation, {
+				delivery: captured?.delivery,
+				replicas: captured?.replicas,
+				meta: {
+					next: prepared.next,
+					type: EntryType.CUT,
+				},
+			});
+		}
 		const capturedOptions = asTrustedDocumentSharedLog(
 			this.log,
 		).snapshotDocumentAppendOptions(options);
@@ -6344,6 +6747,7 @@ export class Documents<
 		query?: indexerTypes.Query | indexerTypes.QueryLike;
 		approximate?: false | true | { scope?: ReachScope };
 	}): Promise<number | CountEstimate> {
+		if (getProofDeleteContract(this.log)) this.assertProofActive();
 		// Local/exact count
 		if (!options?.approximate) {
 			return this.index.index.count({ query: options?.query });
