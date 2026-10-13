@@ -1763,7 +1763,16 @@ export const convertSearchRequestToQuery = (
 					table,
 					new Map(joins), // copy the map, else we might might do unececessary joins
 					[],
-					options,
+					{
+						...options,
+						separateSelection:
+							!!groupBy &&
+							[normalizedRequest?.sort ?? []].flat().every((sort) =>
+								table.fields.some(
+									(field) => field.name === getInlineTableFieldName(sort.key),
+								),
+							),
+					},
 				);
 
 				unionBuilder += `${unionBuilder.length > 0 ? " UNION " : ""} ${selectQuery} ${query} ${groupBy ? "GROUP BY " + groupBy : ""}`;
@@ -1854,13 +1863,16 @@ const convertRequestToQuery = <
 	options?: {
 		fetchAll?: boolean;
 		planner?: PlanningSession;
+		separateSelection?: boolean;
 	},
 ): R => {
 	let whereBuilder = "";
 	let bindableBuilder: any[] = [];
 	/* let orderByBuilder: string | undefined = undefined; */
 	/* let tablesToSelect: string[] = [table.name]; */
-	let joinBuilder: Map<string, JoinOrRootTable> = extraJoin || new Map();
+	let joinBuilder: Map<string, JoinOrRootTable> = options?.separateSelection
+		? new Map()
+		: extraJoin || new Map();
 
 	getOrSetRootTable(joinBuilder, table);
 
@@ -1933,6 +1945,36 @@ const convertRequestToQuery = <
 		}
 	} */
 	const where = whereBuilder.length > 0 ? "where " + whereBuilder : undefined;
+
+	if (options?.separateSelection && extraJoin && table.primary) {
+		const childJoins = [...joinBuilder.values()].filter(
+			(join) => join.type !== "root",
+		);
+		if (
+			childJoins.length > 0 &&
+			childJoins.every(
+				(join) => getNonInlinedTable(join.table.parent!) === table,
+			)
+		) {
+			// Select complete roots before hydrating arrays, without multiplying each
+			// reconstructed element by every matching predicate element. Keep the
+			// entire predicate together (including NOT/NULL and same-element AND).
+			// Deeper joins may depend on a hydration parent's alias, so stay on the
+			// existing path for them and for child-sorted results.
+			const primary = `${table.name}.${escapeColumnName(table.primary)}`;
+			return {
+				query: `${buildJoin(extraJoin, options).join} where ${primary} IN (SELECT ${primary} FROM ${table.name} ${buildJoin(joinBuilder, options).join} ${where ?? ""})`,
+				bindable: bindableBuilder,
+			} as R;
+		}
+		// Preserve the original join order and column hints on the unchanged path.
+		for (const [key, join] of joinBuilder) {
+			const existing = extraJoin.get(key);
+			if (existing) existing.columns.push(...join.columns);
+			else extraJoin.set(key, join);
+		}
+		joinBuilder = extraJoin;
+	}
 
 	if (extraJoin && extraJoin.size > 0) {
 		insertMapIntoMap(joinBuilder, extraJoin);
