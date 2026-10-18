@@ -53,6 +53,32 @@ awaiting observers, and suppress late events after the terminal. Keep any extern
 collector bounded too. The precommit immutable lookup is separate from persisted
 receipt settlement, so its time must not be attributed to receipt latency.
 
+## Put timing diagnostics
+
+The same `sync.profile` callback receives invocation-local `documents.put:*`
+traces for single `put` calls, with one `documents.put.settle` terminal after
+the call succeeds or fails (including any requested persisted delivery).
+Preparation and the selected `prepared`/`compatibility` path are reported.
+The JavaScript append path additionally times authorization, payload/signable
+encoding, signing, log indexing (including trusted commit-evidence capture),
+document projection/change dispatch, and shared-log local processing. Optimized
+native paths do not fabricate these finer spans.
+
+Durations are inclusive and overlap; do not sum them. `entry.create.storage`
+combines serialization, CID calculation and block storage, not an isolated fsync.
+`documents.put.authorize` includes entry decoding and the policy callback;
+`sharedLog.append.localProcessing` includes coordinate/planning work and ordinary
+delivery. Phase `outcome: "success"` means the phase returned, not that permission
+was granted or a durable receipt exists. Only the normal write/receipt contract
+provides durability evidence.
+
+These traces use the same 256-detail-event bound and isolated observer delivery
+as query traces, with no document IDs, contents, hashes or raw errors. Disabled
+tracing adds no phase clock reads. Keep observers cheap and filter on the trace
+prefix when relying on this isolation: older uncorrelated `sync.profile` events
+have their existing behavior. Strict native mode's existing rejection of
+`sync.profile` is unchanged. No write options or storage/wire formats change.
+
 ## Durable remote delivery
 
 Document puts can opt in to waiting for crash-safe persistence on current remote

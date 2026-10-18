@@ -53,6 +53,12 @@ import {
 	type ShallowOrFullEntry,
 } from "./entry.js";
 import { findUniques } from "./find-uniques.js";
+import {
+	type InternalProfileSink,
+	emitInternalProfileDuration,
+	internalProfileStart,
+	withInternalProfile,
+} from "./internal-profile.js";
 import * as LogError from "./log-errors.js";
 import * as Sorting from "./log-sorting.js";
 import { logger as baseLogger } from "./logger.js";
@@ -157,18 +163,6 @@ const hasNativeCommitOwnershipAck = (
 
 type MaybePromise<T> = T | Promise<T>;
 
-type InternalProfileValue = string | number | boolean | undefined;
-type InternalProfileEvent = {
-	name: string;
-	component?: string;
-	durationMs?: number;
-	entries?: number;
-	bytes?: number;
-	messages?: number;
-	count?: number;
-	details?: Record<string, InternalProfileValue>;
-};
-type InternalProfileSink = (event: InternalProfileEvent) => void;
 type InternalAppendHashesSink = (hashes: string[]) => void | Promise<void>;
 // Private cross-package seam used by SharedLog to bind a post-commit delivery
 // proof to the exact lower-log mutation. Hash-only callers remain supported;
@@ -235,22 +229,6 @@ const createLogDropProgress = (): LogDropProgress => ({
 	indexerStopped: false,
 });
 
-const internalProfileNow = () => globalThis.performance?.now?.() ?? Date.now();
-const internalProfileStart = (sink: InternalProfileSink | undefined) =>
-	sink ? internalProfileNow() : 0;
-const emitInternalProfileDuration = (
-	sink: InternalProfileSink | undefined,
-	startedAt: number,
-	event: Omit<InternalProfileEvent, "durationMs">,
-) => {
-	if (!sink) {
-		return;
-	}
-	sink({
-		...event,
-		durationMs: internalProfileNow() - startedAt,
-	});
-};
 const EMPTY_NEXT_HASHES: string[] = [];
 const EMPTY_NEXT_ENTRIES: Sorting.SortableEntry[] = [];
 const normalizedUniqueStrings = (values: string[]): string[] =>
@@ -488,6 +466,17 @@ export type AppendOptions<T> = {
 type TrustedAppendOptions<T> = AppendOptions<T> & {
 	__peerbitCanAppendAlreadyValidated?: boolean;
 	__peerbitOnLocalCommit?: InternalLocalCommitEvidenceSink;
+	__peerbitProfile?: InternalProfileSink;
+};
+
+const appendProfile = (options: unknown): InternalProfileSink | undefined => {
+	// Only an owned data property carries this internal sink. Do not evaluate an
+	// unrelated caller getter on the public append options.
+	const profile = Object.getOwnPropertyDescriptor(
+		options,
+		"__peerbitProfile",
+	)?.value;
+	return typeof profile === "function" ? profile : undefined;
 };
 
 const canAppendAlreadyValidated = (options?: unknown): boolean =>
@@ -1428,6 +1417,7 @@ export class Log<T> {
 		options: AppendOptions<T>,
 	): Promise<{ entry: Entry<T>; removed: ShallowOrFullEntry<T>[] }> {
 		const onLocalCommit = localCommitEvidenceSink(options);
+		const profile = appendProfile(options);
 		const nexts = await this.getNextsForAppend(options);
 		const deferBlockStore = hasPutMany(this._storage);
 		type MutationResult = {
@@ -1497,9 +1487,29 @@ export class Log<T> {
 		}
 
 		if (!mutation) {
-			const entry = await this.createAppendEntry(data, options, nexts);
+			const createStartedAt = internalProfileStart(profile);
+			let createOutcome = "error";
+			let entry: Entry<T>;
+			try {
+				entry = await this.createAppendEntry(
+					data,
+					options,
+					nexts,
+					undefined,
+					profile,
+				);
+				createOutcome = "success";
+			} finally {
+				if (profile) {
+					emitInternalProfileDuration(profile, createStartedAt, {
+						name: "log.append.createEntry",
+						component: "log",
+						details: { outcome: createOutcome },
+					});
+				}
+			}
 			await this.joinMissingNexts(entry, nexts);
-			await this.putAppendEntry(entry, options);
+			await this.putAppendEntry(entry, options, profile);
 			mutation = await finishMutation(entry);
 		}
 
@@ -4320,13 +4330,14 @@ export class Log<T> {
 		storeOptions?: {
 			deferStore?: boolean;
 		},
+		profile?: InternalProfileSink,
 	): Promise<Entry<T>> {
 		const clock = new Clock({
 			id: this._identity.publicKey.bytes,
 			timestamp: options?.meta?.timestamp || this._hlc.now(),
 		});
 
-		const entry = await EntryV0.create<T>({
+		const properties = {
 			store: this._storage,
 			identity: options.identity || this._identity,
 			signers: options.signers?.map((signer) =>
@@ -4352,13 +4363,16 @@ export class Log<T> {
 			canAppend: canAppendAlreadyValidated(options)
 				? undefined
 				: options.canAppend
-					? (entry) =>
+					? (entry: Entry<T>) =>
 							this.runWithMutationCallback(() => options.canAppend!(entry))
 					: this._hasCustomCanAppend
 						? this._canAppend
 						: undefined,
 			deferStore: storeOptions?.deferStore,
-		});
+		};
+		const entry = await EntryV0.create<T>(
+			withInternalProfile(properties, profile),
+		);
 
 		if (!entry.hash) {
 			throw new Error("Unexpected");
@@ -4396,27 +4410,46 @@ export class Log<T> {
 		}
 	}
 
-	private async putAppendEntry(entry: Entry<T>, options: AppendOptions<T>) {
+	private async putAppendEntry(
+		entry: Entry<T>,
+		options: AppendOptions<T>,
+		profile?: InternalProfileSink,
+	) {
 		const onLocalCommit = localCommitEvidenceSink(options);
+		const startedAt = internalProfileStart(profile);
+		let outcome = "error";
 		try {
-			await this.entryIndex.put(entry, {
-				unique: true,
-				isHead: true,
-				toMultiHash: false,
-				deferIndexWrite:
-					options.deferIndexWrite ??
-					(options.durability
-						? options.durability === "buffered"
-						: this._appendDurability === "buffered"),
-			});
-		} catch (error) {
-			if (error instanceof EntryIndexPostCommitError) {
-				onLocalCommit?.([error.committedHash], [entry]);
-				throw error.cause;
+			try {
+				await this.entryIndex.put(entry, {
+					unique: true,
+					isHead: true,
+					toMultiHash: false,
+					deferIndexWrite:
+						options.deferIndexWrite ??
+						(options.durability
+							? options.durability === "buffered"
+							: this._appendDurability === "buffered"),
+				});
+			} catch (error) {
+				if (error instanceof EntryIndexPostCommitError) {
+					onLocalCommit?.([error.committedHash], [entry]);
+					throw error.cause;
+				}
+				throw error;
 			}
-			throw error;
+			onLocalCommit?.([entry.hash], [entry]);
+			outcome = "success";
+		} finally {
+			if (profile) {
+				// Include trusted evidence binding: no application observer may run
+				// between the irreversible mutation and its canonical commit capture.
+				emitInternalProfileDuration(profile, startedAt, {
+					name: "log.append.entryIndex",
+					component: "log",
+					details: { outcome },
+				});
+			}
 		}
-		onLocalCommit?.([entry.hash], [entry]);
 	}
 
 	private async putAppendEntries(
