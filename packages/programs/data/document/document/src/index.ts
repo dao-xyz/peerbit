@@ -32,7 +32,11 @@ export type {
 	JoiningTargets,
 	JoiningTimeoutPolicy,
 } from "./search.js";
-export { coerceWithContext, coerceWithIndexed } from "./search.js";
+export {
+	AccessDeniedError,
+	coerceWithContext,
+	coerceWithIndexed,
+} from "./search.js";
 export * from "./operation.js";
 export { policy } from "./policy.js";
 export { transform } from "./transform.js";
