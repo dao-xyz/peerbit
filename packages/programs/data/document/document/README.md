@@ -23,6 +23,43 @@ Persisted data and wire formats are unchanged. These checks authorize query
 responses, not all replication or direct block access, and do not by themselves
 provide store confidentiality.
 
+## Waiting for a remote query candidate
+
+To gate the first query on a non-self cover candidate and reject when the wait
+expires, use the existing blocking policy:
+
+```typescript
+const iterator = store.docs.index.iterate({}, {
+	remote: {
+		wait: {
+			behavior: "block",
+			until: "any",
+			timeout: 5_000,
+			onTimeout: "error",
+		},
+	},
+});
+try {
+	const results = await iterator.next(100);
+} finally {
+	await iterator.close();
+}
+```
+
+The blocking wait and its deadline start when `iterate()` creates the iterator,
+not at the first `next()`. The wait listens for replication changes; it does not
+poll. Its positive timeout bounds the readiness phase, including the initial
+cover lookup, not the whole query. Closing the iterator or aborting its top-level
+`signal` cancels the wait. A lookup already in progress may finish later; its late
+result is ignored.
+With `behavior: "block"`, a zero timeout leaves the wait untimed.
+
+This is only candidate discovery: a non-self `getCover` result is not proof of
+reachability, complete query coverage, authorization, catch-up, or persistence.
+It can include peers with synchronization in flight. Persisted delivery receipts
+remain the durability proof. Defaults are unchanged: `remote.wait: true` uses
+`"keep-open"`, not this blocking gate; an omitted `onTimeout` proceeds on timeout.
+
 ## Query timing diagnostics
 
 The existing `Documents.open({ type, sync: { profile } })` callback also receives
