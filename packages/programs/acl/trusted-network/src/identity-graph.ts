@@ -88,20 +88,21 @@ export async function* getPathGenerator(
 	resolver: RelationResolver,
 ) {
 	let iter = [from];
-	const visited = new Set();
+	const visited = new Set([from.hashcode()]);
 	while (iter.length > 0) {
 		const newIter: PublicSignKey[] = [];
 		for (const value of iter) {
 			const results = await resolver.resolve(value, db);
 			for (const result of results) {
 				if (result instanceof IdentityRelation) {
-					if (visited.has(result.id)) {
-						return;
-					}
-					visited.add(result.id);
 					yield result;
 
-					newIter.push(resolver.next(result));
+					const next = resolver.next(result);
+					const hash = next.hashcode();
+					if (!visited.has(hash)) {
+						visited.add(hash);
+						newIter.push(next);
+					}
 				}
 			}
 		}
