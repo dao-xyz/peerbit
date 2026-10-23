@@ -1259,12 +1259,21 @@ export abstract class Program<
 		await Promise.all(
 			expectedHashes.map((hash) =>
 				pubsub
-					.waitFor(hash, { target: "neighbor", timeout: neighborProbeTimeout })
+					.waitFor(hash, {
+						target: "neighbor",
+						timeout: neighborProbeTimeout,
+						signal: options?.signal,
+					})
 					.catch(() => {
 						// Multi-hop overlays may never be direct neighbours; best-effort only.
 					}),
 			),
 		);
+		if (options?.signal?.aborted) {
+			throw options.signal.reason instanceof Error
+				? options.signal.reason
+				: new AbortError("Aborted");
+		}
 
 		// Best-effort seeding: subscribe events are edge-triggered and can be missed if a peer
 		// subscribed before this program attached listeners. Actively ask for subscriber
