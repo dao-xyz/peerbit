@@ -18744,6 +18744,7 @@ describe("index", () => {
 				this.property = properties?.property ?? "test";
 			}
 			async open() {
+				openedLogs.add(this.log);
 				return this.log.open(this.node.services.blocks, this.node.identity);
 			}
 		}
@@ -18785,8 +18786,10 @@ describe("index", () => {
 
 		let stores: { store: TestStoreSubPrograms }[];
 		let peersCount = 2;
+		let openedLogs: Set<Log<any>>;
 
 		beforeEach(async () => {
+			openedLogs = new Set();
 			session = await TestSession.connected(peersCount);
 			stores = [];
 
@@ -18822,7 +18825,11 @@ describe("index", () => {
 			}
 		});
 		afterEach(async () => {
-			await session.stop();
+			try {
+				await session.stop();
+			} finally {
+				await Promise.all([...openedLogs].map((log) => log.close()));
+			}
 		});
 
 		it("can open a subprogram when put", async () => {
