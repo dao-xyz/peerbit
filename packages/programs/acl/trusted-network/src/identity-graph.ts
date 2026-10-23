@@ -63,7 +63,11 @@ export const getFromByToLocalOnly: RelationResolver = {
 		to: PublicSignKey,
 		db: DocumentsLike<IdentityRelation, FromTo>,
 	) => {
-		return searchRelations(db, { key: "to", value: to.hashcode() }, LOCAL_ONLY_QUERY);
+		return searchRelations(
+			db,
+			{ key: "to", value: to.hashcode() },
+			LOCAL_ONLY_QUERY,
+		);
 	},
 	next: (relation) => relation.from,
 };
@@ -88,17 +92,18 @@ export async function* getPathGenerator(
 	resolver: RelationResolver,
 ) {
 	let iter = [from];
-	const visited = new Set();
+	const visited = new Set<string>();
 	while (iter.length > 0) {
 		const newIter: PublicSignKey[] = [];
 		for (const value of iter) {
+			const hash = value.hashcode();
+			if (visited.has(hash)) {
+				continue;
+			}
+			visited.add(hash);
 			const results = await resolver.resolve(value, db);
 			for (const result of results) {
 				if (result instanceof IdentityRelation) {
-					if (visited.has(result.id)) {
-						return;
-					}
-					visited.add(result.id);
 					yield result;
 
 					newIter.push(resolver.next(result));
@@ -133,7 +138,7 @@ export const hasPathToTarget = async (
 
 	const iterator = getPathGenerator(current, db, resolver);
 	for await (const relation of iterator) {
-		if (target(relation.from)) {
+		if (target(resolver.next(relation))) {
 			return true;
 		}
 	}
