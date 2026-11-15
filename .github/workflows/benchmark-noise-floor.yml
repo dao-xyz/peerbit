@@ -1,4 +1,6 @@
 name: Benchmark noise floor
+# The separate document-durable job instead compares two frozen builds on one
+# Ubuntu runner. Its raw latency/reopen evidence is not a noise-floor estimate.
 # Runs ONE commit's benchmark suites N times so the per-task "delta mean %"
 # that .github/workflows/benchmarks.yml prints for base vs head can be judged
 # against a measured floor. A delta smaller than the floor is not evidence.
@@ -22,6 +24,10 @@ on:
         required: false
         default: master
         type: string
+      compare_ref:
+        description: Exact baseline SHA, required only for document-durable (ref is the candidate SHA)
+        required: false
+        type: string
       repeats:
         description: How many times to run the suites on the one build (2-10)
         required: false
@@ -31,6 +37,7 @@ on:
         description: >-
           Comma-separated subset of shared-log, transport, document - the same
           three suite groups benchmarks.yml selects from a PR's changed files.
+          Or document-durable alone for a four-process Ubuntu A/B/B/A comparison.
         required: false
         default: shared-log,transport,document
         type: string
@@ -39,6 +46,7 @@ permissions: {}
 
 jobs:
   noise-floor:
+    if: inputs.suites != 'document-durable'
     runs-on: ubuntu-22.04
     permissions:
       contents: read
@@ -576,5 +584,126 @@ jobs:
         with:
           name: benchmark-noise-floor-${{ github.run_id }}-${{ github.run_attempt }}
           path: bench-results
+          if-no-files-found: error
+          retention-days: 14
+
+  document-durable:
+    if: inputs.suites == 'document-durable'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    timeout-minutes: 120
+    concurrency:
+      group: document-durable-${{ inputs.compare_ref }}-${{ inputs.ref }}
+      cancel-in-progress: false
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+      DOC_DURABLE_SINGLES: "60"
+      DOC_DURABLE_ROUNDS: "30"
+      DOC_DURABLE_RESOLVER_CACHE: default
+    steps:
+      - name: Validate exact cohort inputs
+        env:
+          BASE_SHA: ${{ inputs.compare_ref }}
+          CANDIDATE_SHA: ${{ inputs.ref }}
+          REPEATS: ${{ inputs.repeats }}
+        run: |
+          set -euo pipefail
+          [[ "$BASE_SHA" =~ ^[0-9a-f]{40}$ && "$CANDIDATE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$REPEATS" == 4 ]]
+      - name: Checkout candidate
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: ${{ inputs.ref }}
+          path: candidate
+          persist-credentials: false
+      - name: Checkout baseline
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: ${{ inputs.compare_ref }}
+          path: baseline
+          persist-credentials: false
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22.x
+      - name: Setup pnpm
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
+        with:
+          package_json_file: candidate/package.json
+          run_install: false
+      - name: Build both frozen cohorts
+        run: |
+          set -euo pipefail
+          cargo install wasm-pack --version '=0.13.1' --locked
+          rustup target add wasm32-unknown-unknown
+          for cohort in baseline candidate; do
+            ( cd "$cohort" && pnpm install --frozen-lockfile && pnpm --filter @peerbit/document... run build )
+            git -C "$cohort" diff --exit-code
+          done
+      # The baseline predates this benchmark. Overlay only the identical compiled
+      # harness, never candidate runtime. Each process resolves its own cohort.
+      - name: Record provenance and install the matched harness
+        id: provenance
+        env:
+          EXPECTED_BASE_SHA: ${{ inputs.compare_ref }}
+          EXPECTED_CANDIDATE_SHA: ${{ inputs.ref }}
+        run: |
+          set -euo pipefail
+          mkdir -p durable-results
+          node --input-type=module <<'NODE'
+          import { execFileSync } from 'node:child_process';
+          import assert from 'node:assert/strict';
+          import { createHash } from 'node:crypto';
+          import { copyFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+          import { dirname } from 'node:path';
+          const document = 'packages/programs/data/document/document/dist';
+          const sqlite = 'packages/utils/indexer/sqlite3/dist/src';
+          const harness = `${document}/benchmark/document-put-durable.js`;
+          const hash = path => createHash('sha256').update(readFileSync(path)).digest('hex');
+          const cohorts = {};
+          for (const [label, root] of [['A', 'baseline'], ['B', 'candidate']]) {
+            const git = ref => execFileSync('git', ['rev-parse', ref], { cwd: root, encoding: 'utf8' }).trim();
+            assert.equal(git('HEAD'), label === 'A' ? process.env.EXPECTED_BASE_SHA : process.env.EXPECTED_CANDIDATE_SHA);
+            cohorts[label] = {
+              head: git('HEAD'), tree: git('HEAD^{tree}'),
+              lockSha256: hash(`${root}/pnpm-lock.yaml`),
+              programSha256: hash(`${root}/${document}/src/program.js`),
+              engineSha256: hash(`${root}/${sqlite}/engine.js`),
+              schemaSha256: hash(`${root}/${sqlite}/schema.js`),
+            };
+          }
+          const metadata = {
+            cohorts, harnessSha256: hash(`candidate/${harness}`),
+            workflowSha: process.env.GITHUB_SHA,
+            toolchain: Object.fromEntries(['pnpm', 'rustc', 'cargo', 'wasm-pack'].map(tool => [tool, execFileSync(tool, ['--version'], { encoding: 'utf8' }).trim()])),
+            order: ['A', 'B', 'B', 'A'], measuredAt: new Date().toISOString(),
+            run: `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`,
+            note: 'Separate frozen builds, identical benchmark-only overlay, one runner. Graceful offline reopen, not crash or remote-receipt evidence. Results are advisory, not a production latency guarantee.',
+          };
+          mkdirSync(dirname(`baseline/${harness}`), { recursive: true });
+          copyFileSync(`candidate/${harness}`, `baseline/${harness}`);
+          assert.equal(hash(`baseline/${harness}`), metadata.harnessSha256);
+          writeFileSync('durable-results/provenance.json', JSON.stringify(metadata, null, 2) + '\n');
+          NODE
+      - name: Measure A/B/B/A with natural process exit
+        run: |
+          set -euo pipefail
+          document=packages/programs/data/document/document
+          index=0
+          for label in A B B A; do
+            index=$((index + 1))
+            cohort=baseline
+            if [[ "$label" == B ]]; then cohort=candidate; fi
+            destination="$GITHUB_WORKSPACE/durable-results/${index}-${label}"
+            ( cd "$cohort/$document" && node --unhandled-rejections=strict --expose-gc dist/benchmark/document-put-durable.js ) > "$destination.jsonl" 2> "$destination.stderr.log"
+            node candidate/scripts/bench/durable-put.mjs "$destination.jsonl" durable-results/provenance.json "$label" > "$destination.summary.json"
+          done
+      - name: Upload durable-put evidence
+        if: always() && steps.provenance.conclusion == 'success'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: document-durable-${{ github.run_id }}-${{ github.run_attempt }}
+          path: durable-results
           if-no-files-found: error
           retention-days: 14
