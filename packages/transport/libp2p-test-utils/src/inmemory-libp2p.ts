@@ -2,6 +2,7 @@ import {
 	UnsupportedProtocolError,
 	type AbortOptions,
 	type Connection,
+	type ConnectionStatus,
 	type Libp2pEvents,
 	type PeerId,
 	type PrivateKey,
@@ -342,7 +343,7 @@ class InMemoryConnection {
 	public readonly remoteAddr?: Multiaddr;
 	public readonly streams: Stream[] = [];
 
-	public status: "open" | "closed" = "open";
+	public status: ConnectionStatus = "open";
 	public limits: any = undefined;
 	public timeline: any = { open: Date.now(), close: undefined };
 
@@ -484,12 +485,34 @@ class InMemoryConnection {
 		}
 	}
 
+	_abortLocal(status: "aborted" | "reset", err: Error): void {
+		if (this.status !== "open") return;
+		this.status = status;
+		this.timeline.close = Date.now();
+		for (const s of [...this.streams]) {
+			try {
+				s.abort(err);
+			} catch {}
+		}
+	}
+
 	async close(_opts?: AbortOptions): Promise<void> {
 		if (this.pair) {
 			await this.pair.close(this);
 			return;
 		}
 		await this._closeLocal();
+	}
+
+	/**
+	 * Close immediately, without a graceful shutdown (libp2p `Connection.abort`).
+	 */
+	abort(err: Error): void {
+		if (this.pair) {
+			this.pair.abort(this, err);
+			return;
+		}
+		this._abortLocal("aborted", err);
 	}
 }
 
@@ -511,19 +534,46 @@ class InMemoryConnectionPair {
 	async close(_initiator: InMemoryConnection): Promise<void> {
 		if (this.closePromise) return this.closePromise;
 		this.closePromise = (async () => {
-			const { aConn, bConn, aOwner, bOwner, aManager, bManager, network } =
-				this.opts;
-
+			const { aConn, bConn } = this.opts;
 			await Promise.all([aConn._closeLocal(), bConn._closeLocal()]);
-
-			aManager._removeConnectionInstance(bOwner.peerId.toString(), aConn);
-			bManager._removeConnectionInstance(aOwner.peerId.toString(), bConn);
-
-			network.metrics.connectionsClosed += 1;
-			network.notifyDisconnect(aOwner, bOwner.peerId, [aConn]);
-			network.notifyDisconnect(bOwner, aOwner.peerId, [bConn]);
+			this.release();
+			this.notifyDisconnect();
 		})();
 		return this.closePromise;
+	}
+
+	/**
+	 * Before this returns, the initiator is "aborted", the remote end "reset",
+	 * every stream on both ends is aborted and both connection managers have
+	 * dropped the pair, as libp2p's manager does from the synchronous close
+	 * event. Topologies hear the disconnect afterwards, as after close() (the
+	 * libp2p registrar also notifies them asynchronously), so a topology that
+	 * aborts from onConnect cannot reorder the remote's connect and disconnect.
+	 * A pair that is already closing or closed is left as is.
+	 */
+	abort(initiator: InMemoryConnection, err: Error): void {
+		if (this.closePromise) return;
+		// Claim the pair before aborting streams: their 'close' listeners run
+		// synchronously and may call close() or abort() again.
+		this.closePromise = Promise.resolve().then(() => this.notifyDisconnect());
+		const { aConn, bConn } = this.opts;
+		initiator._abortLocal("aborted", err);
+		(initiator === aConn ? bConn : aConn)._abortLocal("reset", err);
+		this.release();
+	}
+
+	private release(): void {
+		const { aConn, bConn, aOwner, bOwner, aManager, bManager, network } =
+			this.opts;
+		aManager._removeConnectionInstance(bOwner.peerId.toString(), aConn);
+		bManager._removeConnectionInstance(aOwner.peerId.toString(), bConn);
+		network.metrics.connectionsClosed += 1;
+	}
+
+	private notifyDisconnect(): void {
+		const { aConn, bConn, aOwner, bOwner, network } = this.opts;
+		network.notifyDisconnect(aOwner, bOwner.peerId, [aConn]);
+		network.notifyDisconnect(bOwner, aOwner.peerId, [bConn]);
 	}
 }
 
