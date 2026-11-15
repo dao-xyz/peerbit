@@ -1,5 +1,11 @@
 # @peerbit/shared-log-rust
 
+## 0.1.9
+
+### Patch Changes
+
+- [#1515](https://github.com/dao-xyz/peerbit/pull/1515) [`6e6c5f7`](https://github.com/dao-xyz/peerbit/commit/6e6c5f7477e3332c3c65e2084db3722b7a0b0488) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Use exclusive circular range endpoints consistently in rateless synchronization so a receiver that already holds the sender's entries does not report the last entry as missing. Include the maximum hash coordinate in wrapped ranges in both indexed and native resolution, preserving receive limits and collision multiplicity. Hash-number range resolvers now interpret a nonzero start with end zero as the high segment through the ring maximum; `(0, 0)` remains empty. Update custom range resolvers and deploy the coherent JavaScript/WASM cohort together.
+
 ## 0.1.8
 
 ### Patch Changes

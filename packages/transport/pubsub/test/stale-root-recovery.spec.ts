@@ -8,7 +8,7 @@ import {
 	TracedDelivery,
 } from "@peerbit/stream-interface";
 import { AbortError } from "@peerbit/time";
-import { expect } from "chai";
+import { AssertionError, expect } from "chai";
 import pDefer from "p-defer";
 import sinon from "sinon";
 import { Uint8ArrayList } from "uint8arraylist";
@@ -118,6 +118,11 @@ const openingFixture = () => {
 
 describe("pubsub relay root recovery", function () {
 	let clock: sinon.SinonFakeTimers | undefined;
+	const expectNoTimers = () => {
+		// countTimers includes fake jobs; drain them without advancing deadlines.
+		clock!.runMicrotasks();
+		expect(clock!.countTimers()).to.equal(0);
+	};
 	let session:
 		| TestSession<{ pubsub: TopicControlPlane; fanout: FanoutTree }>
 		| undefined;
@@ -127,6 +132,40 @@ describe("pubsub relay root recovery", function () {
 		sinon.restore();
 		await session?.stop();
 		session = undefined;
+	});
+
+	it("does not conceal owned probe deadlines when draining queued jobs", async () => {
+		clock = sinon.useFakeTimers();
+		const f = fixture();
+		f.subject.createMessage.returns(new Promise(() => {}));
+		const controller = new AbortController();
+		const result = f.run({ controller }).catch((error: unknown) => error);
+		await clock.tickAsync(0);
+		const cohort = f.subject.relayRootProbeCohort;
+		const now = clock.now;
+		const job = sinon.spy();
+		try {
+			queueMicrotask(job);
+			expect(expectNoTimers).to.throw(AssertionError);
+			expect(clock.now).to.equal(now);
+			expect(clock.countTimers()).to.equal(2);
+			expect(job.calledOnce).to.equal(true);
+			expect(cohort.controller.signal.aborted).to.equal(false);
+			expect(cohort.users.size).to.equal(1);
+		} finally {
+			controller.abort();
+			await Promise.all([result, cohort.promise]);
+		}
+		expect(await result).to.equal(controller.signal.reason);
+		queueMicrotask(job);
+		expectNoTimers();
+		expect(job.calledTwice).to.equal(true);
+		expect(clock.now).to.equal(now);
+		expect(cohort.users.size).to.equal(0);
+		expect(f.subject.publishMessage.notCalled).to.equal(true);
+		expect(f.subject.suppressedDepartedTopicRootCandidateClaims.size).to.equal(
+			0,
+		);
 	});
 
 	it("coalesces 64 origins across cold shards under one deadline and rebuilds once", async () => {
@@ -149,7 +188,7 @@ describe("pubsub relay root recovery", function () {
 		).to.equal(1);
 		expect(f.subject.signedTopicRootCandidateClaims.size).to.equal(64);
 		expect(f.subject.topicRootCandidateClaimReplayFloors.size).to.equal(64);
-		expect(clock.countTimers()).to.equal(0);
+		expectNoTimers();
 	});
 
 	it("reuses positives briefly, not for the signed lease", async () => {
@@ -184,7 +223,7 @@ describe("pubsub relay root recovery", function () {
 		expect(
 			f.subject.rebuildAutoTopicRootCandidatesFromClaims.callCount,
 		).to.equal(1);
-		expect(clock.countTimers()).to.equal(0);
+		expectNoTimers();
 	});
 
 	it("gives immediate delivery failure a midpoint retry without a new deadline", async () => {
@@ -219,7 +258,7 @@ describe("pubsub relay root recovery", function () {
 		expect(f.subject.suppressedDepartedTopicRootCandidateClaims.size).to.equal(
 			0,
 		);
-		expect(clock.countTimers()).to.equal(0);
+		expectNoTimers();
 	});
 
 	it("does not mistake having no transport neighbors for failed origin reachability", async () => {
@@ -233,7 +272,7 @@ describe("pubsub relay root recovery", function () {
 		expect(f.subject.suppressedDepartedTopicRootCandidateClaims.size).to.equal(
 			0,
 		);
-		expect(clock.countTimers()).to.equal(0);
+		expectNoTimers();
 	});
 
 	it("cancels the winning origin's blocked hedge while other origins are pending", async () => {
@@ -291,7 +330,7 @@ describe("pubsub relay root recovery", function () {
 			expect(
 				f.subject.suppressedDepartedTopicRootCandidateClaims.size,
 			).to.equal(0);
-			expect(clock.countTimers()).to.equal(0);
+			expectNoTimers();
 		});
 	}
 
@@ -311,13 +350,12 @@ describe("pubsub relay root recovery", function () {
 		signing.resolve({});
 		b.abort(); // Signer's continuation is queued, but must never publish.
 		expect(cohort.controller.signal.aborted).to.equal(true);
-		await Promise.all([first, second]);
-		await clock.tickAsync(0);
+		await Promise.all([first, second, cohort.promise]);
 		expect(f.subject.publishMessage.notCalled).to.equal(true);
 		expect(f.subject.suppressedDepartedTopicRootCandidateClaims.size).to.equal(
 			0,
 		);
-		expect(clock.countTimers()).to.equal(0);
+		expectNoTimers();
 	});
 
 	it("bounds a signer which ignores cancellation without declaring the origin dead", async () => {
@@ -348,7 +386,7 @@ describe("pubsub relay root recovery", function () {
 			expect(
 				f.subject.suppressedDepartedTopicRootCandidateClaims.size,
 			).to.equal(0);
-			expect(clock.countTimers()).to.equal(0);
+			expectNoTimers();
 		});
 	}
 
@@ -527,7 +565,7 @@ describe("pubsub relay root recovery", function () {
 				f.subject.suppressedDepartedTopicRootCandidateClaims.size,
 			).to.equal(0);
 			expect(f.subject.fanoutChannels.size).to.equal(0);
-			expect(clock.countTimers()).to.equal(0);
+			expectNoTimers();
 		});
 	}
 

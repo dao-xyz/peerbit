@@ -1,5 +1,19 @@
 # Changelog
 
+## 2.0.133
+
+### Patch Changes
+
+- Updated dependencies [[`cfd2201`](https://github.com/dao-xyz/peerbit/commit/cfd2201fa66386480caec589465bca8af6033d75), [`137a6a9`](https://github.com/dao-xyz/peerbit/commit/137a6a93dd2aea71729548eeb5a2e6def6b8d221), [`a8a34de`](https://github.com/dao-xyz/peerbit/commit/a8a34defcbb7b3c6596311a6b21f72590d2710bf)]:
+  - @peerbit/canonical-client@1.1.72
+  - @peerbit/canonical-host@1.0.91
+  - @peerbit/document@15.1.12
+  - @peerbit/program@6.0.69
+  - @peerbit/stream-interface@6.0.17
+  - @peerbit/shared-log-proxy@2.0.126
+  - @peerbit/document-interface@3.2.83
+  - @peerbit/indexer-interface@3.1.1
+
 ## 2.0.132
 
 ### Patch Changes

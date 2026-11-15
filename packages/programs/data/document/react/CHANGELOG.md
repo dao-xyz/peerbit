@@ -1,5 +1,15 @@
 # @peerbit/document-react
 
+## 1.0.134
+
+### Patch Changes
+
+- Updated dependencies [[`cfd2201`](https://github.com/dao-xyz/peerbit/commit/cfd2201fa66386480caec589465bca8af6033d75), [`a8a34de`](https://github.com/dao-xyz/peerbit/commit/a8a34defcbb7b3c6596311a6b21f72590d2710bf)]:
+  - @peerbit/document@15.1.12
+  - @peerbit/logger@2.0.3
+  - @peerbit/react@1.1.75
+  - @peerbit/indexer-interface@3.1.1
+
 ## 1.0.133
 
 ### Patch Changes

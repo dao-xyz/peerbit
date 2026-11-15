@@ -66,6 +66,14 @@ describe("advisory sync profiling", () => {
 
 	const repairHost = (profile?: SyncProfileFn) => ({
 		_logProperties: { sync: { profile } },
+		log: {
+			entryIndex: {
+				captureMutationGeneration: () => 0,
+				isMutationGenerationCurrent: () => true,
+			},
+			hasMany: async (hashes: string[]) => new Set(hashes),
+		},
+		_peerSessions: { current: () => null, receiveEpoch: () => undefined },
 		isEntryRecentlyKnownByPeer: sinon.spy(
 			(hash: string) => hash === "private-known",
 		),
@@ -442,7 +450,7 @@ describe("advisory sync profiling", () => {
 			);
 			expect(selectedBeforeMutation).to.equal(1);
 			expect(host.syncronizer.onMaybeMissingEntries.callCount).to.equal(1);
-			expect(isStillCurrent.callCount).to.equal(3);
+			expect(isStillCurrent.callCount).to.equal(4);
 			expect(host.isEntryRecentlyKnownByPeer.callCount).to.equal(2);
 			expect(host.isEntryKnownByPeer.callCount).to.equal(1);
 			expect(events).to.have.length(sinkMode === "disabled" ? 0 : 1);
@@ -456,7 +464,7 @@ describe("advisory sync profiling", () => {
 			const events: SyncProfileEvent[] = [];
 			const host = repairHost(recordingSink(events));
 			const isStillCurrent = sinon.stub().returns(true);
-			isStillCurrent.onCall(2).returns(false);
+			isStillCurrent.onCall(3).returns(false);
 			const shipped = sinon.spy();
 			host.pushRepairEntries.callsFake(async (_target, _entries, current) => {
 				await Promise.resolve();
@@ -472,7 +480,7 @@ describe("advisory sync profiling", () => {
 				"churn",
 			);
 			expect(host.pushRepairEntries.callCount).to.equal(1);
-			expect(isStillCurrent.callCount).to.equal(3);
+			expect(isStillCurrent.callCount).to.equal(4);
 			expect(shipped.callCount).to.equal(0);
 			expect(host.isEntryRecentlyKnownByPeer.callCount).to.equal(2);
 			expect(host.isEntryKnownByPeer.callCount).to.equal(1);
@@ -480,10 +488,6 @@ describe("advisory sync profiling", () => {
 			if (events.length) {
 				expect(events[0]).to.include({ entries: 2, count: 1 });
 				expect(events[0].details?.outcome).to.equal("stale");
-			} else {
-				expect(host.pushRepairEntries.firstCall.args[2]).to.equal(
-					isStillCurrent,
-				);
 			}
 		});
 
@@ -514,7 +518,7 @@ describe("advisory sync profiling", () => {
 				"churn",
 			);
 			expect(host.trySendFusedRawExchangeHeads.callCount).to.equal(1);
-			expect(isStillCurrent.callCount).to.equal(5);
+			expect(isStillCurrent.callCount).to.equal(6);
 			expect(current).to.equal(false);
 			expect(events).to.have.length(sinkMode === "disabled" ? 0 : 1);
 			if (events.length) {

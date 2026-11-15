@@ -2125,7 +2125,7 @@ export class DocumentIndex<
 		});
 		if (query instanceof types.PredictedSearchRequest) {
 			// put results in a waiting cache so that we eventually in the future will query a matching thing, we already have results available
-			this._prefetch?.accumulator.add(
+			const replaced = this._prefetch?.accumulator.add(
 				{
 					message: ctx.message,
 					response: query,
@@ -2133,6 +2133,19 @@ export class DocumentIndex<
 				},
 				ctx.from!.hashcode(),
 			);
+			if (replaced) {
+				try {
+					await this._query.send(
+						new types.CloseIteratorRequest({ id: replaced.response.request.id }),
+						{
+							signal: AbortSignal.timeout(CLOSE_ITERATOR_REQUEST_TIMEOUT),
+							mode: new SilentDelivery({ to: [ctx.from], redundancy: 1 }),
+						},
+					);
+				} catch (error) {
+					warn("Failed to close replaced prediction", error);
+				}
+			}
 			indexPrefetchLogger("cached predicted results", {
 				from: ctx.from.hashcode(),
 				request: query.idString,

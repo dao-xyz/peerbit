@@ -10728,6 +10728,12 @@ describe("index", () => {
 		});
 
 		describe("get", () => {
+			let session: TestSession;
+
+			afterEach(async () => {
+				await session?.stop();
+			});
+
 			it("get waitFor existing", async () => {
 				session = await TestSession.connected(1);
 				const store = new TestStore({
@@ -18345,60 +18351,67 @@ describe("index", () => {
 		});
 
 		it("get first entry", async () => {
-			session = await TestSession.connected(1);
+			const session = await TestSession.connected(1);
+			try {
+				const store = new TestStore({
+					docs: new Documents<Document>(),
+				});
 
-			const store = new TestStore({
-				docs: new Documents<Document>(),
-			});
-
-			await session.peers[0].open(store, {
-				args: {
-					replicate: {
-						factor: 1,
+				await session.peers[0].open(store, {
+					args: {
+						replicate: {
+							factor: 1,
+						},
 					},
-				},
-			});
+				});
 
-			const doc = new Document({ id: "1" });
-			const doc2 = new Document({ id: "2" });
-			const doc3 = new Document({ id: "3" });
+				const doc = new Document({ id: "1" });
+				const doc2 = new Document({ id: "2" });
+				const doc3 = new Document({ id: "3" });
 
-			await store.docs.put(doc);
-			await store.docs.put(doc2);
-			await store.docs.put(doc3);
+				await store.docs.put(doc);
+				await store.docs.put(doc2);
+				await store.docs.put(doc3);
 
-			const first = await store.docs.index
-				.iterate({ sort: { key: "id", direction: SortDirection.DESC } })
-				.first();
-			expect(first!.id).to.deep.equal(doc3.id);
+				const first = await store.docs.index
+					.iterate({ sort: { key: "id", direction: SortDirection.DESC } })
+					.first();
+				expect(first!.id).to.deep.equal(doc3.id);
 
-			// expect cleanup
-			expect(store.docs.index.hasPending).to.be.false;
+				// expect cleanup
+				expect(store.docs.index.hasPending).to.be.false;
+			} finally {
+				await session.stop();
+			}
 		});
 
 		it("local only", async () => {
-			session = await TestSession.connected(2);
-			const store = new TestStore({
-				docs: new Documents<Document>(),
-			});
-			await session.peers[0].open(store);
-			const store2 = await session.peers[1].open(store.clone(), {
-				args: {
-					replicate: false,
-				},
-			});
-			const doc = new Document({ id: "1" });
-			await store.docs.put(doc);
-			await store2.docs.index.waitFor(store.node.identity.publicKey);
-			const localOnly = await store2.docs.index
-				.iterate({}, { local: true, remote: false })
-				.first();
-			expect(localOnly).to.be.undefined;
+			const session = await TestSession.connected(2);
+			try {
+				const store = new TestStore({
+					docs: new Documents<Document>(),
+				});
+				await session.peers[0].open(store);
+				const store2 = await session.peers[1].open(store.clone(), {
+					args: {
+						replicate: false,
+					},
+				});
+				const doc = new Document({ id: "1" });
+				await store.docs.put(doc);
+				await store2.docs.index.waitFor(store.node.identity.publicKey);
+				const localOnly = await store2.docs.index
+					.iterate({}, { local: true, remote: false })
+					.first();
+				expect(localOnly).to.be.undefined;
 
-			const localAndRemote = await store2.docs.index
-				.iterate({}, { local: true, remote: true })
-				.first();
-			expect(localAndRemote?.id).to.equal(doc.id);
+				const localAndRemote = await store2.docs.index
+					.iterate({}, { local: true, remote: true })
+					.first();
+				expect(localAndRemote?.id).to.equal(doc.id);
+			} finally {
+				await session.stop();
+			}
 		});
 	});
 
@@ -20515,6 +20528,92 @@ describe("index", () => {
 			}
 		});
 
+		for (const consumed of [false, true]) {
+			it(`replaces a duplicate prediction without ${consumed ? "closing a consumed cursor" : "orphaning an unconsumed cursor"}`, async function () {
+				this.timeout(30_000);
+				const { store, store2 } = await setupInitialStoresAndPrefetch();
+				const accumulator = store2.docs.index.prefetch!.accumulator;
+				await waitForResolved(() => expect(accumulator.size).to.equal(1), {
+					timeout: 10_000,
+				});
+				const cached = (accumulator as any).prefetch.map as Map<
+					string,
+					{ value: { response: PredictedSearchRequest<any> } }
+				>;
+				const first = [...cached.values()][0].value.response;
+				const sendSpy = sinon.spy(store2.docs.index._query, "send");
+				const addSpy = sinon.spy(accumulator, "add");
+				let active: ReturnType<typeof store2.docs.index.iterate> | undefined;
+				let replacement:
+					| ReturnType<typeof store2.docs.index.iterate>
+					| undefined;
+				try {
+					if (consumed) {
+						active = store2.docs.index.iterate({}, { resolve: false });
+						expect((await active.next(1)).map((doc) => doc.id)).to.deep.equal([
+							"1",
+						]);
+					}
+					// Re-delivery must not retire this ID, even after ownership has
+					// transferred from the prediction cache to a live iterator.
+					await store.docs.index._query.send(first, {
+						mode: new SilentDelivery({
+							to: [store2.node.identity.publicKey],
+							redundancy: 1,
+						}),
+					});
+					await waitForResolved(() => expect(addSpy.callCount).to.equal(1));
+					expect(
+						sendSpy
+							.getCalls()
+							.some((call) => call.args[0] instanceof CloseIteratorRequest),
+					).to.equal(false);
+
+					// Schedule a second prediction before consuming the cached one.
+					await (store.docs.index as any)._joinListener({
+						detail: store2.node.identity.publicKey,
+					});
+					await waitForResolved(() => expect(addSpy.callCount).to.equal(2));
+					const latest = addSpy.lastCall.args[0].response.request;
+					expect(equals(first.request.id, latest.id)).to.equal(false);
+					if (active) {
+						expect((await active.next(2)).map((doc) => doc.id)).to.deep.equal([
+							"2",
+							"3",
+						]);
+					} else {
+						await waitForResolved(
+							() =>
+								expect(store.docs.index.countIteratorsInProgress).to.equal(1),
+							{ timeout: 5_000 },
+						);
+					}
+					const retired = sendSpy
+						.getCalls()
+						.map((call) => call.args[0])
+						.filter((request) => request instanceof CloseIteratorRequest);
+					expect(retired.map((request) => request.idString)).to.deep.equal(
+						consumed ? [] : [first.request.idString],
+					);
+
+					replacement = store2.docs.index.iterate({}, { resolve: false });
+					expect(
+						(await replacement.next(1)).map((doc) => doc.id),
+					).to.deep.equal(["1"]);
+					await replacement.close();
+					await waitForResolved(
+						() => expect(store.docs.index.countIteratorsInProgress).to.equal(0),
+						{ timeout: 5_000 },
+					);
+				} finally {
+					await active?.close();
+					await replacement?.close();
+					addSpy.restore();
+					sendSpy.restore();
+				}
+			});
+		}
+
 		it("switches from a stale prefetched id when retrying a missing page", async function () {
 			this.timeout(30_000);
 			const { store, store2 } = await setupInitialStoresAndPrefetch();
@@ -20570,7 +20669,16 @@ describe("index", () => {
 					true,
 				);
 
-				expect(store.docs.index.countIteratorsInProgress).to.equal(1);
+				const remainingIds = [
+					...(store.docs.index as any)._resumableIterators.queues.map.keys(),
+				];
+				const cachedPredictions = [
+					...(store2.docs.index.prefetch!.accumulator as any).prefetch.map.values(),
+				].map((cached) => cached.value.response.request.idString);
+				expect(
+					remainingIds,
+					`Cached predictions: ${cachedPredictions.join(", ")}`,
+				).to.deep.equal([collectRequests[0].idString]);
 				await iterator.close();
 				await waitForResolved(
 					() => expect(store.docs.index.countIteratorsInProgress).to.equal(0),

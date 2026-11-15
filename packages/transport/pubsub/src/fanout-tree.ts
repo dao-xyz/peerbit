@@ -1906,12 +1906,23 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		const bootstraps = bootstrapOverride ?? this.bootstraps;
 		if (bootstraps.length === 0) return;
 		const signal = this.closeController.signal;
-		const peers = await this.ensureBootstrapPeers(
-			bootstraps,
-			bootstrapDialTimeoutMs,
-			signal,
-			bootstrapMaxPeers,
-		);
+		const ready = new Set<string>();
+		for (const address of bootstraps) {
+			const hash = this.connectedPeerHashForBootstrap(address);
+			if (hash) ready.add(hash);
+			if (bootstrapMaxPeers > 0 && ready.size >= bootstrapMaxPeers) break;
+		}
+		// Provider hints must not wait for unavailable trackers when a configured
+		// tracker is already ready. Retain bounded dialing for cold providers.
+		const peers =
+			ready.size > 0
+				? [...ready]
+				: await this.ensureBootstrapPeers(
+						bootstraps,
+						bootstrapDialTimeoutMs,
+						signal,
+						bootstrapMaxPeers,
+					);
 		if (peers.length === 0 || signal.aborted) return;
 
 		const iterator = namespaces[Symbol.iterator]();

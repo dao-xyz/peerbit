@@ -1,5 +1,14 @@
 # Changelog
 
+## 3.2.83
+
+### Patch Changes
+
+- Updated dependencies [[`cfd2201`](https://github.com/dao-xyz/peerbit/commit/cfd2201fa66386480caec589465bca8af6033d75), [`7626f62`](https://github.com/dao-xyz/peerbit/commit/7626f6291f815e7d1b3feaf276ffc1d2427c803c)]:
+  - @peerbit/crypto@3.1.7
+  - @peerbit/log@6.2.39
+  - @peerbit/indexer-interface@3.1.1
+
 ## 3.2.82
 
 ### Patch Changes

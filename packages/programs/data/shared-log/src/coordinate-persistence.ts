@@ -3,6 +3,9 @@ import type { Cache } from "@peerbit/cache";
 import {
 	type DeleteOptions,
 	type Index,
+	type IndexKeyScan,
+	type IndexKeyScanOptions,
+	type IndexKeyScanPage,
 	Or,
 	StringMatch,
 	toId,
@@ -1329,6 +1332,191 @@ export class CoordinatePersistenceCoordinator<R extends "u32" | "u64"> {
 				: undefined;
 		}
 		return (await this.deps.entryCoordinatesIndex().get(toId(hash)))?.value;
+	}
+
+	/** Non-durable presence, including runtime-only native coordinate state. */
+	getAuthoritativeCoordinateEntryForInventory(
+		hash: string,
+	): MaybePromise<EntryReplicated<R> | undefined> {
+		this.deps.captureReplicationOwnershipLifecycle();
+		if (this.deps.canUseNativeBackboneResidentCoordinateState()) {
+			const resident = this._residentEntryCoordinatesByHash?.get(hash);
+			return resident
+				? this.materializeResidentCoordinateEntry(resident)
+				: undefined;
+		}
+		return mapMaybePromise(
+			this.deps.entryCoordinatesIndex().get(toId(hash)),
+			(row) => row?.value,
+		);
+	}
+
+	/**
+	 * Bounded, provisional held-coordinate membership. Native admission spans
+	 * resident changes through lower durable finalization, so neither a partially
+	 * committed mirror nor a backend page can complete across that boundary.
+	 * No generic query fallback: absent raw-scan support remains unsupported.
+	 */
+	scanAuthoritativeCoordinateKeys({
+		pageSize,
+		signal,
+	}: IndexKeyScanOptions): IndexKeyScan | undefined {
+		if (!Number.isInteger(pageSize) || pageSize < 1 || pageSize > 4096) {
+			throw new RangeError(
+				"Key scan pageSize must be an integer from 1 to 4096",
+			);
+		}
+		const lifecycle = this.deps.captureReplicationOwnershipLifecycle();
+		const native = this.deps.canUseNativeBackboneResidentCoordinateState();
+		const coordinateIndex = native
+			? undefined
+			: this.deps.entryCoordinatesIndex();
+		if (!native && !coordinateIndex!.scanKeyPrimitives) return undefined;
+		let state:
+			| {
+					owner: CoordinatePersistenceCoordinator<R>;
+					index: Log<any>["entryIndex"];
+					lifecycle: AbortController;
+					coordinateIndex: typeof coordinateIndex;
+					rows: Map<string, ResidentCoordinateEntry<R>> | undefined;
+					backbone: NativePeerbitBackbone | undefined;
+			  }
+			| undefined = {
+			owner: this,
+			index: this.deps.log().entryIndex,
+			lifecycle,
+			coordinateIndex,
+			rows: native ? this._residentEntryCoordinatesByHash : undefined,
+			backbone: native ? this.deps.nativeBackbone() : undefined,
+		};
+		const generation = state.index.captureMutationGeneration();
+		let remaining = state.rows?.size ?? 0;
+		let cursor: MapIterator<string> | undefined;
+		let delegate: IndexKeyScan | undefined;
+		let terminal: Exclude<IndexKeyScanPage["status"], "more"> | undefined;
+		let cleanup: Promise<void> | undefined;
+		const finish = (status: NonNullable<typeof terminal>) => {
+			if (!terminal) {
+				terminal = status;
+				signal?.removeEventListener("abort", onAbort);
+				state?.lifecycle.signal.removeEventListener("abort", onClose);
+				state = undefined;
+				cursor = undefined;
+				const closing = delegate;
+				delegate = undefined;
+				cleanup = Promise.resolve().then(() => closing?.close());
+				// Abort callbacks have no rejection channel; next/close still await
+				// the original cleanup promise and report any release error.
+				void cleanup.catch(() => {});
+			}
+			return cleanup;
+		};
+		const onAbort = () => {
+			void finish("aborted");
+		};
+		const onClose = () => {
+			void finish("closed");
+		};
+		const check = () => {
+			if (terminal) return;
+			if (signal?.aborted) return finish("aborted");
+			const current = state!;
+			current.owner.deps.throwIfReplicationOwnershipPoisoned();
+			if (current.lifecycle.signal.aborted) return finish("closed");
+			current.owner.deps.throwIfReplicationOwnershipLifecycleInactive(
+				current.lifecycle,
+			);
+			if (
+				current.owner.deps.log().entryIndex !== current.index ||
+				generation === undefined ||
+				!current.index.isMutationGenerationCurrent(generation) ||
+				current.owner.deps.canUseNativeBackboneResidentCoordinateState() !==
+					native ||
+				(native
+					? current.owner._residentEntryCoordinatesByHash !== current.rows ||
+						current.owner.deps.nativeBackbone() !== current.backbone
+					: current.owner.deps.entryCoordinatesIndex() !==
+						current.coordinateIndex)
+			)
+				return finish("invalidated");
+		};
+		check();
+		if (!terminal) {
+			try {
+				if (native) {
+					if (!state!.rows)
+						throw new Error(
+							"Authoritative native coordinate state is unavailable",
+						);
+					cursor = state!.rows.keys();
+				} else
+					delegate = coordinateIndex!.scanKeyPrimitives!({ pageSize, signal });
+				signal?.addEventListener("abort", onAbort, { once: true });
+				lifecycle.signal.addEventListener("abort", onClose, { once: true });
+				// A custom delegate may synchronously abort or admit mutation while
+				// constructing its cursor, before these listeners are registered.
+				check();
+			} catch (error) {
+				void finish("failed");
+				throw error;
+			}
+		}
+		let pending = Promise.resolve();
+		const next = async (): Promise<IndexKeyScanPage> => {
+			try {
+				check();
+				if (terminal) {
+					await cleanup;
+					return { status: terminal, keys: [] };
+				}
+				let page: IndexKeyScanPage;
+				if (delegate) page = await delegate.next();
+				else {
+					const keys: string[] = [];
+					while (keys.length < pageSize && remaining > 0) {
+						const item = cursor!.next();
+						if (item.done)
+							throw new Error(
+								"Coordinate key scan ended before its captured size",
+							);
+						keys.push(item.value);
+						remaining--;
+					}
+					page = { status: remaining === 0 ? "complete" : "more", keys };
+				}
+				check();
+				if (terminal) {
+					await cleanup;
+					return { status: terminal, keys: [] };
+				}
+				if (page.status !== "more") await finish(page.status);
+				return page;
+			} catch (error) {
+				await finish("failed")?.catch(() => {});
+				terminal = "failed";
+				cleanup = undefined;
+				throw error;
+			}
+		};
+		return {
+			next: () => {
+				const result = pending.then(next);
+				pending = result.then(
+					() => {},
+					() => {},
+				);
+				return result;
+			},
+			close: async () => {
+				try {
+					await finish("closed");
+				} catch (error) {
+					terminal = "failed";
+					cleanup = undefined;
+					throw error;
+				}
+			},
+		};
 	}
 
 	materializeRepairDispatchEntries(

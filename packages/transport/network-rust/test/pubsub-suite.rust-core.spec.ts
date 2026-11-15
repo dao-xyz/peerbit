@@ -9,6 +9,9 @@
 //
 // Gated behind PEERBIT_STREAM_RUST_CORE=1 (the `test:stream-rust-core`
 // script) so the plain `npm test` run keeps the default mode.
+// The mixed fake-clock/real-node stale-root-recovery and fanout-parent-probe
+// specs run in separate native CI processes to keep delayed peer-store
+// notifications from entering another suite's global fake clock.
 import { RUST_CORE_GLOBAL_KEY } from "@peerbit/stream";
 import { existsSync } from "fs";
 import { fileURLToPath } from "url";
@@ -21,7 +24,6 @@ const PUBSUB_SUITE_SPECS = [
 	"topic-root-control-plane.spec.js",
 	"provider-directory.spec.js",
 	"subscribe-races.spec.js",
-	"stale-root-recovery.spec.js",
 	"stale-root-cold-join.spec.js",
 	"unsubscribe-reason.spec.js",
 	"fanout-topics.spec.js",
@@ -29,7 +31,6 @@ const PUBSUB_SUITE_SPECS = [
 	"fanout-tree-bootstrap-dials.spec.js",
 	"fanout-tree-parent-upgrade.spec.js",
 	"fanout-parent-liveness.spec.js",
-	"fanout-parent-probe.spec.js",
 	"fanout-parent-probe-metrics.spec.js",
 	"fanout-tree-sim.spec.js",
 	"pubsub-topic-sim.spec.js",

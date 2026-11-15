@@ -1,4 +1,4 @@
-// Re-runs the full @peerbit/stream behavioral test-suite with the native
+// Re-runs the @peerbit/stream behavioral test-suite with the native
 // DirectStream core injected (see RUST_CORE_GLOBAL_KEY in @peerbit/stream):
 // every DirectStream the suite constructs picks up the rust-core routing
 // table, seen-cache, lane scheduler and relay/ack decisions, so the same
@@ -6,8 +6,10 @@
 //
 // Gated behind PEERBIT_STREAM_RUST_CORE=1 (the `test:stream-rust-core`
 // script) so the plain `npm test` run keeps the default mode. The
-// messages-signing spec is not re-imported: it tests message classes only
-// and never constructs a DirectStream, so the core cannot affect it.
+// messages-signing and ack-wait-ownership specs are not re-imported: neither
+// constructs a DirectStream, so the core cannot affect them. The ACK fixture
+// also needs its own CI process so its global fake clock cannot capture
+// delayed peer-store notifications from the real-node suites.
 import { RUST_CORE_GLOBAL_KEY } from "@peerbit/stream";
 import { existsSync } from "fs";
 import { fileURLToPath } from "url";
@@ -17,7 +19,6 @@ const STREAM_SUITE_SPECS = [
 	"stream.spec.js",
 	"stream-before-stop.spec.js",
 	"stream-replacement.spec.js",
-	"ack-wait-ownership.spec.js",
 	"routes.spec.js",
 	"priority-lanes.spec.js",
 	"it-pushable.spec.js",

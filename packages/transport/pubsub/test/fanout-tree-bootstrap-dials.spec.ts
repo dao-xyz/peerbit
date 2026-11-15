@@ -1,5 +1,6 @@
 import { multiaddr } from "@multiformats/multiaddr";
 import { TestSession } from "@peerbit/libp2p-test-utils";
+import { waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
 import { FanoutTree } from "../src/fanout-tree.js";
 
@@ -33,11 +34,16 @@ const holdDial = (fanout: FanoutTree, cooperate = true) => {
 	// Cleanup can reject before a failed test has installed an awaiting caller.
 	void pending.catch(() => {});
 	let calls = 0;
+	let markStarted!: () => void;
+	const started = new Promise<void>((resolve) => {
+		markStarted = resolve;
+	});
 	manager.openConnection = (
 		_address: unknown,
 		options?: { signal?: AbortSignal },
 	) => {
 		calls++;
+		markStarted();
 		// Closing a provider handle may start a best-effort withdrawal dial.
 		if (calls > 1) return Promise.reject(new Error("additional dial refused"));
 		signal = options?.signal;
@@ -49,6 +55,7 @@ const holdDial = (fanout: FanoutTree, cooperate = true) => {
 		return pending;
 	};
 	return {
+		started,
 		get signal() {
 			return signal;
 		},
@@ -274,5 +281,127 @@ describe("fanout-tree non-diagnostic dial bounds", () => {
 			handle.close();
 			internals._sendControlMany = originalSend;
 		}
+	});
+});
+
+describe("fanout-tree ready provider bootstraps", () => {
+	let session: TestSession<FanoutServices>;
+	let operation: Promise<unknown> | undefined;
+	let dial: ReturnType<typeof holdDial> | undefined;
+
+	beforeEach(async () => {
+		session = await TestSession.disconnected<FanoutServices>(3, {
+			services: {
+				fanout: (components) =>
+					new FanoutTree(components, {
+						connectionManager: false,
+						random: () => 0.999_999,
+					}),
+			},
+		});
+		operation = undefined;
+		dial = undefined;
+	});
+
+	afterEach(async () => {
+		dial?.cleanup();
+		await operation?.catch(() => {});
+		await session.stop();
+	});
+
+	const expectAnnounced = async (
+		tracker: FanoutTree,
+		namespace: string,
+		provider: string,
+	) => {
+		await waitForResolved(
+			async () => {
+				expect(await tracker.queryProviders(namespace, { want: 1 })).to.include(
+					provider,
+				);
+			},
+			{ timeout: 500 },
+		);
+	};
+
+	it("announces to a ready tracker without waiting for a stale bootstrap dial", async () => {
+		const [providerNode, liveNode, staleNode] = session.peers;
+		await session.connect([[providerNode, liveNode]]);
+		const provider = providerNode.services.fanout;
+		const tracker = liveNode.services.fanout;
+		const liveAddress = liveNode.getMultiaddrs()[0]!;
+		await waitForResolved(() => {
+			expect(
+				(provider as any).connectedPeerHashForBootstrap(liveAddress),
+			).to.equal(tracker.publicKeyHash);
+		});
+		provider.setBootstraps([staleNode.getMultiaddrs()[0]!, liveAddress]);
+		dial = holdDial(provider, false);
+		const namespace = "ready-before-stale-provider";
+		operation = provider.announceProvider(namespace, { bootstrapMaxPeers: 2 });
+		// This is a causal boundary, not a shorter dial timeout. The held dial is
+		// released only by cleanup; a ready tracker must make progress without it.
+		expect(
+			await Promise.race([
+				operation.then(() => "announced"),
+				dial.started.then(() => "dialed"),
+			]),
+		).to.equal("announced");
+		expect(dial.signal).to.equal(undefined);
+		await expectAnnounced(tracker, namespace, provider.publicKeyHash);
+	});
+
+	it("keeps the bounded cold-bootstrap fallback when no tracker is ready", async () => {
+		const [providerNode, trackerNode] = session.peers;
+		const provider = providerNode.services.fanout;
+		const trackerAddress = trackerNode.getMultiaddrs()[0]!;
+		expect(
+			(provider as any).connectedPeerHashForBootstrap(trackerAddress),
+		).to.equal(undefined);
+		provider.setBootstraps([trackerAddress]);
+		operation = provider.announceProvider("cold-provider", {
+			bootstrapMaxPeers: 1,
+		});
+		await operation;
+		await expectAnnounced(
+			trackerNode.services.fanout,
+			"cold-provider",
+			provider.publicKeyHash,
+		);
+	});
+
+	it("respects explicit bootstrap selection and the ready-peer cap", async () => {
+		const [providerNode, selectedNode, otherNode] = session.peers;
+		await session.connect([
+			[providerNode, selectedNode],
+			[providerNode, otherNode],
+		]);
+		const provider = providerNode.services.fanout;
+		const selected = selectedNode.getMultiaddrs()[0]!;
+		const other = otherNode.getMultiaddrs()[0]!;
+		await waitForResolved(() => {
+			expect(
+				(provider as any).connectedPeerHashForBootstrap(selected),
+			).to.equal(selectedNode.services.fanout.publicKeyHash);
+			expect((provider as any).connectedPeerHashForBootstrap(other)).to.equal(
+				otherNode.services.fanout.publicKeyHash,
+			);
+		});
+		provider.setBootstraps([other]);
+		operation = provider.announceProvider("override-provider", {
+			bootstrap: [selected, selected, other],
+			bootstrapMaxPeers: 1,
+		});
+		await operation;
+		await expectAnnounced(
+			selectedNode.services.fanout,
+			"override-provider",
+			provider.publicKeyHash,
+		);
+		expect(
+			await otherNode.services.fanout.queryProviders("override-provider", {
+				want: 1,
+			}),
+		).to.deep.equal([]);
 	});
 });

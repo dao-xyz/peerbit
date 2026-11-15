@@ -1,5 +1,23 @@
 # Changelog
 
+## 3.1.50
+
+### Patch Changes
+
+- [#1514](https://github.com/dao-xyz/peerbit/pull/1514) [`cfd2201`](https://github.com/dao-xyz/peerbit/commit/cfd2201fa66386480caec589465bca8af6033d75) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Update the coordinated libp2p dependency cohort and use the maintained Noise and Yamux package names. Preserve Peerbit's transport configuration, custom Yamux protocol and window sizes, and standard Yamux fallback. Refresh browser fixture dependencies so transport imports do not rely on workspace hoisting.
+
+- Updated dependencies [[`54a8940`](https://github.com/dao-xyz/peerbit/commit/54a89403a08450e13b9ea1ccac27daaf16854f6a), [`cfd2201`](https://github.com/dao-xyz/peerbit/commit/cfd2201fa66386480caec589465bca8af6033d75), [`f7388ce`](https://github.com/dao-xyz/peerbit/commit/f7388ce21c2daf85cff9cd99cd657a09e258d70f), [`137a6a9`](https://github.com/dao-xyz/peerbit/commit/137a6a93dd2aea71729548eeb5a2e6def6b8d221), [`d666bc6`](https://github.com/dao-xyz/peerbit/commit/d666bc6de100c49333323d5a7981a77affcc4d32), [`04d6450`](https://github.com/dao-xyz/peerbit/commit/04d6450c01ecaef4c23c5a299d7e4feb6d2eaf58), [`137a6a9`](https://github.com/dao-xyz/peerbit/commit/137a6a93dd2aea71729548eeb5a2e6def6b8d221)]:
+  - @peerbit/pubsub@5.4.14
+  - @peerbit/blocks@4.3.4
+  - @peerbit/crypto@3.1.7
+  - @peerbit/keychain@1.2.18
+  - @peerbit/libp2p-test-utils@3.0.12
+  - @peerbit/program@6.0.69
+  - @peerbit/stream@5.2.5
+  - peerbit@5.4.11
+  - @peerbit/indexer-interface@3.1.1
+  - @peerbit/any-store@2.2.18
+
 ## 3.1.49
 
 ### Patch Changes

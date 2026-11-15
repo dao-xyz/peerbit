@@ -249,6 +249,19 @@ impl NativeRustIndex {
         self.store.len()
     }
 
+    /// Direct dense-index access: visiting a page never walks its preceding keys.
+    /// The JS owner invalidates cursors on mutation, including shift-removals.
+    pub fn key_page(&self, offset: usize, limit: usize) -> Array {
+        let keys = Array::new();
+        let end = offset.saturating_add(limit.min(4096)).min(self.store.len());
+        for index in offset..end {
+            if let Some((key, _)) = self.store.entries.get_index(index) {
+                keys.push(&JsValue::from_str(key));
+            }
+        }
+        keys
+    }
+
     pub fn put(
         &mut self,
         key: String,
