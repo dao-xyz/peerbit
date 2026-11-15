@@ -4,6 +4,7 @@ import { TestSession } from "@peerbit/test-utils";
 import { expect } from "chai";
 import sinon from "sinon";
 import {
+	SYNC_CAPABILITY_ENTRY_INVENTORY,
 	SYNC_CAPABILITY_RAW_EXCHANGE_HEADS,
 	SYNC_CAPABILITY_REPLICATION_INFO_V2_APPLY,
 	SYNC_CAPABILITY_REPLICATION_INFO_V2_CONFIRM,
@@ -304,6 +305,7 @@ describe("receive admission replication-info V2 decode-only codec", () => {
 		expect(SYNC_CAPABILITY_REPLICATION_INFO_V2_APPLY).to.equal(8);
 		expect(SYNC_CAPABILITY_REPLICATION_INFO_V2_CONFIRM).to.equal(16);
 		expect(SYNC_CAPABILITY_REPLICATION_INFO_V2_REARM).to.equal(64);
+		expect(SYNC_CAPABILITY_ENTRY_INVENTORY).to.equal(128);
 		expect(hex(new SyncCapabilitiesMessage())).to.equal("00000a01000000");
 		expect(
 			hex(
@@ -373,6 +375,7 @@ describe("receive admission replication-info V2 decode-only codec", () => {
 		});
 		const log = db.log as any;
 		const remote = session.peers[1].identity.publicKey;
+		const remoteHash = remote.hashcode();
 		const sent: unknown[] = [];
 		const send = sinon
 			.stub(log.rpc, "send")
@@ -391,13 +394,13 @@ describe("receive admission replication-info V2 decode-only codec", () => {
 		const markReady = sinon.spy(log._v2Receive, "recordLocalCapabilityReady");
 
 		try {
+			expect(log._peerSyncCapabilitySessions.has(remoteHash)).to.be.false;
 			await log._onSubscription({
 				detail: { from: remote, topics: [db.log.topic] },
 			});
 			const capabilityAdvertisement = advertise.returnValues[0];
 			expect(capabilityAdvertisement).to.exist;
 			await capabilityAdvertisement.firstAttempt;
-			const remoteHash = remote.hashcode();
 			const peerSession = log._peerSessions.current(remoteHash);
 			// B12: no legacy barrier — the startup advert is promoted ready as
 			// soon as its ACK lands.
@@ -405,9 +408,8 @@ describe("receive admission replication-info V2 decode-only codec", () => {
 				log._v2Receive._localCapabilityAdvertisementsByPeer.get(remoteHash)
 					?.ready,
 			).to.be.true;
-			expect(
-				log._v2Receive._localCapabilityContextBySession.has(peerSession),
-			).to.be.true;
+			expect(log._v2Receive._localCapabilityContextBySession.has(peerSession))
+				.to.be.true;
 			expect(markReady.calledOnce).to.be.true;
 			const capability = sent.find(
 				(message) => message instanceof SyncCapabilitiesMessage,
@@ -426,15 +428,25 @@ describe("receive admission replication-info V2 decode-only codec", () => {
 				capability!.capabilities & SYNC_CAPABILITY_REPLICATION_INFO_V2_CONFIRM,
 			).to.equal(SYNC_CAPABILITY_REPLICATION_INFO_V2_CONFIRM);
 			expect(
+				capability!.capabilities & SYNC_CAPABILITY_ENTRY_INVENTORY,
+			).to.equal(SYNC_CAPABILITY_ENTRY_INVENTORY);
+			// Missing a signed remote binding requires one reciprocal recovery hint.
+			// It is not a steady capability, and no other unknown flags are allowed.
+			expect(advertise.firstCall.args[0].requestRemoteFullRearm).to.be.true;
+			expect(
 				capability!.capabilities &
 					~(
 						SYNC_CAPABILITY_REPLICATION_INFO_V2_DECODE |
 						SYNC_CAPABILITY_REPLICATION_INFO_V2_SEND |
 						SYNC_CAPABILITY_REPLICATION_INFO_V2_APPLY |
 						SYNC_CAPABILITY_REPLICATION_INFO_V2_CONFIRM |
+						SYNC_CAPABILITY_ENTRY_INVENTORY |
 						SYNC_CAPABILITY_RAW_EXCHANGE_HEADS
 					),
-			).to.equal(0);
+			).to.equal(SYNC_CAPABILITY_REPLICATION_INFO_V2_REARM);
+			expect(log.replicationInfoV2ReceiveCapabilities()).to.equal(
+				capability!.capabilities & ~SYNC_CAPABILITY_REPLICATION_INFO_V2_REARM,
+			);
 			expect(
 				sent.some(
 					(message) => message instanceof AllReplicatingSegmentsMessage,

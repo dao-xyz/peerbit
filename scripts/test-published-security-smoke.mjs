@@ -54,6 +54,7 @@ const run = (command, args, options = {}) => {
 			...options.env,
 		},
 		timeout: options.timeout ?? 600_000,
+		killSignal: options.killSignal,
 	});
 	assert.equal(
 		result.error,
@@ -334,6 +335,15 @@ try {
 	const lockfile = JSON.parse(
 		await readFile(join(consumerDirectory, "package-lock.json"), "utf8"),
 	);
+	for (const [packagePath, manifest] of Object.entries(lockfile.packages)) {
+		const name = packagePath.split("node_modules/").pop();
+		assert(
+			name !== "vite-plugin-static-copy" &&
+				name !== "braces" &&
+				!(name === "chokidar" && Number(manifest.version.split(".")[0]) < 4),
+			`the retired glob-watching asset dependency returned: ${packagePath}`,
+		);
+	}
 	const forbiddenPeerSubtreePackages = [
 		"react-native",
 		"metro",
@@ -503,6 +513,28 @@ try {
 			status: 0,
 			timeout: 120_000,
 		});
+		const nativeWebrtc = run(
+			process.execPath,
+			[
+				join(
+					repositoryRoot,
+					"scripts",
+					"ci",
+					"peerbit-native-webrtc.worker.mjs",
+				),
+				join(consumerDirectory, "node_modules", "peerbit", "package.json"),
+			],
+			{
+				cwd: consumerDirectory,
+				status: 0,
+				timeout: 90_000,
+				killSignal: "SIGKILL",
+			},
+		);
+		assert.equal(nativeWebrtc.signal, null);
+		assert.match(nativeWebrtc.stdout, /"phase":"native-webrtc-loaded"/);
+		assert.match(nativeWebrtc.stdout, /"phase":"native-webrtc-closed"/);
+		console.log(nativeWebrtc.stdout);
 		const node18 = run(
 			node18Executable,
 			[join(consumerDirectory, "crypto-node18-smoke.mjs")],

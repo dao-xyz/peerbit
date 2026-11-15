@@ -6,12 +6,14 @@ import type {
 	UnsubscriptionReason,
 } from "@peerbit/pubsub-interface";
 import {
+	PeerUnavailable,
 	Subscribe,
 	SubscriptionData,
 	Unsubscribe,
 } from "@peerbit/pubsub-interface";
 import { waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
+import sinon from "sinon";
 import {
 	FanoutTree,
 	TopicControlPlane,
@@ -228,6 +230,116 @@ describe("pubsub (unsubscribe reason)", function () {
 		}
 	});
 
+	for (const fanoutFirst of [true, false]) {
+		it(`removes subscriptions when shared routes are invalidated ${fanoutFirst ? "fanout-first" : "pubsub-first"}`, async () => {
+			const topic = "unsubscribe-shared-routes";
+			const session = await createDisconnectedSession(2);
+			try {
+				const { a, b } = await setupTrackedSubscribers(topic, session);
+				const fanout = session.peers[0]!.services.fanout;
+				expect(fanout.routes).to.equal(a.routes);
+				expect(a.routes.isReachable(a.publicKeyHash, b.publicKeyHash)).to.equal(
+					true,
+				);
+				expect(
+					a.getSubscribers(topic)?.map((key) => key.hashcode()),
+				).to.include(b.publicKeyHash);
+				const reasons: (UnsubscriptionReason | undefined)[] = [];
+				const onUnsubscribe = ({ detail }: CustomEvent<UnsubcriptionEvent>) => {
+					if (
+						detail.from.equals(b.publicKey) &&
+						detail.topics.includes(topic)
+					) {
+						reasons.push(detail.reason);
+					}
+				};
+				a.addEventListener("unsubscribe", onUnsubscribe);
+				try {
+					// Drive route invalidation synchronously, before live transport traffic
+					// can restore a route. Do not bypass shared routing with onPeerUnreachable.
+					const services = fanoutFirst ? [fanout, a] : [a, fanout];
+					for (const service of services)
+						service.removePeerFromRoutes(b.publicKeyHash, true);
+					expect(
+						a.routes.isReachable(a.publicKeyHash, b.publicKeyHash),
+					).to.equal(false);
+					expect(
+						a.getSubscribers(topic)?.map((key) => key.hashcode()) ?? [],
+					).not.to.include(b.publicKeyHash);
+					expect(reasons).to.deep.equal(["peer-unreachable"]);
+					for (const service of services)
+						service.removePeerFromRoutes(b.publicKeyHash, true);
+					expect(reasons).to.deep.equal(["peer-unreachable"]);
+				} finally {
+					a.removeEventListener("unsubscribe", onUnsubscribe);
+				}
+			} finally {
+				await session.stop();
+			}
+		});
+	}
+
+	it("retains subscriptions while shared routes have a surviving alternative", async () => {
+		const topic = "unsubscribe-shared-routes-alternative";
+		const session = await createDisconnectedSession(3);
+		try {
+			const { a, b } = await setupTrackedSubscribersViaRelay(topic, session);
+			await session.connect([[session.peers[0], session.peers[1]]]);
+			const fanout = session.peers[0]!.services.fanout;
+			const relay = session.peers[2]!.services.pubsub;
+			expect(fanout.routes).to.equal(a.routes);
+			// Preserve real subscribed peers while arranging both routes through the
+			// public route-admission seam. The target key is known to both services.
+			for (const service of [fanout, a]) {
+				service.updateSession(b.publicKey, b.session);
+				for (const nextHop of [relay.publicKeyHash, b.publicKeyHash]) {
+					service.addRouteConnection(
+						a.publicKeyHash,
+						nextHop,
+						b.publicKey,
+						1,
+						b.session,
+						b.session,
+					);
+				}
+			}
+			expect(
+				a.getRouteHints(b.publicKeyHash).map((route) => route.nextHop),
+			).to.have.members([relay.publicKeyHash, b.publicKeyHash]);
+			const reasons: (UnsubscriptionReason | undefined)[] = [];
+			const onUnsubscribe = ({ detail }: CustomEvent<UnsubcriptionEvent>) => {
+				if (detail.from.equals(b.publicKey) && detail.topics.includes(topic)) {
+					reasons.push(detail.reason);
+				}
+			};
+			a.addEventListener("unsubscribe", onUnsubscribe);
+			try {
+				for (const service of [fanout, a])
+					service.removePeerFromRoutes(relay.publicKeyHash, true);
+				expect(a.routes.isReachable(a.publicKeyHash, b.publicKeyHash)).to.equal(
+					true,
+				);
+				expect(
+					a.getSubscribers(topic)?.map((key) => key.hashcode()),
+				).to.include(b.publicKeyHash);
+				expect(reasons).to.deep.equal([]);
+				for (const service of [fanout, a])
+					service.removePeerFromRoutes(b.publicKeyHash, true);
+				expect(a.routes.isReachable(a.publicKeyHash, b.publicKeyHash)).to.equal(
+					false,
+				);
+				expect(
+					a.getSubscribers(topic)?.map((key) => key.hashcode()) ?? [],
+				).not.to.include(b.publicKeyHash);
+				expect(reasons).to.deep.equal(["peer-unreachable"]);
+			} finally {
+				a.removeEventListener("unsubscribe", onUnsubscribe);
+			}
+		} finally {
+			await session.stop();
+		}
+	});
+
 	it("propagates relay-observed abrupt child loss to tracked relay-only subscribers", async () => {
 		const topic = "unsubscribe-reason-unreachable-relay-propagated";
 		const session = await createDisconnectedSession(3);
@@ -247,6 +359,54 @@ describe("pubsub (unsubscribe reason)", function () {
 					reason: "peer-unreachable",
 				});
 			} finally {
+				a.removeEventListener("unsubscribe", onUnsubscribe as any);
+			}
+		} finally {
+			await session.stop();
+		}
+	});
+
+	it("keeps a direct subscriber when a signed relay loss arrives over the shard", async () => {
+		const topic = "unsubscribe-reason-relay-path-loss";
+		const session = await createDisconnectedSession(3);
+		try {
+			const { a, b } = await setupTrackedSubscribersViaRelay(topic, session);
+			const relay = session.peers[2]!.services.pubsub;
+			await session.connect([[session.peers[0], session.peers[1]]]);
+			await waitForResolved(() => {
+				const direct = a.peers.get(b.publicKeyHash);
+				expect(direct?.isReadable && direct.isWritable).to.equal(true);
+			});
+			const events: UnsubcriptionEvent[] = [];
+			const onUnsubscribe = (event: CustomEvent<UnsubcriptionEvent>) =>
+				events.push(event.detail);
+			const internals = a as any;
+			const process = internals.processShardPubSubMessage.bind(a);
+			let processedHint = false;
+			const receive = sinon
+				.stub(internals, "processShardPubSubMessage")
+				.callsFake(async (input: any) => {
+					await process(input);
+					if (
+						input.pubsubMessage instanceof PeerUnavailable &&
+						input.pubsubMessage.publicKeyHash === b.publicKeyHash &&
+						input.from.equals(relay.publicKey)
+					) {
+						processedHint = true;
+					}
+				});
+			a.addEventListener("unsubscribe", onUnsubscribe as any);
+			try {
+				await (relay as any).announcePeerUnavailableOnShard(
+					b.publicKeyHash,
+					internals.getShardTopicForUserTopic(topic),
+				);
+				await waitForResolved(() => expect(processedHint).to.equal(true));
+				expect(a.topics.get(topic)?.has(b.publicKeyHash)).to.equal(true);
+				expect(events.filter((event) => event.from.equals(b.publicKey))).to.be
+					.empty;
+			} finally {
+				receive.restore();
 				a.removeEventListener("unsubscribe", onUnsubscribe as any);
 			}
 		} finally {

@@ -91,12 +91,19 @@ describe("durable native commit acknowledgement", function () {
 	};
 
 	afterEach(async () => {
-		try {
-			await client?.stop();
-		} catch (error) {
-			if (!(error instanceof NativeDurableCommitError)) {
-				throw error;
+		if (client) {
+			try {
+				await client.stop();
+			} catch (error) {
+				if (!(error instanceof NativeDurableCommitError)) {
+					throw error;
+				}
+				// A retired durable wrapper reports its poison once after physical
+				// shutdown. Complete the retained terminal bookkeeping before releasing
+				// the node; this is not a retry of the failed write or test.
+				await client.stop();
 			}
+			expect(client.libp2p.status).equal("stopped");
 		}
 		client = undefined;
 		if (directory) {
@@ -2758,6 +2765,62 @@ describe("durable native commit acknowledgement", function () {
 			durablePutStub.restore();
 			residentStateStub.restore();
 		}
+	});
+
+	it("finishes node shutdown after reporting a retired durable generation's poison", async () => {
+		const { store, sharedLog, wrapper, durable } = await openStore();
+		const acknowledged = await store.docs.put(
+			new Document({ id: "shutdown-acknowledged", name: "must-survive" }),
+			{ unique: true, replicate: false, target: "none" },
+		);
+		const residentStateStub = sinon
+			.stub(
+				sharedLog._coordinates,
+				"canUseNativeBackboneResidentCoordinateState",
+			)
+			.returns(false);
+		const mirrorFailure = new Error("injected shutdown durable mirror failure");
+		const durablePutStub = sinon
+			.stub(durable, "putKnown")
+			.rejects(mirrorFailure);
+		let poison: unknown;
+		try {
+			poison = await store.docs
+				.put(new Document({ id: "shutdown-rejected", name: "must-not-appear" }))
+				.then(
+					() => undefined,
+					(error: unknown) => error,
+				);
+		} finally {
+			durablePutStub.restore();
+			residentStateStub.restore();
+		}
+		expect(poison).to.be.instanceOf(NativeDurableCommitError);
+
+		const stoppingClient = client!;
+		const closeFailure = await stoppingClient.stop().then(
+			() => undefined,
+			(error: unknown) => error,
+		);
+		expect(closeFailure).equal(poison);
+		expect(wrapper.stopCompleted).equal(true);
+		expect(durable.status()).equal("closed");
+		// The failed terminal call retains its identity until this exact cleanup
+		// continuation completes. It must not repeat the failed append or lose data.
+		await stoppingClient.stop();
+		expect(stoppingClient.libp2p.status).equal("stopped");
+		expect(stoppingClient.handler.items.size).equal(0);
+		client = undefined;
+
+		const reopened = await createStore(directory!);
+		expect(
+			(await reopened.store.docs.get("shutdown-acknowledged"))?.name,
+		).equal("must-survive");
+		expect(
+			await reopened.sharedLog.log.entryIndex.has(acknowledged.entry.hash),
+		).equal(true);
+		expect(await reopened.store.docs.get("shutdown-rejected")).equal(undefined);
+		expect(reopened.sharedLog.log.length).equal(1);
 	});
 
 	it("rejects concurrent receive writes and onMessage with one poison", async () => {

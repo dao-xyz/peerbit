@@ -27,6 +27,8 @@ const DEFAULT_MAX_SEND_RETRY_MS = 30_000;
 const DEFAULT_CONFIRM_RETRY_MS = 1_000;
 const DEFAULT_CONFIRM_TIMEOUT_MS = 30_000;
 const DEFAULT_MAX_CONFIRMATION_WAITERS = 1_024;
+const MAX_PHYSICAL_CONFIRMATIONS_PER_PEER = 2;
+const MAX_PHYSICAL_CONFIRMATIONS_GLOBAL = 64;
 const MAX_TIMER_MS = 2_147_483_647;
 const MAX_BACKOFF_EXPONENT = 20;
 
@@ -132,6 +134,7 @@ export type ReplicationInfoV2SendState = {
 	worker?: Promise<void>;
 	applicationConfirmationRequest?: ApplicationConfirmationRequest;
 	appliedRevision?: bigint;
+	minimumConfirmationSequence?: bigint;
 };
 
 export type ReplicationInfoV2SendDeps<R extends "u32" | "u64"> = {
@@ -193,6 +196,17 @@ export class ReplicationInfoV2SendCoordinator<R extends "u32" | "u64"> {
 	private readonly maxSendRetryMs: number;
 	private readonly confirmationRetryMs: number;
 	private readonly maxConfirmationWaiters: number;
+	// Logical cancellation must not release a transport that ignores abort.
+	// These charges survive close/open and sender-state replacement.
+	private readonly physicalConfirmations = new Map<
+		string,
+		Set<{
+			state: ReplicationInfoV2SendState;
+			minimumSequence?: bigint;
+			revision: bigint;
+		}>
+	>();
+	private physicalConfirmationCount = 0;
 
 	constructor(private readonly deps: ReplicationInfoV2SendDeps<R>) {
 		this.sendRetryMs = Math.max(1, deps.sendRetryMs ?? DEFAULT_SEND_RETRY_MS);
@@ -256,6 +270,51 @@ export class ReplicationInfoV2SendCoordinator<R extends "u32" | "u64"> {
 		if (state) {
 			this.clearState(state);
 		}
+	}
+
+	/** Re-prove an unchanged transport stream after an authenticated recovery hint. */
+	reconfirmAfterPeerRecovery(peerHash: string): void {
+		const state = this._sendStates.get(peerHash);
+		if (!state || !this.isCurrent(state)) return;
+		this.resetRetryBackoff(state);
+		state.appliedRevision = undefined;
+		state.minimumConfirmationSequence = state.nextSequence;
+		state.applicationConfirmationRequest?.controller.abort(
+			new AbortError("Replication confirmation peer recovery"),
+		);
+		state.applicationConfirmationRequest = undefined;
+		// Keep the stream: older rearm callers may still own its receive grant.
+		// A new Full sequence fences even an old Applied packet arriving after a
+		// replacement confirmation query has been registered for the same revision.
+		this.enqueueState(state, { kind: "snapshot", revision: this._revision });
+	}
+
+	/** Wake pending work on an exact recovered transport without revoking proof. */
+	resumeAfterTransportRecovery(peerHash: string, peerSession: object): void {
+		const state = this._sendStates.get(peerHash);
+		if (
+			!state ||
+			state.peerSession !== peerSession ||
+			!this.isCurrent(state) ||
+			state.nextSequence > MAX_U64
+		) {
+			return;
+		}
+		const retryPending = state.suspended || state.retryTimer !== undefined;
+		if (!retryPending && !state.worker && !state.pending) return;
+		// If the previous attempt rejects after this hint, its normal retry starts
+		// from the base delay. Never start a second worker or replay its sequence.
+		this.resetRetryBackoff(state);
+		if (retryPending) {
+			this.enqueueState(state, { kind: "snapshot", revision: this._revision });
+		}
+	}
+
+	private resetRetryBackoff(state: ReplicationInfoV2SendState): void {
+		if (state.retryTimer) clearTimeout(state.retryTimer);
+		state.retryTimer = undefined;
+		state.retryAttempts = 0;
+		state.suspended = false;
 	}
 
 	private clearState(state: ReplicationInfoV2SendState): void {
@@ -1133,7 +1192,8 @@ export class ReplicationInfoV2SendCoordinator<R extends "u32" | "u64"> {
 			state.retryAttempts + 1,
 			MAX_BACKOFF_EXPONENT + 1,
 		);
-		state.retryTimer = setTimeout(() => {
+		const timer = setTimeout(() => {
+			if (state.retryTimer !== timer) return;
 			state.retryTimer = undefined;
 			if (state.nextSequence > MAX_U64 || !this.isCurrent(state)) {
 				this.parkSnapshotForRetry(state);
@@ -1146,7 +1206,8 @@ export class ReplicationInfoV2SendCoordinator<R extends "u32" | "u64"> {
 				revision: this._revision,
 			});
 		}, this.retryDelay(state));
-		state.retryTimer.unref?.();
+		state.retryTimer = timer;
+		timer.unref?.();
 	}
 
 	private async createMessage(
@@ -1197,6 +1258,40 @@ export class ReplicationInfoV2SendCoordinator<R extends "u32" | "u64"> {
 		state: ReplicationInfoV2SendState,
 		signal: AbortSignal,
 	): Promise<void> {
+		let pending = this.physicalConfirmations.get(state.peerHash);
+		if (
+			this.physicalConfirmationCount >= MAX_PHYSICAL_CONFIRMATIONS_GLOBAL ||
+			(pending?.size ?? 0) >= MAX_PHYSICAL_CONFIRMATIONS_PER_PEER ||
+			[...(pending ?? [])].some(
+				(charge) =>
+					charge.state === state &&
+					charge.minimumSequence === state.minimumConfirmationSequence &&
+					charge.revision === request.revision,
+			)
+		) {
+			// No proof is produced. The current request remains outstanding, and
+			// its existing confirmation retry can send after a charge is released.
+			return Promise.resolve();
+		}
+		if (!pending)
+			this.physicalConfirmations.set(state.peerHash, (pending = new Set()));
+		const charged = pending;
+		const charge = {
+			state,
+			minimumSequence: state.minimumConfirmationSequence,
+			revision: request.revision,
+		};
+		charged.add(charge); // Reserve before scheduling or invoking transport.
+		this.physicalConfirmationCount++;
+		const release = () => {
+			if (!charged.delete(charge)) return;
+			this.physicalConfirmationCount--;
+			if (
+				charged.size === 0 &&
+				this.physicalConfirmations.get(state.peerHash) === charged
+			)
+				this.physicalConfirmations.delete(state.peerHash);
+		};
 		return new Promise<void>((resolve, reject) => {
 			let settled = false;
 			const cleanup = () => signal.removeEventListener("abort", onAbort);
@@ -1220,6 +1315,7 @@ export class ReplicationInfoV2SendCoordinator<R extends "u32" | "u64"> {
 				);
 			signal.addEventListener("abort", onAbort, { once: true });
 			if (signal.aborted) {
+				release(); // No physical operation was started.
 				onAbort();
 				return;
 			}
@@ -1239,7 +1335,16 @@ export class ReplicationInfoV2SendCoordinator<R extends "u32" | "u64"> {
 						signal,
 					});
 				})
-				.then(succeed, fail);
+				.then(
+					() => {
+						release();
+						succeed();
+					},
+					(error) => {
+						release();
+						fail(error);
+					},
+				);
 		});
 	}
 
@@ -1264,6 +1369,8 @@ export class ReplicationInfoV2SendCoordinator<R extends "u32" | "u64"> {
 			!bytesEqual(message.receiverChallenge, state.receiverChallenge) ||
 			!bytesEqual(message.senderEpoch, state.senderEpoch) ||
 			message.sequence !== requested.sequence ||
+			(state.minimumConfirmationSequence !== undefined &&
+				message.sequence < state.minimumConfirmationSequence) ||
 			message.revision !== requested.revision ||
 			message.revision > this._revision
 		) {
@@ -1359,6 +1466,8 @@ export class ReplicationInfoV2SendCoordinator<R extends "u32" | "u64"> {
 			if (
 				this.hasConfirmationFor(state, request.revision) &&
 				this.supportsApplicationConfirmation(state) &&
+				(state.minimumConfirmationSequence === undefined ||
+					message.sequence >= state.minimumConfirmationSequence) &&
 				this.isCurrent(state)
 			) {
 				// Keep one outstanding query until answered or no longer needed. A

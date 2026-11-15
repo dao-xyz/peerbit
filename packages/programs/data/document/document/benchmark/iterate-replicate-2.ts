@@ -1,6 +1,6 @@
-import { yamux } from "@chainsafe/libp2p-yamux";
 import { field, option, variant } from "@dao-xyz/borsh";
 import { tcp } from "@libp2p/tcp";
+import { yamux } from "@libp2p/yamux";
 import { SearchRequest } from "@peerbit/document-interface";
 import { Sort } from "@peerbit/indexer-interface";
 import { Program } from "@peerbit/program";

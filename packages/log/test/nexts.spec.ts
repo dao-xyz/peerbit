@@ -16,8 +16,14 @@ describe("Log - Nexts", function () {
 		await store.stop();
 	});
 	describe("Custom next", () => {
+		let log1: Log<any>;
+
+		afterEach(async () => {
+			await log1?.close();
+		});
+
 		it("can fork explicitly", async () => {
-			const log1 = new Log();
+			log1 = new Log();
 			await log1.open(store, signKey, { encoding: JSON_ENCODING });
 			const { entry: e0 } = await log1.append("0", { meta: { next: [] } });
 			const { entry: e1 } = await log1.append("1", { meta: { next: [e0] } });

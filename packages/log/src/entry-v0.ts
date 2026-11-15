@@ -732,10 +732,6 @@ export class EntryV0<T>
 	private _keychain?: CryptoKeychain;
 	private _encoding?: Encoding<T>;
 	private _hashDigestBytes?: Uint8Array;
-	// Set for locally-created prepared entries whose signature value and bytes
-	// stay in the native store (cachePreparedEntries: false): the signer is
-	// known at construction, so publicKeys can be answered without them.
-	_preparedSignerPublicKey?: PublicSignKey;
 
 	constructor(obj: {
 		payload: MaybeEncrypted<Payload<T>>;
@@ -832,17 +828,7 @@ export class EntryV0<T>
 	}
 
 	get publicKeys(): PublicSignKey[] {
-		if (this._preparedSignerPublicKey) {
-			return [this._preparedSignerPublicKey];
-		}
 		return this.signatures.map((x) => x.publicKey);
-	}
-
-	override async getPublicKeys(): Promise<PublicSignKey[]> {
-		if (this._preparedSignerPublicKey) {
-			return [this._preparedSignerPublicKey];
-		}
-		return super.getPublicKeys();
 	}
 
 	get next(): string[] {
@@ -1014,6 +1000,28 @@ export class EntryV0<T>
 		return (await EntryV0.createPlainAppendChainBatch(properties))?.entries;
 	}
 
+	private initPreparedEntry(
+		prepared: NativePreparedPlainEntry,
+		encoding: Encoding<T>,
+	): void {
+		// Some native adapters return the signed image instead of its field
+		// buffers. Keep those bytes in the ordinary Entry, independently of the
+		// store's lifetime; cachePreparedEntries only controls prepared caches.
+		if (
+			prepared.bytes &&
+			(!prepared.metaBytes ||
+				!prepared.payloadBytes ||
+				!prepared.signatureBytes)
+		) {
+			const complete = deserialize(prepared.bytes, Entry) as EntryV0<T>;
+			this._meta = complete._meta;
+			this._payload = complete._payload;
+			this._signatures = complete._signatures;
+			this._reserved = complete._reserved;
+		}
+		this.init({ encoding });
+	}
+
 	static async createPlainAppendEntriesBatch<T>(properties: {
 		data: T[];
 		payloadDatas?: Uint8Array[];
@@ -1161,9 +1169,6 @@ export class EntryV0<T>
 			if (properties.cachePreparedEntries === false) {
 				entry.hash = preparedEntry.cid;
 				entry.size = preparedEntry.byteLength;
-				if (!preparedEntry.signatureBytes) {
-					entry._preparedSignerPublicKey = properties.identity.publicKey;
-				}
 			} else {
 				if (!preparedEntry.bytes) {
 					throw new Error("Missing prepared entry bytes");
@@ -1208,8 +1213,8 @@ export class EntryV0<T>
 			if (properties.cachePreparedEntries !== false) {
 				Entry.prepareShallowEntry(entry, shallowEntry);
 				Entry.prepareNativeLogEntry(entry, nativeEntry!);
-				entry.init({ encoding: properties.encoding });
 			}
+			entry.initPreparedEntry(preparedEntry, properties.encoding);
 			entries.push(entry);
 			shallowEntries.push(shallowEntry);
 			appendFacts.push({
@@ -1810,9 +1815,6 @@ export class EntryV0<T>
 			if (properties.cachePreparedEntries === false) {
 				entry.hash = preparedEntry.cid;
 				entry.size = preparedEntry.byteLength;
-				if (!preparedEntry.signatureBytes) {
-					entry._preparedSignerPublicKey = properties.identity.publicKey;
-				}
 			} else {
 				if (!preparedEntry.bytes) {
 					throw new Error("Missing prepared entry bytes");
@@ -1858,9 +1860,7 @@ export class EntryV0<T>
 				Entry.prepareShallowEntry(entry, shallowEntry);
 				Entry.prepareNativeLogEntry(entry, nativeEntry!);
 			}
-			if (properties.cachePreparedEntries !== false) {
-				entry.init({ encoding: properties.encoding });
-			}
+			entry.initPreparedEntry(preparedEntry, properties.encoding);
 			entries.push(entry);
 			if (preparedBlock) {
 				blocks.push(preparedBlock);

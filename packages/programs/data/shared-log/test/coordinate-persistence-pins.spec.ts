@@ -31,10 +31,11 @@ import { TestSession } from "@peerbit/test-utils";
 import { expect } from "chai";
 import fs from "fs/promises";
 import os from "os";
+import pDefer from "p-defer";
 import path from "path";
 import { Peerbit } from "peerbit";
 import { createRustPeerbitOptions } from "peerbit/rust";
-import pDefer from "p-defer";
+import sinon from "sinon";
 import { SharedLog } from "../src/index.js";
 import { createReplicationDomainHash } from "../src/replication-domain-hash.js";
 import { SimpleSyncronizer } from "../src/sync/simple.js";
@@ -156,9 +157,8 @@ describe("coordinate persistence journal flush pins", () => {
 		log._nativeBackboneCoordinateJournalLastFlushMs = 7;
 
 		// Nothing pending: no flush, watermark untouched.
-		let result = coordinateInternals(
-			log,
-		).flushNativeBackboneCoordinateJournal();
+		let result =
+			coordinateInternals(log).flushNativeBackboneCoordinateJournal();
 		expect(result).to.equal(undefined);
 		expect(flushCalls).to.equal(0);
 		expect(log._nativeBackboneCoordinateJournalLastFlushMs).to.equal(7);
@@ -189,9 +189,8 @@ describe("coordinate persistence journal flush pins", () => {
 		expect(
 			coordinateInternals(log).flushNativeBackboneCoordinateJournal(),
 		).to.equal(undefined);
-		const onAppend = coordinateInternals(
-			log,
-		).flushNativeBackboneCoordinateJournalOnAppend();
+		const onAppend =
+			coordinateInternals(log).flushNativeBackboneCoordinateJournalOnAppend();
 		if (onAppend) {
 			await onAppend;
 		}
@@ -215,9 +214,8 @@ describe("coordinate persistence journal flush pins", () => {
 		backbone.coordinatePendingJournalLength = 5;
 		backbone.coordinatePendingJournalByteLength = 1e9;
 		log._nativeBackboneCoordinateJournalLastFlushMs = 7;
-		const result = coordinateInternals(
-			log,
-		).flushNativeBackboneCoordinateJournalOnAppend();
+		const result =
+			coordinateInternals(log).flushNativeBackboneCoordinateJournalOnAppend();
 		if (result) {
 			await result;
 		}
@@ -277,6 +275,24 @@ describe("coordinate persistence rollback and receive-batch pins", function () {
 			hash,
 		);
 
+	const withSnapshot = async (
+		log: any,
+		hash: string,
+		operation: (snapshot: any, owner: any) => Promise<void>,
+	) => {
+		const internals = coordinateInternals(log);
+		const index = log.log.entryIndex;
+		const owner = await index.acquireHashMutationLocks([hash]);
+		let snapshot: any;
+		try {
+			snapshot = internals.snapshotResidentCoordinateEntries([hash], owner);
+			await operation(snapshot, owner);
+		} finally {
+			internals.settleResidentCoordinateSnapshot(snapshot);
+			index.releaseHashMutationLocks(owner);
+		}
+	};
+
 	it("P2: a matching rollback snapshot erases the failed append everywhere and a retry succeeds", async () => {
 		const log = store!.log as any;
 		const internals = coordinateInternals(log);
@@ -288,28 +304,33 @@ describe("coordinate persistence rollback and receive-batch pins", function () {
 		// prior entry) exactly as the append path does before its mutation.
 		await internals.deleteCoordinatesForHashes([hash]);
 		expect(await countIndexed(log, hash)).to.equal(0);
-		const snapshot = internals.snapshotResidentCoordinateEntries([hash]);
-		expect(snapshot.entries.has(hash)).to.be.false;
+		await withSnapshot(log, hash, async (snapshot, owner) => {
+			expect(snapshot.entries.has(hash)).to.be.false;
 
-		// Simulate the failed append's partial work: coordinates persisted to
-		// the index, the resident mirror, and the native backbone.
-		await internals.persistCoordinate({
-			coordinates,
-			entry,
-			leaders: false,
-			replicas: 1,
+			// Simulate the failed append's partial work: coordinates persisted to
+			// the index, the resident mirror, and the native backbone.
+			await internals.persistCoordinate(
+				{
+					coordinates,
+					entry,
+					leaders: false,
+					replicas: 1,
+				},
+				undefined,
+				owner,
+			);
+			expect(await countIndexed(log, hash)).to.equal(1);
+			expect(log._residentEntryCoordinatesByHash.has(hash)).to.be.true;
+			expect(backboneHas(log, hash)).to.be.true;
+
+			await internals.rollbackNativeBackboneCoordinateAppendDurably(
+				hash,
+				snapshot,
+			);
+			expect(await countIndexed(log, hash)).to.equal(0);
+			expect(log._residentEntryCoordinatesByHash.has(hash)).to.be.false;
+			expect(backboneHas(log, hash)).to.be.false;
 		});
-		expect(await countIndexed(log, hash)).to.equal(1);
-		expect(log._residentEntryCoordinatesByHash.has(hash)).to.be.true;
-		expect(backboneHas(log, hash)).to.be.true;
-
-		await internals.rollbackNativeBackboneCoordinateAppendDurably(
-			hash,
-			snapshot,
-		);
-		expect(await countIndexed(log, hash)).to.equal(0);
-		expect(log._residentEntryCoordinatesByHash.has(hash)).to.be.false;
-		expect(backboneHas(log, hash)).to.be.false;
 
 		// Retry after rollback persists cleanly.
 		const retried = await internals.persistCoordinate({
@@ -333,34 +354,269 @@ describe("coordinate persistence rollback and receive-batch pins", function () {
 
 		// Snapshot captures the persisted prior entry, then the failed
 		// generation wipes the row; rollback must restore it everywhere.
-		const snapshot = internals.snapshotResidentCoordinateEntries([hash]);
-		expect(snapshot.entries.has(hash)).to.be.true;
-		await internals.deleteCoordinatesForHashes([hash]);
-		expect(await countIndexed(log, hash)).to.equal(0);
-		expect(log._residentEntryCoordinatesByHash.has(hash)).to.be.false;
+		await withSnapshot(log, hash, async (snapshot, owner) => {
+			expect(snapshot.entries.has(hash)).to.be.true;
+			await internals.deleteCoordinatesForHashes([hash], undefined, owner);
+			expect(await countIndexed(log, hash)).to.equal(0);
+			expect(log._residentEntryCoordinatesByHash.has(hash)).to.be.false;
 
-		await internals.rollbackNativeBackboneCoordinateAppendDurably(
-			hash,
-			snapshot,
+			await internals.rollbackNativeBackboneCoordinateAppendDurably(
+				hash,
+				snapshot,
+			);
+			expect(await countIndexed(log, hash)).to.equal(1);
+			expect(log._residentEntryCoordinatesByHash.has(hash)).to.be.true;
+			expect(backboneHas(log, hash)).to.be.true;
+
+			// Ratchet: a snapshot superseded by a newer mutation generation must
+			// not roll anything back (`_nativeCoordinateMutationGenerations` is
+			// generation-checked per hash). The newer state must be visibly
+			// DIFFERENT from the stale snapshot (here: the row deleted) so an
+			// unconditional rollback would clobber it — with identical states a
+			// no-op and an always-rollback are indistinguishable and the pin
+			// has no teeth.
+			const stale = internals.snapshotResidentCoordinateEntries([hash], owner);
+			const newer = internals.snapshotResidentCoordinateEntries([hash], owner);
+			try {
+				await internals.deleteCoordinatesForHashes([hash], undefined, owner);
+				await internals.rollbackNativeBackboneCoordinateAppendDurably(
+					hash,
+					stale,
+				);
+				expect(await countIndexed(log, hash)).to.equal(0);
+				expect(log._residentEntryCoordinatesByHash.has(hash)).to.be.false;
+				expect(backboneHas(log, hash)).to.be.false;
+			} finally {
+				internals.settleResidentCoordinateSnapshot(stale);
+				internals.settleResidentCoordinateSnapshot(newer);
+			}
+		});
+	});
+
+	for (const mutation of ["persist", "delete"] as const) {
+		it(`serializes an independent generic ${mutation} after the owning rollback`, async () => {
+			const log = store!.log as any;
+			const internals = coordinateInternals(log);
+			const entry = (
+				await store!.add(`p2-independent-${mutation}`, { meta: { next: [] } })
+			).entry;
+			const hash = entry.hash;
+			const coordinates = await log.createCoordinates(entry, 1);
+			if (mutation === "persist") {
+				await internals.deleteCoordinatesForHashes([hash]);
+			}
+			const index = log.log.entryIndex;
+			const owner = await index.acquireHashMutationLocks([hash]);
+			let stale: any;
+			let acquire: sinon.SinonSpy | undefined;
+			let independent: Promise<unknown> | undefined;
+			let completed = false;
+			try {
+				stale = internals.snapshotResidentCoordinateEntries([hash], owner);
+				// This scope has already made partial changes that must be undone.
+				if (mutation === "persist") {
+					await internals.persistCoordinate(
+						{ coordinates, entry, leaders: false, replicas: 1 },
+						undefined,
+						owner,
+					);
+				} else {
+					await internals.deleteCoordinatesForHashes([hash], undefined, owner);
+				}
+				acquire = sinon.spy(index, "acquireHashMutationLocks");
+				// No borrowed owner: this independent operation must queue, not
+				// enter the rollback scope or require a second snapshot.
+				independent = Promise.resolve(
+					mutation === "persist"
+						? internals.persistCoordinate({
+								coordinates,
+								entry,
+								leaders: false,
+								replicas: 1,
+							})
+						: internals.deleteCoordinatesForHashes([hash]),
+				).then(() => {
+					completed = true;
+				});
+				expect(
+					acquire.calledOnce,
+					"independent operation requests its own owner",
+				).to.be.true;
+				await Promise.resolve();
+				expect(completed, "independent operation waits for rollback").to.be
+					.false;
+				await internals.rollbackNativeBackboneCoordinateAppendDurably(
+					hash,
+					stale,
+				);
+				expect(completed, "rollback retains ownership through durable flush").to
+					.be.false;
+				expect(await countIndexed(log, hash)).to.equal(
+					mutation === "delete" ? 1 : 0,
+				);
+			} finally {
+				internals.settleResidentCoordinateSnapshot(stale);
+				index.releaseHashMutationLocks(owner);
+				acquire?.restore();
+				await independent;
+			}
+			const present = mutation === "persist";
+			expect(
+				await countIndexed(log, hash),
+				"independent mutation committed after rollback",
+			).to.equal(present ? 1 : 0);
+			expect(log._residentEntryCoordinatesByHash.has(hash)).to.equal(present);
+			expect(backboneHas(log, hash)).to.equal(present);
+			expect(() =>
+				internals.rollbackNativeBackboneCoordinateAppend(hash, stale),
+			).to.throw();
+			expect(log._residentEntryCoordinatesByHash.has(hash)).to.equal(present);
+			expect(backboneHas(log, hash)).to.equal(present);
+		});
+	}
+
+	it("rejects snapshot and rollback after the captured owner was released", async () => {
+		const log = store!.log as any;
+		const internals = coordinateInternals(log);
+		const entry = (
+			await store!.add("released-snapshot-owner", { meta: { next: [] } })
+		).entry;
+		const snapshot = await internals.withCoordinateMutationOwner(
+			[entry.hash],
+			(owner: any) =>
+				internals.snapshotResidentCoordinateEntries([entry.hash], owner),
 		);
-		expect(await countIndexed(log, hash)).to.equal(1);
-		expect(log._residentEntryCoordinatesByHash.has(hash)).to.be.true;
-		expect(backboneHas(log, hash)).to.be.true;
+		try {
+			await internals.deleteCoordinatesForHashes([entry.hash]);
+			expect(() =>
+				internals.snapshotResidentCoordinateEntries(
+					[entry.hash],
+					snapshot.owner,
+				),
+			).to.throw();
+			const error = await internals
+				.rollbackNativeBackboneCoordinateAppendDurably(entry.hash, snapshot)
+				.then(
+					() => undefined,
+					(error: unknown) => error,
+				);
+			expect(
+				error,
+				"released owner cannot restore an old before-image",
+			).to.be.instanceOf(Error);
+			expect(await countIndexed(log, entry.hash)).to.equal(0);
+			expect(log._residentEntryCoordinatesByHash.has(entry.hash)).to.be.false;
+			expect(backboneHas(log, entry.hash)).to.be.false;
+		} finally {
+			internals.settleResidentCoordinateSnapshot(snapshot);
+		}
+	});
 
-		// Ratchet: a snapshot superseded by a newer mutation generation must
-		// not roll anything back (`_nativeCoordinateMutationGenerations` is
-		// generation-checked per hash). The newer state must be visibly
-		// DIFFERENT from the stale snapshot (here: the row deleted) so an
-		// unconditional rollback would clobber it — with identical states a
-		// no-op and an always-rollback are indistinguishable and the pin
-		// has no teeth.
-		const stale = internals.snapshotResidentCoordinateEntries([hash]);
-		internals.snapshotResidentCoordinateEntries([hash]); // newer generation
-		await internals.deleteCoordinatesForHashes([hash]); // newer visible state
-		await internals.rollbackNativeBackboneCoordinateAppendDurably(hash, stale);
-		expect(await countIndexed(log, hash)).to.equal(0);
-		expect(log._residentEntryCoordinatesByHash.has(hash)).to.be.false;
-		expect(backboneHas(log, hash)).to.be.false;
+	it("batches parent-coordinate deletion while preserving mixed native commit flags", async () => {
+		await store!.close();
+		store = await client!.open(new EventStore<string, any>(), {
+			args: {
+				replicate: { factor: 1 },
+				nativeGraph: true,
+				nativeBackbone: { optional: false },
+				nativeRangePlanner: { optional: false },
+			},
+		});
+		const log = store!.log as any;
+		const internals = coordinateInternals(log);
+		const parents = [
+			(await store!.add("batch-parent-a", { meta: { next: [] } })).entry,
+			(await store!.add("batch-parent-b", { meta: { next: [] } })).entry,
+		];
+		const children = [
+			(await store!.add("batch-child-a", { meta: { next: [parents[0]!] } }))
+				.entry,
+			(await store!.add("batch-child-b", { meta: { next: [parents[1]!] } }))
+				.entry,
+		];
+		const makeItem = async (entry: (typeof parents)[number]) => ({
+			entry,
+			coordinates: await log.createCoordinates(entry, 1),
+			leaders: false,
+			replicas: 1,
+		});
+		await internals.deleteCoordinatesForHashes(
+			[...parents, ...children].map((entry) => entry.hash),
+		);
+		await internals.persistCoordinatesBatch(
+			await Promise.all(parents.map(makeItem)),
+		);
+		const items = await Promise.all(children.map(makeItem));
+		const index = log.entryCoordinatesIndex;
+		const nativeState = log._nativeSharedLogState;
+		const backbone = log._nativeBackbone;
+		expect(nativeState, "real native shared-log state").to.exist;
+		const probes = sinon.createSandbox();
+		try {
+			const batch = probes.spy(
+				index,
+				"putSharedLogCoordinateFieldsAndDeleteHashesBatchNoReturn",
+			);
+			const single = probes.spy(
+				index,
+				"putSharedLogCoordinateFieldsAndDeleteHashesNoReturn",
+			);
+			const nativeBatch = probes.spy(
+				nativeState,
+				"commitEntryCoordinatesBatch",
+			);
+			const nativeSingle = probes.spy(nativeState, "commitEntryCoordinates");
+			const backboneBatch = probes.spy(backbone, "commitEntryCoordinatesBatch");
+			const backboneSingle = probes.spy(backbone, "commitEntryCoordinates");
+
+			expect(
+				await internals.persistCoordinatesBatch([
+					{ ...items[0], commitNative: false },
+					{ ...items[1], commitNativeBackbone: false },
+				]),
+			).to.deep.equal([true, true]);
+			expect(batch.callCount).to.equal(1);
+			expect(single.callCount).to.equal(0);
+			expect(
+				batch.firstCall.args[0].map((row: any) => ({
+					hash: row.fields.hash,
+					deleteHashes: row.deleteHashes,
+				})),
+			).to.deep.equal(
+				children.map((entry, i) => ({
+					hash: entry.hash,
+					deleteHashes: [parents[i]!.hash],
+				})),
+			);
+			expect(nativeBatch.callCount).to.equal(1);
+			expect(
+				nativeBatch.firstCall.args[0].map((row: any) => row.hash),
+			).to.deep.equal([children[1]!.hash]);
+			expect(backboneBatch.callCount).to.equal(1);
+			expect(
+				backboneBatch.firstCall.args[0].map((row: any) => row.hash),
+			).to.deep.equal([children[0]!.hash]);
+			expect(nativeSingle.callCount).to.equal(0);
+			expect(backboneSingle.callCount).to.equal(0);
+			const heads = children.map((entry) => entry.hash);
+			expect(
+				(await index.iterate({}).all()).map((row: any) => row.value.hash),
+			).to.have.members(heads);
+			expect([...log._residentEntryCoordinatesByHash.keys()]).to.have.members(
+				heads,
+			);
+			expect(backbone.graph.heads()).to.have.members(heads);
+			expect(nativeState.getEntryCoordinateHashes()).to.have.members([
+				parents[0]!.hash,
+				children[1]!.hash,
+			]);
+			expect(backbone.getEntryCoordinateHashes()).to.have.members([
+				children[0]!.hash,
+				parents[1]!.hash,
+			]);
+		} finally {
+			probes.restore();
+		}
 	});
 
 	it("P4: the backbone-only receive batch commits exactly the planned rows and rolls back atomically", async () => {

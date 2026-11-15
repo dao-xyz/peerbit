@@ -39,6 +39,10 @@ describe("append", function () {
 			await log.append(new Uint8Array([1]));
 		});
 
+		afterEach(async () => {
+			await log.close();
+		});
+
 		it("added the correct amount of items", () => {
 			expect(log.length).equal(1);
 		});
@@ -70,8 +74,17 @@ describe("append", function () {
 	});
 
 	describe("reset", () => {
+		let log: Log<Uint8Array>;
+
+		beforeEach(() => {
+			log = new Log();
+		});
+
+		afterEach(async () => {
+			await log.close();
+		});
+
 		it("append", async () => {
-			const log = new Log();
 			await log.open(store, signKey);
 			const { entry: e1 } = await log.append(new Uint8Array([1]));
 			const { entry: e2 } = await log.append(new Uint8Array([2]));
@@ -87,8 +100,6 @@ describe("append", function () {
 		});
 
 		it("can resolve the full entry from deleted", async () => {
-			const log = new Log();
-
 			let resolved: any = undefined;
 			await log.open(store, signKey, {
 				onChange: async (change) => {
@@ -1759,6 +1770,10 @@ describe("append", function () {
 		const amount = 100;
 
 		let log: Log<Uint8Array>;
+
+		after(async () => {
+			await log.close();
+		});
 
 		before(async () => {
 			// Do sign function really need to returnr publcikey

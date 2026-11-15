@@ -1,9 +1,9 @@
-import { noise } from "@chainsafe/libp2p-noise";
-import { yamux } from "@chainsafe/libp2p-yamux";
 import { circuitRelayTransport } from "@libp2p/circuit-relay-v2";
 import { identify } from "@libp2p/identify";
+import { noise } from "@libp2p/noise";
 import { webRTC } from "@libp2p/webrtc";
 import { webSockets } from "@libp2p/websockets";
+import { yamux } from "@libp2p/yamux";
 import { multiaddr } from "@multiformats/multiaddr";
 import { ready } from "@peerbit/crypto";
 import { createRustCoreStream } from "@peerbit/network-rust";

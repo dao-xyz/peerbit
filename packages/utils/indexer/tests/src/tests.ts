@@ -2441,7 +2441,7 @@ export const tests = (
 							});
 						});
 
-						it("field poly-morph but nested not", () => {
+						describe("field poly-morph but nested not", () => {
 							@variant(0)
 							class NestedSimple {
 								@field({ type: "u32" })
@@ -4357,7 +4357,7 @@ export const tests = (
 					const iterator = store.iterate(request);
 					await iterator.next(2);
 					await iterator.next(1);
-					assertIteratorIsDone(iterator);
+					await assertIteratorIsDone(iterator);
 					expect(await iterator.pending()).equal(0);
 				});
 			});
@@ -4700,7 +4700,7 @@ export const tests = (
 			});
 
 			it("re-drop", async () => {
-				const scope = await createIndicies();
+				const scope = (indices = await createIndicies());
 				await scope.start();
 				const subScope = await scope.scope("subindex");
 				await subScope.init({ indexBy: ["id"], schema: Document });
@@ -4709,7 +4709,7 @@ export const tests = (
 			});
 
 			it("isolates", async () => {
-				const scope = await createIndicies();
+				const scope = (indices = await createIndicies());
 				await scope.start();
 				const scopeA = await scope.scope("a");
 				const scopeB = await scope.scope("b");
@@ -4726,7 +4726,7 @@ export const tests = (
 			});
 
 			it("scope name can contain any character", async () => {
-				const scope = await createIndicies();
+				const scope = (indices = await createIndicies());
 				await scope.start();
 				const scopeA = await scope.scope("a/=b");
 				const indexA = await scopeA.init({ indexBy: ["id"], schema: Document });
@@ -4737,7 +4737,7 @@ export const tests = (
 			});
 
 			it("drops sub scopes", async () => {
-				const scope = await createIndicies();
+				const scope = (indices = await createIndicies());
 				await scope.start();
 				let subScope = await scope.scope("subindex");
 
@@ -4759,7 +4759,7 @@ export const tests = (
 			});
 
 			it("starts on init if scope is started", async () => {
-				const scope = await createIndicies();
+				const scope = (indices = await createIndicies());
 				await scope.start();
 				const subScope = await scope.scope("subindex");
 				const subIndex = await subScope.init({
@@ -4772,7 +4772,7 @@ export const tests = (
 			});
 
 			it("can restart", async () => {
-				const scope = await createIndicies();
+				const scope = (indices = await createIndicies());
 				await scope.start();
 				await scope.stop();
 				await scope.start();
@@ -4800,7 +4800,7 @@ export const tests = (
 					}
 				}
 
-				const scope = await createIndicies();
+				const scope = (indices = await createIndicies());
 				await scope.start();
 
 				const a = await scope.scope("a");

@@ -1,5 +1,50 @@
 # Changelog
 
+## 1.1.75
+
+### Patch Changes
+
+- [#1514](https://github.com/dao-xyz/peerbit/pull/1514) [`cfd2201`](https://github.com/dao-xyz/peerbit/commit/cfd2201fa66386480caec589465bca8af6033d75) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Update the coordinated libp2p dependency cohort and use the maintained Noise and Yamux package names. Preserve Peerbit's transport configuration, custom Yamux protocol and window sizes, and standard Yamux fallback. Refresh browser fixture dependencies so transport imports do not rely on workspace hoisting.
+
+- Updated dependencies [[`cfd2201`](https://github.com/dao-xyz/peerbit/commit/cfd2201fa66386480caec589465bca8af6033d75)]:
+  - @peerbit/canonical-client@1.1.72
+  - @peerbit/crypto@3.1.7
+  - @peerbit/logger@2.0.3
+  - @peerbit/program@6.0.69
+  - peerbit@5.4.11
+  - @peerbit/program-react@0.4.73
+  - @peerbit/indexer-interface@3.1.1
+
+## 1.1.74
+
+### Patch Changes
+
+- Updated dependencies []:
+  - peerbit@5.4.10
+  - @peerbit/program@6.0.68
+  - @peerbit/canonical-client@1.1.71
+  - @peerbit/program-react@0.4.72
+
+## 1.1.73
+
+### Patch Changes
+
+- Updated dependencies []:
+  - peerbit@5.4.9
+  - @peerbit/program@6.0.67
+  - @peerbit/canonical-client@1.1.70
+  - @peerbit/program-react@0.4.71
+
+## 1.1.72
+
+### Patch Changes
+
+- Updated dependencies []:
+  - peerbit@5.4.8
+  - @peerbit/program@6.0.66
+  - @peerbit/canonical-client@1.1.69
+  - @peerbit/program-react@0.4.70
+
 ## 1.1.71
 
 ### Patch Changes

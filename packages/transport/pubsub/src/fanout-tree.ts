@@ -877,6 +877,19 @@ const PROVIDER_DIRECTORY_MAX_NAMESPACES = 4_096;
 // large networks can cause unbounded memory growth on the tracker nodes.
 const TRACKER_DIRECTORY_MAX_ENTRIES = 16_384;
 const TRACKER_DIRECTORY_MAX_NAMESPACES = 4_096;
+// Best-effort bound on per-key control metrics for keys without an open channel.
+// Every inbound control frame is recorded under its key, including tracker frames
+// for channels we do not host, so bootstraps/relays see an open-ended key set.
+// Open channels keep their metrics on the channel and are never evicted.
+const DETACHED_METRICS_MAX_KEYS = 4_096;
+// Best-effort bounds for provider watches and namespace names. Provider namespaces
+// are commonly per block (`cid:<cid>`), so anything keyed by them must be bounded.
+const PROVIDER_WATCH_MAX_NAMESPACES = 4_096;
+const PROVIDER_NAMESPACE_NAME_MAX_ENTRIES = 16_384;
+// Per-channel ingress token buckets (proxy-publish/unicast) are kept for recent
+// senders only: a few multiples of the child limit, with a small floor.
+const INGRESS_BUCKETS_MIN_ENTRIES = 64;
+const INGRESS_BUCKETS_PER_CHILD = 4;
 
 const FANOUT_PROTOCOLS = ["/peerbit/fanout-tree/0.5.0"];
 
@@ -1370,13 +1383,27 @@ const isDataId = (id: Uint8Array) =>
 	id[2] === ID_PREFIX[2] &&
 	id[3] === ID_PREFIX[3];
 
+const isProviderControlKind = (kind: number) =>
+	kind === MSG_PROVIDER_ANNOUNCE ||
+	kind === MSG_PROVIDER_QUERY ||
+	kind === MSG_PROVIDER_REPLY ||
+	kind === MSG_PROVIDER_SUBSCRIBE ||
+	kind === MSG_PROVIDER_UNSUBSCRIBE ||
+	kind === MSG_PROVIDER_NOTIFY;
+
 export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 	private channelsBySuffixKey = new Map<string, ChannelState>();
 	private readonly cachedSuffixKey = new WeakMap<Uint8Array, string>();
+	// Metrics for keys without an open channel, in LRU order (oldest first) and
+	// bounded by DETACHED_METRICS_MAX_KEYS. Open channels own `ch.metrics`.
 	private readonly metricsBySuffixKey = new Map<
 		string,
 		InternalFanoutTreeChannelMetrics
 	>();
+	// Provider control frames are keyed per provider namespace (often per block),
+	// which no channel metrics lookup can address, so they share one aggregate.
+	private readonly providerControlMetrics: InternalFanoutTreeChannelMetrics =
+		createEmptyMetrics();
 	private readonly joinTimeoutStreakByPeer = new Map<string, number>();
 	private readonly joinResetCooldownUntilByPeer = new Map<string, number>();
 	private bootstraps: Multiaddr[] = [];
@@ -1437,6 +1464,11 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		this.topicRootControlPlane =
 			topicRootControlPlane ?? new TopicRootControlPlane();
 
+		this.registerUnderlayPeerDisconnectHandler();
+	}
+
+	private registerUnderlayPeerDisconnectHandler() {
+		if (this.underlayPeerDisconnectHandler) return;
 		const onPeerDisconnect = (ev: any) => {
 			const peerId = ev?.detail;
 			if (!peerId) return;
@@ -1453,6 +1485,15 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 			"peer:disconnect",
 			onPeerDisconnect as any,
 		);
+	}
+
+	public override async start() {
+		await super.start();
+		// stop() removes the listener, so a restarted instance must add it again
+		// (but not while a stop that raced this start is still tearing down).
+		if (this.started && !this.stopping) {
+			this.registerUnderlayPeerDisconnectHandler();
+		}
 	}
 
 	private createLoopCloseController(): AbortController {
@@ -1561,6 +1602,27 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 			this.providerNamespaceLru.delete(suffixKey);
 			this.pendingProviderQueryBySuffixKey.delete(suffixKey);
 		}
+	}
+
+	private touchProviderWatchers(
+		suffixKey: string,
+	): Map<string, ProviderWatchRegistration> {
+		// LRU touch
+		const watchers =
+			this.providerWatchersBySuffixKey.get(suffixKey) ??
+			new Map<string, ProviderWatchRegistration>();
+		this.providerWatchersBySuffixKey.delete(suffixKey);
+		this.providerWatchersBySuffixKey.set(suffixKey, watchers);
+		while (
+			this.providerWatchersBySuffixKey.size > PROVIDER_WATCH_MAX_NAMESPACES
+		) {
+			const oldest = this.providerWatchersBySuffixKey.keys().next().value as
+				| string
+				| undefined;
+			if (oldest === undefined) break;
+			this.providerWatchersBySuffixKey.delete(oldest);
+		}
+		return watchers;
 	}
 
 	private pruneProviderWatchersIfEmpty(suffixKey: string) {
@@ -1698,7 +1760,19 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 	private getProviderNamespaceId(namespace: string): ProviderNamespaceId {
 		const key = sha256Sync(textEncoder.encode(`provider|${namespace}`));
 		const suffixKey = toBase64(key.subarray(0, 24));
+		// LRU touch: every announced block adds a namespace, so keep this bounded.
+		this.providerNamespaceBySuffixKey.delete(suffixKey);
 		this.providerNamespaceBySuffixKey.set(suffixKey, namespace);
+		while (
+			this.providerNamespaceBySuffixKey.size >
+			PROVIDER_NAMESPACE_NAME_MAX_ENTRIES
+		) {
+			const oldest = this.providerNamespaceBySuffixKey.keys().next().value as
+				| string
+				| undefined;
+			if (oldest === undefined) break;
+			this.providerNamespaceBySuffixKey.delete(oldest);
+		}
 		return { namespace, key, suffixKey };
 	}
 
@@ -1832,12 +1906,23 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		const bootstraps = bootstrapOverride ?? this.bootstraps;
 		if (bootstraps.length === 0) return;
 		const signal = this.closeController.signal;
-		const peers = await this.ensureBootstrapPeers(
-			bootstraps,
-			bootstrapDialTimeoutMs,
-			signal,
-			bootstrapMaxPeers,
-		);
+		const ready = new Set<string>();
+		for (const address of bootstraps) {
+			const hash = this.connectedPeerHashForBootstrap(address);
+			if (hash) ready.add(hash);
+			if (bootstrapMaxPeers > 0 && ready.size >= bootstrapMaxPeers) break;
+		}
+		// Provider hints must not wait for unavailable trackers when a configured
+		// tracker is already ready. Retain bounded dialing for cold providers.
+		const peers =
+			ready.size > 0
+				? [...ready]
+				: await this.ensureBootstrapPeers(
+						bootstraps,
+						bootstrapDialTimeoutMs,
+						signal,
+						bootstrapMaxPeers,
+					);
 		if (peers.length === 0 || signal.aborted) return;
 
 		const iterator = namespaces[Symbol.iterator]();
@@ -2115,6 +2200,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		if (!this.started) {
 			throw new Error("FanoutTree must be started before watching providers");
 		}
+		const serviceSignal = this.closeController.signal;
 
 		const id = this.getProviderNamespaceId(namespace);
 		const ttlMs = Math.max(1_000, Math.floor(options.ttlMs ?? 10_000));
@@ -2184,6 +2270,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 				void this._sendControl(
 					trackerHash,
 					this.codec.encodeProviderUnsubscribe(id.key),
+					serviceSignal,
 				).catch(dontThrowIfDeliveryError);
 			}
 			watch.trackerPeers = [];
@@ -2210,11 +2297,13 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 									watch.bootstrapMaxPeers,
 								)
 							: [];
+					if (watch.closed || loopSignal.aborted) return;
 					watch.trackerPeers = trackerPeers;
 					for (const trackerHash of trackerPeers) {
 						void this._sendControl(
 							trackerHash,
 							this.codec.encodeProviderSubscribe(id.key, watch.want, watch.ttlMs),
+							loopSignal,
 						).catch(dontThrowIfDeliveryError);
 					}
 				} catch (error) {
@@ -2517,6 +2606,9 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 			lastTrackerQueryAt: 0,
 		};
 		this.channelsBySuffixKey.set(id.suffixKey, ch);
+		// The open channel now owns its metrics; take them out of the detached LRU
+		// so they can never be evicted while the channel is open.
+		this.metricsBySuffixKey.delete(id.suffixKey);
 		const needsAnnounceLoop = ch.effectiveMaxChildren > 0;
 		if (needsAnnounceLoop) {
 			ch.announceLoop = this._announceLoop(ch).catch(() => {});
@@ -2717,6 +2809,13 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		if (!peerHash) return;
 		this.joinTimeoutStreakByPeer.delete(peerHash);
 
+		// A disconnected watcher can no longer receive provider notifications.
+		for (const [suffixKey, watchers] of this.providerWatchersBySuffixKey) {
+			if (watchers.delete(peerHash) && watchers.size === 0) {
+				this.providerWatchersBySuffixKey.delete(suffixKey);
+			}
+		}
+
 		// Detach from a disconnected parent immediately, so children can rejoin.
 		// This is more reliable than polling `getConnections()` because the underlay
 		// can flap/reconnect faster than the join loop cadence.
@@ -2815,6 +2914,8 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 
 		this.channelsBySuffixKey.delete(id.suffixKey);
 		this.trackerBySuffixKey.delete(id.suffixKey);
+		// Keep the counters readable after close (and across a reopen), bounded.
+		this.storeDetachedMetrics(id.suffixKey, ch.metrics);
 
 		await Promise.all(pendingSends);
 	}
@@ -3997,12 +4098,45 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 	private getMetricsForSuffixKey(
 		suffixKey: string,
 	): InternalFanoutTreeChannelMetrics {
-		let m = this.metricsBySuffixKey.get(suffixKey);
-		if (!m) {
-			m = createEmptyMetrics();
-			this.metricsBySuffixKey.set(suffixKey, m);
-		}
+		const ch = this.channelsBySuffixKey.get(suffixKey);
+		if (ch) return ch.metrics;
+		const m = this.metricsBySuffixKey.get(suffixKey) ?? createEmptyMetrics();
+		this.storeDetachedMetrics(suffixKey, m);
 		return m;
+	}
+
+	private storeDetachedMetrics(
+		suffixKey: string,
+		metrics: InternalFanoutTreeChannelMetrics,
+	) {
+		// LRU touch
+		this.metricsBySuffixKey.delete(suffixKey);
+		this.metricsBySuffixKey.set(suffixKey, metrics);
+		while (this.metricsBySuffixKey.size > DETACHED_METRICS_MAX_KEYS) {
+			const oldest = this.metricsBySuffixKey.keys().next().value as
+				| string
+				| undefined;
+			if (oldest === undefined) break;
+			this.metricsBySuffixKey.delete(oldest);
+		}
+	}
+
+	private getControlMetrics(
+		suffixKey: string,
+		kind: number,
+	): InternalFanoutTreeChannelMetrics {
+		return isProviderControlKind(kind)
+			? this.providerControlMetrics
+			: this.getMetricsForSuffixKey(suffixKey);
+	}
+
+	/**
+	 * Returns aggregate diagnostic counters for provider control frames.
+	 *
+	 * @internal
+	 */
+	public getProviderControlMetrics(): FanoutTreeChannelMetrics {
+		return this.providerControlMetrics;
 	}
 
 	private recordControlSend(
@@ -4014,7 +4148,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		if (bytes.length < 1 + 24) return;
 		const kind = bytes[0]!;
 		const suffixKey = toBase64(bytes.subarray(1, 25));
-		const m = this.getMetricsForSuffixKey(suffixKey);
+		const m = this.getControlMetrics(suffixKey, kind);
 		m.controlSends += transmissions;
 		const sentBytes = bytes.byteLength * transmissions;
 		m.controlBytesSent += sentBytes;
@@ -4096,7 +4230,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		kind: number,
 		bytesReceived: number,
 	) {
-		const m = this.getMetricsForSuffixKey(suffixKey);
+		const m = this.getControlMetrics(suffixKey, kind);
 		m.controlReceives += 1;
 		m.controlBytesReceived += bytesReceived;
 		switch (kind) {
@@ -4231,6 +4365,10 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		}
 		const stream = this.peers.get(to);
 		if (!stream) return;
+		const lifetime = this.closeController.signal;
+		if (lifetime.aborted || this.stopping || !this.started) {
+			throw new AbortError("fanout control service stopped");
+		}
 		this.recordControlSend(bytes, 1, probePurpose);
 		const message = await this.createMessage(bytes, {
 			mode: new AnyWhere(),
@@ -4238,6 +4376,10 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		} as any);
 		if (signal?.aborted) {
 			throw signal.reason ?? new AbortError("fanout control send aborted");
+		}
+		// Signing can outlive stop (or a later restart) of this service.
+		if (lifetime.aborted || this.stopping || !this.started) {
+			throw new AbortError("fanout control service stopped");
 		}
 		await this.publishMessageMaybe(
 			this.publicKey,
@@ -4254,11 +4396,18 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 			.map((t) => this.peers.get(t))
 			.filter((s): s is PeerStreams => Boolean(s));
 		if (streams.length === 0) return false;
+		const lifetime = this.closeController.signal;
+		if (lifetime.aborted || this.stopping || !this.started) {
+			throw new AbortError("fanout control service stopped");
+		}
 		this.recordControlSend(bytes, streams.length);
 		const message = await this.createMessage(bytes, {
 			mode: new AnyWhere(),
 			priority: CONTROL_PRIORITY,
 		} as any);
+		if (lifetime.aborted || this.stopping || !this.started) {
+			throw new AbortError("fanout control service stopped");
+		}
 		return this.publishMessageMaybe(this.publicKey, message, streams);
 	}
 
@@ -4318,15 +4467,33 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 			tokens = Math.min(capacity, tokens + (elapsedMs * budgetBps) / 1_000);
 		}
 		if (tokens < costBytes) {
-			// LRU-touch on access to keep the bucket map bounded by active children.
-			byPeer.delete(fromHash);
-			byPeer.set(fromHash, { tokens, lastRefillAt: now });
+			this.setIngressBucket(ch, byPeer, fromHash, { tokens, lastRefillAt: now });
 			return false;
 		}
 		tokens -= costBytes;
-		byPeer.delete(fromHash);
-		byPeer.set(fromHash, { tokens, lastRefillAt: now });
+		this.setIngressBucket(ch, byPeer, fromHash, { tokens, lastRefillAt: now });
 		return true;
+	}
+
+	private setIngressBucket(
+		ch: ChannelState,
+		byPeer: Map<string, { tokens: number; lastRefillAt: number }>,
+		fromHash: string,
+		bucket: { tokens: number; lastRefillAt: number },
+	) {
+		// LRU touch, capped: long-lived (pinned) roots see an open-ended set of
+		// children over time, and buckets are not dropped when a child leaves.
+		byPeer.delete(fromHash);
+		byPeer.set(fromHash, bucket);
+		const maxBuckets = Math.max(
+			INGRESS_BUCKETS_MIN_ENTRIES,
+			ch.maxChildren * INGRESS_BUCKETS_PER_CHILD,
+		);
+		while (byPeer.size > maxBuckets) {
+			const oldest = byPeer.keys().next().value as string | undefined;
+			if (oldest === undefined) break;
+			byPeer.delete(oldest);
+		}
 	}
 
 	private async _sendData(
@@ -5079,39 +5246,35 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		for (const a of shuffled) {
 			if (signal.aborted) break;
 			if (target > 0 && out.length >= target) break;
-			const attempt = diagnostics
-				? this.createBoundedDialAttempt(
-						signal,
-						timeoutMs,
-						diagnostics.deadlineAt,
-					)
-				: undefined;
-			if (diagnostics && !attempt) break;
+			const attempt = this.createBoundedDialAttempt(
+				signal,
+				timeoutMs,
+				diagnostics?.deadlineAt,
+			);
+			if (!attempt) break;
 			if (diagnostics) diagnostics.metrics.joinBootstrapDialAttempts += 1;
 			let ready = false;
 			let skippedExcluded = false;
 			try {
-				const conn = attempt
-					? await this.components.connectionManager.openConnection(a, {
-							signal: attempt.signal,
-						})
-					: await this.components.connectionManager.openConnection(a);
+				const conn = await this.components.connectionManager.openConnection(a, {
+					signal: attempt.signal,
+				});
+				attempt.signal.throwIfAborted();
 				const h = getPublicKeyFromPeerId(conn.remotePeer).hashcode();
 				await this.waitFor(h, {
 					seek: "present",
-					timeout: attempt?.timeoutMs ?? timeoutMs,
-					signal: attempt?.signal ?? signal,
+					timeout: attempt.timeoutMs,
+					signal: attempt.signal,
 				});
-				skippedExcluded =
-					diagnostics?.excludeReadyPeerHashes?.has(h) === true;
+				attempt.signal.throwIfAborted();
+				skippedExcluded = diagnostics?.excludeReadyPeerHashes?.has(h) === true;
 				ready =
-					!skippedExcluded &&
-					(diagnostics ? this.isPeerReadyForJoin(h) : true);
+					!skippedExcluded && (diagnostics ? this.isPeerReadyForJoin(h) : true);
 				if (ready) out.push(h);
 			} catch {
 				// ignore dial failures
 			} finally {
-				attempt?.clear();
+				attempt.clear();
 				if (!ready && !skippedExcluded && diagnostics) {
 					diagnostics.metrics.joinBootstrapDialFailures += 1;
 				}
@@ -5555,34 +5718,30 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		if (this.isPeerReadyForJoin(hash)) return true;
 		for (const a of addrs) {
 			if (signal.aborted) return false;
-			const attempt = diagnostics
-				? this.createBoundedDialAttempt(
-						signal,
-						timeoutMs,
-						diagnostics.deadlineAt,
-					)
-				: undefined;
-			if (diagnostics && !attempt) return false;
+			const attempt = this.createBoundedDialAttempt(
+				signal,
+				timeoutMs,
+				diagnostics?.deadlineAt,
+			);
+			if (!attempt) return false;
 			if (diagnostics) diagnostics.metrics.joinCandidateDialAttempts += 1;
 			let ready = false;
 			try {
-				if (attempt) {
-					await this.components.connectionManager.openConnection(a, {
-						signal: attempt.signal,
-					});
-				} else {
-					await this.components.connectionManager.openConnection(a);
-				}
+				await this.components.connectionManager.openConnection(a, {
+					signal: attempt.signal,
+				});
+				attempt.signal.throwIfAborted();
 				await this.waitFor(hash, {
 					seek: "present",
-					timeout: attempt?.timeoutMs ?? timeoutMs,
-					signal: attempt?.signal ?? signal,
+					timeout: attempt.timeoutMs,
+					signal: attempt.signal,
 				});
+				attempt.signal.throwIfAborted();
 				ready = diagnostics ? this.isPeerReadyForJoin(hash) : true;
 			} catch {
 				// ignore and try next
 			} finally {
-				attempt?.clear();
+				attempt.clear();
 				if (!ready && diagnostics) {
 					diagnostics.metrics.joinCandidateDialFailures += 1;
 				}
@@ -8535,11 +8694,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 				const want = Math.max(1, decoded.want);
 				const ttlMs = Math.min(120_000, Math.max(1_000, decoded.ttlMs));
 				const now = Date.now();
-				let watchers = this.providerWatchersBySuffixKey.get(suffixKey);
-				if (!watchers) {
-					watchers = new Map<string, ProviderWatchRegistration>();
-					this.providerWatchersBySuffixKey.set(suffixKey, watchers);
-				}
+				const watchers = this.touchProviderWatchers(suffixKey);
 				watchers.set(fromHash, {
 					hash: fromHash,
 					want,

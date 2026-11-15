@@ -1,5 +1,37 @@
 # Changelog
 
+## 1.0.91
+
+### Patch Changes
+
+- Updated dependencies [[`cfd2201`](https://github.com/dao-xyz/peerbit/commit/cfd2201fa66386480caec589465bca8af6033d75)]:
+  - @peerbit/canonical-client@1.1.72
+  - @peerbit/canonical-host@1.0.91
+
+## 1.0.90
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @peerbit/canonical-host@1.0.90
+  - @peerbit/canonical-client@1.1.71
+
+## 1.0.89
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @peerbit/canonical-host@1.0.89
+  - @peerbit/canonical-client@1.1.70
+
+## 1.0.88
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @peerbit/canonical-host@1.0.88
+  - @peerbit/canonical-client@1.1.69
+
 ## 1.0.87
 
 ### Patch Changes

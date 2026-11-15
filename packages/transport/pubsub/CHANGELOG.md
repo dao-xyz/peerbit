@@ -1,5 +1,40 @@
 # Changelog
 
+## 5.4.14
+
+### Patch Changes
+
+- [#1509](https://github.com/dao-xyz/peerbit/pull/1509) [`54a8940`](https://github.com/dao-xyz/peerbit/commit/54a89403a08450e13b9ea1ccac27daaf16854f6a) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Apply the existing per-address dial timeout and lifecycle cancellation to fanout bootstrap and candidate connections even without join diagnostics. Dialing and stream readiness share the same abort budget, so best-effort provider announcements do not wait indefinitely on an abort-aware bootstrap dial. Provider hooks remain awaited, and bootstrap selection and registration policies are unchanged.
+
+- [#1514](https://github.com/dao-xyz/peerbit/pull/1514) [`cfd2201`](https://github.com/dao-xyz/peerbit/commit/cfd2201fa66386480caec589465bca8af6033d75) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Update the coordinated libp2p dependency cohort and use the maintained Noise and Yamux package names. Preserve Peerbit's transport configuration, custom Yamux protocol and window sizes, and standard Yamux fallback. Refresh browser fixture dependencies so transport imports do not rely on workspace hoisting.
+
+- [#1494](https://github.com/dao-xyz/peerbit/pull/1494) [`f7388ce`](https://github.com/dao-xyz/peerbit/commit/f7388ce21c2daf85cff9cd99cd657a09e258d70f) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Cancel fanout control sends when message creation outlives the sending service, preventing provider-watch teardown from publishing after shutdown. Do not renew closed provider watches after pending bootstrap discovery completes, or let obsolete cleanup unsubscribe a replacement watch after restart. Active-service errors and awaited cancellation remain observable.
+
+- Updated dependencies [[`cfd2201`](https://github.com/dao-xyz/peerbit/commit/cfd2201fa66386480caec589465bca8af6033d75), [`137a6a9`](https://github.com/dao-xyz/peerbit/commit/137a6a93dd2aea71729548eeb5a2e6def6b8d221), [`d666bc6`](https://github.com/dao-xyz/peerbit/commit/d666bc6de100c49333323d5a7981a77affcc4d32), [`04d6450`](https://github.com/dao-xyz/peerbit/commit/04d6450c01ecaef4c23c5a299d7e4feb6d2eaf58), [`137a6a9`](https://github.com/dao-xyz/peerbit/commit/137a6a93dd2aea71729548eeb5a2e6def6b8d221)]:
+  - @peerbit/crypto@3.1.7
+  - @peerbit/logger@2.0.3
+  - @peerbit/pubsub-interface@5.2.3
+  - @peerbit/stream@5.2.5
+  - @peerbit/stream-interface@6.0.17
+
+## 5.4.13
+
+### Patch Changes
+
+- [#1479](https://github.com/dao-xyz/peerbit/pull/1479) [`8d7eac9`](https://github.com/dao-xyz/peerbit/commit/8d7eac9e5dd7e1ebcb51b80bf7d7d97b9fb03359) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Ignore relayed unavailability hints for subscribers with a live bidirectional direct stream, while preserving explicit unsubscribe and disconnected-peer cleanup.
+
+## 5.4.12
+
+### Patch Changes
+
+- [#1502](https://github.com/dao-xyz/peerbit/pull/1502) [`0005cda`](https://github.com/dao-xyz/peerbit/commit/0005cda2dd65c22657e9c9587a0061f2829e033e) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Re-register the fanout tree's underlay `peer:disconnect` listener when the service starts again after `stop()`, so a restarted instance handles peer disconnects again.
+
+## 5.4.11
+
+### Patch Changes
+
+- [#1496](https://github.com/dao-xyz/peerbit/pull/1496) [`3ba8a8b`](https://github.com/dao-xyz/peerbit/commit/3ba8a8b8eb259839a6f20ecab7a05a0abac3fd39) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Bound fanout state that bootstrap trackers and relays accumulate from remote peers. Per-key control metrics for keys without an open channel now live in a capped LRU. Provider control frames, which are keyed per provider namespace (often one per block), now count into a single aggregate, so a long-running relay no longer keeps metrics for every block it ever saw. Provider watch registrations are capped and dropped when the watching peer disconnects. Provider namespace names are capped, and so are per-channel ingress token buckets on long-lived roots. Counters for open channels are unchanged and remain readable after close.
+
 ## 5.4.10
 
 ### Patch Changes

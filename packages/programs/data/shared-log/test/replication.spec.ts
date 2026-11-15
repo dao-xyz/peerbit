@@ -798,7 +798,45 @@ testSetups.forEach((setup) => {
 					it("it does not fetch missing entries from remotes when exchanging heads to remote", async () => {
 						const first = await db1.add("a", { meta: { next: [] } });
 						const second = await db1.add("b", { meta: { next: [] } });
+						const coordinates = (db1.log as any)._coordinates;
+						const staleCoordinate =
+							await coordinates.getAuthoritativeCoordinateEntryForReceipt(
+								second.entry.hash,
+							);
+						expect(staleCoordinate).to.not.be.undefined;
 						await db1.log.log.entryIndex.delete(second.entry.hash);
+						expect(
+							await coordinates.getAuthoritativeCoordinateEntryForReceipt(
+								second.entry.hash,
+							),
+						).to.be.undefined;
+						// Deletion completes coordinate cleanup. Explicitly restore only the
+						// stale advertisement to exercise a missing local entry during exchange.
+						await coordinates.persistCoordinate({
+							entry: second.entry,
+							coordinates: staleCoordinate.coordinates,
+							replicas: staleCoordinate.coordinates.length,
+							assignedToRangeBoundary: staleCoordinate.assignedToRangeBoundary,
+							leaders: false,
+						});
+						expect(await db1.log.log.entryIndex.getShallow(second.entry.hash))
+							.to.be.undefined;
+
+						let remoteFetchOptions: any[] = [];
+						const db1LogGet = db1.log.log.get.bind(db1.log.log);
+						const presence = sinon.spy(db1.log.log, "hasMany");
+						const retireFrontier = sinon.spy(
+							db1.log as any,
+							"clearRepairFrontierHashes",
+						);
+
+						db1.log.log.get = async (hash, options) => {
+							if (hash === second.entry.hash) {
+								remoteFetchOptions.push(options?.remote);
+								return undefined;
+							}
+							return db1LogGet(hash, options);
+						};
 
 						db2 = (await EventStore.open<EventStore<string, any>>(
 							db1.address!,
@@ -810,17 +848,6 @@ testSetups.forEach((setup) => {
 							},
 						))!;
 
-						let remoteFetchOptions: any[] = [];
-						const db1LogGet = db1.log.log.get.bind(db1.log.log);
-
-						db1.log.log.get = async (hash, options) => {
-							if (hash === second.entry.hash) {
-								remoteFetchOptions.push(options?.remote);
-								return undefined;
-							}
-							return db1LogGet(hash, options);
-						};
-
 						await waitForResolved(async () => {
 							expect(
 								(await db2.iterator({ limit: -1 }))
@@ -828,10 +855,25 @@ testSetups.forEach((setup) => {
 									.map((x) => x.hash),
 							).to.deep.equal([first.entry.hash]);
 						});
-						await waitForResolved(() =>
-							expect(remoteFetchOptions).to.have.length(1),
-						);
-						expect(remoteFetchOptions[0]).to.be.undefined;
+						// Wait for authoritative rejection, not a quiet period: the stale
+						// offer must be retired before any payload lookup is needed.
+						await waitForResolved(async () => {
+							const results = await Promise.all(
+								presence
+									.getCalls()
+									.filter((call) => [...call.args[0]].includes(second.entry.hash))
+									.map((call) => call.returnValue),
+							);
+							expect(results.some((present) => !present.has(second.entry.hash)))
+								.to.be.true;
+							expect(
+								retireFrontier.calledWith(
+									session.peers[1].identity.publicKey.hashcode(),
+									[second.entry.hash],
+								),
+							).to.be.true;
+						});
+						expect(remoteFetchOptions).to.be.empty;
 					});
 				});
 				describe("two way", () => {

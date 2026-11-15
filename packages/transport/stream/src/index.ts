@@ -1242,7 +1242,9 @@ type SharedRoutingState = {
 	session: number;
 	routes: RoutesLike;
 	controller: AbortController;
-	refs: number;
+	consumers: Set<DirectStream<any>>;
+	// Exists only during synchronous dispatch; nested route replacement supersedes it.
+	reachableNotifications: Map<string, symbol>;
 };
 
 type DeliveryHealthCheck = {
@@ -1288,6 +1290,7 @@ export abstract class DirectStream<
 	public peers: Map<string, PeerStreams>;
 	// Replacements must not orphan teardown that beforeStop still needs to drain.
 	private readonly retiredPeerStreams = new Set<PeerStreams>();
+	private readonly removingPeerStreams = new WeakSet<PeerStreams>();
 	public peerKeyHashToPublicKey: Map<string, PublicSignKey>;
 	public routes: RoutesLike;
 	/**
@@ -1327,6 +1330,7 @@ export abstract class DirectStream<
 	}> = new Set();
 	private sharedRoutingKey?: PrivateKey;
 	private sharedRoutingState?: SharedRoutingState;
+	private reachableNotifications?: Map<string, symbol>;
 	private readonly nativeWire?: NativeWire;
 	protected readonly rustCore?: RustCoreStream;
 	private readonly rustSeenCache?: RustSeenCache;
@@ -1374,12 +1378,15 @@ export abstract class DirectStream<
 		string,
 		{
 			promise: Promise<void>;
+			shared: boolean;
 			callback: (
 				ack: ACK,
 				messageThrough: PeerStreams,
 				messageFrom?: PeerStreams,
 			) => void;
 			clear: () => void;
+			bindDirectAttempt?: (peer: PeerStreams) => void;
+			onPeerReplacement?: (current: PeerStreams) => void;
 		}
 	>;
 
@@ -1701,7 +1708,8 @@ export abstract class DirectStream<
 					session: Date.now(),
 					controller,
 					routes: this.createRoutes(controller.signal),
-					refs: 0,
+					consumers: new Set(),
+					reachableNotifications: new Map(),
 				};
 				sharedRoutingByPrivateKey.set(key, state);
 			} else {
@@ -1712,7 +1720,7 @@ export abstract class DirectStream<
 				);
 			}
 
-			state.refs += 1;
+			state.consumers.add(this);
 			this.sharedRoutingState = state;
 			this.session = state.session;
 			this.routes = state.routes;
@@ -1966,7 +1974,29 @@ export abstract class DirectStream<
 		const sharedKey = this.sharedRoutingKey;
 		this.started = false;
 		logger.trace("stopping");
-		await this.stopNetwork();
+		try {
+			await this.stopNetwork();
+		} finally {
+			// Failed teardown must not retain a stopped service in the shared owners.
+			this.sharedRoutingState = undefined;
+			this.sharedRoutingKey = undefined;
+			if (sharedState && sharedKey) {
+				sharedState.consumers.delete(this);
+				if (sharedState.consumers.size === 0) {
+					try {
+						sharedState.routes.clear();
+					} catch {
+						// ignore
+					}
+					try {
+						sharedState.controller.abort();
+					} catch {
+						// ignore
+					}
+					sharedRoutingByPrivateKey.delete(sharedKey);
+				}
+			}
+		}
 		this.prunedConnectionsCache?.clear();
 
 		this.queue.clear();
@@ -1989,24 +2019,6 @@ export abstract class DirectStream<
 		}
 
 		this._ackCallbacks.clear();
-		this.sharedRoutingState = undefined;
-		this.sharedRoutingKey = undefined;
-		if (sharedState && sharedKey) {
-			sharedState.refs = Math.max(0, sharedState.refs - 1);
-			if (sharedState.refs === 0) {
-				try {
-					sharedState.routes.clear();
-				} catch {
-					// ignore
-				}
-				try {
-					sharedState.controller.abort();
-				} catch {
-					// ignore
-				}
-				sharedRoutingByPrivateKey.delete(sharedKey);
-			}
-		}
 		logger.trace("stopped");
 	}
 
@@ -2260,9 +2272,37 @@ export abstract class DirectStream<
 		}
 
 		const unreachable = this.routes.remove(hash);
+		const state = this.sharedRoutingState;
+		const consumers = [...(state?.consumers ?? [this])];
+		const failures: unknown[] = [];
 		for (const node of unreachable) {
-			this.onPeerUnreachable(node); // TODO types
-			this.peerKeyHashToPublicKey.delete(node);
+			// Removing a shared route is one transition for every active protocol,
+			// not just the first service to observe the disconnect.
+			for (const consumer of consumers) {
+				if (
+					!consumer.started ||
+					consumer.stopping ||
+					consumer.routes !== this.routes ||
+					(state && consumer.sharedRoutingState !== state) ||
+					this.routes.isReachable(this.publicKeyHash, node)
+				) {
+					continue;
+				}
+				try {
+					consumer.onPeerUnreachable(node);
+				} catch (error) {
+					failures.push(error);
+				} finally {
+					// A synchronous listener may already have established a new route.
+					if (!this.routes.isReachable(this.publicKeyHash, node)) {
+						consumer.peerKeyHashToPublicKey.delete(node);
+					}
+				}
+			}
+		}
+		if (failures.length === 1) throw failures[0];
+		if (failures.length > 1) {
+			throw new AggregateError(failures, "Route notification failed");
 		}
 	}
 
@@ -2273,31 +2313,103 @@ export abstract class DirectStream<
 		distance: number,
 		session: number,
 		remoteSession: number,
-		) {
-			const targetHash = typeof target === "string" ? target : target.hashcode();
-			// Best-effort: keep a hash -> public key map for any routed targets so
-			// peer:unreachable events can always carry a PublicSignKey when we have seen it.
-			if (typeof target !== "string") {
-				this.peerKeyHashToPublicKey.set(targetHash, target);
-			}
-
-			const update = this.routes.add(
+	) {
+		const targetHash = target.hashcode();
+		this.peerKeyHashToPublicKey.set(targetHash, target);
+		const update = () => {
+			this.routes.add(
 				from,
 				neighbour,
 				targetHash,
-			distance,
-			session,
-			remoteSession,
-		);
+				distance,
+				session,
+				remoteSession,
+			);
+		};
+		if (from !== this.publicKeyHash) {
+			update();
+			return;
+		}
+		this.updateReachability(target, update);
+	}
 
-			// second condition is that we don't want to emit 'reachable' events for routes where we act only as a relay
-			// in this case, from is != this.publicKeyhash
-			if (from === this.publicKeyHash) {
-				if (update === "new") {
-					this.onPeerReachable(target);
-				}
+	private updateReachability(
+		target: PublicSignKey,
+		update: () => void,
+		afterUpdate?: () => void,
+	) {
+		const targetHash = target.hashcode();
+		const routes = this.routes;
+		const state = this.sharedRoutingState;
+		const from = this.publicKeyHash;
+		const wasReachable = routes.isReachable(from, targetHash);
+		const wasReady = routes.isReachable(from, targetHash, 0);
+		update();
+		const becameReachable = !wasReachable && routes.isReachable(from, targetHash);
+		// waitFor(reachable) requires distance zero, so a better route must also
+		// wake an existing waiter without repeating same-quality path updates.
+		const becameReady = !wasReady && routes.isReachable(from, targetHash, 0);
+		if (!becameReachable && !becameReady) {
+			afterUpdate?.();
+			return;
+		}
+
+		const consumers = [...(state?.consumers ?? [this])].map((consumer) => ({
+			consumer,
+			controller: consumer.closeController,
+		}));
+		const isCurrent = ({ consumer, controller }: (typeof consumers)[number]) =>
+			consumer.started &&
+			!consumer.stopping &&
+			consumer.closeController === controller &&
+			consumer.routes === routes &&
+			(!state || consumer.sharedRoutingState === state);
+		// Seed every owner before callbacks: the first listener may remove the
+		// route synchronously, and all owners need the key for that loss event.
+		for (const owner of consumers) {
+			if (isCurrent(owner)) {
+				owner.consumer.peerKeyHashToPublicKey.set(targetHash, target);
 			}
 		}
+
+		const notifications =
+			state?.reachableNotifications ?? (this.reachableNotifications ??= new Map());
+		const notification = Symbol();
+		notifications.set(targetHash, notification);
+		const failures: unknown[] = [];
+		try {
+			try {
+				afterUpdate?.();
+			} catch (error) {
+				failures.push(error);
+			}
+			for (const owner of consumers) {
+				if (
+					!isCurrent(owner) ||
+					notifications.get(targetHash) !== notification ||
+					!(
+						(becameReachable && routes.isReachable(from, targetHash)) ||
+						(becameReady && routes.isReachable(from, targetHash, 0))
+					)
+				) {
+					continue;
+				}
+				try {
+					owner.consumer.onPeerReachable(target);
+				} catch (error) {
+					failures.push(error);
+				}
+			}
+		} finally {
+			if (notifications.get(targetHash) === notification) {
+				notifications.delete(targetHash);
+			}
+		}
+		if (failures.length === 1) throw failures[0];
+		if (failures.length > 1) {
+			throw new AggregateError(failures, "Route notification failed");
+		}
+	}
 
 	public onPeerReachable(publicKey: PublicSignKey) {
 		// override this fn
@@ -2321,9 +2433,16 @@ export abstract class DirectStream<
 		}
 
 	public updateSession(key: PublicSignKey, session?: number) {
-		if (this.routes.updateSession(key.hashcode(), session)) {
-			return this.onPeerSession(key, session!);
-		}
+		let changed = false;
+		this.updateReachability(
+			key,
+			() => {
+				changed = this.routes.updateSession(key.hashcode(), session);
+			},
+			() => {
+				if (changed) this.onPeerSession(key, session!);
+			},
+		);
 	}
 	public invalidateSession(key: string) {
 		this.routes.updateSession(key, undefined);
@@ -2399,13 +2518,30 @@ export abstract class DirectStream<
 		});
 
 		this.peers.set(publicKeyHash, peerStreams);
-		// Object replacement is not evidence of a new authenticated peer session.
-		if (!existing) this.updateSession(publicKey, -1);
 
 		// Propagate per-peer stream readiness events to the parent emitter
 			const isCurrentPeer = () => this.peers.get(publicKeyHash) === peerStreams;
+			let writableNotified = false;
 			const forwardOutbound = () => {
-				if (isCurrentPeer()) this.dispatchEvent(new CustomEvent("stream:outbound"));
+				if (!isCurrentPeer()) return;
+				if (
+					!writableNotified &&
+					!peerStreams.isClosed &&
+					peerStreams.isWritable
+				) {
+					writableNotified = true;
+					if (existing) {
+						for (const callback of this._ackCallbacks.values()) {
+							callback.onPeerReplacement?.(peerStreams);
+						}
+					}
+					// Wake peer-scoped recovery, including when the predecessor was
+					// already removed. This does not establish an authenticated session.
+					this.dispatchEvent(
+						new CustomEvent("peer:stream-ready", { detail: publicKey }),
+					);
+				}
+				this.dispatchEvent(new CustomEvent("stream:outbound"));
 			};
 			const forwardInbound = () => {
 				if (isCurrentPeer()) this.dispatchEvent(new CustomEvent("stream:inbound"));
@@ -2435,6 +2571,9 @@ export abstract class DirectStream<
 				{ once: true },
 			);
 
+			// Install stream forwarding before a session/route transition can wake
+			// recovery listeners. Replacement alone is not a new authenticated session.
+			if (!existing) this.updateSession(publicKey, -1);
 			this.addRouteConnection(
 				this.publicKeyHash,
 				publicKey.hashcode(),
@@ -2463,18 +2602,22 @@ export abstract class DirectStream<
 		const peerStreams = this.peers.get(hash);
 		this.clearHealthcheckTimer(hash);
 
-		if (peerStreams == null) {
+		if (peerStreams == null || this.removingPeerStreams.has(peerStreams)) {
 			return;
 		}
 
-		// close peer streams
-		await peerStreams.close();
-		if (this.peers.get(hash) !== peerStreams) return;
-
-		// delete peer streams
-		logger.trace("delete peer" + publicKey.toString());
-		this.peers.delete(hash);
-		return peerStreams;
+		// close() may synchronously emit close before yielding. Its callback must
+		// not steal this removal and make the disconnect skip route cleanup.
+		this.removingPeerStreams.add(peerStreams);
+		try {
+			await peerStreams.close();
+			if (this.peers.get(hash) !== peerStreams) return;
+			logger.trace("delete peer" + publicKey.toString());
+			this.peers.delete(hash);
+			return peerStreams;
+		} finally {
+			this.removingPeerStreams.delete(peerStreams);
+		}
 	}
 
 	// MESSAGE METHODS
@@ -3399,6 +3542,7 @@ export abstract class DirectStream<
 		promise: Promise<void>;
 		startTimeout: () => void;
 		clear: () => void;
+		bindDirectAttempt?: (peer: PeerStreams) => void;
 	}> {
 		if (isAnyWhereDeliveryMode(message.header.mode)) {
 			return {
@@ -3413,10 +3557,14 @@ export abstract class DirectStream<
 
 		const existing = this._ackCallbacks.get(idString);
 		if (existing) {
+			// Another same-ID publish may use viable relay/explicit paths. The shared
+			// wait must then retain normal ACK/timeout semantics, not one direct owner.
+			existing.shared = true;
 			return {
 				promise: existing.promise,
 				startTimeout: () => {},
 				clear: existing.clear,
+				bindDirectAttempt: existing.bindDirectAttempt,
 			};
 		}
 
@@ -3429,6 +3577,17 @@ export abstract class DirectStream<
 			}
 		}
 		const haveReceivers = messageToSet.size > 0;
+		const directTarget =
+			!relayed &&
+			from.hashcode() === this.publicKeyHash &&
+			message instanceof DataMessage &&
+			isAcknowledgeDeliveryMode(message.header.mode) &&
+			message.header.mode.redundancy === 1 &&
+			message.header.mode.to.length === 1 &&
+			messageToSet.size === 1
+				? message.header.mode.to[0]
+				: undefined;
+		let directAttempt: PeerStreams | undefined;
 
 		if (haveReceivers && this.peers.size === 0) {
 			return {
@@ -3513,6 +3672,7 @@ export abstract class DirectStream<
 				return;
 			}
 			cleared = true;
+			directAttempt = undefined;
 			timeout && clearTimeout(timeout);
 			onUnreachable &&
 				this.removeEventListener("peer:unreachable", onUnreachable);
@@ -3607,8 +3767,53 @@ export abstract class DirectStream<
 			return false;
 		};
 
+		const onPeerReplacement = (current: PeerStreams): void => {
+			if (
+				!directTarget ||
+				cleared ||
+				ackCallback.shared ||
+				this._ackCallbacks.get(idString) !== ackCallback ||
+				uniqueAcks.has(directTarget) ||
+				!directAttempt?.isClosed ||
+				current === directAttempt ||
+				current.publicKey.hashcode() !== directTarget ||
+				this.peers.get(directTarget) !== current ||
+				current.isClosed ||
+				!current.isWritable
+			) {
+				return;
+			}
+			// A replacement may skip an intermediate object that never became writable.
+			// Fail only the wait bound to the closed direct attempt, not the peer session.
+			clear();
+			deliveryDeferredPromise.reject(
+				new DeliveryError(
+					"Direct delivery stream was replaced before acknowledgement",
+				),
+			);
+		};
+		const bindDirectAttempt = (peer: PeerStreams): void => {
+			if (
+				!directTarget ||
+				cleared ||
+				ackCallback.shared ||
+				this._ackCallbacks.get(idString) !== ackCallback ||
+				uniqueAcks.has(directTarget) ||
+				peer.publicKey.hashcode() !== directTarget
+			) {
+				return;
+			}
+			directAttempt ??= peer;
+			// Readiness may have fired while publishMessage was awaiting earlier work.
+			const current = this.peers.get(directTarget);
+			if (current) onPeerReplacement(current);
+		};
+
 		const ackCallback = {
 			promise: deliveryDeferredPromise.promise,
+			shared: false,
+			bindDirectAttempt: directTarget ? bindDirectAttempt : undefined,
+			onPeerReplacement: directTarget ? onPeerReplacement : undefined,
 			callback: (
 				ack: ACK,
 				messageThrough: PeerStreams,
@@ -3699,6 +3904,7 @@ export abstract class DirectStream<
 			promise: deliveryDeferredPromise.promise,
 			startTimeout,
 			clear: ackCallback.clear,
+			bindDirectAttempt: ackCallback.bindDirectAttempt,
 		};
 	}
 
@@ -3717,6 +3923,7 @@ export abstract class DirectStream<
 		let delivereyPromise: Promise<void> | undefined = undefined as any;
 		let startDeliveryTimeout: (() => void) | undefined;
 		let clearDelivery: (() => void) | undefined;
+		let bindDirectAttempt: ((peer: PeerStreams) => void) | undefined;
 
 		if (
 			(!message.header.signatures ||
@@ -3744,6 +3951,7 @@ export abstract class DirectStream<
 			delivereyPromise = deliveryDeferredPromise.promise;
 			startDeliveryTimeout = deliveryDeferredPromise.startTimeout;
 			clearDelivery = deliveryDeferredPromise.clear;
+			bindDirectAttempt = deliveryDeferredPromise.bindDirectAttempt;
 		}
 
 		try {
@@ -3796,6 +4004,9 @@ export abstract class DirectStream<
 									),
 								);
 							} else {
+								if (fanout.size === 1) {
+									bindDirectAttempt?.(stream);
+								}
 								promises.push(
 									this.waitForPeerWrite(
 										stream,

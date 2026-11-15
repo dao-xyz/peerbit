@@ -396,54 +396,83 @@ describe("receive admission batch signatures with canAppend", function () {
 		}
 	});
 
-	it("drains an admitted receive and clears leases when close cancels its lifecycle", async () => {
+	it("drains started authorization but cancels further admission on close", async () => {
 		const entered = pDefer<void>();
 		const release = pDefer<void>();
 		const callbackEntries: Entry<Operation<string>>[] = [];
-		let first = true;
-		const fixture = await createFixture(16, async (entry) => {
-			callbackEntries.push(entry);
-			if (first) {
-				first = false;
-				entered.resolve();
-				await release.promise;
-			}
-			return true;
-		});
+		let callbackCompleted = false;
+		const changes: Change<Operation<string>>[] = [];
+		const fixture = await createFixture(
+			16,
+			async (entry) => {
+				callbackEntries.push(entry);
+				if (callbackEntries.length === 1) {
+					entered.resolve();
+					await release.promise;
+				}
+				callbackCompleted = true;
+				return true;
+			},
+			(change) => changes.push(change),
+		);
+		const sharedLog = fixture.target.log as any;
+		const lowerLog = fixture.target.log.log as any;
+		const facts = sharedLog._receiveSignatureVerificationFacts;
+		const indexPut = sinon.spy(lowerLog.entryIndex, "put");
+		let receive: Promise<void> | undefined;
+		let close: Promise<unknown> | undefined;
 		try {
-			const receive = deliver(fixture);
+			let receiveSettled = false;
+			receive = deliver(fixture).then(() => {
+				receiveSettled = true;
+			});
 			await entered.promise;
+			expect(callbackEntries).to.deep.equal([fixture.entries[0]]);
+			expect(lowerLog.length).to.equal(0);
 			for (const entry of fixture.entries) {
-				expect(
-					(fixture.target.log as any)._receiveSignatureVerificationFacts.has(
-						entry,
-					),
-				).to.equal(true);
+				expect(facts.get(entry)).to.have.length(1);
 			}
 
 			let closeSettled = false;
-			const close = fixture.target.close().then(() => {
+			close = fixture.target.close().then(() => {
 				closeSettled = true;
 			});
 			await new Promise<void>((resolve) => setTimeout(resolve, 0));
 			expect(
-				(fixture.target.log as any)._instanceLifecycle
-					.membershipLifecycleController.signal.aborted,
+				sharedLog._instanceLifecycle.membershipLifecycleController.signal
+					.aborted,
 			).to.equal(true);
 			expect(closeSettled).to.equal(false);
+			expect(receiveSettled).to.equal(false);
+			expect(callbackCompleted).to.equal(false);
+			expect(callbackEntries).to.deep.equal([fixture.entries[0]]);
+			expect(lowerLog._joining.size).to.equal(1);
+			for (const entry of fixture.entries) {
+				expect(facts.get(entry)).to.have.length(1);
+			}
+			expect(indexPut.callCount).to.equal(0);
+			expect(changes).to.deep.equal([]);
 
 			release.resolve();
 			await Promise.all([receive, close]);
-			expect(callbackEntries).to.deep.equal(fixture.entries);
+			expect(closeSettled).to.equal(true);
+			expect(receiveSettled).to.equal(true);
+			expect(callbackCompleted).to.equal(true);
+			expect(callbackEntries).to.deep.equal([fixture.entries[0]]);
+			// The blocked callback returned true, but cancellation wins before any
+			// entry-index write, change event, or admission of the remaining entries.
+			expect(indexPut.callCount).to.equal(0);
+			expect(changes).to.deep.equal([]);
+			expect(lowerLog._joining.size).to.equal(0);
+			expect(sharedLog._activeReceiveHandlersByPeer.size).to.equal(0);
+			expect(sharedLog._receiveHandlerDrainByPeer.size).to.equal(0);
 			for (const entry of fixture.entries) {
-				expect(
-					(fixture.target.log as any)._receiveSignatureVerificationFacts.has(
-						entry,
-					),
-				).to.equal(false);
+				expect(facts.has(entry)).to.equal(false);
 			}
 		} finally {
 			release.resolve();
+			await Promise.allSettled([receive, close]);
+			indexPut.restore();
 			await fixture.session.stop();
 		}
 	});

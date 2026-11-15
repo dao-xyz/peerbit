@@ -1,5 +1,3 @@
-import { noise } from "@chainsafe/libp2p-noise";
-import { yamux } from "@chainsafe/libp2p-yamux";
 import {
 	type Connection,
 	ConnectionClosedError,
@@ -7,7 +5,9 @@ import {
 	type Stream,
 	StreamResetError,
 } from "@libp2p/interface";
+import { noise } from "@libp2p/noise";
 import { tcp } from "@libp2p/tcp";
+import { yamux } from "@libp2p/yamux";
 import { Cache } from "@peerbit/cache";
 import { Ed25519Keypair } from "@peerbit/crypto";
 import { expect } from "chai";
@@ -19,9 +19,14 @@ import { DirectStream, type DirectStreamComponents } from "../src/index.js";
 class GuardedStream extends DirectStream {
 	cleanupCount = 0;
 
-	constructor(components: DirectStreamComponents) {
-		super(components, ["/before-stop/1.0.0"], {
+	constructor(
+		components: DirectStreamComponents,
+		protocol = "/before-stop/1.0.0",
+		sharedRouting = true,
+	) {
+		super(components, [protocol], {
 			connectionManager: false,
+			sharedRouting,
 		});
 	}
 
@@ -41,6 +46,21 @@ const createNode = (start = true) =>
 		connectionMonitor: { enabled: false },
 		connectionManager: { reconnectRetries: 0 },
 		services: { directstream: (components) => new GuardedStream(components) },
+	});
+
+const createSharedNode = (sharedRouting = true) =>
+	createLibp2p<{ first: GuardedStream; second: GuardedStream }>({
+		transports: [tcp()],
+		streamMuxers: [yamux()],
+		connectionEncrypters: [noise()],
+		connectionMonitor: { enabled: false },
+		connectionManager: { reconnectRetries: 0 },
+		services: {
+			first: (components) =>
+				new GuardedStream(components, "/shared-first/1.0.0", sharedRouting),
+			second: (components) =>
+				new GuardedStream(components, "/shared-second/1.0.0", sharedRouting),
+		},
 	});
 
 const createRaw = (id: string): Stream =>
@@ -196,7 +216,617 @@ describe("stream outbound negotiation recovery", () => {
 	});
 });
 
+describe("stream shared reachable notification", () => {
+	for (const sharedRouting of [true, false]) {
+		it(`keeps public route events and reads consistent for ${sharedRouting ? "shared" : "independent"} owners`, async () => {
+			const node = await createSharedNode(sharedRouting);
+			const { first, second } = node.services;
+			const key = (await Ed25519Keypair.create()).publicKey;
+			const hash = key.hashcode();
+			const reached: string[][] = [[], []];
+			const lost: string[][] = [[], []];
+			const reads: boolean[][] = [[], []];
+			for (const [index, consumer] of [first, second].entries()) {
+				consumer.addEventListener("peer:reachable", ({ detail }) => {
+					reached[index].push(detail.hashcode());
+					reads[index].push(
+						consumer.routes.isReachable(consumer.publicKeyHash, hash) &&
+							consumer.peerKeyHashToPublicKey.get(hash) === key,
+					);
+				});
+				consumer.addEventListener("peer:unreachable", ({ detail }) => {
+					lost[index].push(detail.hashcode());
+				});
+			}
+			try {
+				first.routes.updateSession(hash, 1);
+				first.addRouteConnection(first.publicKeyHash, hash, key, 1, 1, 1);
+				expect(reached).to.deep.equal([[hash], sharedRouting ? [hash] : []]);
+				expect(reads).to.deep.equal([[true], sharedRouting ? [true] : []]);
+				expect(second.routes.isReachable(second.publicKeyHash, hash)).to.equal(
+					sharedRouting,
+				);
+				first.removePeerFromRoutes(hash);
+				expect(lost).to.deep.equal([[hash], sharedRouting ? [hash] : []]);
+				for (const consumer of [first, second]) {
+					expect(
+						consumer.routes.isReachable(consumer.publicKeyHash, hash),
+					).to.equal(false);
+					expect(consumer.peerKeyHashToPublicKey.has(hash)).to.equal(false);
+				}
+			} finally {
+				await node.stop();
+			}
+		});
+	}
+
+	it("does not notify local owners for a relay-only route", async () => {
+		const node = await createSharedNode();
+		const { first, second } = node.services;
+		const key = (await Ed25519Keypair.create()).publicKey;
+		const origin = (await Ed25519Keypair.create()).publicKey.hashcode();
+		const reached: string[] = [];
+		for (const consumer of [first, second]) {
+			consumer.addEventListener("peer:reachable", ({ detail }) => {
+				reached.push(detail.hashcode());
+			});
+		}
+		try {
+			first.routes.updateSession(key.hashcode(), 1);
+			first.addRouteConnection(origin, key.hashcode(), key, 1, 1, 1);
+			expect(first.routes.isReachable(origin, key.hashcode())).to.equal(true);
+			for (const consumer of [first, second]) {
+				expect(
+					consumer.routes.isReachable(consumer.publicKeyHash, key.hashcode()),
+				).to.equal(false);
+			}
+			expect(reached).to.deep.equal([]);
+		} finally {
+			await node.stop();
+		}
+	});
+
+	it("notifies once when another owner adds an alternative reachable path", async () => {
+		const node = await createSharedNode();
+		const { first, second } = node.services;
+		const key = (await Ed25519Keypair.create()).publicKey;
+		const hash = key.hashcode();
+		const relay = (await Ed25519Keypair.create()).publicKey.hashcode();
+		const reached: string[][] = [[], []];
+		for (const [index, consumer] of [first, second].entries()) {
+			consumer.addEventListener("peer:reachable", ({ detail }) => {
+				reached[index].push(detail.hashcode());
+			});
+		}
+		try {
+			first.routes.updateSession(hash, 1);
+			first.addRouteConnection(first.publicKeyHash, hash, key, 1, 1, 1);
+			expect(reached).to.deep.equal([[hash], [hash]]);
+			second.addRouteConnection(second.publicKeyHash, relay, key, 2, 1, 1);
+			first.addRouteConnection(first.publicKeyHash, hash, key, 1, 1, 1);
+			expect(reached).to.deep.equal([[hash], [hash]]);
+		} finally {
+			await node.stop();
+		}
+	});
+
+	it("notifies the other public owner before rethrowing a reachable callback failure", async () => {
+		const node = await createSharedNode();
+		const { first, second } = node.services;
+		const key = (await Ed25519Keypair.create()).publicKey;
+		const failure = new Error("reachable callback failed");
+		const reached: string[] = [];
+		second.addEventListener("peer:reachable", ({ detail }) => {
+			reached.push(detail.hashcode());
+		});
+		const fail = sinon.stub(first, "onPeerReachable").throws(failure);
+		try {
+			first.routes.updateSession(key.hashcode(), 1);
+			let caught: unknown;
+			try {
+				first.addRouteConnection(
+					first.publicKeyHash,
+					key.hashcode(),
+					key,
+					1,
+					1,
+					1,
+				);
+			} catch (error) {
+				caught = error;
+			}
+			expect(caught).to.equal(failure);
+			expect(reached).to.deep.equal([key.hashcode()]);
+			expect(second.peerKeyHashToPublicKey.get(key.hashcode())).to.equal(key);
+		} finally {
+			fail.restore();
+			await node.stop();
+		}
+	});
+
+	it("settles an existing reachable waiter when a shared route becomes distance-zero eligible", async () => {
+		const node = await createSharedNode();
+		const { first, second } = node.services;
+		const key = (await Ed25519Keypair.create()).publicKey;
+		const hash = key.hashcode();
+		const relays = await Promise.all([
+			Ed25519Keypair.create(),
+			Ed25519Keypair.create(),
+		]);
+		const abort = new AbortController();
+		let waiting: Promise<string[] | unknown> | undefined;
+		try {
+			first.routes.updateSession(hash, 1);
+			first.addRouteConnection(
+				first.publicKeyHash,
+				relays[0].publicKey.hashcode(),
+				key,
+				1,
+				1,
+				1,
+			);
+			expect(second.routes.isReachable(second.publicKeyHash, hash)).to.equal(
+				true,
+			);
+			expect(second.routes.isReachable(second.publicKeyHash, hash, 0)).to.equal(
+				false,
+			);
+			waiting = second
+				.waitFor(key, {
+					target: "reachable",
+					timeout: 1_000,
+					signal: abort.signal,
+				})
+				.catch((error: unknown) => error);
+			first.addRouteConnection(
+				first.publicKeyHash,
+				relays[1].publicKey.hashcode(),
+				key,
+				0,
+				1,
+				1,
+			);
+			expect(second.routes.isReachable(second.publicKeyHash, hash, 0)).to.equal(
+				true,
+			);
+			expect(await waiting).to.deep.equal([hash]);
+		} finally {
+			abort.abort();
+			await waiting;
+			await node.stop();
+		}
+	});
+
+	it("settles an existing reachable waiter when addPeer restores a stale route session", async () => {
+		const node = await createSharedNode();
+		const { first, second } = node.services;
+		const key = (await Ed25519Keypair.create()).publicKey;
+		const hash = key.hashcode();
+		const relay = (await Ed25519Keypair.create()).publicKey.hashcode();
+		const abort = new AbortController();
+		let waiting: Promise<unknown> | undefined;
+		try {
+			first.routes.updateSession(hash, 1);
+			first.addRouteConnection(first.publicKeyHash, relay, key, 0, 1, 1);
+			expect(second.routes.isReachable(second.publicKeyHash, hash, 0)).to.equal(
+				true,
+			);
+			first.routes.updateSession(hash, 2);
+			expect(second.routes.isReachable(second.publicKeyHash, hash, 0)).to.equal(
+				false,
+			);
+			waiting = second
+				.waitFor(key, {
+					target: "reachable",
+					timeout: 1_000,
+					signal: abort.signal,
+				})
+				.catch((error: unknown) => error);
+			const peer = first.addPeer(
+				key.toPeerId(),
+				key,
+				"/shared-first/1.0.0",
+				"fresh",
+			);
+			expect(first.peers.get(hash)).to.equal(peer);
+			expect(second.routes.isReachable(second.publicKeyHash, hash, 0)).to.equal(
+				true,
+			);
+			expect(await waiting).to.deep.equal([hash]);
+		} finally {
+			abort.abort();
+			await waiting;
+			await node.stop();
+		}
+	});
+
+	for (const outcome of ["removes the route", "throws"] as const) {
+		it(`finishes shared session reachability when the session callback ${outcome}`, async () => {
+			const node = await createSharedNode();
+			const { first, second } = node.services;
+			const key = (await Ed25519Keypair.create()).publicKey;
+			const hash = key.hashcode();
+			const failure = new Error("session callback failed");
+			const reached: string[][] = [[], []];
+			const lost: string[][] = [[], []];
+			for (const [index, consumer] of [first, second].entries()) {
+				consumer.addEventListener("peer:reachable", ({ detail }) => {
+					reached[index].push(detail.hashcode());
+				});
+				consumer.addEventListener("peer:unreachable", ({ detail }) => {
+					lost[index].push(detail.hashcode());
+				});
+			}
+			const session = sinon.stub(first, "onPeerSession").callsFake(() => {
+				if (outcome === "throws") throw failure;
+				first.removePeerFromRoutes(hash);
+			});
+			try {
+				// The route alone is not reachable until remote session state exists.
+				first.addRouteConnection(first.publicKeyHash, hash, key, 1, 1, 1);
+				expect(first.routes.isReachable(first.publicKeyHash, hash)).to.equal(
+					false,
+				);
+				expect(reached).to.deep.equal([[], []]);
+				let caught: unknown;
+				try {
+					first.updateSession(key, 1);
+				} catch (error) {
+					caught = error;
+				}
+				expect(session.calledOnceWithExactly(key, 1)).to.equal(true);
+				expect(caught).to.equal(outcome === "throws" ? failure : undefined);
+				expect(reached).to.deep.equal(
+					outcome === "throws" ? [[hash], [hash]] : [[], []],
+				);
+				expect(lost).to.deep.equal(
+					outcome === "throws" ? [[], []] : [[hash], [hash]],
+				);
+				for (const consumer of [first, second]) {
+					expect(
+						consumer.routes.isReachable(consumer.publicKeyHash, hash),
+					).to.equal(outcome === "throws");
+					expect(consumer.peerKeyHashToPublicKey.get(hash)).to.equal(
+						outcome === "throws" ? key : undefined,
+					);
+				}
+				expect(
+					first["sharedRoutingState"]!.reachableNotifications.size,
+				).to.equal(0);
+			} finally {
+				session.restore();
+				await node.stop();
+			}
+		});
+	}
+
+	for (const sharedRouting of [true, false]) {
+		it(`notifies a session-listener replacement once for ${sharedRouting ? "shared" : "independent"} owners`, async () => {
+			const node = await createSharedNode(sharedRouting);
+			const { first, second } = node.services;
+			const key = (await Ed25519Keypair.create()).publicKey;
+			const hash = key.hashcode();
+			const reached: string[][] = [[], []];
+			for (const [index, consumer] of [first, second].entries()) {
+				consumer.addEventListener("peer:reachable", ({ detail }) => {
+					reached[index].push(detail.hashcode());
+				});
+			}
+			first.addEventListener(
+				"peer:session",
+				() => {
+					first.removePeerFromRoutes(hash);
+					first.routes.updateSession(hash, 2);
+					first.addRouteConnection(first.publicKeyHash, hash, key, 1, 2, 2);
+				},
+				{ once: true },
+			);
+			try {
+				first.addRouteConnection(first.publicKeyHash, hash, key, 1, 1, 1);
+				expect(first.routes.isReachable(first.publicKeyHash, hash)).to.equal(
+					false,
+				);
+				expect(reached).to.deep.equal([[], []]);
+				first.updateSession(key, 1);
+				expect(reached).to.deep.equal([[hash], sharedRouting ? [hash] : []]);
+				expect(first.routes.isReachable(first.publicKeyHash, hash)).to.equal(
+					true,
+				);
+				expect(second.routes.isReachable(second.publicKeyHash, hash)).to.equal(
+					sharedRouting,
+				);
+				const notifications =
+					first["sharedRoutingState"]?.reachableNotifications ??
+					Reflect.get(first, "reachableNotifications");
+				expect(notifications?.size ?? 0).to.equal(0);
+			} finally {
+				await node.stop();
+			}
+		});
+	}
+
+	it("does not notify stale reachability after a synchronous public listener removes the route", async () => {
+		const node = await createSharedNode();
+		const { first, second } = node.services;
+		const key = (await Ed25519Keypair.create()).publicKey;
+		const hash = key.hashcode();
+		const reached: string[][] = [[], []];
+		const lost: string[][] = [[], []];
+		for (const [index, consumer] of [first, second].entries()) {
+			consumer.addEventListener("peer:unreachable", ({ detail }) => {
+				lost[index].push(detail.hashcode());
+			});
+		}
+		first.addEventListener("peer:reachable", ({ detail }) => {
+			reached[0].push(detail.hashcode());
+			first.removePeerFromRoutes(hash);
+		});
+		second.addEventListener("peer:reachable", ({ detail }) => {
+			reached[1].push(detail.hashcode());
+		});
+		try {
+			first.routes.updateSession(hash, 1);
+			first.addRouteConnection(first.publicKeyHash, hash, key, 1, 1, 1);
+			expect(reached).to.deep.equal([[hash], []]);
+			expect(lost).to.deep.equal([[hash], [hash]]);
+			for (const consumer of [first, second]) {
+				expect(
+					consumer.routes.isReachable(consumer.publicKeyHash, hash),
+				).to.equal(false);
+				expect(consumer.peerKeyHashToPublicKey.has(hash)).to.equal(false);
+			}
+		} finally {
+			await node.stop();
+		}
+	});
+
+	it("does not duplicate a replacement route notification after synchronous remove and re-add", async () => {
+		const node = await createSharedNode();
+		const { first, second } = node.services;
+		const key = (await Ed25519Keypair.create()).publicKey;
+		const hash = key.hashcode();
+		const reached: string[][] = [[], []];
+		const lost: string[][] = [[], []];
+		for (const [index, consumer] of [first, second].entries()) {
+			consumer.addEventListener("peer:reachable", ({ detail }) => {
+				reached[index].push(detail.hashcode());
+			});
+			consumer.addEventListener("peer:unreachable", ({ detail }) => {
+				lost[index].push(detail.hashcode());
+			});
+		}
+		first.addEventListener(
+			"peer:reachable",
+			() => {
+				first.removePeerFromRoutes(hash);
+				first.routes.updateSession(hash, 2);
+				first.addRouteConnection(first.publicKeyHash, hash, key, 1, 2, 2);
+			},
+			{ once: true },
+		);
+		try {
+			first.routes.updateSession(hash, 1);
+			first.addRouteConnection(first.publicKeyHash, hash, key, 1, 1, 1);
+			expect(reached).to.deep.equal([[hash, hash], [hash]]);
+			expect(lost).to.deep.equal([[hash], [hash]]);
+			for (const consumer of [first, second]) {
+				expect(
+					consumer.routes.isReachable(consumer.publicKeyHash, hash),
+				).to.equal(true);
+				expect(consumer.peerKeyHashToPublicKey.get(hash)).to.equal(key);
+			}
+		} finally {
+			await node.stop();
+		}
+	});
+
+	it("excludes quiescing and stopped owners and notifies a restarted owner once", async () => {
+		const node = await createSharedNode();
+		const { first, second } = node.services;
+		const key = (await Ed25519Keypair.create()).publicKey;
+		const hash = key.hashcode();
+		const reached: string[][] = [[], []];
+		for (const [index, consumer] of [first, second].entries()) {
+			consumer.addEventListener("peer:reachable", ({ detail }) => {
+				reached[index].push(detail.hashcode());
+			});
+		}
+		const addRoute = () => {
+			second.routes.updateSession(hash, 1);
+			second.addRouteConnection(second.publicKeyHash, hash, key, 1, 1, 1);
+		};
+		try {
+			await first.beforeStop();
+			addRoute();
+			expect(reached).to.deep.equal([[], [hash]]);
+			second.removePeerFromRoutes(hash);
+			await first.stop();
+			addRoute();
+			expect(reached).to.deep.equal([[], [hash, hash]]);
+			second.removePeerFromRoutes(hash);
+			await first.start();
+			expect(first.routes).to.equal(second.routes);
+			addRoute();
+			expect(reached).to.deep.equal([[hash], [hash, hash, hash]]);
+			expect(first.peerKeyHashToPublicKey.get(hash)).to.equal(key);
+		} finally {
+			await node.stop();
+		}
+	});
+});
+
 describe("stream before-stop barrier", () => {
+	it("keeps unreachable notifications local when routing is not shared", async () => {
+		const node = await createSharedNode(false);
+		const { first, second } = node.services;
+		const key = (await Ed25519Keypair.create()).publicKey;
+		const hash = key.hashcode();
+		const firstLost = sinon.spy(first, "onPeerUnreachable");
+		const secondLost = sinon.spy(second, "onPeerUnreachable");
+		try {
+			expect(first.routes).not.to.equal(second.routes);
+			for (const consumer of [first, second]) {
+				consumer.routes.updateSession(hash, 1);
+				consumer.addRouteConnection(consumer.publicKeyHash, hash, key, 1, 1, 1);
+			}
+			first.removePeerFromRoutes(hash);
+			expect(firstLost.calledOnceWithExactly(hash)).to.equal(true);
+			expect(secondLost.called).to.equal(false);
+			expect(first.peerKeyHashToPublicKey.has(hash)).to.equal(false);
+			expect(second.peerKeyHashToPublicKey.get(hash)).to.equal(key);
+			expect(second.routes.isReachable(second.publicKeyHash, hash)).to.equal(
+				true,
+			);
+		} finally {
+			firstLost.restore();
+			secondLost.restore();
+			await node.stop();
+		}
+	});
+
+	for (const outcome of ["restores the route", "throws"] as const) {
+		it(`finishes shared loss notification safely when the first consumer ${outcome}`, async () => {
+			const node = await createSharedNode();
+			const { first, second } = node.services;
+			const key = (await Ed25519Keypair.create()).publicKey;
+			const hash = key.hashcode();
+			const failure = new Error("unreachable callback failed");
+			const firstLost = sinon.stub(first, "onPeerUnreachable").callsFake(() => {
+				if (outcome === "throws") throw failure;
+				first.routes.updateSession(hash, 2);
+				first.addRouteConnection(first.publicKeyHash, hash, key, 1, 2, 2);
+			});
+			const secondLost = sinon.spy(second, "onPeerUnreachable");
+			try {
+				expect(first.routes).to.equal(second.routes);
+				first.routes.updateSession(hash, 1);
+				for (const consumer of [first, second]) {
+					consumer.addRouteConnection(
+						consumer.publicKeyHash,
+						hash,
+						key,
+						1,
+						1,
+						1,
+					);
+				}
+				if (outcome === "throws") {
+					let caught: unknown;
+					try {
+						second.removePeerFromRoutes(hash);
+					} catch (error) {
+						caught = error;
+					}
+					expect(caught).to.equal(failure);
+					expect(secondLost.calledOnceWithExactly(hash)).to.equal(true);
+					for (const consumer of [first, second]) {
+						expect(consumer.peerKeyHashToPublicKey.has(hash)).to.equal(false);
+					}
+				} else {
+					second.removePeerFromRoutes(hash);
+					expect(secondLost.called).to.equal(false);
+					expect(first.routes.isReachable(first.publicKeyHash, hash)).to.equal(
+						true,
+					);
+					expect(first.routes.getSession(hash)).to.equal(2);
+					for (const consumer of [first, second]) {
+						expect(consumer.peerKeyHashToPublicKey.get(hash)).to.equal(key);
+					}
+				}
+				expect(firstLost.calledOnceWithExactly(hash)).to.equal(true);
+			} finally {
+				firstLost.restore();
+				secondLost.restore();
+				await node.stop();
+			}
+		});
+	}
+
+	it("excludes quiescing and stopped routing consumers and notifies a restarted consumer once", async () => {
+		const node = await createSharedNode();
+		const { first, second } = node.services;
+		const key = (await Ed25519Keypair.create()).publicKey;
+		const hash = key.hashcode();
+		const lost = sinon.spy(first, "onPeerUnreachable");
+		const otherLost = sinon.spy(second, "onPeerUnreachable");
+		const addRoute = (subject: GuardedStream) => {
+			subject.routes.updateSession(hash, 1);
+			subject.addRouteConnection(
+				subject.publicKeyHash,
+				hash,
+				key,
+				1,
+				Date.now(),
+				1,
+			);
+		};
+		try {
+			expect(first.routes).to.equal(second.routes);
+			addRoute(first);
+			addRoute(second);
+			await first.beforeStop();
+			second.removePeerFromRoutes(hash);
+			expect(lost.called).to.equal(false);
+			expect(otherLost.calledOnceWithExactly(hash)).to.equal(true);
+
+			await first.stop();
+			addRoute(second);
+			second.removePeerFromRoutes(hash);
+			expect(lost.called).to.equal(false);
+			expect(otherLost.callCount).to.equal(2);
+
+			await first.start();
+			expect(first.routes).to.equal(second.routes);
+			addRoute(first);
+			addRoute(second);
+			expect(first.peerKeyHashToPublicKey.has(hash)).to.equal(true);
+			second.removePeerFromRoutes(hash);
+			expect(lost.calledOnceWithExactly(hash)).to.equal(true);
+			expect(otherLost.callCount).to.equal(3);
+			expect(first.peerKeyHashToPublicKey.has(hash)).to.equal(false);
+		} finally {
+			lost.restore();
+			otherLost.restore();
+			await node.stop();
+		}
+	});
+
+	it("releases shared routing ownership even when final stop reports a teardown failure", async () => {
+		const node = await createSharedNode();
+		const { first, second } = node.services;
+		const key = (await Ed25519Keypair.create()).publicKey;
+		const sharedRoutes = first.routes;
+		const failure = new Error(
+			"final teardown failed after the network drained",
+		);
+		let failStop: sinon.SinonStub | undefined;
+		try {
+			expect(sharedRoutes).to.equal(second.routes);
+			first.addRouteConnection(
+				first.publicKeyHash,
+				key.hashcode(),
+				key,
+				1,
+				1,
+				1,
+			);
+			expect(sharedRoutes.countAll()).to.be.greaterThan(0);
+			// Drain the real network first so the injected error owns no live handles.
+			await first.beforeStop();
+			failStop = sinon.stub(first as any, "stopNetwork").rejects(failure);
+			expect(await first.stop().catch((error) => error)).to.equal(failure);
+			expect(first.isStarted()).to.equal(false);
+			failStop.restore();
+			await second.stop();
+			expect(sharedRoutes.countAll()).to.equal(0);
+			await first.start();
+			expect(first.routes).not.to.equal(sharedRoutes);
+		} finally {
+			failStop?.restore();
+			await node.stop();
+		}
+	});
+
 	it("preserves guarded subclass cleanup and permits a complete restart", async () => {
 		const node = await createNode();
 		const subject = node.services.directstream;

@@ -5181,6 +5181,18 @@ export class TopicControlPlane
 
 		if (pubsubMessage instanceof PeerUnavailable) {
 			const peerHash = pubsubMessage.publicKeyHash;
+			// A relay reports loss of its own path, not the subscriber's departure.
+			// Keep stronger local evidence; explicit signed Unsubscribe messages are
+			// handled separately and still remove directly connected subscribers.
+			const direct = this.peers.get(peerHash);
+			if (
+				direct &&
+				!direct.isClosed &&
+				direct.isReadable &&
+				direct.isWritable
+			) {
+				return;
+			}
 			// Relay-originated shard deltas are keyed only by shard membership, not by
 			// per-topic subscription watermarks. They are emitted immediately when the
 			// relay loses a child so downstream peers can shed stale membership without

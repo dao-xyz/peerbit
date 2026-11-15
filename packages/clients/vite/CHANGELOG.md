@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.0.10
+
+### Patch Changes
+
+- [#1513](https://github.com/dao-xyz/peerbit/pull/1513) [`03a8af1`](https://github.com/dao-xyz/peerbit/commit/03a8af1ce40ac9dd94f7f914283ab96a10cf68fa) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Replace the glob-watching static-copy dependency with literal asset routes and the existing copy helper, removing the production chokidar 3/braces dependency chain. Preserve public-file precedence, custom asset additions, proxy/base routing, build output with `copyPublicDir: false`, and the legacy SQLite Wasm alias without creating another watcher.
+
 ## 2.0.9
 
 ### Patch Changes

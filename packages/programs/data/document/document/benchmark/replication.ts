@@ -1,6 +1,6 @@
-import { yamux } from "@chainsafe/libp2p-yamux";
 import { field, option, variant } from "@dao-xyz/borsh";
 import { tcp } from "@libp2p/tcp";
+import { yamux } from "@libp2p/yamux";
 import { Program } from "@peerbit/program";
 import { delay } from "@peerbit/time";
 import B from "benchmark";

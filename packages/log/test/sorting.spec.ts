@@ -6,13 +6,17 @@ import { signKey } from "./fixtures/privateKey.js";
 
 describe("sorting", function () {
 	let store: BlockStore;
-	before(async () => {
+	beforeEach(async () => {
 		store = new AnyBlockStore();
 		await store.start();
 	});
 
-	after(async () => {
-		await store.stop();
+	afterEach(async () => {
+		try {
+			await log?.close();
+		} finally {
+			await store.stop();
+		}
 	});
 
 	let log: Log<Uint8Array>;
@@ -23,7 +27,7 @@ describe("sorting", function () {
 
 	describe("last write wins", () => {
 		it("sorts by last write wins", async () => {
-			await log.open(new AnyBlockStore(), signKey, {
+			await log.open(store, signKey, {
 				sortFn: LastWriteWins,
 			});
 
@@ -61,7 +65,7 @@ describe("sorting", function () {
 
 	describe("compare", () => {
 		it("last write wins", async () => {
-			await log.open(new AnyBlockStore(), signKey, {
+			await log.open(store, signKey, {
 				sortFn: LastWriteWins,
 			});
 			const { entry: e0 } = await log.append(new Uint8Array([0]));
@@ -70,7 +74,7 @@ describe("sorting", function () {
 		});
 
 		it("first write wins", async () => {
-			await log.open(new AnyBlockStore(), signKey, {
+			await log.open(store, signKey, {
 				sortFn: FirstWriteWins,
 			});
 			const { entry: e0 } = await log.append(new Uint8Array([0]));
