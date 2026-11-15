@@ -5,6 +5,8 @@ import type { DataMessage, Message } from "./messages.js";
 export * from "./keys.js";
 
 export interface PeerEvents {
+	/** First writable stream for a local transport object; not a session or delivery proof. */
+	"peer:stream-ready": CustomEvent<PublicSignKey>;
 	"peer:session": CustomEvent<PublicSignKey>;
 	"peer:reachable": CustomEvent<PublicSignKey>;
 	"peer:unreachable": CustomEvent<PublicSignKey>;

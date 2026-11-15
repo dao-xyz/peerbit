@@ -1,6 +1,6 @@
 {
 	"name": "@peerbit/document",
-	"version": "15.1.8",
+	"version": "15.1.12",
 	"description": "Document store implementation",
 	"type": "module",
 	"sideEffects": false,
@@ -56,17 +56,17 @@
 		"bench:ordered-remote-projection": "node --loader ts-node/esm ./benchmark/ordered-remote-projection.ts",
 		"bench:shared-fs-cold-join": "node --loader ts-node/esm ./benchmark/shared-fs-cold-join.ts",
 		"test": "aegir test --target node",
-		"test:document-rust-core": "npm run build && PEERBIT_SHARED_LOG_RUST_CORE=1 aegir test -t node --grep '^(?!.*(uses the validated local append path|uses the independent native prepared batch path|uses native shared-log planning for replicated target-none puts|uses commit-only local puts when coordinate persistence is deferred)).*(native conformance guard |operations basic |operations get |operations index |operations search |iterate sort |count approximate |query distribution |returnIndexed |caching |custom index |prefetch )' -- --forbid-pending",
+		"test:document-rust-core": "npm run build && PEERBIT_SHARED_LOG_RUST_CORE=1 aegir test -t node --grep '^(?!.*(uses the validated local append path|uses the independent native prepared batch path|uses native shared-log planning for replicated target-none puts|uses commit-only local puts when coordinate persistence is deferred)).*(native conformance guard |operations basic |operations get |operations index |operations search |iterate sort |count approximate |query distribution |returnIndexed |caching |custom index |prefetch )' -- --forbid-pending --no-exit",
 		"lint": "aegir lint",
 		"test:cov": "aegir test -t node --cov"
 	},
 	"author": "Peerbit contributors",
 	"license": "MIT",
 	"dependencies": {
-		"@chainsafe/libp2p-yamux": "^8.0.1",
 		"@dao-xyz/borsh": "^6.0.0",
-		"@libp2p/interface": "^3.2.5",
-		"@libp2p/tcp": "^11.0.26",
+		"@libp2p/interface": "^3.3.1",
+		"@libp2p/tcp": "^11.0.29",
+		"@libp2p/yamux": "^8.0.4",
 		"@multiformats/multiaddr": "^13.0.3",
 		"@peerbit/cache": "workspace:*",
 		"@peerbit/crypto": "workspace:*",
@@ -91,8 +91,8 @@
 		"@peerbit/document-rust": "workspace:*"
 	},
 	"devDependencies": {
-		"@chainsafe/libp2p-noise": "^17.0.0",
-		"@libp2p/websockets": "^10.1.19",
+		"@libp2p/noise": "^17.0.4",
+		"@libp2p/websockets": "^10.1.22",
 		"@peerbit/log-rust": "workspace:*",
 		"@peerbit/native-backbone": "workspace:*",
 		"@peerbit/test-utils": "workspace:*",

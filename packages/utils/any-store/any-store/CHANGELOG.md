@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.2.18
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @peerbit/any-store-opfs@1.1.16
+
 ## 2.2.17
 
 ### Patch Changes

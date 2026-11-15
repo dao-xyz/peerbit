@@ -41,6 +41,7 @@ describe("replication", function () {
 		const buffer1: Uint8Array[] = [];
 		const buffer2: Uint8Array[] = [];
 		let processing = 0;
+		const logs = new Set<Pick<Log<unknown>, "close">>();
 
 		const handleMessage = async (message: PubSubData, topic: string) => {
 			if (!message.topics.includes(topic)) {
@@ -64,18 +65,22 @@ describe("replication", function () {
 
 		beforeEach(async () => {
 			log1 = new Log({ id: logId });
+			logs.add(log1);
 			(await log1.open(session.peers[0].services.blocks, signKey),
 				{ encoding: JSON_ENCODING });
 			log2 = new Log({ id: logId });
+			logs.add(log2);
 			await log2.open(session.peers[1].services.blocks, signKey2, {
 				encoding: JSON_ENCODING,
 			});
 
 			input1 = new Log({ id: logId });
+			logs.add(input1);
 			await input1.open(session.peers[0].services.blocks, signKey, {
 				encoding: JSON_ENCODING,
 			});
 			input2 = new Log({ id: logId });
+			logs.add(input2);
 			await input2.open(session.peers[1].services.blocks, signKey2, {
 				encoding: JSON_ENCODING,
 			});
@@ -104,8 +109,16 @@ describe("replication", function () {
 		});
 
 		afterEach(async () => {
-			await session.peers[0].services.pubsub.unsubscribe(channel);
-			await session.peers[1].services.pubsub.unsubscribe(channel);
+			try {
+				await session.peers[0].services.pubsub.unsubscribe(channel);
+				await session.peers[1].services.pubsub.unsubscribe(channel);
+			} finally {
+				try {
+					await Promise.all([...logs].map((log) => log.close()));
+				} finally {
+					logs.clear();
+				}
+			}
 		});
 		// TODO why is this test doing a lot of unchaught rejections? (Reproduce in VSCODE tick `Uncaught exceptions`)
 		it("replicates logs", async () => {
@@ -169,6 +182,7 @@ describe("replication", function () {
 			await whileProcessingMessages(10 * 1000);
 
 			const result = new Log<string>({ id: logId });
+			logs.add(result);
 			await result.open(session.peers[0].services.blocks, signKey, {
 				encoding: JSON_ENCODING,
 			});

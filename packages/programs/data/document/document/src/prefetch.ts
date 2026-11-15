@@ -1,7 +1,8 @@
 import { TypedEventEmitter } from "@libp2p/interface";
 import { Cache } from "@peerbit/cache";
-import type * as types from "@peerbit/document-interface";
+import * as types from "@peerbit/document-interface";
 import type { RPCResponse } from "@peerbit/rpc";
+import { equals } from "uint8arrays";
 import { idAgnosticQueryKey } from "./most-common-query-predictor.js";
 
 // --- typed helper ---------------------------------------------------------
@@ -36,16 +37,41 @@ export class Prefetch extends TypedEventEmitter<{
 		super();
 	}
 
-	/** Store the prediction **and** notify listeners */
+	/** Store and notify; return a displaced unused prediction for retirement. */
 	public add(
 		request: RPCResponse<types.PredictedSearchRequest<any>>,
 		keyHash: string,
-	): void {
+	): RPCResponse<types.PredictedSearchRequest<any>> | void {
 		const key = prefetchKey(request.response.request, keyHash);
+		const previous = this.prefetch.del(key)?.value;
+		const wasConsumed =
+			previous && this.isConsumed(previous.response.request.id, keyHash);
 		this.prefetch.add(key, request);
 		this.dispatchEvent(
 			new CustomEvent("add", { detail: { consumable: request } }),
 		);
+		if (!previous) return;
+		const previousRequest = previous.response.request;
+		if (equals(previousRequest.id, request.response.request.id)) return;
+		// Push snapshots reuse active cursor IDs, not just speculative ones.
+		if (
+			previousRequest instanceof types.IterationRequest &&
+			(previousRequest.pushUpdates != null ||
+				previousRequest.keepAliveTtl != null)
+		)
+			return;
+		// A duplicate may re-enter the cache after consumption, and listeners
+		// can change translations synchronously while accepting the replacement.
+		if (wasConsumed || this.isConsumed(previousRequest.id, keyHash)) return;
+		return previous;
+	}
+
+	private isConsumed(id: Uint8Array, keyHash: string): boolean {
+		for (const peers of this.searchIdTranslationMap.values()) {
+			const consumed = peers.get(keyHash);
+			if (consumed && equals(consumed, id)) return true;
+		}
+		return false;
 	}
 
 	public consume(

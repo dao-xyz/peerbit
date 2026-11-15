@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.2.2
+
+### Patch Changes
+
+- Updated dependencies [[`cfd2201`](https://github.com/dao-xyz/peerbit/commit/cfd2201fa66386480caec589465bca8af6033d75), [`137a6a9`](https://github.com/dao-xyz/peerbit/commit/137a6a93dd2aea71729548eeb5a2e6def6b8d221)]:
+  - @peerbit/crypto@3.1.7
+  - @peerbit/stream-interface@6.0.17
+
 ## 2.2.1
 
 ### Patch Changes

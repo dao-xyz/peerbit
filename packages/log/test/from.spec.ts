@@ -82,6 +82,18 @@ class SlowBlockStore implements Blocks {
 }
 
 describe("from", function () {
+	const ownedLogs = new Set<Log<any>>();
+	const ownLog = <T>(log: Log<T>): Log<T> => {
+		ownedLogs.add(log);
+		return log;
+	};
+
+	afterEach(async () => {
+		const logs = [...ownedLogs];
+		ownedLogs.clear();
+		await Promise.all(logs.map((log) => log.close()));
+	});
+
 	const firstWriteExpectedData = [
 		"entryA10",
 		"entryA9",
@@ -136,15 +148,15 @@ describe("from", function () {
 				store,
 				signKeys,
 			);
-			const data = fixture.log;
+			const data = ownLog(fixture.log);
 			const heads = await fixture.log.getHeads(true).all();
 
 			const log1 = await Log.fromEntry(store, signKey, heads[0], {
 				encoding: JSON_ENCODING,
-			});
+			}).then(ownLog);
 			const log2 = await Log.fromEntry(store, signKey, heads[1], {
 				encoding: JSON_ENCODING,
-			});
+			}).then(ownLog);
 
 			await log1.join(log2);
 			expect(
@@ -160,15 +172,16 @@ describe("from", function () {
 				store,
 				signKeys,
 			);
+			ownLog(fixture.log);
 			const heads = await fixture.log.getHeads(true).all();
 			const log1 = await Log.fromEntry(store, signKey, heads[0], {
 				sortFn: FirstWriteWins,
 				encoding: JSON_ENCODING,
-			});
+			}).then(ownLog);
 			const log2 = await Log.fromEntry(store, signKey, heads[1], {
 				sortFn: FirstWriteWins,
 				encoding: JSON_ENCODING,
-			});
+			}).then(ownLog);
 
 			await log1.join(log2);
 
@@ -186,7 +199,7 @@ describe("from", function () {
 					signKey,
 					"zdpuAwNuRc2Kc1aNDdcdSWuxfNpHRJQw8L8APBNHCEFXbogus",
 					{ timeout, encoding: JSON_ENCODING },
-				);
+				).then(ownLog);
 				throw new Error("Expected to fail");
 			} catch (error) {
 				const et = new Date().getTime();
@@ -202,13 +215,13 @@ describe("from", function () {
 		beforeEach(async () => {
 			const logOptions = { encoding: JSON_ENCODING };
 
-			log1 = new Log();
+			log1 = ownLog(new Log());
 			await log1.open(store, signKey, logOptions);
-			log2 = new Log();
+			log2 = ownLog(new Log());
 			await log2.open(store, signKey2, logOptions);
-			log3 = new Log();
+			log3 = ownLog(new Log());
 			await log3.open(store, signKey3, logOptions);
-			log4 = new Log();
+			log4 = ownLog(new Log());
 			await log4.open(store, signKey4, logOptions);
 		});
 
@@ -217,7 +230,7 @@ describe("from", function () {
 				store,
 				signKeys,
 			);
-			const data = fixture.log;
+			const data = ownLog(fixture.log);
 
 			const log = await Log.fromEntry<string>(
 				store,
@@ -226,7 +239,7 @@ describe("from", function () {
 				{
 					encoding: JSON_ENCODING,
 				},
-			);
+			).then(ownLog);
 			expect((await log.getHeads().all())[0].meta.gid).equal(
 				(await data.getHeads().all())[0].meta.gid,
 			);
@@ -242,14 +255,14 @@ describe("from", function () {
 				store,
 				signKeys,
 			);
-			const data = fixture.log;
+			const data = ownLog(fixture.log);
 
 			const log = await Log.fromEntry<string>(
 				store,
 				signKey,
 				await data.getHeads(true).all(),
 				{ sortFn: FirstWriteWins, encoding: JSON_ENCODING },
-			);
+			).then(ownLog);
 			expect(log.length).equal(16);
 			assert.deepStrictEqual(
 				(await log.toArray()).map((e) => e.payload.getValue()),
@@ -405,17 +418,19 @@ describe("from", function () {
 				items3.push(n3);
 			}
 
-			const a = await Log.fromEntry<Uint8Array>(store, signKey, [last(items1)]);
+			const a = await Log.fromEntry<Uint8Array>(store, signKey, [
+				last(items1),
+			]).then(ownLog);
 			expect(a.length).equal(amount);
 
 			const b = await Log.fromEntry<Uint8Array>(store, signKey2, [
 				last(items2),
-			]);
+			]).then(ownLog);
 			expect(b.length).equal(amount * 2);
 
 			const c = await Log.fromEntry<Uint8Array>(store, signKey3, [
 				last(items3),
-			]);
+			]).then(ownLog);
 			expect(c.length).equal(amount * 3);
 		});
 
@@ -457,13 +472,25 @@ describe("from", function () {
 				items3.push(n3);
 			}
 
-			const a = await Log.fromEntry<Uint8Array>(store, signKey, last(items1));
+			const a = await Log.fromEntry<Uint8Array>(
+				store,
+				signKey,
+				last(items1),
+			).then(ownLog);
 			expect(a.length).equal(amount);
 
-			const b = await Log.fromEntry<Uint8Array>(store, signKey2, last(items2));
+			const b = await Log.fromEntry<Uint8Array>(
+				store,
+				signKey2,
+				last(items2),
+			).then(ownLog);
 			expect(b.length).equal(amount * 2);
 
-			const c = await Log.fromEntry<Uint8Array>(store, signKey3, last(items3));
+			const c = await Log.fromEntry<Uint8Array>(
+				store,
+				signKey3,
+				last(items3),
+			).then(ownLog);
 			expect(c.length).equal(amount * 3);
 		});
 
@@ -532,7 +559,9 @@ describe("from", function () {
 				items3.push(n3);
 			}
 
-			const a = await Log.fromEntry<string>(store, signKey, last(items1));
+			const a = await Log.fromEntry<string>(store, signKey, last(items1)).then(
+				ownLog,
+			);
 			expect(a.length).equal(amount);
 
 			const itemsInB = [
@@ -560,7 +589,7 @@ describe("from", function () {
 
 			const b = await Log.fromEntry<string>(store, signKey2, last(items2), {
 				encoding: JSON_ENCODING,
-			});
+			}).then(ownLog);
 			expect(b.length).equal(amount * 2);
 			expect(
 				(await b.toArray()).map((e) => e.payload.getValue()),
@@ -568,7 +597,7 @@ describe("from", function () {
 
 			const c = await Log.fromEntry<string>(store, signKey4, last(items3), {
 				encoding: JSON_ENCODING,
-			});
+			}).then(ownLog);
 			await c.append("EOF");
 			expect(c.length).equal(amount * 3 + 1);
 
@@ -611,7 +640,7 @@ describe("from", function () {
 			).to.have.members(tmp);
 
 			// make sure logX comes after A, B and C
-			const logX = new Log<string>();
+			const logX = ownLog(new Log<string>());
 			await logX.open(store, signKey4, { encoding: JSON_ENCODING });
 			await logX.append("1");
 			await logX.append("2");
@@ -623,7 +652,7 @@ describe("from", function () {
 				{
 					encoding: JSON_ENCODING,
 				},
-			);
+			).then(ownLog);
 
 			await c.join(d);
 			await d.join(c);
@@ -632,10 +661,10 @@ describe("from", function () {
 			await d.append("DONE");
 			await Log.fromEntry<string>(store, signKey3, last(await c.toArray()), {
 				encoding: JSON_ENCODING,
-			});
+			}).then(ownLog);
 			await Log.fromEntry<string>(store, signKey3, last(await d.toArray()), {
 				encoding: JSON_ENCODING,
-			});
+			}).then(ownLog);
 
 			/*  expect(f.toString()).equal(bigLogString) // Ignore these for know since we have removed the clock manipulation in the loop
 	 expect(g.toString()).equal(bigLogString) */
@@ -734,7 +763,7 @@ describe("from", function () {
 				store,
 				signKeys,
 			);
-			const log = testLog.log;
+			const log = ownLog(testLog.log);
 			const expectedData = testLog.expectedData;
 
 			const expectedData2 = [
@@ -846,7 +875,7 @@ describe("from", function () {
 				store,
 				signKeys,
 			);
-			const log = testLog.log;
+			const log = ownLog(testLog.log);
 			const expectedData = testLog.expectedData;
 
 			const fetchOrder = (await log.toArray()).slice().sort(Entry.compare);
@@ -873,7 +902,7 @@ describe("from", function () {
 				store,
 				signKeys,
 			);
-			const log = testLog.log;
+			const log = ownLog(testLog.log);
 			const expectedData = testLog.expectedData;
 			assert.deepStrictEqual(
 				(await log.toArray()).map((e) => e.payload.getValue()),
@@ -886,8 +915,9 @@ describe("from", function () {
 				store,
 				signKeys,
 			);
+			ownLog(testLog.log);
 
-			const firstWriteWinsLog = new Log<string>();
+			const firstWriteWinsLog = ownLog(new Log<string>());
 			await firstWriteWinsLog.open(store, signKeys[0], {
 				sortFn: FirstWriteWins,
 				encoding: JSON_ENCODING,
@@ -1188,7 +1218,11 @@ describe("from", function () {
 			});
 
 			it("returns all entries - no excluded entries", async () => {
-				const a = await Log.fromEntry<Uint8Array>(store, signKey, last(items1));
+				const a = await Log.fromEntry<Uint8Array>(
+					store,
+					signKey,
+					last(items1),
+				).then(ownLog);
 				expect(a.length).equal(amount);
 				expect((await a.toArray())[0].hash).equal(items1[0].hash);
 			});

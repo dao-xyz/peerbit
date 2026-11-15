@@ -1,5 +1,77 @@
 # Changelog
 
+## 16.0.41
+
+### Patch Changes
+
+- [#1514](https://github.com/dao-xyz/peerbit/pull/1514) [`cfd2201`](https://github.com/dao-xyz/peerbit/commit/cfd2201fa66386480caec589465bca8af6033d75) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Update the coordinated libp2p dependency cohort and use the maintained Noise and Yamux package names. Preserve Peerbit's transport configuration, custom Yamux protocol and window sizes, and standard Yamux fallback. Refresh browser fixture dependencies so transport imports do not rely on workspace hoisting.
+
+- [#1515](https://github.com/dao-xyz/peerbit/pull/1515) [`6e6c5f7`](https://github.com/dao-xyz/peerbit/commit/6e6c5f7477e3332c3c65e2084db3722b7a0b0488) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Use exclusive circular range endpoints consistently in rateless synchronization so a receiver that already holds the sender's entries does not report the last entry as missing. Include the maximum hash coordinate in wrapped ranges in both indexed and native resolution, preserving receive limits and collision multiplicity. Hash-number range resolvers now interpret a nonzero start with end zero as the high segment through the ring maximum; `(0, 0)` remains empty. Update custom range resolvers and deploy the coherent JavaScript/WASM cohort together.
+
+- [#1512](https://github.com/dao-xyz/peerbit/pull/1512) [`7626f62`](https://github.com/dao-xyz/peerbit/commit/7626f6291f815e7d1b3feaf276ffc1d2427c803c) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Complete receipt-authorizing coordinate metadata for already-admitted entries even when the remaining receive is cancelled. Own native append mutations before preparation and retain ownership through coordinate completion or rollback. Serialize overlapping coordinate writes and deletes, reject stale rollback owners, and fail closed when committed metadata completion is uncertain. Keep disjoint exact-hash writes concurrent, serialize native preparations with unknown mutation sets, and release ownership before change callbacks.
+
+  Bound generic coordinate-deletion queries while retaining one mutation owner across all chunks, and avoid repeating completed cleanup after a newer mutation has promoted the same head.
+
+- [#1511](https://github.com/dao-xyz/peerbit/pull/1511) [`137a6a9`](https://github.com/dao-xyz/peerbit/commit/137a6a93dd2aea71729548eeb5a2e6def6b8d221) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Wake pending replication-info recovery when a peer's new transport stream becomes writable. Keep retry work bound to its current peer session and receive generation, and ignore callbacks from superseded retry timers. Writable readiness remains a scheduling hint, not replication confirmation or a persisted delivery receipt.
+
+- Updated dependencies [[`54a8940`](https://github.com/dao-xyz/peerbit/commit/54a89403a08450e13b9ea1ccac27daaf16854f6a), [`cfd2201`](https://github.com/dao-xyz/peerbit/commit/cfd2201fa66386480caec589465bca8af6033d75), [`6e6c5f7`](https://github.com/dao-xyz/peerbit/commit/6e6c5f7477e3332c3c65e2084db3722b7a0b0488), [`7626f62`](https://github.com/dao-xyz/peerbit/commit/7626f6291f815e7d1b3feaf276ffc1d2427c803c), [`f7388ce`](https://github.com/dao-xyz/peerbit/commit/f7388ce21c2daf85cff9cd99cd657a09e258d70f), [`137a6a9`](https://github.com/dao-xyz/peerbit/commit/137a6a93dd2aea71729548eeb5a2e6def6b8d221)]:
+  - @peerbit/pubsub@5.4.14
+  - @peerbit/blocks@4.3.4
+  - @peerbit/crypto@3.1.7
+  - @peerbit/log@6.2.39
+  - @peerbit/logger@2.0.3
+  - @peerbit/program@6.0.69
+  - @peerbit/pubsub-interface@5.2.3
+  - @peerbit/stream-interface@6.0.17
+  - @peerbit/riblt@1.2.1
+  - @peerbit/rpc@6.2.5
+  - @peerbit/blocks-interface@2.2.2
+  - @peerbit/indexer-interface@3.1.1
+  - @peerbit/indexer-sqlite3@3.0.22
+  - @peerbit/any-store@2.2.18
+
+## 16.0.40
+
+### Patch Changes
+
+- [#1479](https://github.com/dao-xyz/peerbit/pull/1479) [`8d7eac9`](https://github.com/dao-xyz/peerbit/commit/8d7eac9e5dd7e1ebcb51b80bf7d7d97b9fb03359) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Keep persisted-receipt response waits bounded independently of confirmation and
+  transfer work, so a dropped request can retry before the delivery deadline.
+  Adapt the response wait only after an unanswered request, and back off repeated
+  valid responses that make no receipt progress without changing ingress limits,
+  session and ownership checks, or durable receipt requirements.
+
+- [#1479](https://github.com/dao-xyz/peerbit/pull/1479) [`8d7eac9`](https://github.com/dao-xyz/peerbit/commit/8d7eac9e5dd7e1ebcb51b80bf7d7d97b9fb03359) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Allow callers to cancel log joins without cancelling another caller's shared join, while draining already-started writes and callbacks. Cancel missing-parent receives when their SharedLog receive generation closes so shutdown does not wait for the remote block timeout.
+
+- [#1479](https://github.com/dao-xyz/peerbit/pull/1479) [`8d7eac9`](https://github.com/dao-xyz/peerbit/commit/8d7eac9e5dd7e1ebcb51b80bf7d7d97b9fb03359) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Yield to transport and lifecycle work between rebalance scan pages instead of draining synchronously resolved SQLite pages in one event-loop turn. This does not change iterator ordering or replace OFFSET paging.
+
+- [#1479](https://github.com/dao-xyz/peerbit/pull/1479) [`8d7eac9`](https://github.com/dao-xyz/peerbit/commit/8d7eac9e5dd7e1ebcb51b80bf7d7d97b9fb03359) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Recover replication capability exchange after a one-sided topic-session reopening, including a fresh instance whose departure announcement was lost, without requiring an application readiness waiter. Reuse the authenticated, bounded rearm handshake and require a fresh Full sequence before an old stream can confirm readiness again.
+
+- Updated dependencies [[`8d7eac9`](https://github.com/dao-xyz/peerbit/commit/8d7eac9e5dd7e1ebcb51b80bf7d7d97b9fb03359), [`8d7eac9`](https://github.com/dao-xyz/peerbit/commit/8d7eac9e5dd7e1ebcb51b80bf7d7d97b9fb03359), [`95e6803`](https://github.com/dao-xyz/peerbit/commit/95e680332e870a8a4929702de4d24cc31c5d24de)]:
+  - @peerbit/pubsub@5.4.13
+  - @peerbit/log@6.2.38
+  - @peerbit/program@6.0.68
+  - @peerbit/rpc@6.2.4
+
+## 16.0.39
+
+### Patch Changes
+
+- Updated dependencies [[`224a1f4`](https://github.com/dao-xyz/peerbit/commit/224a1f4675762705986bfaba2ae424f00ae81b77), [`0005cda`](https://github.com/dao-xyz/peerbit/commit/0005cda2dd65c22657e9c9587a0061f2829e033e)]:
+  - @peerbit/log@6.2.37
+  - @peerbit/pubsub@5.4.12
+  - @peerbit/program@6.0.67
+  - @peerbit/rpc@6.2.3
+
+## 16.0.38
+
+### Patch Changes
+
+- Updated dependencies [[`3ba8a8b`](https://github.com/dao-xyz/peerbit/commit/3ba8a8b8eb259839a6f20ecab7a05a0abac3fd39)]:
+  - @peerbit/pubsub@5.4.11
+  - @peerbit/program@6.0.66
+  - @peerbit/rpc@6.2.2
+  - @peerbit/log@6.2.36
+
 ## 16.0.37
 
 ### Patch Changes

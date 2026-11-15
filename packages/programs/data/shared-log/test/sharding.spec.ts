@@ -1253,9 +1253,12 @@ testSetups.forEach((setup) => {
 
 				const entryCount = shardingSmallEntryCount;
 
-				// expect min replicas 2 with 3 peers, this means that 66% of entries (ca) will be at peer 2 and 3, and peer1 will have all of them since 1 is the creator
+				// Exercise redistribution with reproducible coordinates, not the
+				// statistical balance of a small random sample.
 				await appendInBatches(entryCount, (i) =>
-					db1.add(toBase64(new Uint8Array([i])), { meta: { next: [] } }),
+					db1.add(toBase64(new Uint8Array([i])), {
+						meta: { next: [], gidSeed: new Uint8Array([i]) },
+					}),
 				);
 
 				// Participation can report "full" while redistribution is still in flight.

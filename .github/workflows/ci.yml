@@ -248,33 +248,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Node 24 was dropped from this matrix in #1239 and restored here after
-        # the reason given for dropping it turned out to be false. That reason
-        # was: the published-closure smoke installs packed tarballs with npm,
-        # which "resolves `@libp2p/webrtc@^6.0.15` -> `node-datachannel@^0.29.0`
-        # on its own", and 0.29.0 ships no prebuilds so the install compiles
-        # from source, which is broken on Node 24 (upstream
-        # https://github.com/murat-dogan/node-datachannel/issues/428).
-        #
-        # `^6.0.15` admits 6.0.21+, and npm takes the highest match. A consumer
-        # resolving our published manifests gets `@libp2p/webrtc@6.0.29`, whose
-        # `node-datachannel` range is `^0.32.3` -- which does ship prebuilds.
-        # Verified by running the smoke itself on Node 24: exit 0.
-        #
-        # The mistake was conflating two different resolutions: our OWN lockfile
-        # was held at webrtc 6.0.15, which never constrained a consumer, who
-        # resolves the range fresh and lands on a webrtc new enough to be fine.
-        #
-        # That lockfile gap is now closed too -- the workspace runs webrtc 6.0.29
-        # on the same `@libp2p/interface` 3.2.5 as everything else, so the
-        # `node-datachannel` override that used to force a prebuilt 0.32.3 is
-        # gone: webrtc requires `^0.32.3` on its own. #1235 failed only because
-        # it bumped webrtc alone while the lockfile pinned the rest of the stack
-        # to interface 3.1.1, duplicating a branded type.
-        #
-        # So this lane is not "permanently red for an upstream reason"; it is
-        # exactly the forward-compat signal it looks like, and Node 24 belongs
-        # in it. If it does go red, read the failure before removing the lane.
+        # A packed consumer resolves independently of the workspace lockfile.
+        # Test both supported Node majors and the actual Peerbit -> WebRTC ->
+        # node-datachannel binding, including natural process exit. A workspace
+        # override or a passing browser test cannot establish that guarantee.
         node-version: [22.x, 24.x]
     steps:
       - uses: actions/checkout@v4
@@ -332,10 +309,70 @@ jobs:
         run: >-
           node scripts/ci/assert-tests-ran.mjs node ./node_modules/aegir/src/index.js run test
           --roots ./packages/programs/data/shared-log -- -t node --no-build
-          --grep "^(append delivery options|receive admission replication-info V2|replicator liveness|waitForReplicator)"
+          --grep "^(append delivery options|receive admission (replication-info V2|(cancelled )?coordinate)|receive coordinate|replicator liveness|waitForReplicator)"
           -- --retries 0
       - name: Verify default peers exit naturally after replication
         run: node --test scripts/ci/peerbit-shutdown-lifecycle.test.mjs scripts/ci/peerbit-shutdown.test.mjs
+      - name: Test recovery ownership fences without retries
+        timeout-minutes: 3
+        env:
+          AEGIR_RUNNER: node
+          NODE_ENV: test
+        run: >-
+          node scripts/ci/assert-tests-ran.mjs node ./node_modules/mocha/bin/mocha.js
+          --no-config --no-package --require chai-extend/chai-global.js
+          --timeout 60000 --retries 0 --no-exit
+          packages/log/dist/test/mutation-generation.spec.js
+          packages/programs/rpc/dist/test/request-physical-settlement.spec.js
+      - name: Test bounded reconnect inventory without retries
+        timeout-minutes: 3
+        env:
+          AEGIR_RUNNER: node
+          NODE_ENV: test
+        run: >-
+          node scripts/ci/assert-tests-ran.mjs node ./node_modules/mocha/bin/mocha.js
+          --no-config --no-package --require chai-extend/chai-global.js
+          --timeout 60000 --retries 0 --no-exit
+          packages/programs/data/shared-log/dist/test/coordinate-key-scan.spec.js
+          packages/programs/data/shared-log/dist/test/coordinate-key-scan-durable.spec.js
+          packages/programs/data/shared-log/dist/test/entry-inventory-presence.spec.js
+          packages/programs/data/shared-log/dist/test/exact-entry-inventory-offer.spec.js
+      # Fake-clock timer ownership must exclude delayed real-peer store work.
+      - name: Test inventory clock ownership in isolated processes
+        timeout-minutes: 3
+        shell: bash
+        env:
+          AEGIR_RUNNER: node
+          NODE_ENV: test
+        run: |
+          set -euo pipefail
+          for spec in entry-inventory-progress entry-inventory-recovery; do
+            node scripts/ci/assert-tests-ran.mjs node ./node_modules/mocha/bin/mocha.js \
+              --no-config --no-package --require chai-extend/chai-global.js \
+              --timeout 60000 --retries 0 --no-exit \
+              "packages/programs/data/shared-log/dist/test/${spec}.spec.js"
+          done
+      - name: Test settled-session reconnect with default and native storage
+        timeout-minutes: 3
+        env:
+          AEGIR_RUNNER: node
+          NODE_ENV: test
+        run: >-
+          node scripts/ci/assert-tests-ran.mjs node ./node_modules/mocha/bin/mocha.js
+          --no-config --no-package --require chai-extend/chai-global.js
+          --timeout 60000 --retries 0 --no-exit
+          packages/programs/data/shared-log/dist/test/settled-session-entry-recovery.spec.js
+      - name: Test real three-peer partitions with default and native storage
+        timeout-minutes: 3
+        env:
+          AEGIR_RUNNER: node
+          NODE_ENV: test
+        run: >-
+          node scripts/ci/assert-tests-ran.mjs node ./node_modules/mocha/bin/mocha.js
+          --no-config --no-package --require chai-extend/chai-global.js
+          --timeout 60000 --retries 0 --no-exit
+          packages/programs/data/shared-log/dist/test/three-peer-held-entry-recovery.spec.js
+          packages/programs/data/shared-log/dist/test/receive-provider-announcement.spec.js
       - name: Test protected recovery without retries or forced exit
         timeout-minutes: 3
         working-directory: packages/programs/acl/trusted-network
@@ -347,6 +384,32 @@ jobs:
           --no-config --no-package --require chai-extend/chai-global.js
           --timeout 90000 --retries 0 --no-exit
           dist/test/v2-protected-recovery.spec.js
+      # Global fake-clock assertions must not capture delayed peer-store work
+      # from the real-node lifecycle tests in another suite.
+      - name: Test ACK wait ownership in an isolated process
+        timeout-minutes: 3
+        env:
+          AEGIR_RUNNER: node
+          NODE_ENV: test
+        run: >-
+          node scripts/ci/assert-tests-ran.mjs node ./node_modules/mocha/bin/mocha.js
+          --no-config --no-package --require chai-extend/chai-global.js
+          --timeout 60000 --retries 0 --no-exit
+          packages/transport/stream/dist/test/ack-wait-ownership.spec.js
+      - name: Test pubsub clock ownership in isolated processes
+        timeout-minutes: 3
+        shell: bash
+        env:
+          AEGIR_RUNNER: node
+          NODE_ENV: test
+        run: |
+          set -euo pipefail
+          for spec in stale-root-recovery fanout-parent-probe; do
+            node scripts/ci/assert-tests-ran.mjs node ./node_modules/mocha/bin/mocha.js \
+              --no-config --no-package --require chai-extend/chai-global.js \
+              --timeout 60000 --retries 0 --no-exit \
+              "packages/transport/pubsub/dist/test/${spec}.spec.js"
+          done
       - name: Test stream replacement and pubsub ownership without retries
         timeout-minutes: 3
         env:
@@ -356,15 +419,21 @@ jobs:
           node scripts/ci/assert-tests-ran.mjs node ./node_modules/mocha/bin/mocha.js
           --no-config --no-package --require chai-extend/chai-global.js
           --timeout 60000 --retries 0 --no-exit
+          packages/transport/stream/dist/test/stream-before-stop.spec.js
           packages/transport/stream/dist/test/stream-replacement.spec.js
-          packages/transport/stream/dist/test/ack-wait-ownership.spec.js
+          packages/programs/data/shared-log/dist/test/partition-recovery.spec.js
+          packages/programs/data/shared-log/dist/test/partition-stream-renewal.spec.js
+          packages/programs/data/shared-log/dist/test/transport-recovery-hint.spec.js
           packages/transport/pubsub/dist/test/subscribe-races.spec.js
+          packages/transport/pubsub/dist/test/provider-directory.spec.js
+          packages/transport/pubsub/dist/test/unsubscribe-order.spec.js
+          packages/transport/pubsub/dist/test/unsubscribe-reason.spec.js
           packages/transport/pubsub/dist/test/fanout-idle-close.spec.js
           packages/transport/pubsub/dist/test/fanout-parent-liveness.spec.js
-          packages/transport/pubsub/dist/test/fanout-parent-probe.spec.js
           packages/transport/pubsub/dist/test/fanout-parent-probe-metrics.spec.js
-          packages/transport/pubsub/dist/test/stale-root-recovery.spec.js
           packages/transport/pubsub/dist/test/stale-root-cold-join.spec.js
+          packages/transport/pubsub/dist/test/fanout-tree-bootstrap-dials.spec.js
+          packages/clients/peerbit/dist/test/blocks-provider-directory.spec.js
       - name: Test synchronizer teardown without retries or forced exit
         timeout-minutes: 3
         env:
@@ -376,7 +445,9 @@ jobs:
           --timeout 60000 --retries 0 --no-exit
           packages/programs/data/shared-log/dist/test/lifecycle.spec.js
           packages/programs/data/shared-log/dist/test/receive-drain-cancellation.spec.js
+          packages/programs/data/shared-log/dist/test/receive-parent-cancellation.spec.js
           packages/programs/data/shared-log/dist/test/receive-admission.spec.js
+          packages/log/dist/test/join-cancellation.spec.js
           packages/programs/data/shared-log/dist/test/sync-memory-pins.spec.js
           packages/programs/data/shared-log/dist/test/rateless-iblt.spec.js
           packages/programs/data/shared-log/dist/test/rateless-iblt-cache.spec.js
@@ -941,6 +1012,34 @@ jobs:
         run: pnpm --filter @peerbit/network-rust run test
       - name: Test @peerbit/stream suite in rust-core mode
         run: pnpm --filter @peerbit/network-rust run test:stream-rust-core
+      - name: Test pubsub clock ownership with the native transport in isolated processes
+        timeout-minutes: 3
+        env:
+          AEGIR_RUNNER: node
+          NODE_ENV: test
+          PEERBIT_STREAM_RUST_CORE: "1"
+        run: |
+          set -euo pipefail
+          for spec in stale-root-recovery fanout-parent-probe; do
+            node scripts/ci/assert-tests-ran.mjs node ./node_modules/mocha/bin/mocha.js \
+              --no-config --no-package --require chai-extend/chai-global.js \
+              --require ./scripts/ci/use-rust-stream-core.mjs \
+              --timeout 60000 --retries 0 --no-exit \
+              "packages/transport/pubsub/dist/test/${spec}.spec.js"
+          done
+      - name: Test real-peer reconnect recovery with the native transport
+        timeout-minutes: 3
+        env:
+          AEGIR_RUNNER: node
+          NODE_ENV: test
+        run: >-
+          node scripts/ci/assert-tests-ran.mjs node ./node_modules/mocha/bin/mocha.js
+          --no-config --no-package --require chai-extend/chai-global.js
+          --require ./scripts/ci/use-rust-stream-core.mjs
+          --timeout 60000 --retries 0 --no-exit
+          packages/programs/data/shared-log/dist/test/transport-recovery-hint.spec.js
+          packages/programs/data/shared-log/dist/test/partition-recovery.spec.js
+          packages/programs/data/shared-log/dist/test/partition-stream-renewal.spec.js
       - name: Test @peerbit/shared-log conformance in rust-core mode
         # Curated [default,native] conformance leg: re-runs an allowlist of the
         # EXISTING shared-log suites with the native (rust) data plane engaged
@@ -951,6 +1050,23 @@ jobs:
         # catalogued in test/NATIVE_CONFORMANCE.md; this curated parity gate is
         # blocking.
         run: pnpm --filter @peerbit/shared-log run test:shared-log-rust-core
+      - name: Test native session recovery and parent cancellation without retries
+        timeout-minutes: 3
+        env:
+          AEGIR_RUNNER: node
+          NODE_ENV: test
+          PEERBIT_SHARED_LOG_RUST_CORE: "1"
+        run: >-
+          node scripts/ci/assert-tests-ran.mjs node ./node_modules/mocha/bin/mocha.js
+          --no-config --no-package --require chai-extend/chai-global.js
+          --timeout 60000 --retries 0 --no-exit
+          packages/programs/data/shared-log/dist/test/one-sided-capability-recovery.spec.js
+          packages/programs/data/shared-log/dist/test/receive-parent-cancellation.spec.js
+          packages/programs/data/shared-log/dist/test/receive-drain-cancellation.spec.js
+          packages/programs/data/shared-log/dist/test/receive-coordinate-cancellation.spec.js
+          packages/programs/data/shared-log/dist/test/receive-coordinate-notifications.spec.js
+          packages/programs/data/shared-log/dist/test/receive-coordinate-reopen.spec.js
+          packages/programs/data/shared-log/dist/test/receive-coordinate-profile-failure.spec.js
       - name: Test @peerbit/document conformance in rust-core mode
         # Curated [default,native] conformance leg for the DOCUMENT layer: re-runs
         # an allowlist of the EXISTING document suites with the native (rust) data

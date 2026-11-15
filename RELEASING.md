@@ -182,12 +182,20 @@ workflow then:
    "Git tags and the format change" below — this is a new tag namespace, not the
    old `<component>-v<version>` one.
 
-After each successful publish command, the publisher verifies that the exact
-package version is visible on npm. A missing version is retried with nearly
-eight minutes of bounded scheduled backoff, excluding registry query time, to
-accommodate npm processing and propagation. Authentication, network, and other
-unexpected registry errors are not retried. If the version remains absent, the
-release fails before publishing the next package.
+The publisher verifies that every exact package version it hands to npm becomes
+visible on the registry. npm can take more than twenty minutes to process an
+upload, so versions of packages that already exist on npm are all published
+first and then verified together within one shared window: 60 minutes, polled
+every 30 seconds, overridable with `PUBLISH_VERIFY_TIMEOUT_MS` and
+`PUBLISH_VERIFY_POLL_MS`. A brand-new package is verified straight away, before
+anything after it is published, so a package that npm silently refuses to create
+never has dependents shipped against it. A publish error fails the release
+immediately. The one exception is npm rejecting an upload of a version it is
+still processing from an earlier run; that version is verified with the rest. A
+version that never appears fails the release and names every missing version.
+Because existing packages are verified in batch, a dependent can be published
+before an updated dependency is visible; if that dependency never lands, the
+failed release reports it and it needs a new version.
 
 The downstream `Post Release Automation` workflow then restores the
 `workspace:*` protocol (a no-op with changesets, which preserves it) and, when

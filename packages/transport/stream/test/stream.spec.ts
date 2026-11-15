@@ -1,10 +1,10 @@
-import { noise } from "@chainsafe/libp2p-noise";
-import { yamux } from "@chainsafe/libp2p-yamux";
 import { deserialize, serialize } from "@dao-xyz/borsh";
 import { keys } from "@libp2p/crypto";
 import { type Connection, type PeerId } from "@libp2p/interface";
+import { noise } from "@libp2p/noise";
 import { tcp } from "@libp2p/tcp";
 import { webSockets } from "@libp2p/websockets";
+import { yamux } from "@libp2p/yamux";
 import { type Multiaddr } from "@multiformats/multiaddr";
 import { Cache } from "@peerbit/cache";
 import {
@@ -4053,8 +4053,20 @@ describe("join/leave", () => {
 				streams[3].stream.publicKeyHash,
 			]);
 
-			await delay(5000);
-			await waitForResolved(() => expect(streams[0].reachable.length).equal(3));
+			await Promise.all([
+				streams[0].stream.waitFor(streams[3].stream.peerId, {
+					target: "neighbor",
+					timeout: 10_000,
+				}),
+				streams[3].stream.waitFor(streams[0].stream.peerId, {
+					target: "neighbor",
+					timeout: 10_000,
+				}),
+			]);
+			expect(streams[0].reachable.map((x) => x.hashcode())).to.deep.equal([
+				streams[1].stream.publicKeyHash,
+				streams[3].stream.publicKeyHash,
+			]);
 			await session.peers[3].stop();
 
 			await waitForResolved(() => expect(streams[0].goodbye).to.have.length(1));

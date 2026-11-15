@@ -47,6 +47,56 @@ const longRunningChannelOptions = {
 } as const;
 
 describe("fanout-tree background loop lifecycle", () => {
+	it("still reacts to peer disconnects after the service restarts", async function () {
+		this.timeout(30_000);
+		const session = await TestSession.disconnected<FanoutServices>(2, {
+			services: {
+				fanout: (components) =>
+					new FanoutTree(components, { connectionManager: false }),
+			},
+		});
+
+		try {
+			const tracker = session.peers[0]!.services.fanout;
+			const consumer = session.peers[1]!.services.fanout;
+
+			// stop() removes the underlay peer:disconnect listener; start() must add it back.
+			await tracker.stop();
+			await tracker.start();
+
+			consumer.setBootstraps(session.peers[0]!.getMultiaddrs());
+			const handle = consumer.watchProviders("restart-watch", {
+				want: 1,
+				ttlMs: 60_000,
+				// One subscribe only (no re-subscribe after hangUp), so give its
+				// bootstrap dial plenty of time.
+				renewIntervalMs: 30_000,
+				bootstrapMaxPeers: 1,
+				bootstrapDialTimeoutMs: 10_000,
+				onProviders: () => {},
+			});
+			const watchers = (
+				tracker as unknown as {
+					providerWatchersBySuffixKey: Map<string, Map<string, unknown>>;
+				}
+			).providerWatchersBySuffixKey;
+
+			try {
+				await waitForResolved(() => expect(watchers.size).to.equal(1), {
+					timeout: 20_000,
+				});
+				// The watch stays open, so only the tracker's disconnect handling
+				// can drop the registration.
+				await session.peers[1]!.hangUp(session.peers[0]!.peerId);
+				await waitForResolved(() => expect(watchers.size).to.equal(0));
+			} finally {
+				handle.close();
+			}
+		} finally {
+			await session.stop();
+		}
+	});
+
 	it("cancels a provider announce sleep when its handle closes", async () => {
 		const session = await createSession();
 		try {

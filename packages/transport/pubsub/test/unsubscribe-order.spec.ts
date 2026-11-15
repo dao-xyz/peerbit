@@ -1,6 +1,10 @@
 import { Ed25519PublicKey } from "@peerbit/crypto";
 import { TestSession } from "@peerbit/libp2p-test-utils";
-import { Subscribe, Unsubscribe } from "@peerbit/pubsub-interface";
+import {
+	PeerUnavailable,
+	Subscribe,
+	Unsubscribe,
+} from "@peerbit/pubsub-interface";
 import { waitForNeighbour } from "@peerbit/stream";
 import { waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
@@ -129,6 +133,75 @@ const deferred = () => {
 	});
 	return { promise, resolve };
 };
+
+describe("pubsub (relayed unavailability)", () => {
+	for (const fastPath of [true, false]) {
+		it(`preserves a live direct subscriber after a ${fastPath ? "shard-wide" : "watermarked"} relay hint`, async () => {
+			const { receiver, internals, deliver } = fixture();
+			const subscriber = keys[0];
+			const hash = subscriber.hashcode();
+			await deliver("direct", true, subscriber, 10n);
+			Object.assign(internals.peers.get(hash), {
+				isClosed: false,
+				isReadable: true,
+				isWritable: true,
+			});
+			internals.getShardTopicForUserTopic = () => "shard";
+			const subscription = receiver.topics.get(topic)!.get(hash);
+			const watermark = receiver.lastSubscriptionMessages.get(hash)!.get(topic);
+			const events: unknown[] = [];
+			internals.dispatchEvent = (event: unknown) => events.push(event);
+			await internals.processShardPubSubMessage({
+				pubsubMessage: new PeerUnavailable({
+					publicKeyHash: hash,
+					session: fastPath ? 0n : 1n,
+					timestamp: fastPath ? 0n : 11n,
+					topics: fastPath ? [] : [topic],
+				}),
+				from: keys[1],
+				shardTopic: "shard",
+			});
+			expect(receiver.topics.get(topic)!.get(hash)).to.equal(subscription);
+			expect(receiver.peerToTopic.get(hash)?.has(topic)).to.equal(true);
+			expect(receiver.lastSubscriptionMessages.get(hash)!.get(topic)).to.equal(
+				watermark,
+			);
+			expect(events).to.deep.equal([]);
+		});
+	}
+
+	for (const state of [
+		"absent",
+		"closed",
+		"read-only",
+		"write-only",
+	] as const) {
+		it(`still applies a relay hint when the direct stream is ${state}`, async () => {
+			const { receiver, internals, deliver } = fixture();
+			const subscriber = keys[0];
+			const hash = subscriber.hashcode();
+			await deliver("shard", true, subscriber, 10n);
+			Object.assign(internals.peers.get(hash), {
+				isClosed: state === "closed",
+				isReadable: state !== "write-only",
+				isWritable: state !== "read-only",
+			});
+			if (state === "absent") internals.peers.delete(hash);
+			internals.getShardTopicForUserTopic = () => "shard";
+			await internals.processShardPubSubMessage({
+				pubsubMessage: new PeerUnavailable({
+					publicKeyHash: hash,
+					session: 0n,
+					timestamp: 0n,
+					topics: [],
+				}),
+				from: keys[1],
+				shardTopic: "shard",
+			});
+			expect(receiver.topics.get(topic)!.has(hash)).to.equal(false);
+		});
+	}
+});
 
 describe("pubsub (unsubscribe ordering)", () => {
 	it("announces departure before a pending same-session reopen", async function () {

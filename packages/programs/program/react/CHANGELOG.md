@@ -1,5 +1,34 @@
 # Changelog
 
+## 0.4.73
+
+### Patch Changes
+
+- Updated dependencies [[`cfd2201`](https://github.com/dao-xyz/peerbit/commit/cfd2201fa66386480caec589465bca8af6033d75)]:
+  - @peerbit/crypto@3.1.7
+  - @peerbit/program@6.0.69
+
+## 0.4.72
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @peerbit/program@6.0.68
+
+## 0.4.71
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @peerbit/program@6.0.67
+
+## 0.4.70
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @peerbit/program@6.0.66
+
 ## 0.4.69
 
 ### Patch Changes

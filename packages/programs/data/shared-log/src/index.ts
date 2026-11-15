@@ -164,6 +164,7 @@ import {
 	RequestIPruneV2,
 	ResponseIPrune,
 	ResponseIPruneV2,
+	SYNC_CAPABILITY_ENTRY_INVENTORY,
 	SYNC_CAPABILITY_PERSISTED_ENTRY_RECEIPTS,
 	SYNC_CAPABILITY_RAW_EXCHANGE_HEADS,
 	SYNC_CAPABILITY_REPLICATION_INFO_V2_APPLY,
@@ -174,6 +175,7 @@ import {
 	StashBackedRawExchangeHeadsMessage,
 	SyncCapabilitiesMessage,
 	collectRawExchangeHeadSendPlan,
+	createExactExchangeHeadsMessages,
 	createExchangeHeadsMessages,
 	createRawExchangeHeadsMessages,
 	getExchangeHeadHash,
@@ -298,6 +300,10 @@ import {
 } from "./replication.js";
 import { ReplicatorLivenessMonitor } from "./replicator-liveness.js";
 import { SyncReceiveAbortError } from "./sync/dispatch-lifecycle.js";
+import {
+	type EntryInventoryPass,
+	EntryInventoryRecovery,
+} from "./sync/entry-inventory-recovery.js";
 import { createSyncronizer } from "./sync/factory.js";
 import type {
 	SharedLogNativeWireSync,
@@ -318,7 +324,9 @@ import {
 } from "./sync/profile.js";
 import {
 	ConfirmEntriesMessage,
+	ENTRY_INVENTORY_PAGE_SIZE,
 	RECENT_KNOWN_EXCHANGE_HEAD_SUPPRESSION_MS,
+	RequestEntryInventoryV1,
 	RequestPersistedEntriesV1,
 	SYNC_MESSAGE_PRIORITY,
 	SimpleSyncronizer,
@@ -757,6 +765,7 @@ export type CoordinatePersistBatchItem<R extends "u32" | "u64"> = {
 	commitNativeBackbone?: boolean;
 	hashNumber?: NumberFromType<R>;
 	prepared?: PreparedCoordinatePersistence<R>;
+	deleteHashes?: string[];
 };
 
 export type NativeBackboneReceiveCoordinateRow<R extends "u32" | "u64"> = {
@@ -772,6 +781,7 @@ export type NativeBackboneReceiveCoordinateBatch<R extends "u32" | "u64"> = {
 };
 
 export type NativeBackboneCoordinateRollback<R extends "u32" | "u64"> = {
+	owner: EntryIndexHashMutationLockOwner;
 	hashes: Set<string>;
 	entries: Map<string, ResidentCoordinateEntry<R>>;
 	generations: Map<string, number>;
@@ -954,6 +964,7 @@ type NativeStrictDurableTransactionIntent = {
 	lowerIndexRows: Array<{
 		hash: string;
 		before?: number[];
+		beforePendingOnly?: boolean;
 		after?: number[];
 	}>;
 	coordinates: Array<{
@@ -2146,6 +2157,9 @@ type TrustedLowerLogJoinOptions<T> = Parameters<Log<T>["join"]>[1] & {
 	__peerbitEntriesAlreadyMissing?: boolean;
 	__peerbitCanAppendAlreadyValidated?: boolean;
 	__peerbitOnAppendHashes?: TrustedLowerLogAppendHashesSink;
+	__peerbitOnJoinCommitted?: (
+		input: TrustedLowerLogJoinCommittedInput,
+	) => Promise<void> | void;
 	__peerbitDeferIndexWrite?: boolean;
 	__peerbitProfile?: SyncProfileFn;
 };
@@ -2159,11 +2173,10 @@ type TrustedLowerLogPreparedJoinCommitInput = {
 	validatePlan?: boolean;
 };
 
-type TrustedLowerLogPreparedJoinCommittedInput = {
-	entries: PreparedAppendJoinFacts[];
+type TrustedLowerLogJoinCommittedInput = {
 	hashes: string[];
-	headFlags: boolean[];
 	nativePreparedCommitted: boolean;
+	hashMutationLockOwner?: EntryIndexHashMutationLockOwner;
 };
 
 type TrustedLowerLogPreparedJoinOptions = {
@@ -2176,8 +2189,8 @@ type TrustedLowerLogPreparedJoinOptions = {
 		input: TrustedLowerLogPreparedJoinCommitInput,
 	) => Promise<boolean> | boolean;
 	__peerbitNativePreparedJoinCommitValidatesPlan?: boolean;
-	__peerbitOnPreparedJoinCommitted?: (
-		input: TrustedLowerLogPreparedJoinCommittedInput,
+	__peerbitOnJoinCommitted?: (
+		input: TrustedLowerLogJoinCommittedInput,
 	) => Promise<void> | void;
 };
 
@@ -2269,6 +2282,12 @@ type TrustedLowerLog<T> = {
 			payloadData?: Uint8Array;
 			includeMaterializationBytes?: boolean;
 			includeAppendFactsBytes?: boolean;
+			onTrimCommitted?: (properties: {
+				entry: Entry<T>;
+				appendFacts: PreparedAppendFacts;
+				removed: ShallowEntry[];
+				hashMutationLockOwner: EntryIndexHashMutationLockOwner;
+			}) => MaybePromise<boolean>;
 		},
 	): Promise<TrustedLowerLogPreparedAppendResult<T>>;
 	appendLocallyPreparedCommitOnly(
@@ -2480,6 +2499,11 @@ export class SharedLog<
 	// compatibility state accessors below re-state the precise R types at their
 	// boundaries, so host-side inference is unchanged.
 	private _coordinates!: CoordinatePersistenceCoordinator<any>;
+	private _entryInventoryRecovery?: EntryInventoryRecovery<PeerSession>;
+	private _completeLowerCoordinateRemoval?: (
+		hashes: readonly string[],
+		owner?: EntryIndexHashMutationLockOwner,
+	) => Promise<void>;
 	// Test-visible compat accessors under the historical field names. The
 	// getters mirror the legacy never-opened-clone reads (`undefined` before
 	// the coordinator exists); the setters hydrate the coordinator exactly
@@ -2902,6 +2926,7 @@ export class SharedLog<
 		if (this._nativeDurableCommitFailure) {
 			throw this._nativeDurableCommitFailure;
 		}
+		this.log?.entryIndex?.throwIfNativeDurableTransactionMutationsFailed();
 	}
 
 	private poisonNativeStrictDurableTransaction(cause: unknown): void {
@@ -3165,7 +3190,7 @@ export class SharedLog<
 	}
 
 	private async beginNativeStrictDurableTransaction(
-		documents: NativeBackboneDocumentRollback[],
+		snapshotDocuments: () => NativeBackboneDocumentRollback[],
 	): Promise<NativeStrictDurableTransactionHandle> {
 		this.throwIfNativeDurableCommitFailed();
 		if (this._nativeStrictDurableTransactionsClosing) {
@@ -3179,12 +3204,28 @@ export class SharedLog<
 		});
 		this._nativeStrictDurableTransactionTail = previous.then(() => held);
 		await previous;
+		let lowerHashMutationLockOwner: EntryIndexHashMutationLockOwner | undefined;
+		let documents: NativeBackboneDocumentRollback[];
 		try {
 			this.throwIfNativeDurableCommitFailed();
 			if (this._nativeStrictDurableTransactionsClosing) {
 				throw new Error("Shared log is closing");
 			}
+			// Native preparation discovers its write-set while mutating it. Own the
+			// whole lower mutation boundary before snapshots, preparation or rollback.
+			lowerHashMutationLockOwner =
+				await this.log.entryIndex.acquireExclusiveMutationLock();
+			this.throwIfNativeDurableCommitFailed();
+			if (this._nativeStrictDurableTransactionsClosing) {
+				throw new Error("Shared log is closing");
+			}
+			documents = snapshotDocuments();
 		} catch (error) {
+			if (lowerHashMutationLockOwner) {
+				this.log.entryIndex.releaseHashMutationLocks(
+					lowerHashMutationLockOwner,
+				);
+			}
 			release();
 			throw error;
 		}
@@ -3205,12 +3246,15 @@ export class SharedLog<
 			},
 			release,
 			released: false,
+			lowerHashMutationLockOwner,
 		};
 		(this._nativeStrictDurableTransactions ??= new Set()).add(handle);
 		try {
 			await this.writeNativeStrictDurableTransactionIntent(handle.intent);
 			return handle;
 		} catch (error) {
+			this.log.entryIndex.releaseHashMutationLocks(lowerHashMutationLockOwner);
+			handle.lowerHashMutationLockOwner = undefined;
 			handle.released = true;
 			this._nativeStrictDurableTransactions.delete(handle);
 			handle.release();
@@ -3241,14 +3285,13 @@ export class SharedLog<
 				...handle.intent.coordinateDeleteHashes,
 			]),
 		];
-		if (handle.lowerHashMutationLockOwner) {
-			throw new Error("Native durable transaction operation is already locked");
+		if (!handle.lowerHashMutationLockOwner) {
+			throw new Error("Native durable transaction has no mutation owner");
 		}
-		// This lease is shared with the lower native transaction and every ordinary
-		// EntryIndex mutation. Acquire it before reading any before-image, then hold
-		// it through marker acknowledgement or exact compensation.
-		handle.lowerHashMutationLockOwner =
-			await this.log.entryIndex.acquireHashMutationLocks(lowerHashes);
+		this.log.entryIndex.assertHashMutationLocks(
+			handle.lowerHashMutationLockOwner,
+			lowerHashes,
+		);
 		handle.intent.lowerIndexRows = await Promise.all(
 			lowerHashes.map(async (hash) => {
 				// EntryIndex publication may still live only in its pending generation.
@@ -3259,6 +3302,9 @@ export class SharedLog<
 				return {
 					hash,
 					before: previous ? [...serialize(previous)] : undefined,
+					beforePendingOnly: previous
+						? !(await this.log.entryIndex.properties.index.get(toId(hash)))
+						: undefined,
 				};
 			}),
 		);
@@ -3335,6 +3381,9 @@ export class SharedLog<
 			const intentRow = {
 				hash: nextHash,
 				before: [...serialize(previous)],
+				beforePendingOnly: !(await this.log.entryIndex.properties.index.get(
+					toId(nextHash),
+				)),
 				after: [...serialize(after)],
 			};
 			handle.intent.lowerIndexRows.push(intentRow);
@@ -3407,12 +3456,17 @@ export class SharedLog<
 	private async completeNativeStrictDurableCoordinateCleanup(
 		intent: NativeStrictDurableTransactionIntent,
 		committed = intent.lowerMarkerCommitted === true,
+		owner?: EntryIndexHashMutationLockOwner,
 	) {
 		const hashes = intent.coordinateDeleteHashes ?? [];
 		if (!committed || hashes.length === 0) {
 			return;
 		}
-		await this._coordinates.deleteCoordinatesForHashes(hashes);
+		await this._coordinates.deleteCoordinatesForHashes(
+			hashes,
+			undefined,
+			owner,
+		);
 		const flushed = this._coordinates.flushNativeBackboneCoordinateJournal();
 		if (isPromiseLike(flushed)) {
 			await flushed;
@@ -3426,7 +3480,11 @@ export class SharedLog<
 			return;
 		}
 		try {
-			await this.completeNativeStrictDurableCoordinateCleanup(handle.intent);
+			await this.completeNativeStrictDurableCoordinateCleanup(
+				handle.intent,
+				handle.intent.lowerMarkerCommitted === true,
+				handle.lowerHashMutationLockOwner,
+			);
 			await this.completeNativeStrictDurableTrimCleanup(handle.intent);
 			await this.writeNativeStrictDurableTransactionIntent(undefined);
 			this.clearNativeStrictDurableTransactionFailure();
@@ -3455,6 +3513,15 @@ export class SharedLog<
 		finish: () => MaybePromise<TValue>,
 		shouldWarnOnRetirementFailure: () => boolean = () => true,
 	): Promise<TValue> {
+		let retirementError: unknown;
+		let retirementFailed = false;
+		try {
+			// Retire metadata and release ownership before observers can append again.
+			await this.completeNativeStrictDurableTransaction(handle);
+		} catch (error) {
+			retirementError = error;
+			retirementFailed = true;
+		}
 		let finishResult: TValue | undefined;
 		let finishError: unknown;
 		let finishFailed = false;
@@ -3464,16 +3531,16 @@ export class SharedLog<
 			finishError = error;
 			finishFailed = true;
 		}
-		try {
-			await this.completeNativeStrictDurableTransaction(handle);
-		} catch (error) {
+		if (retirementFailed) {
 			// The acknowledged lower commit is already final. Completion poisons and
 			// releases the in-memory transaction before throwing, so preserve an
 			// earlier post-commit failure while leaving recovery to retire the intent.
 			if (!finishFailed && !shouldWarnOnRetirementFailure()) {
-				throw error;
+				throw retirementError;
 			}
-			warn(`Failed to retire committed native intent: ${String(error)}`);
+			warn(
+				`Failed to retire committed native intent: ${String(retirementError)}`,
+			);
 		}
 		if (finishFailed) {
 			throw finishError;
@@ -3541,252 +3608,285 @@ export class SharedLog<
 		documentIndexReady = false,
 	): Promise<boolean> {
 		const store = this._nativeBackboneCoordinatePersistenceStore;
-		if (!store || !this._nativeBackbone) {
+		if (!this._nativeBackbone) {
 			this._nativeStrictDurableDocumentRecoveryDeferred = false;
 			return true;
 		}
-		const journalState =
-			await this.loadNativeStrictDurableTransactionJournalState();
-		const intent = journalState.intent;
-		if (!intent) {
-			this._nativeStrictDurableDocumentRecoveryDeferred = false;
-			this.clearNativeStrictDurableTransactionFailure();
-			return true;
-		}
-		if (intent.version !== 1) {
-			throw new Error("Unsupported native durable transaction recovery intent");
-		}
-		intent.trimHashes ??= [];
-		intent.coordinateDeleteHashes ??= [];
-		intent.lowerIndexRows ??= [];
-		intent.coordinates ??= [];
-		const bytesEqual = (
-			left: Uint8Array | undefined,
-			right: number[] | undefined,
-		) => {
-			if (!left || !right) {
-				return left === undefined && right === undefined;
+		return this.log.entryIndex.withExclusiveMutationRecovery(async (owner) => {
+			if (!store) {
+				await this.reconcileNativeCoordinatesWithLowerCommitMarkers(owner);
+				this._nativeStrictDurableDocumentRecoveryDeferred = false;
+				return true;
 			}
-			if (left.byteLength !== right.length) {
-				return false;
+			const journalState =
+				await this.loadNativeStrictDurableTransactionJournalState();
+			const intent = journalState.intent;
+			if (!intent) {
+				this._nativeStrictDurableDocumentRecoveryDeferred = false;
+				await this.reconcileNativeCoordinatesWithLowerCommitMarkers(owner);
+				this.clearNativeStrictDurableTransactionFailure();
+				return true;
 			}
-			for (let index = 0; index < left.byteLength; index++) {
-				if (left[index] !== right[index]) {
+			if (intent.version !== 1) {
+				throw new Error(
+					"Unsupported native durable transaction recovery intent",
+				);
+			}
+			intent.trimHashes ??= [];
+			intent.coordinateDeleteHashes ??= [];
+			intent.lowerIndexRows ??= [];
+			intent.coordinates ??= [];
+			const bytesEqual = (
+				left: Uint8Array | undefined,
+				right: number[] | undefined,
+			) => {
+				if (!left || !right) {
+					return left === undefined && right === undefined;
+				}
+				if (left.byteLength !== right.length) {
 					return false;
 				}
-			}
-			return true;
-		};
-		const immutableRowEquals = (
-			current: Uint8Array | undefined,
-			expected: number[] | undefined,
-		) => {
-			if (!current || !expected) {
-				return current === undefined && expected === undefined;
-			}
-			const currentRow = deserialize(current, ShallowEntry);
-			const expectedRow = deserialize(Uint8Array.from(expected), ShallowEntry);
-			// `head` is a mutable graph projection. Hash, payload size, and metadata
-			// are content-addressed append identity and are safe marker evidence even
-			// when a later acknowledged entry has demoted this row.
-			currentRow.head = false;
-			expectedRow.head = false;
-			return bytesEqual(serialize(currentRow), [...serialize(expectedRow)]);
-		};
-		const currentLowerRows = new Map<string, Uint8Array | undefined>();
-		for (const row of intent.lowerIndexRows) {
-			const current = (
-				await this.log.entryIndex.properties.index.get(toId(row.hash))
-			)?.value;
-			currentLowerRows.set(row.hash, current ? serialize(current) : undefined);
-		}
-		const trimHashes = new Set(intent.trimHashes);
-		const retainedMarkerRows = intent.lowerIndexRows.filter(
-			(row) =>
-				intent.appendHashes.includes(row.hash) &&
-				!trimHashes.has(row.hash) &&
-				row.after !== undefined,
-		);
-		// Only a row known absent in the before-image is an unambiguous lower commit
-		// marker. An existing content-addressed row can equal the after-image once
-		// mutable `head` is ignored even before this transaction mutated anything.
-		const expectedMarkerRows = retainedMarkerRows.filter(
-			(row) => row.before === undefined,
-		);
-		let lowerMarkerCommitted =
-			intent.lowerMarkerCommitted === true ||
-			(expectedMarkerRows.length > 0 &&
-				expectedMarkerRows.every((row) =>
-					immutableRowEquals(currentLowerRows.get(row.hash), row.after),
-				));
-		if (
-			!lowerMarkerCommitted &&
-			!documentIndexReady &&
-			intent.documents.some((document) => document.value !== undefined)
-		) {
-			// SharedLog opens before Documents can attach its schema-aware native
-			// index. Restoring an encoded before-image requires that schema. Keep the
-			// intent authoritative and mutations poisoned until Documents has attached
-			// the index and explicitly resumes recovery.
-			this._nativeStrictDurableDocumentRecoveryDeferred = true;
-			this.poisonNativeStrictDurableTransaction(
-				new Error(
-					"Native strict durable document recovery is waiting for its document index",
-				),
-			);
-			return false;
-		}
-
-		const lowerIndex = this.log.entryIndex.properties
-			.index as PutAndDeleteIndex<ShallowEntry>;
-		const deleteLowerIndexHash = async (hash: string) => {
-			if (lowerIndex.delIds) {
-				await lowerIndex.delIds([hash]);
-			} else if (lowerIndex.delIdsNoReturn) {
-				await lowerIndex.delIdsNoReturn([hash]);
-			} else {
-				await lowerIndex.del({ query: { hash } });
-			}
-		};
-		let lowerIndexChanged = false;
-		if (lowerMarkerCommitted) {
+				for (let index = 0; index < left.byteLength; index++) {
+					if (left[index] !== right[index]) {
+						return false;
+					}
+				}
+				return true;
+			};
+			const immutableRowEquals = (
+				current: Uint8Array | undefined,
+				expected: number[] | undefined,
+			) => {
+				if (!current || !expected) {
+					return current === undefined && expected === undefined;
+				}
+				const currentRow = deserialize(current, ShallowEntry);
+				const expectedRow = deserialize(
+					Uint8Array.from(expected),
+					ShallowEntry,
+				);
+				// `head` is a mutable graph projection. Hash, payload size, and metadata
+				// are content-addressed append identity and are safe marker evidence even
+				// when a later acknowledged entry has demoted this row.
+				currentRow.head = false;
+				expectedRow.head = false;
+				return bytesEqual(serialize(currentRow), [...serialize(expectedRow)]);
+			};
+			const currentLowerRows = new Map<string, Uint8Array | undefined>();
 			for (const row of intent.lowerIndexRows) {
-				if (trimHashes.has(row.hash) || !row.after) {
-					continue;
-				}
-				const current = currentLowerRows.get(row.hash);
-				if (immutableRowEquals(current, row.after)) {
-					// Preserve the current mutable head projection. It may include a later
-					// acknowledged Y -> X demotion that must survive recovery.
-					continue;
-				}
-				if (!intent.appendHashes.includes(row.hash) || current !== undefined) {
-					// External-next rows are not resurrected over a later delete, and a
-					// conflicting present content-addressed row is never overwritten.
-					continue;
-				}
-				await lowerIndex.put(
-					deserialize(Uint8Array.from(row.after), ShallowEntry),
+				const current = (
+					await this.log.entryIndex.properties.index.get(toId(row.hash))
+				)?.value;
+				currentLowerRows.set(
+					row.hash,
+					current ? serialize(current) : undefined,
 				);
-				lowerIndexChanged = true;
 			}
-			for (const hash of intent.trimHashes) {
-				const current = await lowerIndex.get(toId(hash));
-				const intentRow = intent.lowerIndexRows.find(
-					(row) => row.hash === hash,
+			const trimHashes = new Set(intent.trimHashes);
+			const retainedMarkerRows = intent.lowerIndexRows.filter(
+				(row) =>
+					intent.appendHashes.includes(row.hash) &&
+					!trimHashes.has(row.hash) &&
+					row.after !== undefined,
+			);
+			// Only a row known absent in the before-image is an unambiguous lower commit
+			// marker. An existing content-addressed row can equal the after-image once
+			// mutable `head` is ignored even before this transaction mutated anything.
+			const expectedMarkerRows = retainedMarkerRows.filter(
+				(row) => row.before === undefined,
+			);
+			let lowerMarkerCommitted =
+				intent.lowerMarkerCommitted === true ||
+				(expectedMarkerRows.length > 0 &&
+					expectedMarkerRows.every((row) =>
+						immutableRowEquals(currentLowerRows.get(row.hash), row.after),
+					));
+			if (
+				!lowerMarkerCommitted &&
+				!documentIndexReady &&
+				intent.documents.some((document) => document.value !== undefined)
+			) {
+				// SharedLog opens before Documents can attach its schema-aware native
+				// index. Restoring an encoded before-image requires that schema. Keep the
+				// intent authoritative and mutations poisoned until Documents has attached
+				// the index and explicitly resumes recovery.
+				this._nativeStrictDurableDocumentRecoveryDeferred = true;
+				this.poisonNativeStrictDurableTransaction(
+					new Error(
+						"Native strict durable document recovery is waiting for its document index",
+					),
 				);
-				if (
-					current &&
-					intentRow?.before &&
-					bytesEqual(serialize(current.value), intentRow.before)
-				) {
-					await deleteLowerIndexHash(hash);
+				return false;
+			}
+
+			const lowerIndex = this.log.entryIndex.properties
+				.index as PutAndDeleteIndex<ShallowEntry>;
+			const deleteLowerIndexHash = async (hash: string) => {
+				if (lowerIndex.delIds) {
+					await lowerIndex.delIds([hash]);
+				} else if (lowerIndex.delIdsNoReturn) {
+					await lowerIndex.delIdsNoReturn([hash]);
+				} else {
+					await lowerIndex.del({ query: { hash } });
+				}
+			};
+			let lowerIndexChanged = false;
+			if (lowerMarkerCommitted) {
+				for (const row of intent.lowerIndexRows) {
+					if (trimHashes.has(row.hash) || !row.after) {
+						continue;
+					}
+					const current = currentLowerRows.get(row.hash);
+					if (immutableRowEquals(current, row.after)) {
+						// Preserve the current mutable head projection. It may include a later
+						// acknowledged Y -> X demotion that must survive recovery.
+						continue;
+					}
+					if (
+						!intent.appendHashes.includes(row.hash) ||
+						current !== undefined
+					) {
+						// External-next rows are not resurrected over a later delete, and a
+						// conflicting present content-addressed row is never overwritten.
+						continue;
+					}
+					await lowerIndex.put(
+						deserialize(Uint8Array.from(row.after), ShallowEntry),
+					);
+					lowerIndexChanged = true;
+				}
+				for (const hash of intent.trimHashes) {
+					const current = await lowerIndex.get(toId(hash));
+					const intentRow = intent.lowerIndexRows.find(
+						(row) => row.hash === hash,
+					);
+					if (
+						current &&
+						intentRow?.before &&
+						bytesEqual(serialize(current.value), intentRow.before)
+					) {
+						await deleteLowerIndexHash(hash);
+						lowerIndexChanged = true;
+					}
+				}
+			} else {
+				for (const row of intent.lowerIndexRows) {
+					const current = currentLowerRows.get(row.hash);
+					if (bytesEqual(current, row.before)) {
+						continue;
+					}
+					// A previously admitted pending-only row may never have reached disk.
+					// The exclusive intent captured that absence before mutation, so restore
+					// its before-image after a pre-marker failure, including an abrupt exit.
+					// Otherwise keep exact after-image CAS: older intents or a conflicting
+					// present row must not resurrect or overwrite a later mutation.
+					const missingPendingBefore =
+						current === undefined &&
+						row.beforePendingOnly === true &&
+						row.before;
+					if (!missingPendingBefore && !bytesEqual(current, row.after)) {
+						continue;
+					}
+					if (row.before) {
+						await lowerIndex.put(
+							deserialize(Uint8Array.from(row.before), ShallowEntry),
+						);
+					} else {
+						await deleteLowerIndexHash(row.hash);
+					}
 					lowerIndexChanged = true;
 				}
 			}
-		} else {
-			for (const row of intent.lowerIndexRows) {
-				const current = currentLowerRows.get(row.hash);
-				if (bytesEqual(current, row.before)) {
-					continue;
-				}
-				// Exact after-image CAS: a later mutation (including only a `head`
-				// change) owns the row and must not be erased or overwritten by recovery.
-				if (!bytesEqual(current, row.after)) {
-					continue;
-				}
-				if (row.before) {
-					await lowerIndex.put(
-						deserialize(Uint8Array.from(row.before), ShallowEntry),
-					);
-				} else {
-					await deleteLowerIndexHash(row.hash);
-				}
-				lowerIndexChanged = true;
+			if (lowerIndexChanged) {
+				await this.log.entryIndex.init();
 			}
-		}
-		if (lowerIndexChanged) {
-			await this.log.entryIndex.init();
-		}
 
-		if (!lowerMarkerCommitted) {
-			if (intent.coordinates.length > 0) {
-				const mutationGenerations =
-					(this._coordinates._nativeCoordinateMutationGenerations ??=
-						new Map());
-				const rollback: NativeBackboneCoordinateRollback<R> = {
-					hashes: new Set(),
-					entries: new Map(),
-					generations: new Map(),
-				};
-				for (const coordinate of intent.coordinates) {
-					rollback.hashes.add(coordinate.hash);
-					// Same hold-counted row shape the coordinator's own
-					// snapshot writes: one hold per hash, released by the
-					// settle after the replay consumes the token below.
-					// RELIES ON `intent.coordinates` HOLDING UNIQUE HASHES —
-					// it is built from the token's `hashes` Set (see
-					// setNativeStrictDurableTransactionOperation). Holds are
-					// taken per element here but released per unique hash by
-					// the settle, so a duplicate would take two and release
-					// one and retain that row forever. That is the safe
-					// direction (a retained row, never a fail-open rollback),
-					// but keep the source a Set.
-					const row = mutationGenerations.get(coordinate.hash);
-					const generation = (row?.generation ?? 0) + 1;
-					mutationGenerations.set(coordinate.hash, {
-						generation,
-						holds: (row?.holds ?? 0) + 1,
-					});
-					rollback.generations.set(coordinate.hash, generation);
-					if (coordinate.value) {
-						const number = (value: string) =>
-							(this.domain.resolution === "u32"
-								? Number(value)
-								: BigInt(value)) as NumberFromType<R>;
-						rollback.entries.set(
-							coordinate.hash,
-							new this.indexableDomain.constructorEntry({
-								hash: coordinate.hash,
-								hashNumber: number(coordinate.value.hashNumber),
-								gid: coordinate.value.gid,
-								coordinates: coordinate.value.coordinates.map(number),
-								wallTime: BigInt(coordinate.value.wallTime),
-								assignedToRangeBoundary:
-									coordinate.value.assignedToRangeBoundary,
-								metaBytes: Uint8Array.from(coordinate.value.metaBytes),
-							}),
-						);
+			if (!lowerMarkerCommitted) {
+				if (intent.coordinates.length > 0) {
+					const mutationGenerations =
+						(this._coordinates._nativeCoordinateMutationGenerations ??=
+							new Map());
+					const rollback: NativeBackboneCoordinateRollback<R> = {
+						owner,
+						hashes: new Set(),
+						entries: new Map(),
+						generations: new Map(),
+					};
+					for (const coordinate of intent.coordinates) {
+						rollback.hashes.add(coordinate.hash);
+						// Same hold-counted row shape the coordinator's own
+						// snapshot writes: one hold per hash, released by the
+						// settle after the replay consumes the token below.
+						// RELIES ON `intent.coordinates` HOLDING UNIQUE HASHES —
+						// it is built from the token's `hashes` Set (see
+						// setNativeStrictDurableTransactionOperation). Holds are
+						// taken per element here but released per unique hash by
+						// the settle, so a duplicate would take two and release
+						// one and retain that row forever. That is the safe
+						// direction (a retained row, never a fail-open rollback),
+						// but keep the source a Set.
+						const row = mutationGenerations.get(coordinate.hash);
+						const generation = (row?.generation ?? 0) + 1;
+						mutationGenerations.set(coordinate.hash, {
+							generation,
+							holds: (row?.holds ?? 0) + 1,
+						});
+						rollback.generations.set(coordinate.hash, generation);
+						if (coordinate.value) {
+							const number = (value: string) =>
+								(this.domain.resolution === "u32"
+									? Number(value)
+									: BigInt(value)) as NumberFromType<R>;
+							rollback.entries.set(
+								coordinate.hash,
+								new this.indexableDomain.constructorEntry({
+									hash: coordinate.hash,
+									hashNumber: number(coordinate.value.hashNumber),
+									gid: coordinate.value.gid,
+									coordinates: coordinate.value.coordinates.map(number),
+									wallTime: BigInt(coordinate.value.wallTime),
+									assignedToRangeBoundary:
+										coordinate.value.assignedToRangeBoundary,
+									metaBytes: Uint8Array.from(coordinate.value.metaBytes),
+								}),
+							);
+						}
 					}
+					await this._coordinates.rollbackNativeBackboneCoordinateAppendDurably(
+						"",
+						rollback,
+					);
+					// The replay fabricated these generations itself one turn
+					// earlier and has now consumed them, so the rows are dead.
+					this._coordinates.settleResidentCoordinateSnapshot(rollback);
 				}
-				await this._coordinates.rollbackNativeBackboneCoordinateAppendDurably(
-					"",
-					rollback,
+				for (const document of intent.documents) {
+					this.restoreNativeBackboneDocument({
+						key: document.key,
+						value: document.value ? Uint8Array.from(document.value) : undefined,
+						byteElementIndexLimit: document.byteElementIndexLimit,
+					});
+				}
+				const flushed =
+					this._coordinates.flushNativeBackboneCoordinateJournal();
+				if (isPromiseLike(flushed)) {
+					await flushed;
+				}
+			}
+			if (lowerMarkerCommitted) {
+				await this.completeNativeStrictDurableCoordinateCleanup(
+					intent,
+					true,
+					owner,
 				);
-				// The replay fabricated these generations itself one turn
-				// earlier and has now consumed them, so the rows are dead.
-				this._coordinates.settleResidentCoordinateSnapshot(rollback);
+				await this.completeNativeStrictDurableTrimCleanup(intent, true, true);
 			}
-			for (const document of intent.documents) {
-				this.restoreNativeBackboneDocument({
-					key: document.key,
-					value: document.value ? Uint8Array.from(document.value) : undefined,
-					byteElementIndexLimit: document.byteElementIndexLimit,
-				});
-			}
-			const flushed = this._coordinates.flushNativeBackboneCoordinateJournal();
-			if (isPromiseLike(flushed)) {
-				await flushed;
-			}
-		}
-		if (lowerMarkerCommitted) {
-			await this.completeNativeStrictDurableCoordinateCleanup(intent, true);
-			await this.completeNativeStrictDurableTrimCleanup(intent, true, true);
-		}
-		await this.writeNativeStrictDurableTransactionIntent(undefined);
-		this._nativeStrictDurableDocumentRecoveryDeferred = false;
-		this.clearNativeStrictDurableTransactionFailure();
-		return true;
+			await this.writeNativeStrictDurableTransactionIntent(undefined);
+			this._nativeStrictDurableDocumentRecoveryDeferred = false;
+			await this.reconcileNativeCoordinatesWithLowerCommitMarkers(owner);
+			this.clearNativeStrictDurableTransactionFailure();
+			return true;
+		});
 	}
 
 	/** @internal Complete a deferred rollback after Documents attaches its schema. */
@@ -3801,7 +3901,6 @@ export class SharedLog<
 				"Native strict durable document recovery did not complete",
 			);
 		}
-		await this.reconcileNativeCoordinatesWithLowerCommitMarkers();
 	}
 
 	private async rollbackFailedNativeBackboneTransaction(properties: {
@@ -4119,6 +4218,7 @@ export class SharedLog<
 			SYNC_CAPABILITY_REPLICATION_INFO_V2_SEND |
 			SYNC_CAPABILITY_REPLICATION_INFO_V2_APPLY |
 			SYNC_CAPABILITY_REPLICATION_INFO_V2_CONFIRM |
+			SYNC_CAPABILITY_ENTRY_INVENTORY |
 			(this._persistedReceiptStorage
 				? SYNC_CAPABILITY_PERSISTED_ENTRY_RECEIPTS
 				: 0) |
@@ -4134,6 +4234,7 @@ export class SharedLog<
 		receiveEpoch: object | null;
 		signal: AbortSignal;
 		requestRemoteFullRearm?: boolean;
+		acknowledgeRearm?: boolean;
 	}): Promise<
 		{ receiverTransportSession: bigint; requestNotBeforeMs: number } | undefined
 	> {
@@ -4148,15 +4249,16 @@ export class SharedLog<
 						: 0),
 			}),
 			{
-				// The transient rearm is only a bounded recovery hint. The ensuing
-				// authenticated Full/Applied exchange is the readiness proof, so do not
-				// let an ACK-delivery promise park the recovery scheduler itself.
-				mode: properties.requestRemoteFullRearm
-					? new SilentDelivery({ redundancy: 1, to: [properties.target] })
-					: new AcknowledgeDelivery({
-							redundancy: 1,
-							to: [properties.target],
-						}),
+				// Watchdog hints stay silent so ACK latency cannot park that scheduler.
+				// Opening adverts still need an ACK before granting local receive
+				// readiness, even when they also solicit reciprocal recovery.
+				mode:
+					properties.requestRemoteFullRearm && !properties.acknowledgeRearm
+						? new SilentDelivery({ redundancy: 1, to: [properties.target] })
+						: new AcknowledgeDelivery({
+								redundancy: 1,
+								to: [properties.target],
+							}),
 				priority: CONVERGENCE_MESSAGE_PRIORITY,
 				signal: properties.signal,
 			},
@@ -4218,6 +4320,7 @@ export class SharedLog<
 					receiveEpoch: properties.receiveEpoch,
 					signal: properties.signal,
 					requestRemoteFullRearm: properties.requestRemoteFullRearm,
+					acknowledgeRearm: properties.acknowledgeRearm,
 				}),
 			onRequestError: (error) => {
 				if (
@@ -6461,7 +6564,9 @@ export class SharedLog<
 					});
 			}
 		};
-		let maxAttemptMs = MAX_PERSISTED_RECEIPT_ATTEMPT_MS;
+		let maxPrerequisiteAttemptMs = MAX_PERSISTED_RECEIPT_ATTEMPT_MS;
+		let maxReceiptResponseAttemptMs = MAX_PERSISTED_RECEIPT_ATTEMPT_MS;
+		let noProgressRetryMs = PERSISTED_RECEIPT_RETRY_MS;
 		let initialTransferPending = transferOnFirstRound;
 		let needsInitialLeaderCheck = true;
 		const carriedAcknowledgements = new Map<
@@ -6653,16 +6758,19 @@ export class SharedLog<
 				);
 				const roundController = new AbortController();
 				const roundSignal = AbortSignal.any([signal, roundController.signal]);
-				const getAttemptTimeout = () =>
+				const getAttemptTimeout = (maxMs = maxPrerequisiteAttemptMs) =>
 					Math.max(
 						1,
 						Math.min(
-							maxAttemptMs,
+							maxMs,
 							Math.floor((deadline.deadline - Date.now()) / candidateWaves),
 						),
 					);
 				const requests = new Set<Promise<void>>();
 				const transferAllOnRound = initialTransferPending;
+				let receivedValidReceipt = false;
+				let receivedNewReceipt = false;
+				let missedReceiptResponse = false;
 				try {
 					for (const [peer, hashes] of hashesByPeer) {
 						let request!: Promise<void>;
@@ -6850,6 +6958,7 @@ export class SharedLog<
 									break;
 								}
 								let responses;
+								let requestIssued = false;
 								const attempt = offset / PERSISTED_RECEIPT_CHUNK_SIZE + 1;
 								let requestStartedAt: number | undefined;
 								let endRequest:
@@ -6875,11 +6984,16 @@ export class SharedLog<
 										throw error;
 									}
 									if (!isPeerRoundCurrent()) break;
-									const attemptTimeout = getAttemptTimeout();
 									responses =
 										(await operationQueue.add(async () => {
 											if (!isPeerRoundCurrent()) return [];
+											// Only a missed response grows this bounded wait. Valid empty
+											// receipts instead back off polling while durability catches up.
+											const attemptTimeout = getAttemptTimeout(
+												maxReceiptResponseAttemptMs,
+											);
 											requestStartedAt = profile?.now();
+											requestIssued = true;
 											const pending = this.rpc.request(
 												new RequestPersistedEntriesV1({
 													expectedReceiverSession: captured.capabilitySession,
@@ -6909,6 +7023,7 @@ export class SharedLog<
 								} catch {
 									endRequest?.("rejected", 0);
 									if (roundSignal.aborted) break;
+									if (requestIssued) missedReceiptResponse = true;
 									// A peer can disconnect or miss this retry while the overall
 									// quorum deadline remains active. Replan on the next round.
 									break;
@@ -6947,10 +7062,16 @@ export class SharedLog<
 										continue;
 									}
 									receivedValidConfirmation = true;
+									receivedValidReceipt = true;
 									for (const hash of unique) {
 										confirmed.add(hash);
-										carriedAcknowledgements.get(hash)?.set(peer, captured);
+										const acknowledgements = carriedAcknowledgements.get(hash)!;
+										if (!acknowledgements.has(peer)) receivedNewReceipt = true;
+										acknowledgements.set(peer, captured);
 									}
+								}
+								if (requestIssued && !receivedValidConfirmation) {
+									missedReceiptResponse = true;
 								}
 								if (receivedValidConfirmation) {
 									const state = ensureRepairState();
@@ -7064,21 +7185,34 @@ export class SharedLog<
 				if (isRoundOwnershipCurrent()) {
 					initialTransferPending = false;
 				}
-				// Keep early retries fair and responsive, then let a caller's longer
-				// overall deadline accommodate a genuinely slow durability barrier.
-				maxAttemptMs = Math.min(
+				// Confirmation and transfer can need a growing preparation window, but
+				// receipt response waits stay bounded independently of that work.
+				maxPrerequisiteAttemptMs = Math.min(
 					MAX_PERSISTED_DELIVERY_TIMEOUT_MS,
-					maxAttemptMs * 2,
+					maxPrerequisiteAttemptMs * 2,
 				);
+				// A genuinely slow receiver may need more than one response window.
+				// Grow on any issued request's miss, even if another peer replied empty,
+				// preserving the existing timer maximum and caller-deadline clamp.
+				if (missedReceiptResponse) {
+					maxReceiptResponseAttemptMs = Math.min(
+						MAX_PERSISTED_DELIVERY_TIMEOUT_MS,
+						maxReceiptResponseAttemptMs * 2,
+					);
+				}
+				// A valid empty/unchanged receipt should reduce polling, not grow the
+				// next RPC's response timeout. New receipts or a round without a valid
+				// response reset this backoff; readiness recovery gets no extra pause.
+				const noReceiptProgress = receivedValidReceipt && !receivedNewReceipt;
+				const retryMs = noReceiptProgress
+					? noProgressRetryMs
+					: PERSISTED_RECEIPT_RETRY_MS;
+				noProgressRetryMs = noReceiptProgress
+					? Math.min(1_000, noProgressRetryMs * 2)
+					: PERSISTED_RECEIPT_RETRY_MS;
 				await this.waitPersistedReceiptRetry(
 					signal,
-					Math.max(
-						0,
-						Math.min(
-							PERSISTED_RECEIPT_RETRY_MS,
-							deadline.deadline - Date.now(),
-						),
-					),
+					Math.max(0, Math.min(retryMs, deadline.deadline - Date.now())),
 				);
 			}
 		} catch (error) {
@@ -7836,6 +7970,7 @@ export class SharedLog<
 	}
 
 	private invalidateLeaderSelectionContextCache() {
+		this._entryInventoryRecovery?.restartActive();
 		if (this._instanceLifecycle) {
 			this._instanceLifecycle._receiveOwnershipRevision++;
 		}
@@ -8290,7 +8425,7 @@ export class SharedLog<
 		);
 
 		if (staleHashes.length > 0) {
-			await this._coordinates.deleteCoordinatesForHashes(
+			await this._coordinates.deleteNonHeadCoordinatesForHashes(
 				staleHashes,
 				ownershipLifecycleController,
 			);
@@ -10758,6 +10893,7 @@ export class SharedLog<
 		target: string,
 		options?: { expectedWarmupSession?: WarmupSession | null },
 	) {
+		this._entryInventoryRecovery?.forget(target);
 		if (
 			options?.expectedWarmupSession === undefined ||
 			(options.expectedWarmupSession !== null &&
@@ -10770,6 +10906,218 @@ export class SharedLog<
 			this._repairFrontierByMode.get(mode)?.delete(target);
 			this._repairFrontierActiveTargetsByMode.get(mode)?.delete(target);
 			this._repairFrontierBypassKnownPeersByMode.get(mode)?.delete(target);
+		}
+	}
+
+	private isEntryInventoryPeerCurrent(
+		peer: string,
+		session: PeerSession,
+	): boolean {
+		return (
+			!this.closed &&
+			session.phase === "open" &&
+			session.isActive() &&
+			this._peerSessions.isCurrent(peer, session)
+		);
+	}
+
+	private recoverPeerEntryInventory(
+		peer: string,
+		session: PeerSession,
+		jobSignal: AbortSignal,
+	): EntryInventoryPass {
+		const terminal = (result: "complete" | "retry"): EntryInventoryPass => ({
+			next: async () => result,
+			close: () => {},
+		});
+		const transportSession = this._peerSyncCapabilitySessions.get(peer);
+		if (transportSession === undefined) return terminal("retry");
+		if (
+			((this._peerSyncCapabilities.get(peer) ?? 0) &
+				SYNC_CAPABILITY_ENTRY_INVENTORY) ===
+			0
+		) {
+			// Old peers keep their existing synchronization behavior. An unsupported
+			// pass is never exposed as a caught-up or durable-replication signal.
+			return terminal("complete");
+		}
+		const lifecycle = this.captureReplicationOwnershipLifecycle();
+		const signal = AbortSignal.any([
+			jobSignal,
+			lifecycle.signal,
+			this._closeController.signal,
+		]);
+		const revision = this._instanceLifecycle?._receiveOwnershipRevision ?? 0;
+		const receiveEpoch = this._peerSessions.receiveEpoch(peer);
+		const lower = this.log.entryIndex;
+		const generation = lower.captureMutationGeneration();
+		const current = () =>
+			!signal.aborted &&
+			generation !== undefined &&
+			lower === this.log.entryIndex &&
+			lower.isMutationGenerationCurrent(generation) &&
+			this.isEntryInventoryPeerCurrent(peer, session) &&
+			!this._peerSessions.isReplicationInfoBlocked(peer) &&
+			this._peerSessions.isReceiveCleanupGateOpen(peer) &&
+			this._peerSessions.receiveEpoch(peer) === receiveEpoch &&
+			this._peerSyncCapabilitySessions.get(peer) === transportSession &&
+			this.isReceiveOwnershipSnapshotStable(revision);
+		if (!current()) return terminal("retry");
+		const cursor = this._coordinates.scanAuthoritativeCoordinateKeys({
+			pageSize: ENTRY_INVENTORY_PAGE_SIZE,
+			signal,
+		});
+		if (!cursor) return terminal("complete"); // No unbounded iterate/all fallback.
+		let incomplete = false;
+		return {
+			next: async () => {
+				if (!current()) return "retry";
+				const page = await cursor.next();
+				if (
+					!current() ||
+					(page.status !== "more" && page.status !== "complete")
+				)
+					return "retry";
+				const hashes: string[] = [];
+				for (const key of page.keys) {
+					if (typeof key !== "string")
+						throw new Error("Coordinate inventory key is not a hash");
+					const coordinate =
+						await this._coordinates.getAuthoritativeCoordinateEntryForInventory(
+							key,
+						);
+					if (!current()) return "retry";
+					if (!coordinate) return "retry";
+					const leaders = await this.findLeadersFromEntry(
+						coordinate,
+						decodeReplicas(coordinate).getValue(this),
+						{ roleAge: 0, freshLeaderPlan: true },
+						lifecycle,
+					);
+					if (!current()) return "retry";
+					if (leaders.has(peer)) hashes.push(key);
+				}
+				if (
+					hashes.length > 0 &&
+					!(await this.recoverEntryInventoryPage(
+						peer,
+						transportSession,
+						hashes,
+						signal,
+						current,
+					))
+				) {
+					// A missed page is not proof of presence. Keep walking so loss or
+					// an authorization rejection near the start cannot starve the tail.
+					incomplete = true;
+				}
+				if (!current()) return "retry";
+				if (page.status === "complete")
+					return incomplete ? "retry" : "complete";
+				// Page-local arrays fall out of scope before the scheduler parks this
+				// pass. Only cursor position, fences and `incomplete` survive a turn.
+				return "more";
+			},
+			close: () => cursor.close(),
+		};
+	}
+
+	private async recoverEntryInventoryPage(
+		peer: string,
+		transportSession: bigint,
+		hashes: string[],
+		signal: AbortSignal,
+		isCurrent: () => boolean,
+	): Promise<boolean> {
+		const deadline = new AbortController();
+		const timer = setTimeout(() => deadline.abort(), 2_000);
+		const pageSignal = AbortSignal.any([signal, deadline.signal]);
+		const current = () => !pageSignal.aborted && isCurrent();
+		const requested = new Set(hashes);
+		let sent = false;
+		try {
+			while (current()) {
+				await this.waitForPersistedReceiptEgressAdmission(
+					peer,
+					transportSession,
+					hashes.length,
+					pageSignal,
+				);
+				if (!current()) return false;
+				let physical: Promise<void> | undefined;
+				let responses: Awaited<ReturnType<typeof this.rpc.request>>;
+				try {
+					responses = await this.rpc.request(
+						new RequestEntryInventoryV1({
+							expectedReceiverSession: transportSession,
+							hashes,
+						}),
+						{
+							mode: new SilentDelivery({ to: [peer], redundancy: 1 }),
+							amount: 1,
+							priority: SYNC_MESSAGE_PRIORITY,
+							timeout: 1_000,
+							signal: pageSignal,
+							isCurrent: current,
+							onPhysicalSettlement: (settled) => {
+								physical = settled;
+							},
+						},
+					);
+				} finally {
+					// RPC timeout/abort can precede publish settlement. Keep this worker
+					// charged until the physical operation actually relinquishes ownership.
+					await physical;
+				}
+				if (!current() || responses.length !== 1) return false;
+				const result = responses[0]!;
+				if (
+					!(result.response instanceof ConfirmEntriesMessage) ||
+					result.from?.hashcode() !== peer ||
+					result.message.header.session !== transportSession ||
+					result.response.hashes.length > hashes.length
+				)
+					return false;
+				const present = new Set(result.response.hashes);
+				if (
+					present.size !== result.response.hashes.length ||
+					[...present].some((hash) => !requested.has(hash))
+				)
+					return false;
+				const missing = hashes.filter((hash) => !present.has(hash));
+				if (missing.length === 0) return true;
+				if (!sent) {
+					// Do not consult old uncorrelated confirmation hints. Only this fresh
+					// response determines the payload subset, through normal canAppend.
+					for await (const message of createExactExchangeHeadsMessages(
+						this.log,
+						missing,
+						current,
+					)) {
+						if (!current()) return false;
+						message.reserved[0] |= EXCHANGE_HEADS_REPAIR_HINT;
+						await this.rpc.send(message, {
+							mode: new SilentDelivery({ to: [peer], redundancy: 1 }),
+							priority: SYNC_MESSAGE_PRIORITY,
+							signal: pageSignal,
+							isCurrent: current,
+						});
+					}
+					sent = true;
+				}
+				await delay(100, { signal: pageSignal });
+			}
+			return false;
+		} catch (error) {
+			if (
+				!current() ||
+				error instanceof AbortError ||
+				error instanceof TimeoutError
+			)
+				return false;
+			throw error;
+		} finally {
+			clearTimeout(timer);
 		}
 	}
 
@@ -10935,8 +11283,21 @@ export class SharedLog<
 		},
 		mode?: RepairDispatchMode,
 	) {
-		const isStillCurrent = options?.isStillCurrent ?? (() => true);
-		if (!isStillCurrent()) {
+		const ownerIsCurrent = options?.isStillCurrent ?? (() => true);
+		if (!ownerIsCurrent()) return;
+		const lower = this.log.entryIndex;
+		const generation = lower.captureMutationGeneration();
+		const session = this._peerSessions.current(target);
+		const receiveEpoch = this._peerSessions.receiveEpoch(target);
+		const isStillCurrent = () =>
+			ownerIsCurrent() &&
+			!options?.signal?.aborted &&
+			generation !== undefined &&
+			lower === this.log.entryIndex &&
+			lower.isMutationGenerationCurrent(generation) &&
+			this._peerSessions.current(target) === session &&
+			this._peerSessions.receiveEpoch(target) === receiveEpoch;
+		if (generation === undefined || options?.signal?.aborted) {
 			return;
 		}
 		const unknownEntries = new Map<string, RepairDispatchEntry<R>>();
@@ -10963,12 +11324,31 @@ export class SharedLog<
 					knownHashes.push(hash);
 				}
 			}
+			// A repair frontier can outlive local CUT/prune removal. Recheck the
+			// authoritative lower log before offering those hashes, in bounded reads.
+			// Absence retires only our stale send obligation, never remote presence.
+			const candidates = unknownEntries.keys();
+			while (unknownEntries.size > 0) {
+				const chunk: string[] = [];
+				while (chunk.length < REPAIR_SWEEP_ENTRY_BATCH_SIZE) {
+					const next = candidates.next();
+					if (next.done) break;
+					chunk.push(next.value);
+				}
+				if (chunk.length === 0) break;
+				const present = await this.log.hasMany(chunk);
+				if (!isStillCurrent()) return;
+				const absent = chunk.filter((hash) => !present.has(hash));
+				for (const hash of absent) unknownEntries.delete(hash);
+				if (absent.length > 0) this.clearRepairFrontierHashes(target, absent);
+			}
 			// A custom synchronizer may mutate the Map once it receives it.
 			if (profile) selectedEntries = unknownEntries.size;
 			if (!isStillCurrent()) return;
 			this.clearRepairFrontierHashes(target, knownHashes);
 			if (unknownEntries.size === 0) {
-				outcome = "known-suppressed";
+				outcome =
+					knownHashes.length === entries.size ? "known-suppressed" : "not-held";
 				return;
 			}
 			if (transport === "simple") {
@@ -13252,6 +13632,13 @@ export class SharedLog<
 			appendOptions,
 			properties?.localCommitEvidence,
 		);
+		let coalescedNativeAppendPlan: NativeAppendEntryPlan<R> | undefined;
+		const coalesceTrimCoordinates =
+			options?.target === "none" &&
+			options.replicate !== true &&
+			!this.shouldDeferHeadCoordinatePersistence(options) &&
+			this.domain.type === "hash" &&
+			(!!this._nativeSharedLogState || !!this._nativeBackbone);
 		const result = await asTrustedLowerLog(this.log).appendLocallyPrepared(
 			data,
 			appendOptions,
@@ -13259,6 +13646,20 @@ export class SharedLog<
 				skipMissingNextJoin: properties?.skipMissingNextJoin,
 				resolveTrimmedEntries: properties?.resolveTrimmedEntries,
 				payloadData: properties?.payloadData,
+				onTrimCommitted: coalesceTrimCoordinates
+					? async ({ appendFacts, removed, hashMutationLockOwner }) => {
+							const plan = await this.planAndPersistNativeLocalAppendFacts(
+								appendFacts,
+								minReplicasValue,
+								removed.map((entry) => entry.hash),
+								ownershipLifecycleController,
+								{ hashMutationLockOwner },
+							);
+							if (!plan) return false;
+							coalescedNativeAppendPlan = plan;
+							return true;
+						}
+					: undefined,
 			},
 		);
 		if (properties?.localCommitEvidence) {
@@ -13272,6 +13673,7 @@ export class SharedLog<
 		const nativePreparedCommit =
 			await this.processNativePreparedTargetNoneAppend(result, options, {
 				minReplicasValue,
+				nativeAppendPlan: coalescedNativeAppendPlan,
 				ownershipLifecycleController,
 			});
 		this.throwIfReplicationOwnershipLifecycleInactive(
@@ -13293,27 +13695,6 @@ export class SharedLog<
 				this.applyChangeWithDeferredCoordinateDeletes(result.change, {
 					ownershipLifecycleController,
 				});
-			nativeAppendPlan = await this.planNativeLocalAppendFacts(
-				result.appendFacts,
-				minReplicasValue,
-				undefined,
-				ownershipLifecycleController,
-			);
-			this.throwIfReplicationOwnershipLifecycleInactive(
-				ownershipLifecycleController,
-			);
-			if (!nativeAppendPlan) {
-				if (deferredCoordinateDeleteHashes) {
-					await this._coordinates.deleteCoordinatesForHashes(
-						deferredCoordinateDeleteHashes,
-						ownershipLifecycleController,
-					);
-					this.throwIfReplicationOwnershipLifecycleInactive(
-						ownershipLifecycleController,
-					);
-				}
-				deferredCoordinateDeleteHashes = undefined;
-			}
 		} else {
 			const changeResult = this.applyChange(result.change, {
 				ownershipLifecycleController,
@@ -13336,7 +13717,7 @@ export class SharedLog<
 				})) ?? nativeAppendPlan;
 		} catch (error) {
 			if (deferredCoordinateDeleteHashes) {
-				await this._coordinates.deleteCoordinatesForHashes(
+				await this._coordinates.deleteNonHeadCoordinatesForHashes(
 					deferredCoordinateDeleteHashes,
 					ownershipLifecycleController,
 				);
@@ -13358,6 +13739,77 @@ export class SharedLog<
 		};
 	}
 
+	private async planAndPersistNativeLocalAppendFacts(
+		appendFacts: PreparedAppendFacts,
+		replicas: number,
+		deleteCandidates: string[],
+		ownershipLifecycleController: AbortController,
+		properties?: {
+			hashMutationLockOwner?: EntryIndexHashMutationLockOwner;
+			coordinateIndex?: PutAndDeleteIndex<EntryReplicated<R>>;
+		},
+	): Promise<NativeAppendEntryPlan<R> | undefined> {
+		return this._coordinates.withCoordinateMutationOwner(
+			[appendFacts.hash, ...appendFacts.next, ...deleteCandidates],
+			async (owner) => {
+				if (
+					!(await this.log.entryIndex.getShallow(appendFacts.hash))?.value.head
+				) {
+					return undefined;
+				}
+				const deleteHashes: string[] = [];
+				for (const hash of deleteCandidates) {
+					if (!(await this.log.entryIndex.getShallow(hash))?.value.head) {
+						deleteHashes.push(hash);
+					}
+				}
+				try {
+					const plan = await this.planNativeLocalAppendFacts(
+						appendFacts,
+						replicas,
+						{ deleteHashes },
+						ownershipLifecycleController,
+						owner,
+					);
+					if (!plan) return undefined;
+					const write = {
+						prepared: plan.preparedCoordinate,
+						hash: appendFacts.hash,
+						nextHashes: appendFacts.next,
+						deleteHashes,
+						coordinates: plan.coordinates,
+						replicas: plan.coordinates.length,
+						commitNative: plan.committedNativeCoordinateState !== true,
+						commitNativeBackbone:
+							plan.committedNativeBackboneCoordinateState !== true,
+					};
+					if (properties?.coordinateIndex) {
+						await this._coordinates.persistPreparedCoordinateNativeTransaction(
+							{ ...write, coordinateIndex: properties.coordinateIndex },
+							ownershipLifecycleController,
+							owner,
+						);
+					} else {
+						await this._coordinates.persistPreparedCoordinate(
+							write,
+							ownershipLifecycleController,
+							owner,
+						);
+					}
+					this.throwIfReplicationOwnershipLifecycleInactive(
+						ownershipLifecycleController,
+					);
+					return plan;
+				} catch (error) {
+					// Lower admission is committed. Preserve partial metadata for recovery.
+					this.poisonNativeStrictDurableTransaction(error);
+					throw error;
+				}
+			},
+			properties?.hashMutationLockOwner,
+		);
+	}
+
 	private async processNativePreparedTargetNoneAppend(
 		result: {
 			entry?: Entry<T>;
@@ -13371,6 +13823,7 @@ export class SharedLog<
 		options: SharedAppendOptions<T> | undefined,
 		properties: {
 			minReplicasValue: number;
+			nativeAppendPlan?: NativeAppendEntryPlan<R>;
 			ownershipLifecycleController?: AbortController;
 		},
 	): Promise<PreparedLocalAppendCommit<R> | undefined> {
@@ -13394,70 +13847,30 @@ export class SharedLog<
 			result.change?.removed.map((entry) => entry.hash) ??
 			result.removedHashes ??
 			result.removed.map((entry) => entry.hash);
-		const nativeAppendPlan = await this.planNativeLocalAppendFacts(
-			result.appendFacts,
-			properties.minReplicasValue,
-			{
-				deleteHashes:
-					plannedCoordinateDeleteHashes.length > 0
-						? plannedCoordinateDeleteHashes
-						: undefined,
-			},
-			ownershipLifecycleController,
-		);
-		this.throwIfReplicationOwnershipLifecycleInactive(
-			ownershipLifecycleController,
-		);
-		if (!nativeAppendPlan) {
-			return undefined;
-		}
-
-		let deferredCoordinateDeleteHashes: string[] | undefined;
-		try {
-			deferredCoordinateDeleteHashes = result.change
-				? this.applyChangeWithDeferredCoordinateDeletes(result.change, {
-						forgetNativeCoordinates:
-							!nativeAppendPlan.committedNativeCoordinateDeletes,
-						ownershipLifecycleController,
-					})
-				: this.applyPreparedAppendFactsWithDeferredCoordinateDeletes(
-						result.appendFacts,
-						result.removed,
-						() => this.materializePreparedAppendResultEntry(result),
-						{
-							forgetNativeCoordinates:
-								!nativeAppendPlan.committedNativeCoordinateDeletes,
-							removedHashes: result.removedHashes,
-							removedGids: result.removedGids,
-							ownershipLifecycleController,
-						},
-					);
-			await this._coordinates.persistPreparedCoordinate(
+		const nativeAppendPlan =
+			properties.nativeAppendPlan ??
+			(await this.planAndPersistNativeLocalAppendFacts(
+				result.appendFacts,
+				properties.minReplicasValue,
+				plannedCoordinateDeleteHashes,
+				ownershipLifecycleController,
+			));
+		if (!nativeAppendPlan) return undefined;
+		if (result.change) {
+			this.applyChangeWithDeferredCoordinateDeletes(result.change, {
+				ownershipLifecycleController,
+			});
+		} else {
+			this.applyPreparedAppendFactsWithDeferredCoordinateDeletes(
+				result.appendFacts,
+				result.removed,
+				() => this.materializePreparedAppendResultEntry(result),
 				{
-					prepared: nativeAppendPlan.preparedCoordinate,
-					hash: result.appendFacts.hash,
-					nextHashes: result.appendFacts.next,
-					deleteHashes: deferredCoordinateDeleteHashes,
-					coordinates: nativeAppendPlan.coordinates,
-					replicas: nativeAppendPlan.coordinates.length,
-					commitNative:
-						nativeAppendPlan.committedNativeCoordinateState !== true,
-					commitNativeBackbone:
-						nativeAppendPlan.committedNativeBackboneCoordinateState !== true,
-				},
-				ownershipLifecycleController,
-			);
-			this.throwIfReplicationOwnershipLifecycleInactive(
-				ownershipLifecycleController,
-			);
-		} catch (error) {
-			if (deferredCoordinateDeleteHashes) {
-				await this._coordinates.deleteCoordinatesForHashes(
-					deferredCoordinateDeleteHashes,
+					removedHashes: result.removedHashes,
+					removedGids: result.removedGids,
 					ownershipLifecycleController,
-				);
-			}
-			throw error;
+				},
+			);
 		}
 
 		const delayAdaptiveRebalance = this.shouldDelayAdaptiveRebalance();
@@ -13828,6 +14241,18 @@ export class SharedLog<
 		nativeCommitProperties.deferNativeTransactionAcknowledgement = true;
 		const rollbackLowerPublication = async (error: unknown): Promise<never> => {
 			durableWrapper?.cancelNativeDeleteCleanup?.(nativeDeleteCleanupToken);
+			if (
+				!lowerPublicationRollback &&
+				nativeStrictTransaction?.lowerHashMutationLockOwner
+			) {
+				// An opaque native throw may follow partial graph/document mutation.
+				// Without its result we cannot prove compensation; retain the intent.
+				this.releaseNativeStrictDurableTransaction(
+					nativeStrictTransaction,
+					error,
+				);
+				throw error;
+			}
 			const rollbackFailures: unknown[] = [];
 			if (
 				lowerPublicationRollback &&
@@ -13848,20 +14273,6 @@ export class SharedLog<
 						unmirroredBlockCompensation: !lowerPublicationStarted,
 						restoreGraphFromIndex: true,
 					});
-				} catch (rollbackError) {
-					rollbackFailures.push(rollbackError);
-				}
-			} else if (
-				nativeDocumentRollback &&
-				!(error instanceof NativeDurableCommitError)
-			) {
-				try {
-					this.restoreNativeBackboneDocument(nativeDocumentRollback);
-					const flushed =
-						this._coordinates.flushNativeBackboneCoordinateJournal();
-					if (isPromiseLike(flushed)) {
-						await flushed;
-					}
 				} catch (rollbackError) {
 					rollbackFailures.push(rollbackError);
 				}
@@ -13912,13 +14323,13 @@ export class SharedLog<
 					}
 					const useLatestDocumentContext =
 						properties?.useNativeExistingDocumentContext === true;
-					nativeDocumentRollback = this.snapshotNativeBackboneDocument(
-						nativeBackboneDocumentIndexForAppend,
-					);
 					nativeStrictTransaction =
-						await this.beginNativeStrictDurableTransaction(
-							nativeDocumentRollback ? [nativeDocumentRollback] : [],
-						);
+						await this.beginNativeStrictDurableTransaction(() => {
+							nativeDocumentRollback = this.snapshotNativeBackboneDocument(
+								nativeBackboneDocumentIndexForAppend,
+							);
+							return nativeDocumentRollback ? [nativeDocumentRollback] : [];
+						});
 					const prepared = backbone.graph.prepareEntryV0PlainEntryCommit(
 						{
 							...input,
@@ -13949,11 +14360,14 @@ export class SharedLog<
 							)?.flatMap((entry) => (entry.hash ? [entry.hash] : [])) ??
 							[];
 						const coordinateRollback =
-							this._coordinates.snapshotResidentCoordinateEntries([
-								...(preparedHash ? [preparedHash] : []),
-								...preparedNext,
-								...nativeTrimmedHashes,
-							]);
+							this._coordinates.snapshotResidentCoordinateEntries(
+								[
+									...(preparedHash ? [preparedHash] : []),
+									...preparedNext,
+									...nativeTrimmedHashes,
+								],
+								nativeStrictTransaction.lowerHashMutationLockOwner!,
+							);
 						lowerPublicationRollback = {
 							committedHashes: preparedHash ? [preparedHash] : [],
 							trimmedEntries: prepared.trimmedEntries,
@@ -14436,16 +14850,16 @@ export class SharedLog<
 										documentDeleteKey: nativeBackboneDocumentDeleteKey,
 									}
 								: appendInput;
-					nativeDocumentRollback = this.snapshotNativeBackboneDocument(
-						nativeBackboneDocumentIndexForAppend ??
-							(nativeBackboneDocumentDeleteKey
-								? { key: nativeBackboneDocumentDeleteKey }
-								: undefined),
-					);
 					nativeStrictTransaction =
-						await this.beginNativeStrictDurableTransaction(
-							nativeDocumentRollback ? [nativeDocumentRollback] : [],
-						);
+						await this.beginNativeStrictDurableTransaction(() => {
+							nativeDocumentRollback = this.snapshotNativeBackboneDocument(
+								nativeBackboneDocumentIndexForAppend ??
+									(nativeBackboneDocumentDeleteKey
+										? { key: nativeBackboneDocumentDeleteKey }
+										: undefined),
+							);
+							return nativeDocumentRollback ? [nativeDocumentRollback] : [];
+						});
 					this.throwIfReplicationOwnershipPoisoned();
 					if (next.length === 0) {
 						if (commitBlocksInBackbone) {
@@ -14508,11 +14922,14 @@ export class SharedLog<
 						backboneAppend.entry.cid ?? backboneAppend.entry.hash;
 					const committedNext = backboneAppend.entry.next ?? next;
 					nativeCoordinateRollback =
-						this._coordinates.snapshotResidentCoordinateEntries([
-							...(committedHash ? [committedHash] : []),
-							...committedNext,
-							...nativeTrimmedHashes,
-						]);
+						this._coordinates.snapshotResidentCoordinateEntries(
+							[
+								...(committedHash ? [committedHash] : []),
+								...committedNext,
+								...nativeTrimmedHashes,
+							],
+							nativeStrictTransaction.lowerHashMutationLockOwner!,
+						);
 					await this.setNativeStrictDurableTransactionOperation(
 						nativeStrictTransaction,
 						committedHash ? [committedHash] : [],
@@ -14669,6 +15086,16 @@ export class SharedLog<
 					error: unknown,
 				): Promise<never> => {
 					durableWrapper?.cancelNativeDeleteCleanup?.(nativeDeleteCleanupToken);
+					if (
+						!backboneAppend &&
+						nativeStrictTransaction?.lowerHashMutationLockOwner
+					) {
+						this.releaseNativeStrictDurableTransaction(
+							nativeStrictTransaction,
+							error,
+						);
+						throw error;
+					}
 					let compensated = !backboneAppend;
 					if (backboneAppend && !(error instanceof NativeDurableCommitError)) {
 						const committedHash =
@@ -14763,10 +15190,10 @@ export class SharedLog<
 					);
 					const rollbackCoordinateEntries =
 						nativeCoordinateRollback ??
-						this._coordinates.snapshotResidentCoordinateEntries([
-							prepared.appendFacts.hash,
-							...plannedCoordinateDeleteHashes,
-						]);
+						this._coordinates.snapshotResidentCoordinateEntries(
+							[prepared.appendFacts.hash, ...plannedCoordinateDeleteHashes],
+							nativeStrictTransaction!.lowerHashMutationLockOwner!,
+						);
 					const finish = (): PreparedPayloadCommitOnlyResult<T, R> => {
 						const appendCommit = this.createPreparedLocalAppendCommitFromFacts(
 							prepared.appendFacts,
@@ -14880,18 +15307,24 @@ export class SharedLog<
 											.coordinates as NumberFromType<R>[],
 										skipGenericTransientCoordinateIndex: runtimeOnlyCoordinates,
 									},
+									undefined,
+									nativeStrictTransaction!.lowerHashMutationLockOwner,
 								)
-							: this._coordinates.persistPreparedCoordinate({
-									prepared: getPreparedCoordinate(),
-									hash: prepared.appendFacts.hash,
-									nextHashes: [],
-									deleteHashes: [],
-									coordinates: backboneAppend.coordinate
-										.coordinates as NumberFromType<R>[],
-									replicas: backboneAppend.coordinate.coordinates.length,
-									commitNative: true,
-									commitNativeBackbone: false,
-								});
+							: this._coordinates.persistPreparedCoordinate(
+									{
+										prepared: getPreparedCoordinate(),
+										hash: prepared.appendFacts.hash,
+										nextHashes: [],
+										deleteHashes: [],
+										coordinates: backboneAppend.coordinate
+											.coordinates as NumberFromType<R>[],
+										replicas: backboneAppend.coordinate.coordinates.length,
+										commitNative: true,
+										commitNativeBackbone: false,
+									},
+									undefined,
+									nativeStrictTransaction!.lowerHashMutationLockOwner,
+								);
 						if (isPromiseLike(persisted)) {
 							await persisted;
 						}
@@ -14926,7 +15359,6 @@ export class SharedLog<
 								prepared.removed,
 								prepared.materializeEntry,
 								{
-									forgetNativeCoordinates: false,
 									removedHashes: prepared.removedHashes,
 									removedGids: prepared.removedGids,
 								},
@@ -15009,7 +15441,7 @@ export class SharedLog<
 					: result.appendFacts.next;
 			if (deleteHashes.length > 0) {
 				return mapMaybePromise(
-					this._coordinates.deleteCoordinatesForHashes(
+					this._coordinates.deleteNonHeadCoordinatesForHashes(
 						deleteHashes,
 						ownershipLifecycleController,
 					),
@@ -15176,70 +15608,29 @@ export class SharedLog<
 		const plannedCoordinateDeleteHashes =
 			result.change?.removed.map((entry) => entry.hash) ??
 			result.removed.map((entry) => entry.hash);
-		const nativeAppendPlan = await this.planNativeLocalAppendFacts(
+		const nativeAppendPlan = await this.planAndPersistNativeLocalAppendFacts(
 			result.appendFacts,
 			properties.minReplicasValue,
-			{
-				deleteHashes:
-					plannedCoordinateDeleteHashes.length > 0
-						? plannedCoordinateDeleteHashes
-						: undefined,
-			},
+			plannedCoordinateDeleteHashes,
 			ownershipLifecycleController,
+			{ coordinateIndex: properties.coordinateIndex },
 		);
-		this.throwIfReplicationOwnershipLifecycleInactive(
-			ownershipLifecycleController,
-		);
-		if (!nativeAppendPlan) {
-			return undefined;
-		}
-
-		let deferredCoordinateDeleteHashes: string[] | undefined;
-		try {
-			deferredCoordinateDeleteHashes = result.change
-				? this.applyChangeWithDeferredCoordinateDeletes(result.change, {
-						forgetNativeCoordinates:
-							!nativeAppendPlan.committedNativeCoordinateDeletes,
-						ownershipLifecycleController,
-					})
-				: this.applyPreparedAppendFactsWithDeferredCoordinateDeletes(
-						result.appendFacts,
-						result.removed,
-						() => this.materializePreparedAppendResultEntry(result),
-						{
-							forgetNativeCoordinates:
-								!nativeAppendPlan.committedNativeCoordinateDeletes,
-							removedHashes: result.removedHashes,
-							removedGids: result.removedGids,
-							ownershipLifecycleController,
-						},
-					);
-			await this._coordinates.persistPreparedCoordinateNativeTransaction(
+		if (!nativeAppendPlan) return undefined;
+		if (result.change) {
+			this.applyChangeWithDeferredCoordinateDeletes(result.change, {
+				ownershipLifecycleController,
+			});
+		} else {
+			this.applyPreparedAppendFactsWithDeferredCoordinateDeletes(
+				result.appendFacts,
+				result.removed,
+				() => this.materializePreparedAppendResultEntry(result),
 				{
-					coordinateIndex: properties.coordinateIndex,
-					prepared: nativeAppendPlan.preparedCoordinate,
-					hash: result.appendFacts.hash,
-					nextHashes: result.appendFacts.next,
-					deleteHashes: deferredCoordinateDeleteHashes,
-					coordinates: nativeAppendPlan.coordinates,
-					commitNative:
-						nativeAppendPlan.committedNativeCoordinateState !== true,
-					commitNativeBackbone:
-						nativeAppendPlan.committedNativeBackboneCoordinateState !== true,
-				},
-				ownershipLifecycleController,
-			);
-			this.throwIfReplicationOwnershipLifecycleInactive(
-				ownershipLifecycleController,
-			);
-		} catch (error) {
-			if (deferredCoordinateDeleteHashes) {
-				await this._coordinates.deleteCoordinatesForHashes(
-					deferredCoordinateDeleteHashes,
+					removedHashes: result.removedHashes,
+					removedGids: result.removedGids,
 					ownershipLifecycleController,
-				);
-			}
-			throw error;
+				},
+			);
 		}
 
 		const delayAdaptiveRebalance = this.shouldDelayAdaptiveRebalance();
@@ -15334,24 +15725,6 @@ export class SharedLog<
 						ownershipLifecycleController,
 					},
 				);
-			nativeAppendPlan = await this.planNativeLocalAppendFacts(
-				result.appendFacts,
-				minReplicasValue,
-				undefined,
-				ownershipLifecycleController,
-			);
-			this.throwIfReplicationOwnershipLifecycleInactive(
-				ownershipLifecycleController,
-			);
-			if (!nativeAppendPlan) {
-				if (deferredCoordinateDeleteHashes) {
-					await this._coordinates.deleteCoordinatesForHashes(
-						deferredCoordinateDeleteHashes,
-						ownershipLifecycleController,
-					);
-				}
-				deferredCoordinateDeleteHashes = undefined;
-			}
 		} else {
 			this.onEntryAddedHash(result.appendFacts.hash, result.materializeEntry);
 			if (result.removed.length > 0) {
@@ -15376,7 +15749,7 @@ export class SharedLog<
 				})) ?? nativeAppendPlan;
 		} catch (error) {
 			if (deferredCoordinateDeleteHashes) {
-				await this._coordinates.deleteCoordinatesForHashes(
+				await this._coordinates.deleteNonHeadCoordinatesForHashes(
 					deferredCoordinateDeleteHashes,
 					ownershipLifecycleController,
 				);
@@ -15548,15 +15921,15 @@ export class SharedLog<
 					this.throwIfReplicationOwnershipLifecycleInactive(
 						ownershipLifecycleController,
 					);
-					batchDocumentRollbacks = documentIndexes
-						.map((index) => this.snapshotNativeBackboneDocument(index))
-						.filter(
-							(value): value is NativeBackboneDocumentRollback => !!value,
-						);
 					nativeStrictTransaction =
-						await this.beginNativeStrictDurableTransaction(
-							batchDocumentRollbacks,
-						);
+						await this.beginNativeStrictDurableTransaction(() => {
+							batchDocumentRollbacks = documentIndexes
+								.map((index) => this.snapshotNativeBackboneDocument(index))
+								.filter(
+									(value): value is NativeBackboneDocumentRollback => !!value,
+								);
+							return batchDocumentRollbacks;
+						});
 					this.throwIfReplicationOwnershipLifecycleInactive(
 						ownershipLifecycleController,
 					);
@@ -15642,6 +16015,7 @@ export class SharedLog<
 								...(append.trimmedHashes ??
 									append.trimmed.map((entry) => entry.hash)),
 							]),
+							nativeStrictTransaction.lowerHashMutationLockOwner!,
 						);
 					await this.setNativeStrictDurableTransactionOperation(
 						nativeStrictTransaction,
@@ -15826,6 +16200,16 @@ export class SharedLog<
 			);
 		} catch (error) {
 			durableWrapper?.cancelNativeDeleteCleanup?.(nativeDeleteCleanupToken);
+			if (
+				!backboneAppends &&
+				nativeStrictTransaction?.lowerHashMutationLockOwner
+			) {
+				this.releaseNativeStrictDurableTransaction(
+					nativeStrictTransaction,
+					error,
+				);
+				throw error;
+			}
 			let compensated = !backboneAppends;
 			if (backboneAppends && !(error instanceof NativeDurableCommitError)) {
 				try {
@@ -16002,6 +16386,7 @@ export class SharedLog<
 							skipGenericTransientCoordinateIndex: runtimeOnlyCoordinates,
 						},
 						ownershipLifecycleController,
+						nativeStrictTransaction!.lowerHashMutationLockOwner,
 					);
 				if (isPromiseLike(persisted)) {
 					await persisted;
@@ -16058,7 +16443,6 @@ export class SharedLog<
 							[],
 							appended.materializeEntries[i]!,
 							{
-								forgetNativeCoordinates: false,
 								removedHashes: plannedCoordinateDeleteHashes,
 								removedGids:
 									backboneAppend.trimmedGids ??
@@ -16192,7 +16576,7 @@ export class SharedLog<
 			this.shouldDeferHeadCoordinatePersistence(options);
 
 		if (deferHeadCoordinatePersistence) {
-			await this._coordinates.deleteCoordinatesForHashes(
+			await this._coordinates.deleteNonHeadCoordinatesForHashes(
 				[
 					...result.entries.flatMap((entry) => entry.meta.next),
 					...result.removed.map((entry) => entry.hash),
@@ -16212,45 +16596,15 @@ export class SharedLog<
 			};
 		}
 
-		let nativeAppendPlans =
-			options?.replicate === true
-				? undefined
-				: options?.target === "none"
-					? await this.planNativeLocalAppendEntries(
-							result.entries,
-							minReplicasValue,
-							ownershipLifecycleController,
-						)
-					: await this.planNativeAppendEntries(
-							result.entries,
-							minReplicasValue,
-							options?.delivery,
-							options,
-							ownershipLifecycleController,
-						);
+		let nativeAppendPlans = await this.planAndPersistNativeAppendEntries(
+			result.entries,
+			minReplicasValue,
+			options,
+			ownershipLifecycleController,
+		);
 		this.throwIfReplicationOwnershipLifecycleInactive(
 			ownershipLifecycleController,
 		);
-		if (
-			nativeAppendPlans &&
-			(await this.processLocalAppendManyNativePlanned(result.entries, options, {
-				nativeAppendPlans,
-				ownershipLifecycleController,
-			}))
-		) {
-			this.throwIfReplicationOwnershipLifecycleInactive(
-				ownershipLifecycleController,
-			);
-			return {
-				entries: result.entries,
-				removed: result.removed,
-				appendCommits: this.createPreparedLocalAppendCommitsFromFacts(
-					result.appendFacts,
-					result.entries,
-					nativeAppendPlans,
-				),
-			};
-		}
 		for (let i = 0; i < result.entries.length; i++) {
 			const processedPlan = await this.processLocalAppend(
 				result.entries[i]!,
@@ -16260,6 +16614,7 @@ export class SharedLog<
 					minReplicasValue,
 					deferHeadCoordinatePersistence: false,
 					nativeAppendPlan: nativeAppendPlans?.[i],
+					coordinatesAlreadyPersisted: !!nativeAppendPlans?.[i],
 					ownershipLifecycleController,
 				},
 			);
@@ -16343,7 +16698,7 @@ export class SharedLog<
 			this.shouldDeferHeadCoordinatePersistence(options);
 
 		if (deferHeadCoordinatePersistence) {
-			await this._coordinates.deleteCoordinatesForHashes(
+			await this._coordinates.deleteNonHeadCoordinatesForHashes(
 				[
 					...result.entries.flatMap((entry) => entry.meta.next),
 					...result.removed.map((entry) => entry.hash),
@@ -16367,22 +16722,12 @@ export class SharedLog<
 			return result;
 		}
 
-		const nativeAppendPlans =
-			options?.replicate === true
-				? undefined
-				: options?.target === "none"
-					? await this.planNativeLocalAppendEntries(
-							result.entries,
-							minReplicasValue,
-							ownershipLifecycleController,
-						)
-					: await this.planNativeAppendEntries(
-							result.entries,
-							minReplicasValue,
-							options?.delivery,
-							options,
-							ownershipLifecycleController,
-						);
+		const nativeAppendPlans = await this.planAndPersistNativeAppendEntries(
+			result.entries,
+			minReplicasValue,
+			options,
+			ownershipLifecycleController,
+		);
 		this.throwIfReplicationOwnershipLifecycleInactive(
 			ownershipLifecycleController,
 		);
@@ -16392,6 +16737,7 @@ export class SharedLog<
 				minReplicasValue,
 				deferHeadCoordinatePersistence: false,
 				nativeAppendPlan: nativeAppendPlans?.[i],
+				coordinatesAlreadyPersisted: !!nativeAppendPlans?.[i],
 				ownershipLifecycleController,
 			});
 			this.throwIfReplicationOwnershipLifecycleInactive(
@@ -16583,20 +16929,14 @@ export class SharedLog<
 			ownershipLifecycleController,
 		);
 		const head = result.entries[result.entries.length - 1]!;
-		await this._coordinates.deleteCoordinatesForHashes(
-			[
+		await this.processLocalAppend(head, result.removed, options, {
+			minReplicasValue: properties.minReplicasValue,
+			deferHeadCoordinatePersistence: false,
+			extraCoordinateDeleteHashes: [
 				...result.entries[0]!.meta.next,
 				...result.entries.slice(0, -1).map((entry) => entry.hash),
 				...result.removed.map((entry) => entry.hash),
 			],
-			ownershipLifecycleController,
-		);
-		this.throwIfReplicationOwnershipLifecycleInactive(
-			ownershipLifecycleController,
-		);
-		await this.processLocalAppend(head, result.removed, options, {
-			minReplicasValue: properties.minReplicasValue,
-			deferHeadCoordinatePersistence: false,
 			ownershipLifecycleController,
 		});
 		this.throwIfReplicationOwnershipLifecycleInactive(
@@ -16604,70 +16944,105 @@ export class SharedLog<
 		);
 	}
 
-	private async processLocalAppendManyNativePlanned(
+	private async planAndPersistNativeAppendEntries(
 		entries: Entry<T>[],
+		replicas: number,
 		options: SharedAppendOptions<T> | undefined,
-		properties: {
-			nativeAppendPlans: NativeAppendEntryPlan<R>[];
-			ownershipLifecycleController: AbortController;
-		},
-	): Promise<boolean> {
-		const ownershipLifecycleController =
-			properties.ownershipLifecycleController;
+		ownershipLifecycleController: AbortController,
+	): Promise<Array<NativeAppendEntryPlan<R> | undefined> | undefined> {
 		this.throwIfReplicationOwnershipLifecycleInactive(
 			ownershipLifecycleController,
 		);
 		if (
 			entries.length === 0 ||
-			options?.target !== "none" ||
+			options?.target === "all" ||
 			options?.replicate === true ||
-			properties.nativeAppendPlans.length !== entries.length
+			(!this._nativeBackbone && !this._nativeSharedLogState)
 		) {
-			return false;
+			return undefined;
 		}
-
-		const delayAdaptiveRebalance = this.shouldDelayAdaptiveRebalance();
-		await this._coordinates.persistCoordinatesBatch(
-			entries.map((entry, index) => {
-				const plan = properties.nativeAppendPlans[index]!;
-				return {
-					leaders: plan.leaders!,
-					coordinates: plan.coordinates,
-					replicas: plan.coordinates.length,
-					entry,
-					assignedToRangeBoundary: plan.assignedToRangeBoundary,
-					commitNative: plan.committedNativeCoordinateState !== true,
-					commitNativeBackbone:
-						plan.committedNativeBackboneCoordinateState !== true,
-					hashNumber: plan.hashNumber,
-					prepared: plan.preparedCoordinate,
-				};
-			}),
-			ownershipLifecycleController,
-		);
-		this.throwIfReplicationOwnershipLifecycleInactive(
-			ownershipLifecycleController,
-		);
-
-		if (!delayAdaptiveRebalance) {
-			for (let i = 0; i < entries.length; i++) {
-				const plan = properties.nativeAppendPlans[i]!;
-				if (!plan.isLeader) {
-					await this.pruneDebouncedFnAddIfNotKeeping(
-						{
-							key: entries[i]!.hash,
-							value: { entry: entries[i]!, leaders: plan.leaders! },
-						},
-						ownershipLifecycleController,
-					);
-					this.throwIfReplicationOwnershipLifecycleInactive(
-						ownershipLifecycleController,
-					);
+		return this._coordinates.withCoordinateMutationOwner(
+			entries.flatMap((entry) => [entry.hash, ...entry.meta.next]),
+			async (owner) => {
+				const retained: Entry<T>[] = [];
+				for (const entry of entries) {
+					if ((await this.log.entryIndex.getShallow(entry.hash))?.value.head) {
+						retained.push(entry);
+					}
 				}
-			}
-			this.rebalanceParticipationDebounced?.call();
-		}
-		return true;
+				const deleteHashes: string[] = [];
+				const retainedNext = new Set(
+					retained.flatMap((entry) => entry.meta.next),
+				);
+				for (const hash of new Set(
+					entries.flatMap((entry) => [entry.hash, ...entry.meta.next]),
+				)) {
+					if (
+						!retainedNext.has(hash) &&
+						!(await this.log.entryIndex.getShallow(hash))?.value.head
+					) {
+						deleteHashes.push(hash);
+					}
+				}
+				try {
+					if (retained.length === 0) {
+						await this._coordinates.deleteCoordinatesForHashes(
+							deleteHashes,
+							ownershipLifecycleController,
+							owner,
+						);
+						return undefined;
+					}
+					const plans =
+						options?.target === "none"
+							? await this.planNativeLocalAppendEntries(
+									retained,
+									replicas,
+									ownershipLifecycleController,
+									owner,
+								)
+							: await this.planNativeAppendEntries(
+									retained,
+									replicas,
+									options?.delivery,
+									options,
+									ownershipLifecycleController,
+									owner,
+								);
+					if (!plans) return undefined;
+					await this._coordinates.persistCoordinatesBatch(
+						retained.map((entry, index) => {
+							const plan = plans[index]!;
+							return {
+								leaders: plan.leaders!,
+								coordinates: plan.coordinates,
+								replicas: plan.coordinates.length,
+								entry,
+								assignedToRangeBoundary: plan.assignedToRangeBoundary,
+								commitNative:
+									(index === 0 && deleteHashes.length > 0) ||
+									plan.committedNativeCoordinateState !== true,
+								commitNativeBackbone:
+									(index === 0 && deleteHashes.length > 0) ||
+									plan.committedNativeBackboneCoordinateState !== true,
+								hashNumber: plan.hashNumber,
+								prepared: plan.preparedCoordinate,
+								deleteHashes: index === 0 ? deleteHashes : undefined,
+							};
+						}),
+						ownershipLifecycleController,
+						owner,
+					);
+					const byHash = new Map(
+						retained.map((entry, index) => [entry.hash, plans[index]!]),
+					);
+					return entries.map((entry) => byHash.get(entry.hash));
+				} catch (error) {
+					this.poisonNativeStrictDurableTransaction(error);
+					throw error;
+				}
+			},
+		);
 	}
 
 	private createLogAppendOptions(
@@ -16822,6 +17197,7 @@ export class SharedLog<
 		replicas: number,
 		deliveryArg: false | true | DeliveryOptions | undefined,
 		ownershipLifecycleController = this.captureReplicationOwnershipLifecycle(),
+		coordinateOwner: EntryIndexHashMutationLockOwner,
 	): Promise<NativeAppendEntryPlan<R> | undefined> {
 		this.throwIfReplicationOwnershipLifecycleInactive(
 			ownershipLifecycleController,
@@ -16849,6 +17225,10 @@ export class SharedLog<
 		const { delivery, reliability, requireRecipients, minAcks } =
 			this._parseDeliveryOptions(deliveryArg);
 		const hashNumber = this.getAppendFactsHashNumber(appendFacts);
+		this.log.entryIndex.assertHashMutationLocks(coordinateOwner, [
+			appendFacts.hash,
+			...appendFacts.next,
+		]);
 		const plan = nativePlanner.planAppendForGid(
 			{
 				entryHash: appendFacts.hash,
@@ -16873,7 +17253,9 @@ export class SharedLog<
 				plan: plan.coordinate,
 			});
 		if (!preparedCoordinate) {
-			return undefined;
+			throw new Error(
+				"Native append coordinate result does not match the committed entry",
+			);
 		}
 		return {
 			coordinates,
@@ -16893,8 +17275,9 @@ export class SharedLog<
 	private async planNativeLocalAppendFacts(
 		appendFacts: PreparedAppendFacts,
 		replicas: number,
-		options?: { deleteHashes?: string[] },
+		options: { deleteHashes?: string[] } | undefined,
 		ownershipLifecycleController = this.captureReplicationOwnershipLifecycle(),
+		coordinateOwner: EntryIndexHashMutationLockOwner,
 	): Promise<NativeAppendEntryPlan<R> | undefined> {
 		this.throwIfReplicationOwnershipLifecycleInactive(
 			ownershipLifecycleController,
@@ -16913,6 +17296,11 @@ export class SharedLog<
 		);
 		const hashNumber = this.getAppendFactsHashNumber(appendFacts);
 		const nativeLeaderOptions = this.createNativeLeaderOptions(context);
+		this.log.entryIndex.assertHashMutationLocks(coordinateOwner, [
+			appendFacts.hash,
+			...appendFacts.next,
+			...(options?.deleteHashes ?? []),
+		]);
 		const plan =
 			options?.deleteHashes && options.deleteHashes.length > 0
 				? nativePlanner.commitLocalAppendForGidCompact(
@@ -16946,7 +17334,9 @@ export class SharedLog<
 				plan: plan.coordinate,
 			});
 		if (!preparedCoordinate) {
-			return undefined;
+			throw new Error(
+				"Native append coordinate result does not match the committed entry",
+			);
 		}
 		return {
 			coordinates,
@@ -16969,6 +17359,7 @@ export class SharedLog<
 		replicas: number,
 		deliveryArg: false | true | DeliveryOptions | undefined,
 		ownershipLifecycleController = this.captureReplicationOwnershipLifecycle(),
+		coordinateOwner: EntryIndexHashMutationLockOwner,
 	): Promise<NativeAppendEntryPlan<R> | undefined> {
 		this.throwIfReplicationOwnershipLifecycleInactive(
 			ownershipLifecycleController,
@@ -16996,6 +17387,10 @@ export class SharedLog<
 		const { delivery, reliability, requireRecipients, minAcks } =
 			this._parseDeliveryOptions(deliveryArg);
 		const hashNumber = this.getEntryHashNumber(entry);
+		this.log.entryIndex.assertHashMutationLocks(coordinateOwner, [
+			entry.hash,
+			...entry.meta.next,
+		]);
 		const plan = nativePlanner.planAppendForGid(
 			{
 				entryHash: entry.hash,
@@ -17020,7 +17415,9 @@ export class SharedLog<
 				plan: plan.coordinate,
 			});
 		if (!preparedCoordinate) {
-			return undefined;
+			throw new Error(
+				"Native append coordinate result does not match the committed entry",
+			);
 		}
 		return {
 			coordinates,
@@ -17041,6 +17438,7 @@ export class SharedLog<
 		entry: Entry<T>,
 		replicas: number,
 		ownershipLifecycleController = this.captureReplicationOwnershipLifecycle(),
+		coordinateOwner: EntryIndexHashMutationLockOwner,
 	): Promise<NativeAppendEntryPlan<R> | undefined> {
 		this.throwIfReplicationOwnershipLifecycleInactive(
 			ownershipLifecycleController,
@@ -17058,6 +17456,10 @@ export class SharedLog<
 			ownershipLifecycleController,
 		);
 		const hashNumber = this.getEntryHashNumber(entry);
+		this.log.entryIndex.assertHashMutationLocks(coordinateOwner, [
+			entry.hash,
+			...entry.meta.next,
+		]);
 		const plan = nativePlanner.planLocalAppendForGidCompact(
 			{
 				entryHash: entry.hash,
@@ -17077,7 +17479,9 @@ export class SharedLog<
 				plan: plan.coordinate,
 			});
 		if (!preparedCoordinate) {
-			return undefined;
+			throw new Error(
+				"Native append coordinate result does not match the committed entry",
+			);
 		}
 		return {
 			coordinates,
@@ -17097,6 +17501,7 @@ export class SharedLog<
 		entries: Entry<T>[],
 		replicas: number,
 		ownershipLifecycleController = this.captureReplicationOwnershipLifecycle(),
+		coordinateOwner: EntryIndexHashMutationLockOwner,
 	): Promise<NativeAppendEntryPlan<R>[] | undefined> {
 		this.throwIfReplicationOwnershipLifecycleInactive(
 			ownershipLifecycleController,
@@ -17121,6 +17526,10 @@ export class SharedLog<
 			entry,
 			hashNumber: this.getEntryHashNumber(entry),
 		}));
+		this.log.entryIndex.assertHashMutationLocks(
+			coordinateOwner,
+			entries.flatMap((entry) => [entry.hash, ...entry.meta.next]),
+		);
 		const plans = nativePlanner.planAppendForGidsBatch(
 			{
 				entries: entriesWithHashNumbers.map(({ entry, hashNumber }) => ({
@@ -17138,6 +17547,9 @@ export class SharedLog<
 			},
 			this.createNativeLeaderOptions(context),
 		);
+		if (plans.length !== entries.length) {
+			throw new Error("Native append coordinate batch result count mismatch");
+		}
 		const out: NativeAppendEntryPlan<R>[] = [];
 		for (let index = 0; index < plans.length; index++) {
 			const plan = plans[index]!;
@@ -17151,7 +17563,9 @@ export class SharedLog<
 					plan: plan.coordinate,
 				});
 			if (!preparedCoordinate) {
-				return undefined;
+				throw new Error(
+					"Native append coordinate result does not match the committed entry",
+				);
 			}
 			out.push({
 				coordinates,
@@ -17175,6 +17589,7 @@ export class SharedLog<
 		deliveryArg: false | true | DeliveryOptions | undefined,
 		options: SharedAppendOptions<T> | undefined,
 		ownershipLifecycleController = this.captureReplicationOwnershipLifecycle(),
+		coordinateOwner: EntryIndexHashMutationLockOwner,
 	): Promise<NativeAppendEntryPlan<R>[] | undefined> {
 		this.throwIfReplicationOwnershipLifecycleInactive(
 			ownershipLifecycleController,
@@ -17212,6 +17627,10 @@ export class SharedLog<
 			entry,
 			hashNumber: this.getEntryHashNumber(entry),
 		}));
+		this.log.entryIndex.assertHashMutationLocks(
+			coordinateOwner,
+			entries.flatMap((entry) => [entry.hash, ...entry.meta.next]),
+		);
 		const plans = nativePlanner.planAppendForGidsBatch(
 			{
 				entries: entriesWithHashNumbers.map(({ entry, hashNumber }) => ({
@@ -17230,6 +17649,9 @@ export class SharedLog<
 			},
 			this.createNativeLeaderOptions(context),
 		);
+		if (plans.length !== entries.length) {
+			throw new Error("Native append coordinate batch result count mismatch");
+		}
 		const out: NativeAppendEntryPlan<R>[] = [];
 		for (let index = 0; index < plans.length; index++) {
 			const plan = plans[index]!;
@@ -17243,7 +17665,9 @@ export class SharedLog<
 					plan: plan.coordinate,
 				});
 			if (!preparedCoordinate) {
-				return undefined;
+				throw new Error(
+					"Native append coordinate result does not match the committed entry",
+				);
 			}
 			out.push({
 				coordinates,
@@ -17274,6 +17698,7 @@ export class SharedLog<
 				source: PersistedAppendBackfillSource<T, R>,
 			) => void;
 			nativeAppendPlan?: NativeAppendEntryPlan<R>;
+			coordinatesAlreadyPersisted?: boolean;
 			extraCoordinateDeleteHashes?: string[];
 			ownershipLifecycleController?: AbortController;
 		},
@@ -17297,10 +17722,11 @@ export class SharedLog<
 		}
 
 		if (deferHeadCoordinatePersistence) {
-			await this._coordinates.deleteCoordinatesForHashes(
+			await this._coordinates.deleteNonHeadCoordinatesForHashes(
 				[
 					...(properties.appendFacts?.next ?? entry.meta.next),
 					...removed.map((entry) => entry.hash),
+					...(properties.extraCoordinateDeleteHashes ?? []),
 				],
 				ownershipLifecycleController,
 			);
@@ -17314,38 +17740,122 @@ export class SharedLog<
 		const target = options?.target;
 		const deliveryArg = options?.delivery;
 		let nativeAppendPlan = properties.nativeAppendPlan;
-		if (!nativeAppendPlan && target !== "all") {
-			nativeAppendPlan =
-				target === "none"
-					? properties.appendFacts
-						? await this.planNativeLocalAppendFacts(
-								properties.appendFacts,
-								properties.minReplicasValue,
-								undefined,
+		let supersededCoordinatesDeleted = false;
+		const coordinateHashes = [
+			entry.hash,
+			...(properties.appendFacts?.next ?? entry.meta.next),
+			...(properties.extraCoordinateDeleteHashes ?? []),
+		];
+		const obsoleteCoordinateHashes = async (candidates: Iterable<string>) => {
+			const hashes: string[] = [];
+			for (const hash of new Set(candidates)) {
+				if (!(await this.log.entryIndex.getShallow(hash))?.value.head) {
+					hashes.push(hash);
+				}
+			}
+			return hashes;
+		};
+		const deleteSupersededCoordinates = async (
+			owner: EntryIndexHashMutationLockOwner,
+		) => {
+			await this._coordinates.deleteCoordinatesForHashes(
+				await obsoleteCoordinateHashes(coordinateHashes),
+				ownershipLifecycleController,
+				owner,
+			);
+		};
+		if (!properties.coordinatesAlreadyPersisted && target !== "all") {
+			nativeAppendPlan = await this._coordinates.withCoordinateMutationOwner(
+				coordinateHashes,
+				async (owner) => {
+					try {
+						if (
+							!(await this.log.entryIndex.getShallow(entry.hash))?.value.head
+						) {
+							await deleteSupersededCoordinates(owner);
+							supersededCoordinatesDeleted = true;
+							return undefined;
+						}
+						const plan =
+							nativeAppendPlan ??
+							(target === "none"
+								? properties.appendFacts
+									? await this.planNativeLocalAppendFacts(
+											properties.appendFacts,
+											properties.minReplicasValue,
+											undefined,
+											ownershipLifecycleController,
+											owner,
+										)
+									: await this.planNativeLocalAppendEntry(
+											entry,
+											properties.minReplicasValue,
+											ownershipLifecycleController,
+											owner,
+										)
+								: properties.appendFacts
+									? await this.planNativeAppendFacts(
+											properties.appendFacts,
+											properties.minReplicasValue,
+											deliveryArg,
+											ownershipLifecycleController,
+											owner,
+										)
+									: await this.planNativeAppendEntry(
+											entry,
+											properties.minReplicasValue,
+											deliveryArg,
+											ownershipLifecycleController,
+											owner,
+										));
+						if (!plan) return undefined;
+						if (properties.appendFacts) {
+							await this._coordinates.persistPreparedCoordinate(
+								{
+									prepared: plan.preparedCoordinate,
+									hash: properties.appendFacts.hash,
+									nextHashes: properties.appendFacts.next,
+									deleteHashes: await obsoleteCoordinateHashes(
+										properties.extraCoordinateDeleteHashes ?? [],
+									),
+									coordinates: plan.coordinates,
+									replicas: plan.coordinates.length,
+									commitNative: plan.committedNativeCoordinateState !== true,
+									commitNativeBackbone:
+										plan.committedNativeBackboneCoordinateState !== true,
+								},
 								ownershipLifecycleController,
-							)
-						: await this.planNativeLocalAppendEntry(
-								entry,
-								properties.minReplicasValue,
-								ownershipLifecycleController,
-							)
-					: properties.appendFacts
-						? await this.planNativeAppendFacts(
-								properties.appendFacts,
-								properties.minReplicasValue,
-								deliveryArg,
-								ownershipLifecycleController,
-							)
-						: await this.planNativeAppendEntry(
-								entry,
-								properties.minReplicasValue,
-								deliveryArg,
-								ownershipLifecycleController,
+								owner,
 							);
+						} else {
+							await this._coordinates.persistCoordinate(
+								{
+									leaders: plan.leaders ?? false,
+									coordinates: plan.coordinates,
+									replicas: plan.coordinates.length,
+									entry,
+									assignedToRangeBoundary: plan.assignedToRangeBoundary,
+									commitNative: plan.committedNativeCoordinateState !== true,
+									commitNativeBackbone:
+										plan.committedNativeBackboneCoordinateState !== true,
+									deleteHashes: await obsoleteCoordinateHashes(
+										properties.extraCoordinateDeleteHashes ?? [],
+									),
+									hashNumber: plan.hashNumber,
+									prepared: plan.preparedCoordinate,
+								},
+								ownershipLifecycleController,
+								owner,
+							);
+						}
+						return plan;
+					} catch (error) {
+						this.poisonNativeStrictDurableTransaction(error);
+						throw error;
+					}
+				},
+			);
 		}
-		this.throwIfReplicationOwnershipLifecycleInactive(
-			ownershipLifecycleController,
-		);
 		let coordinates: NumberFromType<R>[];
 		let leaders: LeaderMap | undefined;
 		let isLeader: boolean;
@@ -17367,50 +17877,43 @@ export class SharedLog<
 					)
 				).leaders;
 			}
-			if (properties.appendFacts) {
-				await this._coordinates.persistPreparedCoordinate(
-					{
-						prepared: nativeAppendPlan.preparedCoordinate,
-						hash: properties.appendFacts.hash,
-						nextHashes: properties.appendFacts.next,
-						deleteHashes: properties.extraCoordinateDeleteHashes,
-						coordinates,
-						replicas: coordinates.length,
-						commitNative:
-							nativeAppendPlan.committedNativeCoordinateState !== true,
-						commitNativeBackbone:
-							nativeAppendPlan.committedNativeBackboneCoordinateState !== true,
-					},
-					ownershipLifecycleController,
-				);
-			} else {
-				await this._coordinates.persistCoordinate(
-					{
-						leaders: leaders ?? false,
-						coordinates,
-						replicas: coordinates.length,
-						entry,
-						assignedToRangeBoundary: nativeAppendPlan.assignedToRangeBoundary,
-						commitNative:
-							nativeAppendPlan.committedNativeCoordinateState !== true,
-						commitNativeBackbone:
-							nativeAppendPlan.committedNativeBackboneCoordinateState !== true,
-						deleteHashes: properties.extraCoordinateDeleteHashes,
-						hashNumber: nativeAppendPlan.hashNumber,
-						prepared: nativeAppendPlan.preparedCoordinate,
-					},
-					ownershipLifecycleController,
-				);
-			}
 		} else {
-			({ coordinates, leaders, isLeader } = await this.planEntryLeaders(
+			const plan = await this.planEntryLeaders(
 				entry,
 				properties.minReplicasValue,
 				{
-					persist: {},
+					persist: false,
 				},
 				ownershipLifecycleController,
-			));
+			);
+			({ coordinates, leaders, isLeader } = plan);
+			if (!supersededCoordinatesDeleted) {
+				await this._coordinates.withCoordinateMutationOwner(
+					coordinateHashes,
+					async (owner) => {
+						if (
+							!(await this.log.entryIndex.getShallow(entry.hash))?.value.head
+						) {
+							await deleteSupersededCoordinates(owner);
+							return;
+						}
+						await this._coordinates.persistCoordinate(
+							{
+								leaders: leaders ?? false,
+								coordinates,
+								replicas: coordinates.length,
+								entry,
+								assignedToRangeBoundary: plan.assignedToRangeBoundary,
+								deleteHashes: await obsoleteCoordinateHashes(
+									properties.extraCoordinateDeleteHashes ?? [],
+								),
+							},
+							ownershipLifecycleController,
+							owner,
+						);
+					},
+				);
+			}
 		}
 		this.throwIfReplicationOwnershipLifecycleInactive(
 			ownershipLifecycleController,
@@ -18566,6 +19069,20 @@ export class SharedLog<
 					maxPeers: 8,
 				}),
 			...this._logProperties,
+			...{
+				__peerbitOnDeleteCommitted: async (
+					entries: readonly { hash: string }[],
+					owner: EntryIndexHashMutationLockOwner,
+				) => {
+					if (!this._completeLowerCoordinateRemoval) {
+						throw new Error("Lower coordinate removal has not been opened");
+					}
+					await this._completeLowerCoordinateRemoval(
+						entries.map((entry) => entry.hash),
+						owner,
+					);
+				},
+			},
 			nativeGraph: nativeBackboneGraph
 				? {
 						graph: nativeBackboneGraph,
@@ -18589,17 +19106,15 @@ export class SharedLog<
 			},
 			indexer: logIndex,
 		});
+		this._completeLowerCoordinateRemoval =
+			this._coordinates.prepareLowerLogCoordinateRemoval();
 		emitAdvisorySyncProfileDuration(openProfile, lowerLogStartedAt, {
 			name: "sharedLog.open.lowerLog",
 			component: "shared-log",
 		});
 		this._persistedReceiptStorage = this.resolvePersistedReceiptStorage();
 		try {
-			const recovered =
-				await this.recoverNativeStrictDurableTransactionIntent();
-			if (recovered) {
-				await this.reconcileNativeCoordinatesWithLowerCommitMarkers();
-			}
+			await this.recoverNativeStrictDurableTransactionIntent();
 		} catch (error) {
 			this.poisonNativeStrictDurableTransaction(error);
 			throw error;
@@ -18658,6 +19173,37 @@ export class SharedLog<
 				);
 			});
 		const communicationStartedAt = syncProfileStart(openProfile);
+		const membershipController =
+			this._instanceLifecycle!.membershipLifecycleController!;
+		this._entryInventoryRecovery?.close();
+		this._entryInventoryRecovery = new EntryInventoryRecovery({
+			signal: membershipController.signal,
+			isCurrent: (peer, session) =>
+				this.isEntryInventoryPeerCurrent(peer, session),
+			create: (peer, session, signal) =>
+				this.recoverPeerEntryInventory(peer, session, signal),
+			onError: (error) =>
+				logger.trace("Reconnect entry inventory interrupted", error),
+		});
+		this.node.services.pubsub.addEventListener(
+			"peer:stream-ready",
+			({ detail }) => {
+				if (!this.isReplicationLifecycleActive(membershipController)) return;
+				const peerHash = detail.hashcode();
+				const peerSession = this._peerSessions.current(peerHash);
+				if (peerSession?.phase !== "open" || !peerSession.isActive()) return;
+				// Connectivity only wakes already-owned work. It never grants a
+				// capability, confirms replication, or renews the topic session.
+				this._v2Send.resumeAfterTransportRecovery(peerHash, peerSession);
+				this._v2Receive.resumeAfterTransportRecovery({
+					peerHash,
+					peerSession,
+					receiveEpoch: this._peerSessions.receiveEpoch(peerHash),
+				});
+				this._entryInventoryRecovery?.wake(peerHash, peerSession);
+			},
+			{ signal: membershipController.signal },
+		);
 		await Promise.all([
 			this.rpc.open({
 				queryType: TransportMessage,
@@ -18936,7 +19482,9 @@ export class SharedLog<
 		}
 	}
 
-	private async reconcileNativeCoordinatesWithLowerCommitMarkers() {
+	private async reconcileNativeCoordinatesWithLowerCommitMarkers(
+		owner: EntryIndexHashMutationLockOwner,
+	) {
 		if (!this._nativeBackbone) {
 			return;
 		}
@@ -18960,6 +19508,7 @@ export class SharedLog<
 		if (hashes.size === 0) {
 			return;
 		}
+		this.log.entryIndex.assertHashMutationLocks(owner, hashes);
 		const committed = await this.log.entryIndex.hasMany(hashes);
 		const orphaned = [...hashes].filter((hash) => !committed.has(hash));
 		if (orphaned.length === 0) {
@@ -20199,7 +20748,6 @@ export class SharedLog<
 	private applyChangeWithDeferredCoordinateDeletes(
 		change: Change<T>,
 		options?: {
-			forgetNativeCoordinates?: boolean;
 			ownershipLifecycleController?: AbortController;
 		},
 	): string[] | undefined {
@@ -20221,15 +20769,8 @@ export class SharedLog<
 		this.scheduleDeadGidPeerHistoryReclaim(
 			change.removed.map((removed) => removed.meta.gid),
 		);
-		if (options?.forgetNativeCoordinates === false) {
-			this._coordinates.forgetResidentCoordinateStateForHashes(
-				deferredCoordinateDeleteHashes,
-			);
-		} else {
-			this._coordinates.forgetCoordinateStateForHashes(
-				deferredCoordinateDeleteHashes,
-			);
-		}
+		// The caller persists these deletes together with its coordinate write,
+		// under one mutation owner. Do not change resident/native state early.
 		return deferredCoordinateDeleteHashes;
 	}
 
@@ -20249,7 +20790,6 @@ export class SharedLog<
 		removed: ShallowOrFullEntry<T>[],
 		materializeEntry: () => Entry<T>,
 		options?: {
-			forgetNativeCoordinates?: boolean;
 			removedHashes?: string[];
 			removedGids?: string[];
 			ownershipLifecycleController?: AbortController;
@@ -20277,15 +20817,7 @@ export class SharedLog<
 				? removed.map((entry) => entry.meta.gid)
 				: options?.removedGids,
 		);
-		if (options?.forgetNativeCoordinates === false) {
-			this._coordinates.forgetResidentCoordinateStateForHashes(
-				deferredCoordinateDeleteHashes,
-			);
-		} else {
-			this._coordinates.forgetCoordinateStateForHashes(
-				deferredCoordinateDeleteHashes,
-			);
-		}
+		// Physical and resident deletion belongs to the caller's owned persistence.
 		return deferredCoordinateDeleteHashes;
 	}
 
@@ -20299,10 +20831,14 @@ export class SharedLog<
 					ownershipLifecycleController,
 				);
 			}
-			await this._coordinates.deleteCoordinates(
-				{ hash: removed.hash },
-				ownershipLifecycleController,
-			);
+			if (this._completeLowerCoordinateRemoval) {
+				await this._completeLowerCoordinateRemoval([removed.hash]);
+			} else {
+				await this._coordinates.deleteCoordinates(
+					{ hash: removed.hash },
+					ownershipLifecycleController,
+				);
+			}
 			if (ownershipLifecycleController) {
 				this.throwIfReplicationOwnershipLifecycleInactive(
 					ownershipLifecycleController,
@@ -21037,6 +21573,11 @@ export class SharedLog<
 		this.resetReplicationStatusLifecycle();
 		const preserveDropRetryResources =
 			options?.preserveDropRetryResources === true;
+		if (!preserveDropRetryResources) {
+			// Physical receives, prune operations and lower mutations have drained.
+			// Do not retain this generation's captured coordinate stores after teardown.
+			this._completeLowerCoordinateRemoval = undefined;
+		}
 		let firstError: unknown;
 		const capture = async (operation: () => Promise<unknown> | unknown) => {
 			try {
@@ -22019,6 +22560,7 @@ export class SharedLog<
 				!context.from.equals(this.node.identity.publicKey) &&
 				!(msg instanceof RequestReplicationInfoV2Message) &&
 				!(msg instanceof RequestPersistedEntriesV1) &&
+				!(msg instanceof RequestEntryInventoryV1) &&
 				!isReplicationInfoV2Message(msg)
 			) {
 				this._liveness.markReplicatorActivity(receiveFromHash);
@@ -23253,6 +23795,43 @@ export class SharedLog<
 								prepared: reusablePlan.prepared,
 							});
 						}
+						// Complete all planning before lower admission. A cancelled receive may
+						// finish fixed writes, but cannot start user/domain planning while closing.
+						for (const entry of coordinatePersistFallbackEntries) {
+							const replicas =
+								receiveReplicaCounts.get(entry.hash) ??
+								decodeReplicas(entry).getValue(this);
+							const plan = await this.planEntryLeaders(
+								entry,
+								replicas,
+								{ roleAge: 0, persist: false },
+								receiveOwnershipLifecycleController,
+							);
+							reusableCoordinatePersistItems.push({
+								entry,
+								replicas,
+								coordinates: plan.coordinates,
+								leaders: plan.leaders,
+								assignedToRangeBoundary: plan.assignedToRangeBoundary,
+							});
+						}
+						coordinatePersistFallbackEntries = [];
+						const receiveCoordinateCompletion =
+							this._coordinates.prepareReceiveCoordinateCompletion(
+								reusableCoordinatePersistItems,
+							);
+						const completeReceiveCoordinates = async (
+							...args: Parameters<typeof receiveCoordinateCompletion.complete>
+						) => {
+							try {
+								await receiveCoordinateCompletion.complete(...args);
+							} catch (error) {
+								// The lower entries have committed. A metadata failure must
+								// not allow a later receipt to treat this receive as complete.
+								this.poisonReplicationOwnership(error);
+								throw error;
+							}
+						};
 						let nativePreparedCoordinateBatch:
 							| NativeBackboneReceiveCoordinateBatch<R>
 							| undefined;
@@ -23264,7 +23843,7 @@ export class SharedLog<
 								)
 							: undefined;
 						try {
-							const nativePreparedJoinCommit = canUsePreparedAppendFacts
+							const commitNativePreparedJoin = canUsePreparedAppendFacts
 								? this._coordinates.createNativeBackbonePreparedJoinCommit(
 										nativeReceiveCoordinateBatch,
 										(batch) => {
@@ -23277,6 +23856,19 @@ export class SharedLog<
 											nativePreparedCommittedHashes = new Set(committedHashes);
 										},
 									)
+								: undefined;
+							const nativePreparedJoinCommit = commitNativePreparedJoin
+								? (input: TrustedLowerLogPreparedJoinCommitInput) => {
+										try {
+											return commitNativePreparedJoin(input);
+										} catch (error) {
+											// A commit-stage failure does not establish that no graph or
+											// coordinate mutation occurred. Preserve the uncertain
+											// state and fail closed instead of coordinate-only rollback.
+											this.poisonReplicationOwnership(error);
+											throw error;
+										}
+									}
 								: undefined;
 							const finishNativePreparedCoordinates = async (properties: {
 								nativePreparedCommitted: boolean;
@@ -23295,9 +23887,11 @@ export class SharedLog<
 										);
 									nativePreparedCoordinatesFinished = true;
 								} catch (error) {
-									this._coordinates.rollbackBackboneOnlyReceiveCoordinateBatch(
-										nativePreparedCoordinateBatch,
-									);
+									// Lower entries are already committed. Removing only their
+									// coordinates would strand them on the next receive retry.
+									// Keep the mandatory metadata and stop further ownership work
+									// until recovery can establish durability coherently.
+									this.poisonReplicationOwnership(error);
 									throw error;
 								}
 							};
@@ -23343,13 +23937,36 @@ export class SharedLog<
 												nativePreparedJoinCommit,
 											__peerbitNativePreparedJoinCommitValidatesPlan:
 												nativePreparedJoinCommitValidatesPlan,
-											__peerbitOnPreparedJoinCommitted: nativePreparedJoinCommit
-												? finishNativePreparedCoordinates
-												: undefined,
+											__peerbitOnJoinCommitted: nativePreparedJoinCommit
+												? async (committed) => {
+														await finishNativePreparedCoordinates(committed);
+														if (committed.nativePreparedCommitted) {
+															for (const hash of nativeBackboneOnlyPersistedHashes ??
+																[])
+																receiveCoordinateCompletion.handledHashes.add(
+																	hash,
+																);
+														}
+														await completeReceiveCoordinates(
+															committed.hashes,
+															committed.hashMutationLockOwner,
+														);
+													}
+												: (committed) =>
+														completeReceiveCoordinates(
+															committed.hashes,
+															committed.hashMutationLockOwner,
+														),
 										},
 									));
 								if (!joinedPreparedFacts) {
 									await trustedLowerLog.join(materializeAllToMergeEntries(), {
+										signal: releasePeerReceiveLease.signal,
+										__peerbitOnJoinCommitted: (committed) =>
+											completeReceiveCoordinates(
+												committed.hashes,
+												committed.hashMutationLockOwner,
+											),
 										__peerbitBatchIndependent: true,
 										__peerbitEntriesAlreadyMissing: true,
 										__peerbitCanAppendAlreadyValidated:
@@ -23390,6 +24007,18 @@ export class SharedLog<
 										admittedHashes.has(entry.hash),
 									);
 							}
+							reusableCoordinatePersistItems =
+								reusableCoordinatePersistItems.filter(
+									(item) =>
+										!receiveCoordinateCompletion.handledHashes.has(
+											item.entry.hash,
+										),
+								);
+							coordinatePersistFallbackEntries =
+								coordinatePersistFallbackEntries.filter(
+									(entry) =>
+										!receiveCoordinateCompletion.handledHashes.has(entry.hash),
+								);
 							const reusableCoordinatePersistItemCount =
 								reusableCoordinatePersistItems.length;
 							if (syncProfile) {
@@ -23413,18 +24042,9 @@ export class SharedLog<
 								// The lower-log prepared receive transaction already finished
 								// the native coordinate mirror/journal after entry-index commit.
 							} else if (nativePreparedCoordinateBatch) {
-								try {
-									nativeBackboneOnlyPersistedHashes =
-										await this._coordinates.finishBackboneOnlyReceiveCoordinateBatch(
-											nativePreparedCoordinateBatch,
-											syncProfile,
-										);
-								} catch (error) {
-									this._coordinates.rollbackBackboneOnlyReceiveCoordinateBatch(
-										nativePreparedCoordinateBatch,
-									);
-									throw error;
-								}
+								await finishNativePreparedCoordinates({
+									nativePreparedCommitted: true,
+								});
 							} else {
 								nativeBackboneOnlyPersistedHashes =
 									await this._coordinates.persistBackboneOnlyReceiveCoordinateBatch(
@@ -23565,16 +24185,7 @@ export class SharedLog<
 							}
 							this.rebalanceParticipationDebounced?.call();
 						} finally {
-							// Settle seam for the receive token. Every consumer that can
-							// roll it back runs inline before control leaves this block: the
-							// prepared-join callback resolves during the join await, and the
-							// late finish/rollback arm runs above. This `finally` is what
-							// closes the abandon arms (no prepared-join commit, a declined
-							// native commit, a downgrade to the plain join) without having
-							// to enumerate them.
-							this._coordinates.settleResidentCoordinateSnapshot(
-								nativeReceiveCoordinateBatch?.rollbackCoordinateEntries,
-							);
+							receiveCoordinateCompletion.release();
 						}
 					}
 
@@ -23666,7 +24277,13 @@ export class SharedLog<
 				};
 				// The prelude already threw when `context.from` was missing.
 				const laneRequestContext = context as ReceiveRequestContext;
-				if (msg instanceof RequestPersistedEntriesV1) {
+				if (msg instanceof RequestEntryInventoryV1) {
+					return await this.handleRequestEntryInventoryV1(
+						msg,
+						laneRequestContext,
+						lane,
+					);
+				} else if (msg instanceof RequestPersistedEntriesV1) {
 					return await this.handleRequestPersistedEntriesV1(
 						msg,
 						laneRequestContext,
@@ -23788,23 +24405,18 @@ export class SharedLog<
 									capabilityTimestamp > previousCapabilityTimestamp;
 								if (
 									freshExactRearm &&
-									this._v2Receive.isCurrentActive({
+									this._v2Receive.acceptRemoteRearm({
 										peerHash: receiveFromHash,
 										peerSession: receiveSession,
 										receiveEpoch:
 											this._peerSessions.receiveEpoch(receiveFromHash),
-										senderTransportSession: capabilityTransportSession,
 									})
 								) {
-									// Rotate the receiver grant/challenge before requesting Full. A
-									// sender rebuilt from no state starts at sequence one, which an
-									// active receiver's old sequence fence must otherwise reject.
-									this._v2Receive.advanceRecovery({
-										peerHash: receiveFromHash,
-										peerSession: receiveSession,
-										receiveEpoch:
-											this._peerSessions.receiveEpoch(receiveFromHash),
-									});
+									// A one-sided topic reopening can discard the opposite receive
+									// stream without changing transport. Retire its old Applied proof
+									// before refreshing our capability and requesting a new Full.
+									this._v2Send.reconfirmAfterPeerRecovery(receiveFromHash);
+									this.dispatchPersistedReceiptReadinessChange(receiveFromHash);
 								}
 							} else if (observed && receiveSession === null) {
 								// A capability can arrive before the sender's topic Subscribe after
@@ -23930,9 +24542,19 @@ export class SharedLog<
 		context: ReceiveRequestContext,
 		lane: ReceiveLaneContext,
 	): boolean {
-		const session = lane.session;
 		return (
 			!!this._persistedReceiptStorage &&
+			this.isEntryPresenceRequestSessionCurrent(request, context, lane)
+		);
+	}
+
+	private isEntryPresenceRequestSessionCurrent(
+		request: { expectedReceiverSession: bigint },
+		context: ReceiveRequestContext,
+		lane: ReceiveLaneContext,
+	): boolean {
+		const session = lane.session;
+		return (
 			!context.from.equals(this.node.identity.publicKey) &&
 			request.expectedReceiverSession === this.ownTransportSession() &&
 			session !== null &&
@@ -24031,6 +24653,91 @@ export class SharedLog<
 		peerBudget.requestTokens -= 1;
 		peerBudget.hashTokens -= hashCost;
 		return true;
+	}
+
+	private async handleRequestEntryInventoryV1(
+		request: RequestEntryInventoryV1,
+		context: ReceiveRequestContext,
+		lane: ReceiveLaneContext,
+	): Promise<ConfirmEntriesMessage | undefined> {
+		if (
+			!this.isEntryPresenceRequestSessionCurrent(request, context, lane) ||
+			((this._peerSyncCapabilities.get(lane.fromHash) ?? 0) &
+				SYNC_CAPABILITY_ENTRY_INVENTORY) ===
+				0 ||
+			// Both request variants share ingress credits: switching variants cannot
+			// double the work available to an authenticated peer.
+			!this.admitPersistedReceiptIngress(
+				lane.fromHash,
+				context.message.header.session,
+				request.hashes.length,
+			)
+		)
+			return undefined;
+		if (
+			request.hashes.length === 0 ||
+			request.hashes.length > ENTRY_INVENTORY_PAGE_SIZE
+		)
+			return undefined;
+		let bytes = 0;
+		for (const hash of request.hashes) {
+			// Canonical CIDs are ASCII. Bound work before parsing or allocating reads.
+			if (hash.length === 0) return undefined;
+			bytes += hash.length;
+			if (bytes > 16 * 1024) return undefined;
+		}
+		if (!this.hasValidPersistedReceiptHashes(request)) return undefined;
+		const inFlight =
+			this._persistedReceiptRequestsInFlight.get(lane.fromHash) ?? 0;
+		if (
+			inFlight >= MAX_PERSISTED_RECEIPT_REQUESTS_PER_PEER ||
+			this._persistedReceiptRequestsInFlightTotal >=
+				MAX_PERSISTED_RECEIPT_REQUESTS_GLOBAL
+		)
+			return undefined;
+		this._persistedReceiptRequestsInFlight.set(lane.fromHash, inFlight + 1);
+		this._persistedReceiptRequestsInFlightTotal++;
+		try {
+			const lower = this.log.entryIndex;
+			const generation = lower.captureMutationGeneration();
+			const revision = this._instanceLifecycle?._receiveOwnershipRevision ?? 0;
+			const current = () =>
+				generation !== undefined &&
+				lower === this.log.entryIndex &&
+				lower.isMutationGenerationCurrent(generation) &&
+				this.isReceiveOwnershipSnapshotStable(revision) &&
+				this.isEntryPresenceRequestSessionCurrent(request, context, lane);
+			if (!current()) return new ConfirmEntriesMessage({ hashes: [] });
+			this.throwIfNativeDurableCommitFailed();
+			const blocks = await this.remoteBlocks.localStore.hasMany(request.hashes);
+			if (!current()) return new ConfirmEntriesMessage({ hashes: [] });
+			const present: string[] = [];
+			for (let i = 0; i < request.hashes.length; i++) {
+				if (!blocks[i]) continue;
+				const hash = request.hashes[i]!;
+				const [row, coordinate] = await Promise.all([
+					lower.getShallow(hash),
+					this._coordinates.getAuthoritativeCoordinateEntryForInventory(hash),
+				]);
+				if (!current()) return new ConfirmEntriesMessage({ hashes: [] });
+				if (row && coordinate && !this._checkedPrune.hasActiveWork(hash))
+					present.push(hash);
+			}
+			this.throwIfNativeDurableCommitFailed();
+			// No barriers, fsync or durable acknowledgment: only a fresh presence
+			// answer to this exact RPC request. Never feed this into delivery receipts.
+			return new ConfirmEntriesMessage({ hashes: current() ? present : [] });
+		} finally {
+			const remaining =
+				(this._persistedReceiptRequestsInFlight.get(lane.fromHash) ?? 1) - 1;
+			if (remaining <= 0)
+				this._persistedReceiptRequestsInFlight.delete(lane.fromHash);
+			else this._persistedReceiptRequestsInFlight.set(lane.fromHash, remaining);
+			this._persistedReceiptRequestsInFlightTotal = Math.max(
+				0,
+				this._persistedReceiptRequestsInFlightTotal - 1,
+			);
+		}
 	}
 
 	private async handleRequestPersistedEntriesV1(
@@ -26327,18 +27034,30 @@ export class SharedLog<
 			this.throwIfReplicationOwnershipLifecycleInactive(
 				ownershipLifecycleController,
 			);
-			!this.closed &&
-				(await this._coordinates.persistCoordinate(
-					{
-						leaders,
-						coordinates: cursors,
-						replicas: cursors.length,
-						entry,
-						prev: options?.persist?.prev,
-						assignedToRangeBoundary,
+			if (!this.closed) {
+				await this._coordinates.withCoordinateMutationOwner(
+					[entry.hash, ...this.getEntryNext(entry)],
+					async (owner) => {
+						if (
+							!(await this.log.entryIndex.getShallow(entry.hash))?.value.head
+						) {
+							return;
+						}
+						await this._coordinates.persistCoordinate(
+							{
+								leaders,
+								coordinates: cursors,
+								replicas: cursors.length,
+								entry,
+								prev: options?.persist ? options.persist.prev : undefined,
+								assignedToRangeBoundary,
+							},
+							ownershipLifecycleController,
+							owner,
+						);
 					},
-					ownershipLifecycleController,
-				));
+				);
+			}
 			this.throwIfReplicationOwnershipLifecycleInactive(
 				ownershipLifecycleController,
 			);
@@ -26458,73 +27177,131 @@ export class SharedLog<
 					return !!persist && !persist.prev;
 				});
 			if (canUseNativeReceiveCoordinateBatch) {
-				const nativePlans =
-					nativeReceivePlanner.planReceiveCoordinatesForGidsBatch(
-						{
-							entries: itemArray.map((item) => ({
-								entryHash: item.entry.hash,
-								gid: this.getEntryGid(item.entry),
-								hashNumber: this.getEntryHashNumber(item.entry),
-								nextHashes: this.getEntryNext(item.entry),
-								replicas: item.replicas,
-							})),
-							selfHash: context.selfHash,
-						},
-						this.createNativeLeaderOptions(context, firstItem.options),
-					);
-				const plans: EntryLeaderPlan<R>[] = [];
-				const persistItems: Parameters<
-					typeof this._coordinates.persistCoordinatesBatch
-				>[0] = [];
-				for (let i = 0; i < itemArray.length; i++) {
-					const item = itemArray[i]!;
-					const nativePlan = nativePlans[i]!;
-					const coordinates = Array.from(
-						nativePlan.coordinate.coordinates as Iterable<NumberFromType<R>>,
-					);
-					const leaders = nativePlan.leaders ?? new Map();
-					const assignedToRangeBoundary =
-						nativePlan.coordinate.assignedToRangeBoundary;
-					plans.push({
-						coordinates,
-						leaders,
-						isLeader: nativePlan.isLeader,
-						assignedToRangeBoundary,
-					});
-					if (!this.closed) {
-						const prepared =
-							this._coordinates.createCoordinatePersistenceEntryFromNativePlan({
-								entry: item.entry,
-								plan: nativePlan.coordinate,
-							});
-						persistItems.push({
-							coordinates,
-							entry: item.entry,
-							leaders,
-							replicas: coordinates.length,
-							assignedToRangeBoundary,
-							prepared: prepared || undefined,
-							commitNative:
-								nativeReceivePlanner === this._nativeSharedLogState
-									? false
-									: undefined,
-							commitNativeBackbone:
-								nativeReceivePlanner === this._nativeBackbone
-									? false
-									: undefined,
-						});
-					}
-				}
-				if (!this.closed && persistItems.length > 0) {
-					await this._coordinates.persistCoordinatesBatch(
-						persistItems,
-						ownershipLifecycleController,
-					);
-				}
-				this.throwIfReplicationOwnershipLifecycleInactive(
-					ownershipLifecycleController,
+				return this._coordinates.withCoordinateMutationOwner(
+					itemArray.flatMap((item) => [
+						item.entry.hash,
+						...this.getEntryNext(item.entry),
+					]),
+					async (owner) => {
+						const retained: Array<{
+							item: EntryLeaderBatchItem<R>;
+							index: number;
+						}> = [];
+						const superseded: typeof retained = [];
+						for (let index = 0; index < itemArray.length; index++) {
+							const item = itemArray[index]!;
+							((await this.log.entryIndex.getShallow(item.entry.hash))?.value
+								.head
+								? retained
+								: superseded
+							).push({ item, index });
+						}
+						const plans: EntryLeaderPlan<R>[] = new Array(itemArray.length);
+						const nativeOptions = this.createNativeLeaderOptions(
+							context,
+							firstItem.options,
+						);
+						if (superseded.length > 0) {
+							const readOnlyPlans = superseded.map(({ item }) =>
+								nativeReceivePlanner.planLeadersForGid(
+									this.getEntryGid(item.entry),
+									item.replicas,
+									nativeOptions,
+								),
+							);
+							for (let i = 0; i < superseded.length; i++) {
+								const plan = readOnlyPlans[i]!;
+								plans[superseded[i]!.index] = {
+									coordinates: Array.from(
+										plan.coordinates as Iterable<NumberFromType<R>>,
+									),
+									leaders: plan.leaders,
+									isLeader: plan.leaders.has(context.selfHash),
+									assignedToRangeBoundary:
+										"assignedToRangeBoundary" in plan
+											? (plan.assignedToRangeBoundary as boolean)
+											: undefined,
+								};
+							}
+						}
+						if (retained.length === 0) return plans;
+						try {
+							const nativePlans =
+								nativeReceivePlanner.planReceiveCoordinatesForGidsBatch(
+									{
+										entries: retained.map(({ item }) => ({
+											entryHash: item.entry.hash,
+											gid: this.getEntryGid(item.entry),
+											hashNumber: this.getEntryHashNumber(item.entry),
+											nextHashes: this.getEntryNext(item.entry),
+											replicas: item.replicas,
+										})),
+										selfHash: context.selfHash,
+									},
+									nativeOptions,
+								);
+							if (nativePlans.length !== retained.length) {
+								throw new Error(
+									"Native receive coordinate batch result count mismatch",
+								);
+							}
+							const persistItems: Parameters<
+								typeof this._coordinates.persistCoordinatesBatch
+							>[0] = [];
+							for (let i = 0; i < retained.length; i++) {
+								const { item, index } = retained[i]!;
+								const nativePlan = nativePlans[i]!;
+								const coordinates = Array.from(
+									nativePlan.coordinate.coordinates as Iterable<
+										NumberFromType<R>
+									>,
+								);
+								const leaders = nativePlan.leaders ?? new Map();
+								const assignedToRangeBoundary =
+									nativePlan.coordinate.assignedToRangeBoundary;
+								plans[index] = {
+									coordinates,
+									leaders,
+									isLeader: nativePlan.isLeader,
+									assignedToRangeBoundary,
+								};
+								const prepared =
+									this._coordinates.createCoordinatePersistenceEntryFromNativePlan(
+										{ entry: item.entry, plan: nativePlan.coordinate },
+									);
+								if (!prepared) {
+									throw new Error(
+										"Native receive coordinate result does not match the committed entry",
+									);
+								}
+								persistItems.push({
+									coordinates,
+									entry: item.entry,
+									leaders,
+									replicas: coordinates.length,
+									assignedToRangeBoundary,
+									prepared: prepared || undefined,
+									commitNative:
+										nativeReceivePlanner !== this._nativeSharedLogState,
+									commitNativeBackbone:
+										nativeReceivePlanner !== this._nativeBackbone,
+								});
+							}
+							await this._coordinates.persistCoordinatesBatch(
+								persistItems,
+								ownershipLifecycleController,
+								owner,
+							);
+							this.throwIfReplicationOwnershipLifecycleInactive(
+								ownershipLifecycleController,
+							);
+							return plans;
+						} catch (error) {
+							this.poisonNativeStrictDurableTransaction(error);
+							throw error;
+						}
+					},
 				);
-				return plans;
 			}
 
 			const nativePlanner = this._nativeBackbone ?? this._nativeRangePlanner;
@@ -26578,9 +27355,27 @@ export class SharedLog<
 				}
 			}
 			if (!this.closed && persistItems.length > 0) {
-				await this._coordinates.persistCoordinatesBatch(
-					persistItems,
-					ownershipLifecycleController,
+				await this._coordinates.withCoordinateMutationOwner(
+					persistItems.flatMap((item) => [
+						item.entry.hash,
+						...this.getEntryNext(item.entry),
+					]),
+					async (owner) => {
+						const retained: typeof persistItems = [];
+						for (const item of persistItems) {
+							if (
+								(await this.log.entryIndex.getShallow(item.entry.hash))?.value
+									.head
+							) {
+								retained.push(item);
+							}
+						}
+						await this._coordinates.persistCoordinatesBatch(
+							retained,
+							ownershipLifecycleController,
+							owner,
+						);
+					},
 				);
 			}
 			this.throwIfReplicationOwnershipLifecycleInactive(
@@ -28880,6 +29675,11 @@ export class SharedLog<
 			peerSession: expectedSubscriptionEpoch,
 			receiveEpoch,
 			signal: replicationLifecycleController.signal,
+			// Without a signed remote binding, even a fresh local instance may
+			// face a peer that still considers its old topic session fully active.
+			// Solicit one steady capability through the receiver-led Full handshake;
+			// ordinary timestamp refreshes do not themselves request another reply.
+			requestRemoteFullRearm: !this._peerSyncCapabilitySessions.has(peerHash),
 		});
 		this.scheduleReplicationInfoV2Recovery(
 			publicKey,

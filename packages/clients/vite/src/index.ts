@@ -7,9 +7,15 @@ import {
 } from "@peerbit/build-assets";
 import fs from "fs";
 import { createRequire } from "module";
+import { lookup } from "mrmime";
 import path from "path";
-import { type PluginOption } from "vite";
-import { viteStaticCopy } from "vite-plugin-static-copy";
+import sirv from "sirv";
+import {
+	type Connect,
+	type Plugin,
+	type PluginOption,
+	type ResolvedConfig,
+} from "vite";
 
 export type { ModuleResolver } from "@peerbit/build-assets";
 
@@ -98,15 +104,28 @@ function dontMinimizeCertainPackagesPlugin(
 
 function copyToPublicPlugin(
 	options: { assets?: { src: string; dest: string }[] } = {},
-) {
+	legacyAliasSource?: string,
+): Plugin {
 	const [sqlite3Assets] = resolveAssetLocations([
 		"@peerbit/indexer-sqlite3/dist/assets/sqlite3",
 	]);
+	const targets = [
+		...(options.assets ?? []),
+		...(legacyAliasSource
+			? [
+					{
+						src: legacyAliasSource,
+						dest: "node_modules/.vite/deps/sqlite3.wasm",
+					},
+				]
+			: []),
+	];
+	let resolvedConfig: ResolvedConfig;
 
 	return {
 		name: "copy-to-public",
-		enforce: "pre" as const,
-		config(config: any) {
+		enforce: "pre",
+		config(config) {
 			const publicDir = resolveOrCreatePublicDir(config?.publicDir);
 			config.publicDir = publicDir;
 
@@ -118,13 +137,146 @@ function copyToPublicPlugin(
 
 			// Ensure worker exists in public/ for dev server.
 			const destDir = path.resolve(publicDir, sqlite3Assets.dest);
-			copyAssets(sqlite3Assets.src, destDir, "/");
+			copyAssets(sqlite3Assets.src, destDir);
 
 			options?.assets?.forEach(({ src, dest }) => {
 				const sourcePath = path.resolve(src);
 				const destinationPath = path.resolve(publicDir, dest);
-				copyAssets(sourcePath, destinationPath, "/");
+				copyAssets(sourcePath, destinationPath);
 			});
+		},
+		configResolved(config) {
+			resolvedConfig = config;
+		},
+		configureServer(server) {
+			const routes = targets.map(({ src, dest }) => {
+				const source = fs.realpathSync(path.resolve(server.config.root, src));
+				const directory = fs.statSync(source).isDirectory();
+				const root = directory ? source : path.dirname(source);
+				return {
+					source,
+					directory,
+					root,
+					url: path.posix
+						.normalize("/" + dest.replace(/\\/g, "/"))
+						.replace(/\/$/, ""),
+					serve: sirv(root, {
+						dev: true,
+						etag: true,
+						extensions: [],
+						setHeaders(res, pathname) {
+							const destination = directory ? pathname : dest;
+							res.setHeader(
+								"Content-Type",
+								/\.(?:[tj]sx?|[cm][tj]s)$/.test(destination)
+									? "text/javascript"
+									: lookup(destination) || "",
+							);
+							// Custom .gz/.br files are opaque assets, not negotiated encodings.
+							if (/\.(?:gz|br)$/.test(pathname))
+								res.setHeader("Content-Encoding", "identity");
+							for (const [name, value] of Object.entries(
+								server.config.server.headers ?? {},
+							)) {
+								if (value !== undefined) res.setHeader(name, value);
+							}
+						},
+					}),
+				};
+			});
+			const middleware: Connect.NextHandleFunction = (req, res, next) => {
+				if (!req.url || (req.method !== "GET" && req.method !== "HEAD"))
+					return next();
+				let pathname: string;
+				try {
+					pathname = decodeURIComponent(req.url.split("?")[0]!);
+				} catch {
+					res.statusCode = 400;
+					return res.end();
+				}
+				const route =
+					routes.find(({ url }) => pathname === url) ??
+					routes.find(
+						({ url, directory }) => directory && pathname.startsWith(url + "/"),
+					);
+				if (!route) return next();
+				if (
+					pathname.includes("\\") ||
+					pathname.includes("\0") ||
+					pathname.split("/").some((part) => part === "." || part === "..")
+				) {
+					res.statusCode = 403;
+					return res.end();
+				}
+				// Existing public copies retain overwrite:false precedence.
+				if (fs.existsSync(path.join(server.config.publicDir, pathname)))
+					return next();
+				const relative = route.directory
+					? pathname.slice(route.url.length + 1)
+					: path.basename(route.source);
+				const source = path.join(route.root, relative);
+				try {
+					if (!fs.statSync(source, { throwIfNoEntry: false })?.isFile())
+						return next();
+					const actual = fs.realpathSync(source);
+					const relativeActual = path.relative(route.root, actual);
+					if (
+						route.directory
+							? relativeActual === ".." ||
+								relativeActual.startsWith(".." + path.sep) ||
+								path.isAbsolute(relativeActual)
+							: actual !== route.source
+					) {
+						res.statusCode = 403;
+						return res.end();
+					}
+					const originalUrl = req.url;
+					// Encode again so sirv decodes exactly once, including literal '%' names.
+					req.url = "/" + relative.split("/").map(encodeURIComponent).join("/");
+					try {
+						route.serve(req, res, () => {
+							req.url = originalUrl;
+							next();
+						});
+					} finally {
+						req.url = originalUrl;
+					}
+				} catch (error) {
+					next(error);
+				}
+			};
+			return () => {
+				// Retain static-copy's ordering: proxy/base first, then our fallback
+				// before Vite's public-file cache and module transforms.
+				const index = server.middlewares.stack.findIndex(
+					({ handle }) =>
+						typeof handle === "function" &&
+						["viteServePublicMiddleware", "viteTransformMiddleware"].includes(
+							handle.name,
+						),
+				);
+				if (index < 0)
+					throw new Error(
+						"[peerbit/vite] Asset middleware insertion point not found",
+					);
+				server.middlewares.stack.splice(index, 0, {
+					route: "",
+					handle: middleware,
+				});
+			};
+		},
+		writeBundle(output) {
+			const outDir = path.resolve(
+				resolvedConfig.root,
+				output.dir ?? resolvedConfig.build.outDir,
+			);
+			for (const { src, dest } of targets) {
+				copyAssets(
+					path.resolve(resolvedConfig.root, src),
+					path.resolve(outDir, dest),
+					false,
+				);
+			}
 		},
 	};
 }
@@ -183,40 +335,21 @@ export default (
 	const assetsToCopy = includeDefaultAssets
 		? [...resolveAssetLocations(defaultAssetSources), ...userAssets]
 		: userAssets;
-
-	const staticCopyTargets = assetsToCopy.map(({ src, dest }) => ({
-		src,
-		dest: path.dirname(dest),
-		rename: path.basename(dest),
-		overwrite: false,
-	}));
-
 	const publicDir = resolveOrCreatePublicDir();
 
 	return [
 		dontMinimizeCertainPackagesPlugin({ packages: options.packages }),
-		copyToPublicPlugin({
-			assets: assetsToCopy,
-		}),
+		copyToPublicPlugin(
+			{ assets: assetsToCopy },
+			publicDir
+				? path.join(publicDir, "peerbit", "sqlite3", "sqlite3.wasm")
+				: undefined,
+		),
 		nodePolyfillsPlugin(),
-		viteStaticCopy({
-			targets: [
-				...staticCopyTargets,
-				...(publicDir
-					? [
-							{
-								src: path.join(publicDir, "peerbit", "sqlite3", "sqlite3.wasm"),
-								dest: "node_modules/.vite/deps",
-								overwrite: false,
-							},
-						]
-					: []),
-			],
-		}),
 	];
 };
 
-function copyAssets(srcPath: string, destPath: string, base: string) {
+function copyAssets(srcPath: string, destPath: string, overwrite = true) {
 	if (!fs.existsSync(srcPath)) {
 		throw new Error(`File ${srcPath} does not exist`);
 	}
@@ -229,7 +362,7 @@ function copyAssets(srcPath: string, destPath: string, base: string) {
 			const srcFilePath = path.join(srcPath, file);
 			const destFilePath = path.join(destPath, file);
 
-			copyAssets(srcFilePath, destFilePath, base);
+			copyAssets(srcFilePath, destFilePath, overwrite);
 		});
 	} else {
 		let destPathAsFile = destPath;
@@ -238,7 +371,9 @@ function copyAssets(srcPath: string, destPath: string, base: string) {
 			destPathAsFile = path.join(destPath, path.basename(srcPath));
 		}
 
-		fs.copyFileSync(srcPath, destPathAsFile);
+		if (overwrite || !fs.existsSync(destPathAsFile)) {
+			fs.copyFileSync(srcPath, destPathAsFile);
+		}
 	}
 }
 

@@ -807,6 +807,72 @@ describe("native shared-log range planner", () => {
 		).to.deep.equal([90n]);
 	});
 
+	for (const resolution of ["u32", "u64"] as const) {
+		it(`includes the ${resolution} ring endpoint in all hash-number range variants`, async () => {
+			const state = await createSharedLogState(resolution);
+			const max = (1n << (resolution === "u32" ? 32n : 64n)) - 1n;
+			for (const [index, symbol] of [0n, 1n, max - 1n, max, max].entries()) {
+				state.putEntryCoordinates(
+					`head-${index}`,
+					`gid-${index}`,
+					[0n],
+					false,
+					1,
+					symbol,
+				);
+			}
+			const cases = [
+				{
+					start1: max,
+					end1: 0n,
+					start2: 0n,
+					end2: 0n,
+					expected: [max, max],
+				},
+				{
+					start1: max - 1n,
+					end1: 0n,
+					start2: 0n,
+					end2: 1n,
+					expected: [max - 1n, max, max, 0n],
+				},
+				{
+					start1: 1n,
+					end1: 0n,
+					start2: 0n,
+					end2: 1n,
+					expected: [1n, max - 1n, max, max, 0n],
+				},
+				{ start1: 0n, end1: 0n, start2: 0n, end2: 0n, expected: [] },
+				{ start1: 2n, end1: 2n, start2: 0n, end2: 0n, expected: [] },
+				{ start1: 5n, end1: 2n, start2: 0n, end2: 0n, expected: [] },
+				{ start1: 0n, end1: 1n, start2: 0n, end2: 0n, expected: [0n] },
+			];
+			for (const { expected, ...range } of cases) {
+				expect(state.getEntryHashNumbersInRange(range)).to.deep.equal(expected);
+				expect(
+					Array.from(state.getEntryHashNumbersInRangeU64(range)!),
+				).to.deep.equal(expected);
+				for (const limit of [
+					0,
+					1,
+					2,
+					3,
+					expected.length,
+					expected.length + 1,
+				]) {
+					const limited = { ...range, limit };
+					expect(
+						state.getEntryHashNumbersInRangeLimited(limited),
+					).to.deep.equal(expected.slice(0, limit));
+					expect(
+						Array.from(state.getEntryHashNumbersInRangeU64Limited(limited)!),
+					).to.deep.equal(expected.slice(0, limit));
+				}
+			}
+		});
+	}
+
 	it("counts resident entry coordinates in owned ranges", async () => {
 		const state = await createSharedLogState("u32");
 		state.putEntryCoordinates("head-a", "gid-a", [5, 100]);

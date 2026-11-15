@@ -1,5 +1,6 @@
 import { TestSession } from "@peerbit/libp2p-test-utils";
 import { AnyWhere } from "@peerbit/stream-interface";
+import { AbortError } from "@peerbit/time";
 import { expect } from "chai";
 import sinon from "sinon";
 import {
@@ -56,6 +57,9 @@ const fixture = () => {
 	};
 	const context = {
 		peers: new Map([["parent", peer]]),
+		started: true,
+		stopping: false,
+		closeController: new AbortController(),
 		random: () => 0,
 		codec: tsFanoutWireCodec,
 		_sendControl: sinon.stub().resolves(),
@@ -98,18 +102,20 @@ describe("fanout parent probe", () => {
 			clock = sinon.useFakeTimers();
 			const f = fixture();
 			const gate = deferred<any>();
+			const createMessage = sinon.stub().returns(gate.promise);
 			const publish = sinon.stub().resolves(true);
 			if (blocked === "signing") {
 				Object.assign(f.context, {
 					_sendControl: sendControl,
 					recordControlSend: sinon.stub(),
-					createMessage: sinon.stub().returns(gate.promise),
+					createMessage,
 					publishMessageMaybe: publish,
 				});
 			} else {
 				f.context._sendControl.returns(gate.promise);
 			}
 			const pending = f.probe();
+			if (blocked === "signing") expect(createMessage.calledOnce).to.equal(true);
 			expect(f.channel.pendingParentProbe.size).to.equal(1);
 			await clock.tickAsync(100);
 			expect(await pending).to.equal(undefined);
@@ -129,15 +135,17 @@ describe("fanout parent probe", () => {
 			clock = sinon.useFakeTimers();
 			const f = fixture();
 			const signing = deferred<any>();
+			const createMessage = sinon.stub().returns(signing.promise);
 			const publish = sinon.stub().resolves(true);
 			Object.assign(f.context, {
 				_sendControl: sendControl,
 				recordControlSend: sinon.stub(),
-				createMessage: sinon.stub().returns(signing.promise),
+				createMessage,
 				publishMessageMaybe: publish,
 			});
 			const reason = new Error("caller left");
 			const outcome = f.probe().catch((error) => error);
+			expect(createMessage.calledOnce).to.equal(true);
 			// Queue the send continuation first, then cancel before microtasks drain.
 			signing.resolve({});
 			if (cancellation === "caller abort") f.controller.abort(reason);
@@ -150,6 +158,34 @@ describe("fanout parent probe", () => {
 			f.expectClean(clock);
 		});
 	}
+
+	it("does not send an old lifetime's signed control message after restart", async () => {
+		const f = fixture();
+		const signing = deferred<any>();
+		const createMessage = sinon.stub().returns(signing.promise);
+		const publish = sinon.stub().resolves(true);
+		Object.assign(f.context, {
+			recordControlSend: sinon.stub(),
+			createMessage,
+			publishMessageMaybe: publish,
+		});
+		// No caller signal: the service lifetime must fence this send itself.
+		const outcome = sendControl
+			.call(f.context, "parent", new Uint8Array([1]))
+			.catch((error: unknown) => error);
+		try {
+			expect(createMessage.calledOnce).to.equal(true);
+			f.context.closeController.abort();
+			f.context.closeController = new AbortController();
+			expect(f.context.closeController.signal.aborted).to.equal(false);
+			signing.resolve({});
+			expect(await outcome).to.be.instanceOf(AbortError);
+			expect(publish.notCalled).to.equal(true);
+		} finally {
+			signing.resolve({});
+			await outcome;
+		}
+	});
 
 	for (const completion of [
 		"success",

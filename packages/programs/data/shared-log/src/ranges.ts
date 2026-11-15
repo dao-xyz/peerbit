@@ -3517,6 +3517,7 @@ export const toRebalance = <R extends "u32" | "u64">(
 	return {
 		[Symbol.asyncIterator]: async function* () {
 			let completed = false;
+			let scannedPage = false;
 			try {
 				let cursor: RebalanceTaskCursor | undefined;
 				for (;;) {
@@ -3535,6 +3536,16 @@ export const toRebalance = <R extends "u32" | "u64">(
 						let taskCompleted = false;
 						try {
 							while (iterator.done() !== true) {
+								if (scannedPage) {
+									// SQLite pages can settle synchronously. Give transport and
+									// lifecycle work a turn before reading the next bounded page.
+									await new Promise<void>((resolve) => {
+										if (typeof setImmediate === "function")
+											setImmediate(resolve);
+										else setTimeout(resolve, 0);
+									});
+								}
+								scannedPage = true;
 								const entries = await iterator.next(
 									REBALANCE_ITERATOR_BATCH_SIZE,
 								);

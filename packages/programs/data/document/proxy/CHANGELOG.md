@@ -1,5 +1,54 @@
 # Changelog
 
+## 2.0.133
+
+### Patch Changes
+
+- Updated dependencies [[`cfd2201`](https://github.com/dao-xyz/peerbit/commit/cfd2201fa66386480caec589465bca8af6033d75), [`137a6a9`](https://github.com/dao-xyz/peerbit/commit/137a6a93dd2aea71729548eeb5a2e6def6b8d221), [`a8a34de`](https://github.com/dao-xyz/peerbit/commit/a8a34defcbb7b3c6596311a6b21f72590d2710bf)]:
+  - @peerbit/canonical-client@1.1.72
+  - @peerbit/canonical-host@1.0.91
+  - @peerbit/document@15.1.12
+  - @peerbit/program@6.0.69
+  - @peerbit/stream-interface@6.0.17
+  - @peerbit/shared-log-proxy@2.0.126
+  - @peerbit/document-interface@3.2.83
+  - @peerbit/indexer-interface@3.1.1
+
+## 2.0.132
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @peerbit/document@15.1.11
+  - @peerbit/shared-log-proxy@2.0.125
+  - @peerbit/program@6.0.68
+  - @peerbit/document-interface@3.2.82
+  - @peerbit/canonical-host@1.0.90
+  - @peerbit/canonical-client@1.1.71
+
+## 2.0.131
+
+### Patch Changes
+
+- Updated dependencies [[`2702d72`](https://github.com/dao-xyz/peerbit/commit/2702d729eed01d60f1f739a5bd90a4d89ccd9252)]:
+  - @peerbit/document@15.1.10
+  - @peerbit/document-interface@3.2.81
+  - @peerbit/shared-log-proxy@2.0.124
+  - @peerbit/program@6.0.67
+  - @peerbit/canonical-host@1.0.89
+  - @peerbit/canonical-client@1.1.70
+
+## 2.0.130
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @peerbit/document@15.1.9
+  - @peerbit/program@6.0.66
+  - @peerbit/canonical-host@1.0.88
+  - @peerbit/shared-log-proxy@2.0.123
+  - @peerbit/canonical-client@1.1.69
+
 ## 2.0.129
 
 ### Patch Changes

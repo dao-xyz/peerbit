@@ -6,7 +6,7 @@ import {
 	MessageHeader,
 } from "@peerbit/stream-interface";
 import { AbortError } from "@peerbit/time";
-import { expect } from "chai";
+import { AssertionError, expect } from "chai";
 import pDefer from "p-defer";
 import sinon from "sinon";
 import { Uint8ArrayList } from "uint8arraylist";
@@ -31,6 +31,7 @@ const fixture = () => {
 	const subject: any = Object.assign(new EventTarget(), {
 		started: true,
 		stopping: false,
+		closeController: new AbortController(),
 		publicKey: from,
 		publicKeyHash: "self",
 		seekTimeout: 100,
@@ -51,6 +52,10 @@ const fixture = () => {
 		),
 		removePeerFromRoutes: DirectStream.prototype.removePeerFromRoutes,
 		addRouteConnection: DirectStream.prototype.addRouteConnection,
+		updateReachability: Reflect.get(
+			DirectStream.prototype,
+			"updateReachability",
+		),
 	});
 	subject.routes.updateSession("target", 1);
 	subject.routes.add("self", "relay", "target", 0, 1, 1);
@@ -90,12 +95,38 @@ const fixture = () => {
 
 describe("stream ACK wait ownership", () => {
 	let clock: sinon.SinonFakeTimers;
+	const expectNoTimers = () => {
+		// countTimers includes fake jobs; drain them without advancing deadlines.
+		clock.runMicrotasks();
+		expect(clock.countTimers()).to.equal(0);
+	};
 	before(async () => ready);
 	beforeEach(() => {
 		clock = sinon.useFakeTimers();
 	});
 	afterEach(() => {
 		sinon.restore();
+	});
+
+	it("does not conceal owned deadlines when draining queued jobs", async () => {
+		const { subject, begin } = fixture();
+		const wait = await begin();
+		wait.startTimeout();
+		const now = clock.now;
+		const job = sinon.spy();
+		queueMicrotask(job);
+		expect(expectNoTimers).to.throw(AssertionError);
+		expect(job.calledOnce).to.equal(true);
+		expect(clock.now).to.equal(now);
+		expect(clock.countTimers()).to.equal(2);
+		expect(subject._ackCallbacks.size).to.equal(1);
+		expect(subject.healthChecks.size).to.equal(1);
+		expect(subject.onPeerUnreachable.notCalled).to.equal(true);
+		wait.controller.abort();
+		expect(await wait.outcome).to.be.instanceOf(AbortError);
+		expect(subject._ackCallbacks.size).to.equal(0);
+		expect(subject.healthChecks.size).to.equal(0);
+		expectNoTimers();
 	});
 
 	it("does not let a cancelled wait prune a replacement indirect route", async () => {
@@ -129,7 +160,7 @@ describe("stream ACK wait ownership", () => {
 			);
 			expect(subject._ackCallbacks.size).to.equal(0);
 			expect(subject.healthChecks.size).to.equal(0);
-			expect(clock.countTimers()).to.equal(0);
+			expectNoTimers();
 		});
 	}
 
@@ -177,7 +208,7 @@ describe("stream ACK wait ownership", () => {
 		await second.outcome;
 		expect(subject.healthChecks.size).to.equal(0);
 		expect(subject._ackCallbacks.size).to.equal(0);
-		expect(clock.countTimers()).to.equal(0);
+		expectNoTimers();
 	});
 
 	it("still prunes for another active owner and removes the expired record", async () => {
@@ -294,7 +325,7 @@ describe("stream ACK wait ownership", () => {
 		blocked.resolve();
 		expect(await result).to.be.instanceOf(AbortError);
 		await clock.tickAsync(101);
-		expect(clock.countTimers()).to.equal(0);
+		expectNoTimers();
 		expect(subject.onPeerUnreachable.notCalled).to.equal(true);
 	});
 
@@ -308,7 +339,7 @@ describe("stream ACK wait ownership", () => {
 		expect(result).to.equal(failure);
 		expect(subject._ackCallbacks.size).to.equal(0);
 		expect(subject.healthChecks.size).to.equal(0);
-		expect(clock.countTimers()).to.equal(0);
+		expectNoTimers();
 		await clock.tickAsync(101);
 		expect(subject.onPeerUnreachable.notCalled).to.equal(true);
 	});
@@ -357,4 +388,199 @@ describe("stream ACK wait ownership", () => {
 		await wait.outcome;
 		expect(subject._ackCallbacks.size).to.equal(0);
 	});
+
+	const directFixture = () => {
+		const f = fixture();
+		const old = { publicKey: f.target, isClosed: false, isWritable: true };
+		f.subject.peers = new Map([["target", old]]);
+		f.subject.routes = new Routes("self");
+		f.subject.routes.updateSession("target", 1);
+		f.subject.routes.add("self", "target", "target", 0, 1, 1);
+		const controller = new AbortController();
+		const publish = (value = f.message(), to?: any[], relayed = false) =>
+			DirectStream.prototype.publishMessage
+				.call(f.subject, f.from as any, value, to, relayed, controller.signal)
+				.catch((error: unknown) => error);
+		const replacement = () => {
+			old.isClosed = true;
+			old.isWritable = false;
+			const current = {
+				publicKey: f.target,
+				isClosed: false,
+				isWritable: true,
+			};
+			f.subject.peers.set("target", current);
+			return current;
+		};
+		return { ...f, old, controller, publish, replacement };
+	};
+
+	it("retires only an unresolved delivery written to the replaced direct owner", async () => {
+		const f = directFixture();
+		const result = f.publish();
+		await clock.tickAsync(0);
+		const record = [...f.subject._ackCallbacks.values()][0] as any;
+		expect(f.subject.waitForPeerWrite.firstCall.args[0]).to.equal(f.old);
+		const current = f.replacement();
+		record.onPeerReplacement(current);
+		expect(await result).to.be.instanceOf(DeliveryError);
+		expect(f.subject._ackCallbacks.size).to.equal(0);
+		expect(f.subject.healthChecks.size).to.equal(0);
+		expectNoTimers();
+		expect(f.subject.routes.isReachable("self", "target")).to.equal(true);
+		expect(f.subject.onPeerUnreachable.called).to.equal(false);
+	});
+
+	it("ignores unrelated, non-writable and retired events but follows replacement chains", async () => {
+		const f = directFixture();
+		let settled = false;
+		const result = f.publish().then((value) => {
+			settled = true;
+			return value;
+		});
+		await clock.tickAsync(0);
+		const record = [...f.subject._ackCallbacks.values()][0] as any;
+		const unrelated = { publicKey: key("other"), isWritable: true };
+		f.subject.peers.set("other", unrelated);
+		record.onPeerReplacement(unrelated);
+		record.onPeerReplacement(f.old);
+		f.subject.dispatchEvent(
+			new CustomEvent("peer:unreachable", { detail: f.target }),
+		);
+		const intermediate = f.replacement();
+		intermediate.isWritable = false;
+		record.onPeerReplacement(intermediate);
+		const current = f.replacement();
+		intermediate.isClosed = true;
+		intermediate.isWritable = true; // Late event from an already retired owner.
+		record.onPeerReplacement(intermediate);
+		await clock.tickAsync(0);
+		expect(settled).to.equal(false);
+		record.onPeerReplacement(current);
+		expect(await result).to.be.instanceOf(DeliveryError);
+	});
+
+	for (const mode of [
+		"explicit",
+		"relay",
+		"redundant",
+		"indirect",
+		"flood",
+		"multiple",
+	] as const) {
+		it(`does not retire ${mode} delivery on a direct replacement`, async () => {
+			const f = directFixture();
+			if (mode === "indirect") {
+				f.subject.peers.set("relay", f.relay);
+				f.subject.routes = new Routes("self");
+				f.subject.routes.add("self", "relay", "target", 0, 1, 1);
+			}
+			if (mode === "flood") f.subject.routes = new Routes("self");
+			const value = f.message(mode === "redundant" ? 2 : 1);
+			if (mode === "multiple")
+				(value.header.mode as AcknowledgeDelivery).to.push("other");
+			let settled = false;
+			const result = f
+				.publish(
+					value,
+					mode === "explicit" ? [f.old] : undefined,
+					mode === "relay",
+				)
+				.then((value) => {
+					settled = true;
+					return value;
+				});
+			await clock.tickAsync(0);
+			const record = [...f.subject._ackCallbacks.values()][0] as any;
+			record.onPeerReplacement?.(f.replacement());
+			await clock.tickAsync(0);
+			expect(settled).to.equal(false);
+			f.controller.abort();
+			expect(await result).to.be.instanceOf(AbortError);
+		});
+	}
+
+	it("cannot let a retired replacement callback clear a same-ID successor", async () => {
+		const f = directFixture();
+		const value = f.message();
+		const result = f.publish(value);
+		await clock.tickAsync(0);
+		const oldRecord = [...f.subject._ackCallbacks.values()][0] as any;
+		const current = f.replacement();
+		oldRecord.onPeerReplacement(current);
+		expect(await result).to.be.instanceOf(DeliveryError);
+		const successor = f.publish(value);
+		await clock.tickAsync(0);
+		const newRecord = [...f.subject._ackCallbacks.values()][0];
+		expect(newRecord).not.to.equal(oldRecord);
+		oldRecord.onPeerReplacement(current);
+		expect([...f.subject._ackCallbacks.values()]).to.deep.equal([newRecord]);
+		f.controller.abort();
+		expect(await successor).to.be.instanceOf(AbortError);
+		expect(f.subject._ackCallbacks.size).to.equal(0);
+		expect(f.subject.healthChecks.size).to.equal(0);
+		expectNoTimers();
+	});
+
+	it("does not turn an acknowledged direct delivery into a replacement failure", async () => {
+		const f = directFixture();
+		const result = f.publish();
+		await clock.tickAsync(0);
+		const record = [...f.subject._ackCallbacks.values()][0] as any;
+		record.callback(
+			{
+				header: { signatures: { publicKeys: [f.target] }, session: 1 },
+				seenCounter: 0,
+			},
+			f.old,
+		);
+		expect(await result).to.equal(undefined);
+		record.onPeerReplacement(f.replacement());
+		expect(f.subject._ackCallbacks.size).to.equal(0);
+		expect(f.subject.healthChecks.size).to.equal(0);
+		f.subject.routes.clear(); // ACK route learning has its own cleanup timer.
+		expectNoTimers();
+	});
+
+	for (const directFirst of [true, false]) {
+		it(`preserves a same-ID wait shared with a viable explicit attempt (direct first: ${directFirst})`, async () => {
+			const f = directFixture();
+			const value = f.message();
+			let settled = 0;
+			const first = f
+				.publish(value, directFirst ? undefined : [f.relay])
+				.then((value) => {
+					settled++;
+					return value;
+				});
+			await clock.tickAsync(0);
+			const second = f
+				.publish(value, directFirst ? [f.relay] : undefined)
+				.then((value) => {
+					settled++;
+					return value;
+				});
+			await clock.tickAsync(0);
+			const record = [...f.subject._ackCallbacks.values()][0] as any;
+			expect(f.subject._ackCallbacks.size).to.equal(1);
+			record.onPeerReplacement(f.replacement());
+			await clock.tickAsync(0);
+			expect(settled).to.equal(0);
+			// The relay can still deliver the valid acknowledgement for both callers.
+			record.callback(
+				{
+					header: { signatures: { publicKeys: [f.target] }, session: 1 },
+					seenCounter: 0,
+				},
+				f.relay,
+			);
+			expect(await Promise.all([first, second])).to.deep.equal([
+				undefined,
+				undefined,
+			]);
+			expect(f.subject._ackCallbacks.size).to.equal(0);
+			f.subject.routes.clear();
+			expectNoTimers();
+		});
+	}
 });

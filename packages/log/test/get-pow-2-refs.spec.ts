@@ -16,6 +16,10 @@ describe("get-pow-2-refs", function () {
 	describe("Single log", () => {
 		let log1: Log<Uint8Array>;
 
+		afterEach(async () => {
+			await log1.close();
+		});
+
 		beforeEach(async () => {
 			log1 = new Log();
 			await log1.open(store, signKey);
@@ -91,6 +95,10 @@ describe("get-pow-2-refs", function () {
 
 	describe("multiple heads", () => {
 		let log1: Log<Uint8Array>;
+
+		afterEach(async () => {
+			await log1.close();
+		});
 
 		beforeEach(async () => {
 			log1 = new Log();

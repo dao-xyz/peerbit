@@ -455,9 +455,19 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>, RPCEvents<Q, R>> {
 	 * @param message
 	 * @param options
 	 */
-	public async send(message: Q, options?: RPCSendOptions): Promise<void> {
+	public async send(
+		message: Q,
+		options?: RPCSendOptions & {
+			/** Internal: recheck owned work after sealing, immediately before publish. */
+			isCurrent?: () => boolean;
+		},
+	): Promise<void> {
+		const bytes = serialize(await this.seal(message, undefined, options));
+		if (options?.isCurrent?.() === false) {
+			throw new AbortError("RPC send is no longer current");
+		}
 		await this.node.services.pubsub.publish(
-			serialize(await this.seal(message, undefined, options)),
+			bytes,
 			this.getPublishOptions(undefined, options, options?.signal),
 		);
 	}
@@ -616,8 +626,32 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>, RPCEvents<Q, R>> {
 	 */
 	public async request(
 		request: Q,
-		options?: RPCRequestOptions<R>,
+		options?: RPCRequestOptions<R> & {
+			/** Internal: recheck owned work after setup, immediately before publish. */
+			isCurrent?: () => boolean;
+			/**
+			 * Internal: observe local setup/publish work outliving logical completion.
+			 * Called synchronously once; the supplied promise always fulfills after
+			 * the logical result and that work settle. Observer failures are ignored.
+			 * This is not a remote-delivery acknowledgment.
+			 */
+			onPhysicalSettlement?: (settled: Promise<void>) => void;
+		},
 	): Promise<RPCResponse<R>[]> {
+		let physicalWork: Promise<unknown> | undefined;
+		let settlePhysicalWork: (() => void) | undefined;
+		if (options?.onPhysicalSettlement) {
+			const physicalSettlement = new Promise<void>((resolve) => {
+				settlePhysicalWork = resolve;
+			});
+			try {
+				void Promise.resolve(
+					options.onPhysicalSettlement(physicalSettlement),
+				).catch(() => {});
+			} catch {
+				// An observer cannot change the request's result or cancellation.
+			}
+		}
 		const profile = createDiagnosticTrace(options?.profile, "rpc", "rpc");
 		let resultsForProfile: RPCResponse<R>[] | undefined;
 		let respondersForProfile: Set<string> | undefined;
@@ -688,6 +722,7 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>, RPCEvents<Q, R>> {
 					throw error;
 				}
 			})();
+			if (settlePhysicalWork) physicalWork = setupPromise;
 			let setup: Awaited<typeof setupPromise>;
 			try {
 				setup = await Promise.race([setupPromise, setupAbortPromise]);
@@ -824,6 +859,9 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>, RPCEvents<Q, R>> {
 						name: "rpc.request.publish",
 						details: { edge: "start" },
 					});
+					if (options?.isCurrent?.() === false) {
+						throw new AbortError("RPC request is no longer current");
+					}
 					return this.node.services.pubsub.publish(
 						requestBytes,
 						this.getPublishOptions(
@@ -833,6 +871,7 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>, RPCEvents<Q, R>> {
 						),
 					);
 				});
+				if (settlePhysicalWork) physicalWork = rawPublishPromise;
 				if (profile) {
 					void rawPublishPromise.then(
 						() =>
@@ -889,6 +928,13 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>, RPCEvents<Q, R>> {
 			}
 			throw error;
 		} finally {
+			if (settlePhysicalWork) {
+				if (physicalWork) {
+					void physicalWork.then(settlePhysicalWork, settlePhysicalWork);
+				} else {
+					settlePhysicalWork();
+				}
+			}
 			profile?.finish({
 				name: "rpc.request.settle",
 				details: {

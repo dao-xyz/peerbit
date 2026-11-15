@@ -1,9 +1,12 @@
-import { field, serialize, variant } from "@dao-xyz/borsh";
+import { deserialize, field, serialize, variant } from "@dao-xyz/borsh";
+import { DecryptedThing } from "@peerbit/crypto";
 import { SearchRequestIndexed } from "@peerbit/document-interface";
+import { Entry, EntryV0 } from "@peerbit/log";
 import { expect } from "chai";
 import { Peerbit } from "peerbit";
 import { createRustPeerbitOptions } from "peerbit/rust";
 import sinon from "sinon";
+import type { Operation } from "../src/operation.js";
 import { Documents } from "../src/program.js";
 import { Document, TestStore } from "./data.js";
 
@@ -53,7 +56,21 @@ describe("native full-entry materialization", () => {
 		return store;
 	};
 
-	it("materializes a full read of a native local append", async () => {
+	const cacheHollowEntry = (
+		docs: Documents<Document, any>,
+		entry: Entry<Operation>,
+	) => {
+		// Keep coverage of the defensive read boundary without relying on local
+		// appends to return incomplete Entries as an incidental side effect.
+		const hollow = deserialize(serialize(entry), Entry) as EntryV0<Operation>;
+		hollow.createdLocally = entry.createdLocally;
+		hollow._payload = new DecryptedThing({});
+		hollow.init(docs.log.log);
+		(docs.log.log.entryIndex as any).cache.add(entry.hash, hollow);
+		return hollow;
+	};
+
+	it("keeps complete local append results cached and reloads a hollow cache entry", async () => {
 		const store = new TestStore({
 			docs: new Documents<Document>({ immutable: false }),
 		});
@@ -67,10 +84,12 @@ describe("native full-entry materialization", () => {
 
 		const document = new Document({ id: "materialize-log", name: "log value" });
 		const put = await store.docs.put(document);
+		expect(await store.docs.log.log.get(put.entry.hash)).equal(put.entry);
+		const hollow = cacheHollowEntry(store.docs, put.entry);
 
 		const entry = await store.docs.log.log.get(put.entry.hash);
 		expect(entry).to.exist;
-		expect(entry).not.equal(put.entry);
+		expect(entry).not.equal(hollow);
 		expect(entry?.createdLocally).equal(true);
 		expect(entry!.getStorageBytes()).to.exist;
 		expect(await entry!.getPayloadValue()).to.exist;
@@ -102,6 +121,8 @@ describe("native full-entry materialization", () => {
 		];
 		const full = await store.docs.log.log.get(puts[0].entry.hash);
 		expect(full).to.exist;
+		cacheHollowEntry(store.docs, puts[1].entry);
+		cacheHollowEntry(store.docs, puts[2].entry);
 		await store.docs.log.log.blocks.rm(puts[2].entry.hash);
 
 		const getManySpy = sinon.spy(store.docs.log.log.blocks, "getMany");
@@ -144,6 +165,7 @@ describe("native full-entry materialization", () => {
 			);
 		}
 		const blocks = store.docs.log.log.blocks;
+		for (const put of puts) cacheHollowEntry(store.docs, put.entry);
 		const getManySpy = sinon.spy(blocks, "getMany");
 		const getSpy = sinon.spy(blocks, "get");
 
@@ -177,7 +199,8 @@ describe("native full-entry materialization", () => {
 			id: "materialize-1",
 			name: "materialized",
 		});
-		await store.docs.put(document);
+		const put = await store.docs.put(document);
+		cacheHollowEntry(store.docs, put.entry);
 
 		// With the resolver cache disabled and a non-identity index, this reaches
 		// resolveDocument -> Log.get(type:"full") -> getPayloadValue. The cached

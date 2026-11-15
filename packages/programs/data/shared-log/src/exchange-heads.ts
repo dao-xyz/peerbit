@@ -392,6 +392,9 @@ export const SYNC_CAPABILITY_PERSISTED_ENTRY_RECEIPTS = 1 << 5;
  */
 export const SYNC_CAPABILITY_REPLICATION_INFO_V2_REARM = 1 << 6;
 
+/** Session-bound, RPC-correlated entry presence; no durability guarantee. */
+export const SYNC_CAPABILITY_ENTRY_INVENTORY = 1 << 7;
+
 /**
  * One-shot capability advertisement, sent to a peer when it (or we) subscribe
  * to the program topic. Peers that do not know this message drop it as an
@@ -1345,6 +1348,34 @@ export const createExchangeHeadsMessages = async function* (
 	heads: Entry<any>[] | string[] | Set<string>,
 ): AsyncGenerator<ExchangeHeadsMessage<any>, void, void> {
 	yield* createExchangeHeadsMessagesWithVisited(log, heads, new Set<string>());
+};
+
+/** Targeted inventory repair already planned the exact recipient as a leader.
+ * Omit optional cross-GID routing hints: deriving them traverses the whole
+ * ancestry. Signed entries and normal receiver authorization remain unchanged.
+ */
+export const createExactExchangeHeadsMessages = async function* (
+	log: Log<any>,
+	hashes: readonly string[],
+	isCurrent: () => boolean,
+): AsyncGenerator<ExchangeHeadsMessage<any>> {
+	let heads: EntryWithRefs<any>[] = [];
+	let size = 0;
+	for (const hash of hashes) {
+		if (!isCurrent()) return;
+		const entry = await log.get(hash, { remote: false });
+		if (!isCurrent()) return;
+		if (!entry) continue;
+		if (heads.length && size + entry.size > MAX_EXCHANGE_MESSAGE_SIZE) {
+			yield new ExchangeHeadsMessage({ heads });
+			heads = [];
+			size = 0;
+			if (!isCurrent()) return;
+		}
+		heads.push(new EntryWithRefs({ entry, gidRefrences: [] }));
+		size += entry.size;
+	}
+	if (heads.length && isCurrent()) yield new ExchangeHeadsMessage({ heads });
 };
 
 export const createRawExchangeHeadsMessages = async function* (

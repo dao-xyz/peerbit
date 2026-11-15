@@ -1,5 +1,42 @@
 # Changelog
 
+## 6.2.39
+
+### Patch Changes
+
+- [#1514](https://github.com/dao-xyz/peerbit/pull/1514) [`cfd2201`](https://github.com/dao-xyz/peerbit/commit/cfd2201fa66386480caec589465bca8af6033d75) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Update the coordinated libp2p dependency cohort and use the maintained Noise and Yamux package names. Preserve Peerbit's transport configuration, custom Yamux protocol and window sizes, and standard Yamux fallback. Refresh browser fixture dependencies so transport imports do not rely on workspace hoisting.
+
+- [#1512](https://github.com/dao-xyz/peerbit/pull/1512) [`7626f62`](https://github.com/dao-xyz/peerbit/commit/7626f6291f815e7d1b3feaf276ffc1d2427c803c) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Complete receipt-authorizing coordinate metadata for already-admitted entries even when the remaining receive is cancelled. Own native append mutations before preparation and retain ownership through coordinate completion or rollback. Serialize overlapping coordinate writes and deletes, reject stale rollback owners, and fail closed when committed metadata completion is uncertain. Keep disjoint exact-hash writes concurrent, serialize native preparations with unknown mutation sets, and release ownership before change callbacks.
+
+  Bound generic coordinate-deletion queries while retaining one mutation owner across all chunks, and avoid repeating completed cleanup after a newer mutation has promoted the same head.
+
+- Updated dependencies [[`cfd2201`](https://github.com/dao-xyz/peerbit/commit/cfd2201fa66386480caec589465bca8af6033d75), [`137a6a9`](https://github.com/dao-xyz/peerbit/commit/137a6a93dd2aea71729548eeb5a2e6def6b8d221)]:
+  - @peerbit/blocks@4.3.4
+  - @peerbit/crypto@3.1.7
+  - @peerbit/keychain@1.2.18
+  - @peerbit/logger@2.0.3
+  - @peerbit/pubsub-interface@5.2.3
+  - @peerbit/stream-interface@6.0.17
+  - @peerbit/blocks-interface@2.2.2
+  - @peerbit/indexer-interface@3.1.1
+  - @peerbit/indexer-sqlite3@3.0.22
+  - @peerbit/indexer-simple@1.3.1
+  - @peerbit/any-store@2.2.18
+
+## 6.2.38
+
+### Patch Changes
+
+- [#1479](https://github.com/dao-xyz/peerbit/pull/1479) [`8d7eac9`](https://github.com/dao-xyz/peerbit/commit/8d7eac9e5dd7e1ebcb51b80bf7d7d97b9fb03359) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Allow callers to cancel log joins without cancelling another caller's shared join, while draining already-started writes and callbacks. Cancel missing-parent receives when their SharedLog receive generation closes so shutdown does not wait for the remote block timeout.
+
+- [#1491](https://github.com/dao-xyz/peerbit/pull/1491) [`95e6803`](https://github.com/dao-xyz/peerbit/commit/95e680332e870a8a4929702de4d24cc31c5d24de) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Close the log's indexer when `Log.fromEntry` replay fails before returning ownership to its caller. Preserve the replay error, and report both errors if cleanup also fails, without deleting the caller's blocks.
+
+## 6.2.37
+
+### Patch Changes
+
+- [#1506](https://github.com/dao-xyz/peerbit/pull/1506) [`224a1f4`](https://github.com/dao-xyz/peerbit/commit/224a1f4675762705986bfaba2ae424f00ae81b77) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Preserve the signed native entry image in ordinary append results so returned entries can be verified, serialized, joined and read independently of the source store's lifetime. Initialize their payload encoding and keep the separate commit-only fast path unchanged.
+
 ## 6.2.36
 
 ### Patch Changes
