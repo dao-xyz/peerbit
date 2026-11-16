@@ -78,6 +78,74 @@ describe("blocks provider discovery", () => {
 	);
 
 	(isNode ? it : it.skip)(
+		"starts the next queued provider announcement once a bootstrap dial times out",
+		async function () {
+			// The block service announces one call at a time. Nothing but the
+			// default 2-second dial budget ends the first dial and lets the next
+			// call start; the test timeout is the only deadline here.
+			this.timeout(30_000);
+			const peer = await Peerbit.create();
+			const fanout = peer.services.fanout;
+			const pendingDials = new Set<(error: Error) => void>();
+			const dialSignals: Array<AbortSignal | undefined> = [];
+			let markFirstDial!: () => void;
+			const firstDial = new Promise<void>((resolve) => {
+				markFirstDial = resolve;
+			});
+			let markSecondDial!: () => void;
+			const secondDial = new Promise<void>((resolve) => {
+				markSecondDial = resolve;
+			});
+			// Every dial never answers; it ends only when its signal aborts.
+			const dial = sinon
+				.stub((fanout as any).components.connectionManager, "openConnection")
+				.callsFake((_address, options: { signal?: AbortSignal } = {}) => {
+					dialSignals.push(options.signal);
+					if (dialSignals.length === 1) markFirstDial();
+					else markSecondDial();
+					return new Promise((_resolve, reject) => {
+						const finish = (error: Error) => {
+							options.signal?.removeEventListener("abort", onAbort);
+							pendingDials.delete(finish);
+							reject(error);
+						};
+						const onAbort = () => finish(options.signal!.reason);
+						pendingDials.add(finish);
+						if (options.signal?.aborted) onAbort();
+						else
+							options.signal?.addEventListener("abort", onAbort, {
+								once: true,
+							});
+					});
+				});
+			const announce = sinon.spy(fanout, "announceProviders");
+			try {
+				// One bootstrap, so each announcement makes one dial.
+				fanout.setBootstraps([multiaddr("/ip4/127.0.0.1/tcp/1")]);
+				const first = await peer.services.blocks.put(new Uint8Array([17, 19]));
+				await firstDial;
+				// Stored while the first announcement dials, so it is announced by
+				// the next call, which starts only once that call has settled.
+				const second = await peer.services.blocks.put(new Uint8Array([23, 29]));
+
+				await secondDial;
+				expect(dialSignals[0]!.aborted, "the first dial ended").equal(true);
+				expect(announce.args.map(([namespaces]) => [...namespaces])).deep.equal(
+					[[`cid:${first}`], [`cid:${second}`]],
+				);
+				expect(
+					peer.services.blocks.getStoredNotificationTelemetry(),
+				).to.deep.include({ pending: 0, running: 1, dropped: 0 });
+			} finally {
+				for (const reject of pendingDials) reject(new Error("test cleanup"));
+				announce.restore();
+				dial.restore();
+				await peer.stop();
+			}
+		},
+	);
+
+	(isNode ? it : it.skip)(
 		"announces a stored block to the provider directory after its put resolves",
 		async function () {
 			this.timeout(30_000);

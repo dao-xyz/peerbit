@@ -106,6 +106,17 @@ describe("fanout-tree non-diagnostic dial bounds", () => {
 		expect(dial.signal!.aborted).to.equal(true);
 	});
 
+	it("bounds a one-shot provider announcement by the default dial budget", async function () {
+		// Nothing but the default 2 s budget ends this dial. A block store that
+		// announces one call at a time relies on it to start the next call.
+		this.timeout(30_000);
+		dial = holdDial(fanout);
+		operation = fanout.announceProvider("default-budget-provider");
+		expect(dial.signal, "bootstrap dial signal").to.exist;
+		await operation;
+		expect(dial.signal!.aborted).to.equal(true);
+	});
+
 	it("bounds candidate connection attempts without join diagnostics", async () => {
 		dial = holdDial(fanout);
 		operation = (fanout as any).ensurePeerConnection(
