@@ -502,6 +502,37 @@ const cursorOf = (order: OrderKey, row: Row) =>
 const nullPattern = (cursor: unknown[]) => cursor.map((value) => value == null);
 
 const utf8 = new TextEncoder();
+/**
+ * UTF-8 with each lone surrogate as its own 3 bytes (ED A0 80 for U+D800), as
+ * better-sqlite3 12 binds a string on Node 22. TextEncoder (`utf8`) writes
+ * U+FFFD instead, as better-sqlite3 binds it on Node 24 and the WASM engine
+ * always does.
+ */
+const rawSurrogateUtf8 = (value: string) => {
+	const bytes: number[] = [];
+	for (const char of value) {
+		const code = char.codePointAt(0) ?? 0;
+		if (code < 0x80) {
+			bytes.push(code);
+		} else if (code < 0x800) {
+			bytes.push(0xc0 | (code >> 6), 0x80 | (code & 0x3f));
+		} else if (code < 0x10000) {
+			bytes.push(
+				0xe0 | (code >> 12),
+				0x80 | ((code >> 6) & 0x3f),
+				0x80 | (code & 0x3f),
+			);
+		} else {
+			bytes.push(
+				0xf0 | (code >> 18),
+				0x80 | ((code >> 12) & 0x3f),
+				0x80 | ((code >> 6) & 0x3f),
+				0x80 | (code & 0x3f),
+			);
+		}
+	}
+	return new Uint8Array(bytes);
+};
 const compareBytes = (a: Uint8Array, b: Uint8Array) => {
 	for (let i = 0; i < Math.min(a.length, b.length); i++) {
 		if (a[i] !== b[i]) {
@@ -2347,19 +2378,28 @@ describe("key statements", () => {
 			);
 		});
 
+		// Lone surrogates (one at the end of a key, then one at the start of the
+		// next), a backslash before one and before an escape's text, a quote after
+		// one, U+0000, a pair and a plain key. Distinct in either encoding of a
+		// lone surrogate.
+		const stringKeys = [
+			"\ud800x",
+			"x\udfff",
+			"\udfff\ud800",
+			"\udc00y",
+			"\\\ud800",
+			"\\ud800",
+			'\ud800"',
+			"a\u0000b",
+			"\u0000",
+			"😀",
+			"plain",
+		];
+
 		it("matches string keys as SQLite stores them: lone surrogates and U+0000", async () => {
-			const ids = [
-				"\ud800x",
-				"x\udfff",
-				"\udfff\ud800",
-				"a\u0000b",
-				"\u0000",
-				"😀",
-				"plain",
-			];
 			const store = await open(
 				TextKeyDocument,
-				ids.map((key, i) => new TextKeyDocument(key, i)),
+				stringKeys.map((key, i) => new TextKeyDocument(key, i)),
 			);
 			const table = store.rootTables[0];
 			const rowsByKey = convertKeysToRowsQuery(table, undefined);
@@ -2378,11 +2418,24 @@ describe("key statements", () => {
 						values,
 					)
 				).map((row) => row.h);
-			for (const key of ids) {
+			// The bytes this engine stored for each key.
+			const stored = (
+				await run(
+					store,
+					`SELECT hex(id) AS h FROM ${table.name} ORDER BY "rank"`,
+				)
+			).map((row) => row.h as string);
+			expect(stored).to.have.length(stringKeys.length);
+			for (const [i, key] of stringKeys.entries()) {
 				const at = JSON.stringify(key);
-				// Both engines bind a lone surrogate as U+FFFD, as TextEncoder
-				// encodes it, and U+0000 as a 0 byte.
-				const stored = hex(utf8.encode(key)).toUpperCase();
+				// A lone surrogate is its own 3 bytes on Node 22 and U+FFFD on Node
+				// 24 and in the WASM engine; U+0000 is a 0 byte in both.
+				expect(
+					[rawSurrogateUtf8(key), utf8.encode(key)].map((bytes) =>
+						hex(bytes).toUpperCase(),
+					),
+					at,
+				).to.include(stored[i]);
 				expect(
 					(
 						await run(
@@ -2392,26 +2445,89 @@ describe("key statements", () => {
 						)
 					).map((row) => row.h),
 					at,
-				).to.deep.equal([stored]);
+				).to.deep.equal([stored[i]]);
 				const keys = encodeKeyList([key]);
 				expect(
 					(
 						await run(store, "SELECT hex(value) AS h FROM json_each(?)", [keys])
 					).map((row) => row.h),
-					at,
-				).to.deep.equal([stored]);
+					`${at}: json_each`,
+				).to.deep.equal([stored[i]]);
 				expect(
 					await keysOf(
 						rowsByKey.sql,
 						bindKeyQuery(rowsByKey.bindable, { keys }),
 					),
 					`${at}: S5`,
-				).to.deep.equal([stored]);
+				).to.deep.equal([stored[i]]);
 				expect(
 					await keysOf(recheck.sql, bindKeyQuery(recheck.bindable, { keys })),
 					`${at}: S4`,
-				).to.deep.equal([stored]);
+				).to.deep.equal([stored[i]]);
 			}
+			const every = encodeKeyList(stringKeys);
+			expect(
+				await keysOf(
+					recheck.sql,
+					bindKeyQuery(recheck.bindable, { keys: every }),
+				),
+				"S4, every key",
+			).to.deep.equal([...stored].sort());
+			expect(
+				(
+					await keysOf(
+						rowsByKey.sql,
+						bindKeyQuery(rowsByKey.bindable, { keys: every }),
+					)
+				).sort(),
+				"S5, every key",
+			).to.deep.equal([...stored].sort());
+		});
+
+		it("leaves lone surrogates raw, for json_each to read in either encoding", async () => {
+			// The key list as either binding encodes it, bound as a BLOB and read
+			// as TEXT, so the engine that runs this test does not choose: json_each
+			// returns each key in the encoding of the list.
+			const encodings = {
+				"raw surrogate bytes": rawSurrogateUtf8,
+				"U+FFFD": (value: string) => utf8.encode(value),
+			};
+			expect(hex(encodings["raw surrogate bytes"]("\ud800x"))).to.equal(
+				"eda08078",
+			);
+			expect(hex(encodings["U+FFFD"]("\ud800x"))).to.equal("efbfbd78");
+			const store = await open(Document, []);
+			for (const [name, encode] of Object.entries(encodings)) {
+				expect(
+					(
+						await run(
+							store,
+							"SELECT hex(value) AS h FROM json_each(CAST(? AS TEXT))",
+							[encode(encodeKeyList(stringKeys))],
+						)
+					).map((row) => row.h),
+					name,
+				).to.deep.equal(
+					stringKeys.map((key) => hex(encode(key)).toUpperCase()),
+				);
+			}
+
+			// JSON.stringify escapes a lone surrogate; encodeKeyList does not, and
+			// writes every other string as JSON.stringify does.
+			expect(encodeKeyList(["\ud800x", "x\udfff"])).to.equal(
+				'["\ud800x","x\udfff"]',
+			);
+			const wellFormed = [
+				"\\ud800",
+				"\\\\ud800",
+				'quote " and \\',
+				"\u001f\u2028",
+				"a\u0000b",
+				"😀",
+				"",
+			];
+			expect(encodeKeyList(wellFormed)).to.equal(JSON.stringify(wellFormed));
+			expect(JSON.parse(encodeKeyList(stringKeys))).to.deep.equal(stringKeys);
 		});
 
 		it("rejects keys SQLite cannot hold", () => {

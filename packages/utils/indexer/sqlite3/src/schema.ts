@@ -2609,17 +2609,29 @@ const HEX_BYTES = Array.from({ length: 256 }, (_, i) =>
 	i.toString(16).padStart(2, "0"),
 );
 
-// A surrogate pair, or a lone surrogate (no `u` flag: it matches code units).
-const SURROGATES = /[\uD800-\uDBFF][\uDC00-\uDFFF]|[\uD800-\uDFFF]/g;
+// In JSON.stringify's output: an escaped backslash, matched whole so that its
+// second backslash does not start an escape, or the escape of a lone surrogate.
+const LONE_SURROGATE_ESCAPES = /\\\\|\\u(d[89a-f][0-9a-f]{2})/g;
 
 /**
- * `value` with each lone surrogate replaced by U+FFFD. Both engines encode a
- * bound string to UTF-8 that way, so that is how SQLite stores such a key.
- * JSON.stringify escapes a lone surrogate instead (`\ud800`), and json_each
- * decodes the escape to other bytes, which match no stored key.
+ * `value` as a JSON string in which each lone surrogate stays a raw code unit,
+ * where JSON.stringify writes an escape (`\ud800`). The key list is bound as a
+ * string, so the binding then encodes a lone surrogate to UTF-8 just as it
+ * does when it binds the key itself, and json_each returns those bytes as
+ * they are. The bindings differ: better-sqlite3 12 writes the surrogate's own
+ * 3 bytes on Node 22 (ED A0 80 for U+D800) and U+FFFD on Node 24, as the WASM
+ * engine does. No fixed encoding matches both: json_each decodes an escape to
+ * the 3 bytes on every engine, and U+FFFD stays U+FFFD.
  */
-const toWellFormed = (value: string) =>
-	value.replace(SURROGATES, (match) => (match.length === 2 ? match : "\uFFFD"));
+const jsonString = (value: string) => {
+	const json = JSON.stringify(value);
+	// Every escape of a lone surrogate starts with `\ud`; most keys have none.
+	return json.includes("\\ud")
+		? json.replace(LONE_SURROGATE_ESCAPES, (escape, unit) =>
+				unit ? String.fromCharCode(parseInt(unit, 16)) : escape,
+			)
+		: json;
+};
 
 /**
  * SQL key values (as stored, so a u64 key is already shifted into the signed
@@ -2627,8 +2639,14 @@ const toWellFormed = (value: string) =>
  *
  * - Integers become JSON integers, which SQLite reads back as exact 64-bit
  *   INTEGERs: a bigint and a number of equal value encode the same.
- * - Strings stay JSON strings, with each lone surrogate as U+FFFD, the bytes
- *   SQLite stores for it when the key is bound; bytes become hex strings.
+ * - Strings stay JSON strings, with each lone surrogate left raw for the
+ *   binding to encode as it encodes the key (`jsonString`); bytes become hex
+ *   strings.
+ *
+ * A string key finds the row it was written with. On Node 22, better-sqlite3
+ * reads a stored lone surrogate back as one U+FFFD per byte, so a key read from
+ * a row (S3's `__pk`, say) binds to other bytes: like `WHERE id = ?`, its list
+ * finds no row, or another key's row.
  */
 export const encodeKeyList = (keys: Iterable<unknown>): string => {
 	let out = "[";
@@ -2639,7 +2657,7 @@ export const encodeKeyList = (keys: Iterable<unknown>): string => {
 		}
 		first = false;
 		if (typeof key === "string") {
-			out += JSON.stringify(toWellFormed(key));
+			out += jsonString(key);
 		} else if (
 			typeof key === "bigint" ||
 			(typeof key === "number" && Number.isInteger(key))
