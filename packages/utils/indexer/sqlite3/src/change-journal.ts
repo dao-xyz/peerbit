@@ -46,16 +46,21 @@ class Reader implements ChangeJournalReader {
  *   since a savepoint that rolled back. If a rollback fails, the staged keys
  *   are still published: an extra entry costs a reader one re-check, while a
  *   missing one would hide a change.
- * - **Trimmed and bounded.** Entries every reader has read are dropped. At most
- *   `capacity` entries are kept: past that, the oldest are dropped, and a
- *   reader that had not read them is told to rebase.
+ * - **Trimmed and bounded.** Entries no reader can still read are dropped:
+ *   those before the lowest reader, and every entry while all readers must
+ *   rebase. At most `capacity` entries are kept: past that, the oldest are
+ *   dropped, and a reader that had not read them is told to rebase.
  * - **Epochs.** `beginEpoch` drops every entry and tells every registered
  *   reader to rebase. The engine calls it when its tables close (stop, drop),
- *   since they may be replaced before they open again.
+ *   since they may be replaced before they open again. A change `record`
+ *   cannot name (no root table, or no key) begins an epoch too: no entry can
+ *   stand for it, and dropping it would hide it.
  *
  * Positions are absolute and never decrease, so a reader never reads an entry
- * twice. Writes through another `SQLiteIndex` instance or raw SQL are not
- * recorded, as `mutationVersion` does not count them either.
+ * twice. Readers are counted per position and never scanned: whatever the
+ * number of readers, a call costs O(1) plus O(1) per entry it publishes,
+ * visits or drops. Writes through another `SQLiteIndex` instance or raw SQL
+ * are not recorded, as `mutationVersion` does not count them either.
  */
 export class ChangeJournal {
 	/** Most entries kept at once. Tests lower it to force an overflow. */
@@ -65,6 +70,12 @@ export class ChangeJournal {
 	/** Absolute position of the oldest kept entry. */
 	private _start = 0;
 	private readonly readers = new Set<Reader>();
+	/**
+	 * How many readers of the current epoch sit at each position. Positions
+	 * before `start` belong to readers that must rebase; the lowest one from
+	 * `start` on is the floor that `trim` drops entries up to.
+	 */
+	private readonly readersAt = new Map<number, number>();
 	/** Kept entries, oldest first from index `head`. */
 	private tables: number[] = [];
 	private keys: unknown[] = [];
@@ -118,6 +129,7 @@ export class ChangeJournal {
 	register(): ChangeJournalReader {
 		const reader = new Reader(this.end, this._epoch);
 		this.readers.add(reader);
+		this.count(reader.position, 1);
 		return reader;
 	}
 
@@ -128,14 +140,23 @@ export class ChangeJournal {
 		}
 		if (this.readers.size === 0) {
 			this.clear();
-		} else if (this.mayHoldFloor(known)) {
+		} else if (known.epoch === this._epoch) {
+			this.count(known.position, -1);
 			this.trim();
 		}
 	}
 
-	/** Stages a key written by the current write. A no-op without readers. */
+	/**
+	 * Stages a key written by the current write. A no-op without readers. A
+	 * change it cannot name (a negative table ordinal, or no key) begins an
+	 * epoch instead, so that every reader rebases rather than miss it.
+	 */
 	record(table: number, key: unknown): void {
-		if (this.readers.size === 0 || table < 0 || key == null) {
+		if (this.readers.size === 0) {
+			return;
+		}
+		if (table < 0 || key == null) {
+			this.invalidate();
 			return;
 		}
 		this.stagedTables.push(table);
@@ -173,8 +194,13 @@ export class ChangeJournal {
 		this.stagedKeys.length = 0;
 		const overflow = this.size - this.capacity;
 		if (overflow > 0) {
+			// The readers that had not read these must rebase.
 			this.drop(overflow);
 		}
+		// A no-op while a reader sits at `start`. After an overflow it drops the
+		// entries before the lowest reader left, and it drops every entry while
+		// all readers must rebase.
+		this.trim();
 	}
 
 	/**
@@ -214,7 +240,8 @@ export class ChangeJournal {
 	 * Moves `reader` past the entries of `pull`. Call it once the reader acted
 	 * on them, or rebuilt its state after a rebase, in the same admission as
 	 * the pull. A pull from an earlier epoch moves nothing, and a reader never
-	 * moves back.
+	 * moves back. The last reader to leave `start` trims the entries no reader
+	 * needs any more.
 	 */
 	advance(reader: ChangeJournalReader, pull: ChangeJournalPull): void {
 		const known = reader as Reader;
@@ -224,10 +251,14 @@ export class ChangeJournal {
 		if (known.epoch === pull.epoch && known.position >= pull.end) {
 			return;
 		}
-		const mayHoldFloor = this.mayHoldFloor(known);
+		const counted = known.epoch === this._epoch;
+		if (counted) {
+			this.count(known.position, -1);
+		}
 		known.position = pull.end;
 		known.epoch = pull.epoch;
-		if (mayHoldFloor) {
+		this.count(known.position, 1);
+		if (counted) {
 			this.trim();
 		}
 	}
@@ -242,27 +273,38 @@ export class ChangeJournal {
 	}
 
 	/**
-	 * Whether moving `reader` can let `trim` drop entries: it may be the reader
-	 * at `start`, or it is behind `start` or from an earlier epoch. Skipping the
-	 * others keeps `advance` O(1) for every reader but the slowest. After an
-	 * overflow no current reader may be at `start`; the floor then rises when a
-	 * reader behind it moves or unregisters, and `capacity` bounds the entries
-	 * kept until then.
+	 * Tells every registered reader to rebase and drops the published entries.
+	 * The staged keys stay: the write in progress publishes or discards them as
+	 * usual, for the readers registered after this.
 	 */
-	private mayHoldFloor(reader: Reader): boolean {
-		return reader.epoch !== this._epoch || reader.position <= this._start;
+	private invalidate(): void {
+		this._epoch++;
+		this.dropPublished();
 	}
 
-	/** Drops the entries every current reader has read. */
+	/** Adds `delta` to the readers counted at `position`. */
+	private count(position: number, delta: 1 | -1): void {
+		const count = (this.readersAt.get(position) ?? 0) + delta;
+		if (count > 0) {
+			this.readersAt.set(position, count);
+		} else {
+			this.readersAt.delete(position);
+		}
+	}
+
+	/**
+	 * Drops the entries before the lowest reader that can still read: no reader
+	 * needs them. While one sits at `start` this is one lookup; otherwise each
+	 * step drops one entry, so its cost is paid for by the entries it drops.
+	 */
 	private trim(): void {
-		let floor = this.end;
-		for (const reader of this.readers) {
-			if (
-				reader.epoch === this._epoch &&
-				reader.position >= this._start &&
-				reader.position < floor
-			) {
-				floor = reader.position;
+		const end = this.end;
+		let floor = this._start;
+		if (this.readersAt.size === 0) {
+			floor = end;
+		} else {
+			while (floor < end && !this.readersAt.has(floor)) {
+				floor++;
 			}
 		}
 		const count = floor - this._start;
@@ -275,7 +317,7 @@ export class ChangeJournal {
 	private drop(count: number): void {
 		const head = this.head + count;
 		if (head >= this.keys.length) {
-			// Every reader caught up: reuse the arrays.
+			// Nothing is left: reuse the arrays.
 			this._start = this.end;
 			this.tables.length = 0;
 			this.keys.length = 0;
@@ -294,12 +336,22 @@ export class ChangeJournal {
 		}
 	}
 
-	/** Drops everything, releasing the arrays' memory. */
-	private clear(): void {
+	/**
+	 * Drops every published entry and every reader count, releasing the arrays'
+	 * memory. Callers leave no reader counted: none is registered, or the epoch
+	 * just changed.
+	 */
+	private dropPublished(): void {
 		this._start = this.end;
 		this.tables = [];
 		this.keys = [];
 		this.head = 0;
+		this.readersAt.clear();
+	}
+
+	/** Drops everything, releasing the arrays' memory. */
+	private clear(): void {
+		this.dropPublished();
 		this.stagedTables = [];
 		this.stagedKeys = [];
 	}

@@ -747,7 +747,6 @@ export class SQLiteIndex<T extends Record<string, any>>
 			classOfValue,
 			true,
 		);
-		let rootKey: unknown = undefined;
 		await insert(
 			async (values, table) => {
 				let preId = values[table.primaryIndex];
@@ -787,7 +786,7 @@ export class SQLiteIndex<T extends Record<string, any>>
 								: await statement.run(values);
 						}
 						if (table === rootTable) {
-							rootKey = preId;
+							this.recordRootKey(rootTable, preId);
 						}
 						return preId;
 					} else {
@@ -806,7 +805,7 @@ export class SQLiteIndex<T extends Record<string, any>>
 						}
 						const id = out[table.primary as string];
 						if (table === rootTable) {
-							rootKey = id;
+							this.recordRootKey(rootTable, id);
 						}
 						return id;
 					}
@@ -840,11 +839,29 @@ export class SQLiteIndex<T extends Record<string, any>>
 				},
 			},
 		);
-		// Staged until the caller's transaction commits (see withPutSavepoint and
-		// the ordered session's flush).
+	}
+
+	/**
+	 * Stages the key of a root row this admission wrote, as soon as its
+	 * statement succeeded: if a nested row then fails and the rollback fails
+	 * too, the row may still commit. The key is published when the caller's
+	 * transaction commits (see withPutSavepoint and the ordered session's
+	 * flush), and discarded if its savepoint rolls back.
+	 */
+	private recordRootKey(table: Table, key: unknown): void {
 		if (this.changeJournal.recording) {
-			this.changeJournal.record(this._rootTables.indexOf(rootTable), rootKey);
+			this.changeJournal.record(this.journalTableOf(table), key);
 		}
+	}
+
+	/**
+	 * The journal's ordinal for a root table, found by name: a delete planned
+	 * before stop() and start() holds the previous Table objects, which are no
+	 * longer in `_rootTables`. -1 if none matches, which `record` treats as a
+	 * change it cannot name.
+	 */
+	private journalTableOf(table: Table): number {
+		return this._rootTables.findIndex((root) => root.name === table.name);
 	}
 
 	private async withPutSavepoint(write: () => Promise<void>): Promise<void> {
@@ -1670,7 +1687,8 @@ export class SQLiteIndex<T extends Record<string, any>>
 					stmt.all(bindable),
 				);
 				if (this.changeJournal.recording) {
-					const journalTable = this._rootTables.indexOf(table);
+					// By name: `table` may be from planning before a stop() and start().
+					const journalTable = this.journalTableOf(table);
 					for (const result of results) {
 						this.changeJournal.record(
 							journalTable,

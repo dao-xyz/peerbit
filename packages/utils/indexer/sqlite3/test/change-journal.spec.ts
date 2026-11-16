@@ -207,6 +207,24 @@ const hookExec = (
 	};
 };
 
+/** Counts every iteration over `set`'s members from now on. */
+const countIterations = (set: Set<unknown>): (() => number) => {
+	let iterations = 0;
+	const methods = [Symbol.iterator, "values", "keys", "entries", "forEach"];
+	for (const name of methods) {
+		const target = set as unknown as Record<
+			PropertyKey,
+			(...args: unknown[]) => unknown
+		>;
+		const original = target[name];
+		target[name] = function (this: unknown, ...args: unknown[]) {
+			iterations++;
+			return original.apply(this, args);
+		};
+	}
+	return () => iterations;
+};
+
 describe("SQLite change journal", () => {
 	it("records nothing while no reader is registered", async () => {
 		const { store, journal } = await setupDocuments();
@@ -341,6 +359,8 @@ describe("SQLite change journal", () => {
 		await store.put(doc("previous", { tags: ["kept"] }));
 		expect(consume(journal, reader).entries).to.deep.equal([[0, "previous"]]);
 
+		// The root row is written, and its key staged, before the nested row
+		// fails: the rollback discards both.
 		const nestedFailure = new Error("nested row failed");
 		expect(
 			await expectRejected(
@@ -357,6 +377,18 @@ describe("SQLite change journal", () => {
 		expect((await store.get(toId("previous")))?.value.tags).to.deep.equal([
 			"kept",
 		]);
+		expect(
+			await expectRejected(
+				Promise.resolve(
+					store.putBatch!([
+						doc("chunk-0"),
+						failingNestedField(doc("chunk-1"), nestedFailure),
+					]),
+				),
+			),
+		).to.equal(nestedFailure);
+		expect(await store.get(toId("chunk-0"))).to.equal(undefined);
+		expect(await store.get(toId("chunk-1"))).to.equal(undefined);
 
 		const releaseFailure = new Error("release failed");
 		let failRelease = true;
@@ -467,6 +499,205 @@ describe("SQLite change journal", () => {
 		expect(consume(journal, reader).entries).to.deep.equal([[0, "first"]]);
 	});
 
+	it("publishes the keys of a put savepoint whose rollback fails, after a failed release or nested row", async () => {
+		const releaseFailure = new Error("release failed");
+		const nestedFailure = new Error("nested row failed");
+		const rollbackFailure = new Error("rollback failed");
+
+		// The put wrote its rows, then its release and its rollback failed.
+		{
+			const { store, journal, database } = await setupDocuments();
+			const reader = journal.register();
+			let failures = 0;
+			const restore = hookExec(database, (sql) => {
+				if (
+					failures === 0 &&
+					sql.startsWith("RELEASE SAVEPOINT peerbit_put_batch_")
+				) {
+					failures++;
+					throw releaseFailure;
+				}
+				if (
+					failures === 1 &&
+					sql.startsWith("ROLLBACK TO SAVEPOINT peerbit_put_batch_")
+				) {
+					failures++;
+					throw rollbackFailure;
+				}
+			});
+			let error: unknown;
+			try {
+				error = await expectRejected(
+					Promise.resolve(store.put(doc("unknown"))),
+				);
+			} finally {
+				restore();
+			}
+			expect((error as AggregateError).errors).to.deep.equal([
+				releaseFailure,
+				rollbackFailure,
+			]);
+			// Neither released nor rolled back, the write may still commit.
+			expect({ end: journal.end, staged: journal.staged }).to.deep.equal({
+				end: 1,
+				staged: 0,
+			});
+			expect(consume(journal, reader)).to.deep.equal({
+				rebase: false,
+				entries: [[0, "unknown"]],
+			});
+			// Clear the savepoint the failed rollback left open.
+			await database.exec("ROLLBACK");
+		}
+
+		// The second value's root row was written before its nested row failed,
+		// and the rollback failed: that row is still there.
+		{
+			const { store, journal, database } = await setupDocuments();
+			const reader = journal.register();
+			let failRollback = true;
+			const restore = hookExec(database, (sql) => {
+				if (
+					failRollback &&
+					sql.startsWith("ROLLBACK TO SAVEPOINT peerbit_put_batch_")
+				) {
+					failRollback = false;
+					throw rollbackFailure;
+				}
+			});
+			let error: unknown;
+			try {
+				error = await expectRejected(
+					Promise.resolve(
+						store.putBatch!([
+							doc("p0"),
+							failingNestedField(doc("p1"), nestedFailure),
+						]),
+					),
+				);
+			} finally {
+				restore();
+			}
+			expect((error as AggregateError).errors).to.deep.equal([
+				nestedFailure,
+				rollbackFailure,
+			]);
+			expect(await store.get(toId("p1"))).not.to.equal(undefined);
+			expect({ end: journal.end, staged: journal.staged }).to.deep.equal({
+				end: 2,
+				staged: 0,
+			});
+			expect(consume(journal, reader)).to.deep.equal({
+				rebase: false,
+				entries: [
+					[0, "p0"],
+					[0, "p1"],
+				],
+			});
+			await database.exec("ROLLBACK");
+		}
+	});
+
+	it("publishes the key of an ordered row whose rollback fails, after a failed release or nested row", async () => {
+		const releaseFailure = new Error("row release failed");
+		const nestedFailure = new Error("nested row failed");
+		const rollbackFailure = new Error("row rollback failed");
+		const run = async (
+			second: JournalDocument,
+			fail: (sql: string) => Error | undefined,
+		) => {
+			const { store, journal, database } = await setupDocuments();
+			const reader = journal.register();
+			const restore = hookExec(database, (sql) => {
+				const failure = fail(sql);
+				if (failure) {
+					throw failure;
+				}
+			});
+			let error: unknown;
+			try {
+				error = await expectRejected(
+					Promise.resolve(
+						store.withOrderedWriteSession!(async (session) => {
+							await session.put(doc("first"));
+							await session.put(second);
+						}),
+					),
+				);
+			} finally {
+				restore();
+			}
+			// The flush's RELEASE of the chunk savepoint also released the row
+			// savepoint that never rolled back, so the second row committed.
+			const committed = await store.get(toId(second.id));
+			return {
+				errors: (error as AggregateError).errors,
+				committed: committed !== undefined,
+				end: journal.end,
+				staged: journal.staged,
+				...consume(journal, reader),
+			};
+		};
+
+		// The row was written, then its release and its rollback failed.
+		let rowReleases = 0;
+		let failRowRollback = true;
+		expect(
+			await run(doc("second"), (sql) => {
+				if (
+					sql.startsWith("RELEASE SAVEPOINT peerbit_ordered_row_") &&
+					++rowReleases === 2
+				) {
+					return releaseFailure;
+				}
+				if (
+					failRowRollback &&
+					sql.startsWith("ROLLBACK TO SAVEPOINT peerbit_ordered_row_")
+				) {
+					failRowRollback = false;
+					return rollbackFailure;
+				}
+				return undefined;
+			}),
+		).to.deep.equal({
+			errors: [releaseFailure, rollbackFailure],
+			committed: true,
+			end: 2,
+			staged: 0,
+			rebase: false,
+			entries: [
+				[0, "first"],
+				[0, "second"],
+			],
+		});
+
+		// The root row was written before its nested row failed, then the
+		// rollback failed.
+		let failRollback = true;
+		expect(
+			await run(failingNestedField(doc("failed"), nestedFailure), (sql) => {
+				if (
+					failRollback &&
+					sql.startsWith("ROLLBACK TO SAVEPOINT peerbit_ordered_row_")
+				) {
+					failRollback = false;
+					return rollbackFailure;
+				}
+				return undefined;
+			}),
+		).to.deep.equal({
+			errors: [nestedFailure, rollbackFailure],
+			committed: true,
+			end: 2,
+			staged: 0,
+			rebase: false,
+			entries: [
+				[0, "first"],
+				[0, "failed"],
+			],
+		});
+	});
+
 	it("records the root keys a delete by query removes", async () => {
 		const { store, journal } = await setupDocuments();
 		await store.putBatch!([
@@ -512,6 +743,50 @@ describe("SQLite change journal", () => {
 		expect(consume(journal, reader).entries).to.deep.equal([[0, "b"]]);
 		await store.del({ query: [getMatcher(["id"], "b")] });
 		expect(consume(journal, reader).entries).to.deep.equal([]);
+	});
+
+	it("records a delete planned before stop() and start() that commits after them", async () => {
+		const { store, journal } = await setupDocuments();
+		await store.put(doc("a"));
+		// Hold the delete in its planning, which runs before its admission.
+		const planner = (store as unknown as SQLiteIndex<JournalDocument>).planner;
+		const scope = planner.scope;
+		let reachPlanning!: () => void;
+		const reachedPlanning = new Promise<void>(
+			(resolve) => (reachPlanning = resolve),
+		);
+		let openGate!: () => void;
+		const gate = new Promise<void>((resolve) => (openGate = resolve));
+		planner.scope = (query) => {
+			const planning = scope.call(planner, query);
+			const beforePrepare = planning.beforePrepare;
+			planning.beforePrepare = async () => {
+				reachPlanning();
+				await gate;
+				return beforePrepare();
+			};
+			return planning;
+		};
+		let reader!: Reader;
+		let deleted!: { primitive: unknown }[];
+		try {
+			const deleting = store.del({ query: [getMatcher(["id"], "a")] });
+			await reachedPlanning;
+			// start() replaces the root Table objects the delete planned with.
+			await store.stop();
+			await store.start();
+			reader = journal.register();
+			openGate();
+			deleted = await deleting;
+		} finally {
+			planner.scope = scope;
+		}
+		expect(deleted.map((key) => key.primitive)).to.deep.equal(["a"]);
+		expect(await store.get(toId("a"))).to.equal(undefined);
+		expect(consume(journal, reader)).to.deep.equal({
+			rebase: false,
+			entries: [[0, "a"]],
+		});
 	});
 
 	it("records each key with its root table in a polymorphic schema", async () => {
@@ -666,11 +941,13 @@ describe("SQLite change journal", () => {
 		}
 		const active = journal.register();
 		await store.put(doc("k-004"));
-		// The fifth entry pushed the first out: the idle reader lost it.
-		expect({ start: journal.start, end: journal.end }).to.deep.equal({
-			start: 1,
-			end: 5,
-		});
+		// The fifth entry pushed the first out: the idle reader lost it. The
+		// entries before the active reader went too, as no reader can read them.
+		expect({
+			start: journal.start,
+			end: journal.end,
+			size: journal.size,
+		}).to.deep.equal({ start: 4, end: 5, size: 1 });
 		const behind = peek(journal, idle);
 		expect(behind.pull.rebase).to.equal(true);
 		expect(behind.entries).to.deep.equal([]);
@@ -711,10 +988,11 @@ describe("SQLite change journal", () => {
 		const { store, journal } = await setupDocuments();
 		journal.capacity = 10;
 		const early = journal.register();
-		await store.putBatch!(docs("first", 6));
+		await store.putBatch!(docs("first", 2));
 		const late = journal.register();
-		const second = docs("second", 6);
+		const second = docs("second", 10);
 		await store.putBatch!(second);
+		// Twelve entries: the two the early reader had not read were dropped.
 		expect({
 			start: journal.start,
 			end: journal.end,
@@ -728,14 +1006,23 @@ describe("SQLite change journal", () => {
 			second.map((value) => value.id),
 		);
 
-		// One chunk larger than the capacity overflows in a single commit.
+		// One chunk larger than the capacity overflows in a single commit. Every
+		// reader lost entries, so none is kept.
 		await store.putBatch!(docs("third", 25));
 		expect({
 			start: journal.start,
 			end: journal.end,
 			size: journal.size,
-		}).to.deep.equal({ start: 27, end: 37, size: 10 });
-		expect(peek(journal, late).pull.rebase).to.equal(true);
+		}).to.deep.equal({ start: 37, end: 37, size: 0 });
+		const lost = peek(journal, late);
+		expect(lost.pull.rebase).to.equal(true);
+		// Once rebuilt, the reader reads on from where its rebase pull ended.
+		journal.advance(late, lost.pull);
+		await store.put(doc("fourth"));
+		expect(consume(journal, late)).to.deep.equal({
+			rebase: false,
+			entries: [[0, "fourth"]],
+		});
 	});
 
 	it("begins an epoch across stop() and start(), sending earlier readers to rebase", async () => {
@@ -744,6 +1031,8 @@ describe("SQLite change journal", () => {
 		await store.put(doc("a"));
 		const epoch = journal.epoch;
 		const beforeStop = journal.pull(before);
+		// A reader that has read everything when the index stops.
+		const caughtUp = journal.register();
 		// stop() ends the epoch as the tables close, and drops every entry.
 		await store.stop();
 		expect(journal.epoch).to.be.greaterThan(epoch);
@@ -753,6 +1042,13 @@ describe("SQLite change journal", () => {
 		expect(restarted).to.be.greaterThan(epoch);
 
 		await store.put(doc("b"));
+		// Both readers must rebase, so none can read the entry and it is not
+		// kept, although one of them had read everything before the stop.
+		expect({ end: journal.end, size: journal.size }).to.deep.equal({
+			end: 2,
+			size: 0,
+		});
+		journal.unregister(caughtUp);
 		// A pull from the earlier epoch cannot move the reader into this one.
 		journal.advance(before, beforeStop);
 		const stale = peek(journal, before);
@@ -794,6 +1090,70 @@ describe("SQLite change journal", () => {
 		]);
 		await store.put(doc("a"));
 		expect(consume(journal, reader).entries).to.deep.equal([[0, "a"]]);
+	});
+
+	it("sends every reader to rebase for a change it cannot name", async () => {
+		const { store, journal } = await setupDocuments();
+		const reader = journal.register();
+		await store.put(doc("a"));
+		const epoch = journal.epoch;
+		// A write stages a key, then a key with no root table (-1): no entry can
+		// stand for that change, so it begins an epoch.
+		journal.record(0, "staged");
+		journal.record(-1, "no-table");
+		expect({ epoch: journal.epoch, size: journal.size }).to.deep.equal({
+			epoch: epoch + 1,
+			size: 0,
+		});
+		const joined = journal.register();
+		const lost = peek(journal, reader);
+		expect(lost).to.deep.equal({
+			pull: { epoch: epoch + 1, end: 2, rebase: true },
+			entries: [],
+		});
+		// The staged key is still published, for the readers registered since.
+		expect(consume(journal, joined)).to.deep.equal({
+			rebase: false,
+			entries: [[0, "staged"]],
+		});
+		journal.advance(reader, lost.pull);
+
+		// So is a key SQLite did not return.
+		journal.record(0, undefined);
+		expect(journal.epoch).to.equal(epoch + 2);
+		expect(peek(journal, reader).pull.rebase).to.equal(true);
+		expect(peek(journal, joined).pull.rebase).to.equal(true);
+	});
+
+	it("trims without scanning its readers, however many share a position", async () => {
+		const { store, journal } = await setupDocuments();
+		const iterations = countIterations(
+			(journal as unknown as { readers: Set<unknown> }).readers,
+		);
+		const readers = Array.from({ length: 1_000 }, () => journal.register());
+		for (const id of ["a", "b", "c"]) {
+			await store.put(doc(id));
+			const read = readers.map((reader) => consume(journal, reader));
+			expect(
+				read.filter(
+					({ rebase, entries }) =>
+						rebase || entries.length !== 1 || entries[0][1] !== id,
+				),
+			).to.deep.equal([]);
+			// The last reader to move on trimmed the entry.
+			expect({ start: journal.start, size: journal.size }).to.deep.equal({
+				start: journal.end,
+				size: 0,
+			});
+		}
+		for (const reader of readers.slice(1)) {
+			journal.unregister(reader);
+		}
+		// 3,000 advances and 999 unregisters, none of which visited the readers.
+		expect({
+			readers: journal.readerCount,
+			iterations: iterations(),
+		}).to.deep.equal({ readers: 1, iterations: 0 });
 	});
 
 	it("leaves key scans to their own invalidation: they neither register nor read the journal", async () => {
