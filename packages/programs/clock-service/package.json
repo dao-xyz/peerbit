@@ -2,6 +2,11 @@
 	"name": "@peerbit/clock-service",
 	"version": "3.2.167",
 	"description": "Clock signing",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/dao-xyz/peerbit.git",
+		"directory": "packages/programs/clock-service"
+	},
 	"type": "module",
 	"sideEffects": false,
 	"types": "./dist/src/index.d.ts",

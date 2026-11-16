@@ -2,6 +2,11 @@
 	"name": "@peerbit/indexer-rust",
 	"version": "1.0.16",
 	"description": "Rust-backed indexer for document stores",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/dao-xyz/peerbit.git",
+		"directory": "packages/utils/indexer/rust"
+	},
 	"sideEffects": [
 		"./dist/wasm/indexer_rust.js"
 	],

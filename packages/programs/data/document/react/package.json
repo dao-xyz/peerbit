@@ -2,6 +2,11 @@
 	"name": "@peerbit/document-react",
 	"version": "1.0.134",
 	"description": "React hooks for @peerbit/document",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/dao-xyz/peerbit.git",
+		"directory": "packages/programs/data/document/react"
+	},
 	"sideEffects": false,
 	"type": "module",
 	"types": "./dist/src/index.d.ts",

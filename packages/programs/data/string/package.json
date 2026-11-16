@@ -2,6 +2,11 @@
 	"name": "@peerbit/string",
 	"version": "6.0.43",
 	"description": "String store",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/dao-xyz/peerbit.git",
+		"directory": "packages/programs/data/string"
+	},
 	"sideEffects": false,
 	"type": "module",
 	"types": "./dist/src/index.d.ts",

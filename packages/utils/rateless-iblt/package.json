@@ -2,6 +2,11 @@
 	"name": "@peerbit/riblt",
 	"version": "1.2.1",
 	"description": "Riblt",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/dao-xyz/peerbit.git",
+		"directory": "packages/utils/rateless-iblt"
+	},
 	"sideEffects": [
 		"./dist/wasm-init.js",
 		"./dist/wasm-init.browser.js",

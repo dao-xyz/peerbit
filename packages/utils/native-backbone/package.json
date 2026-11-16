@@ -2,6 +2,11 @@
 	"name": "@peerbit/native-backbone",
 	"version": "0.2.18",
 	"description": "Native transaction backbone for Peerbit",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/dao-xyz/peerbit.git",
+		"directory": "packages/utils/native-backbone"
+	},
 	"sideEffects": [
 		"./dist/wasm/native_backbone.js"
 	],

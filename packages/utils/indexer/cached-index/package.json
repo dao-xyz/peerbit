@@ -2,6 +2,11 @@
 	"name": "@peerbit/indexer-cache",
 	"version": "0.3.1",
 	"description": "Indexer caching utility",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/dao-xyz/peerbit.git",
+		"directory": "packages/utils/indexer/cached-index"
+	},
 	"sideEffects": false,
 	"type": "module",
 	"types": "./dist/src/index.d.ts",

@@ -2,6 +2,11 @@
 	"name": "@peerbit/program-react",
 	"version": "0.4.73",
 	"description": "React hooks for Peerbit programs",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/dao-xyz/peerbit.git",
+		"directory": "packages/programs/program/react"
+	},
 	"sideEffects": false,
 	"type": "module",
 	"types": "./dist/src/index.d.ts",
