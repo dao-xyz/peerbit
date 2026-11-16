@@ -1,5 +1,42 @@
 # Changelog
 
+## 16.0.42
+
+### Patch Changes
+
+- [#1530](https://github.com/dao-xyz/peerbit/pull/1530) [`7c089f1`](https://github.com/dao-xyz/peerbit/commit/7c089f1edf904113984565d59c2977e8c229f425) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Keep replication-confirmation transport work bounded when an RPC ignores cancellation. Logical timeout, close, or session replacement no longer releases the physical query's charge before its send settles. Permit one successor session, authenticated recovery, or committed revision while preserving exact confirmation binding and fail-closed limits.
+
+- [#1528](https://github.com/dao-xyz/peerbit/pull/1528) [`82fae14`](https://github.com/dao-xyz/peerbit/commit/82fae14b6718aaa1581234a042f765bea9594d0c) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Update the coordinated libp2p dependency cohort to include buffered-stream close/reset and listener cleanup fixes. Preserve Peerbit's transport configuration, custom Yamux profile and standard Yamux fallback; WebRTC Direct is not enabled by this update.
+
+- [#1519](https://github.com/dao-xyz/peerbit/pull/1519) [`7e7a6c8`](https://github.com/dao-xyz/peerbit/commit/7e7a6c802dec9afe6374527bbe515a71819b7dcb) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Opening a replicating log, and every later announcement of its replication range, no longer reads every current head's entry block to reconcile replication coordinates. Head hashes now come from a hash-only scan of the entry index, intersected with the native graph's heads when native heads are on, and only heads without a coordinate are loaded and planned. Lifecycle fencing and persisted-receipt checks are unchanged. This reconciliation is not an integrity scan: blocks of heads that already have a coordinate are neither read nor checked.
+
+  Behavior changes:
+  - A head counts as current here only while its entry-index row says so, as in coordinate cleanup and leader planning. The coordinate of a head that only the native graph lists (for example a parent promoted by native pruning) is now cleaned up, even when its block is present.
+  - Head blocks are no longer read here, so a head whose block is missing no longer makes `open` or `replicate` fail once it has a coordinate.
+  - With native heads, the repair now flushes deferred entry-index writes before it scans (`EntryIndex.iterate` calls `flushPendingWrites`). That flush is what makes pending heads visible to the scan.
+
+- [#1529](https://github.com/dao-xyz/peerbit/pull/1529) [`8e9fb70`](https://github.com/dao-xyz/peerbit/commit/8e9fb70793d160311b6ba0a26083323a2eaf5aad) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Stop advertising repair hashes removed from the local log and retire their stale sender obligations. Local absence does not count as remote presence or a persisted delivery receipt.
+
+- [#1485](https://github.com/dao-xyz/peerbit/pull/1485) [`5f1250a`](https://github.com/dao-xyz/peerbit/commit/5f1250ac1594428559be0cb5b76cbeff0fab921f) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Cancel pending sync admissions when their entry is removed. A lookup that started before the removal can no longer re-request the removed entry or clear a newer admission of the same hash; it keeps its lookup quota until it settles, and later advertisements are checked normally. The README now documents the 60-second pending-key lifetime. A request for a CUT entry's parent that was never stored locally is not cancelled and can stay pending until that lifetime ends.
+
+- [#1525](https://github.com/dao-xyz/peerbit/pull/1525) [`2375d4b`](https://github.com/dao-xyz/peerbit/commit/2375d4b723f1bfc17601120bc996bfe6ae840c5f) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Recover eligible held entries after a writable transport replacement without requiring a new topic session. Bound recovery to small authoritative inventory pages, check fresh session-bound presence before sending payloads, and invalidate interrupted passes across local mutations or ownership changes. Presence checks are not persisted delivery receipts. Legacy peers keep their existing synchronization protocol.
+
+- Updated dependencies [[`27cdf2f`](https://github.com/dao-xyz/peerbit/commit/27cdf2f61d1e1ac8d5c501f293237a2a7fb0dba0), [`b0facf5`](https://github.com/dao-xyz/peerbit/commit/b0facf5906a7203083f5093927c1b81a10fd20a4), [`f902c41`](https://github.com/dao-xyz/peerbit/commit/f902c41b9402428daa4089c3f0a0d113fde92eaa), [`3795390`](https://github.com/dao-xyz/peerbit/commit/3795390ddf072d4ee23921942f8e5f0b9b0458e4), [`43a5270`](https://github.com/dao-xyz/peerbit/commit/43a527047565362deb1d8068daea453ed97bc76a), [`82fae14`](https://github.com/dao-xyz/peerbit/commit/82fae14b6718aaa1581234a042f765bea9594d0c), [`3e54d21`](https://github.com/dao-xyz/peerbit/commit/3e54d211601c402724064f13417a26423d450f14), [`25da012`](https://github.com/dao-xyz/peerbit/commit/25da01258de25f6337a2ac439e3136f279074084), [`a919a34`](https://github.com/dao-xyz/peerbit/commit/a919a341fa35479958d60c7db99be94d34d6cd8b), [`b0bc133`](https://github.com/dao-xyz/peerbit/commit/b0bc1338ff80315f9ebab506420dc2c2feb12bf9), [`20cfea8`](https://github.com/dao-xyz/peerbit/commit/20cfea88d537fd0eda05b0182e74ec6f3c5df315), [`09a4016`](https://github.com/dao-xyz/peerbit/commit/09a401691cdcbf7955324ba96d377571c512f16d), [`9b28a3e`](https://github.com/dao-xyz/peerbit/commit/9b28a3e3ef99851a7d6f48fa939614b9766b0d27), [`d9f09f8`](https://github.com/dao-xyz/peerbit/commit/d9f09f80352bf32d6c23ad5047a58a72f433e3e8), [`d55509a`](https://github.com/dao-xyz/peerbit/commit/d55509aeb2db9d9f848fcc48a871d6de63284432), [`d55509a`](https://github.com/dao-xyz/peerbit/commit/d55509aeb2db9d9f848fcc48a871d6de63284432)]:
+  - @peerbit/indexer-sqlite3@3.0.23
+  - @peerbit/log@6.2.40
+  - @peerbit/program@6.0.70
+  - @peerbit/pubsub@5.4.15
+  - @peerbit/blocks@4.3.5
+  - @peerbit/crypto@3.1.8
+  - @peerbit/logger@2.0.4
+  - @peerbit/pubsub-interface@5.2.4
+  - @peerbit/stream-interface@6.0.18
+  - @peerbit/indexer-interface@3.1.2
+  - @peerbit/riblt@1.2.2
+  - @peerbit/rpc@6.2.6
+  - @peerbit/blocks-interface@2.2.3
+  - @peerbit/any-store@2.2.19
+
 ## 16.0.41
 
 ### Patch Changes

@@ -1,5 +1,36 @@
 # Changelog
 
+## 6.0.144
+
+### Patch Changes
+
+- [#1540](https://github.com/dao-xyz/peerbit/pull/1540) [`1b12705`](https://github.com/dao-xyz/peerbit/commit/1b1270596d91a9c47f8771393a27edca34212907) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Refuse a TrustedNetwork relation put whose id is not the id of its own truster and trustee. Before, a trusted member could put its own relation under another relation's id. That replaced the other relation's row (for example, so the root stopped trusting a key it had added) and let the member delete the row as its new owner. IdentityGraph's `canPerform` makes the same check, but the native policy that IdentityGraph opens with by default is unchanged and cannot bind ids.
+
+  `add`, `revoke`, `getRelation` and `hasRelation` now ignore a row whose truster and trustee do not match the pair asked for, so the truster can put its relation over a row written before this change, and the truster that row names can still delete it. This repair is partial: a `revoke` after it can leave an earlier entry of the relation on some replicas, and syncing that entry restores the relation.
+
+  Entry types and next pointers are still not checked. The log removes the entries a CUT entry points to, so a trusted writer can still remove another writer's relation by pointing an entry of its own relation at that relation's entry. That predates this change and is tracked in https://github.com/dao-xyz/peerbit/issues/1539.
+
+- [#1533](https://github.com/dao-xyz/peerbit/pull/1533) [`edf55a0`](https://github.com/dao-xyz/peerbit/commit/edf55a065490b4d428310735f303f0840bc208d2) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Restore throttled background trust-graph warmup after deserialization. Local trust misses remain default-deny while remote recovery runs.
+
+- [#1480](https://github.com/dao-xyz/peerbit/pull/1480) [`f3b9783`](https://github.com/dao-xyz/peerbit/commit/f3b97839fa435d0c1473c7969d01cdd625ff35da) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Walk trust graphs completely through converging paths (diamonds) and cycles. `getPathGenerator` now expands each key once, by its hashcode, and yields each reachable relation once. Before, it stopped at the first relation whose `id` array it had already seen: walks ended early when the index returned cached relations, and a cycle never ended when it returned freshly decoded ones. `isTrusted` no longer rejects a key that has a path to the root, and `getTrusted` returns each reachable key exactly once.
+
+  Behavior change: `hasPathToTarget`, and with it `hasPath`, now tests the key the resolver steps to, `resolver.next(relation)`, instead of always testing `relation.from`. For resolvers whose `next` is `relation.from` (`getFromByTo`, and `getFromByToLocalOnly`, which `isTrusted` uses) this is the same test as before. With a resolver whose `next` is `relation.to` (`getToByFrom`, `getToByFromLocalOnly`), a target now matches when the walk reaches it, including as the last key of a path: for a -> b -> c, `hasPath(a, c, db, getToByFrom)` used to return `false` and now returns `true`.
+
+  Relation ownership checks and wire and storage formats are unchanged.
+
+- [#1528](https://github.com/dao-xyz/peerbit/pull/1528) [`82fae14`](https://github.com/dao-xyz/peerbit/commit/82fae14b6718aaa1581234a042f765bea9594d0c) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Update the coordinated libp2p dependency cohort to include buffered-stream close/reset and listener cleanup fixes. Preserve Peerbit's transport configuration, custom Yamux profile and standard Yamux fallback; WebRTC Direct is not enabled by this update.
+
+- [#1534](https://github.com/dao-xyz/peerbit/pull/1534) [`2d4c08e`](https://github.com/dao-xyz/peerbit/commit/2d4c08e29b012ca8a8c898bde138834c2f480d2f) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Reinitialize a closed document child when reopening the same TrustedNetwork or IdentityGraph instance. Already-live shared children remain reused without resetting their runtime or authorization.
+
+- Updated dependencies [[`b0facf5`](https://github.com/dao-xyz/peerbit/commit/b0facf5906a7203083f5093927c1b81a10fd20a4), [`7c089f1`](https://github.com/dao-xyz/peerbit/commit/7c089f1edf904113984565d59c2977e8c229f425), [`3795390`](https://github.com/dao-xyz/peerbit/commit/3795390ddf072d4ee23921942f8e5f0b9b0458e4), [`5f1250a`](https://github.com/dao-xyz/peerbit/commit/5f1250ac1594428559be0cb5b76cbeff0fab921f), [`7e232ab`](https://github.com/dao-xyz/peerbit/commit/7e232ab68cc2a9541623bc0ecdd93481d83dfb44), [`82fae14`](https://github.com/dao-xyz/peerbit/commit/82fae14b6718aaa1581234a042f765bea9594d0c), [`151fdc5`](https://github.com/dao-xyz/peerbit/commit/151fdc51809f9028e48121832b56cfe05a991172), [`b0bc133`](https://github.com/dao-xyz/peerbit/commit/b0bc1338ff80315f9ebab506420dc2c2feb12bf9), [`7e7a6c8`](https://github.com/dao-xyz/peerbit/commit/7e7a6c802dec9afe6374527bbe515a71819b7dcb), [`8e9fb70`](https://github.com/dao-xyz/peerbit/commit/8e9fb70793d160311b6ba0a26083323a2eaf5aad), [`d9f09f8`](https://github.com/dao-xyz/peerbit/commit/d9f09f80352bf32d6c23ad5047a58a72f433e3e8), [`fc6313f`](https://github.com/dao-xyz/peerbit/commit/fc6313fcdecee9f9a0fbf0defc3b35c0cc57d728), [`5f1250a`](https://github.com/dao-xyz/peerbit/commit/5f1250ac1594428559be0cb5b76cbeff0fab921f), [`2375d4b`](https://github.com/dao-xyz/peerbit/commit/2375d4b723f1bfc17601120bc996bfe6ae840c5f), [`2b3a8f9`](https://github.com/dao-xyz/peerbit/commit/2b3a8f9f6e6becc4d40d5458d194dbdac0771c9a), [`ff0b42f`](https://github.com/dao-xyz/peerbit/commit/ff0b42fd54acc83924a83269d690a81f45bd5fdc), [`e0d26bb`](https://github.com/dao-xyz/peerbit/commit/e0d26bb6596b94bedc1f4dfe5bad4ba04b5837a9)]:
+  - @peerbit/log@6.2.40
+  - @peerbit/shared-log@16.0.42
+  - @peerbit/program@6.0.70
+  - @peerbit/document@15.1.13
+  - @peerbit/crypto@3.1.8
+  - @peerbit/blocks-interface@2.2.3
+  - @peerbit/any-store@2.2.19
+
 ## 6.0.143
 
 ### Patch Changes

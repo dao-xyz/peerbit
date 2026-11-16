@@ -1,5 +1,13 @@
 # @peerbit/network-rust
 
+## 0.1.6
+
+### Patch Changes
+
+- [#1545](https://github.com/dao-xyz/peerbit/pull/1545) [`25da012`](https://github.com/dao-xyz/peerbit/commit/25da01258de25f6337a2ac439e3136f279074084) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Add the `repository` field to `package.json`, so npm trusted publishing and provenance can match the published package to the dao-xyz/peerbit repository.
+
+- [#1522](https://github.com/dao-xyz/peerbit/pull/1522) [`abd53f2`](https://github.com/dao-xyz/peerbit/commit/abd53f2f09ae4cf4fe7fea57760edd17fff13ad7) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Keep unexpired relay routes and the remote session when only a direct connection closes, instead of dropping the peer. A peer is reported unreachable when its last usable route is lost. A relay route whose session was already invalidated (for example by another relay's departure hint) is not usable, so that peer is still reported at the disconnect. A kept relay route must then pass the liveness probe sent on the disconnect: if the probe fails, the peer is removed, unless it reconnected or a route to it was learned after the probe was sent. So a peer that itself went away while a relay route to it was still recorded is now reported unreachable when that probe times out (`seekTimeout`, 10 s by default), or earlier if the probe fails sooner (for example on a write to a closing neighbour), not at the disconnect. The departure hint (Goodbye) to peers that reached the lost peer through this node is held back while another path remains, and is sent if that path then fails the probe, so their routes cannot keep looping back through this node. A peer that learns of the departure only from that Goodbye stops treating the lost peer as reachable when it arrives and reports it unreachable after its own probe, about twice `seekTimeout` after the peer left. Applies to both JavaScript and Rust-backed routing.
+
 ## 0.1.5
 
 ### Patch Changes

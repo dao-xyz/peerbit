@@ -1,5 +1,16 @@
 # Changelog
 
+## 3.0.13
+
+### Patch Changes
+
+- [#1538](https://github.com/dao-xyz/peerbit/pull/1538) [`95ce258`](https://github.com/dao-xyz/peerbit/commit/95ce2581ea5a9c0916ece9bc74b11431047d6111) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Support `abort()` on in-memory connections, which the stream layer calls when it rejects a recently pruned peer. Aborting closes both ends at once: their streams are aborted, the local end reports "aborted" and the remote end "reset", both connection managers drop the connection immediately, and topologies hear the disconnect as they do after `close()`.
+
+- [#1528](https://github.com/dao-xyz/peerbit/pull/1528) [`82fae14`](https://github.com/dao-xyz/peerbit/commit/82fae14b6718aaa1581234a042f765bea9594d0c) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Update the coordinated libp2p dependency cohort to include buffered-stream close/reset and listener cleanup fixes. Preserve Peerbit's transport configuration, custom Yamux profile and standard Yamux fallback; WebRTC Direct is not enabled by this update.
+
+- Updated dependencies [[`82fae14`](https://github.com/dao-xyz/peerbit/commit/82fae14b6718aaa1581234a042f765bea9594d0c)]:
+  - @peerbit/crypto@3.1.8
+
 ## 3.0.12
 
 ### Patch Changes

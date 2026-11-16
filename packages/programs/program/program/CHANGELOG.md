@@ -1,5 +1,24 @@
 # Changelog
 
+## 6.0.70
+
+### Patch Changes
+
+- [#1489](https://github.com/dao-xyz/peerbit/pull/1489) [`3795390`](https://github.com/dao-xyz/peerbit/commit/3795390ddf072d4ee23921942f8e5f0b9b0458e4) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Forward caller cancellation to the neighbor probes in `Program.waitFor`, preserving the abort reason and skipping subsequent subscriber requests when aborted during those probes. Ordinary neighbor failures remain best-effort; readiness polling and timeout defaults are unchanged.
+
+- [#1528](https://github.com/dao-xyz/peerbit/pull/1528) [`82fae14`](https://github.com/dao-xyz/peerbit/commit/82fae14b6718aaa1581234a042f765bea9594d0c) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Update the coordinated libp2p dependency cohort to include buffered-stream close/reset and listener cleanup fixes. Preserve Peerbit's transport configuration, custom Yamux profile and standard Yamux fallback; WebRTC Direct is not enabled by this update.
+
+- Updated dependencies [[`43a5270`](https://github.com/dao-xyz/peerbit/commit/43a527047565362deb1d8068daea453ed97bc76a), [`82fae14`](https://github.com/dao-xyz/peerbit/commit/82fae14b6718aaa1581234a042f765bea9594d0c), [`25da012`](https://github.com/dao-xyz/peerbit/commit/25da01258de25f6337a2ac439e3136f279074084), [`20cfea8`](https://github.com/dao-xyz/peerbit/commit/20cfea88d537fd0eda05b0182e74ec6f3c5df315), [`09a4016`](https://github.com/dao-xyz/peerbit/commit/09a401691cdcbf7955324ba96d377571c512f16d), [`9b28a3e`](https://github.com/dao-xyz/peerbit/commit/9b28a3e3ef99851a7d6f48fa939614b9766b0d27)]:
+  - @peerbit/pubsub@5.4.15
+  - @peerbit/blocks@4.3.5
+  - @peerbit/crypto@3.1.8
+  - @peerbit/keychain@1.2.19
+  - @peerbit/logger@2.0.4
+  - @peerbit/pubsub-interface@5.2.4
+  - @peerbit/stream-interface@6.0.18
+  - @peerbit/indexer-interface@3.1.2
+  - @peerbit/blocks-interface@2.2.3
+
 ## 6.0.69
 
 ### Patch Changes

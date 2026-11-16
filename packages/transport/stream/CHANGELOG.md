@@ -1,5 +1,18 @@
 # Changelog
 
+## 5.2.6
+
+### Patch Changes
+
+- [#1528](https://github.com/dao-xyz/peerbit/pull/1528) [`82fae14`](https://github.com/dao-xyz/peerbit/commit/82fae14b6718aaa1581234a042f765bea9594d0c) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Update the coordinated libp2p dependency cohort to include buffered-stream close/reset and listener cleanup fixes. Preserve Peerbit's transport configuration, custom Yamux profile and standard Yamux fallback; WebRTC Direct is not enabled by this update.
+
+- [#1522](https://github.com/dao-xyz/peerbit/pull/1522) [`abd53f2`](https://github.com/dao-xyz/peerbit/commit/abd53f2f09ae4cf4fe7fea57760edd17fff13ad7) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Keep unexpired relay routes and the remote session when only a direct connection closes, instead of dropping the peer. A peer is reported unreachable when its last usable route is lost. A relay route whose session was already invalidated (for example by another relay's departure hint) is not usable, so that peer is still reported at the disconnect. A kept relay route must then pass the liveness probe sent on the disconnect: if the probe fails, the peer is removed, unless it reconnected or a route to it was learned after the probe was sent. So a peer that itself went away while a relay route to it was still recorded is now reported unreachable when that probe times out (`seekTimeout`, 10 s by default), or earlier if the probe fails sooner (for example on a write to a closing neighbour), not at the disconnect. The departure hint (Goodbye) to peers that reached the lost peer through this node is held back while another path remains, and is sent if that path then fails the probe, so their routes cannot keep looping back through this node. A peer that learns of the departure only from that Goodbye stops treating the lost peer as reachable when it arrives and reports it unreachable after its own probe, about twice `seekTimeout` after the peer left. Applies to both JavaScript and Rust-backed routing.
+
+- Updated dependencies [[`82fae14`](https://github.com/dao-xyz/peerbit/commit/82fae14b6718aaa1581234a042f765bea9594d0c)]:
+  - @peerbit/crypto@3.1.8
+  - @peerbit/logger@2.0.4
+  - @peerbit/stream-interface@6.0.18
+
 ## 5.2.5
 
 ### Patch Changes

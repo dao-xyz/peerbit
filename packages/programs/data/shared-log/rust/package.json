@@ -1,6 +1,6 @@
 {
 	"name": "@peerbit/shared-log-rust",
-	"version": "0.1.9",
+	"version": "0.1.10",
 	"description": "Rust-backed shared-log range planner for Peerbit",
 	"repository": {
 		"type": "git",

@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.3.2
+
+### Patch Changes
+
+- [#1537](https://github.com/dao-xyz/peerbit/pull/1537) [`b0bc133`](https://github.com/dao-xyz/peerbit/commit/b0bc1338ff80315f9ebab506420dc2c2feb12bf9) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Make deletes with several predicates atomic. A put that replaced a row while a delete was matching it could be deleted even though it no longer matched. A delete now removes a row only while it is the stored value its predicates matched, and matches a replacement again.
+
+- [#1545](https://github.com/dao-xyz/peerbit/pull/1545) [`25da012`](https://github.com/dao-xyz/peerbit/commit/25da01258de25f6337a2ac439e3136f279074084) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Add the `repository` field to `package.json`, so npm trusted publishing and provenance can match the published package to the dao-xyz/peerbit repository.
+
+- [#1537](https://github.com/dao-xyz/peerbit/pull/1537) [`b0bc133`](https://github.com/dao-xyz/peerbit/commit/b0bc1338ff80315f9ebab506420dc2c2feb12bf9) Thanks [@peerbit-org](https://github.com/peerbit-org)! - A query that matches the id exactly together with other predicates now looks up that row and evaluates the other predicates on it alone, instead of evaluating every row. A delete of one named version, such as `DocumentIndex.delIfHead`, no longer scans the whole index.
+
+- Updated dependencies [[`82fae14`](https://github.com/dao-xyz/peerbit/commit/82fae14b6718aaa1581234a042f765bea9594d0c), [`25da012`](https://github.com/dao-xyz/peerbit/commit/25da01258de25f6337a2ac439e3136f279074084)]:
+  - @peerbit/logger@2.0.4
+  - @peerbit/indexer-interface@3.1.2
+
 ## 1.3.1
 
 ### Patch Changes

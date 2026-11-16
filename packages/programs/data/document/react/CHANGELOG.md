@@ -1,5 +1,17 @@
 # @peerbit/document-react
 
+## 1.0.135
+
+### Patch Changes
+
+- [#1545](https://github.com/dao-xyz/peerbit/pull/1545) [`25da012`](https://github.com/dao-xyz/peerbit/commit/25da01258de25f6337a2ac439e3136f279074084) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Add the `repository` field to `package.json`, so npm trusted publishing and provenance can match the published package to the dao-xyz/peerbit repository.
+
+- Updated dependencies [[`5f1250a`](https://github.com/dao-xyz/peerbit/commit/5f1250ac1594428559be0cb5b76cbeff0fab921f), [`7e232ab`](https://github.com/dao-xyz/peerbit/commit/7e232ab68cc2a9541623bc0ecdd93481d83dfb44), [`82fae14`](https://github.com/dao-xyz/peerbit/commit/82fae14b6718aaa1581234a042f765bea9594d0c), [`151fdc5`](https://github.com/dao-xyz/peerbit/commit/151fdc51809f9028e48121832b56cfe05a991172), [`b0bc133`](https://github.com/dao-xyz/peerbit/commit/b0bc1338ff80315f9ebab506420dc2c2feb12bf9), [`25da012`](https://github.com/dao-xyz/peerbit/commit/25da01258de25f6337a2ac439e3136f279074084), [`fc6313f`](https://github.com/dao-xyz/peerbit/commit/fc6313fcdecee9f9a0fbf0defc3b35c0cc57d728), [`2b3a8f9`](https://github.com/dao-xyz/peerbit/commit/2b3a8f9f6e6becc4d40d5458d194dbdac0771c9a), [`ff0b42f`](https://github.com/dao-xyz/peerbit/commit/ff0b42fd54acc83924a83269d690a81f45bd5fdc), [`e0d26bb`](https://github.com/dao-xyz/peerbit/commit/e0d26bb6596b94bedc1f4dfe5bad4ba04b5837a9)]:
+  - @peerbit/document@15.1.13
+  - @peerbit/logger@2.0.4
+  - @peerbit/react@1.1.76
+  - @peerbit/indexer-interface@3.1.2
+
 ## 1.0.134
 
 ### Patch Changes

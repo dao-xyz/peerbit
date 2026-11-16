@@ -1,5 +1,28 @@
 # Changelog
 
+## 5.4.15
+
+### Patch Changes
+
+- [#1492](https://github.com/dao-xyz/peerbit/pull/1492) [`43a5270`](https://github.com/dao-xyz/peerbit/commit/43a527047565362deb1d8068daea453ed97bc76a) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Stop provider queries from renewing cached provider hints that no tracker reported again. When the cache held fewer candidates than requested, `queryProviderCandidates` stored every merged candidate, cached hints included, with a new expiry, so repeated queries kept a stopped provider listed indefinitely. A tracker's directory is the same cache, so a tracker that queried one of its own namespaces kept announced providers past their announce TTL and served them to other peers. Now only providers in a fresh tracker reply are renewed, with the requested `cacheTtlMs` as before; other cached hints keep their expiry. The cache also keeps the addresses from a fresh reply instead of overwriting them with the older cached copy.
+
+- [#1528](https://github.com/dao-xyz/peerbit/pull/1528) [`82fae14`](https://github.com/dao-xyz/peerbit/commit/82fae14b6718aaa1581234a042f765bea9594d0c) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Update the coordinated libp2p dependency cohort to include buffered-stream close/reset and listener cleanup fixes. Preserve Peerbit's transport configuration, custom Yamux profile and standard Yamux fallback; WebRTC Direct is not enabled by this update.
+
+- [#1495](https://github.com/dao-xyz/peerbit/pull/1495) [`20cfea8`](https://github.com/dao-xyz/peerbit/commit/20cfea88d537fd0eda05b0182e74ec6f3c5df315) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Retire a provider query's request records and cancel its unsent query frames when `queryProviderCandidates` (and so `queryProviders`) ends by reply timeout, caller abort or service stop. Before, an abort or a stop left the request records behind. A query frame still being signed at a reply timeout or an abort was sent after the query had returned, and one still being signed at a stop failed as an unhandled promise rejection. A query send that throws, for example when signing fails, now rejects the awaited query with that error at once and cancels the query's other tracker attempts, so their answers are not returned. Before, the error was an unhandled promise rejection, which ends a Node.js process by default, and the query waited for its reply timeout, then resolved with the other trackers' answers. Delivery failures still do not fail a query, a tracker that does not answer in time still adds no candidates, and default timeouts are unchanged.
+
+- [#1542](https://github.com/dao-xyz/peerbit/pull/1542) [`09a4016`](https://github.com/dao-xyz/peerbit/commit/09a401691cdcbf7955324ba96d377571c512f16d) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Stop closing a healthy connection after an event-loop stall. When several fanout channels were joining through the same peer, one stall fired all of their join-request timers in the same tick. Each timeout counted toward that peer's reset threshold, so the join loop closed the connection to a peer that was still answering. Join timeouts now count once per request window, however many channels were waiting, and an answer that arrives before its request times out starts the count over. The connection is reset after three consecutive windows in which nothing arrived from the peer, or after six consecutive windows with no answer in time while the peer keeps sending other frames (a connection that loses or badly delays only our frames).
+
+  Resets of an unresponsive peer take longer. With the default join timing, a silent peer is reset after about 14 s however many channels join through it (before, three channels timing out together reset it after about 2 s). A peer that keeps sending frames but answers no join in time is reset after about 32 s (before, about 14 s with one channel joining and about 2 s with three). That now includes a peer whose answers all come after the join timeout: before, with one channel joining, such a peer was never reset if its answers came less than about 14 s late.
+
+- [#1532](https://github.com/dao-xyz/peerbit/pull/1532) [`9b28a3e`](https://github.com/dao-xyz/peerbit/commit/9b28a3e3ef99851a7d6f48fa939614b9766b0d27) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Prefer ready bootstrap trackers for provider announcements so unavailable trackers do not delay block admission while a live tracker is available.
+
+- Updated dependencies [[`82fae14`](https://github.com/dao-xyz/peerbit/commit/82fae14b6718aaa1581234a042f765bea9594d0c), [`abd53f2`](https://github.com/dao-xyz/peerbit/commit/abd53f2f09ae4cf4fe7fea57760edd17fff13ad7)]:
+  - @peerbit/crypto@3.1.8
+  - @peerbit/logger@2.0.4
+  - @peerbit/pubsub-interface@5.2.4
+  - @peerbit/stream@5.2.6
+  - @peerbit/stream-interface@6.0.18
+
 ## 5.4.14
 
 ### Patch Changes
