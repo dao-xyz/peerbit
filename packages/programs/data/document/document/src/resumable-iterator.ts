@@ -123,10 +123,15 @@ export class ResumableIterators<T extends Record<string, any>> {
 				: iterator.request.fetch;
 		const next = await iterator.iterator.next(fetchAmount);
 		let pending: number | undefined;
-		try {
-			pending = await iterator.iterator.pending();
-		} catch {
-			pending = undefined;
+		// pending() only feeds this log line and can cost more than the page
+		// (after a write the sqlite3 indexer rescans every match), so call it
+		// only when the line is printed. Callers get the count from getPending.
+		if (iteratorLogger.enabled) {
+			try {
+				pending = await iterator.iterator.pending();
+			} catch {
+				pending = undefined;
+			}
 		}
 		iteratorLogger("iterate:next", {
 			id: request.idString,
