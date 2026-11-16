@@ -20957,6 +20957,39 @@ describe("index", () => {
 			expect(peers).to.have.length(1);
 			expect(peers[0]).to.deep.equal(key2);
 		});
+
+		it("contains onPeer failures instead of leaking unhandled rejections", async () => {
+			const index = new DocumentIndex();
+			(index as any).node = { identity: await Ed25519Keypair.create() };
+			(index as any)._log = {
+				waitForReplicator: async () => {},
+			} as unknown as SharedLog<Document>;
+			const unhandled: unknown[] = [];
+			const onUnhandled = (reason: unknown) => {
+				unhandled.push(reason);
+			};
+			process.on("unhandledRejection", onUnhandled);
+			try {
+				const attempted = pDefer<void>();
+				const detach = index["createReplicatorJoinListener"]({
+					onPeer: async () => {
+						attempted.resolve();
+						throw new Error("joining peer query failed");
+					},
+				});
+				index._query.events.dispatchEvent(
+					new CustomEvent<PublicSignKey>("join", {
+						detail: (await Ed25519Keypair.create()).publicKey,
+					}),
+				);
+				await attempted.promise;
+				await delay(100);
+				detach();
+				expect(unhandled).to.deep.equal([]);
+			} finally {
+				process.off("unhandledRejection", onUnhandled);
+			}
+		});
 	});
 
 	// TODO is this feature needed? if so setup a case where a too strict acl is set, actually results in a recoverable state
