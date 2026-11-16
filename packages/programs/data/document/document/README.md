@@ -38,8 +38,10 @@ This also covers the queries that a replicator joining later triggers, for
 pages that a peer pushes to an iterator with push `updates`, such as a predicted
 `NoAccess`. A denial, missing response or page-processing error there rejects
 `get()`, or rejects the iterator's next read and every read after it until
-`close()`, with `done()` returning `false` until then. Omitting the option or
-setting it to `false` preserves best-effort behavior.
+`close()`, with `done()` returning `false` until then. When `remote.from` or
+`remote.reach.discover` is set, a joining replicator outside them is still
+asked, as without the option, and its failures on any page are only logged.
+Omitting the option or setting it to `false` preserves best-effort behavior.
 
 Public response callbacks still run and their errors propagate unchanged.
 `search()` and `.all()` close their iterators on failure; manual iteration still

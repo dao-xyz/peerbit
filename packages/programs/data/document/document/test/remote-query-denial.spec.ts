@@ -303,9 +303,13 @@ describe("remote query denial from joining replicators", () => {
 			sort: [new Sort({ key: "id", direction: SortDirection.ASC })],
 		});
 
+	// Rows that only the joining replicator holds, for answer "serve".
+	const joinerIds = ["join-e", "join-f", "join-g"];
+
 	// peers[0] answers and is connected to the reader peers[2] from the start.
 	// peers[1] replicates too, but joins the reader only when `join()` is called.
-	const lateJoin = async (answer: "deny" | "hang") => {
+	// It denies, never answers, or serves its own rows until `revoke()`.
+	const lateJoin = async (answer: "deny" | "hang" | "serve") => {
 		session = await TestSession.disconnected(3);
 		await session.connect([[session.peers[0], session.peers[2]]]);
 		const descriptor = new TestStore({ docs: new Documents<Document>() });
@@ -319,16 +323,21 @@ describe("remote query denial from joining replicators", () => {
 		for (const id of ids) await healthy.docs.put(new Document({ id }));
 		const hung = pDefer<boolean>();
 		release = () => hung.resolve(false);
+		let revoked = false;
 		const joiner = await session.peers[1].open(descriptor.clone(), {
 			args: {
 				replicate: { factor: 1 },
 				timeUntilRoleMaturity: 0,
 				index: {
 					prefetch: false,
-					canSearch: () => (answer === "deny" ? false : hung.promise),
+					canSearch: () =>
+						answer === "hang" ? hung.promise : answer === "serve" && !revoked,
 				},
 			},
 		});
+		if (answer === "serve") {
+			for (const id of joinerIds) await joiner.docs.put(new Document({ id }));
+		}
 		const reader = await session.peers[2].open(descriptor.clone(), {
 			args: {
 				replicate: false,
@@ -339,13 +348,19 @@ describe("remote query denial from joining replicators", () => {
 		await reader.docs.index.waitFor(healthy.node.identity.publicKey, {
 			timeout: 10_000,
 		});
+		const healthyHash = healthy.node.identity.publicKey.hashcode();
 		const joinerHash = joiner.node.identity.publicKey.hashcode();
 		const denied = pDefer<void>();
-		const iterate = (strict: boolean | undefined, waitMs = 60_000) =>
+		const iterate = (
+			strict: boolean | undefined,
+			waitMs = 60_000,
+			scope: { from?: string[]; timeout?: number } = {},
+		) =>
 			reader.docs.index.iterate(query(), {
 				remote: {
 					...(strict === undefined ? {} : { throwOnMissing: strict }),
-					timeout: 5_000,
+					...(scope.from ? { from: scope.from } : {}),
+					timeout: scope.timeout ?? 5_000,
 					wait: { timeout: waitMs, behavior: "keep-open" },
 					reach: { eager: true },
 					onResponse: (response, from) => {
@@ -356,11 +371,15 @@ describe("remote query denial from joining replicators", () => {
 			});
 		return {
 			reader,
+			healthyHash,
 			joinerHash,
 			iterate,
 			// Resolves once the reader has received the joining peer's NoAccess.
 			denied: () => bounded(denied.promise, "joining replicator denial"),
 			join: () => session!.connect([[session!.peers[1], session!.peers[2]]]),
+			revoke: () => {
+				revoked = true;
+			},
 		};
 	};
 
@@ -576,10 +595,126 @@ describe("remote query denial from joining replicators", () => {
 		expect(unhandled).to.deep.equal([]);
 	});
 
+	// A join still queries a replicator outside remote.from, as without the
+	// option, but only the peers the caller asked for can fail a strict read.
+	describe("outside remote.from", () => {
+		it("does not reject a strict keep-open iterator when the joining replicator denies", async () => {
+			const test = await lateJoin("deny");
+			const iterator = test.iterate(true, 60_000, { from: [test.healthyHash] });
+			try {
+				expect((await iterator.next(1)).map((row) => row.id)).to.deep.equal([
+					ids[0],
+				]);
+				await test.join();
+				await test.denied();
+				expect((await iterator.next(10)).map((row) => row.id)).to.deep.equal(
+					ids.slice(1),
+				);
+				expect(unhandled).to.deep.equal([]);
+			} finally {
+				await iterator.close();
+			}
+		});
+
+		it("does not reject a strict get(waitFor) when the joining replicator denies", async () => {
+			const test = await lateJoin("deny");
+			const denied = pDefer<void>();
+			const pending = settle(
+				test.reader.docs.index.get("join-absent", {
+					waitFor: 8_000,
+					remote: {
+						throwOnMissing: true,
+						from: [test.healthyHash],
+						timeout: 5_000,
+						onResponse: (response, from) => {
+							if (
+								response instanceof NoAccess &&
+								from?.hashcode() === test.joinerHash
+							)
+								denied.resolve();
+						},
+					},
+				}),
+			);
+			await test.join();
+			await bounded(denied.promise, "joining replicator denial");
+			expect(
+				await bounded(pending, "strict get(waitFor) with an excluded joiner"),
+			).to.deep.equal({ value: undefined });
+			expect(unhandled).to.deep.equal([]);
+		});
+
+		it("retries a silent joining replicator best-effort in a strict keep-open iterator", async () => {
+			const test = await lateJoin("hang");
+			const rpc = test.reader.docs.index._query;
+			const request = rpc.request.bind(rpc);
+			const askedJoiner = pDefer<{ response: Promise<unknown> }>();
+			rpc.request = ((...args: Parameters<typeof request>) => {
+				const response = request(...args);
+				const to = (args[1] as { mode?: { to?: string[] } } | undefined)?.mode
+					?.to;
+				if (to?.includes(test.joinerHash)) askedJoiner.resolve({ response });
+				return response;
+			}) as typeof rpc.request;
+			const iterator = test.iterate(true, 60_000, {
+				from: [test.healthyHash],
+				timeout: 2_000,
+			});
+			try {
+				expect((await iterator.next(1)).map((row) => row.id)).to.deep.equal([
+					ids[0],
+				]);
+				await test.join();
+				// Let the join fetch time out first, so the next reads retry the
+				// joining replicator before they collect the healthy peer's rows.
+				const asked = await bounded(askedJoiner.promise, "join fetch");
+				await Promise.allSettled([asked.response]);
+				const rows: string[] = [];
+				for (let read = 0; read < 6 && rows.length < 3; read++) {
+					rows.push(...(await iterator.next(10)).map((row) => row.id));
+				}
+				expect(rows).to.deep.equal(ids.slice(1));
+				expect(unhandled).to.deep.equal([]);
+			} finally {
+				await iterator.close();
+			}
+		});
+
+		it("does not reject a strict keep-open iterator when the joining replicator denies a later page", async () => {
+			const test = await lateJoin("serve");
+			const iterator = test.iterate(true, 60_000, { from: [test.healthyHash] });
+			try {
+				expect((await iterator.next(1)).map((row) => row.id)).to.deep.equal([
+					ids[0],
+				]);
+				await test.join();
+				// The join fetch buffers the joining replicator's first row and
+				// leaves two more pending there, next to three on the healthy peer.
+				await waitForResolved(
+					async () => expect(await iterator.pending()).to.equal(6),
+					{ timeout: 20_000 },
+				);
+				test.revoke();
+				expect((await iterator.next(10)).map((row) => row.id)).to.deep.equal([
+					...ids.slice(1),
+					joinerIds[0],
+				]);
+				await test.denied();
+				expect(unhandled).to.deep.equal([]);
+			} finally {
+				await iterator.close();
+			}
+		});
+	});
+
 	// A replicator can push a predicted page when the reader joins it; a
 	// push-update iterator merges matching predictions outside any read.
-	for (const strict of [true, false]) {
-		it(`handles a predicted denial pushed to a push-update iterator with strict=${strict}`, async () => {
+	for (const [strict, scoped] of [
+		[true, false],
+		[true, true],
+		[false, false],
+	] as const) {
+		it(`handles a predicted denial pushed to a push-update iterator with strict=${strict}${scoped ? " and the predicting peer outside remote.from" : ""}`, async () => {
 			session = await TestSession.disconnected(3);
 			await session.connect([[session.peers[0], session.peers[2]]]);
 			const descriptor = new TestStore({ docs: new Documents<Document>() });
@@ -632,6 +767,9 @@ describe("remote query denial from joining replicators", () => {
 				remote: {
 					throwOnMissing: strict,
 					timeout: 5_000,
+					...(scoped
+						? { from: [healthy.node.identity.publicKey.hashcode()] }
+						: {}),
 				},
 				updates: "remote",
 			});
@@ -658,7 +796,7 @@ describe("remote query denial from joining replicators", () => {
 				);
 				await session.connect([[session.peers[1], session.peers[2]]]);
 				await bounded(pushed.promise, "predicted denial");
-				if (strict) {
+				if (strict && !scoped) {
 					const result = await settle(iterator.next(10));
 					expectDeniedBy(result, joinerHash);
 					expect(iterator.done()).to.equal(false);

@@ -417,7 +417,11 @@ export type RemoteQueryOptions<Q, R, D> = RPCRequestAllOptions<Q, R> & {
 	replicate?: boolean;
 	from?: string[]; // if specified, only query these peers
 	minAge?: number;
-	/** Reject missing responses, query-level denials and page-processing errors. */
+	/**
+	 * Reject missing responses, query-level denials and page-processing errors.
+	 * A replicator outside `from` or `reach.discover` that a join adds is still
+	 * asked, best-effort.
+	 */
 	throwOnMissing?: boolean;
 	retryMissingResponses?: boolean;
 	strategy?: "fallback";
@@ -603,6 +607,19 @@ export class AccessDeniedError extends Error {
 		this.peers = [...peers];
 	}
 }
+
+/**
+ * Whether the caller's remote options ask for `hash`: always, unless `from`
+ * or `reach.discover` is set and leaves the peer out. A replicator that joins
+ * while a query waits can be asked even when it is left out.
+ */
+const isRequestedRemotePeer = (
+	remote: RemoteQueryOptions<any, any, any> | undefined,
+	hash: string,
+) =>
+	(!remote?.from || remote.from.includes(hash)) &&
+	(!remote?.reach?.discover ||
+		remote.reach.discover.some((key) => key.hashcode() === hash));
 
 const introduceEntries = async <
 	T,
@@ -2543,11 +2560,17 @@ export class DocumentIndex<
 					onPeer: async (pk) => {
 						if (cleanedUp) return;
 						const hash = pk.hashcode();
+						// Under remote.throwOnMissing only a peer the caller asked
+						// for can fail get(); others are asked best-effort.
+						const strict =
+							!!baseRemote?.throwOnMissing &&
+							isRequestedRemotePeer(baseRemote, hash);
 						const requeryOptions: QueryOptions<T, I, D, Resolve> = {
 							...(options as any),
 							remote: {
 								...(baseRemote || {}),
 								from: [hash],
+								throwOnMissing: strict,
 							},
 						};
 						try {
@@ -2563,7 +2586,7 @@ export class DocumentIndex<
 							if (cleanedUp || this.closed) {
 								return;
 							}
-							if (!baseRemote?.throwOnMissing) {
+							if (!strict) {
 								warn("Failed to query joining peer", error);
 								return;
 							}
@@ -5454,9 +5477,25 @@ export class DocumentIndex<
 		// Retain the original promise so fetchFirst still propagates the error.
 		void warmupPromise?.catch(() => {});
 
+		// Under remote.throwOnMissing, failures of the peers the caller asked for
+		// reject reads. Joins and discovery can add peers outside remote.from or
+		// reach.discover; those are asked best-effort, as without the option.
+		const isStrictPeer = (hash: string) =>
+			typeof options?.remote === "object" &&
+			!!options.remote.throwOnMissing &&
+			isRequestedRemotePeer(options.remote, hash);
+		const bestEffortOptions = () =>
+			typeof options?.remote === "object" && options.remote.throwOnMissing
+				? { ...options, remote: { ...options.remote, throwOnMissing: false } }
+				: options;
+
 		const fetchFirst = async (
 			n: number,
-			fetchOptions?: { from?: string[]; fetchedFirstForRemote?: Set<string> },
+			fetchOptions?: {
+				from?: string[];
+				fetchedFirstForRemote?: Set<string>;
+				bestEffort?: boolean;
+			},
 		): Promise<boolean> => {
 			const remoteRequestOptions =
 				typeof options?.remote === "object" ? options.remote : undefined;
@@ -5507,6 +5546,7 @@ export class DocumentIndex<
 					remote: queryRemote
 						? {
 								...remoteRequestOptions,
+								...(fetchOptions?.bestEffort ? { throwOnMissing: false } : {}),
 								from: remoteFrom,
 								signal: fetchSignal,
 							}
@@ -5668,6 +5708,41 @@ export class DocumentIndex<
 			return !hasMore;
 		};
 
+		// First pages from peers that a join, discovery or retry adds. Peers
+		// outside the caller's request are fetched apart from the others and
+		// best-effort; `onStrictFailure` sees a failure of the others. Resolves
+		// true when none of the fetched peers has more results.
+		const fetchFirstFrom = async (
+			n: number,
+			from: string[],
+			fetchedFirstForRemote: Set<string> | undefined,
+			onStrictFailure?: (error: unknown) => void,
+		): Promise<boolean> => {
+			const strictPeers = from.filter(isStrictPeer);
+			const otherPeers = from.filter((hash) => !isStrictPeer(hash));
+			const fetches: Promise<boolean>[] = [];
+			if (strictPeers.length > 0) {
+				fetches.push(
+					fetchFirst(n, { from: strictPeers, fetchedFirstForRemote }).catch(
+						(error: unknown) => {
+							onStrictFailure?.(error);
+							throw error;
+						},
+					),
+				);
+			}
+			if (otherPeers.length > 0) {
+				fetches.push(
+					fetchFirst(n, {
+						from: otherPeers,
+						fetchedFirstForRemote,
+						bestEffort: true,
+					}),
+				);
+			}
+			return (await Promise.all(fetches)).every(Boolean);
+		};
+
 		const fetchAtLeast = async (n: number) => {
 			if (done && first) {
 				return;
@@ -5703,11 +5778,8 @@ export class DocumentIndex<
 					}
 				}
 				return setFetchPromise(
-					fetchFirst(n, {
-						from: retryTargets,
-						// retries for missing groups should not be suppressed by first-fetch dedupe
-						fetchedFirstForRemote: undefined,
-					}),
+					// retries for missing groups should not be suppressed by first-fetch dedupe
+					fetchFirstFrom(n, retryTargets, undefined),
 				);
 			}
 
@@ -5889,6 +5961,7 @@ export class DocumentIndex<
 						}
 						const remoteRequestOptions =
 							typeof options?.remote === "object" ? options.remote : undefined;
+						const strictPeer = isStrictPeer(peer);
 						const collectSignals = [
 							options?.signal,
 							remoteRequestOptions?.signal,
@@ -5913,7 +5986,7 @@ export class DocumentIndex<
 										!response.some((result) => result.from?.hashcode() === peer)
 									) {
 										const missingGroups = [[peer]];
-										if (remoteRequestOptions?.throwOnMissing) {
+										if (strictPeer) {
 											retireRemoteIteratorPeer(peer);
 											throw new MissingResponsesError(
 												"Did not receive responses from all shards: " +
@@ -5931,7 +6004,14 @@ export class DocumentIndex<
 										this.documentType,
 										this.indexedType,
 										this._sync,
-										options as QueryDetailedOptions<T, I, D, any>,
+										(strictPeer
+											? options
+											: bestEffortOptions()) as QueryDetailedOptions<
+											T,
+											I,
+											D,
+											any
+										>,
 									)
 										.then(async (responses) => {
 											return Promise.all(
@@ -6068,7 +6148,7 @@ export class DocumentIndex<
 													e?.message,
 											);
 											peerBufferMap.delete(peer);
-											if (remoteRequestOptions?.throwOnMissing) {
+											if (strictPeer) {
 												throw e;
 											}
 										});
@@ -6664,8 +6744,7 @@ export class DocumentIndex<
 					return;
 				}
 				const strict =
-					typeof options?.remote === "object" &&
-					!!options.remote.throwOnMissing;
+					consumable.from != null && isStrictPeer(consumable.from.hashcode());
 				try {
 					const prepared = await introduceEntries(
 						queryRequestCoerced,
@@ -6678,7 +6757,12 @@ export class DocumentIndex<
 						this.documentType,
 						this.indexedType,
 						this._sync,
-						options as QueryDetailedOptions<T, I, D, any>,
+						(strict ? options : bestEffortOptions()) as QueryDetailedOptions<
+							T,
+							I,
+							D,
+							any
+						>,
 					);
 
 					for (const response of prepared) {
@@ -7072,22 +7156,25 @@ export class DocumentIndex<
 					}
 
 					const lateJoinFetchPromise = trackFetch(
-						fetchFirst(totalFetchedCounter, {
-							from: unresolved,
+						fetchFirstFrom(
+							totalFetchedCounter,
+							unresolved,
 							fetchedFirstForRemote,
-						}),
+							(error) => {
+								// A failed peer stays marked as fetched, so join handling
+								// does not ask it again. Record the failure whichever
+								// caller (a join, pending() or next()) started this fetch.
+								if (!shouldIgnoreLateJoinFetchError(error)) {
+									recordDetachedFailure(error);
+								}
+							},
+						),
 					);
 					try {
 						await lateJoinFetchPromise;
 					} catch (error) {
 						if (shouldIgnoreLateJoinFetchError(error)) {
 							return false;
-						}
-						// A failed peer stays marked as fetched, so join handling does
-						// not ask it again. Record the failure whichever caller (a join,
-						// pending() or next()) started this fetch.
-						if (remoteConfig?.throwOnMissing) {
-							recordDetachedFailure(error);
 						}
 						throw error;
 					}
@@ -7156,7 +7243,7 @@ export class DocumentIndex<
 					} catch (error) {
 						// No read awaits this fetch: report a strict failure through
 						// the next read instead of leaking a rejection.
-						if (remoteConfig?.throwOnMissing) {
+						if (isStrictPeer(hash)) {
 							recordDetachedFailure(error);
 						} else {
 							warn("Failed to query joining peer", error);
