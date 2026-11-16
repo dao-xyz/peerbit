@@ -8454,12 +8454,30 @@ export class SharedLog<
 		const heads = missingHashes.length
 			? await index.getMany(missingHashes, {
 					type: "full",
-					ignoreMissing: useNativeHeads,
+					ignoreMissing: true,
 				})
 			: [];
 		this.throwIfReplicationOwnershipLifecycleInactive(
 			ownershipLifecycleController,
 		);
+		if (!useNativeHeads) {
+			// A lower head deleted since the scan is skipped. One that is still a
+			// head without its block fails closed, as getHeads(true) does.
+			for (let i = 0; i < missingHashes.length; i++) {
+				if (heads[i]) {
+					continue;
+				}
+				const row = await index.getShallow(missingHashes[i]!);
+				this.throwIfReplicationOwnershipLifecycleInactive(
+					ownershipLifecycleController,
+				);
+				if (row?.value.head) {
+					throw new Error(
+						"Failed to load entry from head with hash: " + missingHashes[i],
+					);
+				}
+			}
+		}
 
 		if (staleHashes.length > 0) {
 			await this._coordinates.deleteNonHeadCoordinatesForHashes(

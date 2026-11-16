@@ -209,32 +209,134 @@ describe("current head coordinate repair", () => {
 			expect(await coordinate(shared, stale.hash)).to.exist;
 			expect(await coordinate(shared, needed.hash)).to.equal(undefined);
 		});
+
+		it(`skips a missing-coordinate head deleted during the coordinate scan (${mode})`, async () => {
+			const { store, shared, index } = await open(nativeHeads);
+			const { entry: kept } = await store.add("kept", {
+				target: "none",
+				meta: { next: [] },
+			});
+			const { entry: deleted } = await store.add("deleted", {
+				target: "none",
+				meta: { next: [] },
+			});
+			await shared._coordinates.deleteCoordinatesForHashes(
+				[deleted.hash],
+				shared.captureReplicationOwnershipLifecycle(),
+			);
+			await coldEntries(index);
+			// Delete the head after the head scan, while coordinates are listed.
+			let deletion: Promise<unknown> | undefined;
+			const deleteOnce = () => {
+				if (deletion) return;
+				deletion = track(index.delete(deleted.hash));
+				return deletion;
+			};
+			const nativeCoordinates =
+				shared._nativeBackbone ?? shared._nativeSharedLogState;
+			if (nativeCoordinates) {
+				const list =
+					nativeCoordinates.getEntryCoordinateHashes.bind(nativeCoordinates);
+				sinon
+					.stub(nativeCoordinates, "getEntryCoordinateHashes")
+					.callsFake(() => {
+						const hashes = list();
+						void deleteOnce();
+						return hashes;
+					});
+			} else {
+				const coordinates = shared.entryCoordinatesIndex;
+				const iterate = coordinates.iterate.bind(coordinates);
+				sinon.stub(coordinates, "iterate").callsFake((...args: any[]) => {
+					const iterator = iterate(...args);
+					const all = iterator.all.bind(iterator);
+					iterator.all = async () => {
+						await deleteOnce();
+						return all();
+					};
+					return iterator;
+				});
+			}
+			// Resolve the missing-coordinate head only once its delete committed.
+			const getMany = index.getMany.bind(index);
+			sinon.stub(index, "getMany").callsFake(async (hashes, options) => {
+				await deletion;
+				return getMany(hashes, options);
+			});
+			await shared.ensureCurrentHeadCoordinatesIndexed();
+			expect(deletion).to.exist;
+			await deletion;
+			expect(await index.getShallow(deleted.hash)).to.not.exist;
+			expect(await coordinate(shared, deleted.hash)).to.equal(undefined);
+			expect(await coordinate(shared, kept.hash)).to.exist;
+		});
 	}
 
-	it("removes a stale coordinate for a block-less graph-only promoted head", async () => {
-		const { store, shared, index } = await open(true);
-		const { entry: parent } = await store.add("parent", {
+	it("fails closed for a current lower-index head with neither block nor coordinate", async () => {
+		const { store, shared, index } = await open(false);
+		const { entry: kept } = await store.add("kept", {
 			target: "none",
 			meta: { next: [] },
 		});
-		const { entry: child } = await store.add("child", {
+		const { entry: blockless } = await store.add("blockless", {
 			target: "none",
-			meta: { next: [parent] },
+			meta: { next: [] },
 		});
-		await index.flushPendingWrites();
-		expect((await index.getShallow(parent.hash))?.value.head).to.equal(false);
-		// Match the native-graph block-less-head fixture: a graph deletion promotes
-		// the parent without changing its lower row or restoring its missing block.
-		await shared.remoteBlocks.localStore.rm(parent.hash);
-		const graph = index.properties.nativeGraph!.graph;
-		graph.delete(child.hash);
-		expect(graph.heads()).to.include(parent.hash);
-		await persistStaleCoordinate(shared, parent);
+		await shared._coordinates.deleteCoordinatesForHashes(
+			[blockless.hash],
+			shared.captureReplicationOwnershipLifecycle(),
+		);
+		await shared.remoteBlocks.localStore.rm(blockless.hash);
 		await coldEntries(index);
-		await shared.ensureCurrentHeadCoordinatesIndexed();
-		expect(await coordinate(shared, parent.hash)).to.equal(undefined);
-		// Stale cleanup must retain a current lower head even if the graph differs.
-		expect((await index.getShallow(child.hash))?.value.head).to.equal(true);
-		expect(await coordinate(shared, child.hash)).to.exist;
+		const error = await shared.ensureCurrentHeadCoordinatesIndexed().then(
+			() => undefined,
+			(error: unknown) => error,
+		);
+		expect(error).to.be.instanceOf(Error);
+		expect((error as Error).message).to.equal(
+			`Failed to load entry from head with hash: ${blockless.hash}`,
+		);
+		expect((await index.getShallow(blockless.hash))?.value.head).to.equal(true);
+		expect(await coordinate(shared, blockless.hash)).to.equal(undefined);
+		expect(await coordinate(shared, kept.hash)).to.exist;
 	});
+
+	for (const blockPresent of [false, true]) {
+		const head = blockPresent
+			? "a graph-only promoted head whose block is present"
+			: "a block-less graph-only promoted head";
+		it(`removes a stale coordinate for ${head}`, async () => {
+			const { store, shared, index } = await open(true);
+			const { entry: parent } = await store.add("parent", {
+				target: "none",
+				meta: { next: [] },
+			});
+			const { entry: child } = await store.add("child", {
+				target: "none",
+				meta: { next: [parent] },
+			});
+			await index.flushPendingWrites();
+			expect((await index.getShallow(parent.hash))?.value.head).to.equal(false);
+			// Match the native-graph block-less-head fixture: a graph deletion
+			// promotes the parent without changing its lower row.
+			if (!blockPresent) {
+				await shared.remoteBlocks.localStore.rm(parent.hash);
+			}
+			const graph = index.properties.nativeGraph!.graph;
+			graph.delete(child.hash);
+			expect(graph.heads()).to.include(parent.hash);
+			expect(await shared.remoteBlocks.localStore.has(parent.hash)).to.equal(
+				blockPresent,
+			);
+			await persistStaleCoordinate(shared, parent);
+			await coldEntries(index);
+			await shared.ensureCurrentHeadCoordinatesIndexed();
+			// The lower row decides head-ness, as in stale cleanup and leader
+			// planning, so a present block does not keep the coordinate.
+			expect(await coordinate(shared, parent.hash)).to.equal(undefined);
+			// Stale cleanup must retain a current lower head even if the graph differs.
+			expect((await index.getShallow(child.hash))?.value.head).to.equal(true);
+			expect(await coordinate(shared, child.hash)).to.exist;
+		});
+	}
 });
