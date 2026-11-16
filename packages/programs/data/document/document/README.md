@@ -29,7 +29,9 @@ With `remote: { throwOnMissing: true }`, a responding peer's `NoAccess` rejects
 processed and need not list every denying peer. The RPC may wait for other
 requested peers before processing those responses. This also applies when
 permission is revoked before a continuation request. Healthy responses from
-other peers do not turn an observed denial into success.
+other peers do not turn an observed denial into success. An error processing a
+later page, received from a peer or read from the local index, also rejects
+instead of ending that source's rows early.
 
 This also covers the queries that a replicator joining later triggers, for
 `get(id, { waitFor })` and for iterators with a keep-open `remote.wait`. A

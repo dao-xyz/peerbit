@@ -373,3 +373,93 @@ describe("remote continuation processing failures", () => {
 		});
 	}
 });
+
+describe("local continuation processing failures", () => {
+	// The reader replicates every row, so its later pages come from its own
+	// index instead of from a remote peer.
+	let session: TestSession | undefined;
+	let store: TestStore;
+	const ids = ["local-a", "local-b", "local-c", "local-d"] as const;
+
+	before(async () => {
+		session = await bounded(TestSession.connected(1), "start query peer");
+		store = await bounded(
+			session.peers[0].open(
+				new TestStore({ docs: new Documents<Document>() }),
+				{
+					args: {
+						replicate: { factor: 1 },
+						timeUntilRoleMaturity: 0,
+						index: { prefetch: false },
+					},
+				},
+			),
+			"open query store",
+		);
+		for (const id of ids)
+			await bounded(store.docs.put(new Document({ id })), "put query fixture");
+	});
+	after(async () => {
+		if (session) await bounded(session.stop(), "stop query peer");
+	});
+
+	for (const strict of [true, false, undefined]) {
+		it(`handles a failed local continuation with throwOnMissing=${String(strict)}`, async () => {
+			const index = store.docs.index;
+			const sentinel = new Error("local continuation page failed");
+			let armed = false;
+			let injections = 0;
+			const processQuery = index.processQuery.bind(index) as (
+				...args: unknown[]
+			) => Promise<unknown>;
+			const stub = sinon
+				.stub(index, "processQuery")
+				.callsFake(async (...args: unknown[]) => {
+					const [request, , isLocal] = args;
+					if (
+						armed &&
+						isLocal === true &&
+						request instanceof CollectNextRequest
+					) {
+						injections++;
+						throw sentinel;
+					}
+					return processQuery(...args) as any;
+				});
+			const iterator = index.iterate(
+				new SearchRequest({
+					query: [],
+					sort: [new Sort({ key: "id", direction: SortDirection.ASC })],
+				}),
+				{
+					remote: {
+						...(strict === undefined ? {} : { throwOnMissing: strict }),
+						timeout: 1_000,
+					},
+				},
+			);
+			try {
+				expect(
+					(await bounded(iterator.next(1), "first local page")).map(
+						(row) => row.id,
+					),
+				).to.deep.equal([ids[0]]);
+				armed = true;
+				const result = await bounded(
+					outcome(iterator.next(1)),
+					"failed local continuation",
+				);
+				expect(injections).to.equal(1);
+				if (strict) expectFailure(result, sentinel);
+				else {
+					// Compatibility control: best-effort still ends the local
+					// rows early.
+					expect(result).to.deep.equal({ value: [] });
+				}
+			} finally {
+				stub.restore();
+				await bounded(iterator.close(), "close local iterator");
+			}
+		});
+	}
+});

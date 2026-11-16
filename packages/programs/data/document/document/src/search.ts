@@ -5863,6 +5863,14 @@ export class DocumentIndex<
 										"Failed to collect sorted results from self. " + e?.message,
 									);
 									peerBufferMap.delete(peer);
+									// Under remote.throwOnMissing a failed local page rejects
+									// the read instead of ending the local rows early.
+									if (
+										typeof options?.remote === "object" &&
+										options.remote.throwOnMissing
+									) {
+										throw e;
+									}
 								}),
 						);
 					} else {
