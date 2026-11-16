@@ -1,10 +1,11 @@
-import { field } from "@dao-xyz/borsh";
+import { field, variant } from "@dao-xyz/borsh";
 import {
 	Sort,
 	SortDirection,
 	StringMatch,
 	StringMatchMethod,
 	id,
+	toId,
 } from "@peerbit/indexer-interface";
 import { tests, tieParityTests } from "@peerbit/indexer-tests";
 import { expect } from "chai";
@@ -23,6 +24,30 @@ class BatchDocument {
 	}
 }
 
+@variant("versioned_document_context")
+class VersionContext {
+	@field({ type: "string" })
+	head: string;
+
+	constructor(head: string) {
+		this.head = head;
+	}
+}
+
+@variant(0)
+class VersionedDocument {
+	@id({ type: "string" })
+	id: string;
+
+	@field({ type: VersionContext })
+	__context: VersionContext;
+
+	constructor(id: string, head: string) {
+		this.id = id;
+		this.__context = new VersionContext(head);
+	}
+}
+
 describe("all", () => {
 	tests(create, "transient", {
 		shapingSupported: false,
@@ -31,6 +56,81 @@ describe("all", () => {
 	});
 
 	tieParityTests(create);
+
+	it("keeps a version put while a conditional delete evaluates the row", async () => {
+		const indices = create();
+		await indices.start();
+		const index = await indices.init({ schema: VersionedDocument });
+		const replacement = new VersionedDocument("a", "replacement");
+		let putDuringMatch = false;
+		// The delete reads __context while it matches the stored row. Replace the
+		// row at that moment, after the row was read and before it is deleted.
+		await index.put(
+			new Proxy(new VersionedDocument("a", "original"), {
+				get: (target, property, receiver) => {
+					if (property === "__context" && putDuringMatch) {
+						putDuringMatch = false;
+						index.put(replacement);
+					}
+					return Reflect.get(target, property, receiver);
+				},
+			}),
+		);
+
+		putDuringMatch = true;
+		const deleted = await index.del({
+			query: [
+				new StringMatch({ key: "id", value: "a" }),
+				new StringMatch({ key: ["__context", "head"], value: "original" }),
+			],
+		});
+
+		expect(putDuringMatch).to.equal(false);
+		expect(deleted).to.deep.equal([]);
+		expect((await index.get(toId("a")))?.value).to.equal(replacement);
+
+		await indices.drop();
+	});
+
+	it("reads only the row a query names by id", async () => {
+		const indices = create();
+		await indices.start();
+		const index = await indices.init({ schema: VersionedDocument });
+		// Each stored row records the queries that read it.
+		const read = new Set<string>();
+		for (let i = 0; i < 100; i++) {
+			await index.put(
+				new Proxy(new VersionedDocument(String(i), "first"), {
+					get: (target, property, receiver) => {
+						read.add(target.id);
+						return Reflect.get(target, property, receiver);
+					},
+				}),
+			);
+		}
+		const idAndHead = (id: string, head: string) => [
+			new StringMatch({ key: "id", value: id }),
+			new StringMatch({ key: ["__context", "head"], value: head }),
+		];
+
+		read.clear();
+		expect(await index.del({ query: idAndHead("7", "second") })).to.deep.equal(
+			[],
+		);
+		expect([...read]).to.deep.equal(["7"]);
+
+		read.clear();
+		const deleted = await index.del({ query: idAndHead("7", "first") });
+		expect(deleted.map((key) => key.primitive)).to.deep.equal(["7"]);
+		expect([...read]).to.deep.equal(["7"]);
+		expect(await index.getSize()).to.equal(99);
+
+		read.clear();
+		expect(await index.count({ query: idAndHead("8", "first") })).to.equal(1);
+		expect([...read]).to.deep.equal(["8"]);
+
+		await indices.drop();
+	});
 
 	it("applies puts in a batch", async () => {
 		const indices = create();

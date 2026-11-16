@@ -1937,7 +1937,13 @@ const convertRequestToQuery = <
 	if (extraJoin && extraJoin.size > 0) {
 		insertMapIntoMap(joinBuilder, extraJoin);
 	}
-	let { join } = buildJoin(joinBuilder, options);
+	let { join } = buildJoin(joinBuilder, {
+		...options,
+		primaryKeyTable:
+			path.length === 0 && matchesPrimaryKey(coercedQuery, table)
+				? table
+				: undefined,
+	});
 
 	const query = `${join ? join : ""} ${where ? where : ""}`;
 
@@ -1948,10 +1954,51 @@ const convertRequestToQuery = <
 	} as R;
 };
 
+/**
+ * Whether a conjunct of `query` matches `table`'s primary key by equality. Such
+ * a query reaches at most one row of `table` through its primary key.
+ */
+const matchesPrimaryKey = (query: types.Query[], table: Table): boolean => {
+	if (table.primary === false) {
+		return false;
+	}
+	for (const item of query) {
+		if (item instanceof types.And) {
+			if (matchesPrimaryKey(item.and, table)) {
+				return true;
+			}
+			continue;
+		}
+		if (
+			!(item instanceof types.StateFieldQuery) ||
+			getInlineTableFieldName(item.key) !== table.primary
+		) {
+			continue;
+		}
+		if (
+			item instanceof types.ByteMatchQuery ||
+			(item instanceof types.StringMatch &&
+				item.method === types.StringMatchMethod.exact &&
+				!item.caseInsensitive) ||
+			(item instanceof types.IntegerCompare &&
+				item.compare === types.Compare.Equal &&
+				table.primaryField?.type !== "BLOB")
+		) {
+			return true;
+		}
+	}
+	return false;
+};
+
 export const buildJoin = (
 	joinBuilder: Map<string, JoinOrRootTable>,
 	options?: {
 		planner?: PlanningSession;
+		/**
+		 * A root table whose primary key the query matches by equality. The
+		 * primary key reaches its row, so the planner adds no index for it.
+		 */
+		primaryKeyTable?: Table;
 	},
 ): { join: string } => {
 	/* let joinTypeDefault = resolveAllColumns
@@ -1980,6 +2027,7 @@ const _buildJoin = (
 	table: JoinOrRootTable,
 	options?: {
 		planner?: PlanningSession;
+		primaryKeyTable?: Table;
 	},
 ) => {
 	let join = "";
@@ -1993,8 +2041,8 @@ const _buildJoin = (
 		const usesImplicitPrimaryKeyIndex =
 			table.type === "root" &&
 			table.table.primary !== false &&
-			usedColumns.length === 1 &&
-			usedColumns[0] === table.table.primary;
+			((usedColumns.length === 1 && usedColumns[0] === table.table.primary) ||
+				table.table === options?.primaryKeyTable);
 		if (options?.planner && !usesImplicitPrimaryKeyIndex) {
 			const indexKey = options.planner.resolveIndex(
 				table.table.name,

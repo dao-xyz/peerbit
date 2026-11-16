@@ -1,5 +1,6 @@
 import {
 	BinaryWriter,
+	deserialize,
 	field,
 	serialize,
 	serializer,
@@ -2161,6 +2162,165 @@ describe("native planner bridge", () => {
 			await indices.drop();
 			await removeNodeDirectoryIfNeeded(directory);
 		}
+	});
+
+	describe("delete by context head", () => {
+		type ContextHeadDeleteIndex = {
+			attachNativeBackboneDocumentIndex: (backbone: unknown) => boolean;
+			delIdIfContextHead: (
+				deleteId: ReturnType<typeof toId>,
+				head: string,
+			) => Promise<boolean> | boolean | undefined;
+		};
+
+		// A native backbone document index that keeps the context head of each
+		// stored document.
+		const createBackbone = () => {
+			const heads = new Map<string, string>();
+			const deleted: string[][] = [];
+			const backbone = {
+				documentIndexLength: 0,
+				configureDocumentSchemaIr: () => ({
+					rootFields: 0,
+					nodeCount: 0,
+					genericNodes: 0,
+				}),
+				setDocumentContextHeadField: () => {},
+				setDocumentContextFields: () => {},
+				clearDocumentIndex: () => heads.clear(),
+				putDocumentEncodedPartsStored: (key: string, prefix: Uint8Array) => {
+					heads.set(
+						key,
+						deserialize(prefix, BridgeDocumentWithContext).__context.head,
+					);
+				},
+				documentContext: (key: string) => {
+					const head = heads.get(key);
+					return head === undefined
+						? undefined
+						: (["0", "0", head, "gid", 0] as const);
+				},
+				documentEntry: () => undefined,
+				documentQuery: () => [],
+				documentQueryPage: () => [],
+				documentCount: () => 0,
+				documentSum: () => ["none", "0"] as const,
+				deleteDocument: (key: string) => heads.delete(key),
+				deleteDocuments: (keys: string[]) => {
+					deleted.push([...keys]);
+					return keys.filter((key) => heads.delete(key)).length;
+				},
+			};
+			return { backbone, heads, deleted };
+		};
+		const version = (id: string, head: string) =>
+			new BridgeDocumentWithContext(
+				new BridgeDocument(id, "peerbit", head),
+				new BridgeContext(head),
+			);
+
+		it("removes a document only while its context head is the named head", async () => {
+			const indices = create();
+			await indices.start();
+			const index = await indices.init({ schema: BridgeDocumentWithContext });
+			const contextual = index as typeof index & ContextHeadDeleteIndex;
+			const { backbone, heads, deleted } = createBackbone();
+			expect(contextual.attachNativeBackboneDocumentIndex(backbone)).equal(
+				true,
+			);
+			await index.put(version("a", "head-1"));
+			await index.put(version("a", "head-2"));
+
+			expect(await contextual.delIdIfContextHead(toId("a"), "head-1")).equal(
+				false,
+			);
+			expect(deleted).to.deep.equal([]);
+			expect(heads.get("string:a")).equal("head-2");
+
+			expect(await contextual.delIdIfContextHead(toId("a"), "head-2")).equal(
+				true,
+			);
+			expect(deleted).to.deep.equal([["string:a"]]);
+			expect(heads.size).equal(0);
+
+			await indices.drop();
+		});
+
+		it("leaves the delete to the caller without a native document context", async () => {
+			const indices = create();
+			await indices.start();
+			const index = await indices.init({ schema: BridgeDocumentWithContext });
+			await index.put(version("a", "head-1"));
+
+			expect(
+				(index as typeof index & ContextHeadDeleteIndex).delIdIfContextHead(
+					toId("a"),
+					"head-1",
+				),
+			).equal(undefined);
+			expect(await index.getSize()).equal(1);
+
+			await indices.drop();
+		});
+
+		it("checks the context head after the puts queued ahead of the delete", async () => {
+			const directory = createPersistenceDirectory();
+			const indices = create(directory);
+			// Also released in finally, so a failure cannot leave the put held
+			// and make drop() wait for it.
+			let releaseAppend: () => void = () => {};
+			try {
+				await indices.start();
+				const index = await indices.init({ schema: BridgeDocumentWithContext });
+				const contextual = index as typeof index & ContextHeadDeleteIndex;
+				const { backbone, heads, deleted } = createBackbone();
+				expect(contextual.attachNativeBackboneDocumentIndex(backbone)).equal(
+					true,
+				);
+				await index.put(version("a", "head-1"));
+
+				// Hold the next put in the mutation queue, at its snapshot append.
+				const internal = index as unknown as {
+					appendPut: (...args: unknown[]) => Promise<void>;
+				};
+				const appendPut = internal.appendPut.bind(index);
+				let markHeld!: () => void;
+				const appendHeld = new Promise<void>((resolve) => {
+					markHeld = resolve;
+				});
+				const appendReleased = new Promise<void>((resolve) => {
+					releaseAppend = resolve;
+				});
+				internal.appendPut = async (...args: unknown[]) => {
+					markHeld();
+					await appendReleased;
+					return appendPut(...args);
+				};
+
+				const replacement = index.put(version("a", "head-2"));
+				await appendHeld;
+				expect(heads.get("string:a"), "the put waits in the queue").equal(
+					"head-1",
+				);
+				const removed = contextual.delIdIfContextHead(toId("a"), "head-1");
+				releaseAppend();
+				await replacement;
+
+				expect(await removed).equal(false);
+				expect(deleted).to.deep.equal([]);
+				expect(heads.get("string:a")).equal("head-2");
+
+				expect(await contextual.delIdIfContextHead(toId("a"), "head-2")).equal(
+					true,
+				);
+				expect(deleted).to.deep.equal([["string:a"]]);
+				expect(heads.size).equal(0);
+			} finally {
+				releaseAppend();
+				await indices.drop();
+				await removeNodeDirectoryIfNeeded(directory);
+			}
+		});
 	});
 
 	it("keeps exact byte matching for large byte arrays without indexing every byte by default", async () => {

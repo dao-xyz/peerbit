@@ -5707,6 +5707,104 @@ export class Documents<
 		modified.add(key.primitive);
 	}
 
+	/**
+	 * Apply an added delete of `key`. It removes the row only while the row's
+	 * head is the version the delete names, or a put that descends from it.
+	 *
+	 * Admission checked the same relation, but a newer independent version of
+	 * the key can be indexed after the delete was admitted. A delete must never
+	 * remove a version it did not name.
+	 */
+	private async applyAddedDelete(
+		entry: Entry<Operation>,
+		key: indexerTypes.IdKey,
+		modified: Set<string | number | bigint>,
+		documentsChanged?: DocumentsChange<T, I>,
+	): Promise<void> {
+		if (modified.has(key.primitive)) {
+			return;
+		}
+		// This change decides the key even when the row is kept, so a removed
+		// entry of the same key later in the change cannot delete it by key.
+		modified.add(key.primitive);
+		const target = entry.meta.next[0];
+		if (target === undefined) {
+			return;
+		}
+		// A miss means the head moved after it was read. Decide once more on the
+		// new head, then stop: that is the outcome of the newer version arriving
+		// after this delete.
+		for (let attempt = 0; attempt < 2; attempt++) {
+			const head = this.getExistingContext(
+				this.isNativeMode()
+					? this.getNativeModeIndexedContext(key)
+					: await this.getLocalIndexedContextForChange(key),
+			)?.head;
+			if (!head) {
+				return;
+			}
+			if (head !== target) {
+				// Native admission only accepts a delete of the head itself.
+				if (this.isNativeMode()) {
+					return;
+				}
+				if (!(await this.lineageReaches(head, target))) {
+					return;
+				}
+			}
+			const value = documentsChanged
+				? await this._index.get(key, {
+						local: true,
+						remote: false,
+					})
+				: undefined;
+			// The index checks the head where it removes the row, also when its
+			// mutations wait in a queue, so a version indexed after `head` was read
+			// is kept.
+			if (!(await this._index.delIfHead(key, head))) {
+				continue;
+			}
+			if (value) {
+				documentsChanged!.removed.push(value);
+			}
+			if (
+				value instanceof Program &&
+				value.closed !== true &&
+				value.parents.includes(this)
+			) {
+				await value.drop(this);
+			}
+			return;
+		}
+	}
+
+	/**
+	 * Whether `head` descends from `ancestor` along first parents, as
+	 * `_canAppend` admits a delete of an ancestor. The walk compares each parent
+	 * hash before resolving it, so `ancestor` itself need not be in the log. It
+	 * stops at a CUT: a version whose history passes through a delete was written
+	 * after that delete. Entries are content addressed, so the walk visits each
+	 * version between `head` and `ancestor` at most once, and ends at a root or at
+	 * the first entry missing from the local log.
+	 */
+	private async lineageReaches(
+		head: string,
+		ancestor: string,
+	): Promise<boolean> {
+		let current = await this.log.log.get(head);
+		while (current && current.meta.type !== EntryType.CUT) {
+			const parent = current.meta.next[0];
+			if (parent === undefined) {
+				return false;
+			}
+			if (parent === ancestor) {
+				return true;
+			}
+			current = await this.log.log.get(parent);
+		}
+		return false;
+	}
+
 	private async collectRemovedPutChangeFromNativeId(
 		payload: Operation,
 		modified: Set<string | number | bigint>,
@@ -6260,6 +6358,15 @@ export class Documents<
 					removedSet.has(item.hash)
 				) {
 					await orderedSession?.flush();
+					if (isDeleteOperation(payload) && !removedSet.has(item.hash)) {
+						await this.applyAddedDelete(
+							item,
+							coerceDeleteOperation(payload).key,
+							modified,
+							documentsChanged,
+						);
+						continue;
+					}
 					if (
 						!documentsChanged &&
 						(await this.collectRemovedPutChangeFromNativeId(payload, modified))

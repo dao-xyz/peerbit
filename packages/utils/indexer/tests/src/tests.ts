@@ -4590,6 +4590,58 @@ export const tests = (
 				});
 				expect(await store.getSize()).to.equal(3);
 			});
+
+			describe("conditional", () => {
+				@variant("delete_head_context")
+				class HeadContext {
+					@field({ type: "string" })
+					head: string;
+
+					constructor(head: string) {
+						this.head = head;
+					}
+				}
+
+				@variant(0)
+				class HeadDocument {
+					@id({ type: "string" })
+					id: string;
+
+					@field({ type: HeadContext })
+					__context: HeadContext;
+
+					constructor(id: string, head: string) {
+						this.id = id;
+						this.__context = new HeadContext(head);
+					}
+				}
+
+				const idAndHead = (head: string) => [
+					new StringMatch({ key: "id", value: "1" }),
+					new StringMatch({ key: ["__context", "head"], value: head }),
+				];
+
+				it("deletes a row only while every predicate still matches", async () => {
+					await setup({ schema: HeadDocument });
+					await store.put(new HeadDocument("1", "first"));
+					await store.put(new HeadDocument("1", "second"));
+					await store.put(new HeadDocument("2", "first"));
+
+					const stale = await store.del({ query: idAndHead("first") });
+					expect(stale).to.have.length(0);
+					expect((await store.get(toId("1")))?.value.__context.head).to.equal(
+						"second",
+					);
+					expect(await store.getSize()).to.equal(2);
+
+					const current = await store.del({ query: idAndHead("second") });
+					expect(current.map((key) => key.primitive)).to.deep.equal(["1"]);
+					expect(await store.get(toId("1"))).to.equal(undefined);
+					expect((await store.get(toId("2")))?.value.__context.head).to.equal(
+						"first",
+					);
+				});
+			});
 		});
 
 		describe("persistance", () => {
