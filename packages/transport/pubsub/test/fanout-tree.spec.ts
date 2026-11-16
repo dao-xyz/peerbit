@@ -1777,6 +1777,7 @@ describe("fanout-tree", () => {
 				connectionManager.closeConnections.bind(connectionManager);
 			let dropJoinControls = true;
 			let resetCount = 0;
+			let timeoutsAtReset: number | undefined;
 
 			leafInternals._sendControl = async (to: string, bytes: Uint8Array) => {
 				if (dropJoinControls && to === rootId) return;
@@ -1785,6 +1786,10 @@ describe("fanout-tree", () => {
 			connectionManager.closeConnections = async (...args: any[]) => {
 				if (args[0]?.toString?.() === rootPeer.peerId.toString()) {
 					resetCount += 1;
+					timeoutsAtReset = leaf.getChannelMetrics(
+						topic,
+						rootId,
+					).joinReqTimeouts;
 					await originalCloseConnections(...args);
 					dropJoinControls = false;
 					return;
@@ -1813,6 +1818,7 @@ describe("fanout-tree", () => {
 					},
 				);
 				expect(resetCount).to.equal(1);
+				expect(timeoutsAtReset).to.equal(3);
 				expect(leaf.getChannelMetrics(topic, rootId).joinPeerResets).to.equal(1);
 				expect(leaf.getChannelStats(topic, rootId)?.parent).to.equal(rootId);
 				expect(connectionManager.getConnections(rootPeer.peerId).length).to.be.greaterThan(
@@ -2046,8 +2052,14 @@ describe("fanout-tree", () => {
 			// Nothing this peer sends reaches the remote, so nothing comes back
 			// until the connection is reset and redialled.
 			let dropControls = true;
+			let timeoutsAtReset: number | undefined;
 			watch.onReset = () => {
 				dropControls = false;
+				timeoutsAtReset = Math.max(
+					...topics.map(
+						(topic) => local.getChannelMetrics(topic, remoteId).joinReqTimeouts,
+					),
+				);
 			};
 			internals._sendControl = async (to: string, ...rest: any[]) => {
 				if (dropControls && to === remoteId) return;
@@ -2072,7 +2084,10 @@ describe("fanout-tree", () => {
 				watch.restore();
 			}
 
+			// The channels time out in step, one window per round of timeouts, so
+			// the reset came with the third round: on a channel's third timeout.
 			expect(watch.resets).to.equal(1);
+			expect(timeoutsAtReset).to.equal(3);
 			expect(
 				topics.reduce(
 					(sum, topic) =>
