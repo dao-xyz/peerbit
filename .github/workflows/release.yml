@@ -97,7 +97,10 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: lts/*
+          # Pinned, not lts/*: lts/* moved to Node 26, where better-sqlite3
+          # 12.5.0 does not compile, so "Install deps" failed on every push.
+          # 24.x is the version the last successful release ran on (v24.21.0).
+          node-version: 24.x
           registry-url: "https://registry.npmjs.org"
       - uses: pnpm/action-setup@v4
         with:
@@ -229,7 +232,10 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: lts/*
+          # Pinned, not lts/*: lts/* moved to Node 26, where better-sqlite3
+          # 12.5.0 does not compile, so "Install deps" failed on every push.
+          # 24.x is the version the last successful release ran on (v24.21.0).
+          node-version: 24.x
           registry-url: "https://registry.npmjs.org"
       - uses: pnpm/action-setup@v4
         with:
