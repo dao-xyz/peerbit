@@ -911,10 +911,15 @@ const REPAIR_RETRY_MIN_MS = 1_000;
 const REPAIR_RETRY_INTERVAL_FACTOR = 5;
 // A stream can remain locally readable/writable while silently dropping every
 // control frame. Repeated unanswered JOIN requests are end-to-end evidence that
-// the peer path needs to be rebuilt, as long as the peer stays silent: a reset
-// takes this many consecutive request windows in which nothing arrived from the
-// peer, however many channels were waiting on it.
+// the peer path needs to be rebuilt. They are counted per request window:
+// requests in flight together count once, however many channels were waiting
+// on the peer. A reset takes three consecutive windows in which nothing arrived
+// from the peer, or six consecutive unanswered windows whatever else it sent: a
+// stream that drops only our frames leaves the peer talking to us while our
+// requests never reach it.
 const JOIN_TIMEOUT_RESET_STREAK_THRESHOLD = 3;
+const JOIN_TIMEOUT_RESET_UNANSWERED_THRESHOLD =
+	2 * JOIN_TIMEOUT_RESET_STREAK_THRESHOLD;
 const JOIN_TIMEOUT_RESET_COOLDOWN_MS = 10_000;
 
 const JOIN_REJECT_REDIRECT_QUEUE_MAX = 64;
@@ -1416,11 +1421,12 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 	// which no channel metrics lookup can address, so they share one aggregate.
 	private readonly providerControlMetrics: InternalFanoutTreeChannelMetrics =
 		createEmptyMetrics();
-	// Per peer: consecutive join-request windows in which the peer sent nothing,
-	// and when the latest one was counted (see noteJoinTimeout).
+	// Per peer, since its last join response: consecutive join-request windows
+	// that timed out, how many of the latest ones were silent, and when the
+	// latest one was counted (see noteJoinTimeout).
 	private readonly joinTimeoutStreakByPeer = new Map<
 		string,
-		{ streak: number; countedAt: number }
+		{ unanswered: number; silent: number; countedAt: number }
 	>();
 	private readonly joinResetCooldownUntilByPeer = new Map<string, number>();
 	private bootstraps: Multiaddr[] = [];
@@ -4346,21 +4352,31 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 	) {
 		const stream = this.peers.get(peerHash);
 		if (!stream) return;
-		// Only silence is evidence. Anything the peer sent after the request went
-		// out shows it is alive; its answer may be queued behind a local stall.
-		const heardAt = lastInboundActivityAt(stream);
-		if (heardAt >= requestSentAt) return;
 		const previous = this.joinTimeoutStreakByPeer.get(peerHash);
-		// A request already in flight when the last strike was counted covers the
-		// same silence. One stall fires the join timers of every channel waiting
-		// on this peer in the same tick, and that is one strike, not one each.
+		// A request already in flight when the last window was counted belongs to
+		// that window. One stall fires the join timers of every channel waiting
+		// on this peer in the same tick, and that is one window, not one each.
 		if (previous && requestSentAt <= previous.countedAt) return;
-		// Hearing from the peer since the last strike starts the count over.
-		const streak =
-			previous && heardAt < previous.countedAt ? previous.streak + 1 : 1;
+		const unanswered = (previous?.unanswered ?? 0) + 1;
+		// Silence is the stronger evidence. Anything the peer sent after the
+		// request went out shows it is alive (its answer may be read but not yet
+		// handled), and hearing from it since the last window starts the silent
+		// count over.
+		const heardAt = lastInboundActivityAt(stream);
+		const silent =
+			heardAt >= requestSentAt
+				? 0
+				: (previous && heardAt < previous.countedAt ? previous.silent : 0) + 1;
 		const now = Date.now();
-		if (streak < JOIN_TIMEOUT_RESET_STREAK_THRESHOLD) {
-			this.joinTimeoutStreakByPeer.set(peerHash, { streak, countedAt: now });
+		if (
+			silent < JOIN_TIMEOUT_RESET_STREAK_THRESHOLD &&
+			unanswered < JOIN_TIMEOUT_RESET_UNANSWERED_THRESHOLD
+		) {
+			this.joinTimeoutStreakByPeer.set(peerHash, {
+				unanswered,
+				silent,
+				countedAt: now,
+			});
 			return;
 		}
 
