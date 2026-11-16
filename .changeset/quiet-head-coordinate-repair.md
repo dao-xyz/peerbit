@@ -2,4 +2,4 @@
 "@peerbit/shared-log": patch
 ---
 
-Compare current head metadata with replication coordinates before loading entry blocks, resolving only heads whose coordinates need repair. Preserve current-head ownership, lifecycle fencing, and persisted-receipt validation. Already-indexed blocks are no longer read for this metadata reconciliation; it is not an integrity scan or a durability proof.
+Opening a replicating log, and every later announcement of its replication range, no longer reads every current head's entry block to reconcile replication coordinates. Head hashes now come from the entry index (intersected with the native graph's heads when native heads are on), and only heads without a coordinate are loaded and planned. Lifecycle fencing, stale-coordinate cleanup and persisted-receipt checks are unchanged. This reconciliation is not an integrity scan: blocks of heads that already have a coordinate are neither read nor checked.
