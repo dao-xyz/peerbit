@@ -387,6 +387,37 @@ describe("join provider resolution", () => {
 		});
 	});
 
+	it("passes the block store's close signal to provider announcements", async () => {
+		session = await TestSession.disconnected(1);
+		const store = await session.peers[0].open(new EventStore<string, any>(), {
+			args: { replicate: false },
+		});
+		const log = store.log as any;
+		sinon
+			.stub((session.peers[0].services as any).fanout, "provide")
+			.returns({ close: sinon.spy() });
+		const announce = sinon
+			.stub((session.peers[0].services as any).fanout, "announceProviders")
+			.resolves();
+		const controller = new AbortController();
+
+		await log.remoteBlocks.options.onPutMany(["signal-a", "signal-b"], {
+			signal: controller.signal,
+		});
+		await log.remoteBlocks.options.onPut("signal-c", {
+			signal: controller.signal,
+		});
+
+		expect(announce.callCount).to.equal(2);
+		for (const call of announce.getCalls()) {
+			expect(call.args[1]).to.deep.equal({
+				ttlMs: 120_000,
+				bootstrapMaxPeers: 2,
+				signal: controller.signal,
+			});
+		}
+	});
+
 	it("watches both CID and log-wide provider namespaces", async () => {
 		session = await TestSession.disconnected(1);
 		const store = await session.peers[0].open(new EventStore<string, any>(), {

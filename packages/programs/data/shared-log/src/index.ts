@@ -18564,26 +18564,40 @@ export class SharedLog<
 		const fanoutService = getSharedLogFanoutService(this.node.services);
 		const blockProviderNamespace = (cid: string) => `cid:${cid}`;
 		const logProviderNamespace = `shared-log|${this.topic}`;
-		const announceBlockProvider = async (cid: string): Promise<void> => {
+		// Writes do not wait for these announcements: the log block store runs
+		// them in the background and aborts them through `signal` on close.
+		const blockProviderAnnounceOptions = (signal?: AbortSignal) => ({
+			ttlMs: 120_000,
+			bootstrapMaxPeers: 2,
+			...(signal ? { signal } : {}),
+		});
+		const announceBlockProvider = async (
+			cid: string,
+			options?: { signal?: AbortSignal },
+		): Promise<void> => {
 			try {
-				await fanoutService?.announceProvider(blockProviderNamespace(cid), {
-					ttlMs: 120_000,
-					bootstrapMaxPeers: 2,
-				});
+				await fanoutService?.announceProvider(
+					blockProviderNamespace(cid),
+					blockProviderAnnounceOptions(options?.signal),
+				);
 			} catch {
 				// Provider publication is best-effort.
 			}
 		};
-		const announceBlockProviders = async (cids: string[]): Promise<void> => {
+		const announceBlockProviders = async (
+			cids: string[],
+			options?: { signal?: AbortSignal },
+		): Promise<void> => {
 			const batchedAnnounce = fanoutService?.announceProviders;
 			if (typeof batchedAnnounce === "function") {
 				const namespaces = function* () {
 					for (const cid of cids) yield blockProviderNamespace(cid);
 				};
-				await batchedAnnounce.call(fanoutService, namespaces(), {
-					ttlMs: 120_000,
-					bootstrapMaxPeers: 2,
-				});
+				await batchedAnnounce.call(
+					fanoutService,
+					namespaces(),
+					blockProviderAnnounceOptions(options?.signal),
+				);
 				return;
 			}
 
@@ -18592,8 +18606,8 @@ export class SharedLog<
 			const worker = async () => {
 				for (;;) {
 					const index = nextIndex++;
-					if (index >= cids.length) return;
-					await announceBlockProvider(cids[index]!);
+					if (index >= cids.length || options?.signal?.aborted) return;
+					await announceBlockProvider(cids[index]!, options);
 				}
 			};
 			await Promise.all(
@@ -18876,7 +18890,7 @@ export class SharedLog<
 				: undefined,
 			onPut: fanoutService ? announceBlockProvider : undefined,
 			onPutMany: fanoutService
-				? (cids) => {
+				? (cids, options) => {
 						// A renewable log-wide provider lease makes every CID in a
 						// stored batch discoverable to current readers. Retain the
 						// per-CID directory publications for released readers that only
@@ -18887,7 +18901,7 @@ export class SharedLog<
 						} catch {
 							// ignore announce failures
 						}
-						return announceBlockProviders(cids);
+						return announceBlockProviders(cids, options);
 					}
 				: undefined,
 		});

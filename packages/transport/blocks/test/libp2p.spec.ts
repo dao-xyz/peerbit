@@ -330,6 +330,8 @@ describe("transport", function () {
 			expect(putKnown.callCount).to.equal(1);
 			expect(putKnown.getCall(0).args[0]).to.equal(cid);
 			expect(putKnown.getCall(0).args[1]).to.deep.equal(data);
+			// The provider hook runs after the replicating read, not inside it.
+			await store(session, 1).waitForStoredNotifications();
 			expect(onPut.callCount).to.equal(1);
 			expect(onPut.getCall(0).args[0]).to.equal(cid);
 			expect(await store(session, 1).has(cid)).to.equal(true);
@@ -423,6 +425,7 @@ describe("transport", function () {
 			expect(corruptResponseCount).to.be.greaterThan(0);
 			expect(put.callCount).to.equal(0);
 			expect(putKnown.callCount).to.equal(0);
+			await store(session, 1).waitForStoredNotifications();
 			expect(onPut.callCount).to.equal(0);
 			expect(await store(session, 1).has(cid)).to.equal(false);
 		} finally {
@@ -444,6 +447,7 @@ describe("transport", function () {
 		const cids = await store(session, 0).putKnownMany([[cid, data]]);
 
 		expect(cids).to.deep.equal([cid]);
+		await store(session, 0).waitForStoredNotifications();
 		expect(onPut.callCount).equal(1);
 		expect(onPut.getCall(0).args[0]).equal(cid);
 		expect(await store(session, 0).get(cid)).to.deep.equal(data);
@@ -461,6 +465,7 @@ describe("transport", function () {
 		const storedCid = await store(session, 0).putKnown(cid, data);
 
 		expect(storedCid).equal(cid);
+		await store(session, 0).waitForStoredNotifications();
 		expect(onPut.callCount).equal(1);
 		expect(onPut.getCall(0).args[0]).equal(cid);
 		expect(await store(session, 0).get(cid)).to.deep.equal(data);
@@ -482,7 +487,7 @@ describe("transport", function () {
 		remoteBlocks.notifyStoredManyDeferred([cid, secondCid]);
 
 		expect(onPut.callCount).equal(0);
-		await delay(10);
+		await store(session, 0).waitForStoredNotifications();
 		expect(onPut.callCount).equal(2);
 		expect(onPut.getCalls().map((call) => call.args[0])).to.have.members([
 			cid,

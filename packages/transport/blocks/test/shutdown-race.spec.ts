@@ -137,9 +137,9 @@ describe("@peerbit/blocks — shutdown race", () => {
 			}),
 		);
 		await remote.start();
-		const failure = new Error("deferred notification flush failed");
+		const failure = new Error("stored notification drain failed");
 		const flushStub = sinon
-			.stub(remote as any, "flushDeferredStoredNotifications")
+			.stub(remote as any, "drainStoredNotificationTasks")
 			.rejects(failure);
 		const localStopSpy = sinon.spy(local, "stop");
 		(remote as any)._resolvers.set("pending", async (): Promise<void> => {});
@@ -165,7 +165,7 @@ describe("@peerbit/blocks — shutdown race", () => {
 		}
 	});
 
-	it("awaits every batch provider hook with bounded concurrency", async () => {
+	it("awaits every batch provider hook with bounded concurrency when awaitPutHooks is set", async () => {
 		const local = trackStore(new AnyBlockStore(createStore(tmpDir)));
 		const key = await Ed25519Keypair.create();
 		let releaseNotifications!: () => void;
@@ -192,6 +192,7 @@ describe("@peerbit/blocks — shutdown race", () => {
 				publish: async () => undefined,
 				waitFor: async () => [],
 				onPut,
+				awaitPutHooks: true,
 			}),
 		);
 		await remote.start();
@@ -218,7 +219,7 @@ describe("@peerbit/blocks — shutdown race", () => {
 		expect(peakActive).equal(8);
 	});
 
-	it("uses an awaited aggregate hook for batches and the CID hook for singles", async () => {
+	it("uses an awaited aggregate hook for batches and the CID hook for singles when awaitPutHooks is set", async () => {
 		const local = trackStore(new AnyBlockStore(createStore(tmpDir)));
 		const key = await Ed25519Keypair.create();
 		let releaseAggregate!: () => void;
@@ -242,6 +243,7 @@ describe("@peerbit/blocks — shutdown race", () => {
 				waitFor: async () => [],
 				onPut,
 				onPutMany,
+				awaitPutHooks: true,
 			}),
 		);
 		await remote.start();
@@ -273,7 +275,7 @@ describe("@peerbit/blocks — shutdown race", () => {
 		expect(onPutMany.callCount).equal(1);
 	});
 
-	it("keeps a single put coupled to its provider notification", async () => {
+	it("keeps a single put coupled to its provider notification when awaitPutHooks is set", async () => {
 		const local = trackStore(new AnyBlockStore(createStore(tmpDir)));
 		const key = await Ed25519Keypair.create();
 		let releaseNotification!: () => void;
@@ -295,6 +297,7 @@ describe("@peerbit/blocks — shutdown race", () => {
 				publish: async () => undefined,
 				waitFor: async () => [],
 				onPut,
+				awaitPutHooks: true,
 			}),
 		);
 		await remote.start();
@@ -331,20 +334,27 @@ describe("@peerbit/blocks — shutdown race", () => {
 		const cids = Array.from({ length: 32 }, (_, index) => `cid-${index}`);
 
 		remote.notifyStoredManyDeferred([...cids, ...cids]);
-		const pending = (remote as any)
-			._deferredStoredNotificationCids as Set<string>;
-		expect(pending.size).equal(cids.length);
-		expect([...pending]).deep.equal(cids);
+		expect(remote.getStoredNotificationTelemetry()).to.deep.include({
+			pending: cids.length,
+			admitted: cids.length,
+			coalesced: cids.length,
+		});
+		expect(onPut.callCount).equal(0);
 
-		// stop() drains all work admitted before its lifecycle fence. Later
-		// notifications cannot escape the closed lifecycle.
+		await remote.waitForStoredNotifications();
+		expect(onPut.callCount).equal(cids.length);
+		expect(onPut.getCalls().map((call) => call.args[0])).deep.equal(cids);
+
+		// Notifications cannot escape the closed lifecycle.
 		await remote.stop();
 		await remote.stop();
 		expect(remote.status).equal("closed");
 		remote.notifyStoredDeferred("after-stop");
 		expect(onPut.callCount).equal(cids.length);
-		expect(onPut.getCalls().map((call) => call.args[0])).deep.equal(cids);
-		expect((remote as any)._deferredStoredNotificationCids).equal(undefined);
+		expect(remote.getStoredNotificationTelemetry()).to.deep.include({
+			pending: 0,
+			running: 0,
+		});
 	});
 
 	it("uses the aggregate hook for deferred batches when both hooks exist", async () => {
@@ -382,25 +392,29 @@ describe("@peerbit/blocks — shutdown race", () => {
 		const second = ["batch-d", "batch-e"];
 
 		remote.notifyStoredManyDeferred([...first, ...first]);
-		await firstAggregateStarted;
-		remote.notifyStoredManyDeferred(second);
-		const stopping = remote.stop();
 		try {
+			await firstAggregateStarted;
+			remote.notifyStoredManyDeferred(second);
+			// One aggregate call runs at a time; the second batch waits for it.
+			await new Promise<void>((resolve) => setImmediate(resolve));
 			expect(onPut.callCount).equal(0);
 			expect(onPutMany.callCount).equal(1);
+			expect(remote.getStoredNotificationTelemetry()).to.deep.include({
+				pending: second.length,
+				running: first.length,
+			});
 		} finally {
 			releaseFirstAggregate();
-			await stopping;
 		}
+		await remote.waitForStoredNotifications();
 
 		expect(onPut.callCount).equal(0);
 		expect(onPutMany.callCount).equal(2);
 		expect(onPutMany.firstCall.args[0]).deep.equal(first);
 		expect(onPutMany.secondCall.args[0]).deep.equal(second);
-		expect((remote as any)._deferredStoredNotificationCids).equal(undefined);
 	});
 
-	it("drains running and queued provider hooks during stop", async () => {
+	it("aborts running provider hooks and discards queued ones during stop", async () => {
 		const local = trackStore(new AnyBlockStore(createStore(tmpDir)));
 		const key = await Ed25519Keypair.create();
 		let releaseNotifications!: () => void;
@@ -411,10 +425,15 @@ describe("@peerbit/blocks — shutdown race", () => {
 		const notificationStarted = new Promise<void>((resolve) => {
 			markNotificationStarted = resolve;
 		});
-		const onPut = sinon.spy(async () => {
-			markNotificationStarted();
-			await notificationsReleased;
-		});
+		const signals: AbortSignal[] = [];
+		// These hooks ignore their signal, so stop() has to wait for them.
+		const onPut = sinon.spy(
+			async (_cid: string, options?: { signal?: AbortSignal }) => {
+				if (options?.signal) signals.push(options.signal);
+				markNotificationStarted();
+				await notificationsReleased;
+			},
+		);
 		const remote = trackRemote(
 			new RemoteBlocks({
 				local,
@@ -433,18 +452,29 @@ describe("@peerbit/blocks — shutdown race", () => {
 			);
 			await notificationStarted;
 			expect(onPut.callCount).equal(8);
+			expect(signals).to.have.length(8);
+			expect(signals.some((signal) => signal.aborted)).equal(false);
 
 			stopping = remote.stop().then(() => {
 				stopped = true;
 			});
-			await Promise.resolve();
+			expect(signals.every((signal) => signal.aborted)).equal(true);
+			expect(remote.getStoredNotificationTelemetry()).to.deep.include({
+				pending: 0,
+				running: 8,
+				abandoned: 24,
+			});
+			await new Promise<void>((resolve) => setImmediate(resolve));
 			expect(stopped).equal(false);
 		} finally {
 			releaseNotifications();
 			await stopping;
 		}
-		expect(onPut.callCount).equal(32);
-		expect((remote as any)._deferredStoredNotificationCids).equal(undefined);
+		expect(stopped).equal(true);
+		expect(onPut.callCount).equal(8);
+		expect(remote.getStoredNotificationTelemetry()).to.deep.include({
+			running: 0,
+		});
 	});
 
 	it("delegates the local crash-safe barrier without a duplicate write drain", async () => {

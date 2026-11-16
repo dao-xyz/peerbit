@@ -628,6 +628,18 @@ export type FanoutProviderAnnounceOptions = {
 	bootstrapMaxPeers?: number;
 };
 
+/** Options for a one-shot `announceProvider`/`announceProviders` call. */
+export type FanoutProviderAnnounceOnceOptions = Omit<
+	FanoutProviderAnnounceOptions,
+	"announceIntervalMs"
+> & {
+	/**
+	 * Cancels this announcement, including a pending bootstrap dial. Stopping
+	 * the service cancels it as well.
+	 */
+	signal?: AbortSignal;
+};
+
 export type FanoutProviderQueryOptions = {
 	want?: number;
 	seed?: number;
@@ -1890,7 +1902,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 	 */
 	public async announceProvider(
 		namespace: string,
-		options: Omit<FanoutProviderAnnounceOptions, "announceIntervalMs"> = {},
+		options: FanoutProviderAnnounceOnceOptions = {},
 	): Promise<void> {
 		await this.announceProviders([namespace], options);
 	}
@@ -1903,11 +1915,12 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 	 */
 	public async announceProviders(
 		namespaces: Iterable<string>,
-		options: Omit<FanoutProviderAnnounceOptions, "announceIntervalMs"> = {},
+		options: FanoutProviderAnnounceOnceOptions = {},
 	): Promise<void> {
 		if (!this.started) {
 			throw new Error("FanoutTree must be started before providing");
 		}
+		if (options.signal?.aborted) return;
 
 		const ttlMsRaw = Math.max(0, Math.floor(options.ttlMs ?? 120_000));
 		const ttlMs = Math.min(ttlMsRaw, 120_000);
@@ -1929,66 +1942,78 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		);
 		const bootstraps = bootstrapOverride ?? this.bootstraps;
 		if (bootstraps.length === 0) return;
-		const signal = this.closeController.signal;
-		const ready = new Set<string>();
-		for (const address of bootstraps) {
-			const hash = this.connectedPeerHashForBootstrap(address);
-			if (hash) ready.add(hash);
-			if (bootstrapMaxPeers > 0 && ready.size >= bootstrapMaxPeers) break;
-		}
-		// Provider hints must not wait for unavailable trackers when a configured
-		// tracker is already ready. Retain bounded dialing for cold providers.
-		const peers =
-			ready.size > 0
-				? [...ready]
-				: await this.ensureBootstrapPeers(
-						bootstraps,
-						bootstrapDialTimeoutMs,
-						signal,
-						bootstrapMaxPeers,
-					);
-		if (peers.length === 0 || signal.aborted) return;
-
-		const iterator = namespaces[Symbol.iterator]();
-		const firstNamespaces: string[] = [];
-		for (
-			let index = 0;
-			index < PROVIDER_BATCH_ANNOUNCE_CONCURRENCY;
-			index++
-		) {
-			const next = iterator.next();
-			if (next.done) break;
-			firstNamespaces.push(next.value);
-		}
-		if (firstNamespaces.length === 0) return;
-
-		const addrs = this.getSelfAnnounceAddrs();
-		let firstError: unknown;
-		let failureCount = 0;
-		const announce = async (firstNamespace: string) => {
-			let namespace = firstNamespace;
-			for (;;) {
-				if (signal.aborted) return;
-				try {
-					const id = this.getProviderNamespaceId(namespace);
-					const bytes = this.codec.encodeProviderAnnounce(id.key, ttlMs, addrs);
-					await this._sendControlMany(peers, bytes);
-				} catch (error) {
-					failureCount++;
-					firstError ??= error;
-				}
-				const next = iterator.next();
-				if (next.done) return;
-				namespace = next.value;
+		const signal = options.signal
+			? anySignal([this.closeController.signal, options.signal])
+			: this.closeController.signal;
+		try {
+			const ready = new Set<string>();
+			for (const address of bootstraps) {
+				const hash = this.connectedPeerHashForBootstrap(address);
+				if (hash) ready.add(hash);
+				if (bootstrapMaxPeers > 0 && ready.size >= bootstrapMaxPeers) break;
 			}
-		};
-		await Promise.all(firstNamespaces.map((namespace) => announce(namespace)));
-		if (failureCount === 1) throw firstError;
-		if (failureCount > 1) {
-			throw new AggregateError(
-				[firstError],
-				`Failed to announce ${failureCount} provider namespaces`,
+			// Provider hints must not wait for unavailable trackers when a configured
+			// tracker is already ready. Retain bounded dialing for cold providers.
+			const peers =
+				ready.size > 0
+					? [...ready]
+					: await this.ensureBootstrapPeers(
+							bootstraps,
+							bootstrapDialTimeoutMs,
+							signal,
+							bootstrapMaxPeers,
+						);
+			if (peers.length === 0 || signal.aborted) return;
+
+			const iterator = namespaces[Symbol.iterator]();
+			const firstNamespaces: string[] = [];
+			for (
+				let index = 0;
+				index < PROVIDER_BATCH_ANNOUNCE_CONCURRENCY;
+				index++
+			) {
+				const next = iterator.next();
+				if (next.done) break;
+				firstNamespaces.push(next.value);
+			}
+			if (firstNamespaces.length === 0) return;
+
+			const addrs = this.getSelfAnnounceAddrs();
+			let firstError: unknown;
+			let failureCount = 0;
+			const announce = async (firstNamespace: string) => {
+				let namespace = firstNamespace;
+				for (;;) {
+					if (signal.aborted) return;
+					try {
+						const id = this.getProviderNamespaceId(namespace);
+						const bytes = this.codec.encodeProviderAnnounce(
+							id.key,
+							ttlMs,
+							addrs,
+						);
+						await this._sendControlMany(peers, bytes);
+					} catch (error) {
+						failureCount++;
+						firstError ??= error;
+					}
+					const next = iterator.next();
+					if (next.done) return;
+					namespace = next.value;
+				}
+			};
+			await Promise.all(
+				firstNamespaces.map((namespace) => announce(namespace)),
 			);
+			if (failureCount === 1) throw firstError;
+			if (failureCount > 1) {
+				throw new AggregateError(
+					[firstError],
+					`Failed to announce ${failureCount} provider namespaces`,
+				);
+			}
+		} finally {
+			(signal as { clear?: () => void }).clear?.();
 		}
 	}
 

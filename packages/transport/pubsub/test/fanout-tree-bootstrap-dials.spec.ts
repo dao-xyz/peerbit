@@ -215,6 +215,34 @@ describe("fanout-tree non-diagnostic dial bounds", () => {
 		expect(dial.signal!.aborted).to.equal(true);
 	});
 
+	it("cancels an in-flight one-shot provider dial when the caller's signal aborts", async () => {
+		dial = holdDial(fanout);
+		const controller = new AbortController();
+		operation = fanout.announceProvider("caller-cancelled-provider", {
+			bootstrapDialTimeoutMs: 60_000,
+			signal: controller.signal,
+		});
+		expect(dial.signal, "bootstrap dial signal").to.exist;
+		expect(dial.signal!.aborted).to.equal(false);
+		controller.abort();
+		// The abort reaches the dial at once, not after its 60 s budget.
+		expect(dial.signal!.aborted).to.equal(true);
+		await operation;
+		// The service itself stays usable.
+		expect(fanout.started).to.equal(true);
+	});
+
+	it("does not dial for a one-shot provider announcement that is already cancelled", async () => {
+		dial = holdDial(fanout);
+		const controller = new AbortController();
+		controller.abort();
+		operation = fanout.announceProvider("cancelled-provider", {
+			signal: controller.signal,
+		});
+		await operation;
+		expect(dial.signal).to.equal(undefined);
+	});
+
 	it("cancels an in-flight provider loop dial when its handle closes", async () => {
 		dial = holdDial(fanout);
 		const handle = fanout.provide("closed-provider", {

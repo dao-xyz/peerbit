@@ -7,17 +7,23 @@ const isNode = typeof process !== "undefined" && !!process.versions?.node;
 
 describe("blocks provider discovery", () => {
 	(isNode ? it : it.skip)(
-		"finishes a local block put when a provider bootstrap dial times out",
+		"finishes a local block put while its provider bootstrap dial never answers",
 		async function () {
-			this.timeout(12_000);
+			this.timeout(30_000);
 			const peer = await Peerbit.create();
 			const fanout = peer.services.fanout;
 			const pendingDials = new Set<(error: Error) => void>();
 			const dialSignals: Array<AbortSignal | undefined> = [];
+			let markDialStarted!: () => void;
+			const dialStarted = new Promise<void>((resolve) => {
+				markDialStarted = resolve;
+			});
+			// The dial never answers; it ends only when its signal aborts.
 			const dial = sinon
 				.stub((fanout as any).components.connectionManager, "openConnection")
 				.callsFake((_address, options: { signal?: AbortSignal } = {}) => {
 					dialSignals.push(options.signal);
+					markDialStarted();
 					return new Promise((_resolve, reject) => {
 						const finish = (error: Error) => {
 							options.signal?.removeEventListener("abort", onAbort);
@@ -33,34 +39,122 @@ describe("blocks provider discovery", () => {
 							});
 					});
 				});
-			let deadline: ReturnType<typeof setTimeout> | undefined;
+			const announce = sinon.spy(fanout, "announceProviders");
 			let putting: Promise<string> | undefined;
+			let stopped = false;
 			try {
 				fanout.addBootstraps([multiaddr("/ip4/127.0.0.1/tcp/1")]);
 				const bytes = new Uint8Array([7, 11, 13]);
-				putting = peer.services.blocks.put(bytes);
-				// The production announcement uses a 2-second dial budget. Allow
-				// scheduling headroom, but do not release the mocked dial to pass.
-				const cid = await Promise.race([
-					putting,
-					new Promise<never>((_resolve, reject) => {
-						deadline = setTimeout(
-							() =>
-								reject(new Error("local put is stuck on provider discovery")),
-							4_000,
-						);
-					}),
-				]);
+				let settled = false;
+				putting = peer.services.blocks.put(bytes).then((cid) => {
+					settled = true;
+					return cid;
+				});
+				await dialStarted;
+				// Everything the put still had to do is microtasks; the dial is
+				// pending until its 2-second budget or an abort ends it.
+				await new Promise<void>((resolve) => setImmediate(resolve));
+				expect(settled, "put resolved while its announcement dials").equal(
+					true,
+				);
+				expect(announce.callCount).equal(1);
+				const cid = await putting;
+				expect(await peer.services.blocks.get(cid)).deep.equal(bytes);
+
+				// Stopping cancels the announcement instead of waiting for its dial.
+				await peer.stop();
+				stopped = true;
 				expect(dialSignals.length).greaterThan(0);
 				expect(dialSignals.every((signal) => signal?.aborted)).equal(true);
 				expect(pendingDials.size).equal(0);
-				expect(await peer.services.blocks.get(cid)).deep.equal(bytes);
 			} finally {
-				clearTimeout(deadline);
 				for (const reject of pendingDials) reject(new Error("test cleanup"));
 				await putting?.catch((): void => undefined);
+				announce.restore();
 				dial.restore();
-				await peer.stop();
+				if (!stopped) await peer.stop();
+			}
+		},
+	);
+
+	(isNode ? it : it.skip)(
+		"announces a stored block to the provider directory after its put resolves",
+		async function () {
+			this.timeout(30_000);
+
+			const tracker = await Peerbit.create();
+			const provider = await Peerbit.create();
+			const consumer = await Peerbit.create();
+			const fanout = provider.services.fanout;
+			const announceProviders = fanout.announceProviders;
+			let releaseAnnouncement!: () => void;
+			const announcementReleased = new Promise<void>((resolve) => {
+				releaseAnnouncement = resolve;
+			});
+			let markAnnouncementStarted!: () => void;
+			const announcementStarted = new Promise<void>((resolve) => {
+				markAnnouncementStarted = resolve;
+			});
+			let onProvider: ((event: Event) => void) | undefined;
+
+			try {
+				await provider.bootstrap(tracker.getMultiaddrs());
+				await consumer.bootstrap(tracker.getMultiaddrs());
+
+				// Hold the provider's announcement until the put has resolved.
+				fanout.announceProviders = async function (
+					this: typeof fanout,
+					...args: Parameters<typeof announceProviders>
+				) {
+					markAnnouncementStarted();
+					await announcementReleased;
+					return announceProviders.apply(this, args);
+				};
+				const providerHash = provider.identity.publicKey.hashcode();
+				const recorded = new Promise<void>((resolve) => {
+					onProvider = (event: Event) => {
+						const { providers } = (
+							event as CustomEvent<{ providers: Array<{ hash: string }> }>
+						).detail;
+						if (providers.some((candidate) => candidate.hash === providerHash))
+							resolve();
+					};
+					tracker.services.fanout.addEventListener(
+						"fanout:provider",
+						onProvider,
+					);
+				});
+
+				const data = new Uint8Array([4, 5, 6]);
+				let settled = false;
+				const putting = provider.services.blocks.put(data).then((cid) => {
+					settled = true;
+					return cid;
+				});
+				await announcementStarted;
+				await new Promise<void>((resolve) => setImmediate(resolve));
+				expect(settled, "put resolved while its announcement is held").equal(
+					true,
+				);
+				const cid = await putting;
+
+				releaseAnnouncement();
+				// The tracker records the provider before it emits this event.
+				await recorded;
+				const bytes = await consumer.services.blocks.get(cid, {
+					remote: { timeout: 10_000 },
+				});
+				expect(bytes && new Uint8Array(bytes)).to.deep.equal(data);
+			} finally {
+				releaseAnnouncement();
+				fanout.announceProviders = announceProviders;
+				if (onProvider) {
+					tracker.services.fanout.removeEventListener(
+						"fanout:provider",
+						onProvider,
+					);
+				}
+				await Promise.all([consumer.stop(), provider.stop(), tracker.stop()]);
 			}
 		},
 	);
@@ -176,6 +270,8 @@ describe("blocks provider discovery", () => {
 
 			const data = new Uint8Array([1, 2, 3]);
 			const cid = await provider.services.blocks.put(data);
+			// The put does not wait for its best-effort announcement.
+			await provider.services.blocks.waitForStoredNotifications();
 
 			const bytes = await consumer.services.blocks.get(cid, {
 				remote: { timeout: 10_000 },
