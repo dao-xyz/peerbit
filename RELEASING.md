@@ -176,7 +176,8 @@ workflow then:
 2. runs `pnpm run build`,
 3. runs `pnpm run release` (`scripts/publish-public-packages.mjs`), which
    topologically sorts the public packages and publishes every version that is
-   not yet on npm (`from-package` semantics), and
+   not yet on npm (`from-package` semantics) through npm trusted publishing
+   (see "npm authentication" below), and
 4. creates the `<name>@<version>` git tags (e.g. `peerbit@5.2.21`,
    `@peerbit/crypto@3.2.0`) with `pnpm exec changeset tag` and pushes them. See
    "Git tags and the format change" below — this is a new tag namespace, not the
@@ -200,6 +201,68 @@ failed release reports it and it needs a new version.
 The downstream `Post Release Automation` workflow then restores the
 `workspace:*` protocol (a no-op with changesets, which preserves it) and, when
 `@peerbit/server` changed, opens the bootstrap rollout PR.
+
+## npm authentication
+
+Both publishing jobs in the `Release` workflow, `release` and `release-rc`,
+publish with npm
+[trusted publishing](https://docs.npmjs.com/trusted-publishers): npm exchanges
+the job's GitHub OIDC token for a short-lived token for the package being
+published, so a release needs no long-lived npm token. This requires:
+
+- a trusted publisher on every package the job publishes (on npmjs.com, the
+  package's **Settings** → **Trusted Publisher**): GitHub Actions, organization
+  `dao-xyz`, repository `peerbit`, workflow filename `release.yml`, environment
+  `npm-release`, and `npm publish` selected under **Allowed actions**. Trusted
+  publishers created after 2026-09-03 allow only `npm stage publish` until
+  `npm publish` is selected as well.
+- `id-token: write` on both jobs. Both must keep running in the `npm-release`
+  environment, which the trusted publisher names, on GitHub-hosted runners; npm
+  does not support self-hosted runners.
+- npm 11.5.1 or newer on Node 22.14.0 or newer. Both jobs install Node `24.x`,
+  whose bundled npm qualifies from 24.5.0 on. `pnpm publish`, which
+  `aegir release-rc` also uses, packs each package and uploads it with the npm
+  next to the Node running pnpm.
+
+Because the repository is public, npm also attaches a provenance statement to
+every version published this way, and it rejects the upload unless the
+package's `repository.url` names `https://github.com/dao-xyz/peerbit`. Every
+public package must therefore keep its `repository` field.
+
+A trusted publisher is added in a package's settings on npmjs.com, and a package
+has settings only once it exists. Publish the first version of a new package
+with a token or by hand, then add its trusted publisher.
+
+A new trusted publisher expires unless a publish uses it within 2 days; an
+expired one has to be deleted and created again. Before merging a Version
+Packages PR, run `npm view <name> _npmUser.trustedPublisher.id` for every
+package whose version it bumps. It prints `github` when the latest version was
+published through trusted publishing, and nothing otherwise. For each package
+that prints nothing, add its trusted publisher if it is missing, make sure
+`NPM_TOKEN` is unset (see below), and merge the PR within 2 days so that the
+release validates the trusted publisher.
+
+After that release, `npm view <name>@<version> _npmUser.trustedPublisher.id`
+should print `github` for each of those packages. If it prints nothing, the
+trusted publisher did not match and `NPM_TOKEN` published the version instead:
+recreate the trusted publisher, unset `NPM_TOKEN`, and release the package again
+within 2 days.
+
+If a publish fails with `ENEEDAUTH` (or, with a fallback token set, with the
+token's rejection, such as `E404 Not Found - PUT`), the package has no matching
+trusted publisher. Fix that as above, then run the `Release` workflow with
+publish mode **stable** (see "Manual publishing and release candidates"). It
+publishes only the versions that are not on npm yet, then creates the tags.
+
+The `NPM_TOKEN` secret in the `npm-release` environment is an optional
+fallback. When it is set, npm publishes with it only if the OIDC exchange fails,
+and the from-package publisher's `npm view` checks send it too. Leave it unset
+unless a release must publish the first version of a new package. A token that
+can still publish hides a missing or mismatched trusted publisher: npm publishes
+with the token instead, without provenance, and leaves a new trusted publisher
+unvalidated until it expires. Tokens that bypass 2FA lose `npm publish` in a
+change targeted for January 2027
+([GitHub changelog](https://github.blog/changelog/2026-07-31-restricting-npm-bypass-2fa-granular-access-tokens/)).
 
 ## Git tags and the format change
 
@@ -237,7 +300,11 @@ workflow:
   escape hatch to publish any package whose `package.json` version is not yet
   on npm without going through the Version Packages PR.
 - **rc** — builds and runs `pnpm run release:rc` (`aegir release-rc`) to
-  publish prerelease versions.
+  publish prerelease versions of every public package, so each one needs a
+  trusted publisher (see "npm authentication"). That includes
+  `@peerbit/test-lib`, which never appears in a Version Packages PR: if it has
+  none yet, add it right before dispatching a release candidate, since a new
+  trusted publisher expires unless a publish uses it within 2 days.
 
 The published-package security smoke retains a Node 18 compatibility check for
 `@peerbit/crypto`, even though the repository toolchain itself requires Node

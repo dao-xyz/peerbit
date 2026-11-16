@@ -52,6 +52,11 @@
 	"publishConfig": {
 		"access": "public"
 	},
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/dao-xyz/peerbit.git",
+		"directory": "packages/utils/time"
+	},
 	"scripts": {
 		"clean": "aegir clean",
 		"build": "aegir build  --no-bundle",

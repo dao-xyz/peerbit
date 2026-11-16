@@ -62,6 +62,10 @@ jobs:
     environment: npm-release
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+    # id-token: write lets npm trusted publishing exchange this job's GitHub
+    # OIDC token for a short-lived publish token, and lets npm sign the
+    # provenance statement it attaches. See "npm authentication" in
+    # RELEASING.md.
     permissions:
       contents: read
       id-token: write
@@ -175,6 +179,12 @@ jobs:
           # Older changesets/action builds read the token from the environment
           # rather than the github-token input; set both to stay robust.
           GITHUB_TOKEN: ${{ secrets.RELEASE_PR_TOKEN }}
+          # Optional fallback; empty unless the NPM_TOKEN secret is set. npm
+          # publishes through trusted publishing and silently falls back to
+          # this token only when the OIDC token exchange fails. npm also sends
+          # it with the step's other registry requests, such as npm view, and
+          # every command in the step can read it. The other publish steps
+          # pass it the same way. See "npm authentication" in RELEASING.md.
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       # Manual stable escape hatch: build, run the shared fail-closed security
@@ -197,6 +207,7 @@ jobs:
     environment: npm-release
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+    # id-token: write is for npm trusted publishing; see the release job.
     permissions:
       contents: read
       id-token: write

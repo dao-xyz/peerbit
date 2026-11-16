@@ -50,6 +50,11 @@
 	"publishConfig": {
 		"access": "public"
 	},
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/dao-xyz/peerbit.git",
+		"directory": "packages/programs/data/document/rust"
+	},
 	"scripts": {
 		"clean": "aegir clean && shx rm -rf ./wasm && cargo clean",
 		"build": "wasm-pack build --target web --out-dir wasm --out-name document_rust && shx rm -rf ./wasm/.gitignore ./wasm/package.json && aegir build --no-bundle && shx rm -rf ./dist/wasm && shx cp -r ./wasm ./dist/wasm",

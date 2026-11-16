@@ -51,6 +51,11 @@
 	"publishConfig": {
 		"access": "public"
 	},
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/dao-xyz/peerbit.git",
+		"directory": "packages/utils/any-store/rust"
+	},
 	"scripts": {
 		"benchmark": "npm run build && node ./dist/benchmark/index.js",
 		"clean": "aegir clean && shx rm -rf ./wasm && cargo clean",

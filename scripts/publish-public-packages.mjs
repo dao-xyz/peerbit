@@ -43,6 +43,11 @@ function readDurationEnv(name, fallback) {
 const PUBLISH_CONFLICT_PATTERN =
 	/cannot publish over the previously published version|EPUBLISHCONFLICT/i;
 
+// npm fails a publish with ENEEDAUTH when no trusted publisher matches and no
+// fallback token is set. With a fallback token, it reports the token's
+// rejection instead, such as E404 on the PUT.
+const PUBLISH_AUTH_PATTERN = /\bE(?:NEEDAUTH|401|403|404)\b/;
+
 const args = process.argv.slice(2);
 const dryRun = args.includes("--dry-run");
 const tag = readFlag("--tag");
@@ -144,12 +149,18 @@ async function isPublished({ name, version }) {
 async function verifyPublished(packages) {
 	// `pnpm publish` can exit 0 without the version actually landing on the
 	// registry — most notably the FIRST publish of a brand-new scoped package
-	// when the npm token / org lacks permission to create it. A silent
-	// non-publish must fail the release loudly, not leave a green run that
-	// shipped nothing. Re-query until every version is visible or the shared
-	// window for registry processing and propagation runs out. Unexpected
-	// registry errors are retried within the same window, since everything has
-	// already been handed to npm at this point.
+	// when the npm token / org lacks permission to create it. Trusted
+	// publishing cannot create a package (npm attaches a trusted publisher
+	// only to one that exists), so a first version is published with a token
+	// that may create packages, or by hand. A publish npm refuses, for example
+	// for lack of a matching trusted publisher, exits non-zero and fails in
+	// publishPackage instead. A silent non-publish must fail the release
+	// loudly, not leave a green run that shipped nothing. Re-query until every
+	// version is visible or the shared window for registry processing and
+	// propagation runs out. An upload that npm processes for longer than the
+	// window fails the same way. Unexpected registry errors are retried within
+	// the same window, since everything has already been handed to npm at this
+	// point.
 	let pending = packages;
 	let lastError;
 	const deadline = Date.now() + REGISTRY_VERIFICATION_TIMEOUT_MS;
@@ -184,8 +195,11 @@ async function verifyPublished(packages) {
 	const conflictedPending = pending.filter((pkg) => conflicted.has(pkg));
 	throw new Error(
 		`${pending.map((pkg) => `${pkg.name}@${pkg.version}`).join(", ")}: publish was accepted but the version never appeared on the registry. ` +
-			`For a brand-new package this usually means the npm token/org cannot create it — check the token scope ` +
-			`(needs @peerbit scope-level publish, not just per-package access) and the org's new-package permissions.` +
+			`For a brand-new package this usually means the npm token cannot create it: it needs @peerbit scope-level ` +
+			`publish (not just per-package access) and the org's new-package permission. Trusted publishing cannot ` +
+			`create a package; see "npm authentication" in RELEASING.md. For an existing package, npm may still be ` +
+			`processing the upload: once the version is on npm, run the Release workflow with publish mode stable to ` +
+			`create the tags.` +
 			(conflictedPending.length > 0
 				? ` npm rejected ${conflictedPending.map((pkg) => `${pkg.name}@${pkg.version}`).join(", ")} as already published; ` +
 					`if that version was unpublished or deleted earlier, npm will never accept it again and it needs a new version.`
@@ -227,7 +241,11 @@ async function publishPackage(pkg) {
 			return { brandNew };
 		}
 		throw new Error(
-			`${pnpmCmd} ${publishArgs.join(" ")} exited with code ${result.code}`,
+			`${pnpmCmd} ${publishArgs.join(" ")} exited with code ${result.code}` +
+				(PUBLISH_AUTH_PATTERN.test(result.output)
+					? `. This usually means npm had no credentials that may publish ${pkg.name}; see "npm authentication" ` +
+						`in RELEASING.md (trusted publisher, NPM_TOKEN fallback, first version of a new package).`
+					: ""),
 		);
 	}
 	return dryRun ? undefined : { brandNew };
