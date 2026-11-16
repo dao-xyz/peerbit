@@ -3760,7 +3760,7 @@ describe("join/leave", () => {
 			);
 		});
 
-		it("re-seeks on connection drop", async () => {
+		it("retains and improves the relay route after a direct connection drops", async () => {
 			/* 					
 			┌───┐ 
 			│0  │ 
@@ -3820,12 +3820,16 @@ describe("join/leave", () => {
 					).to.equal(false);
 				});
 
-				// We should observe the disconnected peer as unreachable.
-				expect(streams[0].unrechable.map((x) => x.hashcode())).to.have.members([
-					streams[3].stream.publicKeyHash,
-				]);
+				// The direct edge is gone, but the learned relay still reaches the peer.
+				expect(streams[0].unrechable).to.have.length(0);
+				expect(
+					streams[0].stream.routes.isReachable(
+						streams[0].stream.publicKeyHash,
+						streams[3].stream.publicKeyHash,
+					),
+				).to.equal(true);
 
-				// Trigger reseek/re-route via acknowledged delivery after the direct edge dropped.
+				// Acknowledged delivery also improves the relay's old redundant-path rank.
 				await streams[0].stream.publish(new Uint8Array([234]), {
 					mode: new AcknowledgeDelivery({
 						redundancy: 1,

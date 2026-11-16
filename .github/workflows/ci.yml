@@ -386,16 +386,20 @@ jobs:
           dist/test/v2-protected-recovery.spec.js
       # Global fake-clock assertions must not capture delayed peer-store work
       # from the real-node lifecycle tests in another suite.
-      - name: Test ACK wait ownership in an isolated process
+      - name: Test stream clock ownership in isolated processes
         timeout-minutes: 3
+        shell: bash
         env:
           AEGIR_RUNNER: node
           NODE_ENV: test
-        run: >-
-          node scripts/ci/assert-tests-ran.mjs node ./node_modules/mocha/bin/mocha.js
-          --no-config --no-package --require chai-extend/chai-global.js
-          --timeout 60000 --retries 0 --no-exit
-          packages/transport/stream/dist/test/ack-wait-ownership.spec.js
+        run: |
+          set -euo pipefail
+          for spec in ack-wait-ownership stream-cleanup; do
+            node scripts/ci/assert-tests-ran.mjs node ./node_modules/mocha/bin/mocha.js \
+              --no-config --no-package --require chai-extend/chai-global.js \
+              --timeout 60000 --retries 0 --no-exit \
+              "packages/transport/stream/dist/test/${spec}.spec.js"
+          done
       - name: Test pubsub clock ownership in isolated processes
         timeout-minutes: 3
         shell: bash
@@ -421,6 +425,8 @@ jobs:
           --timeout 60000 --retries 0 --no-exit
           packages/transport/stream/dist/test/stream-before-stop.spec.js
           packages/transport/stream/dist/test/stream-replacement.spec.js
+          packages/transport/stream/dist/test/alternate-route-disconnect.spec.js
+          packages/transport/stream/dist/test/routes.spec.js
           packages/programs/data/shared-log/dist/test/partition-recovery.spec.js
           packages/programs/data/shared-log/dist/test/partition-stream-renewal.spec.js
           packages/programs/data/shared-log/dist/test/transport-recovery-hint.spec.js
@@ -1037,6 +1043,7 @@ jobs:
           --no-config --no-package --require chai-extend/chai-global.js
           --require ./scripts/ci/use-rust-stream-core.mjs
           --timeout 60000 --retries 0 --no-exit
+          packages/transport/stream/dist/test/alternate-route-disconnect.spec.js
           packages/programs/data/shared-log/dist/test/transport-recovery-hint.spec.js
           packages/programs/data/shared-log/dist/test/partition-recovery.spec.js
           packages/programs/data/shared-log/dist/test/partition-stream-renewal.spec.js

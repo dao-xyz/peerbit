@@ -2239,39 +2239,125 @@ export abstract class DirectStream<
 			// tell dependent peers that there is a node that might have left
 			const dependent = this.routes.getDependent(peerKeyHash);
 
-			// make neighbour unreachables
-			this.removePeerFromRoutes(peerKeyHash, true);
+			// Retire the lost next hop, not surviving paths to the same identity.
+			this.removePeerFromRoutes(peerKeyHash, true, { neighbourOnly: true });
 
-			if (dependent.length > 0) {
-				const goodbye = await new Goodbye({
-					leaving: [peerKeyHash],
-					header: new MessageHeader({
-						session: this.session,
-						mode: new SilentDelivery({ to: dependent, redundancy: 2 }),
-					}),
-				}).sign(this.sign);
-				if (this.stopping || !this.started || this.peers.has(peerKeyHash)) {
-					return;
-				}
-				await this.publishMessageMaybe(
-					this.publicKey,
-					goodbye,
-				);
+			const retained = this.routes.isReachable(this.publicKeyHash, peerKeyHash);
+			if (
+				dependent.length > 0 &&
+				!retained &&
+				!(await this.announceDeparture(peerKeyHash, dependent))
+			) {
+				return;
 			}
 
 			// Best-effort liveness probe; never let background probe failures crash callers.
-			void this.checkIsAlive([peerKeyHash]).catch(() => false);
+			const probedAt = Date.now();
+			const alive = this.checkIsAlive([peerKeyHash]).catch(() => false);
+			if (retained) {
+				// The retained relay path is unconfirmed: the peer may have left, and the
+				// path can be a dependent's own route back through us. If the probe
+				// fails, retire the peer and send the dependents the departure hint.
+				const lifecycle = this.closeController;
+				void alive
+					.then(
+						(ok) =>
+							ok ||
+							this.retireUnconfirmedPeer(
+								peerKeyHash,
+								dependent,
+								lifecycle,
+								probedAt,
+							),
+					)
+					.catch(logError);
+			}
 		}
 
 		logger.trace("connection ended:" + peerKey.toString());
 	}
 
-	public removePeerFromRoutes(hash: string, deleteIfNeighbour = false) {
+	/**
+	 * Handles a failed liveness probe for a peer whose relay path was retained
+	 * when its direct connection closed. The probe's health check usually
+	 * retires the peer first, but a probe that fails before that check fires
+	 * (for example when a flood write to a closing neighbour rejects) releases
+	 * the check, and nothing else would retire the path. Unless the peer
+	 * reconnected or a route to it was learned after the probe was sent, it is
+	 * removed as a full removal would, and the dependents are told it left.
+	 */
+	private async retireUnconfirmedPeer(
+		peerKeyHash: string,
+		dependent: string[],
+		lifecycle: AbortController,
+		probedAt: number,
+	) {
+		if (
+			this.closeController !== lifecycle ||
+			lifecycle.signal.aborted ||
+			this.stopping ||
+			!this.started
+		) {
+			return false;
+		}
+		const refreshed = this.routes
+			.getRouteHints(this.publicKeyHash, peerKeyHash)
+			.some((hint) => hint.updatedAt > probedAt);
+		if (!refreshed) {
+			// Keeps a reconnected neighbour; a no-op once the health check removed it.
+			this.removePeerFromRoutes(peerKeyHash);
+		}
+		return (
+			dependent.length > 0 &&
+			this.announceDeparture(peerKeyHash, dependent, lifecycle)
+		);
+	}
+
+	/**
+	 * Signs and sends a departure hint about a lost peer to the peers that
+	 * reached it through us, unless this service restarted or the peer
+	 * reconnected or became reachable again in the meantime. Returns whether
+	 * the hint was sent.
+	 */
+	private async announceDeparture(
+		peerKeyHash: string,
+		dependent: string[],
+		lifecycle = this.closeController,
+	) {
+		const gone = () =>
+			this.closeController === lifecycle &&
+			!lifecycle.signal.aborted &&
+			!this.stopping &&
+			this.started &&
+			!this.peers.has(peerKeyHash) &&
+			!this.routes.isReachable(this.publicKeyHash, peerKeyHash);
+		if (!gone()) {
+			return false;
+		}
+		const goodbye = await new Goodbye({
+			leaving: [peerKeyHash],
+			header: new MessageHeader({
+				session: this.session,
+				mode: new SilentDelivery({ to: dependent, redundancy: 2 }),
+			}),
+		}).sign(this.sign);
+		if (!gone()) {
+			return false;
+		}
+		await this.publishMessageMaybe(this.publicKey, goodbye);
+		return true;
+	}
+
+	public removePeerFromRoutes(
+		hash: string,
+		deleteIfNeighbour = false,
+		options?: { neighbourOnly?: boolean },
+	) {
 		if (this.peers.has(hash) && !deleteIfNeighbour) {
 			return;
 		}
 
-		const unreachable = this.routes.remove(hash);
+		const unreachable = this.routes.remove(hash, options);
 		const state = this.sharedRoutingState;
 		const consumers = [...(state?.consumers ?? [this])];
 		const failures: unknown[] = [];

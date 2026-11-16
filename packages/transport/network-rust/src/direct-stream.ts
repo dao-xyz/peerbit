@@ -49,7 +49,7 @@ type WasmRoutesInstance = {
 	cleanup_pending(nowMs: number): void;
 	get_route_max_retention_period(): number;
 	set_route_max_retention_period(ms: number): void;
-	remove(target: string): string[];
+	remove(target: string, neighbourOnly?: boolean, nowMs?: number): string[];
 	remove_neighbour(neighbour: string): void;
 	find_neighbor_json(from: string, target: string): string | undefined;
 	get_route_hints_json(from: string, target: string, nowMs: number): string;
@@ -266,8 +266,8 @@ class RustRoutes implements RoutesLike {
 		this.cleanupTimer = undefined;
 	}
 
-	remove(target: string): string[] {
-		return this.wasm.remove(target);
+	remove(target: string, options?: { neighbourOnly?: boolean }): string[] {
+		return this.wasm.remove(target, options?.neighbourOnly, Date.now());
 	}
 
 	removeNeighbour(neighbour: string): void {
