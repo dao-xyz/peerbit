@@ -7275,8 +7275,20 @@ export class DocumentIndex<
 		}
 		const remoteWaitActive = keepRemoteWaitOpen;
 
+		// While the local cursor still has rows kept, the next collect reads more
+		// of them, so a drain loop has nothing to wait for. Waiting anyway can
+		// block until a peer joins or the iterator closes, because the join-wait
+		// timer resolves only one wait. The cursor must also still exist: the
+		// next collect skips a cursor that is gone, so the loop would spin.
+		const localCursorHasRows = () =>
+			(peerBufferMap.get(this.node.identity.publicKey.hashcode())?.kept ?? 0) >
+				0 && this._resumableIterators.has(queryRequestCoerced.idString);
+
 		const waitForUpdateAndResetDeferred = async () => {
 			if (remoteWaitActive) {
+				if (localCursorHasRows()) {
+					return;
+				}
 				// wait until: join fetch adds results, cleanup runs, or the join-wait times out
 				await _waitForUpdate();
 
