@@ -286,12 +286,14 @@ export class RemoteBlocks implements IBlocks {
 			 * When present, this replaces the per-CID `onPut` calls for batches. The
 			 * callback must therefore make every supplied CID discoverable through an
 			 * equivalent aggregate mechanism. Without it, `onPut` is invoked once for
-			 * every CID with bounded concurrency. With this hook, calls run one at a
-			 * time: CIDs stored while a call runs wait for it to settle and are
-			 * passed to the next call, so a call that waits on a congested peer
-			 * holds them back until it settles or the store stops. `options.batch`
-			 * says whether the CIDs include a multi-block write. `options.signal`
-			 * behaves as for `onPut`.
+			 * every CID with bounded concurrency. With this hook, background calls
+			 * run one at a time: CIDs stored while a call runs wait for it to settle
+			 * and are passed to the next call, so a call that waits on a congested
+			 * peer holds them back until it settles or the store stops. Writes with
+			 * `awaitPutHooks`, and `notifyStored`/`notifyStoredMany`, call the hook
+			 * directly instead, so those calls can overlap. `options.batch` says
+			 * whether the CIDs include a multi-block write. `options.signal` behaves
+			 * as for `onPut`.
 			 */
 			onPutMany?: (
 				cids: string[],
