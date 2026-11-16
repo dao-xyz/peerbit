@@ -589,7 +589,11 @@ const coerceQuery = <Resolve extends boolean | undefined>(
 	});
 };
 
-/** A query-level denial from one or more observed remote responders. */
+/**
+ * A query-level denial (`NoAccess`) from a remote responder, raised when
+ * `remote.throwOnMissing` is true. `peers` holds the first denying responder
+ * processed, not necessarily every peer that denied.
+ */
 export class AccessDeniedError extends Error {
 	readonly peers: string[];
 
@@ -2461,6 +2465,9 @@ export class DocumentIndex<
 		let deferred:
 			| DeferredPromise<WithIndexedContext<T, I> | WithContext<I>>
 			| undefined;
+		// Under remote.throwOnMissing: the first failure of a query that a
+		// joining peer triggered while this call waited for it.
+		let joinFailure: { error: unknown } | undefined;
 		let baseRemote:
 			| RemoteQueryOptions<
 					types.AbstractSearchRequest,
@@ -2505,7 +2512,7 @@ export class DocumentIndex<
 			let timeout = setTimeout(resolveUndefined, options.waitFor);
 			this.events.addEventListener("close", resolveUndefined);
 			this.documentEvents.addEventListener("change", listener);
-			deferred.promise.then(cleanup);
+			deferred.promise.then(cleanup, cleanup);
 
 			// Prepare remote options without mutating caller options
 			baseRemote =
@@ -2543,10 +2550,25 @@ export class DocumentIndex<
 								from: [hash],
 							},
 						};
-						const re = await this.getDetailed(idKey, requeryOptions as any);
-						const first = re?.[0]?.results[0];
-						if (first) {
-							deferred!.resolve(first.value as any);
+						try {
+							const re = await this.getDetailed(idKey, requeryOptions as any);
+							const first = re?.[0]?.results[0];
+							if (first) {
+								deferred!.resolve(first.value as any);
+							}
+						} catch (error) {
+							// This query runs detached from the caller. Under
+							// remote.throwOnMissing it fails get() while get() still
+							// waits; otherwise it is logged instead of leaking.
+							if (cleanedUp || this.closed) {
+								return;
+							}
+							if (!baseRemote?.throwOnMissing) {
+								warn("Failed to query joining peer", error);
+								return;
+							}
+							joinFailure ??= { error };
+							deferred!.reject(error);
 						}
 					},
 				});
@@ -2564,6 +2586,9 @@ export class DocumentIndex<
 			return deferred?.promise;
 		} else if (deferred) {
 			deferred.resolve(undefined);
+			if (joinFailure) {
+				throw joinFailure.error;
+			}
 		}
 		return result?.value;
 	}
@@ -4281,6 +4306,10 @@ export class DocumentIndex<
 				if (!isReplicator || params.signal?.aborted) return;
 				indexIteratorLogger.trace("peer joined as replicator", { peer: hash });
 				await params.onPeer(pk);
+			} catch (error) {
+				// Join events start this detached from any caller; callers report
+				// their own failures, so never let one escape as unhandled.
+				warn("Failed to handle a joining replicator", error);
 			} finally {
 				active.delete(hash);
 			}
@@ -6068,6 +6097,16 @@ export class DocumentIndex<
 			);
 		};
 
+		// Under remote.throwOnMissing: the first failure of a fetch for a late
+		// joining peer, which may run outside any read. It rejects every read
+		// until close().
+		let lateJoinFailure: { error: unknown } | undefined;
+		const throwLateJoinFailure = () => {
+			if (lateJoinFailure && !closeStarted) {
+				throw lateJoinFailure.error;
+			}
+		};
+
 		const next = async (n: number) => {
 			if (n < 0) {
 				throw new Error("Expecting to fetch a positive amount of element");
@@ -6077,6 +6116,7 @@ export class DocumentIndex<
 				return [];
 			}
 
+			throwLateJoinFailure();
 			await pendingUpdateProcessing;
 
 			const bufferedBeforeFetch = peerBuffers().length;
@@ -6095,6 +6135,8 @@ export class DocumentIndex<
 			// This keeps `next(n)` responsive when a late push/update arrives while a
 			// remote iterator has no more immediate items to collect.
 			const fetchedAll = preferBufferedResults ? false : await fetchAtLeast(n);
+			// A join-triggered fetch may have failed while this read waited.
+			throwLateJoinFailure();
 
 			// get n next top entries, shift and pull more results
 			const peerBuffersArr = peerBuffers();
@@ -6268,6 +6310,10 @@ export class DocumentIndex<
 		};
 
 		let doneFn = () => {
+			// Keep read loops going until they surface a recorded failure.
+			if (lateJoinFailure && !closeStarted) {
+				return false;
+			}
 			return done;
 		};
 
@@ -6897,6 +6943,10 @@ export class DocumentIndex<
 
 			updateDeferred = pDefer<void>();
 			const lateJoinFetchesInFlight = new Set<string>();
+			const recordLateJoinFailure = (error: unknown) => {
+				lateJoinFailure ??= { error };
+				signalUpdate(); // wake reads waiting for a join
+			};
 			const shouldIgnoreLateJoinFetchError = (error: unknown) => {
 				if (
 					this.closed ||
@@ -7016,6 +7066,12 @@ export class DocumentIndex<
 						if (shouldIgnoreLateJoinFetchError(error)) {
 							return false;
 						}
+						// A failed peer stays marked as fetched, so join handling does
+						// not ask it again. Record the failure whichever caller (a join,
+						// pending() or next()) started this fetch.
+						if (remoteConfig?.throwOnMissing) {
+							recordLateJoinFailure(error);
+						}
 						throw error;
 					}
 					for (const hash of unresolved) {
@@ -7078,7 +7134,17 @@ export class DocumentIndex<
 				onPeer: async (pk) => {
 					if (done) return;
 					const hash = pk.hashcode();
-					await fetchLateJoinPeers([hash], new Map([[hash, pk]]));
+					try {
+						await fetchLateJoinPeers([hash], new Map([[hash, pk]]));
+					} catch (error) {
+						// No read awaits this fetch: report a strict failure through
+						// the next read instead of leaking a rejection.
+						if (remoteConfig?.throwOnMissing) {
+							recordLateJoinFailure(error);
+						} else {
+							warn("Failed to query joining peer", error);
+						}
+					}
 				},
 			});
 			const cleanupDefault = cleanup;
