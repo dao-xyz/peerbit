@@ -3,7 +3,9 @@ import test from "node:test";
 import {
 	buildCutLifecycleComparison,
 	deleteHeadMatches,
+	hasDurableCutBlocks,
 	parseCutLifecycleCensusArgs,
+	validateCutLifecycleState,
 } from "./shared-log-cut-lifecycle-census-lib.mjs";
 import {
 	collectLifecycleDebt,
@@ -77,6 +79,166 @@ test("exact head matching catches duplicate-pair replacement", () => {
 	assert.equal(nativeHeads.length - remaining.size, 1);
 	assert.equal(deleteHeadMatches(remaining, ["b", "b", "c"]), 2);
 	assert.deepEqual([...remaining], ["a"]);
+});
+
+const validCutState = () => ({
+	logRows: 4,
+	graphRows: 4,
+	nativeLogRows: 4,
+	nativeBlockRows: 2,
+	headRows: 2,
+	nativeHeadRows: 2,
+	cutHeadRows: 2,
+	residentCoordinateRows: 2,
+	coordinateIndexRows: 2,
+	coordinateValueRows: 2,
+	nativeCoordinateHashes: 2,
+	assignedHeads: 2,
+	nonCutHeadRows: 0,
+	nativeHeadDuplicateRows: 0,
+	lowerHeadNotNativeRows: 0,
+	nativeHeadNotLowerRows: 0,
+	retainedLowerShallowMissing: 0,
+	retainedNativeGraphMissing: 0,
+	retainedDurableBlockMissing: 0,
+	rustCoordinateRows: 0,
+	documentRows: 0,
+	nativeDocumentIndexRows: 0,
+	nativeDocumentValueRows: 0,
+	enumeratedDocumentRows: 0,
+	replicationRanges: 1,
+	replicators: 1,
+	activeReplicators: 1,
+	durableBlockBytes: 100,
+	debt: { nonzero: [], unobserved: [] },
+});
+
+const validateReopenedCutState = (state) =>
+	validateCutLifecycleState({
+		state,
+		expectedOperations: 4,
+		expectedCutHeads: 2,
+		phase: "reopen",
+	});
+
+test("accepts a cold or warm reopen cache without weakening retained state", () => {
+	for (const nativeBlockRows of [0, 1, 2]) {
+		assert.ok(
+			validateReopenedCutState({ ...validCutState(), nativeBlockRows }),
+		);
+	}
+	for (const nativeBlockRows of [undefined, NaN, -1, 0.5, 3]) {
+		assert.throws(
+			() => validateReopenedCutState({ ...validCutState(), nativeBlockRows }),
+			/nativeBlockRows/,
+		);
+	}
+	for (const field of [
+		"headRows",
+		"residentCoordinateRows",
+		"retainedDurableBlockMissing",
+	]) {
+		assert.throws(
+			() => validateReopenedCutState({ ...validCutState(), [field]: 1 }),
+			new RegExp(field),
+		);
+	}
+	assert.throws(
+		() =>
+			validateReopenedCutState({
+				...validCutState(),
+				debt: {
+					nonzero: [{ field: "pendingGidCleanup", value: 1 }],
+					unobserved: [],
+				},
+			}),
+		/debt did not drain/,
+	);
+	const seed = {
+		...validCutState(),
+		headRows: 4,
+		nativeHeadRows: 4,
+		nonCutHeadRows: 2,
+	};
+	assert.throws(
+		() =>
+			validateCutLifecycleState({
+				state: seed,
+				expectedOperations: 4,
+				expectedCutHeads: 2,
+				phase: "seed",
+			}),
+		/nativeBlockRows/,
+	);
+	assert.ok(
+		validateCutLifecycleState({
+			state: { ...seed, nativeBlockRows: 4 },
+			expectedOperations: 4,
+			expectedCutHeads: 2,
+			phase: "seed",
+		}),
+	);
+});
+
+test("a warm native cache cannot hide a missing durable CUT block", async () => {
+	const localStore = {
+		hasMany: () => assert.fail("must not check the hot cache"),
+		durable: {
+			persisted: () => true,
+			hasMany: async (hashes) => {
+				assert.deepEqual(hashes, ["a", "b"]);
+				return [true, false];
+			},
+		},
+	};
+	const present = await hasDurableCutBlocks(localStore, ["a", "b"]);
+	assert.deepEqual(present, [true, false]);
+	assert.throws(
+		() =>
+			validateReopenedCutState({
+				...validCutState(),
+				retainedDurableBlockMissing: present.filter((value) => !value).length,
+			}),
+		/retainedDurableBlockMissing=1/,
+	);
+	localStore.durable.hasMany = async () => [true, true];
+	assert.deepEqual(await hasDurableCutBlocks(localStore, ["a", "b"]), [
+		true,
+		true,
+	]);
+	for (const durable of [
+		undefined,
+		{ persisted: () => false },
+		{ persisted: () => true },
+	]) {
+		await assert.rejects(
+			hasDurableCutBlocks({ durable }, ["a"]),
+			/requires the durable block mirror/,
+		);
+	}
+	for (const result of [undefined, [true], [true, undefined], Array(2)]) {
+		await assert.rejects(
+			hasDurableCutBlocks(
+				{ durable: { persisted: () => true, hasMany: async () => result } },
+				["a", "b"],
+			),
+			/not aligned/,
+		);
+	}
+	await assert.rejects(
+		hasDurableCutBlocks(
+			{
+				durable: {
+					persisted: () => true,
+					hasMany: async () => {
+						throw new Error("disk failure");
+					},
+				},
+			},
+			["a"],
+		),
+		/disk failure/,
+	);
 });
 
 test("observes every live repair debt seam", () => {

@@ -17,6 +17,23 @@ export const deleteHeadMatches = (remaining, hashes) => {
 	return unexpected;
 };
 
+export const hasDurableCutBlocks = async (localStore, hashes) => {
+	// The native write-through wrapper can answer from its non-durable cache.
+	const durable = localStore.durable;
+	if (durable?.persisted() !== true || typeof durable.hasMany !== "function") {
+		throw new Error("CUT lifecycle census requires the durable block mirror");
+	}
+	const present = await durable.hasMany(hashes);
+	if (
+		!Array.isArray(present) ||
+		present.length !== hashes.length ||
+		hashes.some((_, index) => typeof present[index] !== "boolean")
+	) {
+		throw new Error("CUT lifecycle durable block presence is not aligned");
+	}
+	return present;
+};
+
 const validateWorkload = ({
 	historyOperations,
 	keyCount,
@@ -136,7 +153,7 @@ export const validateCutLifecycleState = ({
 		phase === "seed" ? expectedOperations : expectedCutHeads;
 	recordExactFields(failures, state, [
 		[expectedOperations, ["logRows", "graphRows", "nativeLogRows"]],
-		[expectedLoadedHeads, ["nativeBlockRows", "headRows", "nativeHeadRows"]],
+		[expectedLoadedHeads, ["headRows", "nativeHeadRows"]],
 		[
 			expectedCutHeads,
 			[
@@ -167,6 +184,18 @@ export const validateCutLifecycleState = ({
 		],
 		[1, ["replicationRanges", "replicators", "activeReplicators"]],
 	]);
+	// Reopen may leave the native block cache cold; durable custody is checked
+	// independently. Seed still loads every operation and must retain that count.
+	if (
+		!Number.isSafeInteger(state.nativeBlockRows) ||
+		state.nativeBlockRows < 0 ||
+		state.nativeBlockRows > expectedLoadedHeads ||
+		(phase === "seed" && state.nativeBlockRows !== expectedLoadedHeads)
+	) {
+		failures.push(
+			`nativeBlockRows=${state.nativeBlockRows}, expected ${phase === "seed" ? expectedLoadedHeads : `0..${expectedLoadedHeads}`}`,
+		);
+	}
 	if (state.durableBlockBytes <= 0) {
 		failures.push("durable CUT block footprint must be positive");
 	}
