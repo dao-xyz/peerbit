@@ -7,6 +7,7 @@ import type {
 } from "@peerbit/indexer-interface";
 import * as types from "@peerbit/indexer-interface";
 import { v4 as uuid } from "uuid";
+import { ChangeJournal } from "./change-journal.js";
 import { PlannableQuery, QueryPlanner } from "./query-planner.js";
 import {
 	type BindableValue,
@@ -216,6 +217,12 @@ export class SQLiteIndex<T extends Record<string, any>>
 	private state: "closed" | "open" | "closing" = "closed";
 	private fkMode: FKMode;
 	private mutationVersion = 0;
+	/**
+	 * Root keys of committed writes, for iterators that need to know which rows
+	 * changed between two of their calls. It records only while a reader is
+	 * registered; no iterator registers one yet.
+	 */
+	private readonly changeJournal = new ChangeJournal();
 	private keyScanGeneration?: symbol;
 	private keyScanMutations = 0;
 
@@ -596,6 +603,8 @@ export class SQLiteIndex<T extends Record<string, any>>
 
 			await this.planner.stop();
 		} finally {
+			// The tables close: readers must rebase once they are open again.
+			this.changeJournal.beginEpoch();
 			this.setClosed();
 		}
 	}
@@ -643,6 +652,8 @@ export class SQLiteIndex<T extends Record<string, any>>
 			}
 			await this.planner.stop();
 		} finally {
+			// The tables are gone: readers must rebase once they are recreated.
+			this.changeJournal.beginEpoch();
 			this.setClosed();
 		}
 	}
@@ -730,6 +741,13 @@ export class SQLiteIndex<T extends Record<string, any>>
 		options?: { replace?: boolean },
 	): Promise<void> {
 		const classOfValue = value.constructor as Constructor<T>;
+		const rootTable = resolveTable(
+			this.scopeString ? [this.scopeString] : [],
+			this.tables,
+			classOfValue,
+			true,
+		);
+		let rootKey: unknown = undefined;
 		await insert(
 			async (values, table) => {
 				let preId = values[table.primaryIndex];
@@ -768,6 +786,9 @@ export class SQLiteIndex<T extends Record<string, any>>
 								? await runIgnoreFK(statement, values)
 								: await statement.run(values);
 						}
+						if (table === rootTable) {
+							rootKey = preId;
+						}
 						return preId;
 					} else {
 						statement = await this.getOrPrepareStatement(
@@ -783,7 +804,11 @@ export class SQLiteIndex<T extends Record<string, any>>
 						if (out == null) {
 							return undefined;
 						}
-						return out[table.primary as string];
+						const id = out[table.primary as string];
+						if (table === rootTable) {
+							rootKey = id;
+						}
+						return id;
 					}
 				} finally {
 					await statement?.reset?.();
@@ -791,12 +816,7 @@ export class SQLiteIndex<T extends Record<string, any>>
 			},
 			value,
 			this.tables,
-			resolveTable(
-				this.scopeString ? [this.scopeString] : [],
-				this.tables,
-				classOfValue,
-				true,
-			),
+			rootTable,
 			getSchema(classOfValue).fields,
 			(_fn) => {
 				throw new Error("Unexpected");
@@ -820,10 +840,16 @@ export class SQLiteIndex<T extends Record<string, any>>
 				},
 			},
 		);
+		// Staged until the caller's transaction commits (see withPutSavepoint and
+		// the ordered session's flush).
+		if (this.changeJournal.recording) {
+			this.changeJournal.record(this._rootTables.indexOf(rootTable), rootKey);
+		}
 	}
 
 	private async withPutSavepoint(write: () => Promise<void>): Promise<void> {
 		const savepoint = `peerbit_put_batch_${this.databaseCoordinator.nextSavepointId++}`;
+		const journalSavepoint = this.changeJournal.savepoint();
 		await this.properties.db.exec(`SAVEPOINT ${savepoint}`);
 		try {
 			await write();
@@ -838,7 +864,12 @@ export class SQLiteIndex<T extends Record<string, any>>
 					"SQLite write and rollback both failed",
 				);
 			}
+			this.changeJournal.rollback(journalSavepoint);
 			throw error;
+		} finally {
+			// This savepoint is the outermost one, so a release committed. After a
+			// failed rollback the writes may persist: publish their keys too.
+			this.changeJournal.commit();
 		}
 	}
 
@@ -913,6 +944,9 @@ export class SQLiteIndex<T extends Record<string, any>>
 					}
 				}
 			} finally {
+				// Publish before another admission can read. If the release failed,
+				// the chunk's writes may still commit later: publish them anyway.
+				this.changeJournal.commit();
 				chunkSavepoint = undefined;
 				successfulWrites = 0;
 				releaseAdmission = undefined;
@@ -944,6 +978,7 @@ export class SQLiteIndex<T extends Record<string, any>>
 				}
 
 				const rowSavepoint = `peerbit_ordered_row_${this.databaseCoordinator.nextSavepointId++}`;
+				const journalSavepoint = this.changeJournal.savepoint();
 				let rowOpen = false;
 				try {
 					await this.properties.db.exec(`SAVEPOINT ${rowSavepoint}`);
@@ -965,6 +1000,7 @@ export class SQLiteIndex<T extends Record<string, any>>
 							await this.properties.db.exec(
 								`RELEASE SAVEPOINT ${rowSavepoint}`,
 							);
+							this.changeJournal.rollback(journalSavepoint);
 						} catch (rollbackError) {
 							cleanupError = rollbackError;
 						}
@@ -1633,6 +1669,17 @@ export class SQLiteIndex<T extends Record<string, any>>
 				const results: any[] = await planningScope.perform(async () =>
 					stmt.all(bindable),
 				);
+				if (this.changeJournal.recording) {
+					const journalTable = this._rootTables.indexOf(table);
+					for (const result of results) {
+						this.changeJournal.record(
+							journalTable,
+							result[table.primary as string],
+						);
+					}
+					// Each DELETE commits on its own, before a later one can fail.
+					this.changeJournal.commit();
+				}
 
 				// TODO types
 				for (const result of results) {
