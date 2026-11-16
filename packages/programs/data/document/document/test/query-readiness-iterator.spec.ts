@@ -16,6 +16,20 @@ describe("public iterator cover readiness", function () {
 	let iterators: { close(): Promise<void> }[];
 	let releases: (() => void)[];
 	let pending: Promise<unknown>[];
+	let unhandledRejections: Set<unknown>;
+	// Without --unhandled-rejections=strict, Mocha's own handler swallows
+	// rejections that nothing handled, so record them for the assertions below.
+	const recordUnhandledRejection = (reason: unknown) => {
+		unhandledRejections.add(reason);
+	};
+	const expectNoUnhandledRejections = () =>
+		expect(
+			[...unhandledRejections].map((reason) =>
+				reason instanceof Error
+					? `${reason.constructor.name}: ${reason.message}`
+					: String(reason),
+			),
+		).to.deep.equal([]);
 
 	before(async () => {
 		session = await TestSession.connected(1);
@@ -25,6 +39,8 @@ describe("public iterator cover readiness", function () {
 		iterators = [];
 		releases = [];
 		pending = [];
+		unhandledRejections = new Set();
+		process.on("unhandledRejection", recordUnhandledRejection);
 		store = await session.peers[0].open(
 			new TestStore({ docs: new Documents<Document>() }),
 			{ args: { replicate: false, timeUntilRoleMaturity: 0 } },
@@ -46,6 +62,7 @@ describe("public iterator cover readiness", function () {
 			// handlers to internal promises or suppress the strict runner's errors.
 			await new Promise<void>((resolve) => setImmediate(resolve));
 		} finally {
+			process.off("unhandledRejection", recordUnhandledRejection);
 			clock?.restore();
 			sinon.restore();
 			await store?.close();
@@ -108,6 +125,7 @@ describe("public iterator cover readiness", function () {
 		await clock.tickAsync(0);
 		await iterator.close();
 		await new Promise<void>((resolve) => setImmediate(resolve));
+		expectNoUnhandledRejections();
 		expect(iterator.done()).to.equal(true);
 		expect(query.called).to.equal(false);
 	});
@@ -116,6 +134,7 @@ describe("public iterator cover readiness", function () {
 		const iterator = iterate();
 		await clock.tickAsync(100);
 		await new Promise<void>((resolve) => setImmediate(resolve));
+		expectNoUnhandledRejections();
 		expect(query.called).to.equal(false);
 		const result = await observe(iterator.next(1));
 		expect(result.error).to.be.instanceOf(TimeoutError);
