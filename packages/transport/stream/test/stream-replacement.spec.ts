@@ -9,6 +9,7 @@ import {
 	MessageHeader,
 	SilentDelivery,
 } from "@peerbit/stream-interface";
+import { delay, waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
 import { createLibp2p } from "libp2p";
 import pDefer from "p-defer";
@@ -520,6 +521,117 @@ describe("stream same-identity replacement ownership", () => {
 			}
 		}
 	});
+
+	for (const probe of [
+		"answers",
+		"fails",
+		"fails behind a fresh route",
+		"fails after a restart",
+	]) {
+		it(`sends a withheld goodbye only after the retained path fails its probe (${probe})`, async () => {
+			const node = await createNode();
+			const subject = node.services.directstream;
+			const target = (await Ed25519Keypair.create()).publicKey;
+			const relay = (await Ed25519Keypair.create()).publicKey;
+			const targetHash = target.hashcode();
+			const relayHash = relay.hashcode();
+			const direct = subject.addPeer(
+				target.toPeerId(),
+				target,
+				protocol,
+				"direct",
+			);
+			const viaRelay = subject.addPeer(
+				relay.toPeerId(),
+				relay,
+				protocol,
+				"relay",
+			);
+			const settled = pDefer<boolean>();
+			const checkIsAlive = sinon
+				.stub(subject as any, "checkIsAlive")
+				.returns(settled.promise);
+			const publications = sinon.spy(subject, "publishMessageMaybe");
+			const goodbyes = () =>
+				publications
+					.getCalls()
+					.map((call) => call.args[1])
+					.filter((message) => message instanceof Goodbye);
+			try {
+				await direct.attachOutboundStream(raw("direct-outbound"));
+				await viaRelay.attachOutboundStream(raw("relay-outbound"));
+				const routeSession = Date.now();
+				subject.updateSession(target, 123);
+				subject.updateSession(relay, 456);
+				subject.addRouteConnection(
+					subject.publicKeyHash,
+					relayHash,
+					relay,
+					-1,
+					routeSession,
+					456,
+				);
+				for (const nextHop of [targetHash, relayHash]) {
+					subject.addRouteConnection(
+						subject.publicKeyHash,
+						nextHop,
+						target,
+						1,
+						routeSession,
+						123,
+					);
+				}
+				// The relay reaches the target through us. Once the direct edge closes,
+				// the path retained through the relay may be that route back through us.
+				subject.addRouteConnection(
+					relayHash,
+					targetHash,
+					target,
+					1,
+					routeSession,
+					123,
+				);
+				expect(subject.routes.getDependent(targetHash)).to.deep.equal([
+					relayHash,
+				]);
+
+				await subject["onPeerDisconnected"](target.toPeerId(), {
+					id: "direct",
+					remotePeer: target.toPeerId(),
+					status: "closed",
+				} as Connection);
+				expect(checkIsAlive.calledOnceWithExactly([targetHash])).to.equal(true);
+				expect(
+					subject.getRouteHints(targetHash).map((hint) => hint.nextHop),
+				).to.deep.equal([relayHash]);
+				expect(goodbyes()).to.have.length(0);
+
+				if (probe === "fails") {
+					// The probe's ACK health check retires the identity before it settles.
+					subject.removePeerFromRoutes(targetHash);
+				} else if (probe === "fails after a restart") {
+					// A probe from the previous lifecycle must not speak for this one.
+					await subject.stop();
+					await subject.start();
+				}
+				settled.resolve(probe === "answers");
+				if (probe === "fails") {
+					await waitForResolved(() => expect(goodbyes()).to.have.length(1));
+					const goodbye = goodbyes()[0] as Goodbye;
+					expect(goodbye.leaving).to.deep.equal([targetHash]);
+					expect(goodbye.header.mode.to).to.deep.equal([relayHash]);
+				} else {
+					await delay(200);
+					expect(goodbyes()).to.have.length(0);
+				}
+			} finally {
+				settled.resolve(false);
+				checkIsAlive.restore();
+				publications.restore();
+				await node.stop();
+			}
+		});
+	}
 
 	it("does not remove replacement routes after an awaited old disconnect", async () => {
 		const node = await createNode();

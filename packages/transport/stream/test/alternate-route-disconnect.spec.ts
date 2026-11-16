@@ -17,10 +17,11 @@ import {
 } from "../src/index.js";
 
 class AlternateRouteStream extends DirectStream {
-	constructor(components: DirectStreamComponents) {
+	constructor(components: DirectStreamComponents, seekTimeout?: number) {
 		super(components, ["/alternate-route-disconnect/1.0.0"], {
 			canRelayMessage: true,
 			connectionManager: false,
+			seekTimeout,
 		});
 	}
 }
@@ -202,6 +203,107 @@ describe("stream alternate-route disconnect", function () {
 		} finally {
 			ackObserver.restore();
 			b.removeEventListener("data", onData);
+			a.removeEventListener("peer:unreachable", onLost);
+			await session.stop();
+		}
+	});
+
+	it("tells dependents once a retained relay path fails its probe after the peer leaves", async () => {
+		const seekTimeout = 1_000;
+		const blocked = new Set<string>();
+		const pair = (x: PeerId, y: PeerId) =>
+			[x.toString(), y.toString()].sort().join("|");
+		const session = await TestSession.disconnected<{
+			directstream: AlternateRouteStream;
+		}>(3, {
+			addresses: { listen: ["/ip4/127.0.0.1/tcp/0"] },
+			transports: [tcp()],
+			connectionManager: { reconnectRetries: 0 },
+			services: {
+				directstream: (components) => {
+					const deny = (remote: PeerId) =>
+						blocked.has(pair(components.peerId, remote));
+					Object.assign(components.connectionGater, {
+						denyDialPeer: deny,
+						denyInboundEncryptedConnection: deny,
+						denyOutboundEncryptedConnection: deny,
+					});
+					return new AlternateRouteStream(components, seekTimeout);
+				},
+			},
+		});
+		const [aNode, bNode, relayNode] = session.peers;
+		const a = aNode!.services.directstream;
+		const b = bNode!.services.directstream;
+		const relay = relayNode!.services.directstream;
+		const lost: string[] = [];
+		const onLost = ({ detail }: CustomEvent<PublicSignKey>) => {
+			lost.push(detail.hashcode());
+		};
+		const hops = (from: DirectStream, to: DirectStream) =>
+			from.getRouteHints(to.publicKeyHash).map((hint) => hint.nextHop);
+		const send = (from: DirectStream, to: DirectStream, redundancy: number) =>
+			from.publish(new Uint8Array([redundancy]), {
+				mode: new AcknowledgeDelivery({ to: [to.publicKeyHash], redundancy }),
+			});
+		a.addEventListener("peer:unreachable", onLost);
+		try {
+			await session.connect();
+			await Promise.all([
+				waitForNeighbour(a, b),
+				waitForNeighbour(a, relay),
+				waitForNeighbour(b, relay),
+			]);
+			// Redundant ACKs teach a "b via relay" and the relay "b via a".
+			await send(a, b, 2);
+			await send(relay, b, 2);
+			await waitForResolved(
+				() => {
+					expect(hops(a, b)).to.have.members([
+						b.publicKeyHash,
+						relay.publicKeyHash,
+					]);
+					expect(hops(relay, b)).to.have.members([
+						b.publicKeyHash,
+						a.publicKeyHash,
+					]);
+				},
+				{ timeout: 5_000 },
+			);
+			blocked.add(pair(aNode!.peerId, bNode!.peerId));
+			await Promise.all([
+				aNode!.hangUp(bNode!.peerId),
+				bNode!.hangUp(aNode!.peerId),
+			]);
+			await waitForResolved(
+				() => {
+					expect(a.peers.has(b.publicKeyHash)).to.equal(false);
+					expect(hops(a, b)).to.deep.equal([relay.publicKeyHash]);
+				},
+				{ timeout: 5_000 },
+			);
+			// a now reaches b only through the relay, which still keeps "b via a".
+			await send(a, b, 1);
+			expect(hops(relay, b)).to.have.members([
+				b.publicKeyHash,
+				a.publicKeyHash,
+			]);
+			expect(lost).not.to.include(b.publicKeyHash);
+
+			await bNode!.stop();
+			// The relay's retained path leads back to a, so its probe fails. Without
+			// the departure hint, a would keep b reachable through the relay.
+			await waitForResolved(
+				() =>
+					expect(
+						a.routes.isReachable(a.publicKeyHash, b.publicKeyHash),
+					).to.equal(false),
+				{ timeout: 5 * seekTimeout },
+			);
+			await waitForResolved(() => expect(lost).to.include(b.publicKeyHash), {
+				timeout: 5 * seekTimeout,
+			});
+		} finally {
 			a.removeEventListener("peer:unreachable", onLost);
 			await session.stop();
 		}

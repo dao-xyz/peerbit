@@ -2242,36 +2242,66 @@ export abstract class DirectStream<
 			// Retire the lost next hop, not surviving paths to the same identity.
 			this.removePeerFromRoutes(peerKeyHash, true, { neighbourOnly: true });
 
+			const retained = this.routes.isReachable(this.publicKeyHash, peerKeyHash);
 			if (
 				dependent.length > 0 &&
-				!this.routes.isReachable(this.publicKeyHash, peerKeyHash)
+				!retained &&
+				!(await this.announceDeparture(peerKeyHash, dependent))
 			) {
-				const goodbye = await new Goodbye({
-					leaving: [peerKeyHash],
-					header: new MessageHeader({
-						session: this.session,
-						mode: new SilentDelivery({ to: dependent, redundancy: 2 }),
-					}),
-				}).sign(this.sign);
-				if (
-					this.stopping ||
-					!this.started ||
-					this.peers.has(peerKeyHash) ||
-					this.routes.isReachable(this.publicKeyHash, peerKeyHash)
-				) {
-					return;
-				}
-				await this.publishMessageMaybe(
-					this.publicKey,
-					goodbye,
-				);
+				return;
 			}
 
 			// Best-effort liveness probe; never let background probe failures crash callers.
-			void this.checkIsAlive([peerKeyHash]).catch(() => false);
+			const alive = this.checkIsAlive([peerKeyHash]).catch(() => false);
+			if (dependent.length > 0 && retained) {
+				// A retained relay path can be a dependent's own route back through us.
+				// If the probe fails, the dependents still need the departure hint.
+				const lifecycle = this.closeController;
+				void alive
+					.then(
+						(ok) =>
+							ok || this.announceDeparture(peerKeyHash, dependent, lifecycle),
+					)
+					.catch(() => false);
+			}
 		}
 
 		logger.trace("connection ended:" + peerKey.toString());
+	}
+
+	/**
+	 * Signs and sends a departure hint about a lost peer to the peers that
+	 * reached it through us, unless this service restarted or the peer
+	 * reconnected or became reachable again in the meantime. Returns whether
+	 * the hint was sent.
+	 */
+	private async announceDeparture(
+		peerKeyHash: string,
+		dependent: string[],
+		lifecycle = this.closeController,
+	) {
+		const gone = () =>
+			this.closeController === lifecycle &&
+			!lifecycle.signal.aborted &&
+			!this.stopping &&
+			this.started &&
+			!this.peers.has(peerKeyHash) &&
+			!this.routes.isReachable(this.publicKeyHash, peerKeyHash);
+		if (!gone()) {
+			return false;
+		}
+		const goodbye = await new Goodbye({
+			leaving: [peerKeyHash],
+			header: new MessageHeader({
+				session: this.session,
+				mode: new SilentDelivery({ to: dependent, redundancy: 2 }),
+			}),
+		}).sign(this.sign);
+		if (!gone()) {
+			return false;
+		}
+		await this.publishMessageMaybe(this.publicKey, goodbye);
+		return true;
 	}
 
 	public removePeerFromRoutes(
