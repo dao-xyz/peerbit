@@ -1,5 +1,20 @@
 # Changelog
 
+## 3.2.168
+
+### Patch Changes
+
+- [#1545](https://github.com/dao-xyz/peerbit/pull/1545) [`25da012`](https://github.com/dao-xyz/peerbit/commit/25da01258de25f6337a2ac439e3136f279074084) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Add the `repository` field to `package.json`, so npm trusted publishing and provenance can match the published package to the dao-xyz/peerbit repository.
+
+- Updated dependencies [[`b0facf5`](https://github.com/dao-xyz/peerbit/commit/b0facf5906a7203083f5093927c1b81a10fd20a4), [`1b12705`](https://github.com/dao-xyz/peerbit/commit/1b1270596d91a9c47f8771393a27edca34212907), [`7c089f1`](https://github.com/dao-xyz/peerbit/commit/7c089f1edf904113984565d59c2977e8c229f425), [`edf55a0`](https://github.com/dao-xyz/peerbit/commit/edf55a065490b4d428310735f303f0840bc208d2), [`3795390`](https://github.com/dao-xyz/peerbit/commit/3795390ddf072d4ee23921942f8e5f0b9b0458e4), [`f3b9783`](https://github.com/dao-xyz/peerbit/commit/f3b97839fa435d0c1473c7969d01cdd625ff35da), [`82fae14`](https://github.com/dao-xyz/peerbit/commit/82fae14b6718aaa1581234a042f765bea9594d0c), [`25da012`](https://github.com/dao-xyz/peerbit/commit/25da01258de25f6337a2ac439e3136f279074084), [`7e7a6c8`](https://github.com/dao-xyz/peerbit/commit/7e7a6c802dec9afe6374527bbe515a71819b7dcb), [`8e9fb70`](https://github.com/dao-xyz/peerbit/commit/8e9fb70793d160311b6ba0a26083323a2eaf5aad), [`d9f09f8`](https://github.com/dao-xyz/peerbit/commit/d9f09f80352bf32d6c23ad5047a58a72f433e3e8), [`5f1250a`](https://github.com/dao-xyz/peerbit/commit/5f1250ac1594428559be0cb5b76cbeff0fab921f), [`2375d4b`](https://github.com/dao-xyz/peerbit/commit/2375d4b723f1bfc17601120bc996bfe6ae840c5f), [`2d4c08e`](https://github.com/dao-xyz/peerbit/commit/2d4c08e29b012ca8a8c898bde138834c2f480d2f)]:
+  - @peerbit/log@6.2.40
+  - @peerbit/trusted-network@6.0.144
+  - @peerbit/shared-log@16.0.42
+  - @peerbit/program@6.0.70
+  - @peerbit/crypto@3.1.8
+  - @peerbit/logger@2.0.4
+  - @peerbit/rpc@6.2.6
+
 ## 3.2.167
 
 ### Patch Changes

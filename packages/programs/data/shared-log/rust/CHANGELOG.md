@@ -1,5 +1,11 @@
 # @peerbit/shared-log-rust
 
+## 0.1.10
+
+### Patch Changes
+
+- [#1545](https://github.com/dao-xyz/peerbit/pull/1545) [`25da012`](https://github.com/dao-xyz/peerbit/commit/25da01258de25f6337a2ac439e3136f279074084) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Add the `repository` field to `package.json`, so npm trusted publishing and provenance can match the published package to the dao-xyz/peerbit repository.
+
 ## 0.1.9
 
 ### Patch Changes

@@ -1,5 +1,14 @@
 # Changelog
 
+## 3.1.2
+
+### Patch Changes
+
+- [#1545](https://github.com/dao-xyz/peerbit/pull/1545) [`25da012`](https://github.com/dao-xyz/peerbit/commit/25da01258de25f6337a2ac439e3136f279074084) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Add the `repository` field to `package.json`, so npm trusted publishing and provenance can match the published package to the dao-xyz/peerbit repository.
+
+- Updated dependencies [[`82fae14`](https://github.com/dao-xyz/peerbit/commit/82fae14b6718aaa1581234a042f765bea9594d0c)]:
+  - @peerbit/crypto@3.1.8
+
 ## 3.1.1
 
 ### Patch Changes

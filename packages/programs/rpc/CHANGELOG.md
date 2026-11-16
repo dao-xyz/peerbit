@@ -1,5 +1,21 @@
 # Changelog
 
+## 6.2.6
+
+### Patch Changes
+
+- [#1545](https://github.com/dao-xyz/peerbit/pull/1545) [`25da012`](https://github.com/dao-xyz/peerbit/commit/25da01258de25f6337a2ac439e3136f279074084) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Add the `repository` field to `package.json`, so npm trusted publishing and provenance can match the published package to the dao-xyz/peerbit repository.
+
+- [#1523](https://github.com/dao-xyz/peerbit/pull/1523) [`d9f09f8`](https://github.com/dao-xyz/peerbit/commit/d9f09f80352bf32d6c23ad5047a58a72f433e3e8) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Expose non-waiting lower-log mutation fences and optional RPC ownership checks for bounded recovery work. RPC callers can track physical setup/publish settlement after logical cancellation without treating it as a remote delivery acknowledgment.
+
+- Updated dependencies [[`3795390`](https://github.com/dao-xyz/peerbit/commit/3795390ddf072d4ee23921942f8e5f0b9b0458e4), [`43a5270`](https://github.com/dao-xyz/peerbit/commit/43a527047565362deb1d8068daea453ed97bc76a), [`82fae14`](https://github.com/dao-xyz/peerbit/commit/82fae14b6718aaa1581234a042f765bea9594d0c), [`20cfea8`](https://github.com/dao-xyz/peerbit/commit/20cfea88d537fd0eda05b0182e74ec6f3c5df315), [`09a4016`](https://github.com/dao-xyz/peerbit/commit/09a401691cdcbf7955324ba96d377571c512f16d), [`9b28a3e`](https://github.com/dao-xyz/peerbit/commit/9b28a3e3ef99851a7d6f48fa939614b9766b0d27)]:
+  - @peerbit/program@6.0.70
+  - @peerbit/pubsub@5.4.15
+  - @peerbit/crypto@3.1.8
+  - @peerbit/logger@2.0.4
+  - @peerbit/pubsub-interface@5.2.4
+  - @peerbit/stream-interface@6.0.18
+
 ## 6.2.5
 
 ### Patch Changes

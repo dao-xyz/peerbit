@@ -1,5 +1,30 @@
 # Changelog
 
+## 6.2.40
+
+### Patch Changes
+
+- [#1486](https://github.com/dao-xyz/peerbit/pull/1486) [`b0facf5`](https://github.com/dao-xyz/peerbit/commit/b0facf5906a7203083f5093927c1b81a10fd20a4) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Document that signed entry timestamps are author-asserted, that the default Log
+  clock has no future-skew policy, and that admitted future timestamps can advance
+  later local appends. This does not change clock or admission behavior.
+
+- [#1528](https://github.com/dao-xyz/peerbit/pull/1528) [`82fae14`](https://github.com/dao-xyz/peerbit/commit/82fae14b6718aaa1581234a042f765bea9594d0c) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Update the coordinated libp2p dependency cohort to include buffered-stream close/reset and listener cleanup fixes. Preserve Peerbit's transport configuration, custom Yamux profile and standard Yamux fallback; WebRTC Direct is not enabled by this update.
+
+- [#1523](https://github.com/dao-xyz/peerbit/pull/1523) [`d9f09f8`](https://github.com/dao-xyz/peerbit/commit/d9f09f80352bf32d6c23ad5047a58a72f433e3e8) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Expose non-waiting lower-log mutation fences and optional RPC ownership checks for bounded recovery work. RPC callers can track physical setup/publish settlement after logical cancellation without treating it as a remote delivery acknowledgment.
+
+- Updated dependencies [[`b0bc133`](https://github.com/dao-xyz/peerbit/commit/b0bc1338ff80315f9ebab506420dc2c2feb12bf9), [`27cdf2f`](https://github.com/dao-xyz/peerbit/commit/27cdf2f61d1e1ac8d5c501f293237a2a7fb0dba0), [`f902c41`](https://github.com/dao-xyz/peerbit/commit/f902c41b9402428daa4089c3f0a0d113fde92eaa), [`82fae14`](https://github.com/dao-xyz/peerbit/commit/82fae14b6718aaa1581234a042f765bea9594d0c), [`3e54d21`](https://github.com/dao-xyz/peerbit/commit/3e54d211601c402724064f13417a26423d450f14), [`25da012`](https://github.com/dao-xyz/peerbit/commit/25da01258de25f6337a2ac439e3136f279074084), [`a919a34`](https://github.com/dao-xyz/peerbit/commit/a919a341fa35479958d60c7db99be94d34d6cd8b), [`b0bc133`](https://github.com/dao-xyz/peerbit/commit/b0bc1338ff80315f9ebab506420dc2c2feb12bf9), [`d55509a`](https://github.com/dao-xyz/peerbit/commit/d55509aeb2db9d9f848fcc48a871d6de63284432), [`d55509a`](https://github.com/dao-xyz/peerbit/commit/d55509aeb2db9d9f848fcc48a871d6de63284432), [`b0bc133`](https://github.com/dao-xyz/peerbit/commit/b0bc1338ff80315f9ebab506420dc2c2feb12bf9)]:
+  - @peerbit/indexer-simple@1.3.2
+  - @peerbit/indexer-sqlite3@3.0.23
+  - @peerbit/blocks@4.3.5
+  - @peerbit/crypto@3.1.8
+  - @peerbit/keychain@1.2.19
+  - @peerbit/logger@2.0.4
+  - @peerbit/pubsub-interface@5.2.4
+  - @peerbit/stream-interface@6.0.18
+  - @peerbit/indexer-interface@3.1.2
+  - @peerbit/blocks-interface@2.2.3
+  - @peerbit/any-store@2.2.19
+
 ## 6.2.39
 
 ### Patch Changes

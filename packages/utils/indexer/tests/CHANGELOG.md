@@ -1,5 +1,19 @@
 # Changelog
 
+## 3.0.16
+
+### Patch Changes
+
+- [#1537](https://github.com/dao-xyz/peerbit/pull/1537) [`b0bc133`](https://github.com/dao-xyz/peerbit/commit/b0bc1338ff80315f9ebab506420dc2c2feb12bf9) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Add a conformance test for deletes with several predicates: a delete removes a row only while every predicate still matches it.
+
+- [#1490](https://github.com/dao-xyz/peerbit/pull/1490) [`a919a34`](https://github.com/dao-xyz/peerbit/commit/a919a341fa35479958d60c7db99be94d34d6cd8b) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Keep polymorphism setup inside its suite, register scope-test fixtures with per-test cleanup, and await the iterator-completion assertion. This prevents indexer conformance tests from leaking resources or completing before their assertions settle.
+
+- [#1545](https://github.com/dao-xyz/peerbit/pull/1545) [`25da012`](https://github.com/dao-xyz/peerbit/commit/25da01258de25f6337a2ac439e3136f279074084) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Add the `repository` field to `package.json`, so npm trusted publishing and provenance can match the published package to the dao-xyz/peerbit repository.
+
+- Updated dependencies [[`82fae14`](https://github.com/dao-xyz/peerbit/commit/82fae14b6718aaa1581234a042f765bea9594d0c), [`25da012`](https://github.com/dao-xyz/peerbit/commit/25da01258de25f6337a2ac439e3136f279074084)]:
+  - @peerbit/crypto@3.1.8
+  - @peerbit/indexer-interface@3.1.2
+
 ## 3.0.15
 
 ### Patch Changes

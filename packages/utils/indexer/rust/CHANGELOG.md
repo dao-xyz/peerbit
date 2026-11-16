@@ -1,5 +1,21 @@
 # Changelog
 
+## 1.0.17
+
+### Patch Changes
+
+- [#1524](https://github.com/dao-xyz/peerbit/pull/1524) [`f902c41`](https://github.com/dao-xyz/peerbit/commit/f902c41b9402428daa4089c3f0a0d113fde92eaa) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Implement bounded key-only inventory pages through the existing `scanKeyPrimitives` capability. Scans invalidate on admitted writes or lifecycle changes and release cursor resources on completion, cancellation, or failure. SQLite uses primary-key seeks; Rust visits native keys directly without decoding documents or retaining a whole-inventory key set. SQLite multi-root schemas and non-authoritative Rust backbone mirrors remain unsupported. This is an inventory primitive, not a replication-completeness or durability guarantee.
+
+- [#1501](https://github.com/dao-xyz/peerbit/pull/1501) [`fcc9ac7`](https://github.com/dao-xyz/peerbit/commit/fcc9ac73bea472c1b751ef41a888fda414f8713e) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Read all OFFSET pages of one iterator `next()` or `pending()` call without awaiting between them. A mutation queued during the call could land between two page reads and shift the rows under the offset, so `next()` could skip a row and `pending()` could miss or double count one. A call whose page read or result cloning throws no longer consumes rows it did not return; before, a failed later page lost the earlier pages of the call, and a cloning failure on the ordinary path advanced the cursor past its rows. Iterators still see mutations committed between calls.
+
+- [#1537](https://github.com/dao-xyz/peerbit/pull/1537) [`b0bc133`](https://github.com/dao-xyz/peerbit/commit/b0bc1338ff80315f9ebab506420dc2c2feb12bf9) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Add `delIdIfContextHead`, which removes a native backbone document only while its context head is the named head. The head is checked when the document is removed: in the same step, or inside the queued write when the index persists to a snapshot file, so a put queued ahead of the delete is checked, not removed. Without a native document context it returns `undefined` and leaves the delete to the caller.
+
+- [#1545](https://github.com/dao-xyz/peerbit/pull/1545) [`25da012`](https://github.com/dao-xyz/peerbit/commit/25da01258de25f6337a2ac439e3136f279074084) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Add the `repository` field to `package.json`, so npm trusted publishing and provenance can match the published package to the dao-xyz/peerbit repository.
+
+- Updated dependencies [[`82fae14`](https://github.com/dao-xyz/peerbit/commit/82fae14b6718aaa1581234a042f765bea9594d0c), [`25da012`](https://github.com/dao-xyz/peerbit/commit/25da01258de25f6337a2ac439e3136f279074084)]:
+  - @peerbit/logger@2.0.4
+  - @peerbit/indexer-interface@3.1.2
+
 ## 1.0.16
 
 ### Patch Changes

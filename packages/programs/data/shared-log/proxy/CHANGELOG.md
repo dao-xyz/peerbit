@@ -1,5 +1,18 @@
 # Changelog
 
+## 2.0.127
+
+### Patch Changes
+
+- Updated dependencies [[`b0facf5`](https://github.com/dao-xyz/peerbit/commit/b0facf5906a7203083f5093927c1b81a10fd20a4), [`7c089f1`](https://github.com/dao-xyz/peerbit/commit/7c089f1edf904113984565d59c2977e8c229f425), [`3795390`](https://github.com/dao-xyz/peerbit/commit/3795390ddf072d4ee23921942f8e5f0b9b0458e4), [`82fae14`](https://github.com/dao-xyz/peerbit/commit/82fae14b6718aaa1581234a042f765bea9594d0c), [`25da012`](https://github.com/dao-xyz/peerbit/commit/25da01258de25f6337a2ac439e3136f279074084), [`7e7a6c8`](https://github.com/dao-xyz/peerbit/commit/7e7a6c802dec9afe6374527bbe515a71819b7dcb), [`8e9fb70`](https://github.com/dao-xyz/peerbit/commit/8e9fb70793d160311b6ba0a26083323a2eaf5aad), [`d9f09f8`](https://github.com/dao-xyz/peerbit/commit/d9f09f80352bf32d6c23ad5047a58a72f433e3e8), [`5f1250a`](https://github.com/dao-xyz/peerbit/commit/5f1250ac1594428559be0cb5b76cbeff0fab921f), [`2375d4b`](https://github.com/dao-xyz/peerbit/commit/2375d4b723f1bfc17601120bc996bfe6ae840c5f)]:
+  - @peerbit/log@6.2.40
+  - @peerbit/shared-log@16.0.42
+  - @peerbit/program@6.0.70
+  - @peerbit/canonical-client@1.1.73
+  - @peerbit/canonical-host@1.0.92
+  - @peerbit/crypto@3.1.8
+  - @peerbit/indexer-interface@3.1.2
+
 ## 2.0.126
 
 ### Patch Changes

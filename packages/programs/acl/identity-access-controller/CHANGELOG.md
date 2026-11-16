@@ -1,5 +1,18 @@
 # Changelog
 
+## 6.0.144
+
+### Patch Changes
+
+- [#1528](https://github.com/dao-xyz/peerbit/pull/1528) [`82fae14`](https://github.com/dao-xyz/peerbit/commit/82fae14b6718aaa1581234a042f765bea9594d0c) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Update the coordinated libp2p dependency cohort to include buffered-stream close/reset and listener cleanup fixes. Preserve Peerbit's transport configuration, custom Yamux profile and standard Yamux fallback; WebRTC Direct is not enabled by this update.
+
+- Updated dependencies [[`1b12705`](https://github.com/dao-xyz/peerbit/commit/1b1270596d91a9c47f8771393a27edca34212907), [`7c089f1`](https://github.com/dao-xyz/peerbit/commit/7c089f1edf904113984565d59c2977e8c229f425), [`edf55a0`](https://github.com/dao-xyz/peerbit/commit/edf55a065490b4d428310735f303f0840bc208d2), [`3795390`](https://github.com/dao-xyz/peerbit/commit/3795390ddf072d4ee23921942f8e5f0b9b0458e4), [`f3b9783`](https://github.com/dao-xyz/peerbit/commit/f3b97839fa435d0c1473c7969d01cdd625ff35da), [`5f1250a`](https://github.com/dao-xyz/peerbit/commit/5f1250ac1594428559be0cb5b76cbeff0fab921f), [`7e232ab`](https://github.com/dao-xyz/peerbit/commit/7e232ab68cc2a9541623bc0ecdd93481d83dfb44), [`82fae14`](https://github.com/dao-xyz/peerbit/commit/82fae14b6718aaa1581234a042f765bea9594d0c), [`151fdc5`](https://github.com/dao-xyz/peerbit/commit/151fdc51809f9028e48121832b56cfe05a991172), [`b0bc133`](https://github.com/dao-xyz/peerbit/commit/b0bc1338ff80315f9ebab506420dc2c2feb12bf9), [`7e7a6c8`](https://github.com/dao-xyz/peerbit/commit/7e7a6c802dec9afe6374527bbe515a71819b7dcb), [`8e9fb70`](https://github.com/dao-xyz/peerbit/commit/8e9fb70793d160311b6ba0a26083323a2eaf5aad), [`fc6313f`](https://github.com/dao-xyz/peerbit/commit/fc6313fcdecee9f9a0fbf0defc3b35c0cc57d728), [`5f1250a`](https://github.com/dao-xyz/peerbit/commit/5f1250ac1594428559be0cb5b76cbeff0fab921f), [`2375d4b`](https://github.com/dao-xyz/peerbit/commit/2375d4b723f1bfc17601120bc996bfe6ae840c5f), [`2b3a8f9`](https://github.com/dao-xyz/peerbit/commit/2b3a8f9f6e6becc4d40d5458d194dbdac0771c9a), [`2d4c08e`](https://github.com/dao-xyz/peerbit/commit/2d4c08e29b012ca8a8c898bde138834c2f480d2f), [`ff0b42f`](https://github.com/dao-xyz/peerbit/commit/ff0b42fd54acc83924a83269d690a81f45bd5fdc), [`e0d26bb`](https://github.com/dao-xyz/peerbit/commit/e0d26bb6596b94bedc1f4dfe5bad4ba04b5837a9)]:
+  - @peerbit/trusted-network@6.0.144
+  - @peerbit/shared-log@16.0.42
+  - @peerbit/program@6.0.70
+  - @peerbit/document@15.1.13
+  - @peerbit/crypto@3.1.8
+
 ## 6.0.143
 
 ### Patch Changes

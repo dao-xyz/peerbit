@@ -1,5 +1,33 @@
 # Changelog
 
+## 3.0.23
+
+### Patch Changes
+
+- [#1497](https://github.com/dao-xyz/peerbit/pull/1497) [`27cdf2f`](https://github.com/dao-xyz/peerbit/commit/27cdf2f61d1e1ac8d5c501f293237a2a7fb0dba0) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Commit an index value and its nested rows in one SQLite transaction. A failed insert or replacement rolls back completely, so a replacement leaves the previous value intact, and the rollback waits for nested writes that have already started. A value and its nested rows now share one durable commit instead of one commit per nested write; the configured durability mode is unchanged.
+
+  The crash-safe durability barrier now runs after the writes already queued on the connection. Its checkpoint fails inside an open write transaction, which every put now holds while it writes its nested rows.
+
+- [#1524](https://github.com/dao-xyz/peerbit/pull/1524) [`f902c41`](https://github.com/dao-xyz/peerbit/commit/f902c41b9402428daa4089c3f0a0d113fde92eaa) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Implement bounded key-only inventory pages through the existing `scanKeyPrimitives` capability. Scans invalidate on admitted writes or lifecycle changes and release cursor resources on completion, cancellation, or failure. SQLite uses primary-key seeks; Rust visits native keys directly without decoding documents or retaining a whole-inventory key set. SQLite multi-root schemas and non-authoritative Rust backbone mirrors remain unsupported. This is an inventory primitive, not a replication-completeness or durability guarantee.
+
+- [#1520](https://github.com/dao-xyz/peerbit/pull/1520) [`3e54d21`](https://github.com/dao-xyz/peerbit/commit/3e54d211601c402724064f13417a26423d450f14) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Keep the ORDER BY when a query skips an OR arm, or a root table of a polymorphic schema, that lacks a queried field. A skipped arm could drop the ORDER BY (always with one root table), so `all()` and every `next()` page came back unsorted, and paged reads lost their default id order. The ORDER BY now uses the sort column of the first SELECT that remains in the query. Queries that skip no arm build the same SQL as before, and missing-field errors are unchanged.
+
+  This does not fix ordering between rows of different root tables: when the selected fields include the sort key, the ORDER BY binds to the first participating table's column and the other tables' rows sort as NULL, as they already did in queries that skip no arm. The id is always selected, so this also applies to the default id order of paged reads.
+
+- [#1545](https://github.com/dao-xyz/peerbit/pull/1545) [`25da012`](https://github.com/dao-xyz/peerbit/commit/25da01258de25f6337a2ac439e3136f279074084) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Add the `repository` field to `package.json`, so npm trusted publishing and provenance can match the published package to the dao-xyz/peerbit repository.
+
+- [#1490](https://github.com/dao-xyz/peerbit/pull/1490) [`a919a34`](https://github.com/dao-xyz/peerbit/commit/a919a341fa35479958d60c7db99be94d34d6cd8b) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Resolve terminal fields against their declaring schema variant, excluding unrelated flattened child fields, and bind explicit nested inline-field queries to their physical table. Preserve missing-field validation.
+
+- [#1537](https://github.com/dao-xyz/peerbit/pull/1537) [`b0bc133`](https://github.com/dao-xyz/peerbit/commit/b0bc1338ff80315f9ebab506420dc2c2feb12bf9) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Create no planner indexes for a query that matches the primary key by equality. The primary key already reaches the row, so such indexes only added storage and write cost: a delete of one named version (`DocumentIndex.delIfHead`) created two composite indexes on the document table.
+
+- [#1488](https://github.com/dao-xyz/peerbit/pull/1488) [`d55509a`](https://github.com/dao-xyz/peerbit/commit/d55509aeb2db9d9f848fcc48a871d6de63284432) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Reset browser and worker SQLite statements after failed reads or writes so cached statements remain reusable and their prior execution errors do not prevent database shutdown. Preserve the original execution error and report distinct reset failures.
+
+- [#1488](https://github.com/dao-xyz/peerbit/pull/1488) [`d55509a`](https://github.com/dao-xyz/peerbit/commit/d55509aeb2db9d9f848fcc48a871d6de63284432) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Keep explicitly closed iterators terminal while a page or pending count is in flight. Discard late results and stop further page reads at cooperative await boundaries; already-admitted database work still settles under its existing barrier. Preserve normal iteration, query errors on open iterators, and existing pagination semantics.
+
+- Updated dependencies [[`82fae14`](https://github.com/dao-xyz/peerbit/commit/82fae14b6718aaa1581234a042f765bea9594d0c), [`25da012`](https://github.com/dao-xyz/peerbit/commit/25da01258de25f6337a2ac439e3136f279074084)]:
+  - @peerbit/crypto@3.1.8
+  - @peerbit/indexer-interface@3.1.2
+
 ## 3.0.22
 
 ### Patch Changes

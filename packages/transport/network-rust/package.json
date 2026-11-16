@@ -1,6 +1,6 @@
 {
 	"name": "@peerbit/network-rust",
-	"version": "0.1.5",
+	"version": "0.1.6",
 	"description": "Native wire codec and batched signature verification for the Peerbit direct-stream envelope",
 	"repository": {
 		"type": "git",
