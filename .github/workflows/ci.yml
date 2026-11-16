@@ -384,6 +384,23 @@ jobs:
           --no-config --no-package --require chai-extend/chai-global.js
           --timeout 90000 --retries 0 --no-exit
           dist/test/v2-protected-recovery.spec.js
+      - name: Test owner-proof Documents recovery without retries or forced exit
+        timeout-minutes: 3
+        working-directory: packages/programs/data/document/document
+        env:
+          AEGIR_RUNNER: node
+          NODE_ENV: test
+        run: >-
+          node ../../../../../scripts/ci/assert-tests-ran.mjs node ../../../../../node_modules/mocha/bin/mocha.js
+          --no-config --no-package --require chai-extend/chai-global.js
+          --timeout 60000 --retries 0 --no-exit
+          dist/test/proof-documents.spec.js
+          dist/test/proof-documents-order.spec.js
+          dist/test/proof-documents-network.spec.js
+          dist/test/proof-documents-boundary.spec.js
+          dist/test/proof-documents-bytes.spec.js
+          dist/test/proof-documents-hard-kill.spec.js
+          dist/test/proof-namespace.spec.js
       # Global fake-clock assertions must not capture delayed peer-store work
       # from the real-node lifecycle tests in another suite.
       - name: Test ACK wait ownership in an isolated process

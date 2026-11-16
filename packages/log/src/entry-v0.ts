@@ -1914,6 +1914,31 @@ export class EntryV0<T>
 			data: Uint8Array,
 		) => Promise<SignatureWithKey> | SignatureWithKey)[];
 	}): Promise<Entry<T>> {
+		return this.createInternal(properties);
+	}
+
+	// Internal versioned-protocol construction. Keep real parent hashes/clocks
+	// while signing a protocol-defined placement group, instead of pretending
+	// that cross-key parents belong to that group. Ordinary create() still
+	// inherits the minimum parent GID and rejects an explicit GID with parents.
+	private static async createWithExplicitGid<T>(
+		properties: Parameters<typeof EntryV0.create<T>>[0],
+		gid: string,
+	): Promise<Entry<T>> {
+		if (
+			typeof gid !== "string" ||
+			gid.length === 0 ||
+			properties.meta?.gid != null
+		) {
+			throw new Error("Expected one nonempty protocol GID");
+		}
+		return this.createInternal(properties, gid);
+	}
+
+	private static async createInternal<T>(
+		properties: Parameters<typeof EntryV0.create<T>>[0],
+		explicitGid?: string,
+	): Promise<Entry<T>> {
 		if (!properties.encoding || !properties?.meta?.next) {
 			properties = {
 				...properties,
@@ -1977,10 +2002,10 @@ export class EntryV0<T>
 		}
 
 		const nextHashes: string[] = [];
-		let gid: string | null = null;
+		let gid: string | null = explicitGid ?? null;
 		if (nexts?.length > 0) {
 			// take min gid as our gid
-			if (properties.meta?.gid) {
+			if (explicitGid === undefined && properties.meta?.gid) {
 				throw new Error(
 					"Expecting '.meta.gid' property to be undefined if '.meta.next' is provided",
 				);
@@ -1990,15 +2015,18 @@ export class EntryV0<T>
 					throw new Error("Expecting hash to be defined to next entries");
 				}
 				nextHashes.push(n.hash);
-				gid =
-					gid == null
-						? n.meta.gid
-						: n.meta.gid < (gid as string)
+				if (explicitGid === undefined) {
+					gid =
+						gid == null
 							? n.meta.gid
-							: gid;
+							: n.meta.gid < (gid as string)
+								? n.meta.gid
+								: gid;
+				}
 			}
 		} else {
 			gid =
+				explicitGid ||
 				properties.meta?.gid ||
 				(await EntryV0.createGid(properties.meta?.gidSeed));
 		}

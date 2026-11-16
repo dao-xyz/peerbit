@@ -34,6 +34,10 @@ export type {
 } from "./search.js";
 export { coerceWithContext, coerceWithIndexed } from "./search.js";
 export * from "./operation.js";
+export {
+	type DocumentOperation,
+	inspectDocumentOperation,
+} from "./document-operation.js";
 export { policy } from "./policy.js";
 export { transform } from "./transform.js";
 export { registerIndexFieldAccessor } from "./borsh.js";

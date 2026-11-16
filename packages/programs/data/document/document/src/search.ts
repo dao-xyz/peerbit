@@ -24,7 +24,11 @@ import * as indexerTypes from "@peerbit/indexer-interface";
 import { HashmapIndex } from "@peerbit/indexer-simple";
 import { BORSH_ENCODING, type Encoding, Entry } from "@peerbit/log";
 import { logger as loggerFn } from "@peerbit/logger";
-import { ClosedError, Program } from "@peerbit/program";
+import {
+	ClosedError,
+	Program,
+	TerminalOperationNotStartedError,
+} from "@peerbit/program";
 import {
 	MissingResponsesError,
 	RPC,
@@ -1049,6 +1053,18 @@ export const coerceWithLazyIndexed = <T, I>(
 	return value as WithIndexedContext<T, I>;
 };
 
+type DeferredQueryOpen = {
+	phase:
+		| "preparing"
+		| "prepared"
+		| "activating"
+		| "ready"
+		| "failed"
+		| "cancelled";
+	activation?: Promise<void>;
+	assertOwnerActive?: () => void;
+};
+
 @variant("documents_index")
 export class DocumentIndex<
 	T,
@@ -1112,6 +1128,8 @@ export class DocumentIndex<
 	private documentEvents: TypedEventTarget<DocumentEvents<T, I>>;
 
 	private _joinListener?: (e: { detail: PublicSignKey }) => Promise<void>;
+	private _deferredQueryOpen?: DeferredQueryOpen;
+	private _ordinaryQueryOpens?: number;
 
 	private _resultQueue: Map<
 		string,
@@ -1545,6 +1563,111 @@ export class DocumentIndex<
 		};
 	}
 	async open(properties: OpenOptions<T, I, D>) {
+		if (this._deferredQueryOpen) {
+			throw new Error("Deferred query opening must finish terminal cleanup");
+		}
+		this._ordinaryQueryOpens = (this._ordinaryQueryOpens ?? 0) + 1;
+		try {
+			await this.prepareOpen(properties);
+			await this.openQuery();
+			this.attachDocumentChangeListener();
+		} finally {
+			this._ordinaryQueryOpens--;
+		}
+	}
+
+	// Internal recovery boundary; not an open option or a separately usable store.
+	private async openWithDeferredQuery(
+		properties: OpenOptions<T, I, D>,
+		assertOwnerActive?: () => void,
+	): Promise<() => Promise<void>> {
+		if (this._deferredQueryOpen || this._ordinaryQueryOpens) {
+			throw new Error("Document index is opening or awaiting terminal cleanup");
+		}
+		const state: DeferredQueryOpen = { phase: "preparing", assertOwnerActive };
+		this._deferredQueryOpen = state;
+		try {
+			await this.prepareOpen(properties);
+			this.attachDocumentChangeListener();
+			state.phase = "prepared";
+			return () => this.finishDeferredQueryOpen(state);
+		} catch (error) {
+			state.phase = "failed";
+			throw error;
+		}
+	}
+
+	private assertDeferredQueryCurrent(state: DeferredQueryOpen): void {
+		if (
+			this._deferredQueryOpen !== state ||
+			state.phase === "cancelled" ||
+			state.phase === "failed"
+		) {
+			throw new ClosedError();
+		}
+	}
+
+	private finishDeferredQueryOpen(state: DeferredQueryOpen): Promise<void> {
+		try {
+			this.assertDeferredQueryCurrent(state);
+		} catch (error) {
+			return Promise.reject(error);
+		}
+		if (state.activation) return state.activation;
+		state.phase = "activating";
+		return (state.activation = Promise.resolve().then(async () => {
+			try {
+				this.assertDeferredQueryCurrent(state);
+				state.assertOwnerActive?.();
+				await this.openQuery();
+				this.assertDeferredQueryCurrent(state);
+				state.assertOwnerActive?.();
+				state.phase = "ready";
+			} catch (error) {
+				state.phase = "failed";
+				if (this._joinListener) {
+					this._query.events.removeEventListener("join", this._joinListener);
+				}
+				throw error;
+			}
+		}));
+	}
+
+	private beginDeferredQueryTerminal(from?: Program): boolean {
+		const state = this._deferredQueryOpen!;
+		if (!this.closed) {
+			const parent = this.parents?.findIndex((owner) => owner === from) ?? -1;
+			// Let Program perform a nonterminal release or reject an invalid owner
+			// without disabling the surviving projection's queries.
+			if ((from && parent < 0) || (parent >= 0 && this.parents!.length > 1))
+				return false;
+		}
+		if (state.phase === "preparing" || state.phase === "activating") {
+			throw new TerminalOperationNotStartedError(
+				"Document index query opening is in progress",
+			);
+		}
+		this.preventParentAttachments();
+		state.phase = "cancelled";
+		if (this._joinListener) {
+			this._query.events.removeEventListener("join", this._joinListener);
+		}
+		return true;
+	}
+
+	private assertQueryReady(): void {
+		if (this._deferredQueryOpen && this._deferredQueryOpen.phase !== "ready") {
+			throw new ClosedError();
+		}
+		this._deferredQueryOpen?.assertOwnerActive?.();
+	}
+
+	private attachDocumentChangeListener(): void {
+		this.handleDocumentChange ??= (event) => this.onDocumentChange(event);
+		this.documentEvents.addEventListener("change", this.handleDocumentChange);
+	}
+
+	private async prepareOpen(properties: OpenOptions<T, I, D>) {
 		this._log = properties.log;
 		this._queryProfile = properties.profile;
 		// Allow reopening with partial options (tests override the index transform)
@@ -1713,7 +1836,21 @@ export class DocumentIndex<
 		if (this.isProgramValued) {
 			this._resolverProgramCache = new Map();
 		}
+	}
 
+	private async openQuery(): Promise<void> {
+		const deferred = this._deferredQueryOpen;
+		const isCurrent = () => {
+			if (!deferred) return true;
+			if (this._deferredQueryOpen !== deferred || deferred.phase !== "ready")
+				return false;
+			try {
+				deferred.assertOwnerActive?.();
+				return true;
+			} catch {
+				return false;
+			}
+		};
 		if (this.prefetch?.predictor) {
 			indexPrefetchLogger("prefetch predictor enabled", {
 				peer: this.node.identity.publicKey.hashcode(),
@@ -1723,7 +1860,7 @@ export class DocumentIndex<
 			this._joinListener = async (e: { detail: PublicSignKey }) => {
 				// on join we emit predicted search results before peers query us (to save latency but for the price of errornous bandwidth usage)
 
-				if ((await this._log.isReplicating()) === false) {
+				if ((await this._log.isReplicating()) === false || !isCurrent()) {
 					return;
 				}
 
@@ -1752,7 +1889,7 @@ export class DocumentIndex<
 					from: e.detail,
 				});
 
-				if (results instanceof types.AbstractSearchResult) {
+				if (results instanceof types.AbstractSearchResult && isCurrent()) {
 					// start a resumable iterator for the peer
 					const query = new types.PredictedSearchRequest({
 						id: request.id,
@@ -1775,12 +1912,14 @@ export class DocumentIndex<
 			topic: sha256Base64Sync(
 				concat([this._log.log.id, fromString("/document")]),
 			),
-			responseHandler: this.queryRPCResponseHandler.bind(this),
+			responseHandler: async (query, context) => {
+				if (!isCurrent()) return undefined;
+				const result = await this.queryRPCResponseHandler(query, context);
+				return isCurrent() ? result : undefined;
+			},
 			responseType: types.AbstractSearchResult,
 			queryType: types.AbstractSearchRequest,
 		});
-		this.handleDocumentChange ??= (event) => this.onDocumentChange(event);
-		this.documentEvents.addEventListener("change", this.handleDocumentChange);
 	}
 
 	private attachNativeBackboneDocumentIndex(
@@ -2114,6 +2253,13 @@ export class DocumentIndex<
 		query: types.AbstractSearchRequest,
 		ctx: { from?: PublicSignKey; message: DataMessage },
 	) {
+		if (this._deferredQueryOpen) {
+			try {
+				this.assertQueryReady();
+			} catch {
+				return;
+			}
+		}
 		if (!ctx.from) {
 			logger("receieved query without from");
 			return;
@@ -2136,7 +2282,9 @@ export class DocumentIndex<
 			if (replaced) {
 				try {
 					await this._query.send(
-						new types.CloseIteratorRequest({ id: replaced.response.request.id }),
+						new types.CloseIteratorRequest({
+							id: replaced.response.request.id,
+						}),
 						{
 							signal: AbortSignal.timeout(CLOSE_ITERATOR_REQUEST_TIMEOUT),
 							mode: new SilentDelivery({ to: [ctx.from], redundancy: 1 }),
@@ -2289,6 +2437,7 @@ export class DocumentIndex<
 	}
 
 	async afterOpen(): Promise<void> {
+		this.assertQueryReady();
 		if (this.isProgramValued) {
 			// re-open the program cache
 			for (const { id, value } of await this.index.iterate().all()) {
@@ -2329,6 +2478,8 @@ export class DocumentIndex<
 	}
 
 	async close(from?: Program): Promise<boolean> {
+		if (this._deferredQueryOpen && !this.beginDeferredQueryTerminal(from))
+			return super.close(from);
 		const closed = await super.close(from);
 		if (closed) {
 			this._queryProfile = undefined;
@@ -2355,15 +2506,19 @@ export class DocumentIndex<
 				// Be defensive during teardown: stopping an already-stopped index shouldn't
 				// prevent closing the program and releasing timers/iterators.
 				if (error instanceof indexerTypes.NotStartedError) {
+					this._deferredQueryOpen = undefined;
 					return closed;
 				}
 				throw error;
 			}
+			this._deferredQueryOpen = undefined;
 		}
 		return closed;
 	}
 
 	async drop(from?: Program): Promise<boolean> {
+		if (this._deferredQueryOpen && !this.beginDeferredQueryTerminal(from))
+			return super.drop(from);
 		const dropped = await super.drop(from);
 		if (dropped) {
 			this._queryProfile = undefined;
@@ -2393,6 +2548,7 @@ export class DocumentIndex<
 					throw error;
 				}
 			}
+			this._deferredQueryOpen = undefined;
 		}
 		return dropped;
 	}
@@ -2411,6 +2567,7 @@ export class DocumentIndex<
 		Options extends GetOptions<T, I, D, Resolve>,
 		Resolve extends boolean | undefined = ExtractResolveFromOptions<Options>,
 	>(key: indexerTypes.Ideable | indexerTypes.IdKey, options?: Options) {
+		this.assertQueryReady();
 		let deferred:
 			| DeferredPromise<WithIndexedContext<T, I> | WithContext<I>>
 			| undefined;
@@ -3524,6 +3681,7 @@ export class DocumentIndex<
 		key: indexerTypes.IdKey | indexerTypes.IdPrimitive,
 		options?: QueryOptions<T, I, D, Resolve>,
 	): Promise<types.Results<RT>[] | undefined> {
+		this.assertQueryReady();
 		let coercedOptions = options;
 		if (options?.remote && typeof options.remote !== "boolean") {
 			coercedOptions = {
@@ -3683,6 +3841,7 @@ export class DocumentIndex<
 	}
 
 	getSize(): Promise<number> | number {
+		this.assertQueryReady();
 		return this.index.getSize();
 	}
 
@@ -3748,6 +3907,7 @@ export class DocumentIndex<
 			canRead?: CanRead<I>;
 		},
 	): Promise<types.Results<types.ResultTypeFromRequest<R, T, I>>> {
+		this.assertQueryReady();
 		// We do special case for querying the id as we can do it faster than iterating
 
 		let prevQueued = isLocal
@@ -4830,6 +4990,7 @@ export class DocumentIndex<
 		queryRequest?: R,
 		optionsArg?: QueryOptions<T, I, D, Resolve>,
 	): ResultsIterator<ValueTypeFromRequest<Resolve, T, I>> {
+		this.assertQueryReady();
 		let options = optionsArg;
 		if (
 			queryRequest instanceof types.SearchRequest &&
@@ -7286,6 +7447,7 @@ export class DocumentIndex<
 			timeout?: number;
 		},
 	): Promise<string[]> {
+		this.assertQueryReady();
 		// A document index and its SharedLog use separate RPC topics. Establish
 		// both before polling the replication index; otherwise a late-connected
 		// peer can be ready for queries while its replication-info session has
