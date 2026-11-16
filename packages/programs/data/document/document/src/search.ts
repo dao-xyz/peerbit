@@ -6105,13 +6105,13 @@ export class DocumentIndex<
 			);
 		};
 
-		// Under remote.throwOnMissing: the first failure of a fetch for a late
-		// joining peer, which may run outside any read. It rejects every read
-		// until close().
-		let lateJoinFailure: { error: unknown } | undefined;
-		const throwLateJoinFailure = () => {
-			if (lateJoinFailure && !closeStarted) {
-				throw lateJoinFailure.error;
+		// Under remote.throwOnMissing: the first failure of work that may run
+		// outside any read, such as a fetch for a late joining peer or merging a
+		// pushed page. It rejects every read until close().
+		let detachedFailure: { error: unknown } | undefined;
+		const throwDetachedFailure = () => {
+			if (detachedFailure && !closeStarted) {
+				throw detachedFailure.error;
 			}
 		};
 
@@ -6124,7 +6124,7 @@ export class DocumentIndex<
 				return [];
 			}
 
-			throwLateJoinFailure();
+			throwDetachedFailure();
 			await pendingUpdateProcessing;
 
 			const bufferedBeforeFetch = peerBuffers().length;
@@ -6143,8 +6143,8 @@ export class DocumentIndex<
 			// This keeps `next(n)` responsive when a late push/update arrives while a
 			// remote iterator has no more immediate items to collect.
 			const fetchedAll = preferBufferedResults ? false : await fetchAtLeast(n);
-			// A join-triggered fetch may have failed while this read waited.
-			throwLateJoinFailure();
+			// Detached work may have failed while this read waited.
+			throwDetachedFailure();
 
 			// get n next top entries, shift and pull more results
 			const peerBuffersArr = peerBuffers();
@@ -6319,7 +6319,7 @@ export class DocumentIndex<
 
 		let doneFn = () => {
 			// Keep read loops going until they surface a recorded failure.
-			if (lateJoinFailure && !closeStarted) {
+			if (detachedFailure && !closeStarted) {
 				return false;
 			}
 			return done;
@@ -6460,6 +6460,10 @@ export class DocumentIndex<
 			return waiter.promise.finally(() => {
 				updateWaiters.delete(waiter);
 			});
+		};
+		const recordDetachedFailure = (error: unknown) => {
+			detachedFailure ??= { error };
+			signalUpdate(); // wake reads waiting for an update
 		};
 
 		// ---------------- Live updates wiring (sorted-only with optional filter) ----------------
@@ -6659,6 +6663,9 @@ export class DocumentIndex<
 				if (idAgnosticQueryKey(request) !== currentPrefetchKey()) {
 					return;
 				}
+				const strict =
+					typeof options?.remote === "object" &&
+					!!options.remote.throwOnMissing;
 				try {
 					const prepared = await introduceEntries(
 						queryRequestCoerced,
@@ -6693,7 +6700,13 @@ export class DocumentIndex<
 					}
 					signalUpdate("push");
 				} catch (error) {
-					warn("Failed to merge prefetched results", error);
+					// No read awaits this merge. Under remote.throwOnMissing a
+					// failure, such as a predicted NoAccess, rejects the next read.
+					if (strict) {
+						recordDetachedFailure(error);
+					} else {
+						warn("Failed to merge prefetched results", error);
+					}
 				}
 			};
 
@@ -6951,10 +6964,6 @@ export class DocumentIndex<
 
 			updateDeferred = pDefer<void>();
 			const lateJoinFetchesInFlight = new Set<string>();
-			const recordLateJoinFailure = (error: unknown) => {
-				lateJoinFailure ??= { error };
-				signalUpdate(); // wake reads waiting for a join
-			};
 			const shouldIgnoreLateJoinFetchError = (error: unknown) => {
 				if (
 					this.closed ||
@@ -7078,7 +7087,7 @@ export class DocumentIndex<
 						// not ask it again. Record the failure whichever caller (a join,
 						// pending() or next()) started this fetch.
 						if (remoteConfig?.throwOnMissing) {
-							recordLateJoinFailure(error);
+							recordDetachedFailure(error);
 						}
 						throw error;
 					}
@@ -7148,7 +7157,7 @@ export class DocumentIndex<
 						// No read awaits this fetch: report a strict failure through
 						// the next read instead of leaking a rejection.
 						if (remoteConfig?.throwOnMissing) {
-							recordLateJoinFailure(error);
+							recordDetachedFailure(error);
 						} else {
 							warn("Failed to query joining peer", error);
 						}

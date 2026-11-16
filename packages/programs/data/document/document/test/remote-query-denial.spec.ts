@@ -1,14 +1,17 @@
-import { type PublicSignKey } from "@peerbit/crypto";
+import { deserialize, serialize } from "@dao-xyz/borsh";
+import { type PublicSignKey, randomBytes } from "@peerbit/crypto";
 import { MissingResponsesError } from "@peerbit/rpc";
 import { TestSession } from "@peerbit/test-utils";
 import { delay, waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
 import pDefer from "p-defer";
+import sinon from "sinon";
 import {
 	type AbstractSearchResult,
 	AccessDeniedError,
 	CollectNextRequest,
 	Documents,
+	IterationRequest,
 	NoAccess,
 	Results,
 	SearchRequest,
@@ -572,4 +575,106 @@ describe("remote query denial from joining replicators", () => {
 		);
 		expect(unhandled).to.deep.equal([]);
 	});
+
+	// A replicator can push a predicted page when the reader joins it; a
+	// push-update iterator merges matching predictions outside any read.
+	for (const strict of [true, false]) {
+		it(`handles a predicted denial pushed to a push-update iterator with strict=${strict}`, async () => {
+			session = await TestSession.disconnected(3);
+			await session.connect([[session.peers[0], session.peers[2]]]);
+			const descriptor = new TestStore({ docs: new Documents<Document>() });
+			const healthy = await session.peers[0].open(descriptor, {
+				args: {
+					replicate: { factor: 1 },
+					timeUntilRoleMaturity: 0,
+					index: { prefetch: false },
+				},
+			});
+			for (const id of ids) await healthy.docs.put(new Document({ id }));
+			// Predicts the reader's own query when the reader joins, but denies it.
+			let predicted: IterationRequest | undefined;
+			const joiner = await session.peers[1].open(descriptor.clone(), {
+				args: {
+					replicate: { factor: 1 },
+					timeUntilRoleMaturity: 0,
+					index: {
+						canSearch: () => false,
+						prefetch: {
+							predictor: {
+								onRequest: () => ({ ignore: false }),
+								predictedQuery: () => {
+									if (!predicted) return undefined;
+									const request = deserialize(
+										serialize(predicted),
+										IterationRequest,
+									);
+									request.id = randomBytes(32);
+									return request;
+								},
+							},
+						},
+					},
+				},
+			});
+			const reader = await session.peers[2].open(descriptor.clone(), {
+				args: {
+					replicate: false,
+					timeUntilRoleMaturity: 0,
+					index: { prefetch: false },
+				},
+			});
+			await reader.docs.index.waitFor(healthy.node.identity.publicKey, {
+				timeout: 10_000,
+			});
+			const joinerHash = joiner.node.identity.publicKey.hashcode();
+			const sent = sinon.spy(reader.docs.index._query, "request");
+			const iterator = reader.docs.index.iterate(query(), {
+				remote: {
+					throwOnMissing: strict,
+					timeout: 5_000,
+				},
+				updates: "remote",
+			});
+			try {
+				expect((await iterator.next(1)).map((row) => row.id)).to.deep.equal([
+					ids[0],
+				]);
+				predicted = sent
+					.getCalls()
+					.map((call) => call.args[0])
+					.find((request) => request instanceof IterationRequest);
+				expect(predicted).to.be.instanceOf(IterationRequest);
+				const pushed = pDefer<void>();
+				reader.docs.index.prefetch!.accumulator.addEventListener(
+					"add",
+					(event) => {
+						const { consumable } = event.detail;
+						if (
+							consumable.from?.hashcode() === joinerHash &&
+							consumable.response.results instanceof NoAccess
+						)
+							pushed.resolve();
+					},
+				);
+				await session.connect([[session.peers[1], session.peers[2]]]);
+				await bounded(pushed.promise, "predicted denial");
+				if (strict) {
+					const result = await settle(iterator.next(10));
+					expectDeniedBy(result, joinerHash);
+					expect(iterator.done()).to.equal(false);
+					expect((await settle(iterator.next(10))).error).to.equal(
+						result.error,
+					);
+				} else {
+					expect((await iterator.next(10)).map((row) => row.id)).to.deep.equal(
+						ids.slice(1),
+					);
+				}
+				expect(unhandled).to.deep.equal([]);
+			} finally {
+				sent.restore();
+				await iterator.close();
+			}
+		});
+	}
 });
