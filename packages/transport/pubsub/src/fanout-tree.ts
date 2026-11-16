@@ -911,7 +911,9 @@ const REPAIR_RETRY_MIN_MS = 1_000;
 const REPAIR_RETRY_INTERVAL_FACTOR = 5;
 // A stream can remain locally readable/writable while silently dropping every
 // control frame. Repeated unanswered JOIN requests are end-to-end evidence that
-// the peer path needs to be rebuilt.
+// the peer path needs to be rebuilt, as long as the peer stays silent: a reset
+// takes this many consecutive request windows in which nothing arrived from the
+// peer, however many channels were waiting on it.
 const JOIN_TIMEOUT_RESET_STREAK_THRESHOLD = 3;
 const JOIN_TIMEOUT_RESET_COOLDOWN_MS = 10_000;
 
@@ -924,6 +926,16 @@ const JOIN_REJECT_REDIRECT_QUEUE_MAX = 64;
 // disconnected components). Leaf nodes (no children) rejoin immediately.
 const RELAY_REJOIN_COOLDOWN_MS = 3_000;
 const PARENT_UPGRADE_ROOT_RESERVATION_TTL_MS = 5_000;
+
+// When the peer last sent us anything on this protocol (any channel, control or
+// data), as recorded by the stream layer when it reads the frame.
+const lastInboundActivityAt = (stream: PeerStreams) => {
+	let at = Number.NEGATIVE_INFINITY;
+	for (const inbound of stream.inboundStreams) {
+		if (inbound.lastActivity > at) at = inbound.lastActivity;
+	}
+	return at;
+};
 
 const stableUnitInterval = (input: string) => {
 	let hash = 0x811c9dc5;
@@ -1404,7 +1416,12 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 	// which no channel metrics lookup can address, so they share one aggregate.
 	private readonly providerControlMetrics: InternalFanoutTreeChannelMetrics =
 		createEmptyMetrics();
-	private readonly joinTimeoutStreakByPeer = new Map<string, number>();
+	// Per peer: consecutive join-request windows in which the peer sent nothing,
+	// and when the latest one was counted (see noteJoinTimeout).
+	private readonly joinTimeoutStreakByPeer = new Map<
+		string,
+		{ streak: number; countedAt: number }
+	>();
 	private readonly joinResetCooldownUntilByPeer = new Map<string, number>();
 	private bootstraps: Multiaddr[] = [];
 	private trackerBySuffixKey = new Map<string, Map<string, TrackerEntry>>();
@@ -4322,15 +4339,32 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		this.joinTimeoutStreakByPeer.delete(peerHash);
 	}
 
-	private noteJoinTimeout(ch: ChannelState, peerHash: string) {
-		const streak = (this.joinTimeoutStreakByPeer.get(peerHash) ?? 0) + 1;
+	private noteJoinTimeout(
+		ch: ChannelState,
+		peerHash: string,
+		requestSentAt: number,
+	) {
+		const stream = this.peers.get(peerHash);
+		if (!stream) return;
+		// Only silence is evidence. Anything the peer sent after the request went
+		// out shows it is alive; its answer may be queued behind a local stall.
+		const heardAt = lastInboundActivityAt(stream);
+		if (heardAt >= requestSentAt) return;
+		const previous = this.joinTimeoutStreakByPeer.get(peerHash);
+		// A request already in flight when the last strike was counted covers the
+		// same silence. One stall fires the join timers of every channel waiting
+		// on this peer in the same tick, and that is one strike, not one each.
+		if (previous && requestSentAt <= previous.countedAt) return;
+		// Hearing from the peer since the last strike starts the count over.
+		const streak =
+			previous && heardAt < previous.countedAt ? previous.streak + 1 : 1;
+		const now = Date.now();
 		if (streak < JOIN_TIMEOUT_RESET_STREAK_THRESHOLD) {
-			this.joinTimeoutStreakByPeer.set(peerHash, streak);
+			this.joinTimeoutStreakByPeer.set(peerHash, { streak, countedAt: now });
 			return;
 		}
 
 		this.joinTimeoutStreakByPeer.delete(peerHash);
-		const now = Date.now();
 		for (const [hash, until] of this.joinResetCooldownUntilByPeer) {
 			if (until <= now) this.joinResetCooldownUntilByPeer.delete(hash);
 		}
@@ -4338,8 +4372,6 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 			this.joinResetCooldownUntilByPeer.get(peerHash) ?? 0;
 		if (resetCooldownUntil > now) return;
 
-		const stream = this.peers.get(peerHash);
-		if (!stream) return;
 		this.joinResetCooldownUntilByPeer.set(
 			peerHash,
 			now + JOIN_TIMEOUT_RESET_COOLDOWN_MS,
@@ -6957,6 +6989,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 						Math.max(1, joinReqTimeoutMs),
 					);
 					if (requestTimeoutMs <= 0) throwInitialJoinTimeout();
+					const requestSentAt = Date.now();
 					const res = await this.tryJoinOnce(
 						ch,
 						c.hash,
@@ -7010,7 +7043,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 
 					if (res.timedOut) {
 						ch.metrics.joinReqTimeouts += 1;
-						this.noteJoinTimeout(ch, c.hash);
+						this.noteJoinTimeout(ch, c.hash, requestSentAt);
 						this.sendTrackerFeedbackBestEffort(
 							ch,
 							bootstrapPeers,

@@ -2,9 +2,15 @@ import { TestSession } from "@peerbit/libp2p-test-utils";
 import { TimeoutError, delay, waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
 import {
+	MSG_JOIN_ACCEPT,
+	MSG_JOIN_REJECT,
+	MSG_JOIN_REQ,
+} from "../src/fanout-tree-codec.js";
+import {
 	FanoutChannel,
 	FanoutTree,
 	type FanoutTreeChannelMetrics,
+	toUint8Array,
 } from "../src/index.js";
 
 type FanoutServices = { fanout: FanoutTree };
@@ -18,6 +24,46 @@ const createFanoutTestSession = (n: number) =>
 			fanout: createFanoutService,
 		},
 	});
+
+const joinTimeoutRootOptions = {
+	role: "root" as const,
+	msgRate: 10,
+	msgSize: 64,
+	uploadLimitBps: 1_000_000,
+	maxChildren: 4,
+	repair: false,
+};
+
+const joinTimeoutLeafOptions = {
+	msgRate: 10,
+	msgSize: 64,
+	uploadLimitBps: 0,
+	maxChildren: 0,
+	repair: false,
+};
+
+// Counts the connection resets `fanout` aims at one peer and still performs them.
+const watchPeerResets = (fanout: FanoutTree, peerHash: string) => {
+	const internals = fanout as any;
+	const connectionManager = internals.components.connectionManager as any;
+	const peerId = internals.peers.get(peerHash).peerId.toString();
+	const originalCloseConnections = connectionManager.closeConnections;
+	const watch = {
+		resets: 0,
+		onReset: undefined as (() => void) | undefined,
+		restore: () => {
+			connectionManager.closeConnections = originalCloseConnections;
+		},
+	};
+	connectionManager.closeConnections = async (...args: any[]) => {
+		if (args[0]?.toString?.() === peerId) {
+			watch.resets += 1;
+			watch.onReset?.();
+		}
+		return originalCloseConnections.apply(connectionManager, args);
+	};
+	return watch;
+};
 
 describe("fanout-tree", () => {
 	it("keeps cold-join counters additive at the exported metrics boundary", async () => {
@@ -1774,6 +1820,331 @@ describe("fanout-tree", () => {
 				);
 			} finally {
 				leafInternals._sendControl = originalSendControl;
+				connectionManager.closeConnections = originalCloseConnections;
+			}
+		} finally {
+			await session.stop();
+		}
+	});
+
+	it("counts join timeouts that one stall expires together as one strike", async function () {
+		this.timeout(60_000);
+		const session: TestSession<{ fanout: FanoutTree }> =
+			await createFanoutTestSession(2);
+
+		try {
+			await session.connect([[session.peers[0], session.peers[1]]]);
+			const remote = session.peers[0].services.fanout;
+			const local = session.peers[1].services.fanout;
+			const remoteId = remote.publicKeyHash;
+			const topics = [0, 1, 2].map((i) => `join-timeout-stall-burst-${i}`);
+			for (const topic of topics) {
+				remote.openChannel(topic, remoteId, joinTimeoutRootOptions);
+			}
+
+			const internals = local as any;
+			await waitForResolved(
+				() => expect(internals.peers.get(remoteId)).to.exist,
+			);
+			const watch = watchPeerResets(local, remoteId);
+			const originalSendControl = internals._sendControl;
+			const joinReqTimeoutMs = 2_000;
+			const timeouts = () =>
+				topics.reduce(
+					(sum, topic) =>
+						sum + local.getChannelMetrics(topic, remoteId).joinReqTimeouts,
+					0,
+				);
+			// The first JOIN of every channel goes unanswered. It stands in for an
+			// answer that is still unread when the stalled loop fires the timers.
+			let holdJoinRequests = true;
+			const heldAt: number[] = [];
+			internals._sendControl = async (
+				to: string,
+				bytes: Uint8Array,
+				...rest: any[]
+			) => {
+				if (holdJoinRequests && to === remoteId && bytes[0] === MSG_JOIN_REQ) {
+					heldAt.push(Date.now());
+					return;
+				}
+				return originalSendControl.call(local, to, bytes, ...rest);
+			};
+
+			try {
+				const joins = topics.map((topic) =>
+					local.joinChannel(topic, remoteId, joinTimeoutLeafOptions, {
+						timeoutMs: 30_000,
+						joinReqTimeoutMs,
+						retryMs: 10,
+						candidateCooldownMs: 0,
+					}),
+				);
+				for (const join of joins) join.catch(() => {});
+				await waitForResolved(() =>
+					expect(heldAt).to.have.length(topics.length),
+				);
+				expect(timeouts()).to.equal(0);
+
+				// Block the event loop past every held request's deadline, as a long
+				// synchronous call does. All three timers then fire in one tick.
+				const resumeAt = Math.max(...heldAt) + joinReqTimeoutMs + 50;
+				while (Date.now() < resumeAt) {
+					// stalled
+				}
+				holdJoinRequests = false;
+				await waitForResolved(() => expect(timeouts()).to.equal(topics.length));
+				expect(watch.resets).to.equal(0);
+				await Promise.all(joins);
+			} finally {
+				internals._sendControl = originalSendControl;
+				watch.restore();
+			}
+
+			expect(watch.resets).to.equal(0);
+			for (const topic of topics) {
+				const metrics = local.getChannelMetrics(topic, remoteId);
+				expect(metrics.joinReqTimeouts).to.equal(1);
+				expect(metrics.joinPeerResets).to.equal(0);
+				expect(local.getChannelStats(topic, remoteId)?.parent).to.equal(
+					remoteId,
+				);
+			}
+		} finally {
+			await session.stop();
+		}
+	});
+
+	it("does not count join timeouts against a peer whose frames keep arriving", async function () {
+		this.timeout(60_000);
+		const session: TestSession<{ fanout: FanoutTree }> =
+			await createFanoutTestSession(2);
+
+		try {
+			await session.connect([[session.peers[0], session.peers[1]]]);
+			const remote = session.peers[0].services.fanout;
+			const local = session.peers[1].services.fanout;
+			const remoteId = remote.publicKeyHash;
+			const topics = [0, 1, 2].map((i) => `join-timeout-live-peer-${i}`);
+			for (const topic of topics) {
+				remote.openChannel(topic, remoteId, joinTimeoutRootOptions);
+			}
+
+			const internals = local as any;
+			await waitForResolved(
+				() => expect(internals.peers.get(remoteId)).to.exist,
+			);
+			const watch = watchPeerResets(local, remoteId);
+			const originalOnDataMessage = local.onDataMessage;
+			// The remote answers every JOIN at once and the answers are read off the
+			// stream, but this peer's fanout handles them only later, as when its
+			// loop is too busy to keep up. The remote is live throughout.
+			let deferJoinResponses = true;
+			const deferred: any[][] = [];
+			local.onDataMessage = (async (...args: any[]) => {
+				const [from, , message] = args;
+				const data = message?.data ? toUint8Array(message.data) : undefined;
+				if (
+					deferJoinResponses &&
+					from.hashcode() === remoteId &&
+					(data?.[0] === MSG_JOIN_ACCEPT || data?.[0] === MSG_JOIN_REJECT)
+				) {
+					deferred.push(args);
+					return true;
+				}
+				return originalOnDataMessage.apply(local, args as any);
+			}) as typeof local.onDataMessage;
+
+			try {
+				const joins = topics.map((topic) =>
+					local.joinChannel(topic, remoteId, joinTimeoutLeafOptions, {
+						timeoutMs: 30_000,
+						joinReqTimeoutMs: 300,
+						retryMs: 5,
+						candidateCooldownMs: 0,
+					}),
+				);
+				for (const join of joins) join.catch(() => {});
+				// Every channel sees more unanswered windows than the reset threshold.
+				await waitForResolved(
+					() => {
+						if (watch.resets > 0) return;
+						for (const topic of topics) {
+							expect(
+								local.getChannelMetrics(topic, remoteId).joinReqTimeouts,
+							).to.be.greaterThan(3);
+						}
+					},
+					{ timeout: 20_000 },
+				);
+				expect(watch.resets).to.equal(0);
+				expect(deferred.length).to.be.greaterThan(3 * topics.length);
+
+				deferJoinResponses = false;
+				for (const args of deferred.splice(0)) {
+					await originalOnDataMessage.apply(local, args as any);
+				}
+				await Promise.all(joins);
+			} finally {
+				local.onDataMessage = originalOnDataMessage;
+				watch.restore();
+			}
+
+			expect(watch.resets).to.equal(0);
+			for (const topic of topics) {
+				expect(
+					local.getChannelMetrics(topic, remoteId).joinPeerResets,
+				).to.equal(0);
+				expect(local.getChannelStats(topic, remoteId)?.parent).to.equal(
+					remoteId,
+				);
+			}
+		} finally {
+			await session.stop();
+		}
+	});
+
+	it("still resets a silent peer that several channels join through", async function () {
+		this.timeout(30_000);
+		const session: TestSession<{ fanout: FanoutTree }> =
+			await createFanoutTestSession(2);
+
+		try {
+			await session.connect([[session.peers[0], session.peers[1]]]);
+			const remoteNode = session.peers[0];
+			const remote = remoteNode.services.fanout;
+			const local = session.peers[1].services.fanout;
+			const remoteId = remote.publicKeyHash;
+			const bootstrapAddrs = remoteNode
+				.getMultiaddrs()
+				.filter(
+					(address) => !address.getComponents().some((c) => c.code === 290),
+				);
+			const topics = [0, 1, 2].map((i) => `join-timeout-silent-peer-${i}`);
+			for (const topic of topics) {
+				remote.openChannel(topic, remoteId, joinTimeoutRootOptions);
+			}
+
+			const internals = local as any;
+			await waitForResolved(
+				() => expect(internals.peers.get(remoteId)).to.exist,
+			);
+			const watch = watchPeerResets(local, remoteId);
+			const originalSendControl = internals._sendControl;
+			// Nothing this peer sends reaches the remote, so nothing comes back
+			// until the connection is reset and redialled.
+			let dropControls = true;
+			watch.onReset = () => {
+				dropControls = false;
+			};
+			internals._sendControl = async (to: string, ...rest: any[]) => {
+				if (dropControls && to === remoteId) return;
+				return originalSendControl.call(local, to, ...rest);
+			};
+
+			try {
+				await Promise.all(
+					topics.map((topic) =>
+						local.joinChannel(topic, remoteId, joinTimeoutLeafOptions, {
+							timeoutMs: 10_000,
+							bootstrap: bootstrapAddrs,
+							trackerCandidates: 0,
+							retryMs: 5,
+							joinReqTimeoutMs: 50,
+							candidateCooldownMs: 0,
+						}),
+					),
+				);
+			} finally {
+				internals._sendControl = originalSendControl;
+				watch.restore();
+			}
+
+			expect(watch.resets).to.equal(1);
+			expect(
+				topics.reduce(
+					(sum, topic) =>
+						sum + local.getChannelMetrics(topic, remoteId).joinPeerResets,
+					0,
+				),
+			).to.equal(1);
+			for (const topic of topics) {
+				expect(local.getChannelStats(topic, remoteId)?.parent).to.equal(
+					remoteId,
+				);
+			}
+		} finally {
+			await session.stop();
+		}
+	});
+
+	it("counts a peer's join timeouts once per silent request window", async () => {
+		const session: TestSession<{ fanout: FanoutTree }> =
+			await createFanoutTestSession(2);
+
+		try {
+			await session.connect([[session.peers[0], session.peers[1]]]);
+			const remoteId = session.peers[0].services.fanout.publicKeyHash;
+			const local = session.peers[1].services.fanout;
+			const internals = local as any;
+			await waitForResolved(() =>
+				expect(
+					internals.peers.get(remoteId)?.inboundStreams.length,
+				).to.be.greaterThan(0),
+			);
+			const peer = internals.peers.get(remoteId);
+			const channels = [0, 1, 2].map((i) => {
+				const id = local.openChannel(`join-timeout-windows-${i}`, remoteId, {
+					...joinTimeoutLeafOptions,
+					role: "node",
+				});
+				return internals.channelsBySuffixKey.get(id.suffixKey);
+			});
+			const connectionManager = internals.components.connectionManager as any;
+			const originalCloseConnections = connectionManager.closeConnections;
+			let resets = 0;
+			connectionManager.closeConnections = async () => {
+				resets += 1;
+			};
+			// Every step happens strictly after the previous one.
+			const step = async () => {
+				await delay(5);
+				return Date.now();
+			};
+			const hearFromPeer = async () => {
+				const at = await step();
+				for (const inbound of peer.inboundStreams) inbound.lastActivity = at;
+			};
+			const timeOut = (ch: any, requestSentAt: number) =>
+				internals.noteJoinTimeout(ch, remoteId, requestSentAt);
+
+			try {
+				await hearFromPeer();
+				// One stall expires the requests of all three channels together.
+				const burstSentAt = await step();
+				await step();
+				for (const ch of channels) timeOut(ch, burstSentAt);
+				expect(resets).to.equal(0);
+
+				// A frame from the peer after a request went out means the peer
+				// is not silent, so that request's timeout is no strike.
+				const answeredSentAt = await step();
+				await hearFromPeer();
+				await step();
+				timeOut(channels[0], answeredSentAt);
+
+				// The peer spoke after the first strike, so the silence starts over.
+				timeOut(channels[1], await step());
+				timeOut(channels[2], await step());
+				expect(resets).to.equal(0);
+
+				// The third consecutive silent window resets the connection once.
+				timeOut(channels[0], await step());
+				expect(resets).to.equal(1);
+				expect(
+					channels.reduce((sum, ch) => sum + ch.metrics.joinPeerResets, 0),
+				).to.equal(1);
+			} finally {
 				connectionManager.closeConnections = originalCloseConnections;
 			}
 		} finally {
