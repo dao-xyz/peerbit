@@ -409,6 +409,9 @@ describe("@peerbit/blocks — stored-block notifications", () => {
 				...rest,
 			);
 		} as typeof process.stderr.write;
+		// enable() and disable() overwrite process.env.DEBUG, so keep the
+		// caller's namespaces to restore them afterwards.
+		const previousDebug = process.env.DEBUG;
 		enable(`${namespace}*`);
 		try {
 			let gate = held();
@@ -454,7 +457,7 @@ describe("@peerbit/blocks — stored-block notifications", () => {
 			});
 		} finally {
 			disable();
-			if (process.env.DEBUG) enable(process.env.DEBUG);
+			if (previousDebug) enable(previousDebug);
 			process.stderr.write = write;
 		}
 	});
