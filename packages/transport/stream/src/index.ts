@@ -2252,21 +2252,65 @@ export abstract class DirectStream<
 			}
 
 			// Best-effort liveness probe; never let background probe failures crash callers.
+			const probedAt = Date.now();
 			const alive = this.checkIsAlive([peerKeyHash]).catch(() => false);
-			if (dependent.length > 0 && retained) {
-				// A retained relay path can be a dependent's own route back through us.
-				// If the probe fails, the dependents still need the departure hint.
+			if (retained) {
+				// The retained relay path is unconfirmed: the peer may have left, and the
+				// path can be a dependent's own route back through us. If the probe
+				// fails, retire the peer and send the dependents the departure hint.
 				const lifecycle = this.closeController;
 				void alive
 					.then(
 						(ok) =>
-							ok || this.announceDeparture(peerKeyHash, dependent, lifecycle),
+							ok ||
+							this.retireUnconfirmedPeer(
+								peerKeyHash,
+								dependent,
+								lifecycle,
+								probedAt,
+							),
 					)
-					.catch(() => false);
+					.catch(logError);
 			}
 		}
 
 		logger.trace("connection ended:" + peerKey.toString());
+	}
+
+	/**
+	 * Handles a failed liveness probe for a peer whose relay path was retained
+	 * when its direct connection closed. The probe's health check usually
+	 * retires the peer first, but a probe that fails before that check fires
+	 * (for example when a flood write to a closing neighbour rejects) releases
+	 * the check, and nothing else would retire the path. Unless the peer
+	 * reconnected or a route to it was learned after the probe was sent, it is
+	 * removed as a full removal would, and the dependents are told it left.
+	 */
+	private async retireUnconfirmedPeer(
+		peerKeyHash: string,
+		dependent: string[],
+		lifecycle: AbortController,
+		probedAt: number,
+	) {
+		if (
+			this.closeController !== lifecycle ||
+			lifecycle.signal.aborted ||
+			this.stopping ||
+			!this.started
+		) {
+			return false;
+		}
+		const refreshed = this.routes
+			.getRouteHints(this.publicKeyHash, peerKeyHash)
+			.some((hint) => hint.updatedAt > probedAt);
+		if (!refreshed) {
+			// Keeps a reconnected neighbour; a no-op once the health check removed it.
+			this.removePeerFromRoutes(peerKeyHash);
+		}
+		return (
+			dependent.length > 0 &&
+			this.announceDeparture(peerKeyHash, dependent, lifecycle)
+		);
 	}
 
 	/**

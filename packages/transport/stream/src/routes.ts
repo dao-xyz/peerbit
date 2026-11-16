@@ -394,9 +394,13 @@ export class Routes {
 				this.routes.delete(fromMapKey);
 			}
 		}
-		if (removeIdentity || !this.isReachable(this.me, target)) {
-			this.routes.delete(target);
+		if (removeIdentity) {
 			this.remoteInfo.delete(target);
+		} else if (!this.isReachable(this.me, target)) {
+			// Nothing usable is left: no other path, or the session was already
+			// invalidated (for example by a relay's departure hint). The identity
+			// is gone after all, so remove and report it as a full removal does.
+			for (const lost of this.remove(target)) maybeUnreachable.add(lost);
 		} else if (this.remoteInfo.get(target)?.session === -1) {
 			// The direct-neighbour sentinel must not freeze later signed sessions.
 			const session = this.routes.get(this.me)!.get(target)!.remoteSession;

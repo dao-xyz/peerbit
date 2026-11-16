@@ -311,6 +311,43 @@ describe("routes", () => {
 			}
 		});
 
+		it("removes and reports an identity whose session was invalidated before its next hop is lost", () => {
+			const controller = new AbortController();
+			const routes =
+				resolveInjectedRustCore()?.createRoutes({
+					me,
+					routeMaxRetentionPeriod: 10_000,
+					signal: controller.signal,
+				}) ?? new Routes(me, { signal: controller.signal });
+			try {
+				const now = Date.now();
+				routes.add(me, a, a, -1, now, 123);
+				routes.add(me, b, a, 1, now, 123);
+				routes.updateSession(a, 123);
+				// Another peer reaches the target through us, over both next hops.
+				for (const next of [a, b]) routes.add(c, next, a, 1, now, 123);
+				routes.add(a, b, d, 1, now, 456);
+				// A relay's departure hint invalidated the session first.
+				routes.updateSession(a, undefined);
+				expect(routes.isReachable(me, a)).to.equal(false);
+				expect(
+					routes.findNeighbor(me, a)?.list.map((x) => x.hash),
+				).to.have.members([a, b]);
+				// The relay row that is left cannot reach the target, so losing the
+				// direct hop is the identity's departure, reported now.
+				expect(routes.remove(a, { neighbourOnly: true })).to.deep.equal([a]);
+				expect(routes.findNeighbor(me, a)).to.equal(undefined);
+				expect(routes.findNeighbor(c, a)).to.equal(undefined);
+				expect(routes.findNeighbor(a, d)).to.equal(undefined);
+				expect(routes.getSession(a)).to.equal(undefined);
+				expect(routes.routes.size).to.equal(0);
+				expect(routes.remove(a, { neighbourOnly: true })).to.deep.equal([]);
+			} finally {
+				controller.abort();
+				routes.clear();
+			}
+		});
+
 		it("remote", async () => {
 			const routes = new Routes(me);
 			routes.add(me, a, b, 0, +new Date(), +new Date());

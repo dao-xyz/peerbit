@@ -9,7 +9,7 @@ import {
 	MessageHeader,
 	SilentDelivery,
 } from "@peerbit/stream-interface";
-import { delay, waitForResolved } from "@peerbit/time";
+import { AbortError, delay, waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
 import { createLibp2p } from "libp2p";
 import pDefer from "p-defer";
@@ -525,6 +525,7 @@ describe("stream same-identity replacement ownership", () => {
 	for (const probe of [
 		"answers",
 		"fails",
+		"fails before its health check",
 		"fails behind a fresh route",
 		"fails after a restart",
 	]) {
@@ -557,6 +558,11 @@ describe("stream same-identity replacement ownership", () => {
 					.getCalls()
 					.map((call) => call.args[1])
 					.filter((message) => message instanceof Goodbye);
+			const lost: string[] = [];
+			const onLost = ({ detail }: CustomEvent<PublicSignKey>) => {
+				lost.push(detail.hashcode());
+			};
+			subject.addEventListener("peer:unreachable", onLost);
 			try {
 				await direct.attachOutboundStream(raw("direct-outbound"));
 				await viaRelay.attachOutboundStream(raw("relay-outbound"));
@@ -600,38 +606,283 @@ describe("stream same-identity replacement ownership", () => {
 					remotePeer: target.toPeerId(),
 					status: "closed",
 				} as Connection);
+				const disconnectedBy = Date.now();
 				expect(checkIsAlive.calledOnceWithExactly([targetHash])).to.equal(true);
 				expect(
 					subject.getRouteHints(targetHash).map((hint) => hint.nextHop),
 				).to.deep.equal([relayHash]);
 				expect(goodbyes()).to.have.length(0);
+				expect(lost).to.deep.equal([]);
 
 				if (probe === "fails") {
 					// The probe's ACK health check retires the identity before it settles.
 					subject.removePeerFromRoutes(targetHash);
+				} else if (probe === "fails behind a fresh route") {
+					// An ACK through the relay after the probe was sent confirmed the path.
+					await waitForResolved(
+						() => expect(Date.now()).to.be.greaterThan(disconnectedBy),
+						{ timeout: 1_000, delayInterval: 1 },
+					);
+					subject.addRouteConnection(
+						subject.publicKeyHash,
+						relayHash,
+						target,
+						1,
+						Date.now(),
+						123,
+					);
 				} else if (probe === "fails after a restart") {
 					// A probe from the previous lifecycle must not speak for this one.
 					await subject.stop();
 					await subject.start();
 				}
+				// "fails before its health check": nothing retired the path before the
+				// probe settled, as when one of its flood writes rejected early.
 				settled.resolve(probe === "answers");
-				if (probe === "fails") {
+				if (probe === "fails" || probe === "fails before its health check") {
 					await waitForResolved(() => expect(goodbyes()).to.have.length(1));
 					const goodbye = goodbyes()[0] as Goodbye;
 					expect(goodbye.leaving).to.deep.equal([targetHash]);
 					expect(goodbye.header.mode.to).to.deep.equal([relayHash]);
+					expect(
+						subject.routes.isReachable(subject.publicKeyHash, targetHash),
+					).to.equal(false);
+					expect(subject.getRouteHints(targetHash)).to.have.length(0);
+					expect(lost).to.deep.equal([targetHash]);
 				} else {
 					await delay(200);
 					expect(goodbyes()).to.have.length(0);
+					if (probe !== "fails after a restart") {
+						expect(
+							subject.routes.isReachable(subject.publicKeyHash, targetHash),
+						).to.equal(true);
+						expect(
+							subject.getRouteHints(targetHash).map((hint) => hint.nextHop),
+						).to.deep.equal([relayHash]);
+						expect(lost).to.deep.equal([]);
+					}
 				}
 			} finally {
 				settled.resolve(false);
 				checkIsAlive.restore();
 				publications.restore();
+				subject.removeEventListener("peer:unreachable", onLost);
 				await node.stop();
 			}
 		});
 	}
+
+	for (const dependents of ["without", "with"]) {
+		it(`retires a retained relay path whose real probe fails before its health check (${dependents} dependents)`, async () => {
+			const node = await createNode();
+			const subject = node.services.directstream;
+			const target = (await Ed25519Keypair.create()).publicKey;
+			const relay = (await Ed25519Keypair.create()).publicKey;
+			const closing = (await Ed25519Keypair.create()).publicKey;
+			const dependent = (await Ed25519Keypair.create()).publicKey;
+			const targetHash = target.hashcode();
+			const relayHash = relay.hashcode();
+			const neighbours = [
+				subject.addPeer(target.toPeerId(), target, protocol, "direct"),
+				subject.addPeer(relay.toPeerId(), relay, protocol, "relay"),
+				subject.addPeer(closing.toPeerId(), closing, protocol, "closing"),
+				...(dependents === "with"
+					? [
+							subject.addPeer(
+								dependent.toPeerId(),
+								dependent,
+								protocol,
+								"dependent",
+							),
+						]
+					: []),
+			];
+			// A neighbour that is being closed stays in `peers` until its close
+			// resolves, and its writes reject. One rejected flood write fails the
+			// whole probe and releases the probe's ACK health check.
+			const closingWrites = sinon
+				.stub(neighbours[2]!, "waitForWrite")
+				.rejects(new AbortError("Closed"));
+			const probes = sinon.spy(subject as any, "checkIsAlive");
+			const publications = sinon.spy(subject, "publishMessageMaybe");
+			const goodbyes = () =>
+				publications
+					.getCalls()
+					.map((call) => call.args[1])
+					.filter((message) => message instanceof Goodbye);
+			const lost: string[] = [];
+			const onLost = ({ detail }: CustomEvent<PublicSignKey>) => {
+				lost.push(detail.hashcode());
+			};
+			subject.addEventListener("peer:unreachable", onLost);
+			try {
+				for (const [index, peer] of neighbours.entries()) {
+					await peer.attachOutboundStream(raw(`outbound-${index}`));
+				}
+				const routeSession = Date.now();
+				subject.updateSession(relay, 456);
+				subject.addRouteConnection(
+					subject.publicKeyHash,
+					relayHash,
+					relay,
+					-1,
+					routeSession,
+					456,
+				);
+				for (const nextHop of [targetHash, relayHash]) {
+					subject.addRouteConnection(
+						subject.publicKeyHash,
+						nextHop,
+						target,
+						1,
+						routeSession,
+						123,
+					);
+				}
+				if (dependents === "with") {
+					subject.addRouteConnection(
+						dependent.hashcode(),
+						targetHash,
+						target,
+						1,
+						routeSession,
+						123,
+					);
+				}
+
+				const disconnectedAt = Date.now();
+				await subject["onPeerDisconnected"](target.toPeerId(), {
+					id: "direct",
+					remotePeer: target.toPeerId(),
+					status: "closed",
+				} as Connection);
+				expect(probes.calledOnceWithExactly([targetHash])).to.equal(true);
+				expect(await probes.firstCall.returnValue).to.equal(false);
+				// Retired after the failed probe, well before its health check
+				// (seekTimeout) could have fired.
+				await waitForResolved(
+					() => {
+						expect(
+							subject.routes.isReachable(subject.publicKeyHash, targetHash),
+						).to.equal(false);
+						expect(lost).to.deep.equal([targetHash]);
+						expect(goodbyes()).to.have.length(dependents === "with" ? 1 : 0);
+					},
+					{ timeout: subject.seekTimeout / 2, delayInterval: 10 },
+				);
+				expect(Date.now() - disconnectedAt).to.be.lessThan(subject.seekTimeout);
+				expect(subject.getRouteHints(targetHash)).to.have.length(0);
+				expect((subject as any).healthChecks.has(targetHash)).to.equal(false);
+				if (dependents === "with") {
+					const goodbye = goodbyes()[0] as Goodbye;
+					expect(goodbye.leaving).to.deep.equal([targetHash]);
+					expect(goodbye.header.mode.to).to.deep.equal([dependent.hashcode()]);
+				}
+			} finally {
+				closingWrites.restore();
+				probes.restore();
+				publications.restore();
+				subject.removeEventListener("peer:unreachable", onLost);
+				await node.stop();
+			}
+		});
+	}
+
+	it("reports a peer whose session a relay already invalidated as unreachable at its direct disconnect", async () => {
+		const node = await createNode();
+		const subject = node.services.directstream;
+		const target = (await Ed25519Keypair.create()).publicKey;
+		const relay = (await Ed25519Keypair.create()).publicKey;
+		const dependent = (await Ed25519Keypair.create()).publicKey;
+		const targetHash = target.hashcode();
+		const relayHash = relay.hashcode();
+		const neighbours = [
+			subject.addPeer(target.toPeerId(), target, protocol, "direct"),
+			subject.addPeer(relay.toPeerId(), relay, protocol, "relay"),
+			subject.addPeer(dependent.toPeerId(), dependent, protocol, "dependent"),
+		];
+		const checkIsAlive = sinon
+			.stub(subject as any, "checkIsAlive")
+			.resolves(false);
+		const publications = sinon.spy(subject, "publishMessageMaybe");
+		const goodbyes = () =>
+			publications
+				.getCalls()
+				.map((call) => call.args[1])
+				.filter((message) => message instanceof Goodbye);
+		const lost: string[] = [];
+		const onLost = ({ detail }: CustomEvent<PublicSignKey>) => {
+			lost.push(detail.hashcode());
+		};
+		subject.addEventListener("peer:unreachable", onLost);
+		try {
+			for (const [index, peer] of neighbours.entries()) {
+				await peer.attachOutboundStream(raw(`outbound-${index}`));
+			}
+			const routeSession = Date.now();
+			subject.updateSession(relay, 456);
+			subject.addRouteConnection(
+				subject.publicKeyHash,
+				relayHash,
+				relay,
+				-1,
+				routeSession,
+				456,
+			);
+			for (const nextHop of [targetHash, relayHash]) {
+				subject.addRouteConnection(
+					subject.publicKeyHash,
+					nextHop,
+					target,
+					1,
+					routeSession,
+					123,
+				);
+			}
+			subject.addRouteConnection(
+				dependent.hashcode(),
+				targetHash,
+				target,
+				1,
+				routeSession,
+				123,
+			);
+			// What a relay's departure hint does when it arrives before the direct
+			// connection's own close is processed.
+			subject.invalidateSession(targetHash);
+			expect(
+				subject.routes.isReachable(subject.publicKeyHash, targetHash),
+			).to.equal(false);
+			expect(
+				subject.routes
+					.findNeighbor(subject.publicKeyHash, targetHash)
+					?.list.map((route) => route.hash),
+			).to.have.members([targetHash, relayHash]);
+
+			await subject["onPeerDisconnected"](target.toPeerId(), {
+				id: "direct",
+				remotePeer: target.toPeerId(),
+				status: "closed",
+			} as Connection);
+			// The relay row that is left has no valid session, so it is not a
+			// retained path: the loss is reported now, not by the probe's health check.
+			expect(lost).to.deep.equal([targetHash]);
+			expect(
+				subject.routes.findNeighbor(subject.publicKeyHash, targetHash),
+			).to.equal(undefined);
+			expect(subject.routes.getSession(targetHash)).to.equal(undefined);
+			expect(goodbyes()).to.have.length(1);
+			const goodbye = goodbyes()[0] as Goodbye;
+			expect(goodbye.leaving).to.deep.equal([targetHash]);
+			expect(goodbye.header.mode.to).to.deep.equal([dependent.hashcode()]);
+			expect(checkIsAlive.calledOnceWithExactly([targetHash])).to.equal(true);
+		} finally {
+			checkIsAlive.restore();
+			publications.restore();
+			subject.removeEventListener("peer:unreachable", onLost);
+			await node.stop();
+		}
+	});
 
 	it("does not remove replacement routes after an awaited old disconnect", async () => {
 		const node = await createNode();

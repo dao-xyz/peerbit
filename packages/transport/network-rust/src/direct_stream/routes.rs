@@ -444,9 +444,17 @@ impl Routes {
                 self.routes.shift_remove(&from_key);
             }
         }
-        if !neighbour_only || !self.is_reachable(&self.me, target, MAX_ROUTE_DISTANCE) {
-            self.routes.shift_remove(target);
+        if !neighbour_only {
             self.remote_info.remove(target);
+        } else if !self.is_reachable(&self.me, target, MAX_ROUTE_DISTANCE) {
+            // Nothing usable is left: no other path, or the session was already
+            // invalidated (for example by a relay's departure hint). The identity
+            // is gone after all, so remove and report it as a full removal does.
+            for lost in self.remove_routes(target, false, now_ms) {
+                if !maybe_unreachable.contains(&lost) {
+                    maybe_unreachable.push(lost);
+                }
+            }
         } else if self.remote_info.get(target) == Some(&-1) {
             // Retire the direct-only sentinel without inventing a remote epoch.
             if let Some(session) = self
@@ -1072,6 +1080,30 @@ mod tests {
         assert_eq!(r.get_session("target"), None);
         assert!(r.find_neighbor("target", "other").is_none());
         assert!(r.remove_routes("target", true, NOW + 10_001).is_empty());
+    }
+
+    #[test]
+    fn neighbour_removal_reports_identity_whose_session_was_invalidated() {
+        let mut r = routes("me");
+        r.add("me", "target", "target", -1, 100, 123, NOW);
+        r.add("me", "relay", "target", 1, 100, 123, NOW);
+        r.update_session("target", Some(123));
+        for next in ["target", "relay"] {
+            r.add("dependent", next, "target", 1, 100, 123, NOW);
+        }
+        r.add("target", "relay", "other", 1, 100, 456, NOW);
+        // A relay's departure hint invalidated the session first.
+        r.update_session("target", None);
+        assert!(!r.is_reachable("me", "target", MAX_ROUTE_DISTANCE));
+        // The relay row that is left cannot reach the target, so losing the
+        // direct hop is the identity's departure, reported now.
+        assert_eq!(r.remove_routes("target", true, NOW), vec!["target"]);
+        assert!(r.find_neighbor("me", "target").is_none());
+        assert!(r.find_neighbor("dependent", "target").is_none());
+        assert!(r.find_neighbor("target", "other").is_none());
+        assert_eq!(r.get_session("target"), None);
+        assert_eq!(r.count_all(), 0);
+        assert!(r.remove_routes("target", true, NOW).is_empty());
     }
 
     #[test]
