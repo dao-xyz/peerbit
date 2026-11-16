@@ -8,8 +8,13 @@ import { EventStore } from "./utils/stores/event-store.js";
 
 describe("join provider resolution", () => {
 	let session: TestSession;
+	// Announcements a test holds. They are released before the session stops,
+	// so a write that waits for one cannot keep the cleanup from finishing.
+	let heldAnnouncements: Array<() => void> = [];
 
 	afterEach(async () => {
+		for (const release of heldAnnouncements) release();
+		heldAnnouncements = [];
 		sinon.restore();
 		await session.stop();
 	});
@@ -394,12 +399,18 @@ describe("join provider resolution", () => {
 			args: { replicate: false },
 		});
 		const log = store.log as any;
-		const fanout = (session.peers[0].services as any).fanout;
+		const services = session.peers[0].services as any;
+		// Let announcements of blocks stored while opening settle, so the first
+		// announcement below is the first append's.
+		await services.blocks.waitForStoredNotifications();
+		await log.remoteBlocks.waitForStoredNotifications();
+		const fanout = services.fanout;
 		const provide = sinon
 			.stub(fanout, "provide")
 			.returns({ close: sinon.spy() });
 		const firstStarted = pDefer<void>();
 		const releaseFirst = pDefer<void>();
+		heldAnnouncements.push(releaseFirst.resolve);
 		const announced: string[][] = [];
 		sinon
 			.stub(fanout, "announceProviders")
@@ -412,41 +423,37 @@ describe("join provider resolution", () => {
 			});
 		const onPutMany = sinon.spy(log.remoteBlocks.options, "onPutMany");
 
-		try {
-			// The first append's announcement is held, so the next appends queue
-			// behind it and reach the aggregate hook together.
-			const hashes = [
-				(await store.add("first", { meta: { next: [] } })).entry.hash,
-			];
-			await firstStarted.promise;
-			for (let i = 0; i < 3; i++) {
-				hashes.push(
-					(await store.add(`queued-${i}`, { meta: { next: [] } })).entry.hash,
-				);
-			}
-			releaseFirst.resolve();
-			await log.remoteBlocks.waitForStoredNotifications();
-			expect(announced).to.deep.equal([
-				[`cid:${hashes[0]}`],
-				hashes.slice(1).map((hash) => `cid:${hash}`),
-			]);
-			expect(onPutMany.callCount).to.equal(1);
-			expect(onPutMany.firstCall.args[1]).to.deep.include({ batch: false });
-			expect(provide.called, "queued single appends start no lease").to.equal(
-				false,
+		// The first append's announcement is held, so the next appends queue
+		// behind it and reach the aggregate hook together.
+		const first = store.add("first", { meta: { next: [] } });
+		await firstStarted.promise;
+		const queued: string[] = [];
+		for (let i = 0; i < 3; i++) {
+			queued.push(
+				(await store.add(`queued-${i}`, { meta: { next: [] } })).entry.hash,
 			);
-			expect(log._providerHandle).to.equal(undefined);
-
-			// An append of several entries at once still starts it.
-			await store.addMany(["batch-a", "batch-b"]);
-			await log.remoteBlocks.waitForStoredNotifications();
-			expect(onPutMany.callCount).to.equal(2);
-			expect(onPutMany.secondCall.args[1]).to.deep.include({ batch: true });
-			expect(provide.calledOnce).to.equal(true);
-			expect(provide.firstCall.args[0]).to.equal(`shared-log|${log.topic}`);
-		} finally {
-			releaseFirst.resolve();
 		}
+		releaseFirst.resolve();
+		const firstHash = (await first).entry.hash;
+		await log.remoteBlocks.waitForStoredNotifications();
+		expect(announced).to.deep.equal([
+			[`cid:${firstHash}`],
+			queued.map((hash) => `cid:${hash}`),
+		]);
+		expect(onPutMany.callCount).to.equal(1);
+		expect(onPutMany.firstCall.args[1]).to.deep.include({ batch: false });
+		expect(provide.called, "queued single appends start no lease").to.equal(
+			false,
+		);
+		expect(log._providerHandle).to.equal(undefined);
+
+		// An append of several entries at once still starts it.
+		await store.addMany(["batch-a", "batch-b"]);
+		await log.remoteBlocks.waitForStoredNotifications();
+		expect(onPutMany.callCount).to.equal(2);
+		expect(onPutMany.secondCall.args[1]).to.deep.include({ batch: true });
+		expect(provide.calledOnce).to.equal(true);
+		expect(provide.firstCall.args[0]).to.equal(`shared-log|${log.topic}`);
 	});
 
 	it("passes the block store's close signal to provider announcements", async () => {
