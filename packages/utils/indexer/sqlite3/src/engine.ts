@@ -53,6 +53,7 @@ type FKMode = "strict" | "race-tolerant";
 type DatabaseCoordinator = {
 	tail: Promise<void>;
 	nextSavepointId: number;
+	crashSafeDurability?: types.CrashSafeIndexDurability;
 };
 
 // SQLite transactions and schema changes belong to the connection, not to a
@@ -261,8 +262,22 @@ export class SQLiteIndex<T extends Record<string, any>>
 		return this.properties.persisted ?? true;
 	}
 
-	get crashSafeDurability() {
-		return this.properties.db.crashSafeDurability;
+	get crashSafeDurability(): types.CrashSafeIndexDurability | undefined {
+		const durability = this.properties.db.crashSafeDurability;
+		if (!durability) {
+			return undefined;
+		}
+		// The barrier's checkpoint belongs to the connection and fails while a
+		// write transaction is open. Admit it after the operations already queued
+		// on the connection, so it never runs inside another scope's savepoint.
+		// Scopes on one connection share one barrier object.
+		return (this.databaseCoordinator.crashSafeDurability ??= {
+			crashSafe: true,
+			barrier: () =>
+				this.withDatabaseBarrier(async () => {
+					await durability.barrier();
+				}),
+		});
 	}
 
 	private static readonly _emptyTables = new Map<string, Table>();
