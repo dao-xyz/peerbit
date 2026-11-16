@@ -914,9 +914,10 @@ const REPAIR_RETRY_INTERVAL_FACTOR = 5;
 // the peer path needs to be rebuilt. They are counted per request window:
 // requests in flight together count once, however many channels were waiting
 // on the peer. A reset takes three consecutive windows in which nothing arrived
-// from the peer, or six consecutive unanswered windows whatever else it sent: a
-// stream that drops only our frames leaves the peer talking to us while our
-// requests never reach it.
+// from the peer, or six consecutive windows in which no request was answered
+// before it timed out, whatever else the peer sent: a stream that drops or
+// badly delays only our frames leaves the peer talking to us while every join
+// through it fails.
 const JOIN_TIMEOUT_RESET_STREAK_THRESHOLD = 3;
 const JOIN_TIMEOUT_RESET_UNANSWERED_THRESHOLD =
 	2 * JOIN_TIMEOUT_RESET_STREAK_THRESHOLD;
@@ -1421,9 +1422,9 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 	// which no channel metrics lookup can address, so they share one aggregate.
 	private readonly providerControlMetrics: InternalFanoutTreeChannelMetrics =
 		createEmptyMetrics();
-	// Per peer, since its last join response: consecutive join-request windows
-	// that timed out, how many of the latest ones were silent, and when the
-	// latest one was counted (see noteJoinTimeout).
+	// Per peer, since it last answered a join request in time: consecutive
+	// join-request windows that timed out, how many of the latest ones were
+	// silent, and when the latest one was counted (see noteJoinTimeout).
 	private readonly joinTimeoutStreakByPeer = new Map<
 		string,
 		{ unanswered: number; silent: number; countedAt: number }
@@ -9213,10 +9214,13 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 			if (kind === MSG_JOIN_ACCEPT || kind === MSG_JOIN_REJECT) {
 				const reqId = this.codec.decodeJoinResponseReqId(data);
 				if (reqId == null) return false;
-				// Any explicit join response proves this path is alive end to end.
-				this.noteJoinResponse(fromHash);
 				const pending = ch.pendingJoin.get(reqId);
+				// Only an answer in time starts the join-timeout count over. One that
+				// comes after its request timed out shows that the peer is alive,
+				// which the silence check already sees, but a stream that delivers our
+				// frames that late still fails every join through it.
 				if (!pending) return true;
+				this.noteJoinResponse(fromHash);
 				ch.pendingJoin.delete(reqId);
 
 				if (kind === MSG_JOIN_ACCEPT) {

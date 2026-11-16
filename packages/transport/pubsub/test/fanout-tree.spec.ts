@@ -2184,6 +2184,134 @@ describe("fanout-tree", () => {
 		}
 	});
 
+	it("still resets a peer whose join answers always arrive too late", async function () {
+		this.timeout(30_000);
+		const session: TestSession<{ fanout: FanoutTree }> =
+			await createFanoutTestSession(2);
+
+		try {
+			await session.connect([[session.peers[0], session.peers[1]]]);
+			const remoteNode = session.peers[0];
+			const remote = remoteNode.services.fanout;
+			const local = session.peers[1].services.fanout;
+			const remoteId = remote.publicKeyHash;
+			const bootstrapAddrs = remoteNode
+				.getMultiaddrs()
+				.filter(
+					(address) => !address.getComponents().some((c) => c.code === 290),
+				);
+			const dataTopic = "join-timeout-late-answers-data";
+			const topic = "join-timeout-late-answers";
+			remote.openChannel(dataTopic, remoteId, joinTimeoutRootOptions);
+			remote.openChannel(topic, remoteId, joinTimeoutRootOptions);
+
+			const internals = local as any;
+			await waitForResolved(
+				() => expect(internals.peers.get(remoteId)).to.exist,
+			);
+			await local.joinChannel(dataTopic, remoteId, joinTimeoutLeafOptions, {
+				timeoutMs: 10_000,
+			});
+			const watch = watchPeerResets(local, remoteId);
+			const originalSendControl = internals._sendControl;
+			const originalOnDataMessage = local.onDataMessage;
+			// Every control frame this peer sends the remote arrives 500 ms late,
+			// past the 200 ms join timeout, until the connection is reset, and
+			// frames still queued then are lost with it: a stream with a deep send
+			// queue. The remote answers every join at once and, as this peer's
+			// parent on the data channel, keeps sending it data.
+			const lagMs = 500;
+			let lagging = true;
+			const queued = new Set<ReturnType<typeof setTimeout>>();
+			const dropQueued = () => {
+				for (const timer of queued) clearTimeout(timer);
+				queued.clear();
+			};
+			let lateAnswers = 0;
+			let lateAnswersAtReset: number | undefined;
+			let timeoutsAtReset: number | undefined;
+			watch.onReset = () => {
+				lagging = false;
+				dropQueued();
+				lateAnswersAtReset = lateAnswers;
+				timeoutsAtReset = local.getChannelMetrics(
+					topic,
+					remoteId,
+				).joinReqTimeouts;
+			};
+			internals._sendControl = async (
+				to: string,
+				bytes: Uint8Array,
+				...rest: any[]
+			) => {
+				if (lagging && to === remoteId) {
+					// Delivered later, without the attempt's abort signal.
+					const timer = setTimeout(() => {
+						queued.delete(timer);
+						void originalSendControl.call(local, to, bytes).catch(() => {});
+					}, lagMs);
+					queued.add(timer);
+					return;
+				}
+				return originalSendControl.call(local, to, bytes, ...rest);
+			};
+			// The lag is longer than the join timeout, so every answer that arrives
+			// while it lasts is for a request that has already timed out.
+			local.onDataMessage = (async (...args: any[]) => {
+				const [from, , message] = args;
+				const data = message?.data ? toUint8Array(message.data) : undefined;
+				if (
+					lagging &&
+					from.hashcode() === remoteId &&
+					(data?.[0] === MSG_JOIN_ACCEPT || data?.[0] === MSG_JOIN_REJECT)
+				) {
+					lateAnswers += 1;
+				}
+				return originalOnDataMessage.apply(local, args as any);
+			}) as typeof local.onDataMessage;
+			let publishing = true;
+			const publisher = (async () => {
+				for (let i = 0; publishing; i++) {
+					await remote
+						.publishData(dataTopic, remoteId, new Uint8Array([i & 0xff]))
+						.catch(() => {});
+					await delay(25);
+				}
+			})();
+
+			try {
+				await local.joinChannel(topic, remoteId, joinTimeoutLeafOptions, {
+					timeoutMs: 10_000,
+					bootstrap: bootstrapAddrs,
+					trackerCandidates: 0,
+					retryMs: 5,
+					joinReqTimeoutMs: 200,
+					candidateCooldownMs: 0,
+				});
+			} finally {
+				publishing = false;
+				await publisher;
+				dropQueued();
+				local.onDataMessage = originalOnDataMessage;
+				internals._sendControl = originalSendControl;
+				watch.restore();
+			}
+
+			// The late answers did not start the count over: the reset came after
+			// six windows without an answer in time, as for a peer that never
+			// answers.
+			expect(watch.resets).to.equal(1);
+			expect(lateAnswersAtReset).to.be.greaterThan(0);
+			expect(timeoutsAtReset).to.equal(6);
+			expect(local.getChannelMetrics(topic, remoteId).joinPeerResets).to.equal(
+				1,
+			);
+			expect(local.getChannelStats(topic, remoteId)?.parent).to.equal(remoteId);
+		} finally {
+			await session.stop();
+		}
+	});
+
 	it("counts a peer's join timeouts once per silent request window", async () => {
 		const session: TestSession<{ fanout: FanoutTree }> =
 			await createFanoutTestSession(2);
