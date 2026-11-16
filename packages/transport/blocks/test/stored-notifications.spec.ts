@@ -250,6 +250,73 @@ describe("@peerbit/blocks — stored-block notifications", () => {
 		expect(calls).equal(8);
 	});
 
+	it("keeps an open store's running announcements abortable when it is started again", async () => {
+		const started = pDefer<AbortSignal | undefined>();
+		const cleanup = held();
+		const remote = await createRemote({
+			onPut: (_cid, options) => {
+				started.resolve(options?.signal);
+				// Ends only when aborted, like a bootstrap dial that never answers.
+				return new Promise<void>((resolve) => {
+					options?.signal?.addEventListener("abort", () => resolve(), {
+						once: true,
+					});
+					void cleanup.promise.then(resolve);
+				});
+			},
+		});
+
+		await remote.put(new Uint8Array([51]));
+		const signal = await started.promise;
+		expect(signal, "the hook receives the store's lifecycle signal").to.exist;
+
+		// start() without stop() keeps the open store's generation: the running
+		// announcement goes on, and still holds the signal that stop() aborts.
+		await remote.start();
+		expect(signal!.aborted).equal(false);
+		expect(remote.getStoredNotificationTelemetry()).to.deep.include({
+			running: 1,
+		});
+		const stopping = remote.stop();
+		expect(signal!.aborted, "stop() aborts the running announcement").equal(
+			true,
+		);
+		await stopping;
+		expect(remote.getStoredNotificationTelemetry()).to.deep.include({
+			running: 0,
+		});
+	});
+
+	it("waits for a running announcement whose own hook starts the wait", async () => {
+		const started = pDefer<void>();
+		const release = held();
+		let waiting: Promise<void> | undefined;
+		let waitSettled = false;
+		let hookSettled = false;
+		const remote: RemoteBlocks = await createRemote({
+			onPut: async () => {
+				// Reached synchronously when the hook call starts.
+				waiting = remote.waitForStoredNotifications().then(() => {
+					waitSettled = true;
+				});
+				started.resolve();
+				await release.promise;
+				hookSettled = true;
+			},
+		});
+
+		await remote.put(new Uint8Array([52]));
+		await started.promise;
+		await drainMicrotasks();
+		expect(waitSettled, "the wait settled while its hook call ran").equal(
+			false,
+		);
+
+		release.resolve();
+		await waiting;
+		expect(hookSettled).equal(true);
+	});
+
 	it("coalesces a CID while its announcement waits or runs", async () => {
 		const started = pDefer<void>();
 		const release = held();

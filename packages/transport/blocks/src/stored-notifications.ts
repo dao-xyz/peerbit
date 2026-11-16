@@ -73,12 +73,15 @@ type Task = {
  * write never waits for a provider announcement.
  *
  * - A CID that is already waiting or running is coalesced.
- * - Each write is admitted whole while fewer than `maxPending` CIDs wait, and
- *   dropped whole (and counted) otherwise, so a write's blocks are never split
- *   between announced and dropped. Each time the queue fills up, its first
- *   drop is logged: in the warn scope the first time (once per store
+ * - A write's new CIDs are admitted together while fewer than `maxPending`
+ *   CIDs wait, and dropped together (and counted) otherwise, so the bound
+ *   never cuts a write off part-way. CIDs of a dropped write that were already
+ *   waiting or running are still notified. Each time the queue fills up, its
+ *   first drop is logged: in the warn scope the first time (once per store
  *   generation, since a restarted store gets a new queue), at debug after.
  * - At most `concurrency` single-CID calls, or one aggregate call, run at once.
+ *   A call holds its slot until it settles. The queue sets no deadline, so
+ *   CIDs stored meanwhile wait for it, up to the bound above.
  * - `close()` discards waiting CIDs and resolves when running calls settle.
  *   The owner aborts those calls first through the signal it hands its hooks.
  */
@@ -242,6 +245,17 @@ export class StoredNotificationQueue {
 	}
 
 	private run(cids: string[], ticket: number, batch: boolean): void {
+		// Register the call before the hook runs, so a `whenSettled()` or
+		// `close()` that the hook reaches synchronously waits for this call too.
+		let settle!: () => void;
+		const task: Task = {
+			cids,
+			ticket,
+			settled: new Promise<void>((resolve) => {
+				settle = resolve;
+			}),
+		};
+		this.tasks.add(task);
 		let result: Promise<void> | void;
 		try {
 			result = this.options.notify(cids, batch);
@@ -249,15 +263,17 @@ export class StoredNotificationQueue {
 			logger("stored-block notification failed: %e", error);
 			result = undefined;
 		}
-		const task: Task = { cids, ticket, settled: Promise.resolve() };
-		this.tasks.add(task);
-		task.settled = Promise.resolve(result).then(
-			() => this.finish(task),
-			(error: unknown) => {
-				logger("stored-block notification failed: %e", error);
+		const done = () => {
+			try {
 				this.finish(task);
-			},
-		);
+			} finally {
+				settle();
+			}
+		};
+		Promise.resolve(result).then(done, (error: unknown) => {
+			logger("stored-block notification failed: %e", error);
+			done();
+		});
 	}
 
 	private finish(task: Task): void {

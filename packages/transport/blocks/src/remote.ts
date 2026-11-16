@@ -57,8 +57,9 @@ const warn = logger.newScope("warn");
 // as background work with these bounds unless `awaitPutHooks` is set. At most
 // this many single-CID hook calls run at once (an aggregate hook runs alone).
 const STORED_NOTIFICATION_CONCURRENCY = 8;
-// A write's CIDs are admitted whole while fewer than this many CIDs wait for a
-// hook call, and dropped whole (and counted) otherwise, until the queue drains.
+// A write's new CIDs are admitted together while fewer than this many CIDs
+// wait for a hook call, and dropped together (and counted) otherwise, until
+// the queue drains. CIDs already waiting or running coalesce either way.
 const STORED_NOTIFICATION_MAX_PENDING = 4096;
 
 /** Passed to `onPut`/`onPutMany`. */
@@ -68,9 +69,10 @@ export type StoredNotificationHookOptions = {
 	/**
 	 * Set on `onPutMany` calls: true when the CIDs include blocks that one
 	 * write stored together (`putMany`, `putKnownMany`, or a multi-CID
-	 * `notifyStoredManyDeferred`), false when the call only gathers writes of
-	 * one block each that queued behind a running call. Hooks that do extra
-	 * work for bulk writes can skip it when this is false. A block of such a
+	 * `notifyStoredManyDeferred`), false when they come only from writes of
+	 * one block each, such as writes that queued behind a running call, or a
+	 * lone write when `onPutMany` is the only hook. Hooks that do extra work
+	 * for bulk writes can skip it when this is false. A block of a multi-block
 	 * write reaches `onPutMany` with `batch: true` even when the write's other
 	 * blocks were already being announced; a write whose blocks are all being
 	 * announced adds no call.
@@ -284,9 +286,12 @@ export class RemoteBlocks implements IBlocks {
 			 * When present, this replaces the per-CID `onPut` calls for batches. The
 			 * callback must therefore make every supplied CID discoverable through an
 			 * equivalent aggregate mechanism. Without it, `onPut` is invoked once for
-			 * every CID with bounded concurrency. CIDs stored while a call runs are
-			 * passed to the next call, so `options.batch` says whether the CIDs
-			 * include a multi-block write. `options.signal` behaves as for `onPut`.
+			 * every CID with bounded concurrency. With this hook, calls run one at a
+			 * time: CIDs stored while a call runs wait for it to settle and are
+			 * passed to the next call, so a call that waits on a congested peer
+			 * holds them back until it settles or the store stops. `options.batch`
+			 * says whether the CIDs include a multi-block write. `options.signal`
+			 * behaves as for `onPut`.
 			 */
 			onPutMany?: (
 				cids: string[],
@@ -298,10 +303,11 @@ export class RemoteBlocks implements IBlocks {
 			 *
 			 * Defaults to false: writes resolve once the blocks are stored locally,
 			 * and the hooks run as background work in which duplicate CIDs coalesce,
-			 * each write is queued whole while fewer than 4096 CIDs wait (and
-			 * dropped whole otherwise, counted in `getStoredNotificationTelemetry()`),
-			 * and `stop()` discards waiting CIDs and aborts running calls. Use
-			 * `waitForStoredNotifications()` to wait for the hooks of earlier writes.
+			 * a write's new CIDs are queued while fewer than 4096 CIDs wait (and
+			 * dropped otherwise, counted in `getStoredNotificationTelemetry()`), and
+			 * `stop()` discards waiting CIDs and aborts running calls. Use
+			 * `waitForStoredNotifications()` to wait for the hooks of earlier writes,
+			 * for example before stopping a store whose announcements matter.
 			 */
 			awaitPutHooks?: boolean;
 			/**
@@ -1145,6 +1151,11 @@ export class RemoteBlocks implements IBlocks {
 	}
 
 	async start(): Promise<void> {
+		// Starting a store that is already open keeps its generation, as a
+		// started stream does. Replacing the close signal would leave work that
+		// holds the current one, such as a running provider announcement, for no
+		// later stop() to abort.
+		if (this._open && !this.closeController.signal.aborted) return;
 		this._events = new TypedEventEmitter();
 		this.closeController = new AbortController();
 		this._storedNotificationTasks = new Set();
