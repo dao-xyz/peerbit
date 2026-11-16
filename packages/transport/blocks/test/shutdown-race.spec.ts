@@ -263,6 +263,10 @@ describe("@peerbit/blocks — shutdown race", () => {
 			expect(onPutMany.firstCall.args[0]).deep.equal(
 				blocks.map(([cid]) => cid),
 			);
+			// One write's blocks: the hook may treat them as a batch.
+			expect((onPutMany.firstCall.args as unknown[])[1]).to.deep.include({
+				batch: true,
+			});
 			expect(onPut.callCount).equal(0);
 		} finally {
 			releaseAggregate();

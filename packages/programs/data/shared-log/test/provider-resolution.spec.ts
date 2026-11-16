@@ -1,6 +1,7 @@
 import { BlockRequest, BlockResponse } from "@peerbit/blocks";
 import { TestSession } from "@peerbit/test-utils";
 import { expect } from "chai";
+import pDefer from "p-defer";
 import sinon from "sinon";
 import type { SyncProfileEvent } from "../src/index.js";
 import { EventStore } from "./utils/stores/event-store.js";
@@ -385,6 +386,67 @@ describe("join provider resolution", () => {
 			ttlMs: 120_000,
 			bootstrapMaxPeers: 2,
 		});
+	});
+
+	it("starts the log-wide lease for batch writes but not for queued single appends", async () => {
+		session = await TestSession.disconnected(1);
+		const store = await session.peers[0].open(new EventStore<string, any>(), {
+			args: { replicate: false },
+		});
+		const log = store.log as any;
+		const fanout = (session.peers[0].services as any).fanout;
+		const provide = sinon
+			.stub(fanout, "provide")
+			.returns({ close: sinon.spy() });
+		const firstStarted = pDefer<void>();
+		const releaseFirst = pDefer<void>();
+		const announced: string[][] = [];
+		sinon
+			.stub(fanout, "announceProviders")
+			.callsFake(async (namespaces: unknown) => {
+				announced.push([...(namespaces as Iterable<string>)]);
+				if (announced.length === 1) {
+					firstStarted.resolve();
+					await releaseFirst.promise;
+				}
+			});
+		const onPutMany = sinon.spy(log.remoteBlocks.options, "onPutMany");
+
+		try {
+			// The first append's announcement is held, so the next appends queue
+			// behind it and reach the aggregate hook together.
+			const hashes = [
+				(await store.add("first", { meta: { next: [] } })).entry.hash,
+			];
+			await firstStarted.promise;
+			for (let i = 0; i < 3; i++) {
+				hashes.push(
+					(await store.add(`queued-${i}`, { meta: { next: [] } })).entry.hash,
+				);
+			}
+			releaseFirst.resolve();
+			await log.remoteBlocks.waitForStoredNotifications();
+			expect(announced).to.deep.equal([
+				[`cid:${hashes[0]}`],
+				hashes.slice(1).map((hash) => `cid:${hash}`),
+			]);
+			expect(onPutMany.callCount).to.equal(1);
+			expect(onPutMany.firstCall.args[1]).to.deep.include({ batch: false });
+			expect(provide.called, "queued single appends start no lease").to.equal(
+				false,
+			);
+			expect(log._providerHandle).to.equal(undefined);
+
+			// An append of several entries at once still starts it.
+			await store.addMany(["batch-a", "batch-b"]);
+			await log.remoteBlocks.waitForStoredNotifications();
+			expect(onPutMany.callCount).to.equal(2);
+			expect(onPutMany.secondCall.args[1]).to.deep.include({ batch: true });
+			expect(provide.calledOnce).to.equal(true);
+			expect(provide.firstCall.args[0]).to.equal(`shared-log|${log.topic}`);
+		} finally {
+			releaseFirst.resolve();
+		}
 	});
 
 	it("passes the block store's close signal to provider announcements", async () => {

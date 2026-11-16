@@ -1,4 +1,5 @@
 import { toId } from "@peerbit/indexer-interface";
+import { fanoutWire } from "@peerbit/pubsub";
 import { waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
 import pDefer from "p-defer";
@@ -216,6 +217,78 @@ describe("append provider announcement boundary", () => {
 				await appending;
 			} finally {
 				await peer?.stop();
+			}
+		}
+	});
+
+	it("closes while an append's provider announcement waits in its control send", async () => {
+		const peers: Peerbit[] = [];
+		const releaseSends = pDefer<void>();
+		let appending: Promise<unknown> | undefined;
+		try {
+			peers.push(await Peerbit.create(), await Peerbit.create());
+			const [tracker, writer] = peers;
+			await writer.bootstrap(tracker.getMultiaddrs());
+			// The tracker is then a ready bootstrap peer, so the append's
+			// announcement goes straight to its control send rather than through
+			// a bounded bootstrap dial that may give up on a loaded machine.
+			await writer.services.fanout.waitFor(
+				tracker.services.fanout.publicKeyHash,
+				{ target: "neighbor" },
+			);
+			const store = await writer.open(new EventStore<string, any>(), {
+				args: { replicate: false },
+			});
+			const remoteBlocks = (store.log as any).remoteBlocks;
+			// Let announcements of blocks stored while opening settle, so the
+			// only announcement below is the append's.
+			await writer.services.blocks.waitForStoredNotifications();
+			await remoteBlocks.waitForStoredNotifications();
+
+			const fanout = writer.services.fanout;
+			const sendStarted = pDefer<AbortSignal | undefined>();
+			const publish = sinon.stub(fanout, "publishMessageMaybe");
+			publish.callsFake(function (this: unknown, ...args) {
+				const [, message, , , signal] = args;
+				if (
+					(message as { data?: Uint8Array }).data?.[0] !==
+					fanoutWire.MSG_PROVIDER_ANNOUNCE
+				) {
+					return publish.wrappedMethod.apply(this, args);
+				}
+				sendStarted.resolve(signal);
+				// Like a write that waits for queue capacity: it ends only when its
+				// signal aborts (or when the test cleans up).
+				return new Promise<boolean>((resolve) => {
+					signal?.addEventListener("abort", () => resolve(false), {
+						once: true,
+					});
+					void releaseSends.promise.then(() => resolve(false));
+				});
+			});
+
+			appending = store.add("held-control-send", { meta: { next: [] } });
+			const signal = await sendStarted.promise;
+			expect(signal, "the control send carries the log's close signal").to
+				.exist;
+			expect(signal!.aborted).to.equal(false);
+			const { entry } = (await appending) as { entry: { hash: string } };
+			expect(await store.log.log.has(entry.hash)).to.equal(true);
+
+			// Closing aborts the held send instead of waiting for it.
+			await store.close();
+			expect(signal!.aborted).to.equal(true);
+			expect(remoteBlocks.getStoredNotificationTelemetry()).to.deep.include({
+				pending: 0,
+				running: 0,
+			});
+		} finally {
+			releaseSends.resolve();
+			sinon.restore();
+			try {
+				await appending;
+			} finally {
+				await Promise.all(peers.map((peer) => peer.stop()));
 			}
 		}
 	});

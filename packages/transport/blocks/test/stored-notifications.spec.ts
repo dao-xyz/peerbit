@@ -1,5 +1,6 @@
 import { createStore } from "@peerbit/any-store";
 import { Ed25519Keypair } from "@peerbit/crypto";
+import { disable, enable } from "@peerbit/logger";
 import { expect } from "chai";
 import pDefer from "p-defer";
 import { AnyBlockStore } from "../src/any-blockstore.js";
@@ -291,52 +292,171 @@ describe("@peerbit/blocks — stored-block notifications", () => {
 		expect(announced).deep.equal([cid, "other", cid]);
 	});
 
-	it("keeps at most the pending bound and drops the excess", async () => {
-		let calls = 0;
+	it("announces every block of one write larger than the pending bound", async () => {
+		// Distinct blocks, so every CID needs its own announcement.
+		const blocks = Array.from({ length: MAX_PENDING + 904 }, (_, index) => {
+			const bytes = new Uint8Array(4);
+			new DataView(bytes.buffer).setUint32(0, index);
+			return bytes;
+		});
+		for (const aggregate of [true, false]) {
+			const announced = new Set<string>();
+			const hookCalls: number[] = [];
+			const remote = await createRemote({
+				onPut: (cid) => {
+					hookCalls.push(1);
+					announced.add(cid);
+				},
+				...(aggregate
+					? {
+							onPutMany: (cids: string[]) => {
+								hookCalls.push(cids.length);
+								for (const cid of cids) announced.add(cid);
+							},
+						}
+					: {}),
+			});
+
+			const cids = await remote.putMany(blocks);
+			await remote.waitForStoredNotifications();
+			expect(new Set(cids).size).equal(blocks.length);
+			expect(
+				cids.filter((cid) => !announced.has(cid)),
+				aggregate ? "aggregate hook" : "per-CID hook",
+			).deep.equal([]);
+			// One aggregate call, or one call per CID.
+			expect(hookCalls).deep.equal(
+				aggregate ? [blocks.length] : blocks.map(() => 1),
+			);
+			expect(remote.getStoredNotificationTelemetry()).to.deep.include({
+				pending: 0,
+				running: 0,
+				admitted: blocks.length,
+				dropped: 0,
+			});
+			await remote.stop();
+		}
+	});
+
+	it("drops whole writes at the pending bound and admits again once it drains", async () => {
+		const release = held();
+		const announced: string[] = [];
 		const remote = await createRemote({
-			onPut: () => {
-				calls += 1;
+			onPut: async (cid) => {
+				announced.push(cid);
+				await release.promise;
 			},
 		});
-		const cids = Array.from(
-			{ length: MAX_PENDING + 904 },
-			(_, index) => `overflow-${index}`,
-		);
+		const { maxPending, concurrency } =
+			remote.getStoredNotificationTelemetry().limits;
 
-		remote.notifyStoredManyDeferred(cids);
-		// These hooks settle at once, so the admitted CIDs run within microtasks
-		// and stop() has nothing left to discard.
+		// Arrives below the bound, so it is admitted whole although it fills the
+		// queue past it.
+		const first = Array.from(
+			{ length: maxPending + concurrency + 1 },
+			(_, index) => `bound-${index}`,
+		);
+		remote.notifyStoredManyDeferred(first);
 		await drainMicrotasks();
-		await remote.stop();
-		expect(calls).equal(MAX_PENDING);
+		expect(remote.getStoredNotificationTelemetry()).to.deep.include({
+			running: concurrency,
+			pending: maxPending + 1,
+			admitted: first.length,
+			dropped: 0,
+		});
+
+		// Arrives at the bound: dropped whole, not cut off part-way.
+		await remote.putKnownMany([
+			["late-a", new Uint8Array([1])],
+			["late-b", new Uint8Array([2])],
+		]);
+		remote.notifyStoredDeferred("late-c");
+		expect(remote.getStoredNotificationTelemetry()).to.deep.include({
+			pending: maxPending + 1,
+			admitted: first.length,
+			dropped: 3,
+		});
+
+		release.resolve();
+		await remote.waitForStoredNotifications();
+		remote.notifyStoredDeferred("after-drain");
+		await remote.waitForStoredNotifications();
+		expect(announced).deep.equal([...first, "after-drain"]);
 		expect(remote.getStoredNotificationTelemetry()).to.deep.include({
 			pending: 0,
 			running: 0,
-			admitted: MAX_PENDING,
-			dropped: 904,
-			abandoned: 0,
+			admitted: first.length + 1,
+			dropped: 3,
 		});
 	});
 
-	it("admits again once a full queue drains", async () => {
-		let calls = 0;
-		const remote = await createRemote({
-			onPut: () => {
-				calls += 1;
-			},
-		});
+	it("logs the first overflow of each store generation in the warn scope", async () => {
+		const namespace = "peerbit:transport:blocks:stored-notifications";
+		const lines: string[] = [];
+		const write = process.stderr.write;
+		process.stderr.write = function (
+			this: unknown,
+			chunk: unknown,
+			...rest: unknown[]
+		) {
+			if (String(chunk).includes("notification queue is full")) {
+				lines.push(String(chunk));
+				return true;
+			}
+			return (write as (...args: unknown[]) => boolean).call(
+				process.stderr,
+				chunk,
+				...rest,
+			);
+		} as typeof process.stderr.write;
+		enable(`${namespace}*`);
+		try {
+			let gate = held();
+			const remote = await createRemote({ onPut: () => gate.promise });
+			const { maxPending, concurrency } =
+				remote.getStoredNotificationTelemetry().limits;
+			// Fills the queue, then drops two later writes while it is full.
+			const overflow = async (prefix: string) => {
+				remote.notifyStoredManyDeferred(
+					Array.from(
+						{ length: maxPending + concurrency },
+						(_, index) => `${prefix}-${index}`,
+					),
+				);
+				await drainMicrotasks();
+				remote.notifyStoredDeferred(`${prefix}-late-1`);
+				remote.notifyStoredDeferred(`${prefix}-late-2`);
+			};
+			const drain = async () => {
+				gate.resolve();
+				await remote.waitForStoredNotifications();
+				gate = held();
+			};
+			const scopes = () =>
+				lines.map((line) =>
+					line.includes(`${namespace}:warn`) ? "warn" : "debug",
+				);
 
-		remote.notifyStoredManyDeferred(
-			Array.from({ length: MAX_PENDING + 1 }, (_, index) => `refill-${index}`),
-		);
-		await drainMicrotasks();
-		remote.notifyStoredDeferred("after-overflow");
-		await remote.waitForStoredNotifications();
-		expect(calls).equal(MAX_PENDING + 1);
-		expect(remote.getStoredNotificationTelemetry()).to.deep.include({
-			admitted: MAX_PENDING + 1,
-			dropped: 1,
-		});
+			await overflow("first");
+			expect(scopes(), "one line per overflow").deep.equal(["warn"]);
+			await drain();
+			await overflow("again");
+			expect(scopes()).deep.equal(["warn", "debug"]);
+			await drain();
+
+			// A restarted store is a new generation.
+			await remote.stop();
+			await remote.start();
+			await overflow("restarted");
+			expect(scopes()).deep.equal(["warn", "debug", "warn"]);
+			expect(remote.getStoredNotificationTelemetry()).to.deep.include({
+				dropped: 2,
+			});
+		} finally {
+			disable();
+			if (process.env.DEBUG) enable(process.env.DEBUG);
+			process.stderr.write = write;
+		}
 	});
 
 	it("stays bounded while announcements are stuck", async () => {
@@ -347,27 +467,149 @@ describe("@peerbit/blocks — stored-block notifications", () => {
 		expect(maxPending).equal(MAX_PENDING);
 		expect(concurrency).equal(8);
 
+		const largest = maxPending + 904;
 		remote.notifyStoredManyDeferred(
-			Array.from({ length: maxPending + 904 }, (_, index) => `stuck-${index}`),
+			Array.from({ length: largest }, (_, index) => `stuck-${index}`),
 		);
 		await drainMicrotasks();
 		expect(remote.getStoredNotificationTelemetry()).to.deep.include({
 			running: concurrency,
-			pending: maxPending - concurrency,
-			admitted: maxPending,
-			dropped: 904,
+			pending: largest - concurrency,
+			admitted: largest,
+			dropped: 0,
 		});
 
-		// Writes still resolve, and their CIDs take the free slots or are dropped.
-		await remote.putKnownMany(
-			Array.from(
-				{ length: concurrency + 1 },
-				(_, index) => [`late-${index}`, new Uint8Array([index])] as const,
-			),
-		);
+		// Writes still resolve, and while the bound is reached their CIDs are
+		// dropped, so no more than `maxPending - 1` plus one write ever wait.
+		for (let round = 0; round < 3; round++) {
+			await remote.putKnownMany(
+				Array.from(
+					{ length: concurrency + 1 },
+					(_, index) =>
+						[`late-${round}-${index}`, new Uint8Array([index])] as const,
+				),
+			);
+		}
 		expect(remote.getStoredNotificationTelemetry()).to.deep.include({
-			pending: maxPending,
-			dropped: 905,
+			running: concurrency,
+			pending: largest - concurrency,
+			dropped: 3 * (concurrency + 1),
+		});
+	});
+
+	it("tells the aggregate hook whether its CIDs include a multi-block write", async () => {
+		const started = pDefer<void>();
+		const release = held();
+		const calls: Array<{ cids: string[]; batch?: boolean }> = [];
+		const remote = await createRemote({
+			onPut: (cid) => {
+				calls.push({ cids: [cid] });
+			},
+			onPutMany: async (cids, options) => {
+				calls.push({ cids, batch: options?.batch });
+				if (calls.length === 1) {
+					started.resolve();
+					await release.promise;
+				}
+			},
+		});
+
+		// A write of several blocks on an idle store.
+		const batch = await remote.putMany([
+			new Uint8Array([21]),
+			new Uint8Array([22]),
+		]);
+		await started.promise;
+		// Writes of one block each that queue behind the running call reach the
+		// aggregate hook together, but they are not a batch.
+		const singles = [
+			await remote.put(new Uint8Array([23])),
+			await remote.putKnown("single-known", new Uint8Array([24])),
+		];
+		remote.notifyStoredDeferred("single-deferred");
+		release.resolve();
+		await remote.waitForStoredNotifications();
+
+		expect(calls).deep.equal([
+			{ cids: batch, batch: true },
+			{ cids: [...singles, "single-deferred"], batch: false },
+		]);
+	});
+
+	it("counts a write that repeats waiting blocks as a batch", async () => {
+		const started = pDefer<void>();
+		const release = held();
+		const calls: Array<{ cids: string[]; batch?: boolean }> = [];
+		const remote = await createRemote({
+			onPut: async (cid) => {
+				calls.push({ cids: [cid] });
+				started.resolve();
+				await release.promise;
+			},
+			onPutMany: (cids, options) => {
+				calls.push({ cids, batch: options?.batch });
+			},
+		});
+
+		const running = await remote.put(new Uint8Array([31]));
+		await started.promise;
+		const waiting = [
+			await remote.put(new Uint8Array([32])),
+			await remote.put(new Uint8Array([33])),
+		];
+		// One write stores both waiting blocks again; its CIDs coalesce into the
+		// waiting ones, and the call that takes them counts as a batch.
+		expect(
+			await remote.putMany([new Uint8Array([32]), new Uint8Array([33])]),
+		).deep.equal(waiting);
+		release.resolve();
+		await remote.waitForStoredNotifications();
+
+		expect(calls).deep.equal([
+			{ cids: [running] },
+			{ cids: waiting, batch: true },
+		]);
+		expect(remote.getStoredNotificationTelemetry()).to.deep.include({
+			admitted: 3,
+			coalesced: 2,
+		});
+	});
+
+	it("keeps a batch whose other blocks are running a batch for the aggregate hook", async () => {
+		const started = pDefer<void>();
+		const release = held();
+		const calls: Array<{ cids: string[]; batch?: boolean }> = [];
+		const remote = await createRemote({
+			onPut: async (cid) => {
+				calls.push({ cids: [cid] });
+				started.resolve();
+				await release.promise;
+			},
+			onPutMany: (cids, options) => {
+				calls.push({ cids, batch: options?.batch });
+			},
+		});
+
+		const running = await remote.put(new Uint8Array([41]));
+		await started.promise;
+		// One write stores the running block again with a new one. Only the new
+		// block is left to announce, and the aggregate hook still learns that it
+		// came from a batch rather than from a write of one block.
+		const [repeated, added] = await remote.putMany([
+			new Uint8Array([41]),
+			new Uint8Array([42]),
+		]);
+		expect(repeated).equal(running);
+		release.resolve();
+		await remote.waitForStoredNotifications();
+
+		expect(calls).deep.equal([
+			{ cids: [running] },
+			{ cids: [added], batch: true },
+		]);
+		expect(remote.getStoredNotificationTelemetry()).to.deep.include({
+			admitted: 2,
+			coalesced: 1,
 		});
 	});
 });

@@ -1,6 +1,7 @@
 import { logger as loggerFn } from "@peerbit/logger";
 
 const logger = loggerFn("peerbit:transport:blocks:stored-notifications");
+const warn = logger.newScope("warn");
 
 /**
  * Snapshot of the background work that runs `onPut`/`onPutMany` for stored
@@ -15,12 +16,19 @@ export type StoredNotificationTelemetry = {
 	admitted: number;
 	/** CIDs skipped because the same CID was already waiting or running. */
 	coalesced: number;
-	/** CIDs refused because `maxPending` CIDs were already waiting. */
+	/**
+	 * CIDs refused because their write arrived while `maxPending` or more CIDs
+	 * were waiting.
+	 */
 	dropped: number;
 	/** Waiting CIDs discarded when the store stopped. */
 	abandoned: number;
 	limits: {
-		/** CIDs that may wait for a hook call. */
+		/**
+		 * Waiting CIDs at which writes stop being admitted. A write that arrives
+		 * below it is admitted whole, so at most `maxPending - 1` CIDs plus the
+		 * CIDs of one write wait.
+		 */
 		maxPending: number;
 		/** Hook calls that may run at the same time. */
 		concurrency: number;
@@ -37,12 +45,25 @@ export type StoredNotificationQueueOptions = {
 	 * instead of starting another bootstrap lookup.
 	 */
 	aggregate: () => boolean;
-	notify: (cids: string[]) => Promise<void> | void;
+	/**
+	 * Calls the hooks. `batch` is true when the CIDs include blocks that one
+	 * write stored together, and false when they only come from writes that
+	 * each stored a single block.
+	 */
+	notify: (cids: string[], batch: boolean) => Promise<void> | void;
+};
+
+/** Shared by the CIDs that one write admitted. */
+type Admission = {
+	/** Orders writes for `whenSettled()`. */
+	ticket: number;
+	/** Whether the write stored more than one block. */
+	batch: boolean;
 };
 
 type Task = {
 	cids: string[];
-	/** Admission ticket of the oldest CID in this call. */
+	/** Ticket of the oldest write in this call. */
 	ticket: number;
 	settled: Promise<void>;
 };
@@ -52,14 +73,17 @@ type Task = {
  * write never waits for a provider announcement.
  *
  * - A CID that is already waiting or running is coalesced.
- * - At most `maxPending` CIDs wait. Later CIDs are dropped and counted, with
- *   one debug log each time the queue fills up.
+ * - Each write is admitted whole while fewer than `maxPending` CIDs wait, and
+ *   dropped whole (and counted) otherwise, so a write's blocks are never split
+ *   between announced and dropped. Each time the queue fills up, its first
+ *   drop is logged: in the warn scope the first time (once per store
+ *   generation, since a restarted store gets a new queue), at debug after.
  * - At most `concurrency` single-CID calls, or one aggregate call, run at once.
  * - `close()` discards waiting CIDs and resolves when running calls settle.
  *   The owner aborts those calls first through the signal it hands its hooks.
  */
 export class StoredNotificationQueue {
-	private readonly pending = new Map<string, number>();
+	private readonly pending = new Map<string, Admission>();
 	private readonly runningCids = new Set<string>();
 	private readonly tasks = new Set<Task>();
 	private readonly waiters: Array<{ fence: number; resolve: () => void }> = [];
@@ -72,6 +96,7 @@ export class StoredNotificationQueue {
 	private lastTicket = 0;
 	private pumpScheduled = false;
 	private overflowing = false;
+	private warnedOverflow = false;
 	private _closed = false;
 
 	constructor(private readonly options: StoredNotificationQueueOptions) {}
@@ -80,33 +105,45 @@ export class StoredNotificationQueue {
 		return this._closed;
 	}
 
+	/** Queues the CIDs that one write stored. */
 	enqueue(cids: Iterable<string>): void {
 		if (this._closed) return;
-		let admitted = false;
+		// Decide once per write, so a large write is not cut off part-way. This
+		// bounds the waiting CIDs by `maxPending - 1` plus one write, whose CIDs
+		// its caller holds anyway.
+		const admit = this.pending.size < this.options.maxPending;
+		let admission: Admission | undefined;
+		let joined: Admission[] | undefined;
+		let named = 0;
+		let dropped = 0;
 		for (const cid of cids) {
 			if (!cid) continue;
-			if (this.pending.has(cid) || this.runningCids.has(cid)) {
+			named += 1;
+			const waiting = this.pending.get(cid);
+			if (waiting || this.runningCids.has(cid)) {
 				this.counts.coalesced += 1;
+				if (waiting && waiting !== admission) (joined ??= []).push(waiting);
 				continue;
 			}
-			if (this.pending.size >= this.options.maxPending) {
-				this.counts.dropped += 1;
-				if (!this.overflowing) {
-					this.overflowing = true;
-					logger(
-						"stored-block notification queue is full (%d waiting); dropping notifications until it drains",
-						this.pending.size,
-					);
-				}
+			if (!admit) {
+				dropped += 1;
 				continue;
 			}
+			admission ??= { ticket: ++this.lastTicket, batch: false };
 			// Map insertion order is admission order, so the first waiting CID
 			// always holds the oldest waiting ticket.
-			this.pending.set(cid, ++this.lastTicket);
+			this.pending.set(cid, admission);
 			this.counts.admitted += 1;
-			admitted = true;
 		}
-		if (admitted) this.schedulePump();
+		// No pump runs before this synchronous call returns, so the flag still
+		// reaches the call that takes these CIDs, including CIDs this write
+		// coalesced into an earlier write's waiting ones.
+		if (named > 1) {
+			if (admission) admission.batch = true;
+			for (const earlier of joined ?? []) earlier.batch = true;
+		}
+		if (admission) this.schedulePump();
+		if (dropped > 0) this.recordDropped(dropped);
 	}
 
 	/**
@@ -152,6 +189,22 @@ export class StoredNotificationQueue {
 			: Math.max(1, Math.floor(this.options.concurrency));
 	}
 
+	private recordDropped(count: number): void {
+		this.counts.dropped += count;
+		if (this.overflowing) return;
+		this.overflowing = true;
+		// The first overflow goes to the warn scope, which can be enabled
+		// without the rest of this module's debug output; later overflows of
+		// the same queue stay at debug.
+		const log = this.warnedOverflow ? logger : warn;
+		this.warnedOverflow = true;
+		log(
+			"stored-block notification queue is full (%d CIDs waiting); dropping the provider notifications of later writes until it drains (%d dropped so far)",
+			this.pending.size,
+			this.counts.dropped,
+		);
+	}
+
 	private schedulePump(): void {
 		if (this.pumpScheduled) return;
 		this.pumpScheduled = true;
@@ -172,24 +225,26 @@ export class StoredNotificationQueue {
 			const take = aggregate ? this.pending.size : 1;
 			const cids: string[] = [];
 			let ticket = Number.POSITIVE_INFINITY;
-			for (const [cid, cidTicket] of this.pending) {
+			let batch = false;
+			for (const [cid, admission] of this.pending) {
 				this.pending.delete(cid);
 				this.runningCids.add(cid);
 				cids.push(cid);
-				ticket = Math.min(ticket, cidTicket);
+				if (admission.ticket < ticket) ticket = admission.ticket;
+				if (admission.batch) batch = true;
 				if (cids.length >= take) break;
 			}
-			this.run(cids, ticket);
+			this.run(cids, ticket, batch);
 		}
 		if (this.pending.size < this.options.maxPending) {
 			this.overflowing = false;
 		}
 	}
 
-	private run(cids: string[], ticket: number): void {
+	private run(cids: string[], ticket: number, batch: boolean): void {
 		let result: Promise<void> | void;
 		try {
-			result = this.options.notify(cids);
+			result = this.options.notify(cids, batch);
 		} catch (error) {
 			logger("stored-block notification failed: %e", error);
 			result = undefined;
@@ -214,8 +269,8 @@ export class StoredNotificationQueue {
 
 	private oldestUnsettledTicket(): number {
 		let oldest = Number.POSITIVE_INFINITY;
-		for (const ticket of this.pending.values()) {
-			oldest = ticket;
+		for (const admission of this.pending.values()) {
+			oldest = admission.ticket;
 			break;
 		}
 		for (const task of this.tasks) {

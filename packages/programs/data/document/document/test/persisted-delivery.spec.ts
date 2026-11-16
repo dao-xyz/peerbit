@@ -95,9 +95,11 @@ describe("document persisted delivery", function () {
 				opened.docs.log as any,
 				"appendLocallyPreparedPayloadsManyIndependent",
 			);
+			// Covers single deferred notifications too: notifyStoredDeferred
+			// forwards to it, and native batches notify through it directly.
 			const providerNotifySpy = sinon.spy(
 				(opened.docs.log as any).remoteBlocks,
-				"notifyStoredDeferred",
+				"notifyStoredManyDeferred",
 			);
 
 			const result = await opened.docs.putMany(docs, options);

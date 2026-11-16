@@ -634,8 +634,10 @@ export type FanoutProviderAnnounceOnceOptions = Omit<
 	"announceIntervalMs"
 > & {
 	/**
-	 * Cancels this announcement, including a pending bootstrap dial. Stopping
-	 * the service cancels it as well.
+	 * Cancels this announcement, including a pending bootstrap dial and a
+	 * control send that waits for queue capacity; the announcement then
+	 * resolves without sending the rest. Stopping the service cancels it as
+	 * well.
 	 */
 	signal?: AbortSignal;
 };
@@ -1992,7 +1994,10 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 							ttlMs,
 							addrs,
 						);
-						await this._sendControlMany(peers, bytes);
+						// The signal also ends a send that waits for queue capacity, so
+						// a caller that stops (such as a closing block store) never
+						// waits for a congested tracker.
+						await this._sendControlMany(peers, bytes, signal);
 					} catch (error) {
 						failureCount++;
 						firstError ??= error;
@@ -4499,7 +4504,16 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		);
 	}
 
-	private async _sendControlMany(to: string[], bytes: Uint8Array) {
+	/**
+	 * `signal` cancels the send, including a write that waits for queue
+	 * capacity. A cancelled send delivers nothing and resolves false, like a
+	 * send whose write fails.
+	 */
+	private async _sendControlMany(
+		to: string[],
+		bytes: Uint8Array,
+		signal?: AbortSignal,
+	) {
 		if (to.length === 0) return true;
 		const streams = to
 			.map((t) => this.peers.get(t))
@@ -4509,6 +4523,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		if (lifetime.aborted || this.stopping || !this.started) {
 			throw new AbortError("fanout control service stopped");
 		}
+		if (signal?.aborted) return false;
 		this.recordControlSend(bytes, streams.length);
 		const message = await this.createMessage(bytes, {
 			mode: new AnyWhere(),
@@ -4517,7 +4532,14 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		if (lifetime.aborted || this.stopping || !this.started) {
 			throw new AbortError("fanout control service stopped");
 		}
-		return this.publishMessageMaybe(this.publicKey, message, streams);
+		if (signal?.aborted) return false;
+		return this.publishMessageMaybe(
+			this.publicKey,
+			message,
+			streams,
+			undefined,
+			signal,
+		);
 	}
 
 	private refillUploadTokens(ch: ChannelState, now = Date.now()) {

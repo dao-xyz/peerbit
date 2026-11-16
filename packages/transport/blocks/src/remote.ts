@@ -57,13 +57,25 @@ const warn = logger.newScope("warn");
 // as background work with these bounds unless `awaitPutHooks` is set. At most
 // this many single-CID hook calls run at once (an aggregate hook runs alone).
 const STORED_NOTIFICATION_CONCURRENCY = 8;
-// At most this many CIDs wait for a hook call. Later CIDs are dropped and
-// counted until the queue drains.
+// A write's CIDs are admitted whole while fewer than this many CIDs wait for a
+// hook call, and dropped whole (and counted) otherwise, until the queue drains.
 const STORED_NOTIFICATION_MAX_PENDING = 4096;
 
-/** Passed to `onPut`/`onPutMany`; `signal` aborts when the store stops. */
+/** Passed to `onPut`/`onPutMany`. */
 export type StoredNotificationHookOptions = {
+	/** Aborts when the store stops. */
 	signal?: AbortSignal;
+	/**
+	 * Set on `onPutMany` calls: true when the CIDs include blocks that one
+	 * write stored together (`putMany`, `putKnownMany`, or a multi-CID
+	 * `notifyStoredManyDeferred`), false when the call only gathers writes of
+	 * one block each that queued behind a running call. Hooks that do extra
+	 * work for bulk writes can skip it when this is false. A block of such a
+	 * write reaches `onPutMany` with `batch: true` even when the write's other
+	 * blocks were already being announced; a write whose blocks are all being
+	 * announced adds no call.
+	 */
+	batch?: boolean;
 };
 
 export class BlockMessage {}
@@ -273,7 +285,8 @@ export class RemoteBlocks implements IBlocks {
 			 * callback must therefore make every supplied CID discoverable through an
 			 * equivalent aggregate mechanism. Without it, `onPut` is invoked once for
 			 * every CID with bounded concurrency. CIDs stored while a call runs are
-			 * passed to the next call. `options.signal` behaves as for `onPut`.
+			 * passed to the next call, so `options.batch` says whether the CIDs
+			 * include a multi-block write. `options.signal` behaves as for `onPut`.
 			 */
 			onPutMany?: (
 				cids: string[],
@@ -285,10 +298,10 @@ export class RemoteBlocks implements IBlocks {
 			 *
 			 * Defaults to false: writes resolve once the blocks are stored locally,
 			 * and the hooks run as background work in which duplicate CIDs coalesce,
-			 * at most 4096 CIDs wait (later ones are dropped and counted in
-			 * `getStoredNotificationTelemetry()`), and `stop()` discards waiting CIDs
-			 * and aborts running calls. Use `waitForStoredNotifications()` to wait
-			 * for the hooks of earlier writes.
+			 * each write is queued whole while fewer than 4096 CIDs wait (and
+			 * dropped whole otherwise, counted in `getStoredNotificationTelemetry()`),
+			 * and `stop()` discards waiting CIDs and aborts running calls. Use
+			 * `waitForStoredNotifications()` to wait for the hooks of earlier writes.
 			 */
 			awaitPutHooks?: boolean;
 			/**
@@ -590,10 +603,13 @@ export class RemoteBlocks implements IBlocks {
 			maxPending: STORED_NOTIFICATION_MAX_PENDING,
 			concurrency: STORED_NOTIFICATION_CONCURRENCY,
 			aggregate: () => typeof this.options.onPutMany === "function",
-			notify: (cids) =>
-				cids.length === 1
+			// A lone CID goes through `notifyStored`, like any single-block
+			// notification, unless it is all that is left to announce of a
+			// multi-block write and an aggregate hook should learn of the batch.
+			notify: (cids, batch) =>
+				cids.length === 1 && !(batch && this.options.onPutMany)
 					? this.notifyStored(cids[0]!)
-					: this.notifyStoredMany(cids),
+					: this.notifyPuts(cids, batch),
 		});
 	}
 
@@ -964,8 +980,12 @@ export class RemoteBlocks implements IBlocks {
 		this._storedNotifications.enqueue(cids);
 	}
 
-	private storedNotificationHookOptions(): StoredNotificationHookOptions {
-		return { signal: this.closeController.signal };
+	private storedNotificationHookOptions(
+		batch?: boolean,
+	): StoredNotificationHookOptions {
+		return batch === undefined
+			? { signal: this.closeController.signal }
+			: { signal: this.closeController.signal, batch };
 	}
 
 	private notifyPut(cid: string): Promise<void> | void {
@@ -973,11 +993,10 @@ export class RemoteBlocks implements IBlocks {
 		if (!onPut && !onPutMany) {
 			return;
 		}
-		const hookOptions = this.storedNotificationHookOptions();
 		try {
 			const result = onPut
-				? onPut(cid, hookOptions)
-				: onPutMany!([cid], hookOptions);
+				? onPut(cid, this.storedNotificationHookOptions())
+				: onPutMany!([cid], this.storedNotificationHookOptions(false));
 			if (result && typeof result.then === "function") {
 				return result.catch((error: unknown): void => {
 					logger("stored-block hook failed for %s: %e", cid, error);
@@ -989,17 +1008,30 @@ export class RemoteBlocks implements IBlocks {
 		}
 	}
 
-	private notifyPuts(cids: string[]): Promise<void> | void {
+	/**
+	 * `batch` says whether the CIDs include blocks that one write stored
+	 * together. CIDs passed in directly come from one write, so it defaults to
+	 * whether there are several.
+	 */
+	private notifyPuts(
+		cids: string[],
+		batch = cids.length > 1,
+	): Promise<void> | void {
 		if (cids.length === 0) {
 			return;
 		}
-		if (cids.length === 1) {
+		const onPutMany = this.options.onPutMany;
+		// A lone CID is a single-block notification, unless the queue passes
+		// the last unannounced block of a multi-block write.
+		if (cids.length === 1 && !(batch && onPutMany)) {
 			return this.notifyPut(cids[0]!);
 		}
-		const onPutMany = this.options.onPutMany;
 		if (onPutMany) {
 			try {
-				const result = onPutMany(cids, this.storedNotificationHookOptions());
+				const result = onPutMany(
+					cids,
+					this.storedNotificationHookOptions(batch),
+				);
 				if (result && typeof result.then === "function") {
 					return result.catch((error: unknown): void => {
 						logger(
@@ -1650,7 +1682,8 @@ export class RemoteBlocks implements IBlocks {
 		// Before yielding, discard queued provider notifications so an already
 		// scheduled pump cannot start them. Running hooks have just seen their
 		// signal abort; waiting for them below is bounded because provider
-		// announcements pass that signal to their bootstrap dials.
+		// announcements pass that signal to their bootstrap dials and to their
+		// control sends.
 		const notificationsClosed = this._storedNotifications.close();
 		await aborted;
 		await capture(() => this.drainStoredNotificationTasks());

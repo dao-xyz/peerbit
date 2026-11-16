@@ -16486,46 +16486,52 @@ export class SharedLog<
 						ownershipLifecycleController,
 					);
 					const commits: PreparedLocalAppendCommit<R>[] = [];
-					for (let i = 0; i < coordinateRows.length; i++) {
-						const {
-							facts,
-							backboneAppend,
-							coordinateFields,
-							plannedCoordinateDeleteHashes,
-						} = coordinateRows[i]!;
-						this.applyPreparedAppendFactsWithDeferredCoordinateDeletes(
-							facts,
-							[],
-							appended.materializeEntries[i]!,
-							{
-								removedHashes: plannedCoordinateDeleteHashes,
-								removedGids:
-									backboneAppend.trimmedGids ??
-									(backboneAppend.trimmed.length > 0
-										? backboneAppend.trimmed.map((entry) => entry.gid)
-										: undefined),
-							},
-						);
-						if (
-							!runtimeOnlyCoordinates &&
-							this.remoteBlocks.hasNotifyStoredHook()
-						) {
-							this.remoteBlocks.notifyStoredDeferred(facts.hash);
-						}
-						const appendCommit = this.createPreparedLocalAppendCommitFromFacts(
-							facts,
-							{
-								hashNumber: backboneAppend.coordinate
-									.hashNumber as NumberFromType<R>,
+					// The block store announces the committed blocks as one write: it
+					// admits a write whole (one CID at a time would be cut off at its
+					// pending bound) and tells the provider hook that this was a batch.
+					const committedHashes: string[] | undefined =
+						!runtimeOnlyCoordinates && this.remoteBlocks.hasNotifyStoredHook()
+							? []
+							: undefined;
+					try {
+						for (let i = 0; i < coordinateRows.length; i++) {
+							const {
+								facts,
+								backboneAppend,
 								coordinateFields,
-							},
-						);
-						appendCommit.nativeBackboneDocumentIndexCommitted = true;
-						appendCommit.nativeBackboneDocumentIndexTrimmedHeadsProcessed =
-							appended.documentTrimmedHeadsProcessed?.[i];
-						appendCommit.documentPreviousContext =
-							backboneAppend.documentPreviousContext;
-						commits.push(appendCommit);
+								plannedCoordinateDeleteHashes,
+							} = coordinateRows[i]!;
+							this.applyPreparedAppendFactsWithDeferredCoordinateDeletes(
+								facts,
+								[],
+								appended.materializeEntries[i]!,
+								{
+									removedHashes: plannedCoordinateDeleteHashes,
+									removedGids:
+										backboneAppend.trimmedGids ??
+										(backboneAppend.trimmed.length > 0
+											? backboneAppend.trimmed.map((entry) => entry.gid)
+											: undefined),
+								},
+							);
+							committedHashes?.push(facts.hash);
+							const appendCommit =
+								this.createPreparedLocalAppendCommitFromFacts(facts, {
+									hashNumber: backboneAppend.coordinate
+										.hashNumber as NumberFromType<R>,
+									coordinateFields,
+								});
+							appendCommit.nativeBackboneDocumentIndexCommitted = true;
+							appendCommit.nativeBackboneDocumentIndexTrimmedHeadsProcessed =
+								appended.documentTrimmedHeadsProcessed?.[i];
+							appendCommit.documentPreviousContext =
+								backboneAppend.documentPreviousContext;
+							commits.push(appendCommit);
+						}
+					} finally {
+						if (committedHashes && committedHashes.length > 0) {
+							this.remoteBlocks.notifyStoredManyDeferred(committedHashes);
+						}
 					}
 					return commits;
 				},
@@ -18892,14 +18898,20 @@ export class SharedLog<
 			onPutMany: fanoutService
 				? (cids, options) => {
 						// A renewable log-wide provider lease makes every CID in a
-						// stored batch discoverable to current readers. Retain the
-						// per-CID directory publications for released readers that only
-						// know the legacy namespace; the bounded workers avoid creating
-						// one in-flight promise per block.
-						try {
-							this.ensureLogProviderHandle(fanoutService);
-						} catch {
-							// ignore announce failures
+						// stored batch discoverable to current readers. Appends of one
+						// block each that queued behind a running announcement arrive
+						// here too, with `batch: false`; like an append announced on its
+						// own, they do not start the lease, so a non-replicating writer
+						// does not begin to advertise the whole log. Retain the per-CID
+						// directory publications for released readers that only know
+						// the legacy namespace; the bounded workers avoid creating one
+						// in-flight promise per block.
+						if (options?.batch !== false) {
+							try {
+								this.ensureLogProviderHandle(fanoutService);
+							} catch {
+								// ignore announce failures
+							}
 						}
 						return announceBlockProviders(cids, options);
 					}
