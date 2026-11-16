@@ -2,6 +2,11 @@
 	"name": "@peerbit/network-rust",
 	"version": "0.1.5",
 	"description": "Native wire codec and batched signature verification for the Peerbit direct-stream envelope",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/dao-xyz/peerbit.git",
+		"directory": "packages/transport/network-rust"
+	},
 	"sideEffects": [
 		"./dist/wasm/peerbit_wire.js"
 	],

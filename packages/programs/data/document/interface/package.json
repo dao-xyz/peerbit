@@ -2,6 +2,11 @@
 	"name": "@peerbit/document-interface",
 	"version": "3.2.83",
 	"description": "Document store interface",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/dao-xyz/peerbit.git",
+		"directory": "packages/programs/data/document/interface"
+	},
 	"sideEffects": false,
 	"type": "module",
 	"types": "./dist/src/index.d.ts",

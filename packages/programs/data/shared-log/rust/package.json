@@ -2,6 +2,11 @@
 	"name": "@peerbit/shared-log-rust",
 	"version": "0.1.9",
 	"description": "Rust-backed shared-log range planner for Peerbit",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/dao-xyz/peerbit.git",
+		"directory": "packages/programs/data/shared-log/rust"
+	},
 	"sideEffects": [
 		"./dist/wasm/shared_log_rust.js"
 	],

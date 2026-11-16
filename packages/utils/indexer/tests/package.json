@@ -2,6 +2,11 @@
 	"name": "@peerbit/indexer-tests",
 	"version": "3.0.15",
 	"description": "Tests document store index engines",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/dao-xyz/peerbit.git",
+		"directory": "packages/utils/indexer/tests"
+	},
 	"sideEffects": false,
 	"type": "module",
 	"types": "./dist/src/index.d.ts",

@@ -2,6 +2,11 @@
 	"name": "@peerbit/rpc",
 	"version": "6.2.5",
 	"description": "RPC calls for peers",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/dao-xyz/peerbit.git",
+		"directory": "packages/programs/rpc"
+	},
 	"sideEffects": false,
 	"type": "module",
 	"types": "./dist/src/index.d.ts",
