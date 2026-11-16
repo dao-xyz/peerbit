@@ -973,6 +973,14 @@ type ExactDeleteIndex = {
 	) => Promise<indexerTypes.IdKey[]> | indexerTypes.IdKey[];
 };
 
+type ContextHeadDeleteIndex = {
+	// undefined: the index keeps no document context to check.
+	delIdIfContextHead?: (
+		deleteId: indexerTypes.IdKey,
+		head: string,
+	) => Promise<boolean> | boolean | undefined;
+};
+
 type NativeBackboneDocumentIndex = {
 	attachNativeBackboneDocumentIndex?: (
 		backbone: unknown,
@@ -3428,6 +3436,57 @@ export class DocumentIndex<
 		return this.index.del({
 			query: [indexerTypes.getMatcher(this.indexBy, key.key)],
 		});
+	}
+
+	/**
+	 * Remove `key`'s row only while its `__context.head` is `head`.
+	 *
+	 * The head check and the removal are one indexer call, so a version indexed
+	 * after the caller read `head` is never removed. An index that keeps native
+	 * document contexts checks the head where it removes the row; any other index
+	 * runs one delete that matches both the id and the head. Engines must evaluate
+	 * every predicate of a delete at the moment they remove the row.
+	 *
+	 * @returns whether a row was removed.
+	 */
+	public async delIfHead(
+		key: indexerTypes.IdKey,
+		head: string,
+	): Promise<boolean> {
+		let removed: boolean;
+		try {
+			removed = await this.removeIfHead(key, head);
+		} catch (error) {
+			this.recoverClosedRemoval(error);
+			return false;
+		}
+		if (!removed) {
+			return false;
+		}
+		this.deleteResolvedCacheForKey(key);
+		return true;
+	}
+
+	private async removeIfHead(
+		key: indexerTypes.IdKey,
+		head: string,
+	): Promise<boolean> {
+		const delIdIfContextHead = (this.index as ContextHeadDeleteIndex)
+			.delIdIfContextHead;
+		const removed = delIdIfContextHead?.call(this.index, key, head);
+		if (removed !== undefined) {
+			return removed;
+		}
+		const deleted = await this.index.del({
+			query: [
+				indexerTypes.getMatcher(this.indexBy, key.key),
+				new indexerTypes.StringMatch({
+					key: ["__context", "head"],
+					value: head,
+				}),
+			],
+		});
+		return deleted.length > 0;
 	}
 
 	/**

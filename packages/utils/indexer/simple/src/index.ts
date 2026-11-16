@@ -164,10 +164,30 @@ export class HashmapIndex<T extends Record<string, any>, NestedType = any>
 		// Reserve before asynchronous predicates, including across stop/start.
 		this.beginKeyMutation();
 		try {
+			const rows = this._index;
+			const queryCoerced = types.toQuery(query.query);
 			let deleted: types.IdKey[] = [];
 			for (const doc of await this.queryAll(query)) {
-				if (this._index.delete(doc.id.primitive)) {
-					deleted.push(doc.id);
+				// A put can replace a row while the predicates are awaited. Delete a
+				// row only while it is the stored value the predicates matched, with
+				// no await between that check and the delete, and match a
+				// replacement again. `init` replaces the whole map, and a delete that
+				// spans it still removes by key, as before.
+				let matched = doc;
+				while (true) {
+					const current = this._index.get(matched.id.primitive);
+					if (!current) {
+						break;
+					}
+					if (current === matched || this._index !== rows) {
+						this._index.delete(current.id.primitive);
+						deleted.push(current.id);
+						break;
+					}
+					if (!(await this.matchesQuery(queryCoerced, current))) {
+						break;
+					}
+					matched = current;
 				}
 			}
 			return deleted;
@@ -348,34 +368,58 @@ export class HashmapIndex<T extends Record<string, any>, NestedType = any>
 		const queryCoerced = types.toQuery(query?.query);
 		const directResults = this.getDirectResults(queryCoerced);
 		if (directResults) {
-			return directResults;
+			// The id lookup is the whole query when it is the only predicate.
+			if (queryCoerced.length === 1) {
+				return directResults;
+			}
+			const results: types.IndexedValue<T>[] = [];
+			for (const doc of directResults) {
+				if (await this.matchesQuery(queryCoerced, doc)) {
+					results.push(doc);
+				}
+			}
+			return results;
 		}
 
 		// Handle query normally
 		return this._queryDocuments((doc) => this.matchesQuery(queryCoerced, doc));
 	}
 
+	/**
+	 * The rows a query can match when one of its predicates matches the id
+	 * exactly: at most the row stored under that id. The other predicates are not
+	 * evaluated here.
+	 */
 	private getDirectResults(
 		queryCoerced: types.Query[],
 	): types.IndexedValue<T>[] | undefined {
-		if (
-			queryCoerced.length === 1 &&
-			(queryCoerced[0] instanceof types.ByteMatchQuery ||
-				queryCoerced[0] instanceof types.StringMatch) &&
-			types.stringArraysEquals(queryCoerced[0].key, this.indexByArr)
-		) {
-			const firstQuery = queryCoerced[0];
-			if (firstQuery instanceof types.ByteMatchQuery) {
-				const doc = this._index.get(types.toId(firstQuery.value).primitive);
-				return doc ? [doc] : [];
-			} else if (
-				firstQuery instanceof types.StringMatch &&
-				firstQuery.method === types.StringMatchMethod.exact &&
-				firstQuery.caseInsensitive === false
-			) {
-				const doc = this._index.get(firstQuery.value);
+		for (const query of queryCoerced) {
+			const id = this.getExactId(query);
+			if (id !== undefined) {
+				const doc = this._index.get(id);
 				return doc ? [doc] : [];
 			}
+		}
+	}
+
+	private getExactId(query: types.Query): types.IdPrimitive | undefined {
+		if (
+			!(
+				query instanceof types.ByteMatchQuery ||
+				query instanceof types.StringMatch
+			) ||
+			!types.stringArraysEquals(query.key, this.indexByArr)
+		) {
+			return;
+		}
+		if (query instanceof types.ByteMatchQuery) {
+			return types.toId(query.value).primitive;
+		}
+		if (
+			query.method === types.StringMatchMethod.exact &&
+			query.caseInsensitive === false
+		) {
+			return query.value;
 		}
 	}
 

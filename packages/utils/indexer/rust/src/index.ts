@@ -3243,6 +3243,55 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 		);
 	}
 
+	/**
+	 * Remove `deleteId`'s native backbone document only while its context head is
+	 * `head`, and return whether it was removed.
+	 *
+	 * The head is checked where the document is removed: in the same synchronous
+	 * step, or inside the queued mutation when the index persists to a snapshot
+	 * file. A put queued ahead of this delete is applied first, so its head is the
+	 * one checked.
+	 *
+	 * Returns undefined when the index keeps no native document context, so the
+	 * caller can delete by query instead.
+	 */
+	@keyMutation
+	delIdIfContextHead(
+		deleteId: types.IdKey | types.Ideable,
+		head: string,
+	): MaybePromise<boolean> | undefined {
+		const backbone = this.nativeBackboneDocumentIndex;
+		const documentContext = backbone?.documentContext;
+		if (!this.nativeBackboneDocumentIndexPrimary || !documentContext) {
+			return undefined;
+		}
+		if (this.isClosing()) {
+			return false;
+		}
+		this.assertOpen();
+		const storeKey = keyToStoreKey(deleteId);
+		const isHead = () => documentContext.call(backbone, storeKey)?.[2] === head;
+		if (!this.snapshotFile) {
+			if (!isHead()) {
+				return false;
+			}
+			this.delIdsNoReturn([deleteId]);
+			return true;
+		}
+		return this.trackMutationIf(
+			this.enqueueMutation(async () => {
+				if (!isHead()) {
+					return false;
+				}
+				await this.appendDeletes([storeKey]);
+				this.deleteNativeBackboneDocumentKeysNoReturn([storeKey]);
+				await this.compactIfNeeded();
+				return true;
+			}),
+			(removed) => removed,
+		);
+	}
+
 	@keyMutation
 	async del(query: types.DeleteOptions): Promise<types.IdKey[]> {
 		if (this.isClosing()) {
