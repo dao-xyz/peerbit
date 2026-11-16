@@ -112,10 +112,19 @@ describe("copy-stable public keys", () => {
 		const secp256k1 = await Secp256k1PublicKey.recover(
 			await Wallet.createRandom(),
 		);
-		const canPut = (from: PublicSignKey, signer: PublicSignKey) =>
+		const trustee = (await Ed25519Keypair.create()).publicKey;
+		const canPut = (
+			from: PublicSignKey,
+			signer: PublicSignKey,
+			id = new IdentityRelation({ from, to: trustee }).id,
+		) =>
 			graph.canPerform({
 				type: "put",
-				value: { from: asStructuralPublicKey(from) },
+				value: {
+					id,
+					from: asStructuralPublicKey(from),
+					to: asStructuralPublicKey(trustee),
+				},
 				entry: {
 					getPublicKeys: async () => [asStructuralPublicKey(signer)],
 				},
@@ -124,6 +133,13 @@ describe("copy-stable public keys", () => {
 		expect(await canPut(ed25519, ed25519)).to.be.true;
 		expect(await canPut(secp256k1, secp256k1)).to.be.true;
 		expect(await canPut(ed25519, secp256k1)).to.be.false;
+		expect(
+			await canPut(
+				ed25519,
+				ed25519,
+				new IdentityRelation({ from: secp256k1, to: trustee }).id,
+			),
+		).to.be.false;
 	});
 
 	it("accepts structural keys in add and getRelation", async () => {

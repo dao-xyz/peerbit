@@ -204,10 +204,15 @@ export const getRelation = async (
 ): Promise<IdentityRelation | undefined> => {
 	// This is used as a local existence check before writing relations.
 	// Avoid remote queries which can hang under churn or cold-start.
-	return db.index.get(new IdentityRelation({ from, to }).id, {
+	const relation = await db.index.get(new IdentityRelation({ from, to }).id, {
 		remote: false,
 		local: true,
 	} as any);
+	// A row admitted before relation ids were bound can hold another pair at
+	// this id. Treat it as absent so the rightful truster can put over it.
+	return relation?.from.equals(from) && relation.to.equals(to)
+		? relation
+		: undefined;
 };
 
 @variant(0)

@@ -17,6 +17,7 @@ import {
 import { type AppendOptions } from "@peerbit/log";
 import { Program } from "@peerbit/program";
 import { type ReplicationOptions } from "@peerbit/shared-log";
+import { equals } from "uint8arrays";
 import {
 	FromTo,
 	IdentityRelation,
@@ -70,6 +71,20 @@ const canPerformByRelation = async (
 			return false;
 		}
 		owner = coercePublicKey(properties.value.from);
+		// Documents keys a relation by its serialized id, which the writer
+		// chooses. A put may only occupy the row of its own (to, from) pair, or
+		// a member could replace another relation and then delete it as its
+		// owner. Deletes still resolve the stored row, so a row written before
+		// this check can be removed by its from.
+		if (
+			properties.type === "put" &&
+			!equals(
+				properties.value.id,
+				IdentityRelation.id(coercePublicKey(properties.value.to), owner),
+			)
+		) {
+			return false;
+		}
 	} catch {
 		return false;
 	}
@@ -101,6 +116,13 @@ const canPerformByRelation = async (
 	return false;
 };
 
+// Native policy descriptors can only compare `_from` with the signer, so this
+// default cannot bind a relation's id to its (to, from) pair the way
+// canPerformByRelation does. Binding it needs a new policy kind in
+// @peerbit/document; until then a writer can still put its own relation under
+// another pair's id here. Neither this default nor canPerformByRelation checks
+// an entry's type or next pointers, so a CUT entry still removes the entries
+// it points to, whoever wrote them.
 const defaultIdentityGraphCanPerform = policy.or<IdentityRelation>(
 	policy.put(policy.signedByField<IdentityRelation>("_from")),
 	policy.deleteSignedByExistingField<IdentityRelation>("_from"),
