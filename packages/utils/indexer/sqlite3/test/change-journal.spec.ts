@@ -207,6 +207,20 @@ const hookExec = (
 	};
 };
 
+/** Counts the calls of `target`'s `methods` from now on. */
+const countCalls = (target: object, methods: string[]): (() => number) => {
+	let calls = 0;
+	const functions = target as Record<string, (...args: unknown[]) => unknown>;
+	for (const name of methods) {
+		const original = functions[name];
+		functions[name] = function (this: unknown, ...args: unknown[]) {
+			calls++;
+			return original.apply(this, args);
+		};
+	}
+	return () => calls;
+};
+
 /** Counts every iteration over `set`'s members from now on. */
 const countIterations = (set: Set<unknown>): (() => number) => {
 	let iterations = 0;
@@ -255,12 +269,15 @@ describe("SQLite change journal", () => {
 				end: journal.end,
 				size: journal.size,
 				staged: journal.staged,
+				// The design's R: entries kept for the slowest reader.
+				capacity: journal.capacity,
 			}).to.deep.equal({
 				readers: 0,
 				recording: false,
 				end: 0,
 				size: 0,
 				staged: 0,
+				capacity: 16_384,
 			});
 
 			const reader = journal.register();
@@ -277,6 +294,12 @@ describe("SQLite change journal", () => {
 	it("records the root key of each put when its savepoint commits", async () => {
 		const { store, journal, database } = await setupDocuments();
 		const reader = journal.register();
+		// A put finds its root table's ordinal by identity. Only a table from
+		// before a stop() and start() needs a search by name.
+		const byName = countCalls(
+			(store as unknown as SQLiteIndex<JournalDocument>).rootTables,
+			["findIndex"],
+		);
 		const atRelease: { end: number; staged: number }[] = [];
 		const restore = hookExec(database, (sql) => {
 			if (sql.startsWith("RELEASE SAVEPOINT peerbit_put_batch_")) {
@@ -301,6 +324,7 @@ describe("SQLite change journal", () => {
 			{ end: 2, staged: 1 },
 			{ end: 3, staged: 1 },
 		]);
+		expect(byName()).to.equal(0);
 		expect(consume(journal, reader)).to.deep.equal({
 			rebase: false,
 			entries: [
@@ -1014,6 +1038,33 @@ describe("SQLite change journal", () => {
 			end: journal.end,
 			size: journal.size,
 		}).to.deep.equal({ start: 37, end: 37, size: 0 });
+
+		// While every reader must rebase, a commit keeps none of its keys: it
+		// neither copies them into the journal nor walks them to drop them.
+		const internals = journal as unknown as {
+			tables: unknown[];
+			keys: unknown[];
+			readersAt: Map<number, number>;
+		};
+		const pushes = [internals.tables, internals.keys].map((array) =>
+			countCalls(array, ["push"]),
+		);
+		const lookups = countCalls(internals.readersAt, ["has", "get"]);
+		// Three chunk commits: 64, 64 and 2 values.
+		await store.putBatch!(docs("unread", 130));
+		expect({
+			pushes: pushes.map((count) => count()),
+			lookups: lookups(),
+			start: journal.start,
+			end: journal.end,
+			size: journal.size,
+		}).to.deep.equal({
+			pushes: [0, 0],
+			lookups: 3,
+			start: 167,
+			end: 167,
+			size: 0,
+		});
 		const lost = peek(journal, late);
 		expect(lost.pull.rebase).to.equal(true);
 		// Once rebuilt, the reader reads on from where its rebase pull ended.

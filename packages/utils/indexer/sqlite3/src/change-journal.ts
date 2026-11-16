@@ -48,8 +48,9 @@ class Reader implements ChangeJournalReader {
  *   missing one would hide a change.
  * - **Trimmed and bounded.** Entries no reader can still read are dropped:
  *   those before the lowest reader, and every entry while all readers must
- *   rebase. At most `capacity` entries are kept: past that, the oldest are
- *   dropped, and a reader that had not read them is told to rebase.
+ *   rebase (a commit then keeps none of its keys). At most `capacity` entries
+ *   are kept: past that, the oldest are dropped, and a reader that had not
+ *   read them is told to rebase.
  * - **Epochs.** `beginEpoch` drops every entry and tells every registered
  *   reader to rebase. The engine calls it when its tables close (stop, drop),
  *   since they may be replaced before they open again. A change `record`
@@ -65,6 +66,13 @@ class Reader implements ChangeJournalReader {
 export class ChangeJournal {
 	/** Most entries kept at once. Tests lower it to force an overflow. */
 	capacity: number;
+
+	/**
+	 * Whether writes are recorded, that is whether any reader is registered.
+	 * Set only by `register` and `unregister`. A field, not a getter: a put
+	 * reads it for every value it writes, reader or not.
+	 */
+	recording = false;
 
 	private _epoch = 0;
 	/** Absolute position of the oldest kept entry. */
@@ -86,11 +94,6 @@ export class ChangeJournal {
 
 	constructor(capacity: number = CHANGE_JOURNAL_CAPACITY) {
 		this.capacity = capacity;
-	}
-
-	/** Whether writes are recorded, that is whether any reader is registered. */
-	get recording(): boolean {
-		return this.readers.size > 0;
 	}
 
 	get epoch(): number {
@@ -129,6 +132,7 @@ export class ChangeJournal {
 	register(): ChangeJournalReader {
 		const reader = new Reader(this.end, this._epoch);
 		this.readers.add(reader);
+		this.recording = true;
 		this.count(reader.position, 1);
 		return reader;
 	}
@@ -139,6 +143,7 @@ export class ChangeJournal {
 			return;
 		}
 		if (this.readers.size === 0) {
+			this.recording = false;
 			this.clear();
 		} else if (known.epoch === this._epoch) {
 			this.count(known.position, -1);
@@ -152,7 +157,7 @@ export class ChangeJournal {
 	 * epoch instead, so that every reader rebases rather than miss it.
 	 */
 	record(table: number, key: unknown): void {
-		if (this.readers.size === 0) {
+		if (!this.recording) {
 			return;
 		}
 		if (table < 0 || key == null) {
@@ -184,23 +189,30 @@ export class ChangeJournal {
 		if (count === 0) {
 			return;
 		}
-		if (this.readers.size > 0) {
+		if (this.size === 0 && !this.readersAt.has(this._start)) {
+			// No reader can read these. `trim` keeps entries only while a reader
+			// sits at `start`, so every reader sits before it and must rebase.
+			// Move past them without keeping them: `trim` would drop them all.
+			if (this.readers.size > 0) {
+				this._start += count;
+			}
+		} else {
 			for (let i = 0; i < count; i++) {
 				this.tables.push(this.stagedTables[i]);
 				this.keys.push(this.stagedKeys[i]);
 			}
+			const overflow = this.size - this.capacity;
+			if (overflow > 0) {
+				// The readers that had not read these must rebase.
+				this.drop(overflow);
+			}
+			// A no-op while a reader sits at `start`. After an overflow it drops
+			// the entries before the lowest reader left, and it drops every entry
+			// when all readers must rebase.
+			this.trim();
 		}
 		this.stagedTables.length = 0;
 		this.stagedKeys.length = 0;
-		const overflow = this.size - this.capacity;
-		if (overflow > 0) {
-			// The readers that had not read these must rebase.
-			this.drop(overflow);
-		}
-		// A no-op while a reader sits at `start`. After an overflow it drops the
-		// entries before the lowest reader left, and it drops every entry while
-		// all readers must rebase.
-		this.trim();
 	}
 
 	/**

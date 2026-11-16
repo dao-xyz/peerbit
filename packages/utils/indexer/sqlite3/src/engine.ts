@@ -785,7 +785,7 @@ export class SQLiteIndex<T extends Record<string, any>>
 								? await runIgnoreFK(statement, values)
 								: await statement.run(values);
 						}
-						if (table === rootTable) {
+						if (table === rootTable && this.changeJournal.recording) {
 							this.recordRootKey(rootTable, preId);
 						}
 						return preId;
@@ -804,7 +804,7 @@ export class SQLiteIndex<T extends Record<string, any>>
 							return undefined;
 						}
 						const id = out[table.primary as string];
-						if (table === rootTable) {
+						if (table === rootTable && this.changeJournal.recording) {
 							this.recordRootKey(rootTable, id);
 						}
 						return id;
@@ -846,22 +846,25 @@ export class SQLiteIndex<T extends Record<string, any>>
 	 * statement succeeded: if a nested row then fails and the rollback fails
 	 * too, the row may still commit. The key is published when the caller's
 	 * transaction commits (see withPutSavepoint and the ordered session's
-	 * flush), and discarded if its savepoint rolls back.
+	 * flush), and discarded if its savepoint rolls back. Callers check
+	 * `recording` first, inline: it is read once per value.
 	 */
 	private recordRootKey(table: Table, key: unknown): void {
-		if (this.changeJournal.recording) {
-			this.changeJournal.record(this.journalTableOf(table), key);
-		}
+		this.changeJournal.record(this.journalTableOf(table), key);
 	}
 
 	/**
-	 * The journal's ordinal for a root table, found by name: a delete planned
+	 * The journal's ordinal for a root table: its position in `_rootTables`,
+	 * or else the position of the root table with its name. A delete planned
 	 * before stop() and start() holds the previous Table objects, which are no
-	 * longer in `_rootTables`. -1 if none matches, which `record` treats as a
-	 * change it cannot name.
+	 * longer there. -1 if none matches, which `record` treats as a change it
+	 * cannot name.
 	 */
 	private journalTableOf(table: Table): number {
-		return this._rootTables.findIndex((root) => root.name === table.name);
+		const ordinal = this._rootTables.indexOf(table);
+		return ordinal >= 0
+			? ordinal
+			: this._rootTables.findIndex((root) => root.name === table.name);
 	}
 
 	private async withPutSavepoint(write: () => Promise<void>): Promise<void> {
@@ -1687,7 +1690,7 @@ export class SQLiteIndex<T extends Record<string, any>>
 					stmt.all(bindable),
 				);
 				if (this.changeJournal.recording) {
-					// By name: `table` may be from planning before a stop() and start().
+					// `table` may be from planning before a stop() and start().
 					const journalTable = this.journalTableOf(table);
 					for (const result of results) {
 						this.changeJournal.record(
