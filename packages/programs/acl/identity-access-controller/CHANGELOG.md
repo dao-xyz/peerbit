@@ -1,5 +1,15 @@
 # Changelog
 
+## 6.0.145
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @peerbit/trusted-network@6.0.145
+  - @peerbit/program@6.0.71
+  - @peerbit/document@15.1.14
+  - @peerbit/shared-log@16.0.43
+
 ## 6.0.144
 
 ### Patch Changes

@@ -1,5 +1,22 @@
 # Changelog
 
+## 5.4.13
+
+### Patch Changes
+
+- Updated dependencies [[`e2971c1`](https://github.com/dao-xyz/peerbit/commit/e2971c1020333c179ccbde1c2fc3d8fc90306c87)]:
+  - @peerbit/build-assets@1.1.1
+  - @peerbit/time@3.0.2
+  - @peerbit/program@6.0.71
+  - @peerbit/blocks@4.3.6
+  - @peerbit/pubsub@5.4.16
+  - @peerbit/any-store@2.2.20
+  - @peerbit/any-store-opfs@1.1.18
+  - @peerbit/stream@5.2.7
+  - @peerbit/indexer-sqlite3@3.0.24
+  - @peerbit/keychain@1.2.20
+  - @peerbit/indexer-simple@1.3.2
+
 ## 5.4.12
 
 ### Patch Changes

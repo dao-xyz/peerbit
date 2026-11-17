@@ -1,5 +1,16 @@
 # Changelog
 
+## 8.0.42
+
+### Patch Changes
+
+- Updated dependencies [[`e2971c1`](https://github.com/dao-xyz/peerbit/commit/e2971c1020333c179ccbde1c2fc3d8fc90306c87)]:
+  - @peerbit/time@3.0.2
+  - @peerbit/program@6.0.71
+  - @peerbit/blocks@4.3.6
+  - @peerbit/pubsub@5.4.16
+  - peerbit@5.4.13
+
 ## 8.0.41
 
 ### Patch Changes

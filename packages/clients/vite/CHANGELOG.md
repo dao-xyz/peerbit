@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.0.11
+
+### Patch Changes
+
+- Updated dependencies [[`e2971c1`](https://github.com/dao-xyz/peerbit/commit/e2971c1020333c179ccbde1c2fc3d8fc90306c87)]:
+  - @peerbit/build-assets@1.1.1
+
 ## 2.0.10
 
 ### Patch Changes

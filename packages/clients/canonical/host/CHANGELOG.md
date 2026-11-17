@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.0.93
+
+### Patch Changes
+
+- Updated dependencies [[`e2971c1`](https://github.com/dao-xyz/peerbit/commit/e2971c1020333c179ccbde1c2fc3d8fc90306c87)]:
+  - @peerbit/canonical-transport@1.0.1
+  - peerbit@5.4.13
+
 ## 1.0.92
 
 ### Patch Changes

@@ -1,5 +1,15 @@
 # Changelog
 
+## 6.2.7
+
+### Patch Changes
+
+- Updated dependencies [[`e2971c1`](https://github.com/dao-xyz/peerbit/commit/e2971c1020333c179ccbde1c2fc3d8fc90306c87), [`e2971c1`](https://github.com/dao-xyz/peerbit/commit/e2971c1020333c179ccbde1c2fc3d8fc90306c87)]:
+  - @peerbit/diagnostics@0.1.1
+  - @peerbit/time@3.0.2
+  - @peerbit/program@6.0.71
+  - @peerbit/pubsub@5.4.16
+
 ## 6.2.6
 
 ### Patch Changes

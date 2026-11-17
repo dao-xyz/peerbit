@@ -1,6 +1,6 @@
 {
 	"name": "@peerbit/clock-service",
-	"version": "3.2.168",
+	"version": "3.2.169",
 	"description": "Clock signing",
 	"repository": {
 		"type": "git",

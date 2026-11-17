@@ -1,6 +1,6 @@
 {
 	"name": "@peerbit/indexer-tests",
-	"version": "3.0.16",
+	"version": "3.0.17",
 	"description": "Tests document store index engines",
 	"repository": {
 		"type": "git",

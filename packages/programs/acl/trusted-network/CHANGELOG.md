@@ -1,5 +1,17 @@
 # Changelog
 
+## 6.0.145
+
+### Patch Changes
+
+- Updated dependencies [[`e2971c1`](https://github.com/dao-xyz/peerbit/commit/e2971c1020333c179ccbde1c2fc3d8fc90306c87)]:
+  - @peerbit/any-store-interface@1.1.5
+  - @peerbit/program@6.0.71
+  - @peerbit/any-store@2.2.20
+  - @peerbit/log@6.2.41
+  - @peerbit/document@15.1.14
+  - @peerbit/shared-log@16.0.43
+
 ## 6.0.144
 
 ### Patch Changes

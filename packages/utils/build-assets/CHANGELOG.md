@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.1.1
+
+### Patch Changes
+
+- [#1547](https://github.com/dao-xyz/peerbit/pull/1547) [`e2971c1`](https://github.com/dao-xyz/peerbit/commit/e2971c1020333c179ccbde1c2fc3d8fc90306c87) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Add the `repository` field to `package.json`, so npm trusted publishing and provenance can match the published package to the dao-xyz/peerbit repository.
+
 ## [1.1.0](https://github.com/dao-xyz/peerbit/compare/build-assets-v1.0.0...build-assets-v1.1.0) (2025-11-25)
 
 ### Features
