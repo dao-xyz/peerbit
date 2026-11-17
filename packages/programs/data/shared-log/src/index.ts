@@ -24458,8 +24458,28 @@ export class SharedLog<
 									previousCapabilitySession === capabilityTransportSession &&
 									previousCapabilityTimestamp !== undefined &&
 									capabilityTimestamp > previousCapabilityTimestamp;
+								// The peer sets the rearm bit when its new session holds no
+								// capability from us. freshExactRearm needs an earlier capability
+								// on the same transport, which a reopened log does not hold, so a
+								// first rearm is answered too. acceptRemoteRearm acts only on a
+								// receive state bound to our ACKed grant on the current transport.
+								// Every path that drops a capability also clears the receive
+								// state, so the state promoted above is new, and it is bound only
+								// if our advert for this session and epoch was ACKed before this
+								// rearm arrived. On a direct link that means the peer had our
+								// advert before asking, so the advert landed in the session the
+								// peer has since closed: that session dropped it, or its departure
+								// revoked it. Nothing resends it until our request retries run
+								// out. In a plain opening the adverts cross, ours is not ACKed
+								// yet, and nothing changes. At worst this repeats a capability
+								// the peer already holds.
+								const firstRemoteRearm =
+									requestsRemoteFullRearm &&
+									capabilityTransportSession !== undefined &&
+									capabilityTimestamp !== undefined &&
+									previousCapabilitySession === undefined;
 								if (
-									freshExactRearm &&
+									(freshExactRearm || firstRemoteRearm) &&
 									this._v2Receive.acceptRemoteRearm({
 										peerHash: receiveFromHash,
 										peerSession: receiveSession,

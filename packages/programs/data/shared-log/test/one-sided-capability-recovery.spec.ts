@@ -12,7 +12,10 @@ import {
 	SYNC_CAPABILITY_REPLICATION_INFO_V2_REARM,
 	SyncCapabilitiesMessage,
 } from "../src/exchange-heads.js";
-import { FullReplicationInfoV2Message } from "../src/replication.js";
+import {
+	FullReplicationInfoV2Message,
+	RequestReplicationInfoV2Message,
+} from "../src/replication.js";
 import { EventStore } from "./utils/stores/index.js";
 
 describe("receive admission replication-info V2 one-sided topic recovery", function () {
@@ -273,6 +276,96 @@ describe("receive admission replication-info V2 one-sided topic recovery", funct
 			);
 		});
 	}
+
+	it("re-advertises when the peer dropped the opening advert while departing", async () => {
+		const pair = await openPair();
+		const receiverPeer = session!.peers[1];
+		const senderKey = pair.sender.node.identity.publicKey;
+		const topic = pair.senderLog.topic;
+		expect(await pair.receiver.close()).to.equal(true);
+		await waitForResolved(
+			() =>
+				expect(
+					pair.senderLog._peerSessions.current(pair.receiverHash)?.phase,
+				).to.equal("departing"),
+			{ timeout: 5_000 },
+		);
+
+		let droppedAdverts = 0;
+		let unanswerableRequests = 0;
+		const advertDropped = pDefer<void>();
+		const onMessage = pair.sender.log.onMessage.bind(pair.sender.log);
+		sinon
+			.stub(pair.sender.log, "onMessage")
+			.callsFake(async (message: any, context: any) => {
+				const fromReceiver = context.from?.hashcode() === pair.receiverHash;
+				const departingAdvert =
+					fromReceiver &&
+					message instanceof SyncCapabilitiesMessage &&
+					pair.senderLog._peerSessions.current(pair.receiverHash)?.phase ===
+						"departing";
+				if (
+					fromReceiver &&
+					message instanceof RequestReplicationInfoV2Message &&
+					!pair.senderLog._peerSyncCapabilitySessions.has(pair.receiverHash)
+				) {
+					unanswerableRequests++;
+				}
+				const result = await onMessage(message, context);
+				if (departingAdvert) {
+					droppedAdverts++;
+					advertDropped.resolve();
+				}
+				return result;
+			});
+		// The sender's Subscribe reaches the reopened receiver before the receiver
+		// announces its own (in the wild a late shard Subscribe does this). The
+		// receiver opens its session and advertises; the sender's transport ACKs
+		// that advert, but its departing session drops it. Only then does the
+		// receiver's Subscribe open the sender's new session, which solicits the
+		// capability again with the rearm bit.
+		const pubsub = receiverPeer.services.pubsub as any;
+		const announce = pubsub._subscribe.bind(pubsub);
+		sinon.stub(pubsub, "_subscribe").callsFake(async (...args: any[]) => {
+			if (args[0].some(({ key }: { key: string }) => key === topic)) {
+				await pubsub.requestSubscribers(topic, senderKey);
+				await advertDropped.promise;
+			}
+			return announce(...args);
+		});
+
+		const reopened = await EventStore.open<EventStore<string, any>>(
+			pair.sender.address!,
+			receiverPeer,
+			{
+				args: {
+					replicas: { min: 2 },
+					replicate: 1,
+					timeUntilRoleMaturity: 0,
+				},
+			},
+		);
+		const reopenedLog = reopened.log as any;
+		expect(droppedAdverts).to.equal(1);
+		await waitForResolved(
+			() => {
+				for (const [log, hash] of [
+					[pair.senderLog, pair.receiverHash],
+					[reopenedLog, pair.senderHash],
+				] as const) {
+					expect(log._peerSessions.current(hash)?.phase).to.equal("open");
+					expect(log._v2Receive._receiveStates.get(hash)?.phase).to.equal(
+						"active",
+					);
+					expect(log._v2Send._sendStates.get(hash)?.established).to.equal(true);
+				}
+			},
+			{ timeout: 10_000 },
+		);
+		// The solicitation itself restored the sender's grant: the receiver did
+		// not spend its request retries on a sender that could not answer them.
+		expect(unanswerableRequests).to.equal(0);
+	});
 
 	it("restores membership after receiver-only rotation without a waiter", async () => {
 		const pair = await openPair();
