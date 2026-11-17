@@ -25,7 +25,14 @@ import {
 import type { Block } from "multiformats/block";
 import { AnyBlockStore } from "./any-blockstore.js";
 import type { EagerBlocksSetting } from "./eager-cache.js";
-import { BlockMessage, BlockRequest, BlockResponse, RemoteBlocks } from "./remote.js";
+import {
+	BlockMessage,
+	BlockRequest,
+	BlockResponse,
+	RemoteBlocks,
+	type StoredNotificationHookOptions,
+	type StoredNotificationTelemetry,
+} from "./remote.js";
 import { createBuiltInScopedReclamationBlockStore } from "./scoped-reclamation.js";
 
 export type DirectBlockComponents = DirectStreamComponents;
@@ -65,8 +72,21 @@ export class DirectBlock extends DirectStream implements IBlocks {
 					onProviders: (providers: string[]) => void;
 				},
 			) => void | { close: () => void } | (() => void);
-			onPut?: (cid: string) => Promise<void> | void;
-			onPutMany?: (cids: string[]) => Promise<void> | void;
+			/** Best-effort hook after a block is stored; see `RemoteBlocks`. */
+			onPut?: (
+				cid: string,
+				options?: StoredNotificationHookOptions,
+			) => Promise<void> | void;
+			/** Best-effort aggregate hook for stored blocks; see `RemoteBlocks`. */
+			onPutMany?: (
+				cids: string[],
+				options?: StoredNotificationHookOptions,
+			) => Promise<void> | void;
+			/**
+			 * Make writes wait for `onPut`/`onPutMany` to settle. By default they
+			 * resolve once stored and the hooks run as bounded background work.
+			 */
+			awaitPutHooks?: boolean;
 			providerCache?:
 				| boolean
 				| {
@@ -108,6 +128,7 @@ export class DirectBlock extends DirectStream implements IBlocks {
 			watchProviders,
 			onPut,
 			onPutMany,
+			awaitPutHooks,
 			providerCache,
 			requeryOnReachable,
 			scopedBlockReclamation,
@@ -239,6 +260,7 @@ export class DirectBlock extends DirectStream implements IBlocks {
 			watchProviders,
 			onPut,
 			onPutMany,
+			awaitPutHooks,
 			providerCache,
 			requeryOnReachable,
 			rust: blockExchange
@@ -280,6 +302,18 @@ export class DirectBlock extends DirectStream implements IBlocks {
 
 	waitForEagerBlockValidation(): Promise<void> {
 		return this.remoteBlocks.waitForEagerBlockValidation();
+	}
+
+	getStoredNotificationTelemetry(): StoredNotificationTelemetry {
+		return this.remoteBlocks.getStoredNotificationTelemetry();
+	}
+
+	/**
+	 * Resolves once `onPut`/`onPutMany` have settled for blocks stored before
+	 * this call (or those notifications were dropped or discarded).
+	 */
+	waitForStoredNotifications(): Promise<void> {
+		return this.remoteBlocks.waitForStoredNotifications();
 	}
 
 	private encodeBlockMessage(message: BlockRequest | BlockResponse): Uint8Array {

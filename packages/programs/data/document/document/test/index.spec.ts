@@ -1253,6 +1253,74 @@ describe("index", () => {
 				}
 			});
 
+			it("announces a native committed batch through one block notification", async () => {
+				const rustSession = await TestSession.connected(
+					1,
+					createRustPeerbitOptions(),
+				);
+				store = new TestStore({
+					docs: new Documents<Document>(),
+				});
+				const sandbox = sinon.createSandbox();
+				try {
+					await rustSession.peers[0].open(store, {
+						args: {
+							replicate: { factor: 1 },
+							nativeGraph: true,
+							nativeBackbone: nativeBackboneDocumentIndexOptions(),
+						},
+					});
+					const sharedLog = store.docs.log as any;
+					const remoteBlocks = sharedLog.remoteBlocks;
+					const nativeBatchSpy = sandbox.spy(
+						sharedLog,
+						"appendLocallyPreparedPayloadsManyNativeBackboneDocumentIndexBatch",
+					);
+					const deferredSpy = sandbox.spy(
+						remoteBlocks,
+						"notifyStoredManyDeferred",
+					);
+					// Record the hooks instead of announcing to a directory.
+					const onPut = sandbox.stub(remoteBlocks.options, "onPut").resolves();
+					const onPutMany = sandbox
+						.stub(remoteBlocks.options, "onPutMany")
+						.resolves();
+
+					const appended = await store.docs.putMany(
+						[1, 2, 3].map(
+							(index) =>
+								new Document({
+									id: uuid(),
+									name: `backbone-batch-notify-${index}`,
+								}),
+						),
+						{ unique: true, target: "none" },
+					);
+					await remoteBlocks.waitForStoredNotifications();
+
+					expect(nativeBatchSpy.callCount).equal(1);
+					const hashes = appended.entries.map((entry) => entry.hash);
+					expect(hashes).to.have.length(3);
+					// One write of three blocks: admitted whole and announced as a
+					// batch, rather than three single-block notifications.
+					expect(deferredSpy.callCount).equal(1);
+					expect(deferredSpy.firstCall.args[0]).to.deep.equal(hashes);
+					expect(onPut.callCount).equal(0);
+					expect(onPutMany.callCount).equal(1);
+					expect(onPutMany.firstCall.args[0]).to.deep.equal(hashes);
+					expect(onPutMany.firstCall.args[1]).to.deep.include({
+						batch: true,
+					});
+				} finally {
+					sandbox.restore();
+					if (store) {
+						await store.close();
+						store = undefined;
+					}
+					await rustSession.stop();
+				}
+			});
+
 			it("skips block provider notification for local-only native committed puts", async () => {
 				const rustSession = await TestSession.connected(
 					1,

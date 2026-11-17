@@ -1452,12 +1452,14 @@ const runScenario = async (name: string): Promise<BenchRow> => {
 					profile,
 					"remoteBlockPutKnownMs",
 				),
+				// Every deferred notification, single or batched, goes through
+				// notifyStoredManyDeferred, so timing it alone counts each once.
 				patchAsyncMethod(
 					(store.docs.log as any).remoteBlocks ?? {},
-					typeof (store.docs.log as any).remoteBlocks
-						?.notifyStoredDeferred === "function"
-						? "notifyStoredDeferred"
-						: "notifyStored",
+					["notifyStoredManyDeferred", "notifyStoredDeferred"].find(
+						(key) =>
+							typeof (store.docs.log as any).remoteBlocks?.[key] === "function",
+					) ?? "notifyStored",
 					profile,
 					"remoteBlockNotifyStoredMs",
 				),

@@ -613,6 +613,11 @@ export class Peerbit implements ProgramClient {
 				};
 
 				const blockProviderNamespace = (cid: string) => `cid:${cid}`;
+				const blockProviderAnnounceOptions = (signal?: AbortSignal) => ({
+					ttlMs: 120_000,
+					bootstrapMaxPeers: 2,
+					...(signal ? { signal } : {}),
+				});
 
 				const createDefaultPubsubService = (c: any) =>
 					new TopicControlPlane(c, {
@@ -784,13 +789,27 @@ export class Peerbit implements ProgramClient {
 							scopedBlockReclamation,
 							rustCore: nativeNetwork?.rustCore,
 							resolveProviders,
-							onPut: async (cid) => {
-								// Best-effort directory announce for "get without remote.from" workflows.
+							// Best-effort directory announcements for "get without remote.from"
+							// workflows. Writes do not wait for them, and the block service
+							// aborts them through `signal` when it stops.
+							onPut: async (cid, options) => {
 								try {
-									await fanout?.announceProvider(blockProviderNamespace(cid), {
-										ttlMs: 120_000,
-										bootstrapMaxPeers: 2,
-									});
+									await fanout?.announceProvider(
+										blockProviderNamespace(cid),
+										blockProviderAnnounceOptions(options?.signal),
+									);
+								} catch {
+									// ignore announce failures
+								}
+							},
+							// Blocks stored while an announcement runs share one bootstrap
+							// lookup instead of dialing once per block.
+							onPutMany: async (cids, options) => {
+								try {
+									await fanout?.announceProviders(
+										cids.map(blockProviderNamespace),
+										blockProviderAnnounceOptions(options?.signal),
+									);
 								} catch {
 									// ignore announce failures
 								}

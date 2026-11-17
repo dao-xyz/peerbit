@@ -384,6 +384,91 @@ describe("fanout provider discovery", () => {
 		}
 	});
 
+	it("cancels a one-shot provider announcement whose control send waits for queue capacity", async () => {
+		const session = await InMemorySession.disconnected<{ fanout: FanoutTree }>(
+			2,
+			{
+				basePort: 47_380,
+				services: {
+					fanout: (c) => new FanoutTree(c, { connectionManager: false }),
+				},
+			},
+		);
+		const sandbox = sinon.createSandbox();
+		const published = pDefer<AbortSignal | undefined>();
+		const writeHeld = pDefer<void>();
+		const releaseWrites = pDefer<void>();
+		let announcement: Promise<void> | undefined;
+		try {
+			const provider = session.peers[1]!.services.fanout;
+			provider.setBootstraps(session.peers[0]!.getMultiaddrs());
+			// After this the tracker is a reachable bootstrap peer, so the next
+			// announcement goes on to its control send.
+			await provider.announceProvider("provider-capacity-setup");
+
+			let announceSignal: AbortSignal | undefined;
+			const publish = sandbox
+				.stub(provider, "publishMessageMaybe")
+				.callsFake(function (this: FanoutTree, ...args) {
+					const [, message, , , signal] = args;
+					if (
+						(message as { data?: Uint8Array }).data?.[0] ===
+						MSG_PROVIDER_ANNOUNCE
+					) {
+						announceSignal = signal;
+						published.resolve(signal);
+					}
+					return publish.wrappedMethod.apply(this, args);
+				});
+			// Every peer write now waits for queue capacity that never frees up,
+			// like a congested tracker connection: it ends only when its signal
+			// aborts (or when the test cleans up).
+			sandbox
+				.stub(provider as any, "waitForPeerWrite")
+				.callsFake((...args: unknown[]) => {
+					const signal = args[3] as AbortSignal | undefined;
+					if (signal && signal === announceSignal) writeHeld.resolve();
+					return new Promise<void>((_resolve, reject) => {
+						const abort = () => reject(new AbortError("write aborted"));
+						if (signal?.aborted) abort();
+						else signal?.addEventListener("abort", abort, { once: true });
+						void releaseWrites.promise.then(abort);
+					});
+				});
+
+			const controller = new AbortController();
+			let settled = false;
+			announcement = provider
+				.announceProvider("provider-capacity-cancelled", {
+					signal: controller.signal,
+				})
+				.then(() => {
+					settled = true;
+				});
+			const signal = await published.promise;
+			expect(signal, "the control send carries the announcement's signal").to
+				.exist;
+			await writeHeld.promise;
+			await new Promise<void>((resolve) => setImmediate(resolve));
+			expect(settled, "the announcement waits for its write").to.equal(false);
+
+			controller.abort();
+			expect(signal!.aborted).to.equal(true);
+			// The aborted write fails within microtasks; nothing else releases it.
+			await new Promise<void>((resolve) => setImmediate(resolve));
+			expect(settled, "the cancelled announcement resolved").to.equal(true);
+			expect(provider.started).to.equal(true);
+		} finally {
+			releaseWrites.resolve();
+			try {
+				await announcement;
+			} finally {
+				sandbox.restore();
+				await session.stop();
+			}
+		}
+	});
+
 	it("keeps a replacement watch when an old renewal finishes after service restart", async () => {
 		const session = await InMemorySession.disconnected<{ fanout: FanoutTree }>(
 			3,

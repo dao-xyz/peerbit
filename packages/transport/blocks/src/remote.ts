@@ -43,13 +43,42 @@ import {
 	normalizeEagerBlocksOptions,
 } from "./eager-cache.js";
 import type { BlockStore } from "./interface.js";
+import {
+	StoredNotificationQueue,
+	type StoredNotificationTelemetry,
+} from "./stored-notifications.js";
+
+export type { StoredNotificationTelemetry } from "./stored-notifications.js";
 
 export const logger = loggerFn("peerbit:transport:blocks");
 const warn = logger.newScope("warn");
 
-// Keep batch hooks bounded without changing their completion contract: a
-// successful batch put still waits until every onPut callback has settled.
+// onPut/onPutMany are best-effort, so a write never waits for them: they run
+// as background work with these bounds unless `awaitPutHooks` is set. At most
+// this many single-CID hook calls run at once (an aggregate hook runs alone).
 const STORED_NOTIFICATION_CONCURRENCY = 8;
+// A write's new CIDs are admitted together while fewer than this many CIDs
+// wait for a hook call, and dropped together (and counted) otherwise, until
+// the queue drains. CIDs already waiting or running coalesce either way.
+const STORED_NOTIFICATION_MAX_PENDING = 4096;
+
+/** Passed to `onPut`/`onPutMany`. */
+export type StoredNotificationHookOptions = {
+	/** Aborts when the store stops. */
+	signal?: AbortSignal;
+	/**
+	 * Set on `onPutMany` calls: true when the CIDs include blocks that one
+	 * write stored together (`putMany`, `putKnownMany`, or a multi-CID
+	 * `notifyStoredManyDeferred`), false when they come only from writes of
+	 * one block each, such as writes that queued behind a running call, or a
+	 * lone write when `onPutMany` is the only hook. Hooks that do extra work
+	 * for bulk writes can skip it when this is false. A block of a multi-block
+	 * write reaches `onPutMany` with `batch: true` even when the write's other
+	 * blocks were already being announced; a write whose blocks are all being
+	 * announced adds no call.
+	 */
+	batch?: boolean;
+};
 
 export class BlockMessage {}
 
@@ -188,9 +217,8 @@ export class RemoteBlocks implements IBlocks {
 	private _loadFetchQueue: PQueue;
 	private _backgroundLoadFetchQueue: PQueue;
 	private _readFromPeersPromises: Map<string, InFlightRead>;
-	private _deferredStoredNotificationCids?: Set<string>;
-	private _deferredStoredNotificationTimer?: ReturnType<typeof setTimeout>;
-	private _deferredStoredNotificationDrain?: Promise<void>;
+	private _storedNotifications: StoredNotificationQueue;
+	// Columnar puts admit their CIDs only after the durability barrier.
 	private _storedNotificationTasks = new Set<Promise<void>>();
 	_open = false;
 	private _events: TypedEventEmitter<{
@@ -241,18 +269,49 @@ export class RemoteBlocks implements IBlocks {
 			 * Optional hook called after a block is stored locally (best-effort).
 			 *
 			 * Intended for wiring in discovery/provider announcements without coupling
-			 * this transport to a specific directory implementation.
+			 * this transport to a specific directory implementation. Writes resolve
+			 * once the block is stored; the hook runs afterwards as bounded background
+			 * work (see `awaitPutHooks`). `options.signal` aborts when this store
+			 * stops, and `stop()` waits for running calls to settle, so a hook should
+			 * pass the signal on to any dial or request it starts.
 			 */
-			onPut?: (cid: string) => Promise<void> | void;
+			onPut?: (
+				cid: string,
+				options?: StoredNotificationHookOptions,
+			) => Promise<void> | void;
 			/**
-			 * Optional aggregate hook called after a multi-block store (best-effort).
+			 * Optional aggregate hook called with CIDs stored by one or more writes
+			 * (best-effort).
 			 *
 			 * When present, this replaces the per-CID `onPut` calls for batches. The
 			 * callback must therefore make every supplied CID discoverable through an
-			 * equivalent aggregate mechanism. Without it, `onPut` is invoked and
-			 * awaited once for every CID with bounded concurrency.
+			 * equivalent aggregate mechanism. Without it, `onPut` is invoked once for
+			 * every CID with bounded concurrency. With this hook, background calls
+			 * run one at a time: CIDs stored while a call runs wait for it to settle
+			 * and are passed to the next call, so a call that waits on a congested
+			 * peer holds them back until it settles or the store stops. Writes with
+			 * `awaitPutHooks`, and `notifyStored`/`notifyStoredMany`, call the hook
+			 * directly instead, so those calls can overlap. `options.batch` says
+			 * whether the CIDs include a multi-block write. `options.signal` behaves
+			 * as for `onPut`.
 			 */
-			onPutMany?: (cids: string[]) => Promise<void> | void;
+			onPutMany?: (
+				cids: string[],
+				options?: StoredNotificationHookOptions,
+			) => Promise<void> | void;
+			/**
+			 * Make `put`, `putMany`, `putKnown` and `putKnownMany` wait until
+			 * `onPut`/`onPutMany` has settled for the stored CIDs.
+			 *
+			 * Defaults to false: writes resolve once the blocks are stored locally,
+			 * and the hooks run as background work in which duplicate CIDs coalesce,
+			 * a write's new CIDs are queued while fewer than 4096 CIDs wait (and
+			 * dropped otherwise, counted in `getStoredNotificationTelemetry()`), and
+			 * `stop()` discards waiting CIDs and aborts running calls. Use
+			 * `waitForStoredNotifications()` to wait for the hooks of earlier writes,
+			 * for example before stopping a store whose announcements matter.
+			 */
+			awaitPutHooks?: boolean;
 			/**
 			 * Cache of learned/suggested providers per CID to reduce repeated lookups and avoid
 			 * expensive "search" behaviors.
@@ -310,6 +369,7 @@ export class RemoteBlocks implements IBlocks {
 		this._backgroundLoadFetchQueue = new PQueue({
 			concurrency: Math.max(1, messageProcessingConcurrency - 1),
 		});
+		this._storedNotifications = this.createStoredNotificationQueue();
 		this.localStore = options?.local;
 		const localPutKnownManyColumns = (
 			this.localStore as {
@@ -325,14 +385,20 @@ export class RemoteBlocks implements IBlocks {
 				);
 				const durableBarrier = this.waitForDurableWrites?.();
 				if (durableBarrier && typeof durableBarrier.then === "function") {
+					// Announce only blocks that reached durable storage. A barrier that
+					// settles after stop() admits into this generation's closed queue,
+					// never into one opened by a later start().
+					const queue = this._storedNotifications;
 					this.trackStoredNotificationTask(
 						Promise.resolve(durableBarrier).then(
-							() => this.notifyPuts(stored),
+							() => {
+								if (this.hasNotifyStoredHook()) queue.enqueue(stored);
+							},
 							(): void => undefined,
 						),
 					);
 				} else {
-					this.trackStoredNotificationTask(this.notifyPuts(stored));
+					this.queueStoredNotifications(stored);
 				}
 				return stored;
 			};
@@ -517,6 +583,42 @@ export class RemoteBlocks implements IBlocks {
 	/** Primarily useful for diagnostics and deterministic tests. */
 	waitForEagerBlockValidation(): Promise<void> {
 		return this._eagerValidationQueue?.onIdle() ?? Promise.resolve();
+	}
+
+	/** Snapshot of the background `onPut`/`onPutMany` work for stored blocks. */
+	getStoredNotificationTelemetry(): StoredNotificationTelemetry {
+		return this._storedNotifications.telemetry();
+	}
+
+	/**
+	 * Resolves once the `onPut`/`onPutMany` calls for blocks stored before this
+	 * call have settled, or those CIDs were dropped because the queue was full
+	 * or discarded by `stop()`. Writes do not wait for these best-effort hooks;
+	 * use this where an announcement must already have been attempted, such as
+	 * diagnostics and deterministic tests.
+	 */
+	async waitForStoredNotifications(): Promise<void> {
+		const queue = this._storedNotifications;
+		if (this._storedNotificationTasks.size > 0) {
+			// Columnar puts admit their CIDs once their durability barrier settles.
+			await Promise.all([...this._storedNotificationTasks]);
+		}
+		await queue.whenSettled();
+	}
+
+	private createStoredNotificationQueue(): StoredNotificationQueue {
+		return new StoredNotificationQueue({
+			maxPending: STORED_NOTIFICATION_MAX_PENDING,
+			concurrency: STORED_NOTIFICATION_CONCURRENCY,
+			aggregate: () => typeof this.options.onPutMany === "function",
+			// A lone CID goes through `notifyStored`, like any single-block
+			// notification, unless it is all that is left to announce of a
+			// multi-block write and an aggregate hook should learn of the batch.
+			notify: (cids, batch) =>
+				cids.length === 1 && !(batch && this.options.onPutMany)
+					? this.notifyStored(cids[0]!)
+					: this.notifyPuts(cids, batch),
+		});
 	}
 
 	private queueEagerBlock(
@@ -800,7 +902,8 @@ export class RemoteBlocks implements IBlocks {
 			throw new Error("Local store not set");
 		}
 		const cid = await this.localStore!.put(bytes);
-		await this.notifyPut(cid);
+		const notified = this.notifyAfterPut([cid]);
+		if (notified) await notified;
 		return cid;
 	}
 
@@ -813,7 +916,8 @@ export class RemoteBlocks implements IBlocks {
 			throw new Error("Local store not set");
 		}
 		const cids = await this.localStore.putMany(blocks);
-		await this.notifyPuts(cids);
+		const notified = this.notifyAfterPut(cids);
+		if (notified) await notified;
 		return cids;
 	}
 
@@ -822,7 +926,8 @@ export class RemoteBlocks implements IBlocks {
 			throw new Error("Local store not set");
 		}
 		const storedCid = await this.localStore.putKnown(cid, bytes);
-		await this.notifyPut(storedCid);
+		const notified = this.notifyAfterPut([storedCid]);
+		if (notified) await notified;
 		return storedCid;
 	}
 
@@ -833,7 +938,8 @@ export class RemoteBlocks implements IBlocks {
 			throw new Error("Local store not set");
 		}
 		const cids = await this.localStore.putKnownMany(blocks);
-		await this.notifyPuts(cids);
+		const notified = this.notifyAfterPut(cids);
+		if (notified) await notified;
 		return cids;
 	}
 
@@ -841,149 +947,111 @@ export class RemoteBlocks implements IBlocks {
 		return !!(this.options.onPut || this.options.onPutMany);
 	}
 
+	/** Calls the hooks for one stored CID now; resolves when they settle. */
 	notifyStored(cid: string): Promise<void> | void {
 		return this.notifyPut(cid);
 	}
 
+	/** Calls the hooks for stored CIDs now; resolves when they settle. */
 	notifyStoredMany(cids: string[]): Promise<void> | void {
 		return this.notifyPuts(cids);
 	}
 
+	/**
+	 * Queues the hooks for a block stored outside `put*`, such as a block
+	 * committed by a native store. They run in the background with the same
+	 * bounds as write notifications.
+	 */
 	notifyStoredDeferred(cid: string): void {
 		this.notifyStoredManyDeferred([cid]);
 	}
 
 	notifyStoredManyDeferred(cids: string[]): void {
-		if (
-			!this.hasNotifyStoredHook() ||
-			cids.length === 0 ||
-			this.closeController.signal.aborted
-		) {
-			return;
-		}
-		let pending = this._deferredStoredNotificationCids;
-		if (!pending) {
-			pending = new Set();
-			this._deferredStoredNotificationCids = pending;
-		}
-		for (const cid of cids) {
-			if (cid) pending.add(cid);
-		}
-		this.scheduleDeferredStoredNotifications();
+		this.queueStoredNotifications(cids);
 	}
 
-	private scheduleDeferredStoredNotifications(): void {
-		if (
-			this.closeController.signal.aborted ||
-			!this._deferredStoredNotificationCids?.size ||
-			this._deferredStoredNotificationTimer ||
-			this._deferredStoredNotificationDrain
-		) {
-			return;
+	/**
+	 * Hooks for blocks a write just stored: awaited with `awaitPutHooks`,
+	 * otherwise queued so that the write resolves without them.
+	 */
+	private notifyAfterPut(cids: string[]): Promise<void> | void {
+		if (this.options.awaitPutHooks) {
+			return this.notifyPuts(cids);
 		}
-		this._deferredStoredNotificationTimer = setTimeout(() => {
-			this._deferredStoredNotificationTimer = undefined;
-			const flushed = this.flushDeferredStoredNotifications();
-			if (flushed && typeof flushed.catch === "function") {
-				flushed.catch((): void => undefined);
-			}
-		}, 0);
+		this.queueStoredNotifications(cids);
 	}
 
-	private flushDeferredStoredNotifications(): Promise<void> | void {
-		if (this._deferredStoredNotificationTimer) {
-			clearTimeout(this._deferredStoredNotificationTimer);
-			this._deferredStoredNotificationTimer = undefined;
-		}
-		if (this._deferredStoredNotificationDrain) {
-			return this._deferredStoredNotificationDrain.then(() =>
-				this.flushDeferredStoredNotifications(),
-			);
-		}
-		const pending = this._deferredStoredNotificationCids;
-		if (!pending || pending.size === 0) {
+	private queueStoredNotifications(cids: Iterable<string>): void {
+		if (!this.hasNotifyStoredHook() || this.closeController.signal.aborted) {
 			return;
 		}
-		if (this.options.onPutMany && pending.size > 1) {
-			// Detach the current batch before awaiting the aggregate hook. New
-			// notifications collect in a fresh Set and are scheduled by the drain's
-			// finalizer, while this generation retains only one bounded aggregate
-			// task instead of one promise/network announcement per CID.
-			this._deferredStoredNotificationCids = undefined;
-			const cids = [...pending];
-			pending.clear();
-			const drain = Promise.resolve(this.notifyPuts(cids));
-			const trackedDrain = drain.finally(() => {
-				if (this._deferredStoredNotificationDrain === trackedDrain) {
-					this._deferredStoredNotificationDrain = undefined;
-				}
-				this.scheduleDeferredStoredNotifications();
-			});
-			this._deferredStoredNotificationDrain = trackedDrain;
-			return trackedDrain;
-		}
+		this._storedNotifications.enqueue(cids);
+	}
 
-		const worker = async () => {
-			for (;;) {
-				const next = pending.values().next();
-				if (next.done) return;
-				pending.delete(next.value);
-				await this.notifyStored(next.value);
-			}
-		};
-		const workerCount = Math.min(STORED_NOTIFICATION_CONCURRENCY, pending.size);
-		const drain = Promise.all(
-			Array.from({ length: workerCount }, () => worker()),
-		).then((): void => undefined);
-		const trackedDrain = drain.finally(() => {
-			if (this._deferredStoredNotificationDrain === trackedDrain) {
-				this._deferredStoredNotificationDrain = undefined;
-			}
-			if (pending.size === 0) {
-				this._deferredStoredNotificationCids = undefined;
-				return;
-			}
-			this.scheduleDeferredStoredNotifications();
-		});
-		this._deferredStoredNotificationDrain = trackedDrain;
-		return trackedDrain;
+	private storedNotificationHookOptions(
+		batch?: boolean,
+	): StoredNotificationHookOptions {
+		return batch === undefined
+			? { signal: this.closeController.signal }
+			: { signal: this.closeController.signal, batch };
 	}
 
 	private notifyPut(cid: string): Promise<void> | void {
-		const onPut =
-			this.options.onPut ??
-			(this.options.onPutMany
-				? (storedCid: string) => this.options.onPutMany!([storedCid])
-				: undefined);
-		if (!onPut) {
+		const { onPut, onPutMany } = this.options;
+		if (!onPut && !onPutMany) {
 			return;
 		}
 		try {
-			const result = onPut(cid);
+			const result = onPut
+				? onPut(cid, this.storedNotificationHookOptions())
+				: onPutMany!([cid], this.storedNotificationHookOptions(false));
 			if (result && typeof result.then === "function") {
-				return result.catch((): void => undefined);
+				return result.catch((error: unknown): void => {
+					logger("stored-block hook failed for %s: %e", cid, error);
+				});
 			}
-		} catch {
-			// ignore best-effort hooks
+		} catch (error) {
+			// Best-effort hooks never fail the write.
+			logger("stored-block hook failed for %s: %e", cid, error);
 		}
 	}
 
-	private notifyPuts(cids: string[]): Promise<void> | void {
+	/**
+	 * `batch` says whether the CIDs include blocks that one write stored
+	 * together. CIDs passed in directly come from one write, so it defaults to
+	 * whether there are several.
+	 */
+	private notifyPuts(
+		cids: string[],
+		batch = cids.length > 1,
+	): Promise<void> | void {
 		if (cids.length === 0) {
 			return;
 		}
-		if (cids.length === 1) {
+		const onPutMany = this.options.onPutMany;
+		// A lone CID is a single-block notification, unless the queue passes
+		// the last unannounced block of a multi-block write.
+		if (cids.length === 1 && !(batch && onPutMany)) {
 			return this.notifyPut(cids[0]!);
 		}
-		const onPutMany = this.options.onPutMany;
 		if (onPutMany) {
 			try {
-				const result = onPutMany(cids);
+				const result = onPutMany(
+					cids,
+					this.storedNotificationHookOptions(batch),
+				);
 				if (result && typeof result.then === "function") {
-					return result.catch((): void => undefined);
+					return result.catch((error: unknown): void => {
+						logger(
+							"stored-block hook failed for %d CIDs: %e",
+							cids.length,
+							error,
+						);
+					});
 				}
-			} catch {
-				// ignore best-effort hooks
+			} catch (error) {
+				// Best-effort hooks never fail the write.
+				logger("stored-block hook failed for %d CIDs: %e", cids.length, error);
 			}
 			return;
 		}
@@ -1085,9 +1153,17 @@ export class RemoteBlocks implements IBlocks {
 	}
 
 	async start(): Promise<void> {
+		// Starting a store that is already open keeps its generation, as a
+		// started stream does. Replacing the close signal would leave work that
+		// holds the current one, such as a running provider announcement, for no
+		// later stop() to abort.
+		if (this._open && !this.closeController.signal.aborted) return;
 		this._events = new TypedEventEmitter();
 		this.closeController = new AbortController();
 		this._storedNotificationTasks = new Set();
+		if (this._storedNotifications.closed) {
+			this._storedNotifications = this.createStoredNotificationQueue();
+		}
 		await this.localStore?.start();
 		this._open = true;
 	}
@@ -1615,13 +1691,16 @@ export class RemoteBlocks implements IBlocks {
 
 		// Stop accepting work first, then always release every independent
 		// queue/store/cache resource even when an earlier drain fails.
-		await capture(() => this.closeController.abort());
-		if (this._deferredStoredNotificationTimer) {
-			clearTimeout(this._deferredStoredNotificationTimer);
-			this._deferredStoredNotificationTimer = undefined;
-		}
-		await capture(() => this.flushDeferredStoredNotifications());
+		const aborted = capture(() => this.closeController.abort());
+		// Before yielding, discard queued provider notifications so an already
+		// scheduled pump cannot start them. Running hooks have just seen their
+		// signal abort; waiting for them below is bounded because provider
+		// announcements pass that signal to their bootstrap dials and to their
+		// control sends.
+		const notificationsClosed = this._storedNotifications.close();
+		await aborted;
 		await capture(() => this.drainStoredNotificationTasks());
+		await capture(() => notificationsClosed);
 		// Queued wrappers observe the aborted generation and drain without starting
 		// new work. Avoid PQueue.clear(): it would strand promises already returned
 		// by the nested background-admission queue.
