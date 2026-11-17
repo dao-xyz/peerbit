@@ -1,5 +1,16 @@
 # Changelog
 
+## 6.0.71
+
+### Patch Changes
+
+- Updated dependencies [[`e2971c1`](https://github.com/dao-xyz/peerbit/commit/e2971c1020333c179ccbde1c2fc3d8fc90306c87), [`e2971c1`](https://github.com/dao-xyz/peerbit/commit/e2971c1020333c179ccbde1c2fc3d8fc90306c87)]:
+  - @peerbit/any-store-interface@1.1.5
+  - @peerbit/time@3.0.2
+  - @peerbit/blocks@4.3.6
+  - @peerbit/pubsub@5.4.16
+  - @peerbit/keychain@1.2.20
+
 ## 6.0.70
 
 ### Patch Changes

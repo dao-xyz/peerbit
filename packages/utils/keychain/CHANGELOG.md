@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.2.20
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @peerbit/any-store@2.2.20
+
 ## 1.2.19
 
 ### Patch Changes

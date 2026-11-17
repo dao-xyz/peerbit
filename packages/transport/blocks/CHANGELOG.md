@@ -1,5 +1,16 @@
 # Changelog
 
+## 4.3.6
+
+### Patch Changes
+
+- Updated dependencies [[`e2971c1`](https://github.com/dao-xyz/peerbit/commit/e2971c1020333c179ccbde1c2fc3d8fc90306c87), [`e2971c1`](https://github.com/dao-xyz/peerbit/commit/e2971c1020333c179ccbde1c2fc3d8fc90306c87)]:
+  - @peerbit/any-store-interface@1.1.5
+  - @peerbit/cache@3.1.2
+  - @peerbit/time@3.0.2
+  - @peerbit/any-store@2.2.20
+  - @peerbit/stream@5.2.7
+
 ## 4.3.5
 
 ### Patch Changes

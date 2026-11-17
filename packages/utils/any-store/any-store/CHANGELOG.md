@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.2.20
+
+### Patch Changes
+
+- Updated dependencies [[`e2971c1`](https://github.com/dao-xyz/peerbit/commit/e2971c1020333c179ccbde1c2fc3d8fc90306c87)]:
+  - @peerbit/any-store-interface@1.1.5
+  - @peerbit/any-store-opfs@1.1.18
+
 ## 2.2.19
 
 ### Patch Changes

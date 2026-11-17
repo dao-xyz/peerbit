@@ -1,5 +1,12 @@
 # Changelog
 
+## 3.0.24
+
+### Patch Changes
+
+- Updated dependencies [[`e2971c1`](https://github.com/dao-xyz/peerbit/commit/e2971c1020333c179ccbde1c2fc3d8fc90306c87)]:
+  - @peerbit/time@3.0.2
+
 ## 3.0.23
 
 ### Patch Changes

@@ -1,5 +1,11 @@
 # @peerbit/diagnostics
 
+## 0.1.1
+
+### Patch Changes
+
+- [#1547](https://github.com/dao-xyz/peerbit/pull/1547) [`e2971c1`](https://github.com/dao-xyz/peerbit/commit/e2971c1020333c179ccbde1c2fc3d8fc90306c87) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Publish through npm trusted publishing, with provenance. This version has no code changes.
+
 ## 0.1.0
 
 ### Minor Changes

@@ -1,5 +1,18 @@
 # Changelog
 
+## 6.2.41
+
+### Patch Changes
+
+- Updated dependencies [[`e2971c1`](https://github.com/dao-xyz/peerbit/commit/e2971c1020333c179ccbde1c2fc3d8fc90306c87), [`e2971c1`](https://github.com/dao-xyz/peerbit/commit/e2971c1020333c179ccbde1c2fc3d8fc90306c87)]:
+  - @peerbit/cache@3.1.2
+  - @peerbit/time@3.0.2
+  - @peerbit/blocks@4.3.6
+  - @peerbit/any-store@2.2.20
+  - @peerbit/indexer-sqlite3@3.0.24
+  - @peerbit/keychain@1.2.20
+  - @peerbit/indexer-simple@1.3.2
+
 ## 6.2.40
 
 ### Patch Changes

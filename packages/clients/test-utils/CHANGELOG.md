@@ -1,5 +1,19 @@
 # Changelog
 
+## 3.1.52
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @peerbit/program@6.0.71
+  - @peerbit/blocks@4.3.6
+  - @peerbit/pubsub@5.4.16
+  - @peerbit/any-store@2.2.20
+  - @peerbit/stream@5.2.7
+  - peerbit@5.4.13
+  - @peerbit/libp2p-test-utils@3.0.13
+  - @peerbit/keychain@1.2.20
+
 ## 3.1.51
 
 ### Patch Changes

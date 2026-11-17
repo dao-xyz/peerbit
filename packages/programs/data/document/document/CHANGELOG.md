@@ -1,5 +1,23 @@
 # Changelog
 
+## 15.1.14
+
+### Patch Changes
+
+- Updated dependencies [[`e2971c1`](https://github.com/dao-xyz/peerbit/commit/e2971c1020333c179ccbde1c2fc3d8fc90306c87), [`e2971c1`](https://github.com/dao-xyz/peerbit/commit/e2971c1020333c179ccbde1c2fc3d8fc90306c87)]:
+  - @peerbit/cache@3.1.2
+  - @peerbit/diagnostics@0.1.1
+  - @peerbit/time@3.0.2
+  - @peerbit/program@6.0.71
+  - @peerbit/pubsub@5.4.16
+  - @peerbit/log@6.2.41
+  - @peerbit/shared-log@16.0.43
+  - @peerbit/rpc@6.2.7
+  - @peerbit/indexer-sqlite3@3.0.24
+  - @peerbit/indexer-cache@0.3.3
+  - @peerbit/document-interface@3.2.85
+  - @peerbit/indexer-simple@1.3.2
+
 ## 15.1.13
 
 ### Patch Changes
