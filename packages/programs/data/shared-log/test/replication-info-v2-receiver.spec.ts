@@ -3452,6 +3452,68 @@ describe("receive admission replication-info V2 receiver integration", () => {
 		send.restore();
 	});
 
+	it("answers a first rearm only after its opening advert was acknowledged", async () => {
+		session = await TestSession.disconnected(3);
+		const db = await session.peers[0].open(new EventStore(), {
+			args: { replicate: false, timeUntilRoleMaturity: 0 },
+		});
+		const log = db.log as any;
+		const receiverTransportSession = BigInt(log.node.services.pubsub.session);
+		const send = sinon.stub(log.rpc, "send").resolves([] as any);
+		const advanceRecovery = sinon
+			.stub(log._v2Receive, "advanceRecovery")
+			.returns(true);
+		const solicit = async (remote: Ed25519PublicKey, acknowledged: boolean) => {
+			const remoteHash = remote.hashcode();
+			const peerSession = log._peerSessions.rotate(remoteHash, "opening");
+			log._peerSessions.unblockReplicationInfo(remoteHash);
+			log._peerSessions.markOpen(remoteHash, peerSession);
+			const receiveEpoch = log._peerSessions.receiveEpoch(remoteHash);
+			if (acknowledged) {
+				expect(
+					log._v2Receive.markLocalCapabilityReady({
+						peerHash: remoteHash,
+						peerSession,
+						receiveEpoch,
+						receiverTransportSession,
+						requestNotBeforeMs: Date.now(),
+					}),
+				).to.be.true;
+			}
+			expect(log._peerSyncCapabilitySessions.has(remoteHash)).to.be.false;
+			await log.onMessage(
+				new SyncCapabilitiesMessage({
+					capabilities:
+						senderCapabilities | SYNC_CAPABILITY_REPLICATION_INFO_V2_REARM,
+				}),
+				{
+					from: remote,
+					message: { header: { session: 4_060n, timestamp: 10n } },
+				} as any,
+			);
+			expect(log._peerSyncCapabilitySessions.get(remoteHash)).to.equal(4_060n);
+			return { peerHash: remoteHash, peerSession, receiveEpoch };
+		};
+
+		// Crossing our unacknowledged opening advert: that advert still reaches
+		// the soliciting session, so answering would only add a refresh round.
+		await solicit(
+			session.peers[1].identity.publicKey as Ed25519PublicKey,
+			false,
+		);
+		expect(advanceRecovery.notCalled).to.be.true;
+
+		// Acknowledged before the solicitation: the peer received the advert in a
+		// session that has since ended, so only a refresh restores its grant.
+		const target = await solicit(
+			session.peers[2].identity.publicKey as Ed25519PublicKey,
+			true,
+		);
+		expect(advanceRecovery.calledOnce).to.be.true;
+		expect(advanceRecovery.firstCall.args[0]).to.deep.include(target);
+		send.restore();
+	});
+
 	it("commits first-Full cutover before fallible local bookkeeping", async () => {
 		session = await TestSession.disconnected(2);
 		const db = await session.peers[0].open(new EventStore(), {
