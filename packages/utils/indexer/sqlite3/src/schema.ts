@@ -1639,6 +1639,16 @@ export const convertCountRequestToQuery = (
 	};
 };
 
+/** One term of a search's ORDER BY, as `buildOrderBy` resolved it. */
+type OrderByTerm = {
+	/** The expression the term sorts by (its resolver select). */
+	from: string;
+	direction: types.SortDirection;
+	/** The column `from` names. */
+	column: string;
+	foreignTable: JoinOrRootTable;
+};
+
 const buildOrderBy = (
 	sort: types.Sort[] | types.Sort | undefined,
 	tables: Map<string, Table>,
@@ -1652,6 +1662,7 @@ const buildOrderBy = (
 	},
 ) => {
 	let orderByBuilder: string | undefined = undefined;
+	const terms: OrderByTerm[] = [];
 
 	if (
 		(!sort || (Array.isArray(sort) && sort.length === 0)) &&
@@ -1687,16 +1698,23 @@ const buildOrderBy = (
 					foreignTable.columns.push(queryKey); // add the sort key to the list of columns that will be used for this query
 					orderByBuilder += `"${foreignTable.as}#${queryKey}" ${sort.direction === types.SortDirection.ASC ? "ASC" : "DESC"}`;
 
+					const from = `${table.name}.${escapeColumnName(queryKey)}`;
 					resolverBuilder.push({
-						from: `${table.name}.${escapeColumnName(queryKey)}`,
+						from,
 						as: `'${foreignTable.as}#${queryKey}'`,
+					});
+					terms.push({
+						from,
+						direction: sort.direction,
+						column: queryKey,
+						foreignTable,
 					});
 				}
 			}
 		}
 	}
 
-	return { orderByBuilder };
+	return { orderByBuilder, terms };
 };
 
 export const convertSearchRequestToQuery = (
@@ -1791,6 +1809,883 @@ export const convertSearchRequestToQuery = (
 	};
 };
 
+/*
+ * Key statements: they read a search in its order key K and bind no OFFSET.
+ *
+ * K = (sort terms..., primary key[, root ordinal]):
+ * - the primary key breaks ties, in the direction of the last sort term (ASC
+ *   without a sort). A sort term on the primary key ends K: the key is unique.
+ * - With several root tables, the root table's ordinal comes last (ASC).
+ *
+ * Every key statement selects K under positional aliases, which are the same
+ * in every UNION arm (`__s0`, `__s1`, ... for the sort terms, `__pk` and
+ * `__t`), and orders by all of K. SQLite decides every order; a caller compares
+ * keys only for identity.
+ *
+ * - S1, head page (`convertSearchRequestToPageQuery`): the search, hydrated,
+ *   `ORDER BY K LIMIT ?`.
+ * - S2, continuation (the same, with `after`): S1 limited to the rows after a
+ *   cursor (`buildKeysetPredicate`), one statement per NULL pattern of the
+ *   cursor.
+ * - S3, key list (`convertSearchRequestToKeyQuery`): `__t`, `__pk` and the sort
+ *   terms of every matching row in K order, without hydration.
+ * - S4, re-check (the same, with `restrictToKeys`): S3 for the keys of a JSON
+ *   key list, read through the primary key. With `after` it also selects
+ *   `__after`.
+ * - S5, rows by key (`convertKeysToRowsQuery`): the hydrated rows of one root
+ *   table for a JSON key list, in no order.
+ *
+ * Values known only when a statement runs (the cursor, the key list, the
+ * limit) are `KeyQueryParameter`s in `bindable`; `bindKeyQuery` binds them.
+ *
+ * With several root tables, a statement that compares a cursor (S2, `__after`)
+ * or a key list (S4) with a term that the tables store differently throws a
+ * KeyTypeMismatchError. S1, S3 and S5 compare no bound value across tables.
+ * The builders also return their arms (`KeyStatementArms`).
+ */
+
+export const ROOT_ORDINAL_ALIAS = "__t";
+export const PRIMARY_KEY_ALIAS = "__pk";
+export const AFTER_CURSOR_ALIAS = "__after";
+export const sortTermAlias = (index: number) => `__s${index}`;
+
+/**
+ * The storage class of a key term's non-NULL values in a root table (the
+ * tables are STRICT): `numeric` for INTEGER and REAL, which compare as
+ * numbers, `text` for TEXT and `blob` for BLOB.
+ */
+export type KeyTermType = "numeric" | "text" | "blob";
+
+export type OrderKeyTerm = {
+	/** The term's result alias in every key statement. */
+	alias: string;
+	direction: types.SortDirection;
+	/** Whether the term's column can hold NULL (an optional field). */
+	nullable: boolean;
+	/**
+	 * The storage class of the term's values, the same in every root table the
+	 * statement reads; undefined when the tables differ or one is unknown.
+	 */
+	type: KeyTermType | undefined;
+};
+
+export type OrderKey = {
+	/** The sort terms, `__pk`, then `__t` when there are several root tables. */
+	terms: OrderKeyTerm[];
+	/** Whether the request names a sort (if not, K is the primary key). */
+	sorted: boolean;
+};
+
+/**
+ * A key statement would compare a cursor or a key list across root tables
+ * that store a term of K differently.
+ *
+ * SQLite converts a bound value to a column's type before comparing it (TEXT
+ * '10' becomes 10 against an INTEGER column, 5 becomes '5' against a TEXT
+ * column), while ORDER BY compares storage classes (numbers before TEXT, TEXT
+ * before BLOB) and converts nothing. So:
+ * - a cursor (`after`) cannot be compared across root tables where a term of
+ *   K holds numbers in one and TEXT in another: the statement would skip or
+ *   repeat rows of S3's order;
+ * - a key list (`restrictToKeys`) cannot be matched across root tables whose
+ *   primary keys are stored differently (another storage class, or a u64 key
+ *   shifted into the signed range): a key of one table would match a
+ *   different key of another.
+ *
+ * Statements over one root table never throw it.
+ */
+export class KeyTypeMismatchError extends Error {
+	constructor(message: string) {
+		super(message);
+		this.name = "KeyTypeMismatchError";
+	}
+}
+
+/** The storage class of a column of SQL type `sqlType` (as `toSQLType` names it). */
+const keyTermType = (sqlType: string | undefined): KeyTermType | undefined => {
+	const name = /^\s*(INTEGER|REAL|TEXT|BLOB)\b/i.exec(sqlType ?? "")?.[1];
+	if (!name) {
+		return undefined;
+	}
+	const upper = name.toUpperCase();
+	return upper === "TEXT" ? "text" : upper === "BLOB" ? "blob" : "numeric";
+};
+
+/**
+ * How a root table stores its primary keys: its storage class, and whether a
+ * u64 key is shifted into the signed range (`convertToSQLType`).
+ */
+const primaryKeyEncoding = (table: Table): string | undefined => {
+	const type = keyTermType(table.primaryField?.type);
+	return type && table.primaryField?.from?.type === "u64"
+		? `${type} (u64)`
+		: type;
+};
+
+/** A parameter of a key statement, bound by `bindKeyQuery`. */
+export class KeyQueryParameter {
+	private static readonly cursorTerms: KeyQueryParameter[] = [];
+	static readonly keys = new KeyQueryParameter("keys", -1);
+	static readonly limit = new KeyQueryParameter("limit", -1);
+	/** The cursor's value of K's term `term`. */
+	static cursor(term: number): KeyQueryParameter {
+		return (KeyQueryParameter.cursorTerms[term] ??= new KeyQueryParameter(
+			"cursor",
+			term,
+		));
+	}
+	private constructor(
+		readonly kind: "cursor" | "keys" | "limit",
+		readonly term: number,
+	) {}
+}
+
+/**
+ * The values to run a key statement with: `KeyQueryParameter`s replaced by
+ * `cursor` (the K values of the last row read, raw SQL values in term order),
+ * `keys` (from `encodeKeyList`) and `limit` (Infinity reads to the end).
+ */
+export const bindKeyQuery = (
+	bindable: readonly unknown[],
+	values: {
+		cursor?: readonly unknown[];
+		keys?: string;
+		limit?: number | bigint;
+	},
+): BindableValue[] =>
+	bindable.map((value) => {
+		if (!(value instanceof KeyQueryParameter)) {
+			return value as BindableValue;
+		}
+		if (value.kind === "cursor") {
+			const cursorValue = values.cursor?.[value.term];
+			if (cursorValue == null) {
+				throw new Error(`Missing a cursor value for key term ${value.term}`);
+			}
+			return cursorValue as BindableValue;
+		}
+		if (value.kind === "keys") {
+			if (typeof values.keys !== "string") {
+				throw new Error("Missing the key list");
+			}
+			return values.keys;
+		}
+		const limit = values.limit;
+		if (limit === Infinity) {
+			return -1; // SQLite reads to the end with a negative LIMIT
+		}
+		if (
+			typeof limit !== "bigint" &&
+			(typeof limit !== "number" || !Number.isInteger(limit))
+		) {
+			throw new Error(`Invalid limit: ${String(limit)}`);
+		}
+		return limit;
+	});
+
+/**
+ * The rows strictly after a cursor in the order (`columns`, `directions`),
+ * with SQLite's NULL order (NULL is smallest: first in ASC, last in DESC).
+ * `nulls` is the cursor's NULL pattern. `binds` lists, in textual order, the
+ * cursor term each `?` takes; a NULL cursor term binds nothing.
+ *
+ * With one direction this is a row value, `(c1, ..., cn) > (?, ..., ?)`, when
+ * no column can be NULL, or when the direction is ASC and the cursor has no
+ * NULL: a row value is NULL (false) once its decision reaches a NULL in the
+ * row, and such a row sorts before the cursor in ASC. Otherwise it is the
+ * expansion `c1 > ? OR (c1 = ? AND (c2 > ? OR ...))`, led by a range on the
+ * first column when that range keeps every row after the cursor, so SQLite
+ * can still seek.
+ */
+export const buildKeysetPredicate = (
+	columns: string[],
+	directions: types.SortDirection[],
+	nullable: boolean[],
+	nulls: boolean[],
+): { sql: string; binds: number[] } => {
+	const n = columns.length;
+	if (
+		n === 0 ||
+		directions.length !== n ||
+		nullable.length !== n ||
+		nulls.length !== n
+	) {
+		throw new Error(
+			"A keyset predicate needs one direction, nullability and NULL flag per column",
+		);
+	}
+	for (let i = 0; i < n; i++) {
+		if (nulls[i] && !nullable[i]) {
+			throw new Error(`Key term ${i} cannot be NULL`);
+		}
+	}
+	const ascending = (i: number) => directions[i] === types.SortDirection.ASC;
+	if (
+		directions.every((direction) => direction === directions[0]) &&
+		(!nullable.some(Boolean) || (ascending(0) && !nulls.some(Boolean)))
+	) {
+		const operator = ascending(0) ? ">" : "<";
+		return n === 1
+			? { sql: `${columns[0]} ${operator} ?`, binds: [0] }
+			: {
+					sql: `(${columns.join(", ")}) ${operator} (${columns.map(() => "?").join(", ")})`,
+					binds: columns.map((_, i) => i),
+				};
+	}
+	const binds: number[] = [];
+	const greater = (i: number): string => {
+		if (ascending(i)) {
+			if (nulls[i]) {
+				return `${columns[i]} IS NOT NULL`;
+			}
+			binds.push(i);
+			return `${columns[i]} > ?`;
+		}
+		if (nulls[i]) {
+			return "0"; // NULL is last in DESC: nothing comes after it
+		}
+		binds.push(i);
+		return nullable[i]
+			? `(${columns[i]} < ? OR ${columns[i]} IS NULL)`
+			: `${columns[i]} < ?`;
+	};
+	const equal = (i: number): string => {
+		if (nulls[i]) {
+			return `${columns[i]} IS NULL`;
+		}
+		binds.push(i);
+		return `${columns[i]} = ?`;
+	};
+	const after = (i: number): string => {
+		if (i === n - 1) {
+			return greater(i);
+		}
+		const greaterSql = greater(i);
+		const equalSql = equal(i);
+		return `(${greaterSql} OR (${equalSql} AND ${after(i + 1)}))`;
+	};
+	let range = "";
+	if (!nulls[0]) {
+		if (ascending(0)) {
+			range = `${columns[0]} >= ? AND `;
+		} else if (!nullable[0]) {
+			range = `${columns[0]} <= ? AND `;
+		}
+	}
+	const body = after(0);
+	return { sql: `${range}${body}`, binds: range ? [0, ...binds] : binds };
+};
+
+const SORT_DIRECTION_SQL = (direction: types.SortDirection) =>
+	direction === types.SortDirection.DESC ? "DESC" : "ASC";
+
+const orderByKey = (order: OrderKey) =>
+	order.terms
+		.map((term) => `"${term.alias}" ${SORT_DIRECTION_SQL(term.direction)}`)
+		.join(", ");
+
+const asSortArray = (sort: types.Sort[] | types.Sort | undefined) =>
+	sort ? (Array.isArray(sort) ? sort : [sort]) : [];
+
+/**
+ * K for one root table: the expression of each term in this table's arms, and
+ * the terms. Throws a MissingFieldError when the table lacks a sort field.
+ */
+const resolveOrderKey = (
+	sorts: types.Sort[],
+	tables: Map<string, Table>,
+	table: Table,
+	ordinal: number,
+	severalRoots: boolean,
+	joins: Map<string, JoinOrRootTable>,
+	planner: PlanningSession | undefined,
+): { expressions: string[]; terms: OrderKeyTerm[] } => {
+	if (table.primary === false) {
+		throw new Error("Key statements need a primary key");
+	}
+	const { terms: sortTerms } = buildOrderBy(
+		sorts,
+		tables,
+		table,
+		joins,
+		[], // positional aliases replace the resolver selects
+		[],
+		{ planner },
+	);
+	const primaryKey = `${table.name}.${escapeColumnName(table.primary)}`;
+	const expressions: string[] = [];
+	const terms: OrderKeyTerm[] = [];
+	let primaryKeyDirection: types.SortDirection | undefined;
+	for (const term of sortTerms) {
+		const rootColumn = term.foreignTable.type === "root";
+		if (rootColumn && term.column === table.primary) {
+			primaryKeyDirection = term.direction;
+			break;
+		}
+		// Scalar columns are created without NOT NULL, and a field written as
+		// undefined (or an inline object written as null) is stored as NULL,
+		// whatever its schema type. So every sort column can hold NULL unless it
+		// is declared NOT NULL.
+		const field = rootColumn
+			? table.fields.find((candidate) => candidate.name === term.column)
+			: undefined;
+		expressions.push(term.from);
+		terms.push({
+			alias: sortTermAlias(terms.length),
+			direction: term.direction,
+			nullable: !field || !/\bNOT NULL\b/i.test(field.type),
+			type: keyTermType(
+				term.foreignTable.table.fields.find(
+					(candidate) => candidate.name === term.column,
+				)?.type,
+			),
+		});
+	}
+	expressions.push(primaryKey);
+	terms.push({
+		alias: PRIMARY_KEY_ALIAS,
+		direction:
+			primaryKeyDirection ??
+			(sorts.length > 0
+				? sorts[sorts.length - 1].direction
+				: types.SortDirection.ASC),
+		nullable: false,
+		type: keyTermType(table.primaryField?.type),
+	});
+	if (severalRoots) {
+		expressions.push(String(ordinal));
+		terms.push({
+			alias: ROOT_ORDINAL_ALIAS,
+			direction: types.SortDirection.ASC,
+			nullable: false,
+			type: "numeric",
+		});
+	}
+	return { expressions, terms };
+};
+
+type KeyArm = {
+	/** The root table's ordinal: its index in `rootTables`, the value of `__t`. */
+	ordinal: number;
+	table: Table;
+	/** The expression of each term of K in this arm. */
+	key: string[];
+};
+
+/**
+ * A key statement's arms, which a caller needs (with `order`) to pick how to
+ * read a search.
+ */
+export type KeyStatementArms = {
+	/**
+	 * The statement's UNION arms: one per root table and flattened branch,
+	 * without the skipped ones.
+	 */
+	arms: number;
+	/**
+	 * Whether an arm groups its rows by the primary key: its query joins a
+	 * child table, or (S1, S2, S5) its hydration aggregates child rows.
+	 */
+	grouped: boolean;
+};
+
+/**
+ * The UNION of a search's arms (root table x flattened branch), with
+ * `convertSearchRequestToQuery`'s MissingFieldError skip: a root table that
+ * lacks a sort field, and a branch that names a missing field, add no arm. If
+ * no arm remains, the last MissingFieldError is thrown. Each arm selects
+ * `selects` (hydration, for S1 and S2), then K, then `arm(...).selects`; a
+ * condition from `arm(...).where` is AND-ed after its query. An arm whose
+ * query joins a child table, or whose selects aggregate, groups by the
+ * primary key.
+ *
+ * `compares` names what the arms compare with bound values: a cursor with K,
+ * or a key list with the primary key. Across root tables that store the
+ * compared terms differently that throws a KeyTypeMismatchError.
+ */
+const buildKeyUnion = (
+	request:
+		| { query: types.Query[]; sort?: types.Sort[] | types.Sort }
+		| undefined,
+	tables: Map<string, Table>,
+	rootTables: Table[],
+	options: {
+		planner?: PlanningSession;
+		hydrate?: { shape: types.Shape | undefined };
+		primaryKeyAccess?: boolean;
+		compares?: { cursor?: boolean; keys?: boolean };
+		arm?: (
+			arm: KeyArm,
+			order: OrderKey,
+		) => {
+			selects?: { from: string; as: string }[];
+			/** Parameters of `selects`; they bind before the arm's query. */
+			selectBindable?: unknown[];
+			where?: { sql: string; bindable: unknown[] };
+		};
+	},
+): {
+	union: string;
+	bindable: unknown[];
+	order: OrderKey;
+} & KeyStatementArms => {
+	const normalizedRequest = request
+		? {
+				query: coerceLocalQueries(request.query),
+				sort: coerceLocalSorts(request.sort),
+			}
+		: undefined;
+	const sorts = asSortArray(normalizedRequest?.sort);
+	const hydration = options.hydrate
+		? selectAllFieldsFromTables(rootTables, options.hydrate.shape)
+		: undefined;
+	let lastError: Error | undefined = undefined;
+
+	// K per root table. Its terms must agree across tables; a term is nullable
+	// when any table can store NULL in it.
+	const roots: {
+		ordinal: number;
+		table: Table;
+		joins: Map<string, JoinOrRootTable>;
+		/** Joins present before the query: hydration's own. */
+		baseJoins: Set<string>;
+		expressions: string[];
+		/** The storage class of each term of K in this table. */
+		types: (KeyTermType | undefined)[];
+		/** The arms this table adds. */
+		arms: number;
+	}[] = [];
+	let order: OrderKey | undefined = undefined;
+	for (const [ordinal, table] of rootTables.entries()) {
+		const joins = hydration
+			? hydration[ordinal].joins
+			: new Map<string, JoinOrRootTable>();
+		const baseJoins = new Set(joins.keys());
+		let resolved: { expressions: string[]; terms: OrderKeyTerm[] };
+		try {
+			resolved = resolveOrderKey(
+				sorts,
+				tables,
+				table,
+				ordinal,
+				rootTables.length > 1,
+				joins,
+				options.planner,
+			);
+		} catch (error) {
+			if (error instanceof MissingFieldError) {
+				lastError = error;
+				continue;
+			}
+			throw error;
+		}
+		if (!order) {
+			order = { terms: resolved.terms, sorted: sorts.length > 0 };
+		} else {
+			if (
+				resolved.terms.length !== order.terms.length ||
+				resolved.terms.some(
+					(term, i) =>
+						term.alias !== order!.terms[i].alias ||
+						term.direction !== order!.terms[i].direction,
+				)
+			) {
+				throw new Error(
+					"The sort resolves to different key terms in different root tables",
+				);
+			}
+			order.terms = order.terms.map((term, i) =>
+				resolved.terms[i].nullable && !term.nullable
+					? { ...term, nullable: true }
+					: term,
+			);
+		}
+		roots.push({
+			ordinal,
+			table,
+			joins,
+			baseJoins,
+			expressions: resolved.expressions,
+			types: resolved.terms.map((term) => term.type),
+			arms: 0,
+		});
+	}
+
+	let union = "";
+	const bindable: unknown[] = [];
+	let matchedOnce = false;
+	let grouped = false;
+	for (const root of roots) {
+		const { ordinal, table, joins, baseJoins, expressions } = root;
+		const primaryKey = `${table.name}.${escapeColumnName(table.primary as string)}`;
+		const keySelects = order!.terms.map((term, i) => ({
+			from: expressions[i],
+			as: `"${term.alias}"`,
+		}));
+		for (const flattenRequest of flattenQuery(normalizedRequest)) {
+			try {
+				const extra = options.arm?.(
+					{ ordinal, table, key: expressions },
+					order!,
+				);
+				const branchJoins = new Map(joins); // copy the map, else we might do unnecessary joins
+				const { query, bindable: queryBindable } = convertRequestToQuery(
+					"iterate",
+					flattenRequest,
+					tables,
+					table,
+					branchJoins,
+					[],
+					{
+						planner: options.planner,
+						extraWhere: extra?.where,
+						primaryKeyAccess: options.primaryKeyAccess,
+					},
+				);
+				const queryJoinsChildTable = [...branchJoins].some(
+					([name, join]) => join.type !== "root" && !baseJoins.has(name),
+				);
+				const groupBy =
+					hydration?.[ordinal].groupBy ??
+					(queryJoinsChildTable ? primaryKey : undefined);
+				const selects = [
+					...(hydration ? hydration[ordinal].selects : []),
+					...keySelects,
+					...(extra?.selects ?? []),
+				];
+				union += `${union.length > 0 ? " UNION " : ""}${generateSelectQuery(table, selects)} ${query}${groupBy ? " GROUP BY " + groupBy : ""}`;
+				bindable.push(...(extra?.selectBindable ?? []), ...queryBindable);
+				root.arms++;
+				grouped ||= !!groupBy;
+				matchedOnce = true;
+			} catch (error) {
+				if (error instanceof MissingFieldError) {
+					lastError = error;
+					continue;
+				}
+				throw error;
+			}
+		}
+	}
+
+	if (!matchedOnce) {
+		throw lastError!;
+	}
+
+	// The storage class of each term across the root tables that add arms.
+	const read = roots.filter((root) => root.arms > 0);
+	order!.terms = order!.terms.map((term, i) => ({
+		...term,
+		type: read.every(
+			(root) =>
+				root.types[i] !== undefined && root.types[i] === read[0].types[i],
+		)
+			? read[0].types[i]
+			: undefined,
+	}));
+	if (read.length > 1) {
+		const describe = (value: (root: (typeof read)[number]) => unknown) =>
+			read
+				.map((root) => `${root.table.name}: ${value(root) ?? "unknown"}`)
+				.join(", ");
+		if (options.compares?.cursor) {
+			// Numbers and TEXT are the only storage classes SQLite converts
+			// between when it compares a column with a bound value.
+			order!.terms.forEach((term, i) => {
+				const classes = new Set(read.map((root) => root.types[i]));
+				if (
+					classes.has(undefined) ||
+					(classes.has("numeric") && classes.has("text"))
+				) {
+					throw new KeyTypeMismatchError(
+						`Key term "${term.alias}" has values of different types in different root tables (${describe((root) => root.types[i])}): a cursor cannot be compared across them`,
+					);
+				}
+			});
+		}
+		if (options.compares?.keys) {
+			const encodings = new Set(
+				read.map((root) => primaryKeyEncoding(root.table)),
+			);
+			if (encodings.size > 1 || encodings.has(undefined)) {
+				throw new KeyTypeMismatchError(
+					`The primary key is stored differently in different root tables (${describe((root) => primaryKeyEncoding(root.table))}): a key list cannot be matched across them`,
+				);
+			}
+		}
+	}
+	return {
+		union,
+		bindable,
+		order: order!,
+		arms: read.reduce((sum, root) => sum + root.arms, 0),
+		grouped,
+	};
+};
+
+/** `buildKeysetPredicate` over one arm's K, with cursor parameters. */
+const keysetPredicateForArm = (
+	arm: KeyArm,
+	order: OrderKey,
+	nulls: boolean[],
+): { sql: string; bindable: KeyQueryParameter[] } => {
+	if (nulls.length !== order.terms.length) {
+		throw new Error(
+			`The cursor's NULL pattern has ${nulls.length} terms, the order key ${order.terms.length}`,
+		);
+	}
+	const { sql, binds } = buildKeysetPredicate(
+		arm.key,
+		order.terms.map((term) => term.direction),
+		order.terms.map((term) => term.nullable),
+		nulls,
+	);
+	return {
+		sql,
+		bindable: binds.map((term) => KeyQueryParameter.cursor(term)),
+	};
+};
+
+/**
+ * S1 and S2: hydrated rows of a search in K order, `LIMIT ?`. Without `after`
+ * this is the head page (S1). With `after`, the NULL pattern of the cursor
+ * (one flag per term of K), it is the continuation (S2): the rows strictly
+ * after the cursor. Rows carry K under its positional aliases, so the last row
+ * of a page is the next cursor.
+ *
+ * S2 throws a KeyTypeMismatchError when its root tables store a term of K as
+ * numbers in one and as TEXT in another.
+ */
+export const convertSearchRequestToPageQuery = (
+	request:
+		| { query: types.Query[]; sort?: types.Sort[] | types.Sort }
+		| undefined,
+	tables: Map<string, Table>,
+	rootTables: Table[],
+	options?: {
+		shape?: types.Shape | undefined;
+		planner?: PlanningSession;
+		after?: boolean[];
+	},
+): { sql: string; bindable: unknown[]; order: OrderKey } & KeyStatementArms => {
+	const after = options?.after;
+	const { union, bindable, order, arms, grouped } = buildKeyUnion(
+		request,
+		tables,
+		rootTables,
+		{
+			planner: options?.planner,
+			hydrate: { shape: options?.shape },
+			compares: { cursor: after != null },
+			arm: after
+				? (arm, order) => ({ where: keysetPredicateForArm(arm, order, after) })
+				: undefined,
+		},
+	);
+	return {
+		sql: `${union} ORDER BY ${orderByKey(order)} LIMIT ?`,
+		bindable: [...bindable, KeyQueryParameter.limit],
+		order,
+		arms,
+		grouped,
+	};
+};
+
+/**
+ * S3 and S4: `__t`, `__pk` and the sort terms of a search's matching rows, in
+ * K order, without hydration.
+ *
+ * - `restrictToKeys` (S4): only the rows whose primary key is in a JSON key
+ *   list (`encodeKeyList`), reached through the primary key.
+ * - `primaryKeyAccess`: the planner forces no index on the root table. Always
+ *   on with `restrictToKeys`: an index forced for the sort would scan every row
+ *   to find a few keys.
+ * - `after`, the NULL pattern of a cursor: each row also selects `__after`, 1
+ *   when the row comes after the cursor in K order and 0 otherwise.
+ *
+ * Across root tables that store a compared term differently it throws a
+ * KeyTypeMismatchError: with `after`, a term of K that is a number in one and
+ * TEXT in another; with `restrictToKeys`, primary keys stored differently.
+ */
+export const convertSearchRequestToKeyQuery = (
+	request:
+		| { query: types.Query[]; sort?: types.Sort[] | types.Sort }
+		| undefined,
+	tables: Map<string, Table>,
+	rootTables: Table[],
+	options?: {
+		planner?: PlanningSession;
+		restrictToKeys?: boolean;
+		primaryKeyAccess?: boolean;
+		after?: boolean[];
+	},
+): { sql: string; bindable: unknown[]; order: OrderKey } & KeyStatementArms => {
+	const after = options?.after;
+	const restrictToKeys = options?.restrictToKeys === true;
+	const { union, bindable, order, arms, grouped } = buildKeyUnion(
+		request,
+		tables,
+		rootTables,
+		{
+			planner: options?.planner,
+			primaryKeyAccess: restrictToKeys || options?.primaryKeyAccess === true,
+			compares: { cursor: after != null, keys: restrictToKeys },
+			arm: (arm, order) => {
+				const flag = after
+					? keysetPredicateForArm(arm, order, after)
+					: undefined;
+				return {
+					selects: flag
+						? [
+								{
+									from: `CASE WHEN ${flag.sql} THEN 1 ELSE 0 END`,
+									as: `"${AFTER_CURSOR_ALIAS}"`,
+								},
+							]
+						: undefined,
+					selectBindable: flag?.bindable,
+					where: restrictToKeys
+						? {
+								sql: `${arm.table.name}.${escapeColumnName(arm.table.primary as string)} IN (${keyListSubquery(arm.table)})`,
+								bindable: [KeyQueryParameter.keys],
+							}
+						: undefined,
+				};
+			},
+		},
+	);
+	return {
+		sql: `${union} ORDER BY ${orderByKey(order)}`,
+		bindable,
+		order,
+		arms,
+		grouped,
+	};
+};
+
+/**
+ * S5: hydrated rows of one root table for a JSON key list (`encodeKeyList`),
+ * in no particular order, with the primary key also as `__pk`. The primary key
+ * is the access path: the root table gets no planner index, and child tables
+ * are joined as in every other read. `grouped` says whether the hydration
+ * aggregates child rows (GROUP BY the primary key).
+ */
+export const convertKeysToRowsQuery = (
+	table: Table,
+	shape: types.Shape | undefined,
+	options?: { planner?: PlanningSession },
+): { sql: string; bindable: unknown[]; grouped: boolean } => {
+	if (table.primary === false) {
+		throw new Error("Key statements need a primary key");
+	}
+	const { selects, join, groupBy } = selectAllFieldsFromTable(table, shape);
+	const { join: joinSql } = buildJoin(join, {
+		planner: options?.planner,
+		primaryKeyTable: table,
+	});
+	const primaryKey = `${table.name}.${escapeColumnName(table.primary)}`;
+	return {
+		sql: `${generateSelectQuery(table, [
+			...selects,
+			{ from: primaryKey, as: `"${PRIMARY_KEY_ALIAS}"` },
+		])} ${joinSql} WHERE ${primaryKey} IN (${keyListSubquery(table)})${groupBy ? " GROUP BY " + groupBy : ""}`,
+		bindable: [KeyQueryParameter.keys],
+		grouped: !!groupBy,
+	};
+};
+
+/**
+ * The keys of a JSON key list (`encodeKeyList`) as a subquery, in the SQL type
+ * of the table's primary key: BLOB keys travel as hex strings.
+ */
+export const keyListSubquery = (table: Table) =>
+	/^BLOB\b/i.test(table.primaryField?.type ?? "")
+		? "SELECT unhex(value) FROM json_each(?)"
+		: "SELECT value FROM json_each(?)";
+
+const MIN_I64 = -(1n << 63n);
+const MAX_I64 = (1n << 63n) - 1n;
+const HEX_BYTES = Array.from({ length: 256 }, (_, i) =>
+	i.toString(16).padStart(2, "0"),
+);
+
+// In JSON.stringify's output: an escaped backslash, matched whole so that its
+// second backslash does not start an escape, or the escape of a lone surrogate.
+const LONE_SURROGATE_ESCAPES = /\\\\|\\u(d[89a-f][0-9a-f]{2})/g;
+
+/**
+ * `value` as a JSON string in which each lone surrogate stays a raw code unit,
+ * where JSON.stringify writes an escape (`\ud800`). The key list is bound as a
+ * string, so the binding then encodes a lone surrogate to UTF-8 just as it
+ * does when it binds the key itself, and json_each returns those bytes as
+ * they are. The bindings differ: better-sqlite3 12 writes the surrogate's own
+ * 3 bytes on Node 22 (ED A0 80 for U+D800) and U+FFFD on Node 24, as the WASM
+ * engine does. No fixed encoding matches both: json_each decodes an escape to
+ * the 3 bytes on every engine, and U+FFFD stays U+FFFD.
+ */
+const jsonString = (value: string) => {
+	const json = JSON.stringify(value);
+	// Every escape of a lone surrogate starts with `\ud`; most keys have none.
+	return json.includes("\\ud")
+		? json.replace(LONE_SURROGATE_ESCAPES, (escape, unit) =>
+				unit ? String.fromCharCode(parseInt(unit, 16)) : escape,
+			)
+		: json;
+};
+
+/**
+ * SQL key values (as stored, so a u64 key is already shifted into the signed
+ * range) as one JSON array for `keyListSubquery`.
+ *
+ * - Integers become JSON integers, which SQLite reads back as exact 64-bit
+ *   INTEGERs: a bigint and a number of equal value encode the same.
+ * - Strings stay JSON strings, with each lone surrogate left raw for the
+ *   binding to encode as it encodes the key (`jsonString`); bytes become hex
+ *   strings.
+ *
+ * A string key finds the row it was written with. On Node 22, better-sqlite3
+ * reads a stored lone surrogate back as one U+FFFD per byte, so a key read from
+ * a row (S3's `__pk`, say) binds to other bytes: like `WHERE id = ?`, its list
+ * finds no row, or another key's row.
+ */
+export const encodeKeyList = (keys: Iterable<unknown>): string => {
+	let out = "[";
+	let first = true;
+	for (const key of keys) {
+		if (!first) {
+			out += ",";
+		}
+		first = false;
+		if (typeof key === "string") {
+			out += jsonString(key);
+		} else if (
+			typeof key === "bigint" ||
+			(typeof key === "number" && Number.isInteger(key))
+		) {
+			const integer = BigInt(key);
+			if (integer < MIN_I64 || integer > MAX_I64) {
+				throw new RangeError(
+					`Key ${integer} is outside the 64-bit range SQLite stores`,
+				);
+			}
+			out += integer.toString();
+		} else if (typeof key === "number" && Number.isFinite(key)) {
+			out += String(key);
+		} else if (key instanceof Uint8Array) {
+			out += '"';
+			for (let i = 0; i < key.length; i++) {
+				out += HEX_BYTES[key[i]];
+			}
+			out += '"';
+		} else {
+			throw new Error(
+				`Unsupported key in a key list: ${typeof key === "number" ? key : typeof key}`,
+			);
+		}
+	}
+	return out + "]";
+};
+
 type SearchQueryParts = {
 	query: string;
 	/* orderBy: string; */
@@ -1855,6 +2750,13 @@ const convertRequestToQuery = <
 	options?: {
 		fetchAll?: boolean;
 		planner?: PlanningSession;
+		/** A condition AND-ed after the query; its parameters bind last. */
+		extraWhere?: { sql: string; bindable: unknown[] };
+		/**
+		 * The root table is reached through its primary key (an `extraWhere`
+		 * on it), so the planner forces no index on it.
+		 */
+		primaryKeyAccess?: boolean;
 	},
 ): R => {
 	let whereBuilder = "";
@@ -1933,6 +2835,13 @@ const convertRequestToQuery = <
 			}
 		}
 	} */
+	if (options?.extraWhere) {
+		whereBuilder =
+			whereBuilder.length > 0
+				? `(${whereBuilder}) AND (${options.extraWhere.sql})`
+				: options.extraWhere.sql;
+		bindableBuilder.push(...options.extraWhere.bindable);
+	}
 	const where = whereBuilder.length > 0 ? "where " + whereBuilder : undefined;
 
 	if (extraJoin && extraJoin.size > 0) {
@@ -1941,7 +2850,8 @@ const convertRequestToQuery = <
 	let { join } = buildJoin(joinBuilder, {
 		...options,
 		primaryKeyTable:
-			path.length === 0 && matchesPrimaryKey(coercedQuery, table)
+			path.length === 0 &&
+			(options?.primaryKeyAccess || matchesPrimaryKey(coercedQuery, table))
 				? table
 				: undefined,
 	});
