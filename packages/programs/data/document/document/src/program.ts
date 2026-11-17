@@ -181,7 +181,7 @@ const profilePutCallback = <A extends unknown[], R>(
 			trace.emit({
 				name,
 				durationMs: trace.now() - startedAt,
-				details: { outcome, inclusive: true },
+				details: { outcome },
 			});
 		try {
 			const result = callback(...args);
@@ -1253,7 +1253,11 @@ export class Documents<
 	private _clazz!: AbstractType<T>;
 
 	private _optionCanPerform?: CanPerform<T>;
-	private _putProfile?: DiagnosticSink;
+	// The caller's `sync` object, not a copy of its profile: each put reads
+	// `sync.profile` from the caller's own object. SharedLog's own profiling
+	// reads the object it kept at open instead, which is a copy when node-level
+	// shared-log defaults apply.
+	private _putSync?: { readonly profile?: DiagnosticSink };
 	private _optionCanPerformNativePolicy?: CanPerformPolicyDescriptor;
 	private _optionCanPerformNativeFastPath?: CanPerformPolicyEvaluator;
 	private _nativeBackboneDocumentIndexEnabled = false;
@@ -2624,7 +2628,10 @@ export class Documents<
 			options.replicate !== undefined &&
 			options.replicate !== false;
 		this.assertNativeModeOpenOptions(options);
-		this._putProfile = options.sync?.profile;
+		// Removing `sync.profile` after open stops traces for later puts. Strict
+		// native mode rejects `sync.profile` above and its put backend reports no
+		// phases, so it does not keep the object and never traces puts.
+		this._putSync = this.isNativeMode() ? undefined : options.sync;
 
 		if (Program.isPrototypeOf(this._clazz)) {
 			if (!this.canOpen) {
@@ -2817,6 +2824,24 @@ export class Documents<
 
 	async recover() {
 		return this.log.recover();
+	}
+
+	// Release the caller's sync object once closed or dropped, as DocumentIndex
+	// releases its query profile. A put already in flight keeps its own trace.
+	async close(from?: Program): Promise<boolean> {
+		const closed = await super.close(from);
+		if (closed) {
+			this._putSync = undefined;
+		}
+		return closed;
+	}
+
+	async drop(from?: Program): Promise<boolean> {
+		const dropped = await super.drop(from);
+		if (dropped) {
+			this._putSync = undefined;
+		}
+		return dropped;
 	}
 
 	/**
@@ -3522,8 +3547,10 @@ export class Documents<
 		doc: T,
 		options?: DocumentPutOptions,
 	): Promise<DocumentPutResult> {
+		// Read the current profile once: removing it after open stops new
+		// traces, while a put already in flight finishes the trace it started.
 		const trace = createDiagnosticTrace(
-			this._putProfile,
+			this._putSync?.profile,
 			"document",
 			"documents.put",
 		);
@@ -3561,7 +3588,7 @@ export class Documents<
 			trace?.finish({
 				name: "documents.put.settle",
 				durationMs: trace.now() - startedAt!,
-				details: { outcome, inclusive: true },
+				details: { outcome },
 			});
 		}
 	}
@@ -3605,7 +3632,7 @@ export class Documents<
 			trace?.emit({
 				name: "documents.put.prepare",
 				durationMs: trace.now() - prepareStartedAt!,
-				details: { outcome: prepareOutcome, inclusive: true },
+				details: { outcome: prepareOutcome },
 			});
 		}
 		let existingLocalContext:

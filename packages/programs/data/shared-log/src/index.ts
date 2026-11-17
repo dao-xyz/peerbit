@@ -13497,7 +13497,14 @@ export class SharedLog<
 			options,
 			ownershipLifecycleController,
 		);
-		if (profile) {
+		// The option spread above copies any caller-supplied value, and only
+		// Documents' isolated put trace may reach the lower log: overwrite the
+		// key whenever there is a trace or the copy has it. An untraced append
+		// without the key adds nothing.
+		if (
+			profile !== undefined ||
+			Object.prototype.hasOwnProperty.call(appendOptions, "__peerbitProfile")
+		) {
 			(appendOptions as TrustedLogAppendOptions<T>).__peerbitProfile = profile;
 		}
 		let committedHashes: readonly string[] | undefined;
@@ -13588,7 +13595,7 @@ export class SharedLog<
 					emitSyncProfileDuration(profile, processingStartedAt, {
 						name: "sharedLog.append.localProcessing",
 						component: "shared-log",
-						details: { outcome: processingOutcome, inclusive: true },
+						details: { outcome: processingOutcome },
 					});
 				}
 			}
