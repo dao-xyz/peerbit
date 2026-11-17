@@ -65,17 +65,20 @@
 	},
 	"author": "Peerbit contributors",
 	"license": "MIT",
+	"peerDependencies": {
+		"vite": "^7.3.8 || ^8.3.7"
+	},
 	"dependencies": {
 		"@peerbit/build-assets": "workspace:*",
 		"mrmime": "^2.0.1",
-		"sirv": "^3.0.2",
-		"vite": "^7.3.6"
+		"sirv": "^3.0.2"
 	},
 	"devDependencies": {
 		"@peerbit/any-store": "workspace:*",
 		"@peerbit/any-store-opfs": "workspace:*",
 		"@peerbit/indexer-sqlite3": "workspace:*",
 		"@types/chai": "^4.3.16",
-		"chai": "^4.3.10"
+		"chai": "^4.3.10",
+		"vite": "^7.3.8"
 	}
 }

@@ -10,12 +10,7 @@ import { createRequire } from "module";
 import { lookup } from "mrmime";
 import path from "path";
 import sirv from "sirv";
-import {
-	type Connect,
-	type Plugin,
-	type PluginOption,
-	type ResolvedConfig,
-} from "vite";
+import type { Connect, Plugin, PluginOption, ResolvedConfig } from "vite";
 
 export type { ModuleResolver } from "@peerbit/build-assets";
 

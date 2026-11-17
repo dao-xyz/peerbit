@@ -342,6 +342,26 @@ metro-transform-worker, image-size, and every `@react-native/*` package are
 absent. It has no advisory ignores and does not scan workspace-only development
 tools that are never published to users.
 
+`@peerbit/vite` takes Vite as a peer dependency: the plugin only runs inside an
+application's own Vite, so applications install Vite themselves. The scanned
+consumer does the same. Its only `devDependencies` entry is `vite` with the
+packed plugin's peer range, so npm installs the newest Vite the plugin admits,
+and that Vite and the packages only it needs are outside the production audit.
+The scan asserts this boundary rather than assuming it: no packed manifest
+lists Vite in `dependencies` or `optionalDependencies`, the packed plugin keeps
+its required peer, and the lock holds exactly one Vite, marked as a development
+dependency and reached only from the consumer and the plugin's peer edge. As
+with the React Native peer, this does not describe a default npm install: there
+a production dependency's peer counts as production, so applications keep
+`@peerbit/vite` with `vite` in `devDependencies`. Advisories in Vite and its own
+toolchain therefore belong to the application's development audit, not to this
+scan. Each peer floor is the first release of its major with the fixes for every
+Vite advisory published when the range was set. When Vite publishes another
+security fix, raise the floor in `packages/clients/vite/package.json` and in
+`scripts/test-release-security-contracts.mjs`, with a `@peerbit/vite`
+changeset. The workspace tests run on the oldest admitted Vite line, and the
+full release smoke builds a project with the packed plugin on the newest.
+
 A structurally valid audit report containing any production vulnerability fails
 the workflow. A recognized timeout, network failure, rate limit, or server-side
 audit endpoint failure produces a visible `scanner unavailable` warning without
