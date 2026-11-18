@@ -63,6 +63,15 @@ describe("SQLite in-flight iterator close", () => {
 					if (isSelect) await holdSelect?.();
 					return result;
 				});
+				if (/\bcount\s*\(/i.test(sql)) {
+					const get = statement.get.bind(statement);
+					sinon.stub(statement, "get").callsFake(async (...args) => {
+						selects++;
+						const result = await get(...args);
+						await holdSelect?.();
+						return result;
+					});
+				}
 			}
 			return statement;
 		});
@@ -103,20 +112,15 @@ describe("SQLite in-flight iterator close", () => {
 		const entered = gate(),
 			release = gate();
 		releases.push(release.resolve);
-		const barrier = index["withDatabaseBarrier"].bind(index);
 		let pages = 0;
-		// Preserve real SQLite, decoding and barrier release. Hold only delivery
-		// of one completed page to the iterator's rescan loop.
-		sinon
-			.stub(index as any, "withDatabaseBarrier")
-			.callsFake(async (operation: any) => {
-				const result = await barrier(operation);
-				if (Array.isArray(result) && ++pages === pageNumber) {
-					entered.resolve();
-					await release.promise;
-				}
-				return result;
-			});
+		// Preserve real SQLite and admission. Hold one completed SQL read before
+		// delivering it, without depending on the number of admission windows.
+		holdSelect = async () => {
+			if (++pages === pageNumber) {
+				entered.resolve();
+				await release.promise;
+			}
+		};
 		return { entered: entered.promise, release: release.resolve };
 	};
 	const waitEntered = async (
@@ -153,7 +157,9 @@ describe("SQLite in-flight iterator close", () => {
 				(await iterator.next(64)).map((row) => row.value.id),
 			).to.deep.equal(Array.from({ length: 64 }, (_, id) => id));
 			await index.put(new Row(1151, 1));
-			const held = holdPage(mode === "all" ? 3 : 2);
+			// Hold the call's last read: pending() reads once, next() and all()
+			// read twice (keys, then rows by key).
+			const held = holdPage(mode === "pending" ? 1 : 2);
 			const operation = track(
 				Promise.resolve(
 					mode === "next"
@@ -212,21 +218,14 @@ describe("SQLite in-flight iterator close", () => {
 	it("discards a pending count closed before delivery", async () => {
 		const iterator = iterate();
 		await iterator.next(64);
-		const entered = gate(),
-			release = gate();
-		releases.push(release.resolve);
-		const count = index.count.bind(index);
-		sinon.stub(index, "count").callsFake(async (request) => {
-			const result = await count(request);
-			entered.resolve();
-			await release.promise;
-			return result;
-		});
+		// A write gives pending() a key to read.
+		await index.put(new Row(1151, 1));
+		const held = holdPage(1);
 		const operation = track(Promise.resolve(iterator.pending()));
-		await waitEntered(entered.promise, operation);
+		await waitEntered(held.entered, operation);
 		await iterator.close();
 		const atClose = selects;
-		release.resolve();
+		held.release();
 		expect(await operation).to.equal(0);
 		await assertTerminal(iterator, atClose);
 	});

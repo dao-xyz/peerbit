@@ -73,7 +73,8 @@ describe("sort", () => {
 						"1",
 					]);
 					if (mode === "pages") expect(await iterator.next(1)).to.be.empty;
-					expect(statements).to.have.length(1);
+					// Pages list the keys in order, then read the rows by key.
+					expect(statements).to.have.length(mode === "all" ? 1 : 2);
 					expect(statements[0]).to.match(/ORDER BY .* DESC/);
 				} finally {
 					await iterator.close();
@@ -230,8 +231,12 @@ describe("sort", () => {
 			...(await iterator.next(1)),
 		];
 
-		expect(preparedStatement).to.have.length(1);
+		// The keys in order, then the rows by key, and no OFFSET.
+		expect(preparedStatement).to.have.length(2);
 		expect(preparedStatement[0]).to.contain("ORDER BY");
+		for (const sql of preparedStatement) {
+			expect(sql).to.not.match(/\bOFFSET\b/i);
+		}
 
 		expect(first.value.id).to.equal("1");
 		expect(second.value.id).to.equal("2");

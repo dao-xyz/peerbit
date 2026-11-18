@@ -31,8 +31,10 @@ import {
 	convertKeysToRowsQuery,
 	convertSearchRequestToKeyQuery,
 	convertSearchRequestToPageQuery,
+	convertSearchRequestToQuery,
 	convertToSQLType,
 	encodeKeyList,
+	getTablePrefixedField,
 	keyListSubquery,
 	resolveInstanceFromValue,
 	sortTermAlias,
@@ -770,7 +772,7 @@ const pageThrough = async (
 	return { rows, patterns, statementCount };
 };
 
-/** The rows the iterator returns today, through its OFFSET pages. */
+/** The rows the iterator returns, in pages of 7. */
 const pagedIterator = async (store: Store, request: Request) => {
 	const iterator = store.iterate(request);
 	const rows = [];
@@ -807,13 +809,42 @@ const iteratorIdentity = (
 	)}`;
 };
 
-/** Every row as the iterator hydrates it, by identity. */
+/**
+ * Every row by identity, hydrated from the statement a fresh all() runs.
+ * Unlike the iterator, it keeps a key that is in several root tables once per
+ * table.
+ */
 const storedValues = async (store: Store) => {
+	const { tables, rootTables, primaryKeyString } = store;
+	const { sql, bindable } = convertSearchRequestToQuery(
+		{ query: [] },
+		tables,
+		rootTables,
+		{ fetchAll: true },
+	);
 	const values = new Map<string, unknown>();
-	for (const result of await store.iterate().all()) {
-		values.set(iteratorIdentity(store, result), result.value);
+	for (const row of await run(store, sql, bindable)) {
+		const ordinal = rootTables.findIndex(
+			(table) => row[getTablePrefixedField(table, primaryKeyString)] != null,
+		);
+		const table = rootTables[ordinal];
+		const key = row[getTablePrefixedField(table, primaryKeyString)];
+		values.set(`${ordinal}:${show(key)}`, await decode(store, table, row));
 	}
 	return values;
+};
+
+/** Key statement identities, one per primary key: the first in K order. */
+const onePerKey = (keys: string[]) => {
+	const seen = new Set<string>();
+	return keys.filter((key) => {
+		const primaryKey = key.slice(key.indexOf(":") + 1);
+		if (seen.has(primaryKey)) {
+			return false;
+		}
+		seen.add(primaryKey);
+		return true;
+	});
 };
 
 const decode = (store: Store, table: Table, row: Row, shape?: Shape) =>
@@ -1383,28 +1414,12 @@ describe("key statements", () => {
 				'0:"p11"',
 			]);
 
-			// The iterator's OFFSET pages order by the first root table's key
-			// alias, which is NULL in the second table's rows: they come first.
+			// The iterator pages in this order, one row per key: "p04" of the
+			// first root table, which comes first.
 			const iterated = (await pagedIterator(store, { query: [] })).map(
-				(result) => result.id.primitive as string,
+				(result) => iteratorIdentity(store, result),
 			);
-			expect(iterated.slice(0, 6).sort()).to.deep.equal([
-				"p00",
-				"p02",
-				"p04",
-				"p06",
-				"p08",
-				"p10",
-			]);
-			expect(iterated.slice(6)).to.deep.equal([
-				"p01",
-				"p03",
-				"p04",
-				"p05",
-				"p07",
-				"p09",
-				"p11",
-			]);
+			expect(iterated).to.deep.equal(onePerKey(keyRows.map(identity)));
 		});
 
 		it("orders, pages and re-checks a sort across root tables", async () => {
@@ -1493,7 +1508,10 @@ describe("key statements", () => {
 			]) {
 				const keyList = await keys(request);
 				expect(keyList.length).to.be.greaterThan(0);
-				expect([...keyList].sort()).to.deep.equal(await iterated(request));
+				// The iterator returns one row per key.
+				expect(onePerKey(keyList).sort()).to.deep.equal(
+					await iterated(request),
+				);
 			}
 			expect(
 				(await keys({ query: [], sort: [desc("a")] })).every((key) =>
