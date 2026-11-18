@@ -48,6 +48,18 @@ const wellFormedParameters = (
 	return out;
 };
 
+let driverBindsWellFormed: boolean | undefined;
+
+/**
+ * Whether better-sqlite3 binds a lone surrogate as U+FFFD itself (Node 24),
+ * rather than as its own three bytes (Node 22). Asked once per process: where
+ * it does, statements bind their values as they are.
+ */
+const bindsWellFormed = (db: DB.Database) =>
+	(driverBindsWellFormed ??=
+		(db.prepare("select hex(?) as bytes").get("\uD800") as { bytes: string })
+			.bytes === "EFBFBD");
+
 /**
  * Binds strings as the WASM engine and better-sqlite3 on Node 24 do: a lone
  * surrogate as U+FFFD. On Node 22 better-sqlite3 binds the surrogate's own
@@ -151,7 +163,10 @@ let create = async (
 					return prev;
 				}
 			}
-			const stmt = bindWellFormed(db.prepare(sql)) as any as IStatement; // TODO types
+			const prepared = db.prepare(sql);
+			const stmt = (bindsWellFormed(db)
+				? prepared
+				: bindWellFormed(prepared)) as any as IStatement; // TODO types
 			if (id != null) {
 				statements.set(id, stmt);
 			}
