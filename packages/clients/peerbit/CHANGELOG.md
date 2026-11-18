@@ -1,5 +1,12 @@
 # Changelog
 
+## 5.4.15
+
+### Patch Changes
+
+- Updated dependencies [[`08adbc1`](https://github.com/dao-xyz/peerbit/commit/08adbc1bb97d5736d6e879c2ed7eb89fde26a080)]:
+  - @peerbit/indexer-sqlite3@3.0.26
+
 ## 5.4.14
 
 ### Patch Changes
