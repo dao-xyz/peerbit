@@ -119,6 +119,67 @@ awaiting observers, and suppress late events after the terminal. Keep any extern
 collector bounded too. The precommit immutable lookup is separate from persisted
 receipt settlement, so its time must not be attributed to receipt latency.
 
+## Put timing diagnostics
+
+The same `sync.profile` callback receives one bounded trace for each single
+`put` call. All events of a trace share a `traceId` that starts with
+`documents.put:`. A trace ends with exactly one `documents.put.settle` event
+after the call succeeds or fails, including any requested persisted delivery.
+A put that gets as far as choosing its write path also reports
+`documents.put.prepare` and `documents.put.path`, whose `details.path` is
+`"prepared"` or `"compatibility"`. A put that fails before that reports only
+the phases it reached. Options rejected when the put starts, such as persisted
+delivery with `target: "none"`, leave only `documents.put.settle`. A failed
+preparation (for example a missing or invalid id, or an oversized document) or
+a failed lookup of the existing document leaves `documents.put.prepare` and
+`documents.put.settle`.
+
+Only `"compatibility"` puts also time their detailed phases:
+`documents.put.authorize`, `entry.create.payload`, `entry.create.signable`,
+`entry.create.sign`, `entry.create.authorize`, `entry.create.storage`,
+`log.append.createEntry`, `log.append.entryIndex`, `documents.put.projection`
+and `sharedLog.append.localProcessing`. A put takes this path when the store
+has a `canPerform` callback (other than a `policy` helper that allows the
+document up front), `immutable` documents, `strictHistory`, `mode: "compat"`
+or a document type that is itself a `Program`. A put also takes it when it
+sets an option the prepared path does not handle, such as `checkRemote`,
+`signers`, custom `meta`, or an explicit `target` other than `"none"`; an
+explicit `"replicators"` stays on the prepared path only with persisted
+delivery. Other puts take the default `"prepared"` path and report no detailed
+phases, whether they commit natively or through the JavaScript fallback. Use
+`details.path` to tell which path a put took.
+
+Durations are inclusive and overlap; do not sum them. For example,
+`log.append.createEntry` includes every `entry.create.*` span, and
+`entry.create.authorize` includes `documents.put.authorize`.
+`entry.create.storage` combines serialization, CID calculation and block
+storage, not an isolated fsync. `documents.put.authorize` covers the store's
+write check: the existing-document lookup (for `immutable` documents, a
+local-then-remote lookup that reports its own query trace), the
+`strictHistory` check, document decoding for a custom `id` function or a
+`canPerform` callback, and the `canPerform` callback itself, with any previous
+entries a `policy` helper needs. `log.append.entryIndex` includes trusted
+commit-evidence capture; `documents.put.projection` covers document projection
+and change dispatch; `sharedLog.append.localProcessing` includes
+coordinate/planning work and ordinary delivery. Phase `outcome: "success"`
+means the phase returned, not that permission was granted or a durable receipt
+exists. Only the normal write/receipt contract provides durability evidence.
+
+Put tracing follows the current `sync.profile` of the `sync` object passed to
+`open`: each `put` reads it when it starts. Removing the callback after open
+stops `documents.put:` traces for later puts, while a put already in progress
+finishes its trace. Query traces, including the lookups a put makes for
+`immutable` documents or `checkRemote`, keep the callback captured at open
+until the store closes. Without a callback, puts create no trace and add no
+phase clock reads. A store opened with `mode: "native"` (strict native mode)
+still rejects `sync.profile` at open and never traces puts.
+
+These traces use the same 256-detail-event bound and isolated observer delivery
+as query traces, with no document IDs, contents, hashes or raw errors. Keep
+observers cheap and filter on the `traceId` prefix when relying on this
+isolation: older uncorrelated `sync.profile` events have their existing
+behavior. No write options or storage/wire formats change.
+
 ## Durable remote delivery
 
 Document puts can opt in to waiting for crash-safe persistence on current remote
