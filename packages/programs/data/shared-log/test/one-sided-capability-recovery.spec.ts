@@ -146,6 +146,11 @@ describe("receive admission replication-info V2 one-sided topic recovery", funct
 			const previousRangeIds = await remoteRangeIds();
 			expect(previousRangeIds).not.to.be.empty;
 			let closing = true;
+			// When the reopen starts. Pubsub stamps both copies of a departure
+			// (direct and shard) in one synchronous step, before it sends either,
+			// and the wait below needs one copy to arrive before the reopen
+			// starts. So no copy of the closed program's departure is newer.
+			let reopenStartedAt: bigint | undefined;
 			let droppedDepartures = 0;
 			let droppedResets = 0;
 			if (departure.missDeparture) {
@@ -155,12 +160,18 @@ describe("receive admission replication-info V2 one-sided topic recovery", funct
 					.stub(pubsub, "processUnsubscribeMessage")
 					.callsFake((message: any, unsubscribe: any, from: any) => {
 						if (
-							closing &&
+							(reopenStartedAt === undefined ||
+								message.header.timestamp <= reopenStartedAt) &&
 							from.hashcode() === pair.receiverHash &&
 							unsubscribe.topics.includes(pair.senderLog.topic)
 						) {
 							// Both signed direct and shard departures reach this verified
-							// seam. Leave Subscribe, capability and Full traffic untouched.
+							// seam. They are separate messages, so one can still be in
+							// flight after the wait below has counted the other and the
+							// reopen has started. Drop every copy stamped before the
+							// reopen, not only those seen while `closing`, and let any
+							// later Unsubscribe reach the sender. Leave Subscribe,
+							// capability and Full traffic untouched.
 							droppedDepartures++;
 							return;
 						}
@@ -174,6 +185,8 @@ describe("receive admission replication-info V2 one-sided topic recovery", funct
 					.callsFake(async (message, context) => {
 						// This log's authenticated receive seam: discard only the closing
 						// peer's empty Full, never positive Fulls or recovery traffic.
+						// A close sends one such reset, and the wait below counts it
+						// before `closing` ends, so this gate cannot pass a late copy.
 						if (
 							closing &&
 							context.from?.hashcode() === pair.receiverHash &&
@@ -212,6 +225,7 @@ describe("receive admission replication-info V2 one-sided topic recovery", funct
 				{ timeout: 10_000 },
 			);
 			closing = false;
+			reopenStartedAt = BigInt(Date.now());
 			// A fresh program/topic instance, not a new transport generation or
 			// process restart. The events above describe committed membership.
 			const reopened = await EventStore.open<EventStore<string, any>>(
