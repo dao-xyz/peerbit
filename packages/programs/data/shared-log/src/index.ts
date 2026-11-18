@@ -24203,10 +24203,21 @@ export class SharedLog<
 									}
 								}
 							}
+							let unchangedCoordinateRows = 0;
 							if (reusableCoordinatePersistItems.length > 0) {
-								await this._coordinates.persistCoordinatesBatch(
+								// These heads were admitted but not committed by this
+								// receive's own join: another receive committed them, or
+								// they were present before. Identical stored rows are left
+								// in place.
+								const written = await this._coordinates.persistCoordinatesBatch(
 									reusableCoordinatePersistItems,
+									undefined,
+									undefined,
+									{ skipStoredUnchanged: true },
 								);
+								for (const wrote of written) {
+									if (!wrote) unchangedCoordinateRows++;
+								}
 							}
 							if (coordinatePersistFallbackEntries.length > 0) {
 								await this.planEntryLeaderBatch(
@@ -24232,6 +24243,7 @@ export class SharedLog<
 											reusedLeaderPlans: reusableCoordinatePersistItemCount,
 											nativeBackboneOnly:
 												nativeBackboneOnlyPersistedHashes?.size ?? 0,
+											unchangedRows: unchangedCoordinateRows,
 										},
 									},
 								);

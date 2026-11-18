@@ -29,6 +29,7 @@ import type {
 	SharedLogNativeState,
 	SharedLogRangePlanner,
 } from "@peerbit/shared-log-rust";
+import { equals } from "uint8arrays";
 import { getPreparedRawExchangeTimestamp } from "./exchange-heads.js";
 import type {
 	CoordinatePersistBatchItem,
@@ -120,6 +121,116 @@ export const normalizedHashValues = (hashes: Iterable<string>): string[] => {
 	}
 	return values;
 };
+
+/**
+ * The persisted columns of an `EntryReplicatedU32` or `EntryReplicatedU64`
+ * row, in schema order. `coordinateRowsEqual` compares each of them; a test
+ * checks this list against the borsh schema, so a column added later cannot
+ * be left out of the comparison.
+ */
+export const PERSISTED_COORDINATE_ROW_FIELDS = [
+	"hash",
+	"hashNumber",
+	"gid",
+	"coordinates",
+	"wallTime",
+	"assignedToRangeBoundary",
+	"_meta",
+] as const;
+
+/**
+ * True only when both values hold the same integer, each as a number or a
+ * bigint (an index may read a stored integer back as either). A number that
+ * is not a safe integer, NaN and undefined never compare equal.
+ */
+export const sameStoredInteger = (a: unknown, b: unknown): boolean => {
+	if (typeof a === "number") {
+		if (!Number.isSafeInteger(a)) return false;
+		if (typeof b === "number") return a === b;
+		return typeof b === "bigint" && BigInt(a) === b;
+	}
+	if (typeof a === "bigint") {
+		if (typeof b === "bigint") return a === b;
+		return typeof b === "number" && Number.isSafeInteger(b) && a === BigInt(b);
+	}
+	return false;
+};
+
+/**
+ * True only when two coordinate rows store the same value in every persisted
+ * column (`PERSISTED_COORDINATE_ROW_FIELDS`). Anything unexpected, including a
+ * thrown error, compares unequal, so a doubtful row is written again.
+ */
+export const coordinateRowsEqual = (
+	stored: EntryReplicated<any> | undefined,
+	next: EntryReplicated<any> | undefined,
+): boolean => {
+	try {
+		if (!stored || !next) return false;
+		if (typeof stored.hash !== "string" || stored.hash !== next.hash) {
+			return false;
+		}
+		if (typeof stored.gid !== "string" || stored.gid !== next.gid) {
+			return false;
+		}
+		if (
+			!sameStoredInteger(stored.hashNumber, next.hashNumber) ||
+			!sameStoredInteger(stored.wallTime, next.wallTime)
+		) {
+			return false;
+		}
+		if (
+			typeof stored.assignedToRangeBoundary !== "boolean" ||
+			stored.assignedToRangeBoundary !== next.assignedToRangeBoundary
+		) {
+			return false;
+		}
+		const storedCoordinates = stored.coordinates;
+		const nextCoordinates = next.coordinates;
+		const length = storedCoordinates.length;
+		if (!Number.isInteger(length) || length !== nextCoordinates.length) {
+			return false;
+		}
+		for (let i = 0; i < length; i++) {
+			if (!sameStoredInteger(storedCoordinates[i], nextCoordinates[i])) {
+				return false;
+			}
+		}
+		const storedMeta = stored.getMetaBytes();
+		const nextMeta = next.getMetaBytes();
+		return (
+			storedMeta instanceof Uint8Array &&
+			nextMeta instanceof Uint8Array &&
+			equals(storedMeta, nextMeta)
+		);
+	} catch {
+		return false;
+	}
+};
+
+type NativeCoordinateWriter = Extract<
+	keyof PutAndDeleteIndex<any>,
+	`putSharedLogCoordinate${string}`
+>;
+
+// A record over every `putSharedLogCoordinate*` member of `PutAndDeleteIndex`:
+// a writer added there later does not compile until it is listed here.
+const NATIVE_COORDINATE_WRITER_NAMES: Record<NativeCoordinateWriter, true> = {
+	putSharedLogCoordinateAndDeleteIds: true,
+	putSharedLogCoordinateFieldsAndDeleteIds: true,
+	putSharedLogCoordinateFieldsAndDeleteHashes: true,
+	putSharedLogCoordinateFieldsAndDeleteHashesNoReturn: true,
+	putSharedLogCoordinateFieldsEncodedAndDeleteHashesNoReturn: true,
+	putSharedLogCoordinatesAndDeleteIdsBatch: true,
+	putSharedLogCoordinateFieldsAndDeleteIdsBatch: true,
+	putSharedLogCoordinateFieldsAndDeleteHashesBatch: true,
+	putSharedLogCoordinateFieldsAndDeleteHashesBatchNoReturn: true,
+};
+
+/** The writers in `PutAndDeleteIndex` that only a native indexer provides. */
+export const NATIVE_COORDINATE_WRITERS = Object.keys(
+	NATIVE_COORDINATE_WRITER_NAMES,
+) as NativeCoordinateWriter[];
 
 export const combineCoordinateDeleteHashes = (
 	nextHashes: string[],
@@ -1738,7 +1849,7 @@ export class CoordinatePersistenceCoordinator<R extends "u32" | "u64"> {
 		>,
 	): MaybePromise<boolean> {
 		assertOwned();
-		const { assignedToRangeBoundary, fields } = properties.prepared;
+		const { fields } = properties.prepared;
 		const deleteHashes = combineCoordinateDeleteHashes(
 			properties.nextHashes,
 			properties.deleteHashes,
@@ -1800,47 +1911,7 @@ export class CoordinatePersistenceCoordinator<R extends "u32" | "u64"> {
 
 		const finish = (): MaybePromise<boolean> => {
 			assertOwned();
-			const current = resources();
-			const nativeDeleteHashes = combineCoordinateDeleteHashes(
-				properties.nextHashes,
-				properties.deleteHashes,
-			);
-			if (properties.commitNative !== false) {
-				current.nativeState?.commitEntryCoordinates(
-					properties.hash,
-					fields.gid,
-					properties.coordinates,
-					nativeDeleteHashes,
-					assignedToRangeBoundary,
-					properties.replicas,
-					fields.hashNumber,
-				);
-			}
-			if (properties.commitNativeBackbone !== false) {
-				current.backbone?.commitEntryCoordinates(
-					properties.hash,
-					fields.gid,
-					properties.coordinates,
-					nativeDeleteHashes,
-					assignedToRangeBoundary,
-					properties.replicas,
-					fields.hashNumber,
-				);
-			}
-			if (current.resident) {
-				current.resident.set(
-					properties.hash,
-					properties.prepared.coordinateEntry ?? fields,
-				);
-				for (const nextHash of nativeDeleteHashes) {
-					current.resident.delete(nextHash);
-				}
-			}
-
-			for (const coordinate of properties.coordinates) {
-				current.coordinateToHash.add(coordinate, properties.hash);
-			}
-
+			this.commitCoordinateMirrorOwned(properties, resources());
 			return true;
 		};
 		return mapMaybePromise(putResult, () =>
@@ -1853,6 +1924,56 @@ export class CoordinatePersistenceCoordinator<R extends "u32" | "u64"> {
 				finish,
 			),
 		);
+	}
+
+	/** Update the native, resident and coordinate-to-hash mirrors for one
+	 * written (or already stored) coordinate row. */
+	private commitCoordinateMirrorOwned(
+		properties: PreparedCoordinateWrite<R>,
+		current: ReturnType<
+			CoordinatePersistenceCoordinator<R>["coordinateWriteResources"]
+		>,
+	): void {
+		const { assignedToRangeBoundary, fields } = properties.prepared;
+		const nativeDeleteHashes = combineCoordinateDeleteHashes(
+			properties.nextHashes,
+			properties.deleteHashes,
+		);
+		if (properties.commitNative !== false) {
+			current.nativeState?.commitEntryCoordinates(
+				properties.hash,
+				fields.gid,
+				properties.coordinates,
+				nativeDeleteHashes,
+				assignedToRangeBoundary,
+				properties.replicas,
+				fields.hashNumber,
+			);
+		}
+		if (properties.commitNativeBackbone !== false) {
+			current.backbone?.commitEntryCoordinates(
+				properties.hash,
+				fields.gid,
+				properties.coordinates,
+				nativeDeleteHashes,
+				assignedToRangeBoundary,
+				properties.replicas,
+				fields.hashNumber,
+			);
+		}
+		if (current.resident) {
+			current.resident.set(
+				properties.hash,
+				properties.prepared.coordinateEntry ?? fields,
+			);
+			for (const nextHash of nativeDeleteHashes) {
+				current.resident.delete(nextHash);
+			}
+		}
+
+		for (const coordinate of properties.coordinates) {
+			current.coordinateToHash.add(coordinate, properties.hash);
+		}
 	}
 
 	persistPreparedCoordinateNativeTransaction(
@@ -2231,10 +2352,161 @@ export class CoordinatePersistenceCoordinator<R extends "u32" | "u64"> {
 		);
 	}
 
+	/**
+	 * Skipping a stored row is sound only while every writer and remover of
+	 * coordinate rows holds the entry-index hash locks of the rows it touches.
+	 * `persistCoordinatesBatch`, `persistPreparedCoordinate`, the coordinate
+	 * deletes and the in-join completion take them. Native rollback asserts,
+	 * before it writes, that its owner is live and either exclusive, which no
+	 * hash-lock holder can overlap, or holds the lock of every row it restores.
+	 * The native write paths, and the native journal and resident state that
+	 * are authoritative with backbone-only persistence, are not part of this
+	 * argument, so the skip is off whenever a native backbone, backbone-only
+	 * persistence or a native coordinate writer (the `putSharedLogCoordinate*`
+	 * methods) can be in play.
+	 */
+	private canSkipStoredUnchangedCoordinates(
+		index: PutAndDeleteIndex<EntryReplicated<R>>,
+	): boolean {
+		return (
+			!this.canUseBackboneOnlyCoordinatePersistence() &&
+			this.deps.nativeBackbone() === undefined &&
+			!NATIVE_COORDINATE_WRITERS.some((name) => index[name] != null)
+		);
+	}
+
+	/**
+	 * Returns the hashes of the writes whose identical row is already stored
+	 * and whose delete hashes have no row, so writing them changes nothing.
+	 *
+	 * The caller holds the entry-index hash locks for every write's hash, next
+	 * hashes and delete hashes, and every other writer and remover of these
+	 * rows takes the same locks (see `canSkipStoredUnchangedCoordinates`), so
+	 * the rows cannot change between these reads and the caller's writes.
+	 * A write that another write in the same call depends on is never skipped.
+	 *
+	 * This also depends on the index reading committed rows only. The SQLite
+	 * index admits every read through its connection-wide operation queue,
+	 * which keeps reads out of savepoints that may still roll back. Two tests
+	 * in indexer-sqlite3's test/put-batch.spec.ts pin this: "keeps reads and
+	 * lazy planner DDL outside a rollback savepoint" and "serializes batches
+	 * with writes from another scope on the same database".
+	 *
+	 * Each read waits for its turn in that queue while the caller holds the
+	 * locks, and receipts flush under the same locks. The reads therefore run
+	 * in two steps, the writes' rows and then the delete-hash rows of the writes
+	 * whose stored row is identical, and all reads of a step are issued before
+	 * the first is awaited. The queue then runs them back to back, and the
+	 * check waits behind other writes on the connection once per step, not once
+	 * per row. One `Or` query per 64 hashes would also take few turns, but
+	 * `HashmapIndex` answers such a query by scanning every row.
+	 */
+	private async findStoredUnchangedCoordinateWrites(
+		writes: PreparedCoordinateWrite<R>[],
+		index: PutAndDeleteIndex<EntryReplicated<R>>,
+		assertOwned: () => void,
+	): Promise<Set<string>> {
+		const unchanged = new Set<string>();
+		if (!this.canSkipStoredUnchangedCoordinates(index)) {
+			return unchanged;
+		}
+		const writesByHash = new Map<string, number>();
+		const deletedByCall = new Set<string>();
+		for (const write of writes) {
+			writesByHash.set(write.hash, (writesByHash.get(write.hash) ?? 0) + 1);
+			for (const hash of combineCoordinateDeleteHashes(
+				write.nextHashes,
+				write.deleteHashes,
+			)) {
+				deletedByCall.add(hash);
+			}
+		}
+		const candidates: {
+			write: PreparedCoordinateWrite<R>;
+			deleteHashes: string[];
+		}[] = [];
+		for (const write of writes) {
+			const deleteHashes = combineCoordinateDeleteHashes(
+				write.nextHashes,
+				write.deleteHashes,
+			);
+			if (
+				writesByHash.get(write.hash) !== 1 ||
+				deletedByCall.has(write.hash) ||
+				deleteHashes.some((hash) => writesByHash.has(hash))
+			) {
+				continue;
+			}
+			candidates.push({ write, deleteHashes });
+		}
+		const stored = await this.readCoordinateRowsByHash(
+			index,
+			candidates.map(({ write }) => write.hash),
+		);
+		const sameRow = candidates.filter(({ write }) => {
+			try {
+				return coordinateRowsEqual(
+					stored.rows.get(write.hash),
+					this.materializePreparedCoordinateEntry(write.prepared),
+				);
+			} catch {
+				return false;
+			}
+		});
+		const deleteRows = await this.readCoordinateRowsByHash(
+			index,
+			normalizedHashValues(sameRow.flatMap(({ deleteHashes }) => deleteHashes)),
+		);
+		for (const { write, deleteHashes } of sameRow) {
+			if (
+				deleteHashes.every(
+					(hash) => !deleteRows.rows.has(hash) && !deleteRows.unread.has(hash),
+				)
+			) {
+				unchanged.add(write.hash);
+			}
+		}
+		assertOwned();
+		return unchanged;
+	}
+
+	/**
+	 * Reads the stored coordinate rows of `hashes` with one `get` per hash, all
+	 * issued before the first is awaited. A read that fails proves nothing
+	 * about its hash: the hash is returned in `unread`, and a caller that skips
+	 * writes treats it as changed.
+	 */
+	private async readCoordinateRowsByHash(
+		index: PutAndDeleteIndex<EntryReplicated<R>>,
+		hashes: string[],
+	): Promise<{ rows: Map<string, EntryReplicated<R>>; unread: Set<string> }> {
+		const rows = new Map<string, EntryReplicated<R>>();
+		const unread = new Set<string>();
+		await Promise.all(
+			hashes.map(async (hash) => {
+				try {
+					const stored = await index.get(toId(hash));
+					if (stored) {
+						rows.set(hash, stored.value);
+					}
+				} catch {
+					unread.add(hash);
+				}
+			}),
+		);
+		return { rows, unread };
+	}
+
+	/**
+	 * `options.skipStoredUnchanged` leaves out the writes whose identical row is
+	 * already stored (see `findStoredUnchangedCoordinateWrites`); their results
+	 * are false. The in-memory mirrors are updated for every write either way.
+	 */
 	async persistCoordinatesBatch(
 		items: CoordinatePersistBatchItem<R>[],
 		ownershipLifecycleController = this.deps.captureReplicationOwnershipLifecycle(),
 		owner?: EntryIndexHashMutationLockOwner,
+		options?: { skipStoredUnchanged?: boolean },
 	): Promise<boolean[]> {
 		this.deps.throwIfReplicationOwnershipLifecycleInactive(
 			ownershipLifecycleController,
@@ -2269,29 +2541,42 @@ export class CoordinatePersistenceCoordinator<R extends "u32" | "u64"> {
 			commitNative: item.commitNative,
 			commitNativeBackbone: item.commitNativeBackbone,
 		}));
+		let storedUnchanged: Set<string> | undefined;
 		await this.withCoordinateMutationOwner(
 			writes.flatMap((write) => [
 				write.hash,
 				...write.nextHashes,
 				...(write.deleteHashes ?? []),
 			]),
-			(_owned, assertOwned) => {
+			async (_owned, assertOwned) => {
 				const resources = this.coordinateWriteResources();
+				const assertWriteOwned = () => {
+					assertOwned();
+					this.deps.throwIfReplicationOwnershipLifecycleInactive(
+						ownershipLifecycleController,
+					);
+				};
+				if (options?.skipStoredUnchanged) {
+					storedUnchanged = await this.findStoredUnchangedCoordinateWrites(
+						writes,
+						resources.index,
+						assertWriteOwned,
+					);
+				}
 				return this.persistPreparedCoordinatesOwned(
 					writes,
-					() => {
-						assertOwned();
-						this.deps.throwIfReplicationOwnershipLifecycleInactive(
-							ownershipLifecycleController,
-						);
-					},
+					assertWriteOwned,
 					() => resources,
+					false,
+					storedUnchanged,
 				);
 			},
 			owner,
 		);
 		const changedHashes = new Set(
-			changed.map(({ prepared }) => prepared.fields.hash),
+			changed
+				.map(({ prepared }) => prepared.fields.hash)
+				.filter((hash) => !storedUnchanged?.has(hash)),
 		);
 		return items.map((item) => changedHashes.has(item.entry.hash));
 	}
@@ -2303,6 +2588,7 @@ export class CoordinatePersistenceCoordinator<R extends "u32" | "u64"> {
 			CoordinatePersistenceCoordinator<R>["coordinateWriteResources"]
 		>,
 		backboneOnly = false,
+		storedUnchanged?: ReadonlySet<string>,
 	): Promise<void> {
 		assertOwned();
 		if (writes.length === 0) return;
@@ -2352,18 +2638,30 @@ export class CoordinatePersistenceCoordinator<R extends "u32" | "u64"> {
 				})),
 			);
 		} else if (canUseGenericPutBatch) {
-			await coordinateIndex.putBatch!(
-				writes.map(({ prepared }) =>
-					this.materializePreparedCoordinateEntry(prepared),
-				),
-			);
+			// Rows already stored unchanged are not written again; the mirror
+			// updates below still cover every write.
+			const changedWrites = storedUnchanged?.size
+				? writes.filter((write) => !storedUnchanged.has(write.hash))
+				: writes;
+			if (changedWrites.length > 0) {
+				await coordinateIndex.putBatch!(
+					changedWrites.map(({ prepared }) =>
+						this.materializePreparedCoordinateEntry(prepared),
+					),
+				);
+			}
 		} else {
 			for (const write of writes) {
-				await this.persistPreparedCoordinateOwned(
-					write,
-					assertOwned,
-					resources,
-				);
+				if (storedUnchanged?.has(write.hash)) {
+					assertOwned();
+					this.commitCoordinateMirrorOwned(write, resources());
+				} else {
+					await this.persistPreparedCoordinateOwned(
+						write,
+						assertOwned,
+						resources,
+					);
+				}
 				assertOwned();
 			}
 			return;
