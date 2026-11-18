@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.1.78
+
+### Patch Changes
+
+- Updated dependencies [[`5911557`](https://github.com/dao-xyz/peerbit/commit/5911557a9aead1dcc1506e7f156b51752e23254b)]:
+  - peerbit@5.4.14
+  - @peerbit/program@6.0.72
+  - @peerbit/canonical-client@1.1.75
+  - @peerbit/program-react@0.4.76
+
 ## 1.1.77
 
 ### Patch Changes

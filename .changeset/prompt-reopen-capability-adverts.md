@@ -1,5 +1,0 @@
----
-"@peerbit/shared-log": patch
----
-
-Fix a reopened log that could wait about 7 seconds before exchanging replication info with a peer. When a log was closed and reopened while a connected peer was still handling the close, the reopened log could learn the peer's subscription and send the peer its capability advert before its own Subscribe arrived there. The peer received that advert in the session it was closing, so the advert was lost with that session, and the peer's new session asked for the capability again. The reopened log ignored that request, because it held no earlier capability from the peer and its advert had already been acknowledged. Until the log advertised again, the peer rejected its requests for replication info and could not request any itself; the log only advertised again after three requests went unanswered. The reopened log now advertises again as soon as the peer's new session asks, when its earlier advert was acknowledged before that request arrived. No wire, API or option changes.

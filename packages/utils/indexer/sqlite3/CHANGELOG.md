@@ -1,5 +1,13 @@
 # Changelog
 
+## 3.0.25
+
+### Patch Changes
+
+- [#1552](https://github.com/dao-xyz/peerbit/pull/1552) [`20c3a4d`](https://github.com/dao-xyz/peerbit/commit/20c3a4d4a626534251e8d248442b797e4a631a2f) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Add an internal change journal to the SQLite index, for the paged iterators that will re-check only the rows changed between two calls. While a reader is registered, it records the root table and primary key of every committed put, putBatch chunk, ordered write session row and delete, and drops the keys of writes that roll back. Readers are told to rebase when they fall behind its bounded window or when the index stops and starts. No behaviour change: nothing registers a reader yet, so nothing is recorded, and query results, counts and write paths are unchanged.
+
+- [#1546](https://github.com/dao-xyz/peerbit/pull/1546) [`48b0bf1`](https://github.com/dao-xyz/peerbit/commit/48b0bf11d426d99c507fd928c780d173dca8a02a) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Add internal statement builders that read a search in its order key (the sort terms, then the primary key) without OFFSET: a head page, its continuation after a cursor, a key list, a re-check of listed keys, and rows by key. Nothing uses them yet, so the SQL the index runs and the results it returns are unchanged.
+
 ## 3.0.24
 
 ### Patch Changes

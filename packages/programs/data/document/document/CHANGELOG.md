@@ -1,5 +1,18 @@
 # Changelog
 
+## 15.1.15
+
+### Patch Changes
+
+- Updated dependencies [[`5911557`](https://github.com/dao-xyz/peerbit/commit/5911557a9aead1dcc1506e7f156b51752e23254b), [`5911557`](https://github.com/dao-xyz/peerbit/commit/5911557a9aead1dcc1506e7f156b51752e23254b), [`a70e1e4`](https://github.com/dao-xyz/peerbit/commit/a70e1e4c249aa0a452ad235272831bdef3615c08), [`20c3a4d`](https://github.com/dao-xyz/peerbit/commit/20c3a4d4a626534251e8d248442b797e4a631a2f), [`48b0bf1`](https://github.com/dao-xyz/peerbit/commit/48b0bf11d426d99c507fd928c780d173dca8a02a)]:
+  - @peerbit/shared-log@16.0.44
+  - @peerbit/pubsub@5.4.17
+  - @peerbit/indexer-sqlite3@3.0.25
+  - @peerbit/log@6.2.42
+  - @peerbit/program@6.0.72
+  - @peerbit/rpc@6.2.8
+  - @peerbit/document-interface@3.2.86
+
 ## 15.1.14
 
 ### Patch Changes
