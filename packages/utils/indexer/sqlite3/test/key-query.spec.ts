@@ -506,9 +506,10 @@ const nullPattern = (cursor: unknown[]) => cursor.map((value) => value == null);
 const utf8 = new TextEncoder();
 /**
  * UTF-8 with each lone surrogate as its own 3 bytes (ED A0 80 for U+D800), as
- * better-sqlite3 12 binds a string on Node 22. TextEncoder (`utf8`) writes
- * U+FFFD instead, as better-sqlite3 binds it on Node 24 and the WASM engine
- * always does.
+ * better-sqlite3 12 binds a string on Node 22 when the driver passes it
+ * through. TextEncoder (`utf8`) writes U+FFFD instead, as every engine stores
+ * it: the WASM engine and better-sqlite3 on Node 24 bind it so, and the Node
+ * driver binds strings well formed on Node 22.
  */
 const rawSurrogateUtf8 = (value: string) => {
 	const bytes: number[] = [];
@@ -2446,14 +2447,10 @@ describe("key statements", () => {
 			expect(stored).to.have.length(stringKeys.length);
 			for (const [i, key] of stringKeys.entries()) {
 				const at = JSON.stringify(key);
-				// A lone surrogate is its own 3 bytes on Node 22 and U+FFFD on Node
-				// 24 and in the WASM engine; U+0000 is a 0 byte in both.
-				expect(
-					[rawSurrogateUtf8(key), utf8.encode(key)].map((bytes) =>
-						hex(bytes).toUpperCase(),
-					),
-					at,
-				).to.include(stored[i]);
+				// Every engine stores a lone surrogate as U+FFFD (the Node driver
+				// binds strings well formed: better-sqlite3 on Node 22 would write
+				// the surrogate's own 3 bytes), and U+0000 as a 0 byte.
+				expect(stored[i], at).to.equal(hex(utf8.encode(key)).toUpperCase());
 				expect(
 					(
 						await run(

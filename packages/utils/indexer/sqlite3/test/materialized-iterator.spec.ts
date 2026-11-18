@@ -724,6 +724,47 @@ describe("materialized iterator", () => {
 		).to.deep.equal(["a", "b"]);
 	});
 
+	it("finds a key written with a lone surrogate again on every path", async () => {
+		index = await setup({ schema: Doc }, create);
+		const store = index.store as SQLiteIndex<any>;
+		// Every engine stores a lone surrogate as U+FFFD, so "a\uD800" and
+		// "a\uFFFD" are one key, and a key read from a row finds that row.
+		for (const [i, key] of ["a", "a\uD800", "a\uFFFD", "b", "c"].entries()) {
+			await store.put(new Doc(key, i, [BigInt(i)]));
+		}
+		expect(await store.getSize()).to.equal(4);
+		const keys = ["a", "a\uFFFD", "b", "c"];
+		const sorted = () =>
+			store.iterate({
+				query: [],
+				sort: [new Sort({ key: "rank", direction: SortDirection.ASC })],
+			});
+		// Pages: the second one continues after "a\uFFFD".
+		expect(await drain(store.iterate({}), 2)).to.deep.equal(keys);
+		// The key list (sorted rows with a child table), rows by key.
+		expect(await drain(sorted(), 2)).to.deep.equal(keys);
+		// A write after a page: the key list.
+		const paged = store.iterate({});
+		expect(idsOf(await paged.next(1))).to.deep.equal(["a"]);
+		await store.put(new Doc("z", 9));
+		expect(idsOf(await paged.next(10))).to.deep.equal([...keys.slice(1), "z"]);
+		// A write while the key list is held: re-checked by key.
+		const listed = sorted();
+		expect(idsOf(await listed.next(1))).to.deep.equal(["a"]);
+		await store.put(new Doc("a\uD800", 20, [20n])); // to the end
+		expect(idsOf(await listed.next(10))).to.deep.equal([
+			"b",
+			"c",
+			"z",
+			"a\uFFFD",
+		]);
+		expect(listed.done()).to.equal(true);
+		// A mark of the key as it was written.
+		const marked = store.iterate({});
+		await marked.markYielded!([toId("a\uD800")]);
+		expect(idsOf(await marked.next(10))).to.deep.equal(["a", "b", "c", "z"]);
+	});
+
 	it("reads the change journal only while it holds a key list with rows left", async () => {
 		index = await setup({ schema: Doc }, create);
 		const store = index.store as SQLiteIndex<any>;

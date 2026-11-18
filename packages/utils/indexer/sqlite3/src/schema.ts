@@ -2654,12 +2654,12 @@ const LONE_SURROGATE_ESCAPES = /\\\\|\\u(d[89a-f][0-9a-f]{2})/g;
 /**
  * `value` as a JSON string in which each lone surrogate stays a raw code unit,
  * where JSON.stringify writes an escape (`\ud800`). The key list is bound as a
- * string, so the binding then encodes a lone surrogate to UTF-8 just as it
- * does when it binds the key itself, and json_each returns those bytes as
- * they are. The bindings differ: better-sqlite3 12 writes the surrogate's own
- * 3 bytes on Node 22 (ED A0 80 for U+D800) and U+FFFD on Node 24, as the WASM
- * engine does. No fixed encoding matches both: json_each decodes an escape to
- * the 3 bytes on every engine, and U+FFFD stays U+FFFD.
+ * string, so the binding then encodes a lone surrogate just as it does when it
+ * binds the key itself, and json_each returns those bytes as they are: U+FFFD,
+ * as the WASM engine binds a lone surrogate and the Node driver makes
+ * better-sqlite3 bind it on every Node version. json_each would decode an
+ * escape to the surrogate's own 3 bytes (ED A0 80 for U+D800), which no
+ * binding stores.
  */
 const jsonString = (value: string) => {
 	const json = JSON.stringify(value);
@@ -2681,10 +2681,13 @@ const jsonString = (value: string) => {
  *   binding to encode as it encodes the key (`jsonString`); bytes become hex
  *   strings.
  *
- * A string key finds the row it was written with. On Node 22, better-sqlite3
- * reads a stored lone surrogate back as one U+FFFD per byte, so a key read from
- * a row (S3's `__pk`, say) binds to other bytes: like `WHERE id = ?`, its list
- * finds no row, or another key's row.
+ * A string key finds the row it was written with, and a key read from a row
+ * (S3's `__pk`, say) finds that row: every binding stores a lone surrogate as
+ * U+FFFD. A key stored as other bytes that are not UTF-8 (a surrogate's own 3
+ * bytes, as better-sqlite3 wrote them on Node 22 before the Node driver bound
+ * strings well formed, or raw SQL) reads back with U+FFFD in their place and
+ * binds to other bytes: like `WHERE id = ?`, its list finds no row, or another
+ * key's row.
  */
 export const encodeKeyList = (keys: Iterable<unknown>): string => {
 	let out = "[";
