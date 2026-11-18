@@ -3603,8 +3603,8 @@ resolutions.forEach((resolution) => {
 				});
 
 				// Counts the SELECTs that run while one of the iterator calls of
-				// `target` is in flight, and the OFFSET each binds (the last value of
-				// a statement that ends in `OFFSET ?`).
+				// `target` is in flight, the rows they return, and the OFFSET each
+				// binds (the last value of a statement that ends in `OFFSET ?`).
 				const recordIteratorReads = (target: Index<EntryReplicated<R>>) => {
 					type Statement = {
 						all: (values?: unknown[]) => Promise<unknown[]>;
@@ -3619,7 +3619,12 @@ resolutions.forEach((resolution) => {
 							};
 						}
 					).properties.db;
-					const reads = { calls: 0, statements: 0, offsets: [] as number[] };
+					const reads = {
+						calls: 0,
+						statements: 0,
+						rows: 0,
+						offsets: [] as number[],
+					};
 					let inCall = 0;
 					const wrapped = new Set<Statement>();
 					const wrap = (sql: string, statement: Statement) => {
@@ -3629,13 +3634,18 @@ resolutions.forEach((resolution) => {
 						wrapped.add(statement);
 						const all = statement.all.bind(statement);
 						statement.all = async (values?: unknown[]) => {
-							if (inCall > 0) {
+							const counted = inCall > 0;
+							if (counted) {
 								reads.statements++;
 								if (/\boffset \?\s*$/i.test(sql.trim()) && values?.length) {
 									reads.offsets.push(Number(values[values.length - 1]));
 								}
 							}
-							return all(values);
+							const rows = await all(values);
+							if (counted) {
+								reads.rows += rows.length;
+							}
+							return rows;
 						};
 						return statement;
 					};
@@ -3668,8 +3678,10 @@ resolutions.forEach((resolution) => {
 				};
 
 				for (const boundary of [false, true]) {
-					it(`${boundary ? "a boundary pass" : "a pass"} over 3,000 entries with a put between pages binds no OFFSET and issues O(pages) statements`, async () => {
-						const total = 3000;
+					it(`${boundary ? "a boundary pass" : "a pass"} over 9,500 entries with a put between pages binds no OFFSET, in O(pages) statements and O(entries) rows`, async () => {
+						// Ten pages: enough for a pass that reads again from the first
+						// row on every page to read several times the entries.
+						const total = 9500;
 						const page = 1048;
 						const ids = Array.from({ length: total }, (_, i) =>
 							String(i).padStart(6, "0"),
@@ -3719,6 +3731,11 @@ resolutions.forEach((resolution) => {
 						expect(recorded.reads.statements).to.be.at.most(
 							2 * recorded.reads.calls,
 						);
+						// Linear in the entries: the key list once, each row once by
+						// key, and one re-check of a page after the put. Reading again
+						// from the first row on every page would read more than five
+						// times the entries.
+						expect(recorded.reads.rows).to.be.at.most(3 * (total + 1));
 					});
 				}
 
