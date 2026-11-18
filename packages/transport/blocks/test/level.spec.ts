@@ -1,7 +1,12 @@
-import { expect } from "chai";
+import { type AnyStore, createStore } from "@peerbit/any-store";
 import { createStore as createRustStore } from "@peerbit/any-store-rust";
-import { equals } from "uint8arrays";
+import { calculateRawCid } from "@peerbit/blocks-interface";
+import { expect } from "chai";
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import sinon from "sinon";
+import { equals } from "uint8arrays";
 import { AnyBlockStore } from "../src/any-blockstore.js";
 
 describe(`level`, function () {
@@ -125,6 +130,67 @@ describe(`level`, function () {
 		putSpy.restore();
 		putManySpy.restore();
 		putManyImmutableSpy.restore();
+	});
+
+	describe("on a LevelDB store", () => {
+		let directory: string;
+		let backingStore: AnyStore & {
+			putMany(entries: Iterable<readonly [string, Uint8Array]>): Promise<void>;
+		};
+		let putSpy: sinon.SinonSpy;
+		let putManySpy: sinon.SinonSpy;
+
+		beforeEach(async () => {
+			directory = await fs.mkdtemp(path.join(os.tmpdir(), "peerbit-blocks-"));
+			backingStore = createStore(directory) as typeof backingStore;
+			expect(backingStore).to.respondTo("putMany");
+			putSpy = sinon.spy(backingStore, "put");
+			putManySpy = sinon.spy(backingStore, "putMany");
+			store = new AnyBlockStore(backingStore);
+			await store.start();
+		});
+
+		afterEach(async () => {
+			sinon.restore();
+			await store.stop();
+			// Also closes the store when setup failed before the block store took it.
+			await backingStore.close();
+			await fs.rm(directory, { recursive: true, force: true });
+		});
+
+		const datas = [
+			new Uint8Array([1, 2, 3]),
+			new Uint8Array([4, 5, 6]),
+			new Uint8Array([7, 8, 9]),
+		];
+
+		it("writes known blocks with one putMany", async () => {
+			const blocks = await Promise.all(
+				datas.map(async (bytes) => {
+					const { cid } = await calculateRawCid(bytes);
+					return [cid, bytes] as const;
+				}),
+			);
+			const cids = await store.putKnownMany(blocks);
+
+			expect(cids).to.deep.equal(blocks.map(([cid]) => cid));
+			expect(putManySpy.callCount).equal(1);
+			expect(putSpy.callCount).equal(0);
+			for (const [cid, bytes] of blocks) {
+				expect(await store.get(cid)).to.deep.equal(bytes);
+			}
+		});
+
+		it("writes blocks with one putMany", async () => {
+			const cids = await store.putMany(datas);
+
+			expect(cids).to.have.length(datas.length);
+			expect(putManySpy.callCount).equal(1);
+			expect(putSpy.callCount).equal(0);
+			for (let i = 0; i < datas.length; i++) {
+				expect(await store.get(cids[i])).to.deep.equal(datas[i]);
+			}
+		});
 	});
 
 	it("gets and removes many blocks through store batch helpers", async () => {
