@@ -3602,6 +3602,143 @@ resolutions.forEach((resolution) => {
 					expect(closeCalls).to.equal(1);
 				});
 
+				// Counts the SELECTs that run while one of the iterator calls of
+				// `target` is in flight, the rows they return, and the OFFSET each
+				// binds (the last value of a statement that ends in `OFFSET ?`).
+				const recordIteratorReads = (target: Index<EntryReplicated<R>>) => {
+					type Statement = {
+						all: (values?: unknown[]) => Promise<unknown[]>;
+					};
+					const db = (
+						target as unknown as {
+							properties: {
+								db: {
+									prepare: (sql: string, id?: string) => Promise<Statement>;
+									statements: Map<string, Statement>;
+								};
+							};
+						}
+					).properties.db;
+					const reads = {
+						calls: 0,
+						statements: 0,
+						rows: 0,
+						offsets: [] as number[],
+					};
+					let inCall = 0;
+					const wrapped = new Set<Statement>();
+					const wrap = (sql: string, statement: Statement) => {
+						if (wrapped.has(statement) || !/^\s*(with|select)\b/i.test(sql)) {
+							return statement;
+						}
+						wrapped.add(statement);
+						const all = statement.all.bind(statement);
+						statement.all = async (values?: unknown[]) => {
+							const counted = inCall > 0;
+							if (counted) {
+								reads.statements++;
+								if (/\boffset \?\s*$/i.test(sql.trim()) && values?.length) {
+									reads.offsets.push(Number(values[values.length - 1]));
+								}
+							}
+							const rows = await all(values);
+							if (counted) {
+								reads.rows += rows.length;
+							}
+							return rows;
+						};
+						return statement;
+					};
+					const prepare = db.prepare.bind(db);
+					db.prepare = async (sql, id) => wrap(sql, await prepare(sql, id));
+					// Iterators prepare their statements with the SQL as the id.
+					for (const [id, statement] of db.statements) {
+						wrap(id, statement);
+					}
+					return {
+						reads,
+						index: {
+							iterate: (request?: any, options?: any) => {
+								const iterator = target.iterate(request, options);
+								return {
+									...iterator,
+									next: async (amount: number) => {
+										reads.calls++;
+										inCall++;
+										try {
+											return await iterator.next(amount);
+										} finally {
+											inCall--;
+										}
+									},
+								};
+							},
+						} as unknown as Index<EntryReplicated<R>>,
+					};
+				};
+
+				for (const boundary of [false, true]) {
+					it(`${boundary ? "a boundary pass" : "a pass"} over 9,500 entries with a put between pages binds no OFFSET, in O(pages) statements and O(entries) rows`, async () => {
+						// Ten pages: enough for a pass that reads again from the first
+						// row on every page to read several times the entries.
+						const total = 9500;
+						const page = 1048;
+						const ids = Array.from({ length: total }, (_, i) =>
+							String(i).padStart(6, "0"),
+						);
+						await create();
+						await index.putBatch!(
+							ids.map((id, i) =>
+								createTestEntry(id, (0.4 * i) / total, boundary),
+							),
+						);
+						const range = createReplicationRangeFromNormalized({
+							publicKey: a,
+							offset: 0,
+							width: 0.5,
+							mode: ReplicationIntent.Strict,
+							timestamp: 1n,
+						});
+						const recorded = recordIteratorReads(index);
+						const cache = new Cache<string>({ max: 1000, ttl: 1e5 });
+						const hashes: string[] = [];
+						for await (const entry of toRebalance(
+							boundary
+								? []
+								: [{ range, type: "added", timestamp: range.timestamp }],
+							recorded.index,
+							cache,
+						)) {
+							hashes.push(entry.hash);
+							if (hashes.length === page) {
+								// Between the first and the second page: a new entry
+								// behind the last key read, and a returned one written
+								// again.
+								await index.put(createTestEntry("000005x", 0.1, boundary));
+								await index.put(createTestEntry(ids[3], 0.2, boundary));
+							}
+						}
+						// Every entry once, and the new one.
+						expect(new Set(hashes).size).to.equal(hashes.length);
+						expect([...hashes].sort()).to.deep.equal(
+							[...ids, "000005x"].sort(),
+						);
+						expect(recorded.reads.calls).to.equal(
+							Math.ceil((total + 1) / page),
+						);
+						// No page binds an OFFSET, and a page costs at most two reads.
+						expect(recorded.reads.offsets).to.deep.equal([]);
+						expect(recorded.reads.statements).to.be.at.most(
+							2 * recorded.reads.calls,
+						);
+						// Linear in the entries: the key list once, each row once by
+						// key, and one re-check of a page after the put. Reading again
+						// from the first row on every page would read more than five
+						// times the entries.
+						expect(recorded.reads.rows).to.be.at.most(3 * (total + 1));
+					});
+				}
+
 				it("commits rebalance history only after complete successful iteration", async () => {
 					const range = createReplicationRangeFromNormalized({
 						publicKey: a,

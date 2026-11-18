@@ -1839,9 +1839,10 @@ export const convertSearchRequestToQuery = (
  * limit) are `KeyQueryParameter`s in `bindable`; `bindKeyQuery` binds them.
  *
  * With several root tables, a statement that compares a cursor (S2, `__after`)
- * or a key list (S4) with a term that the tables store differently throws a
- * KeyTypeMismatchError. S1, S3 and S5 compare no bound value across tables.
- * The builders also return their arms (`KeyStatementArms`).
+ * or one shared key list (S4) with a term that the tables store differently
+ * throws a KeyTypeMismatchError; S4 with a key list per root table
+ * (`keysPerRoot`) does not. S1, S3 and S5 compare no bound value across
+ * tables. The builders also return their arms (`KeyStatementArms`).
  */
 
 export const ROOT_ORDINAL_ALIAS = "__t";
@@ -1913,9 +1914,10 @@ const keyTermType = (sqlType: string | undefined): KeyTermType | undefined => {
 
 /**
  * How a root table stores its primary keys: its storage class, and whether a
- * u64 key is shifted into the signed range (`convertToSQLType`).
+ * u64 key is shifted into the signed range (`convertToSQLType`). Root tables
+ * with the same encoding store one key as the same SQL value.
  */
-const primaryKeyEncoding = (table: Table): string | undefined => {
+export const primaryKeyEncoding = (table: Table): string | undefined => {
 	const type = keyTermType(table.primaryField?.type);
 	return type && table.primaryField?.from?.type === "u64"
 		? `${type} (u64)`
@@ -1925,6 +1927,7 @@ const primaryKeyEncoding = (table: Table): string | undefined => {
 /** A parameter of a key statement, bound by `bindKeyQuery`. */
 export class KeyQueryParameter {
 	private static readonly cursorTerms: KeyQueryParameter[] = [];
+	private static readonly rootKeyLists: KeyQueryParameter[] = [];
 	static readonly keys = new KeyQueryParameter("keys", -1);
 	static readonly limit = new KeyQueryParameter("limit", -1);
 	/** The cursor's value of K's term `term`. */
@@ -1934,8 +1937,18 @@ export class KeyQueryParameter {
 			term,
 		));
 	}
+	/**
+	 * The key list of the root table with ordinal `ordinal` (`term` holds the
+	 * ordinal), for a re-check built with `keysPerRoot`.
+	 */
+	static rootKeys(ordinal: number): KeyQueryParameter {
+		return (KeyQueryParameter.rootKeyLists[ordinal] ??= new KeyQueryParameter(
+			"rootKeys",
+			ordinal,
+		));
+	}
 	private constructor(
-		readonly kind: "cursor" | "keys" | "limit",
+		readonly kind: "cursor" | "keys" | "rootKeys" | "limit",
 		readonly term: number,
 	) {}
 }
@@ -1943,13 +1956,15 @@ export class KeyQueryParameter {
 /**
  * The values to run a key statement with: `KeyQueryParameter`s replaced by
  * `cursor` (the K values of the last row read, raw SQL values in term order),
- * `keys` (from `encodeKeyList`) and `limit` (Infinity reads to the end).
+ * `keys` (from `encodeKeyList`), `rootKeys` (one such list per root ordinal,
+ * each in its table's encoding) and `limit` (Infinity reads to the end).
  */
 export const bindKeyQuery = (
 	bindable: readonly unknown[],
 	values: {
 		cursor?: readonly unknown[];
 		keys?: string;
+		rootKeys?: readonly (string | undefined)[];
 		limit?: number | bigint;
 	},
 ): BindableValue[] =>
@@ -1969,6 +1984,15 @@ export const bindKeyQuery = (
 				throw new Error("Missing the key list");
 			}
 			return values.keys;
+		}
+		if (value.kind === "rootKeys") {
+			const keys = values.rootKeys?.[value.term];
+			if (typeof keys !== "string") {
+				throw new Error(
+					`Missing the key list of the root table with ordinal ${value.term}`,
+				);
+			}
+			return keys;
 		}
 		const limit = values.limit;
 		if (limit === Infinity) {
@@ -2497,6 +2521,10 @@ export const convertSearchRequestToPageQuery = (
  *
  * - `restrictToKeys` (S4): only the rows whose primary key is in a JSON key
  *   list (`encodeKeyList`), reached through the primary key.
+ * - `keysPerRoot`, with `restrictToKeys`: each root table's arms take their
+ *   own key list (`KeyQueryParameter.rootKeys(ordinal)`), in the way that
+ *   table stores its keys, so the re-check stays one statement across root
+ *   tables that store the primary key differently.
  * - `primaryKeyAccess`: the planner forces no index on the root table. Always
  *   on with `restrictToKeys`: an index forced for the sort would scan every row
  *   to find a few keys.
@@ -2505,7 +2533,8 @@ export const convertSearchRequestToPageQuery = (
  *
  * Across root tables that store a compared term differently it throws a
  * KeyTypeMismatchError: with `after`, a term of K that is a number in one and
- * TEXT in another; with `restrictToKeys`, primary keys stored differently.
+ * TEXT in another; with `restrictToKeys` and one shared key list, primary keys
+ * stored differently.
  */
 export const convertSearchRequestToKeyQuery = (
 	request:
@@ -2516,12 +2545,14 @@ export const convertSearchRequestToKeyQuery = (
 	options?: {
 		planner?: PlanningSession;
 		restrictToKeys?: boolean;
+		keysPerRoot?: boolean;
 		primaryKeyAccess?: boolean;
 		after?: boolean[];
 	},
 ): { sql: string; bindable: unknown[]; order: OrderKey } & KeyStatementArms => {
 	const after = options?.after;
 	const restrictToKeys = options?.restrictToKeys === true;
+	const keysPerRoot = restrictToKeys && options?.keysPerRoot === true;
 	const { union, bindable, order, arms, grouped } = buildKeyUnion(
 		request,
 		tables,
@@ -2529,7 +2560,10 @@ export const convertSearchRequestToKeyQuery = (
 		{
 			planner: options?.planner,
 			primaryKeyAccess: restrictToKeys || options?.primaryKeyAccess === true,
-			compares: { cursor: after != null, keys: restrictToKeys },
+			compares: {
+				cursor: after != null,
+				keys: restrictToKeys && !keysPerRoot,
+			},
 			arm: (arm, order) => {
 				const flag = after
 					? keysetPredicateForArm(arm, order, after)
@@ -2547,7 +2581,11 @@ export const convertSearchRequestToKeyQuery = (
 					where: restrictToKeys
 						? {
 								sql: `${arm.table.name}.${escapeColumnName(arm.table.primary as string)} IN (${keyListSubquery(arm.table)})`,
-								bindable: [KeyQueryParameter.keys],
+								bindable: [
+									keysPerRoot
+										? KeyQueryParameter.rootKeys(arm.ordinal)
+										: KeyQueryParameter.keys,
+								],
 							}
 						: undefined,
 				};
@@ -2616,12 +2654,12 @@ const LONE_SURROGATE_ESCAPES = /\\\\|\\u(d[89a-f][0-9a-f]{2})/g;
 /**
  * `value` as a JSON string in which each lone surrogate stays a raw code unit,
  * where JSON.stringify writes an escape (`\ud800`). The key list is bound as a
- * string, so the binding then encodes a lone surrogate to UTF-8 just as it
- * does when it binds the key itself, and json_each returns those bytes as
- * they are. The bindings differ: better-sqlite3 12 writes the surrogate's own
- * 3 bytes on Node 22 (ED A0 80 for U+D800) and U+FFFD on Node 24, as the WASM
- * engine does. No fixed encoding matches both: json_each decodes an escape to
- * the 3 bytes on every engine, and U+FFFD stays U+FFFD.
+ * string, so the binding then encodes a lone surrogate just as it does when it
+ * binds the key itself, and json_each returns those bytes as they are: U+FFFD,
+ * as the WASM engine binds a lone surrogate and the Node driver makes
+ * better-sqlite3 bind it on every Node version. json_each would decode an
+ * escape to the surrogate's own 3 bytes (ED A0 80 for U+D800), which no
+ * binding stores.
  */
 const jsonString = (value: string) => {
 	const json = JSON.stringify(value);
@@ -2643,10 +2681,13 @@ const jsonString = (value: string) => {
  *   binding to encode as it encodes the key (`jsonString`); bytes become hex
  *   strings.
  *
- * A string key finds the row it was written with. On Node 22, better-sqlite3
- * reads a stored lone surrogate back as one U+FFFD per byte, so a key read from
- * a row (S3's `__pk`, say) binds to other bytes: like `WHERE id = ?`, its list
- * finds no row, or another key's row.
+ * A string key finds the row it was written with, and a key read from a row
+ * (S3's `__pk`, say) finds that row: every binding stores a lone surrogate as
+ * U+FFFD. A key stored as other bytes that are not UTF-8 (a surrogate's own 3
+ * bytes, as better-sqlite3 wrote them on Node 22 before the Node driver bound
+ * strings well formed, or raw SQL) reads back with U+FFFD in their place and
+ * binds to other bytes: like `WHERE id = ?`, its list finds no row, or another
+ * key's row.
  */
 export const encodeKeyList = (keys: Iterable<unknown>): string => {
 	let out = "[";

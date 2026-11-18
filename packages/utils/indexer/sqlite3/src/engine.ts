@@ -1,4 +1,9 @@
-import { type AbstractType, type Constructor, getSchema } from "@dao-xyz/borsh";
+import {
+	type AbstractType,
+	type Constructor,
+	type FieldType,
+	getSchema,
+} from "@dao-xyz/borsh";
 import type {
 	Index,
 	IndexEngineInitProperties,
@@ -7,31 +12,48 @@ import type {
 } from "@peerbit/indexer-interface";
 import * as types from "@peerbit/indexer-interface";
 import { v4 as uuid } from "uuid";
-import { ChangeJournal } from "./change-journal.js";
-import { PlannableQuery, QueryPlanner } from "./query-planner.js";
+import {
+	ChangeJournal,
+	type ChangeJournalPull,
+	type ChangeJournalReader,
+} from "./change-journal.js";
+import {
+	PlannableQuery,
+	type PlanningSession,
+	QueryPlanner,
+} from "./query-planner.js";
 import {
 	type BindableValue,
 	MissingFieldError,
+	PRIMARY_KEY_ALIAS,
+	ROOT_ORDINAL_ALIAS,
 	type Table,
+	bindKeyQuery,
 	buildJoin,
 	coerceLocalQueries,
 	coerceLocalSorts,
 	convertCountRequestToQuery,
 	convertDeleteRequestToQuery,
 	convertFromSQLType,
+	convertKeysToRowsQuery,
+	convertSearchRequestToKeyQuery,
+	convertSearchRequestToPageQuery,
 	convertSearchRequestToQuery,
 	convertSumRequestToQuery,
 	convertToSQLType,
+	encodeKeyList,
 	escapeColumnName,
 	generateSelectQuery,
 	getInlineTableFieldName,
 	getSQLTable,
 	getTablePrefixedField,
 	insert,
+	primaryKeyEncoding,
 	resolveInstanceFromValue,
 	resolveTable,
 	selectAllFieldsFromTable,
 	selectChildren,
+	u64ToI64,
 } from "./schema.js";
 import type { Database, Statement } from "./types.js";
 import { isFKError, isUniqueConstraintError } from "./utils.js";
@@ -76,6 +98,284 @@ const getDatabaseCoordinator = (database: Database): DatabaseCoordinator => {
 };
 
 const PUT_BATCH_CHUNK_SIZE = 64;
+
+/**
+ * Keys an iterator reads from its key list per statement, and the most changed
+ * keys it re-checks in one call: past that, it lists the keys again.
+ */
+const SNAPSHOT_WINDOW = 4096;
+
+/**
+ * Rows an iterator in primary-key order reads by pages after its first one
+ * (S2) before it lists its keys. A short read (a probe, a few pages) holds
+ * only the keys it returned.
+ */
+const PAGED_ROWS_BUDGET = 2048;
+
+/** A primary key as one root table stores it. */
+type StoredKey = { t: number; pk: unknown };
+
+const HEX_BYTES = Array.from({ length: 256 }, (_, i) =>
+	i.toString(16).padStart(2, "0"),
+);
+
+const toHex = (bytes: Uint8Array) => {
+	let out = "";
+	for (let i = 0; i < bytes.length; i++) {
+		out += HEX_BYTES[bytes[i]];
+	}
+	return out;
+};
+
+/** `value` with each lone surrogate replaced by U+FFFD, as SQLite stores it. */
+const wellFormed = (value: string): string => {
+	if (typeof value.isWellFormed === "function") {
+		return value.isWellFormed() ? value : value.toWellFormed();
+	}
+	let out = "";
+	for (let i = 0; i < value.length; i++) {
+		const unit = value.charCodeAt(i);
+		if (unit >= 0xd800 && unit <= 0xdbff) {
+			const low = value.charCodeAt(i + 1);
+			if (low >= 0xdc00 && low <= 0xdfff) {
+				out += value[i] + value[i + 1];
+				i++;
+			} else {
+				out += "\uFFFD";
+			}
+		} else {
+			out += unit >= 0xdc00 && unit <= 0xdfff ? "\uFFFD" : value[i];
+		}
+	}
+	return out;
+};
+
+const normalizeKey = (value: unknown) =>
+	typeof value === "string" ? wellFormed(value) : value;
+
+/**
+ * One string per key value: a bigint and a number of equal value are one key,
+ * and bytes are compared by content. Takes a normalized value
+ * (`KeyIdentity.value`, `KeyIdentity.mark`).
+ */
+const keyString = (value: unknown): string => {
+	switch (typeof value) {
+		case "string":
+			return "s" + value;
+		case "bigint":
+			return "i" + value;
+		case "number":
+			return Number.isInteger(value)
+				? "i" + (Number.isSafeInteger(value) ? value : BigInt(value))
+				: "r" + value;
+		default:
+			return value instanceof Uint8Array
+				? "x" + toHex(value)
+				: "o" + String(value);
+	}
+};
+
+const keyRank = (value: unknown) =>
+	typeof value === "string"
+		? 0
+		: typeof value === "bigint" ||
+			  (typeof value === "number" && Number.isInteger(value))
+			? 1
+			: typeof value === "number"
+				? 2
+				: value instanceof Uint8Array
+					? 3
+					: 4;
+
+/**
+ * A total order on normalized key values that agrees with `keyString`
+ * equality. It only serves lookups: SQLite decides every order a caller sees.
+ */
+const compareKeys = (a: any, b: any): number => {
+	const rankA = keyRank(a);
+	const rankB = keyRank(b);
+	if (rankA !== rankB) {
+		return rankA - rankB;
+	}
+	if (rankA === 3) {
+		const length = Math.min(a.length, b.length);
+		for (let i = 0; i < length; i++) {
+			if (a[i] !== b[i]) {
+				return a[i] - b[i];
+			}
+		}
+		return a.length - b.length;
+	}
+	if (rankA === 4) {
+		a = String(a);
+		b = String(b);
+	}
+	return a < b ? -1 : a > b ? 1 : 0;
+};
+
+const MIN_I64 = -(1n << 63n);
+const MAX_I64 = (1n << 63n) - 1n;
+const U64_END = 1n << 64n;
+
+/**
+ * How an iterator names a row: by the value of its primary key, whichever
+ * root table holds it. A bigint and a number of equal value are one key,
+ * bytes are compared by content, and a lone surrogate counts as U+FFFD, as
+ * SQLite stores it. `markYielded` names rows the same way.
+ *
+ * When every root table stores its keys the same way, the stored SQL value
+ * stands for the key, and one key list serves every root table. Otherwise the
+ * decoded value does, and each root table gets its own key list.
+ */
+class KeyIdentity {
+	readonly uniform: boolean;
+	private readonly encodings: (string | undefined)[];
+	private readonly types: (FieldType | undefined)[];
+
+	constructor(rootTables: Table[]) {
+		this.encodings = rootTables.map(primaryKeyEncoding);
+		this.types = rootTables.map((table) => table.primaryField?.from?.type);
+		this.uniform = this.encodings.every(
+			(encoding) => encoding === this.encodings[0],
+		);
+	}
+
+	/** The normalized value of a key that root table `t` stores as `stored`. */
+	value(t: number, stored: unknown): unknown {
+		return normalizeKey(
+			this.uniform
+				? stored
+				: convertFromSQLType(
+						stored as string | number | bigint | Uint8Array,
+						this.types[t],
+					),
+		);
+	}
+
+	/** The normalized value of a key passed to `markYielded`. */
+	mark(key: unknown): unknown {
+		if (this.uniform && this.encodings[0]?.endsWith("(u64)") && isU64(key)) {
+			return u64ToI64(key);
+		}
+		return normalizeKey(key);
+	}
+
+	/**
+	 * How root table `t` stores the key of normalized value `value` (with
+	 * several encodings), or undefined when that table cannot hold it.
+	 */
+	encode(t: number, value: unknown): unknown {
+		const encoding = this.encodings[t];
+		if (encoding?.startsWith("numeric")) {
+			if (typeof value === "number" && !Number.isInteger(value)) {
+				return encoding.endsWith("(u64)") ? undefined : value;
+			}
+			if (typeof value !== "bigint" && typeof value !== "number") {
+				return undefined;
+			}
+			if (encoding.endsWith("(u64)")) {
+				return isU64(value) ? u64ToI64(value) : undefined;
+			}
+			const integer = BigInt(value);
+			return integer >= MIN_I64 && integer <= MAX_I64 ? value : undefined;
+		}
+		if (encoding === "text") {
+			return typeof value === "string" ? value : undefined;
+		}
+		if (encoding === "blob") {
+			return value instanceof Uint8Array ? value : undefined;
+		}
+		return undefined;
+	}
+}
+
+const isU64 = (value: unknown): value is number | bigint =>
+	(typeof value === "bigint" && value >= 0n && value < U64_END) ||
+	(typeof value === "number" && Number.isSafeInteger(value) && value >= 0);
+
+/**
+ * A key list in an iterator's order: the stored keys, one per row identity.
+ */
+type Snapshot = {
+	pk: unknown[] | BigInt64Array;
+	/** The root ordinal of each key, with several root tables. */
+	t?: Uint8Array | Uint16Array;
+	/**
+	 * Positions ordered by `compareKeys`, or null when `pk` already is; built
+	 * by the first lookup.
+	 */
+	byKey?: Int32Array | null;
+};
+
+const snapshotTable = (snapshot: Snapshot, i: number) =>
+	snapshot.t ? snapshot.t[i] : 0;
+
+/** The position of the key with normalized value `value`, or -1. */
+const snapshotPositionOf = (
+	snapshot: Snapshot,
+	identity: KeyIdentity,
+	value: unknown,
+): number => {
+	const keys = snapshot.pk;
+	const valueAt = (i: number) =>
+		identity.value(snapshotTable(snapshot, i), keys[i]);
+	if (snapshot.byKey === undefined) {
+		let sorted = true;
+		for (let i = 1; i < keys.length; i++) {
+			if (compareKeys(valueAt(i - 1), valueAt(i)) > 0) {
+				sorted = false;
+				break;
+			}
+		}
+		if (sorted) {
+			snapshot.byKey = null;
+		} else {
+			const values =
+				identity.uniform && keys instanceof BigInt64Array
+					? keys
+					: Array.from({ length: keys.length }, (_, i) => valueAt(i));
+			const order = new Int32Array(keys.length);
+			for (let i = 0; i < order.length; i++) {
+				order[i] = i;
+			}
+			order.sort((x, y) => compareKeys(values[x], values[y]));
+			snapshot.byKey = order;
+		}
+	}
+	const order = snapshot.byKey;
+	let low = 0;
+	let high = keys.length - 1;
+	while (low <= high) {
+		const middle = (low + high) >>> 1;
+		const at = order ? order[middle] : middle;
+		const comparison = compareKeys(valueAt(at), value);
+		if (comparison === 0) {
+			return at;
+		}
+		if (comparison < 0) {
+			low = middle + 1;
+		} else {
+			high = middle - 1;
+		}
+	}
+	return -1;
+};
+
+/** Stored keys in a compact array: a BigInt64Array when every key is a bigint. */
+const compactKeys = (keys: unknown[]): unknown[] | BigInt64Array => {
+	if (keys.length === 0 || !keys.every((key) => typeof key === "bigint")) {
+		return keys;
+	}
+	return BigInt64Array.from(keys as bigint[]);
+};
+
+const compactOrdinals = (ordinals: number[]): Uint8Array | Uint16Array =>
+	ordinals.some((ordinal) => ordinal > 255)
+		? Uint16Array.from(ordinals)
+		: Uint8Array.from(ordinals);
+
+/** Thrown inside an admission when the iterator was closed meanwhile. */
+const ITERATOR_CLOSED = Symbol("iterator closed");
 
 async function safeReset(stmt?: Statement) {
 	if (!stmt?.reset) return;
@@ -202,12 +502,16 @@ export class SQLiteIndex<T extends Record<string, any>>
 	private scopeString?: string;
 	private _rootTables: Table[] = [];
 	private _tables: Map<string, Table> = new Map();
+	/**
+	 * Iterators that have rows left, by id. `cursorPruner` releases the ones
+	 * idle past `iteratorTimeout`, and stop() and drop() release them all.
+	 */
 	private _cursor: Map<
 		string,
 		{
-			fetch: (amount: number) => Promise<IndexedResult[]>;
-			/* countStatement: Statement; */
 			expire: number;
+			/** Drops the iterator's key list and journal reader. */
+			release: () => void;
 		}
 	> = new Map(); // TODO choose limit better
 	private cursorPruner: ReturnType<typeof setInterval> | undefined;
@@ -220,7 +524,8 @@ export class SQLiteIndex<T extends Record<string, any>>
 	/**
 	 * Root keys of committed writes, for iterators that need to know which rows
 	 * changed between two of their calls. It records only while a reader is
-	 * registered; no iterator registers one yet.
+	 * registered: an iterator registers one while it holds a key list with rows
+	 * left, and unregisters when it is done, closed, expired or stopped.
 	 */
 	private readonly changeJournal = new ChangeJournal();
 	private keyScanGeneration?: symbol;
@@ -1179,421 +1484,1080 @@ export class SQLiteIndex<T extends Record<string, any>>
 			return SQLiteIndex.closedIterator<T, S>();
 		}
 		this.assertOpen();
+		type Result = IndexedResult<types.ReturnTypeFromShape<T, S>>;
+		/** A result and the string of its key (`keyString`). */
+		type Keyed = { k: string; result: Result };
+		type KeyStatement = { sql: string; bindable: readonly unknown[] };
 
-		// create a sql statement where the offset and the limit id dynamic and can be updated
-		// TODO don't use offset but sort and limit 'next' calls by the last value of the sort
-
-		/* 	const totalCountKey = "count"; */
-		/* const sqlTotalCount = convertCountRequestToQuery(new types.CountRequest({ query: request.query }), this.tables, this.tables.get(this.rootTableName)!)
-		const countStmt = await this.properties.db.prepare(sqlTotalCount); */
-
-		let offset = 0;
-		let started = false;
-		let pagedInitialized = false;
-		let explicitlyClosed = false;
-		let requestId = uuid();
-		let hasMore = true;
-		let mutationMode = false;
-		let iteratorMutationVersion = this.mutationVersion;
-		const yielded = new Set<string>();
-		const idKey = (id: types.IdKey) =>
-			`${typeof id.key}:${String(id.primitive)}`;
-		const markYielded = (
-			results: IndexedResult<types.ReturnTypeFromShape<T, S>>[],
-		) => {
-			for (const result of results) {
-				yielded.add(idKey(result.id));
-			}
-		};
-
-		let stmt: Statement;
-		let kept: number | undefined = undefined;
-		let bindable: any[] = [];
-		let sqlFetch: string | undefined = undefined;
-		const markYieldedIds = (ids: Iterable<types.IdKey>) => {
-			for (const id of ids) {
-				yielded.add(idKey(id));
-			}
-			mutationMode = true;
-			kept = undefined;
-		};
-
+		// An iterator reads its search in the order key K (the sort terms, the
+		// primary key, then the root table) and binds no OFFSET, from one of two
+		// sources.
+		//
+		// - Pages (K): a search over one root table and one branch, with no
+		//   child table in its query, reads its first page with the search's
+		//   own statement, LIMIT n+1 (S1); the extra row tells whether more
+		//   remain. In primary-key order later pages continue after the last
+		//   key returned (S2) while nothing is written or marked, for up to
+		//   PAGED_ROWS_BUDGET rows. Pages hold the keys they returned (Y), and
+		//   no key list or journal reader.
+		// - Key list (S): every other call lists the keys of the matching rows
+		//   in K order, one statement (S3), without the keys returned so far,
+		//   and every page reads its rows by key (S5). While it holds that key
+		//   list it reads the change journal: each call re-checks the keys
+		//   written since the last one with the search restricted to those keys
+		//   (S4), and returns a changed row at its current position.
+		//
+		// Every call (next, pending, all) runs all of its statements in one
+		// database admission, and changes nothing unless they all succeed. It
+		// sees the rows that match when it is admitted, in K order, without the
+		// rows that an earlier call returned or `markYielded` named (Y), and one
+		// row per primary key value (the first in K order).
+		const shape = options?.shape;
 		const normalizedQuery = new PlannableQuery({
 			query: coerceLocalQueries(request?.query),
 			sort: coerceLocalSorts(request?.sort),
 		});
-		let planningScope: ReturnType<QueryPlanner["scope"]>;
-		// Closing retires this cursor, not database work already under the barrier.
+		const identity = new KeyIdentity(this._rootTables);
+		const requestId = uuid();
+
+		let explicitlyClosed = false;
+		/** A call was made: all() no longer reads everything in one statement. */
+		let called = false;
+		/** A call was admitted, so done() is known. */
+		let started = false;
+		/** Whether the last call left a row to return. */
+		let hasMore = true;
+		/** The writes and journal epoch when the last call left no row. */
+		let doneAt: { version: number; epoch: number } | undefined;
+
+		// Y is the key list's positions before `pos` that were not touched, and
+		// `extra`.
+		let snapshot: Snapshot | undefined;
+		let pos = 0;
+		/** Keys written since the key list was read: never read from it again. */
+		const touched = new Map<string, unknown>();
+		/** Touched keys, not in Y, whose current row was not checked yet. */
+		const dirty = new Map<string, StoredKey>();
+		/** Keys in Y that the key list's positions before `pos` do not cover. */
+		const extra = new Map<string, unknown>();
+		/** Keys `markYielded` named that no admission has applied yet. */
+		const pendingMarks: { k: string; value: unknown }[] = [];
+		let reader: ChangeJournalReader | undefined;
+		/** The key list was dropped: the next call lists the keys again. */
+		let needsRebase = false;
+		/** Calls in flight keep the iterator's state until the last returns. */
+		let inFlight = 0;
+		/** The index closed during a call: drop the reader when none runs. */
+		let releaseWhenIdle = false;
+
+		// Pages (K). Y is `extra`: the keys the pages returned.
+		/** The writes and journal epoch when the first page was read. */
+		let pagedAt: { version: number; epoch: number } | undefined;
+		/** Rows the pages read, the extra rows included. */
+		let pagedRows = 0;
+		/** The primary key (as stored) of the last row a page returned. */
+		let pagedCursor: unknown;
+		/** A mark was applied: pages cannot skip it, so the key list serves. */
+		let marked = false;
+		/** The matching rows for pending(), while nothing is written. */
+		let counted: { version: number; epoch: number; count: number } | undefined;
+
+		type Plan = {
+			/** The journal epoch the statements were planned in. */
+			epoch: number;
+			scope: PlanningSession;
+			severalRoots: boolean;
+			/** S3, the key list, and its UNION arms. */
+			keys: KeyStatement & { arms: number };
+			/** S4, the search restricted to a key list. */
+			recheck: KeyStatement;
+			/** S5, rows by key, per root table. */
+			rows: KeyStatement[];
+			/** S1, the head page, when the search can page (K). */
+			head?: KeyStatement;
+			/** S2, the page after a primary key, in primary-key order. */
+			after?: KeyStatement;
+			/** The count of matching rows, when the search can page. */
+			count?: KeyStatement;
+		};
+		let plan: Plan | undefined;
+		/** This iterator's prepared statements, by SQL. */
+		const statements = new Map<string, Statement>();
+
+		// Planned outside the admission: the planner may create an index, which
+		// takes the admission itself. Planned again once the tables closed and
+		// opened (a new journal epoch).
+		const planStatements = async (): Promise<Plan> => {
+			const epoch = this.changeJournal.epoch;
+			if (plan?.epoch === epoch) {
+				return plan;
+			}
+			const scope = this.planner.scope(normalizedQuery);
+			const rootTables = this._rootTables;
+			const keys = convertSearchRequestToKeyQuery(
+				normalizedQuery,
+				this.tables,
+				rootTables,
+				{ planner: scope },
+			);
+			const recheck = convertSearchRequestToKeyQuery(
+				normalizedQuery,
+				this.tables,
+				rootTables,
+				{
+					planner: scope,
+					restrictToKeys: true,
+					keysPerRoot: !identity.uniform,
+				},
+			);
+			const rows = rootTables.map((table) =>
+				convertKeysToRowsQuery(table, shape, { planner: scope }),
+			);
+			// Pages need one root table and one branch, and no child table in the
+			// query: then S1 stops after its LIMIT, without grouping every row.
+			let head: KeyStatement | undefined;
+			let after: KeyStatement | undefined;
+			let count: KeyStatement | undefined;
+			if (rootTables.length === 1 && keys.arms === 1 && !keys.grouped) {
+				const first = convertSearchRequestToPageQuery(
+					normalizedQuery,
+					this.tables,
+					rootTables,
+					{ planner: scope, shape },
+				);
+				// Sorting rows whose hydration groups child rows reads every row
+				// before the first: the key list serves that search.
+				if (!first.order.sorted || !first.grouped) {
+					head = first;
+					// K is the primary key alone.
+					if (first.order.terms.length === 1) {
+						after = convertSearchRequestToPageQuery(
+							normalizedQuery,
+							this.tables,
+							rootTables,
+							{ planner: scope, shape, after: [false] },
+						);
+					}
+					count = convertCountRequestToQuery(
+						{ query: normalizedQuery.query },
+						this.tables,
+						rootTables[0],
+					);
+				}
+			}
+			await scope.beforePrepare();
+			statements.clear();
+			return (plan = {
+				epoch,
+				scope,
+				severalRoots: rootTables.length > 1,
+				keys,
+				recheck,
+				rows,
+				head,
+				after,
+				count,
+			});
+		};
+
+		const prepare = async (statement: KeyStatement) => {
+			let prepared = statements.get(statement.sql);
+			if (!prepared) {
+				prepared = await this.properties.db.prepare(
+					statement.sql,
+					statement.sql,
+				);
+				statements.set(statement.sql, prepared);
+			}
+			return prepared;
+		};
+		const run = async (
+			current: Plan,
+			statement: KeyStatement,
+			values: Parameters<typeof bindKeyQuery>[1] = {},
+		): Promise<Record<string, any>[]> => {
+			const bound = bindKeyQuery(statement.bindable, values);
+			const prepared = await prepare(statement);
+			const rows = await current.scope.perform(async () => prepared.all(bound));
+			if (explicitlyClosed) {
+				throw ITERATOR_CLOSED;
+			}
+			return rows;
+		};
+
+		const rowKey = (current: Plan, row: Record<string, any>): StoredKey => ({
+			t: current.severalRoots ? Number(row[ROOT_ORDINAL_ALIAS]) : 0,
+			pk: row[PRIMARY_KEY_ALIAS],
+		});
+		const keyOf = (key: StoredKey) => keyString(identity.value(key.t, key.pk));
+
+		const hydrate = async (
+			rows: { k: string; row: Record<string, any>; key: StoredKey }[],
+		): Promise<Keyed[]> => {
+			const results = await Promise.all(
+				rows.map(async ({ k, row, key }) => {
+					const table = this._rootTables[key.t];
+					return {
+						k,
+						result: {
+							value: await resolveInstanceFromValue<T, S>(
+								row,
+								this.tables,
+								table,
+								this.resolveDependencies.bind(this),
+								true,
+								shape,
+							),
+							id: types.toId(
+								convertFromSQLType(
+									key.pk as string | number | bigint | Uint8Array,
+									table.primaryField!.from!.type,
+								),
+							),
+						},
+					};
+				}),
+			);
+			if (explicitlyClosed) {
+				throw ITERATOR_CLOSED;
+			}
+			return results;
+		};
+
+		/** S5 for `keys`, once per root table, in the order of `keys`. */
+		const fetchRows = async (
+			current: Plan,
+			keys: StoredKey[],
+		): Promise<Keyed[]> => {
+			const byTable = new Map<number, unknown[]>();
+			for (const key of keys) {
+				let list = byTable.get(key.t);
+				if (!list) {
+					byTable.set(key.t, (list = []));
+				}
+				list.push(key.pk);
+			}
+			const found = new Map<string, Record<string, any>>();
+			for (const [t, list] of byTable) {
+				const rows = await run(current, current.rows[t], {
+					keys: encodeKeyList(list),
+				});
+				for (const row of rows) {
+					found.set(keyOf({ t, pk: row[PRIMARY_KEY_ALIAS] }), row);
+				}
+			}
+			const ordered: { k: string; row: Record<string, any>; key: StoredKey }[] =
+				[];
+			for (const key of keys) {
+				const k = keyOf(key);
+				const row = found.get(k);
+				// No row: deleted by a write the journal does not see (raw SQL,
+				// another index instance). It is skipped.
+				if (row) {
+					ordered.push({
+						k,
+						row,
+						key: { t: key.t, pk: row[PRIMARY_KEY_ALIAS] },
+					});
+				}
+			}
+			return hydrate(ordered);
+		};
+
+		/** The key lists for S4: one list, or one per root table in its encoding. */
+		const keyLists = (
+			current: Plan,
+			keys: Iterable<StoredKey>,
+		): Parameters<typeof bindKeyQuery>[1] => {
+			if (identity.uniform) {
+				return { keys: encodeKeyList(Array.from(keys, (key) => key.pk)) };
+			}
+			const lists: unknown[][] = current.rows.map(() => []);
+			for (const key of keys) {
+				const value = identity.value(key.t, key.pk);
+				for (let t = 0; t < lists.length; t++) {
+					const stored = t === key.t ? key.pk : identity.encode(t, value);
+					if (stored !== undefined) {
+						lists[t].push(stored);
+					}
+				}
+			}
+			return { rootKeys: lists.map((list) => encodeKeyList(list)) };
+		};
+
+		const keyAt = (list: Snapshot, i: number) =>
+			keyString(identity.value(snapshotTable(list, i), list.pk[i]));
+		/** Whether position `i` is never read: its key was touched or is in `extra`. */
+		const skipped = (list: Snapshot, i: number) => {
+			const k = keyAt(list, i);
+			return touched.has(k) || extra.has(k);
+		};
+		const isYielded = (k: string, value: unknown) => {
+			if (extra.has(k)) {
+				return true;
+			}
+			if (!snapshot || pos === 0 || touched.has(k)) {
+				return false;
+			}
+			const at = snapshotPositionOf(snapshot, identity, value);
+			return at >= 0 && at < pos;
+		};
+		const yieldedKeys = (): Map<string, unknown> => {
+			const yielded = new Map<string, unknown>();
+			if (snapshot) {
+				for (let i = 0; i < pos; i++) {
+					const value = identity.value(
+						snapshotTable(snapshot, i),
+						snapshot.pk[i],
+					);
+					const k = keyString(value);
+					if (!touched.has(k)) {
+						yielded.set(k, value);
+					}
+				}
+			}
+			for (const [k, value] of extra) {
+				yielded.set(k, value);
+			}
+			return yielded;
+		};
+
+		const applyMarks = () => {
+			for (const { k, value } of pendingMarks) {
+				dirty.delete(k);
+				extra.set(k, value);
+				marked = true;
+			}
+			pendingMarks.length = 0;
+		};
+		/**
+		 * Marks that arrived while a call ran take their rows out of its result:
+		 * another delivery path owns them.
+		 */
+		const withoutMarked = (rows: Keyed[]): Result[] => {
+			if (pendingMarks.length === 0) {
+				return rows.map((row) => row.result);
+			}
+			const marked = new Set(pendingMarks.map((mark) => mark.k));
+			applyMarks();
+			return rows.filter((row) => !marked.has(row.k)).map((row) => row.result);
+		};
+
+		/** A journal entry: the key changed since the key list was read. */
+		const absorb = (t: number, stored: unknown) => {
+			const value = identity.value(t, stored);
+			const k = keyString(value);
+			if (isYielded(k, value)) {
+				return; // never returned again, whatever the write did
+			}
+			touched.set(k, value);
+			dirty.set(k, { t, pk: stored });
+		};
+
+		/**
+		 * Lists the keys again (S3), without Y. Correct whatever happened since
+		 * the last call: it continues from the first remaining row in K order.
+		 */
+		const rebase = async (current: Plan) => {
+			// The key list held is stale until the one below is read. If the
+			// call fails before then, the next call lists the keys again: a
+			// reader registered here starts after the writes it must see.
+			needsRebase = true;
+			const yielded = yieldedKeys();
+			let pull: ChangeJournalPull | undefined;
+			if (reader) {
+				pull = this.changeJournal.pull(reader);
+			} else {
+				// Before the key list is read: every later write is journaled.
+				// The iterator expires, and drops the reader, if it idles.
+				reader = this.changeJournal.register();
+				this._cursor.set(requestId, cursorEntry);
+			}
+			const rows = await run(current, current.keys);
+			const keys: unknown[] = [];
+			const ordinals: number[] = [];
+			const seen = current.keys.arms > 1 ? new Set<string>() : undefined;
+			for (const row of rows) {
+				const key = rowKey(current, row);
+				if (seen) {
+					// One row per key: the first in K order.
+					const k = keyOf(key);
+					if (seen.has(k)) {
+						continue;
+					}
+					seen.add(k);
+				}
+				keys.push(key.pk);
+				ordinals.push(key.t);
+			}
+			const list: Snapshot = {
+				pk: compactKeys(keys),
+				t: current.severalRoots ? compactOrdinals(ordinals) : undefined,
+			};
+			// What was yielded is usually a prefix of the new list.
+			let at = 0;
+			while (
+				at < keys.length &&
+				yielded.size > 0 &&
+				yielded.delete(keyAt(list, at))
+			) {
+				at++;
+			}
+			snapshot = list;
+			pos = at;
+			touched.clear();
+			dirty.clear();
+			extra.clear();
+			for (const [k, value] of yielded) {
+				extra.set(k, value);
+			}
+			needsRebase = false;
+			if (pull) {
+				this.changeJournal.advance(reader, pull);
+			}
+		};
+
+		/**
+		 * Brings the key list to this admission: reads the journal since the
+		 * last call, or lists the keys again. Returns the pull to advance past
+		 * once the call succeeded.
+		 */
+		const sync = async (
+			current: Plan,
+		): Promise<ChangeJournalPull | undefined> => {
+			if (snapshot && reader && !needsRebase) {
+				const pull = this.changeJournal.pull(reader, absorb);
+				// Behind the journal, or a bulk change that one key list costs
+				// less than re-checking on every page.
+				if (!pull.rebase && dirty.size <= SNAPSHOT_WINDOW) {
+					return pull;
+				}
+			}
+			await rebase(current);
+			return undefined;
+		};
+
+		/**
+		 * The next `amount` rows from the key list and the changed keys,
+		 * without committing anything.
+		 */
+		const readSnapshot = async (current: Plan, amount: number) => {
+			const list = snapshot!;
+			const size = list.pk.length;
+			const skipping = touched.size > 0 || extra.size > 0;
+			/** Changed keys returned, and changed keys that no longer match. */
+			const emitted = new Map<string, unknown>();
+			const dropped = new Set<string>();
+			const changedLeft = () => {
+				const left: [string, StoredKey][] = [];
+				for (const entry of dirty) {
+					if (!emitted.has(entry[0]) && !dropped.has(entry[0])) {
+						left.push(entry);
+					}
+				}
+				return left;
+			};
+			const rows: Keyed[] = [];
+			let cursor = pos;
+			for (;;) {
+				const want = Math.min(amount - rows.length, SNAPSHOT_WINDOW);
+				if (want <= 0) {
+					break;
+				}
+				const window: number[] = [];
+				let scan = cursor;
+				while (window.length < want && scan < size) {
+					if (!skipping || !skipped(list, scan)) {
+						window.push(scan);
+					}
+					scan++;
+				}
+				while (skipping && scan < size && skipped(list, scan)) {
+					scan++;
+				}
+				/** A key of the list is left after the window. */
+				const more = scan < size;
+				const changed = changedLeft();
+				let page: StoredKey[];
+				if (changed.length === 0) {
+					page = window.map((i) => ({
+						t: snapshotTable(list, i),
+						pk: list.pk[i],
+					}));
+					cursor = scan;
+				} else {
+					// Merge the window, unchanged since the list was read (so it
+					// still matches, in the same order), with the changed keys in
+					// their current order (S4). A changed row after the window's
+					// last row waits while the list has more: those come first.
+					const windowAt = new Map<string, number>();
+					const candidates: StoredKey[] = [];
+					for (const i of window) {
+						windowAt.set(keyAt(list, i), i);
+						candidates.push({ t: snapshotTable(list, i), pk: list.pk[i] });
+					}
+					const changedKeys = new Map(changed);
+					for (const [, key] of changed) {
+						candidates.push(key);
+					}
+					const ordered = await run(
+						current,
+						current.recheck,
+						keyLists(current, candidates),
+					);
+					const last = window.length > 0 ? window[window.length - 1] : -1;
+					let passedLast = false;
+					let lastRead = -1;
+					const seen = new Set<string>();
+					page = [];
+					for (const row of ordered) {
+						const key = rowKey(current, row);
+						const value = identity.value(key.t, key.pk);
+						const k = keyString(value);
+						if (seen.has(k)) {
+							continue; // one row per key: the first in K order
+						}
+						seen.add(k);
+						if (page.length >= want) {
+							continue;
+						}
+						const at = windowAt.get(k);
+						if (at !== undefined) {
+							page.push(key);
+							lastRead = at;
+							passedLast ||= at === last;
+						} else if (changedKeys.has(k) && !(more && passedLast)) {
+							page.push(key);
+							emitted.set(k, value);
+						}
+					}
+					for (const k of changedKeys.keys()) {
+						if (!seen.has(k)) {
+							dropped.add(k);
+						}
+					}
+					// A short page returned every window row it found. A full one
+					// stops after the last window row it returned.
+					cursor =
+						page.length < want ? scan : lastRead >= 0 ? lastRead + 1 : cursor;
+				}
+				if (page.length > 0) {
+					rows.push(...(await fetchRows(current, page)));
+				}
+				if (!more && (page.length === 0 || changedLeft().length === 0)) {
+					break;
+				}
+			}
+			return { rows, pos: cursor, emitted, dropped };
+		};
+
+		/**
+		 * After a call: moves `pos` past the keys it never reads, and sets
+		 * `hasMore`, which is exact: an unread key of the list is unchanged, so
+		 * it still matches, and every dirty key left was re-checked and matches.
+		 */
+		const settleSnapshot = () => {
+			const list = snapshot!;
+			if (touched.size > 0 || extra.size > 0) {
+				while (pos < list.pk.length && skipped(list, pos)) {
+					pos++;
+				}
+			}
+			hasMore = pos < list.pk.length || dirty.size > 0;
+		};
+
+		/** Inside the admission, after every statement of a call succeeded. */
+		const settle = (pull: ChangeJournalPull | undefined) => {
+			if (pull && reader) {
+				this.changeJournal.advance(reader, pull);
+			}
+			if (hasMore) {
+				doneAt = undefined;
+				this._cursor.set(requestId, cursorEntry);
+				return;
+			}
+			// Nothing left: no reader until a write could make a row match.
+			doneAt = {
+				version: this.mutationVersion,
+				epoch: this.changeJournal.epoch,
+			};
+			if (reader) {
+				this.changeJournal.unregister(reader);
+				reader = undefined;
+			}
+			this._cursor.delete(requestId);
+		};
+
+		/** Done, and nothing was written since: no row can match. */
+		const unchangedSinceDone = () =>
+			doneAt !== undefined &&
+			doneAt.version === this.mutationVersion &&
+			doneAt.epoch === this.changeJournal.epoch;
+
+		/**
+		 * Nothing was written, marked or reopened since the first page: every
+		 * key in Y matches, and the pages read a prefix of K order.
+		 */
+		const pagesHold = (current: Plan) =>
+			current.head !== undefined &&
+			!snapshot &&
+			!marked &&
+			(!pagedAt ||
+				(pagedAt.version === this.mutationVersion &&
+					pagedAt.epoch === this.changeJournal.epoch));
+
+		/**
+		 * Whether pages serve the next page: the first one (S1), or one after
+		 * the last key returned (S2) within the budget.
+		 */
+		const pagesServe = (current: Plan) =>
+			pagesHold(current) &&
+			(!pagedAt ||
+				(current.after !== undefined &&
+					pagedCursor !== undefined &&
+					pagedRows <= PAGED_ROWS_BUDGET));
+
+		/** The next page from S1 or S2: `amount` rows, and one to look ahead. */
+		const readPaged = async (current: Plan, amount: number) => {
+			const first = !pagedAt;
+			const limit = amount === Infinity ? Infinity : amount + 1;
+			const rows = first
+				? await run(current, current.head!, { limit })
+				: await run(current, current.after!, {
+						cursor: [pagedCursor],
+						limit,
+					});
+			const page = (rows.length > amount ? rows.slice(0, amount) : rows).map(
+				(row) => {
+					const key = rowKey(current, row);
+					return { k: keyOf(key), row, key };
+				},
+			);
+			const keyed = await hydrate(page);
+			// Every statement succeeded: commit.
+			if (first) {
+				pagedAt = {
+					version: this.mutationVersion,
+					epoch: this.changeJournal.epoch,
+				};
+			}
+			pagedRows += rows.length;
+			if (page.length > 0) {
+				pagedCursor = page[page.length - 1].key.pk;
+			}
+			for (const { k, key } of page) {
+				extra.set(k, identity.value(key.t, key.pk));
+			}
+			hasMore = rows.length > amount;
+			const results = withoutMarked(keyed);
+			settle(undefined);
+			return results;
+		};
+
+		const readPage = async (current: Plan, amount: number) => {
+			applyMarks();
+			if (unchangedSinceDone()) {
+				return [];
+			}
+			if (pagesServe(current)) {
+				return readPaged(current, amount);
+			}
+			// The key list serves: list the keys (without Y) when there is none.
+			const pull = await sync(current);
+			const page = await readSnapshot(current, amount);
+			// Every statement succeeded: commit.
+			pos = page.pos;
+			for (const [k, value] of page.emitted) {
+				dirty.delete(k);
+				extra.set(k, value);
+			}
+			for (const k of page.dropped) {
+				dirty.delete(k); // stays touched until it changes again
+			}
+			const results = withoutMarked(page.rows);
+			settleSnapshot();
+			settle(pull);
+			return results;
+		};
+
+		const countPending = async (current: Plan) => {
+			applyMarks();
+			if (unchangedSinceDone()) {
+				return 0;
+			}
+			if (pagesHold(current)) {
+				// The matching rows minus Y, which all match: one COUNT per write.
+				const version = this.mutationVersion;
+				const epoch = this.changeJournal.epoch;
+				if (counted?.version !== version || counted.epoch !== epoch) {
+					const statement = await prepare(current.count!);
+					const row = await statement.get(
+						current.count!.bindable as BindableValue[],
+					);
+					if (explicitlyClosed) {
+						throw ITERATOR_CLOSED;
+					}
+					counted = { version, epoch, count: Number(row?.count ?? 0) };
+				}
+				const count = Math.max(counted.count - extra.size, 0);
+				hasMore = count > 0;
+				settle(undefined);
+				return count;
+			}
+			const pull = await sync(current);
+			const list = snapshot!;
+			// Positions from `pos` on that a page skips: yielded elsewhere, or
+			// touched (counted below when they still match).
+			let skippedAhead = 0;
+			for (const value of extra.values()) {
+				if (snapshotPositionOf(list, identity, value) >= pos) {
+					skippedAhead++;
+				}
+			}
+			for (const [k, value] of touched) {
+				if (!extra.has(k) && snapshotPositionOf(list, identity, value) >= pos) {
+					skippedAhead++;
+				}
+			}
+			let changed = 0;
+			if (dirty.size > 0) {
+				const matched = new Set<string>();
+				for (const row of await run(
+					current,
+					current.recheck,
+					keyLists(current, dirty.values()),
+				)) {
+					matched.add(keyOf(rowKey(current, row)));
+				}
+				changed = matched.size;
+			}
+			const count = Math.max(list.pk.length - pos - skippedAhead, 0) + changed;
+			hasMore = count > 0;
+			settle(pull);
+			return count;
+		};
+
+		// The index closed while a call ran: the call returns nothing, and the
+		// iterator drops its journal reader once no call runs.
 		const closeAsDone = () => {
 			started = true;
 			hasMore = false;
-			kept = 0;
-			return [] as IndexedResult<types.ReturnTypeFromShape<T, S>>[];
+			doneAt = undefined;
+			releaseWhenIdle = true;
 		};
 
-		/* let totalCount: undefined | number = undefined; */
-		const fetch = async (
-			amount: number,
-			pageOptions?: { offset?: number; advance?: boolean },
-		) => {
-			if (explicitlyClosed || this.isClosing()) {
-				return closeAsDone();
-			}
-			this.assertOpen();
+		/** Runs `work` in one admission, planned before it. */
+		const admit = async <R>(
+			fallback: R,
+			work: (current: Plan) => Promise<R>,
+		): Promise<R> => {
 			try {
-				kept = undefined;
-				if (!pagedInitialized) {
-					planningScope = this.planner.scope(normalizedQuery);
+				for (;;) {
+					if (this.isClosing()) {
+						closeAsDone();
+						return fallback;
+					}
+					this.assertOpen();
+					const current = await planStatements();
+					if (explicitlyClosed) {
+						return fallback;
+					}
+					if (this.closed) {
+						closeAsDone();
+						return fallback;
+					}
+					const outcome = await this.withDatabaseBarrier(async () => {
+						if (explicitlyClosed) {
+							return { value: fallback };
+						}
+						if (this.isClosing()) {
+							closeAsDone();
+							return { value: fallback };
+						}
+						this.assertOpen();
+						if (current.epoch !== this.changeJournal.epoch) {
+							return undefined; // the tables closed meanwhile: plan again
+						}
+						started = true;
+						cursorEntry.expire = Date.now() + this.iteratorTimeout;
+						return { value: await work(current) };
+					});
+					if (outcome) {
+						return explicitlyClosed ? fallback : outcome.value;
+					}
+				}
+			} catch (error) {
+				if (error === ITERATOR_CLOSED || explicitlyClosed || this.isClosing()) {
+					if (!explicitlyClosed) {
+						closeAsDone();
+					}
+					return fallback;
+				}
+				throw error;
+			}
+		};
 
-					let { sql, bindable: toBind } = convertSearchRequestToQuery(
+		/**
+		 * all() as the first call, with no marks: one statement, as when nothing
+		 * is iterated (unordered without a sort). Every key it returns is in Y.
+		 */
+		const readAllFresh = async (): Promise<Result[]> => {
+			try {
+				if (this.isClosing()) {
+					closeAsDone();
+					return [];
+				}
+				this.assertOpen();
+				const scope = this.planner.scope(normalizedQuery);
+				// A sorted search over several root tables reads its head page to
+				// the end (S1, LIMIT -1), in K order across the tables. The search
+				// statement orders by the first table's sort columns, which are
+				// NULL in the other tables' rows.
+				const inKeyOrder =
+					normalizedQuery.sort.length > 0 && this._rootTables.length > 1;
+				let sql: string;
+				let bindable: BindableValue[];
+				if (inKeyOrder) {
+					const head = convertSearchRequestToPageQuery(
 						normalizedQuery,
 						this.tables,
 						this._rootTables,
-						{
-							planner: planningScope,
-							shape: options?.shape,
-							fetchAll: false,
-						},
+						{ planner: scope, shape },
 					);
-
-					sqlFetch = sql;
-					bindable = toBind;
-
-					await planningScope.beforePrepare();
+					sql = head.sql;
+					bindable = bindKeyQuery(head.bindable, { limit: Infinity });
+				} else {
+					({ sql, bindable } = convertSearchRequestToQuery(
+						normalizedQuery,
+						this.tables,
+						this._rootTables,
+						{ planner: scope, shape, fetchAll: true },
+					));
 				}
-				if (explicitlyClosed || this.closed) {
-					return closeAsDone();
-				}
-
-				const page = await this.withDatabaseBarrier(async () => {
-					if (explicitlyClosed || this.isClosing()) {
-						return closeAsDone();
-					}
-					this.assertOpen();
-					if (!pagedInitialized) {
-						stmt = await this.properties.db.prepare(sqlFetch!, sqlFetch!);
-						if (explicitlyClosed) return closeAsDone();
-
-						// Bump timeout timer
-						iterator.expire = Date.now() + this.iteratorTimeout;
-						pagedInitialized = true;
-					}
-
-					started = true;
-
-					const allResults = await planningScope.perform(async () => {
-						const allResults: Record<string, any>[] = await stmt.all([
-							...bindable,
-							amount,
-							pageOptions?.offset ?? offset,
-						]);
-						return allResults;
-					});
-					if (explicitlyClosed) return closeAsDone();
-
-					/* const allResults: Record<string, any>[] = await stmt.all([
-					...bindable,
-					...(amount !== "all" ? [amount,
-						offset] : [])
-				]);
-		*/
-					let results: IndexedResult<types.ReturnTypeFromShape<T, S>>[] =
-						await Promise.all(
-							allResults.map(async (row: any) => {
-								let selectedTable = this._rootTables.find(
-									(table) =>
-										row[getTablePrefixedField(table, this.primaryKeyString)] !=
-										null,
-								)!;
-
-								const value = await resolveInstanceFromValue<T, S>(
-									row,
-									this.tables,
-									selectedTable,
-									this.resolveDependencies.bind(this),
-									true,
-									options?.shape,
-								);
-
-								return {
-									value,
-									id: types.toId(
-										convertFromSQLType(
-											row[
-												getTablePrefixedField(
-													selectedTable,
-													this.primaryKeyString,
-												)
-											],
-											selectedTable.primaryField!.from!.type,
-										),
-									),
-								};
-							}),
-						);
-
-					if (explicitlyClosed) return closeAsDone();
-					if (pageOptions?.advance !== false) {
-						offset += results.length;
-					}
-
-					/* const uniqueIds = new Set(results.map((x) => x.id.primitive));
-				if (uniqueIds.size !== results.length) {
-					throw new Error("Duplicate ids in result set");
-				} */
-
-					if (results.length < amount) {
-						hasMore = false;
-						await this.clearupIterator(requestId);
-					}
-					return results;
-				});
-				return explicitlyClosed ? closeAsDone() : page;
-			} catch (error) {
-				if (explicitlyClosed || this.isClosing()) {
-					return closeAsDone();
-				}
-				throw error;
-			}
-		};
-
-		const iterator = {
-			fetch,
-			/* countStatement: countStmt, */
-			expire: Date.now() + this.iteratorTimeout,
-		};
-
-		this.cursor.set(requestId, iterator);
-		let totalCount: number | undefined = undefined;
-		/* 			return fetch(request.fetch); */
-		const fetchAllFresh = async () => {
-			if (explicitlyClosed || this.isClosing()) {
-				return closeAsDone();
-			}
-			this.assertOpen();
-			try {
-				const freshPlanningScope = this.planner.scope(normalizedQuery);
-				let { sql, bindable: toBind } = convertSearchRequestToQuery(
-					normalizedQuery,
-					this.tables,
-					this._rootTables,
-					{
-						planner: freshPlanningScope,
-						shape: options?.shape,
-						fetchAll: true,
-					},
-				);
-				await freshPlanningScope.beforePrepare();
-				if (explicitlyClosed || this.closed) {
-					return closeAsDone();
-				}
-				const page = await this.withDatabaseBarrier(async () => {
-					if (explicitlyClosed || this.isClosing()) {
-						return closeAsDone();
-					}
-					this.assertOpen();
-					const freshStatement = await this.properties.db.prepare(sql, sql);
-					if (explicitlyClosed) return closeAsDone();
-					iterator.expire = Date.now() + this.iteratorTimeout;
-					const allResults: Record<string, any>[] =
-						await freshPlanningScope.perform(async () =>
-							freshStatement.all(toBind),
-						);
-					if (explicitlyClosed) return closeAsDone();
-					const results: IndexedResult<types.ReturnTypeFromShape<T, S>>[] =
-						await Promise.all(
-							allResults.map(async (row: any) => {
-								let selectedTable = this._rootTables.find(
-									(table) =>
-										row[getTablePrefixedField(table, this.primaryKeyString)] !=
-										null,
-								)!;
-
-								const value = await resolveInstanceFromValue<T, S>(
-									row,
-									this.tables,
-									selectedTable,
-									this.resolveDependencies.bind(this),
-									true,
-									options?.shape,
-								);
-
-								return {
-									value,
-									id: types.toId(
-										convertFromSQLType(
-											row[
-												getTablePrefixedField(
-													selectedTable,
-													this.primaryKeyString,
-												)
-											],
-											selectedTable.primaryField!.from!.type,
-										),
-									),
-								};
-							}),
-						);
-					if (explicitlyClosed) return closeAsDone();
-					started = true;
-					hasMore = false;
-					kept = 0;
-					offset += results.length;
-					await this.clearupIterator(requestId);
-					if (explicitlyClosed) return closeAsDone();
-					markYielded(results);
-					return results;
-				});
-				return explicitlyClosed ? closeAsDone() : page;
-			} catch (error) {
-				if (explicitlyClosed || this.isClosing()) {
-					return closeAsDone();
-				}
-				throw error;
-			}
-		};
-		const next = async (
-			amount: number,
-		): Promise<IndexedResult<types.ReturnTypeFromShape<T, S>>[]> => {
-			if (explicitlyClosed) {
-				return [];
-			}
-			if (amount <= 0) {
-				return [];
-			}
-			if (!mutationMode && this.mutationVersion === iteratorMutationVersion) {
-				const results = await fetch(amount);
-				if (explicitlyClosed) return [];
-				markYielded(results);
-				return results;
-			}
-
-			mutationMode = true;
-			iteratorMutationVersion = this.mutationVersion;
-			kept = undefined;
-
-			const results: IndexedResult<types.ReturnTypeFromShape<T, S>>[] = [];
-			const pageSize = Number.isFinite(amount)
-				? Math.max(Math.floor(amount), 128)
-				: 1024;
-			let scanOffset = 0;
-			let exhausted = false;
-			let hasAdditionalUnseen = false;
-			while (results.length < amount) {
-				const page = await fetch(pageSize, {
-					offset: scanOffset,
-					advance: false,
-				});
-				if (explicitlyClosed) return [];
-				scanOffset += page.length;
-				if (page.length < pageSize) {
-					exhausted = true;
-				}
-				for (const result of page) {
-					const key = idKey(result.id);
-					if (yielded.has(key)) {
-						continue;
-					}
-					if (results.length < amount) {
-						yielded.add(key);
-						results.push(result);
-					} else {
-						hasAdditionalUnseen = true;
-					}
-				}
-				if (page.length === 0 || exhausted) {
-					break;
-				}
-			}
-			hasMore = !exhausted || hasAdditionalUnseen;
-			return results;
-		};
-		const pendingUnseen = async () => {
-			let count = 0;
-			const pageSize = 128;
-			let scanOffset = 0;
-			while (true) {
-				const page = await fetch(pageSize, {
-					offset: scanOffset,
-					advance: false,
-				});
-				if (explicitlyClosed) return 0;
-				scanOffset += page.length;
-				for (const result of page) {
-					if (!yielded.has(idKey(result.id))) {
-						count++;
-					}
-				}
-				if (page.length < pageSize) {
-					break;
-				}
-			}
-			hasMore = count > 0;
-			kept = count;
-			return count;
-		};
-		return {
-			all: async () => {
+				await scope.beforePrepare();
 				if (explicitlyClosed) {
 					return [];
 				}
-				if (
-					!started &&
-					offset === 0 &&
-					!mutationMode &&
-					this.mutationVersion === iteratorMutationVersion
-				) {
-					return fetchAllFresh();
+				if (this.closed) {
+					closeAsDone();
+					return [];
 				}
-				const results: IndexedResult<types.ReturnTypeFromShape<T, S>>[] = [];
-				while (true) {
-					const res = await next(1024);
-					if (explicitlyClosed) return [];
-					results.push(...res);
-					if (res.length === 0 || hasMore === false) {
-						break;
+				const page = await this.withDatabaseBarrier(async () => {
+					if (explicitlyClosed) {
+						return [];
+					}
+					if (this.isClosing()) {
+						closeAsDone();
+						return [];
+					}
+					this.assertOpen();
+					started = true;
+					cursorEntry.expire = Date.now() + this.iteratorTimeout;
+					const statement = await this.properties.db.prepare(sql, sql);
+					if (explicitlyClosed) {
+						return [];
+					}
+					const rows: Record<string, any>[] = await scope.perform(async () =>
+						statement.all(bindable),
+					);
+					if (explicitlyClosed) {
+						return [];
+					}
+					const rootTables = this._rootTables;
+					const seen = new Set<string>();
+					const found: {
+						k: string;
+						row: Record<string, any>;
+						key: StoredKey;
+					}[] = [];
+					for (const row of rows) {
+						let key: StoredKey;
+						if (inKeyOrder) {
+							key = {
+								t: Number(row[ROOT_ORDINAL_ALIAS]),
+								pk: row[PRIMARY_KEY_ALIAS],
+							};
+						} else {
+							const t = rootTables.findIndex(
+								(table) =>
+									row[getTablePrefixedField(table, this.primaryKeyString)] !=
+									null,
+							);
+							key = {
+								t,
+								pk: row[
+									getTablePrefixedField(rootTables[t], this.primaryKeyString)
+								],
+							};
+						}
+						const k = keyOf(key);
+						if (seen.has(k)) {
+							continue; // one row per key: sorted, the first in K order
+						}
+						seen.add(k);
+						found.push({ k, row, key });
+					}
+					const results = await hydrate(found);
+					// Every key is in Y: a later call returns only rows that a
+					// write made match.
+					snapshot = {
+						pk: compactKeys(found.map(({ key }) => key.pk)),
+						t:
+							rootTables.length > 1
+								? compactOrdinals(found.map(({ key }) => key.t))
+								: undefined,
+					};
+					pos = found.length;
+					touched.clear();
+					dirty.clear();
+					extra.clear();
+					hasMore = false;
+					const out = withoutMarked(results);
+					settle(undefined);
+					return out;
+				});
+				// Closed while the page was delivered: discard it.
+				return explicitlyClosed ? [] : page;
+			} catch (error) {
+				if (error === ITERATOR_CLOSED || explicitlyClosed || this.isClosing()) {
+					if (!explicitlyClosed) {
+						closeAsDone();
+					}
+					return [];
+				}
+				throw error;
+			}
+		};
+
+		// close() releases the state once no call is in flight.
+		const releaseState = () => {
+			if (reader) {
+				this.changeJournal.unregister(reader);
+				reader = undefined;
+			}
+			pagedCursor = undefined;
+			counted = undefined;
+			snapshot = undefined;
+			touched.clear();
+			dirty.clear();
+			extra.clear();
+			pendingMarks.length = 0;
+			statements.clear();
+			plan = undefined;
+		};
+		/**
+		 * Drops the unread part of the key list and the journal reader, and
+		 * keeps Y: the next call lists the keys again.
+		 */
+		const dropKeyList = () => {
+			if (reader) {
+				this.changeJournal.unregister(reader);
+				reader = undefined;
+			}
+			if (snapshot && pos < snapshot.pk.length) {
+				snapshot = {
+					pk: snapshot.pk.slice(0, pos),
+					t: snapshot.t?.slice(0, pos),
+				};
+			}
+			dirty.clear();
+			needsRebase = true;
+		};
+		const tracked = async <R>(call: () => Promise<R>): Promise<R> => {
+			inFlight++;
+			try {
+				return await call();
+			} finally {
+				if (--inFlight === 0) {
+					if (explicitlyClosed) {
+						releaseState();
+					} else if (releaseWhenIdle) {
+						releaseWhenIdle = false;
+						dropKeyList();
+					} else if (reader && !this._cursor.has(requestId)) {
+						// It expired while a call ran, and the call failed before it
+						// could renew the expiry: keep the reader releasable.
+						cursorEntry.expire = Date.now() + this.iteratorTimeout;
+						this._cursor.set(requestId, cursorEntry);
 					}
 				}
-				return results;
+			}
+		};
+		const cursorEntry = {
+			expire: Date.now() + this.iteratorTimeout,
+			release: () => {
+				if (inFlight > 0) {
+					// A running call keeps what it reads, and refreshes the expiry.
+					// While the index closes, release once it returns.
+					if (explicitlyClosed || this.isClosing() || this.closed) {
+						releaseWhenIdle = true;
+					}
+					return;
+				}
+				if (explicitlyClosed) {
+					releaseState();
+				} else {
+					dropKeyList();
+				}
 			},
+		};
+		this.cursor.set(requestId, cursorEntry);
+
+		const next = (amount: number): Promise<Result[]> =>
+			tracked(async () => {
+				if (explicitlyClosed) {
+					return [];
+				}
+				const limit = amount === Infinity ? Infinity : Math.floor(amount);
+				if (!(limit > 0)) {
+					return [];
+				}
+				called = true;
+				return admit([] as Result[], (current) => readPage(current, limit));
+			});
+
+		return {
+			all: () =>
+				tracked(async () => {
+					if (explicitlyClosed) {
+						return [];
+					}
+					if (!called && pendingMarks.length === 0) {
+						called = true;
+						return readAllFresh();
+					}
+					called = true;
+					return admit([] as Result[], (current) =>
+						readPage(current, Infinity),
+					);
+				}),
 			close: () => {
 				explicitlyClosed = true;
 				started = true;
 				hasMore = false;
-				kept = 0;
 				this.clearupIterator(requestId);
+				if (inFlight === 0) {
+					releaseState();
+				}
 			},
 			next,
-			markYielded: markYieldedIds,
-			pending: async () => {
+			markYielded: (ids: Iterable<types.IdKey>) => {
 				if (explicitlyClosed) {
-					return 0;
+					return;
 				}
-				if (this.isClosing()) {
-					started = true;
-					hasMore = false;
-					kept = 0;
-					return 0;
+				for (const id of ids) {
+					const value = identity.mark(id.key);
+					pendingMarks.push({ k: keyString(value), value });
 				}
-				this.assertOpen();
-				if (mutationMode || this.mutationVersion !== iteratorMutationVersion) {
-					mutationMode = true;
-					iteratorMutationVersion = this.mutationVersion;
-					return pendingUnseen();
-				}
-				if (!hasMore) {
-					return 0;
-				}
-				if (kept != null) {
-					return kept;
-				}
-				totalCount = totalCount ?? (await this.count(request));
-				if (explicitlyClosed) return 0;
-
-				kept = Math.max(totalCount - offset, 0); // this could potentially be negative if new records are added and we iterate concurrently, so we do Math.max here
-				hasMore = kept > 0;
-				return kept;
 			},
+			pending: () =>
+				tracked(async () => {
+					if (explicitlyClosed) {
+						return 0;
+					}
+					called = true;
+					return admit(0, countPending);
+				}),
 			done: () => {
 				if (explicitlyClosed || this.isClosing()) {
 					return true;
@@ -1608,9 +2572,8 @@ export class SQLiteIndex<T extends Record<string, any>>
 		if (!cache) {
 			return; // already cleared
 		}
-		/* cache.countStatement.finalize?.(); */
-		// 	await cache.fetchStatement.finalize?.();
 		this._cursor.delete(id);
+		cache.release();
 	}
 
 	async getSize(): Promise<number> {

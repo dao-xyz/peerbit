@@ -254,12 +254,10 @@ describe("SQLite change journal", () => {
 				query: [new StringMatch({ key: "label", value: "drop" })],
 			});
 			await store.del({ query: [getMatcher(["id"], "put")] });
-			// Iterators do not read the journal yet, so they register no reader.
+			// An iterator that read everything at once registers no reader.
 			const iterator = store.iterate({});
-			expect(await iterator.next(2)).to.have.length(2);
-			await store.put(doc("between-pages"));
-			expect(await iterator.pending()).to.equal(70);
-			expect(await iterator.all()).to.have.length(70);
+			expect(await iterator.all()).to.have.length(71);
+			await store.put(doc("after-all"));
 			await iterator.close();
 
 			expect(record.callCount).to.equal(0);
