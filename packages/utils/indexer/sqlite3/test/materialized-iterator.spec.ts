@@ -3,6 +3,7 @@ import {
 	Compare,
 	type IndexIterator,
 	IntegerCompare,
+	type IterateOptions,
 	Or,
 	Sort,
 	SortDirection,
@@ -283,6 +284,15 @@ const interceptReads = (
 
 const idsOf = (rows: { id: { primitive: unknown } }[]) =>
 	rows.map((row) => String(row.id.primitive));
+
+/** The keys a statement binds in its JSON key lists (re-checks, rows by key). */
+const keysBound = (values: unknown[] | undefined) =>
+	(values ?? [])
+		.filter(
+			(value): value is string =>
+				typeof value === "string" && value.startsWith("["),
+		)
+		.reduce((sum, list) => sum + (JSON.parse(list) as unknown[]).length, 0);
 
 /** The error a call throws, or undefined. */
 const failed = (call: unknown) =>
@@ -898,6 +908,96 @@ describe("materialized iterator", () => {
 			});
 		}
 	}
+
+	it("runs no statement once done, until a write", async () => {
+		const sort = [new Sort({ key: "rank", direction: SortDirection.ASC })];
+		const shapes: [string, IterateOptions, "next" | "all"][] = [
+			["pages", {}, "next"],
+			["a key list", { query: [], sort }, "next"],
+			["a fresh all()", {}, "all"],
+		];
+		for (const [name, request, first] of shapes) {
+			index = await setup({ schema: Doc }, create);
+			const store = index.store as SQLiteIndex<any>;
+			await store.putBatch(
+				range(0, 10).map((i) => new Doc(pad(i), i, [BigInt(i)])),
+			);
+			const stats = instrument(store);
+			const iterator = store.iterate(request);
+			expect(
+				first === "all" ? await iterator.all() : await iterator.next(10),
+				name,
+			).to.have.length(10);
+			expect(iterator.done(), name).to.equal(true);
+			const before = stats.runs.length;
+			expect(await iterator.next(10), name).to.deep.equal([]);
+			expect(await iterator.pending(), name).to.equal(0);
+			expect(await iterator.all(), name).to.deep.equal([]);
+			expect(iterator.done(), name).to.equal(true);
+			expect(stats.runs.slice(before), name).to.deep.equal([]);
+			// A write: the next call reads again, and returns the row.
+			await store.put(new Doc(pad(10), 0));
+			expect(idsOf(await iterator.next(10)), name).to.deep.equal([pad(10)]);
+			expect(stats.runs.length, name).to.be.greaterThan(before);
+			await iterator.close();
+			await store.stop();
+		}
+	});
+
+	it("re-checks up to 4,096 written keys, and lists the keys again past that", async () => {
+		index = await setup({ schema: Doc }, create);
+		const store = index.store as SQLiteIndex<any>;
+		const n = 5000;
+		const rows = (count: number) =>
+			range(0, count).map((i) => new Doc(pad(i), i, [BigInt(i)]));
+		await store.putBatch(rows(n));
+		const stats = instrument(store);
+		const rechecked: number[] = []; // the keys each re-check binds
+		wrapStatements(store, (sql, statement) => {
+			if (!isRecheck(sql)) {
+				return;
+			}
+			const all = statement.all.bind(statement);
+			statement.all = async (values?: any[]) => {
+				rechecked.push(keysBound(values));
+				return all(values as any);
+			};
+		});
+		for (const written of [4096, 4097]) {
+			// Sorted rows with a child table: the key list from the first call.
+			const iterator = store.iterate({
+				query: [],
+				sort: [new Sort({ key: "rank", direction: SortDirection.DESC })],
+			});
+			expect(idsOf(await iterator.next(10))).to.deep.equal(
+				range(n - 10, n)
+					.reverse()
+					.map(pad),
+			);
+			// Rows at the end of the order, written again unchanged.
+			await store.putBatch(rows(written));
+			const before = stats.runs.length;
+			rechecked.length = 0;
+			expect(idsOf(await iterator.next(10))).to.deep.equal(
+				range(n - 20, n - 10)
+					.reverse()
+					.map(pad),
+			);
+			if (written <= 4096) {
+				// One re-check: the page's 10 keys and the written ones.
+				expect(kinds(stats.runs.slice(before))).to.deep.equal([
+					"recheck",
+					"rows",
+				]);
+				expect(rechecked).to.deep.equal([10 + written]);
+			} else {
+				// Past 4,096 written keys, the keys are listed again instead.
+				expect(kinds(stats.runs.slice(before))).to.deep.equal(["keys", "rows"]);
+				expect(rechecked).to.deep.equal([]);
+			}
+			await iterator.close();
+		}
+	});
 
 	describe("pages", () => {
 		const fill = async (n: number) => {
