@@ -1859,6 +1859,10 @@ export class SQLiteIndex<T extends Record<string, any>>
 		 * the last call: it continues from the first remaining row in K order.
 		 */
 		const rebase = async (current: Plan) => {
+			// The key list held is stale until the one below is read. If the
+			// call fails before then, the next call lists the keys again: a
+			// reader registered here starts after the writes it must see.
+			needsRebase = true;
 			const yielded = yieldedKeys();
 			let pull: ChangeJournalPull | undefined;
 			if (reader) {

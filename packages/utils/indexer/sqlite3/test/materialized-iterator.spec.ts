@@ -281,6 +281,16 @@ const interceptReads = (
 	return reached;
 };
 
+const idsOf = (rows: { id: { primitive: unknown } }[]) =>
+	rows.map((row) => String(row.id.primitive));
+
+/** The error a call throws, or undefined. */
+const failed = (call: unknown) =>
+	Promise.resolve(call).then(
+		() => undefined,
+		(error: unknown) => error,
+	);
+
 const drain = async (
 	iterator: IndexIterator<any, any>,
 	page: number,
@@ -775,6 +785,50 @@ describe("materialized iterator", () => {
 		expect(journal.readerCount).to.equal(0);
 	});
 
+	// A done iterator holds no journal reader: after a write, its next call
+	// lists the keys again, and registers a reader that starts after the write.
+	for (const shape of ["a fresh all()", "a key list read to the end"]) {
+		for (const call of ["next", "pending"] as const) {
+			it(`still sees a row written after ${shape} when listing the keys fails once (${call})`, async () => {
+				index = await setup({ schema: Doc }, create);
+				const store = index.store as SQLiteIndex<any>;
+				await store.putBatch(
+					range(0, 10).map((i) => new Doc(pad(i), i, [BigInt(i)])),
+				);
+				// Sorted rows with a child table: the key list from the first call.
+				const iterator =
+					shape === "a fresh all()"
+						? store.iterate({})
+						: store.iterate({
+								query: [],
+								sort: [new Sort({ key: "rank", direction: SortDirection.ASC })],
+							});
+				expect(
+					shape === "a fresh all()"
+						? await iterator.all()
+						: await iterator.next(100),
+				).to.have.length(10);
+				expect(iterator.done()).to.equal(true);
+				expect(journalOf(store).readerCount).to.equal(0);
+				await store.put(new Doc(pad(50), 50, [50n])); // matches, after the end
+				const failure = new Error("key list read failed");
+				interceptReads(store, isKeyList, { fail: failure });
+				expect(
+					await failed(
+						call === "next" ? iterator.next(10) : iterator.pending(),
+					),
+				).to.equal(failure);
+				if (call === "pending") {
+					expect(await iterator.pending()).to.equal(1);
+					expect(iterator.done()).to.equal(false);
+				}
+				expect(idsOf(await iterator.next(10))).to.deep.equal([pad(50)]);
+				expect(iterator.done()).to.equal(true);
+				expect(journalOf(store).readerCount).to.equal(0);
+			});
+		}
+	}
+
 	describe("pages", () => {
 		const fill = async (n: number) => {
 			index = await setup({ schema: Doc }, create);
@@ -783,8 +837,6 @@ describe("materialized iterator", () => {
 			);
 			return index.store as SQLiteIndex<any>;
 		};
-		const idsOf = (rows: { id: { primitive: unknown } }[]) =>
-			rows.map((row) => String(row.id.primitive));
 
 		it("reads a probe with one statement and one row ahead", async () => {
 			const store = await fill(1000);
