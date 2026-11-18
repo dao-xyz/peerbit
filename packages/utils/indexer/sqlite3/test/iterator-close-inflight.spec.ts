@@ -230,6 +230,20 @@ describe("SQLite in-flight iterator close", () => {
 		await assertTerminal(iterator, atClose);
 	});
 
+	it("discards a pending count of a paged scan closed before delivery", async () => {
+		const iterator = iterate();
+		await iterator.next(64);
+		// No write: pending() counts the matching rows.
+		const held = holdPage(1);
+		const operation = track(Promise.resolve(iterator.pending()));
+		await waitEntered(held.entered, operation);
+		await iterator.close();
+		const atClose = selects;
+		held.release();
+		expect(await operation).to.equal(0);
+		await assertTerminal(iterator, atClose);
+	});
+
 	it("discards an admitted SQL read closed before its result resolves", async () => {
 		const iterator = iterate();
 		const entered = gate(),

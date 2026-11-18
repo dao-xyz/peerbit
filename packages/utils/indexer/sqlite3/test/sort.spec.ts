@@ -231,10 +231,11 @@ describe("sort", () => {
 			...(await iterator.next(1)),
 		];
 
-		// The keys in order, then the rows by key, and no OFFSET.
+		// The first page, then the pages after the last key: both ordered, and
+		// no OFFSET.
 		expect(preparedStatement).to.have.length(2);
-		expect(preparedStatement[0]).to.contain("ORDER BY");
 		for (const sql of preparedStatement) {
+			expect(sql).to.contain("ORDER BY");
 			expect(sql).to.not.match(/\bOFFSET\b/i);
 		}
 

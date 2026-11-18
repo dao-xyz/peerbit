@@ -165,6 +165,27 @@ const isRecheck = (sql: string) =>
 /** Rows by key (S5). */
 const isRowsByKey = (sql: string) =>
 	/json_each/.test(sql) && !/ORDER BY/.test(sql);
+/** Pages (S1, S2): the search's rows in order, `LIMIT ?`. */
+const isPage = (sql: string) =>
+	/"__pk"/.test(sql) && /\blimit \?\s*$/i.test(sql.trim());
+/** The count of the matching rows. */
+const isCount = (sql: string) => /\bcount\s*\(/i.test(sql);
+
+/** What each statement an iterator ran does, in order. */
+const kinds = (runs: string[]) =>
+	runs.map((sql) =>
+		isPage(sql)
+			? "page"
+			: isKeyList(sql)
+				? "keys"
+				: isRecheck(sql)
+					? "recheck"
+					: isRowsByKey(sql)
+						? "rows"
+						: isCount(sql)
+							? "count"
+							: "other",
+	);
 
 /**
  * Wraps `all` of every statement the index prepares from now on, and of
@@ -200,7 +221,7 @@ const instrument = (store: SQLiteIndex<any>) => {
 	const stats = {
 		rows: 0,
 		offsets: [] as number[],
-		/** The SQL of each statement run, in order. */
+		/** The SQL of each statement run, in order (counts included). */
 		runs: [] as string[],
 	};
 	wrapStatements(store, (sql, statement) => {
@@ -214,6 +235,14 @@ const instrument = (store: SQLiteIndex<any>) => {
 			}
 			return rows;
 		};
+		if (isCount(sql)) {
+			const get = statement.get.bind(statement);
+			statement.get = async (values?: any[]) => {
+				const row = await get(values as any);
+				stats.runs.push(sql);
+				return row;
+			};
+		}
 	});
 	return stats;
 };
@@ -746,6 +775,161 @@ describe("materialized iterator", () => {
 		expect(journal.readerCount).to.equal(0);
 	});
 
+	describe("pages", () => {
+		const fill = async (n: number) => {
+			index = await setup({ schema: Doc }, create);
+			await index.store.putBatch!(
+				range(0, n).map((i) => new Doc(pad(i), i, [BigInt(i)])),
+			);
+			return index.store as SQLiteIndex<any>;
+		};
+		const idsOf = (rows: { id: { primitive: unknown } }[]) =>
+			rows.map((row) => String(row.id.primitive));
+
+		it("reads a probe with one statement and one row ahead", async () => {
+			const store = await fill(1000);
+			const stats = instrument(store);
+			const iterator = store.iterate({});
+			const rows = await iterator.next(1);
+			expect(idsOf(rows)).to.deep.equal([pad(0)]);
+			expect(rows[0].value.coords).to.deep.equal([0n]);
+			expect(iterator.done()).to.equal(false);
+			expect(kinds(stats.runs)).to.deep.equal(["page"]);
+			expect(stats.rows).to.equal(2);
+			// Pages hold no key list and no journal reader.
+			expect(journalOf(store).readerCount).to.equal(0);
+			await iterator.close();
+		});
+
+		it("reads the next page after the last key returned", async () => {
+			const store = await fill(1000);
+			const db = store.properties.db;
+			const prepare = db.prepare.bind(db);
+			const stats = instrument(store);
+			let after: { sql: string; values: any[] } | undefined;
+			wrapStatements(store, (sql, statement) => {
+				const all = statement.all.bind(statement);
+				statement.all = async (values?: any[]) => {
+					after = { sql, values: values ?? [] };
+					return all(values as any);
+				};
+			});
+			const iterator = store.iterate({});
+			const first = await iterator.next(100);
+			const second = await iterator.next(100);
+			expect(idsOf([...first, ...second])).to.deep.equal(
+				range(0, 200).map(pad),
+			);
+			expect(kinds(stats.runs)).to.deep.equal(["page", "page"]);
+			// Each page reads one row ahead, which the next page reads again.
+			expect(stats.rows).to.equal(202);
+			expect(journalOf(store).readerCount).to.equal(0);
+			// The second page seeks past the last key; it scans no row before it.
+			const plan: { detail: string }[] = await (
+				await prepare("EXPLAIN QUERY PLAN " + after!.sql)
+			).all(after!.values);
+			expect(
+				plan.some((row) => /^SEARCH .*\(id>\?\)/.test(row.detail)),
+			).to.equal(true);
+			await iterator.close();
+		});
+
+		it("reads by pages for up to 2,048 rows, then lists the keys", async () => {
+			const store = await fill(3000);
+			const stats = instrument(store);
+			const ids = await drain(store.iterate({}), 100);
+			expect(ids).to.deep.equal(range(0, 3000).map(pad));
+			// 21 pages read 2,121 rows (one ahead each). The 22nd page lists the
+			// keys without the 2,100 returned, and reads its rows by key.
+			expect(kinds(stats.runs)).to.deep.equal([
+				...range(0, 21).map(() => "page"),
+				"keys",
+				...range(0, 9).map(() => "rows"),
+			]);
+			expect(stats.offsets).to.deep.equal([]);
+		});
+
+		it("lists the keys at the first write, and returns a row written behind the pages first", async () => {
+			const store = await fill(100);
+			const stats = instrument(store);
+			const iterator = store.iterate({});
+			expect(idsOf(await iterator.next(10))).to.deep.equal(
+				range(0, 10).map(pad),
+			);
+			expect(idsOf(await iterator.next(10))).to.deep.equal(
+				range(10, 20).map(pad),
+			);
+			await store.put(new Doc(pad(5) + "x", 0)); // new, behind the last key
+			await store.put(new Doc(pad(3), 3)); // returned
+			expect(idsOf(await iterator.next(10))).to.deep.equal([
+				pad(5) + "x",
+				...range(20, 29).map(pad),
+			]);
+			expect(kinds(stats.runs)).to.deep.equal(["page", "page", "keys", "rows"]);
+			expect(journalOf(store).readerCount).to.equal(1);
+			await iterator.close();
+			expect(journalOf(store).readerCount).to.equal(0);
+		});
+
+		it("lists the keys once a key is marked", async () => {
+			const store = await fill(100);
+			const stats = instrument(store);
+			const iterator = store.iterate({});
+			await iterator.next(10);
+			await iterator.markYielded!([toId(pad(12))]);
+			expect(idsOf(await iterator.next(10))).to.deep.equal(
+				range(10, 21)
+					.filter((i) => i !== 12)
+					.map(pad),
+			);
+			expect(kinds(stats.runs)).to.deep.equal(["page", "keys", "rows"]);
+		});
+
+		it("counts pending rows once until a write", async () => {
+			const store = await fill(100);
+			const stats = instrument(store);
+			const iterator = store.iterate({});
+			await iterator.next(10);
+			expect(await iterator.pending()).to.equal(90);
+			expect(await iterator.pending()).to.equal(90);
+			await iterator.next(10);
+			expect(await iterator.pending()).to.equal(80);
+			expect(kinds(stats.runs)).to.deep.equal(["page", "count", "page"]);
+			// A write: pending() lists the keys, and the pages end.
+			await store.put(new Doc(pad(200), 200));
+			expect(await iterator.pending()).to.equal(81);
+			expect(kinds(stats.runs).slice(3)).to.deep.equal(["keys"]);
+			expect(await iterator.next(100)).to.have.length(81);
+			expect(iterator.done()).to.equal(true);
+		});
+
+		it("reads the rest with one statement after a page", async () => {
+			const store = await fill(1000);
+			const stats = instrument(store);
+			const iterator = store.iterate({});
+			await iterator.next(10);
+			expect(idsOf(await iterator.all())).to.deep.equal(
+				range(10, 1000).map(pad),
+			);
+			expect(kinds(stats.runs)).to.deep.equal(["page", "page"]);
+			expect(iterator.done()).to.equal(true);
+		});
+
+		it("keeps paging after it expires", async () => {
+			const store = await fill(100);
+			const stats = instrument(store);
+			const iterator = store.iterate({});
+			await iterator.next(10);
+			for (const key of [...store.cursor.keys()]) {
+				await store["clearupIterator"](key);
+			}
+			expect(idsOf(await iterator.next(10))).to.deep.equal(
+				range(10, 20).map(pad),
+			);
+			expect(kinds(stats.runs)).to.deep.equal(["page", "page"]);
+		});
+	});
+
 	describe("lifecycle", () => {
 		const fill = async () => {
 			index = await setup({ schema: Row }, create);
@@ -800,7 +984,8 @@ describe("materialized iterator", () => {
 			const hold = new Promise<void>((resolve) => (release = resolve));
 			const iterator = sorted();
 			await iterator.next(64);
-			await index.store.put(new Row(1151, 1)); // the next page re-checks it
+			// A write: the next page lists the keys and reads its rows by key.
+			await index.store.put(new Row(1151, 1));
 			const held = interceptReads(
 				index.store as SQLiteIndex<any>,
 				isRowsByKey,
@@ -822,7 +1007,7 @@ describe("materialized iterator", () => {
 			const hold = new Promise<void>((resolve) => (release = resolve));
 			const iterator = sorted();
 			await iterator.next(64);
-			await index.store.put(new Row(1151, 1));
+			await index.store.put(new Row(1151, 1)); // the next page lists the keys
 			const held = interceptReads(
 				index.store as SQLiteIndex<any>,
 				isRowsByKey,
@@ -842,7 +1027,7 @@ describe("materialized iterator", () => {
 			await fill();
 			const iterator = sorted();
 			await iterator.next(64);
-			await index.store.put(new Row(2000, 7));
+			await index.store.put(new Row(2000, 7)); // the next page lists the keys
 			const failure = new Error("page read failed");
 			interceptReads(index.store as SQLiteIndex<any>, isRowsByKey, {
 				fail: failure,
@@ -856,6 +1041,68 @@ describe("materialized iterator", () => {
 				(await iterator.next(Infinity)).map((row) => row.value.id),
 			).to.deep.equal([...range(64, 1152), 2000]);
 			expect(await iterator.pending()).to.equal(0);
+		});
+
+		// No write: the next page continues after the last key returned.
+		it("leaves out a row marked while its page is read (paged)", async () => {
+			await fill();
+			let release!: () => void;
+			const hold = new Promise<void>((resolve) => (release = resolve));
+			const iterator = sorted();
+			await iterator.next(64);
+			const held = interceptReads(index.store as SQLiteIndex<any>, isPage, {
+				hold,
+			});
+			const page = iterator.next(64);
+			await held;
+			await iterator.markYielded!([toId(100)]);
+			release();
+			expect((await page).map((row) => row.value.id)).to.deep.equal(
+				range(64, 128).filter((id) => id !== 100),
+			);
+			expect(await iterator.pending()).to.equal(1024);
+			expect(
+				(await iterator.next(Infinity)).map((row) => row.value.id),
+			).to.deep.equal(range(128, 1152));
+		});
+
+		it("discards a page closed before delivery (paged)", async () => {
+			await fill();
+			let release!: () => void;
+			const hold = new Promise<void>((resolve) => (release = resolve));
+			const iterator = sorted();
+			await iterator.next(64);
+			const held = interceptReads(index.store as SQLiteIndex<any>, isPage, {
+				hold,
+			});
+			const page = iterator.next(100);
+			await held;
+			await iterator.close();
+			release();
+			expect(await page).to.deep.equal([]);
+			expect(await iterator.pending()).to.equal(0);
+			expect(iterator.done()).to.equal(true);
+			expect(await iterator.next(1)).to.deep.equal([]);
+		});
+
+		it("consumes nothing when a page read fails (paged)", async () => {
+			await fill();
+			const iterator = sorted();
+			await iterator.next(64);
+			const failure = new Error("page read failed");
+			interceptReads(index.store as SQLiteIndex<any>, isPage, {
+				fail: failure,
+			});
+			const error = await Promise.resolve(iterator.next(64)).then(
+				() => undefined,
+				(e: unknown) => e,
+			);
+			expect(error).to.equal(failure);
+			expect(
+				(await iterator.next(Infinity)).map((row) => row.value.id),
+			).to.deep.equal(range(64, 1152));
+			expect(await iterator.pending()).to.equal(0);
+			expect(iterator.done()).to.equal(true);
 		});
 	});
 });

@@ -2,7 +2,7 @@
 "@peerbit/indexer-sqlite3": patch
 ---
 
-SQLite iterators no longer page with OFFSET. An iterator reads its search in the search's order with the primary key as the tiebreak: it lists the keys of the matching rows once and reads each page's rows by key. When rows change between two calls, the next call re-checks only the changed rows, instead of reading every earlier row again on each page. Each call (`next`, `pending`, `all`) runs in one database admission, so a delete that was queued before the next page can no longer make that page skip a live row. Also:
+SQLite iterators no longer page with OFFSET. Short reads stay as cheap as before: a search over one table reads its first page with one statement and one extra row (which tells whether more remain), and in primary-key order the next pages continue after the last key returned, while nothing is written or marked, for up to 2,048 rows. Every other read lists the keys of the matching rows once, in the search's order with the primary key as the tiebreak, and reads each page's rows by key. After rows change between two calls, each call re-checks only the changed rows (a short read first lists the remaining keys once), instead of reading every earlier row again on each page. Each call (`next`, `pending`, `all`) runs in one database admission, so a delete that was queued before the next page can no longer make that page skip a live row. Also:
 
 - `done()` is true right after the call that returns the last row, without one more empty call;
 - `next(Infinity)` works on a fresh iterator (it threw "datatype mismatch");

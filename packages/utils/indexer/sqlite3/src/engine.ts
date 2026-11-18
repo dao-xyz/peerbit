@@ -37,6 +37,7 @@ import {
 	convertFromSQLType,
 	convertKeysToRowsQuery,
 	convertSearchRequestToKeyQuery,
+	convertSearchRequestToPageQuery,
 	convertSearchRequestToQuery,
 	convertSumRequestToQuery,
 	convertToSQLType,
@@ -103,6 +104,13 @@ const PUT_BATCH_CHUNK_SIZE = 64;
  * keys it re-checks in one call: past that, it lists the keys again.
  */
 const SNAPSHOT_WINDOW = 4096;
+
+/**
+ * Rows an iterator in primary-key order reads by pages after its first one
+ * (S2) before it lists its keys. A short read (a probe, a few pages) holds
+ * only the keys it returned.
+ */
+const PAGED_ROWS_BUDGET = 2048;
 
 /** A primary key as one root table stores it. */
 type StoredKey = { t: number; pk: unknown };
@@ -1482,12 +1490,22 @@ export class SQLiteIndex<T extends Record<string, any>>
 		type KeyStatement = { sql: string; bindable: readonly unknown[] };
 
 		// An iterator reads its search in the order key K (the sort terms, the
-		// primary key, then the root table) and binds no OFFSET. Its first call
-		// lists the keys of the matching rows in K order, one statement (S3),
-		// and every page reads its rows by key (S5). While it holds that key
-		// list it reads the change journal: each call re-checks the keys written
-		// since the last one with the search restricted to those keys (S4), and
-		// returns a changed row at its current position.
+		// primary key, then the root table) and binds no OFFSET, from one of two
+		// sources.
+		//
+		// - Pages (K): a search over one root table and one branch, with no
+		//   child table in its query, reads its first page with the search's
+		//   own statement, LIMIT n+1 (S1); the extra row tells whether more
+		//   remain. In primary-key order later pages continue after the last
+		//   key returned (S2) while nothing is written or marked, for up to
+		//   PAGED_ROWS_BUDGET rows. Pages hold the keys they returned (Y), and
+		//   no key list or journal reader.
+		// - Key list (S): every other call lists the keys of the matching rows
+		//   in K order, one statement (S3), without the keys returned so far,
+		//   and every page reads its rows by key (S5). While it holds that key
+		//   list it reads the change journal: each call re-checks the keys
+		//   written since the last one with the search restricted to those keys
+		//   (S4), and returns a changed row at its current position.
 		//
 		// Every call (next, pending, all) runs all of its statements in one
 		// database admission, and changes nothing unless they all succeed. It
@@ -1532,6 +1550,18 @@ export class SQLiteIndex<T extends Record<string, any>>
 		/** The index closed during a call: drop the reader when none runs. */
 		let releaseWhenIdle = false;
 
+		// Pages (K). Y is `extra`: the keys the pages returned.
+		/** The writes and journal epoch when the first page was read. */
+		let pagedAt: { version: number; epoch: number } | undefined;
+		/** Rows the pages read, the extra rows included. */
+		let pagedRows = 0;
+		/** The primary key (as stored) of the last row a page returned. */
+		let pagedCursor: unknown;
+		/** A mark was applied: pages cannot skip it, so the key list serves. */
+		let marked = false;
+		/** The matching rows for pending(), while nothing is written. */
+		let counted: { version: number; epoch: number; count: number } | undefined;
+
 		type Plan = {
 			/** The journal epoch the statements were planned in. */
 			epoch: number;
@@ -1543,6 +1573,12 @@ export class SQLiteIndex<T extends Record<string, any>>
 			recheck: KeyStatement;
 			/** S5, rows by key, per root table. */
 			rows: KeyStatement[];
+			/** S1, the head page, when the search can page (K). */
+			head?: KeyStatement;
+			/** S2, the page after a primary key, in primary-key order. */
+			after?: KeyStatement;
+			/** The count of matching rows, when the search can page. */
+			count?: KeyStatement;
 		};
 		let plan: Plan | undefined;
 		/** This iterator's prepared statements, by SQL. */
@@ -1577,6 +1613,38 @@ export class SQLiteIndex<T extends Record<string, any>>
 			const rows = rootTables.map((table) =>
 				convertKeysToRowsQuery(table, shape, { planner: scope }),
 			);
+			// Pages need one root table and one branch, and no child table in the
+			// query: then S1 stops after its LIMIT, without grouping every row.
+			let head: KeyStatement | undefined;
+			let after: KeyStatement | undefined;
+			let count: KeyStatement | undefined;
+			if (rootTables.length === 1 && keys.arms === 1 && !keys.grouped) {
+				const first = convertSearchRequestToPageQuery(
+					normalizedQuery,
+					this.tables,
+					rootTables,
+					{ planner: scope, shape },
+				);
+				// Sorting rows whose hydration groups child rows reads every row
+				// before the first: the key list serves that search.
+				if (!first.order.sorted || !first.grouped) {
+					head = first;
+					// K is the primary key alone.
+					if (first.order.terms.length === 1) {
+						after = convertSearchRequestToPageQuery(
+							normalizedQuery,
+							this.tables,
+							rootTables,
+							{ planner: scope, shape, after: [false] },
+						);
+					}
+					count = convertCountRequestToQuery(
+						{ query: normalizedQuery.query },
+						this.tables,
+						rootTables[0],
+					);
+				}
+			}
 			await scope.beforePrepare();
 			statements.clear();
 			return (plan = {
@@ -1586,15 +1654,13 @@ export class SQLiteIndex<T extends Record<string, any>>
 				keys,
 				recheck,
 				rows,
+				head,
+				after,
+				count,
 			});
 		};
 
-		const run = async (
-			current: Plan,
-			statement: KeyStatement,
-			values: Parameters<typeof bindKeyQuery>[1] = {},
-		): Promise<Record<string, any>[]> => {
-			const bound = bindKeyQuery(statement.bindable, values);
+		const prepare = async (statement: KeyStatement) => {
 			let prepared = statements.get(statement.sql);
 			if (!prepared) {
 				prepared = await this.properties.db.prepare(
@@ -1603,8 +1669,16 @@ export class SQLiteIndex<T extends Record<string, any>>
 				);
 				statements.set(statement.sql, prepared);
 			}
-			const ready = prepared;
-			const rows = await current.scope.perform(async () => ready.all(bound));
+			return prepared;
+		};
+		const run = async (
+			current: Plan,
+			statement: KeyStatement,
+			values: Parameters<typeof bindKeyQuery>[1] = {},
+		): Promise<Record<string, any>[]> => {
+			const bound = bindKeyQuery(statement.bindable, values);
+			const prepared = await prepare(statement);
+			const rows = await current.scope.perform(async () => prepared.all(bound));
 			if (explicitlyClosed) {
 				throw ITERATOR_CLOSED;
 			}
@@ -1752,6 +1826,7 @@ export class SQLiteIndex<T extends Record<string, any>>
 			for (const { k, value } of pendingMarks) {
 				dirty.delete(k);
 				extra.set(k, value);
+				marked = true;
 			}
 			pendingMarks.length = 0;
 		};
@@ -2015,11 +2090,75 @@ export class SQLiteIndex<T extends Record<string, any>>
 			doneAt.version === this.mutationVersion &&
 			doneAt.epoch === this.changeJournal.epoch;
 
+		/**
+		 * Nothing was written, marked or reopened since the first page: every
+		 * key in Y matches, and the pages read a prefix of K order.
+		 */
+		const pagesHold = (current: Plan) =>
+			current.head !== undefined &&
+			!snapshot &&
+			!marked &&
+			(!pagedAt ||
+				(pagedAt.version === this.mutationVersion &&
+					pagedAt.epoch === this.changeJournal.epoch));
+
+		/**
+		 * Whether pages serve the next page: the first one (S1), or one after
+		 * the last key returned (S2) within the budget.
+		 */
+		const pagesServe = (current: Plan) =>
+			pagesHold(current) &&
+			(!pagedAt ||
+				(current.after !== undefined &&
+					pagedCursor !== undefined &&
+					pagedRows <= PAGED_ROWS_BUDGET));
+
+		/** The next page from S1 or S2: `amount` rows, and one to look ahead. */
+		const readPaged = async (current: Plan, amount: number) => {
+			const first = !pagedAt;
+			const limit = amount === Infinity ? Infinity : amount + 1;
+			const rows = first
+				? await run(current, current.head!, { limit })
+				: await run(current, current.after!, {
+						cursor: [pagedCursor],
+						limit,
+					});
+			const page = (rows.length > amount ? rows.slice(0, amount) : rows).map(
+				(row) => {
+					const key = rowKey(current, row);
+					return { k: keyOf(key), row, key };
+				},
+			);
+			const keyed = await hydrate(page);
+			// Every statement succeeded: commit.
+			if (first) {
+				pagedAt = {
+					version: this.mutationVersion,
+					epoch: this.changeJournal.epoch,
+				};
+			}
+			pagedRows += rows.length;
+			if (page.length > 0) {
+				pagedCursor = page[page.length - 1].key.pk;
+			}
+			for (const { k, key } of page) {
+				extra.set(k, identity.value(key.t, key.pk));
+			}
+			hasMore = rows.length > amount;
+			const results = withoutMarked(keyed);
+			settle(undefined);
+			return results;
+		};
+
 		const readPage = async (current: Plan, amount: number) => {
 			applyMarks();
 			if (unchangedSinceDone()) {
 				return [];
 			}
+			if (pagesServe(current)) {
+				return readPaged(current, amount);
+			}
+			// The key list serves: list the keys (without Y) when there is none.
 			const pull = await sync(current);
 			const page = await readSnapshot(current, amount);
 			// Every statement succeeded: commit.
@@ -2041,6 +2180,25 @@ export class SQLiteIndex<T extends Record<string, any>>
 			applyMarks();
 			if (unchangedSinceDone()) {
 				return 0;
+			}
+			if (pagesHold(current)) {
+				// The matching rows minus Y, which all match: one COUNT per write.
+				const version = this.mutationVersion;
+				const epoch = this.changeJournal.epoch;
+				if (counted?.version !== version || counted.epoch !== epoch) {
+					const statement = await prepare(current.count!);
+					const row = await statement.get(
+						current.count!.bindable as BindableValue[],
+					);
+					if (explicitlyClosed) {
+						throw ITERATOR_CLOSED;
+					}
+					counted = { version, epoch, count: Number(row?.count ?? 0) };
+				}
+				const count = Math.max(counted.count - extra.size, 0);
+				hasMore = count > 0;
+				settle(undefined);
+				return count;
 			}
 			const pull = await sync(current);
 			const list = snapshot!;
@@ -2246,6 +2404,8 @@ export class SQLiteIndex<T extends Record<string, any>>
 				this.changeJournal.unregister(reader);
 				reader = undefined;
 			}
+			pagedCursor = undefined;
+			counted = undefined;
 			snapshot = undefined;
 			touched.clear();
 			dirty.clear();
