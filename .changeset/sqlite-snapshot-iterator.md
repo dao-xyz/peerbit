@@ -6,6 +6,9 @@ SQLite iterators no longer page with OFFSET. Short reads stay as cheap as before
 
 - `done()` is true right after the call that returns the last row, without one more empty call;
 - `next(Infinity)` works on a fresh iterator (it threw "datatype mismatch");
-- a search over several root tables (a polymorphic schema) is ordered by key across the tables, and a key present in more than one of them is returned once.
+- a search over several root tables (a polymorphic schema), a sorted `all()` included, is ordered by key across the tables, and a key present in more than one of them is returned once;
+- on Node 22, a string with a lone surrogate (an unpaired UTF-16 code unit) is now stored with U+FFFD in its place, as on Node 24 and in the browser. better-sqlite3 stored the surrogate's own three bytes on Node 22, which read back as three U+FFFD, so an iterator could not find such a row again by its key. A row stored that way before this release is no longer found by the original string, as on Node 24.
 
 The mutable iterator contract is unchanged: rows inserted or moved behind the cursor come at the front of the next call, an exhausted iterator sees later writes, and `markYielded`, `pending()` and `close()` behave as before.
+
+A key list costs memory and time per open iterator: each iterator that lists keys holds its own list until it is done, closed or expires. After one write, 20 open iterators over 100,000 rows with 46-character keys held 7.3 MB each (147 MB in all, against 0.5 MB before this release), and listing their keys took about 26 ms each. A budget per database that drops idle key lists is planned.
