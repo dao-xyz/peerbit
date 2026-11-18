@@ -189,8 +189,29 @@ try {
 	assert.equal(
 		packedPeerbitVite.manifest.engines?.node,
 		viteNodeEngine,
-		"packed @peerbit/vite must declare the Node.js floor imposed by Vite 7",
+		"packed @peerbit/vite must declare the Node.js floor of its Vite peers",
 	);
+	// A Vite plugin runs inside the application's own Vite, so the packed
+	// plugin declares the range it supports as a peer and nothing ships Vite.
+	const vitePeerRange = packedPeerbitVite.manifest.peerDependencies?.vite;
+	assert(
+		typeof vitePeerRange === "string" && vitePeerRange.length > 0,
+		"packed @peerbit/vite must take the application's Vite as a peer dependency",
+	);
+	assert.notEqual(
+		packedPeerbitVite.manifest.peerDependenciesMeta?.vite?.optional,
+		true,
+		"packed @peerbit/vite must not make its Vite peer optional",
+	);
+	for (const [packageName, { manifest: packedManifest }] of packedPackages) {
+		for (const dependencyField of ["dependencies", "optionalDependencies"]) {
+			assert.equal(
+				packedManifest[dependencyField]?.vite,
+				undefined,
+				`${packageName}: packed ${dependencyField} must not ship Vite; applications install their own`,
+			);
+		}
+	}
 	const packedDocument = packedPackages.get("@peerbit/document");
 	const workspaceTime = workspaceByName.get("@peerbit/time");
 	for (const packageName of ["peerbit", "@peerbit/stream"]) {
@@ -220,6 +241,10 @@ try {
 		undefined,
 		"packed @peerbit/document must not hide @peerbit/time in devDependencies",
 	);
+	// An application installs its own Vite as a development tool; the consumer
+	// does the same with the plugin's peer range, so npm picks the newest Vite
+	// that @peerbit/vite admits.
+	const devDependencies = { vite: vitePeerRange };
 	await writeFile(
 		join(consumerDirectory, "package.json"),
 		JSON.stringify(
@@ -228,6 +253,7 @@ try {
 				private: true,
 				type: "module",
 				dependencies,
+				devDependencies,
 			},
 			null,
 			2,
@@ -259,7 +285,9 @@ try {
 			join(consumerDirectory, "smoke.mjs"),
 			[
 				'import assert from "node:assert/strict";',
+				'import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";',
 				'import { createRequire } from "node:module";',
+				'import { join } from "node:path";',
 				'import { fileURLToPath, pathToFileURL } from "node:url";',
 				"",
 				"const { PreHash, Secp256k1Keypair, verify } = await import('@peerbit/crypto');",
@@ -285,11 +313,26 @@ try {
 				"const { default: peerbitVite } = await import('@peerbit/vite');",
 				"assert.equal(typeof peerbitVite, 'function');",
 				"const peerbitViteEntry = fileURLToPath(import.meta.resolve('@peerbit/vite'));",
-				"const requireFromPeerbitVite = createRequire(peerbitViteEntry);",
-				"const vitePath = requireFromPeerbitVite.resolve('vite');",
+				"const vitePath = createRequire(peerbitViteEntry).resolve('vite');",
+				"assert.equal(vitePath, createRequire(import.meta.url).resolve('vite'), 'the Vite peer must resolve to the consumer Vite');",
 				"const vite = await import(pathToFileURL(vitePath).href);",
-				"const transformed = await vite.transformWithEsbuild('const answer: number = 42', 'probe.ts', { loader: 'ts' });",
-				"assert.match(transformed.code, /answer/);",
+				"const viteProject = await mkdtemp(join(process.cwd(), 'vite-project-'));",
+				"await mkdir(join(viteProject, 'public'));",
+				"await writeFile(join(viteProject, 'index.html'), '<!doctype html><title>Peerbit</title>');",
+				"// No app code is built, so alias events as the plugin's integration test does instead of resolving the browser polyfill.",
+				"const viteConfig = {",
+				"  root: viteProject,",
+				"  configFile: false,",
+				"  logLevel: 'silent',",
+				"  publicDir: join(viteProject, 'public'),",
+				"  resolve: { alias: { events: 'node:events' } },",
+				"};",
+				"await vite.build({ ...viteConfig, plugins: peerbitVite(), build: { outDir: join(viteProject, 'dist') } });",
+				"const sqliteWasm = await readFile(join(viteProject, 'dist', 'peerbit', 'sqlite3', 'sqlite3.wasm'));",
+				"assert.deepEqual([...sqliteWasm.subarray(0, 4)], [0, 97, 115, 109], 'Vite ' + vite.version + ' must emit the SQLite Wasm asset through the packed plugin');",
+				"// Creating a dev server runs the plugin's middleware placement, which throws if Vite's internal anchors moved.",
+				"const viteServer = await vite.createServer({ ...viteConfig, plugins: peerbitVite(), server: { middlewareMode: true, ws: false } });",
+				"await viteServer.close();",
 				"for (const packageName of ['@peerbit/any-store-proxy', '@peerbit/document-react', '@peerbit/indexer-tests', '@peerbit/react']) {",
 				"  assert.match(import.meta.resolve(packageName), /dist\\/src\\/index\\.js$/);",
 				"}",
@@ -307,7 +350,8 @@ try {
 	// react-native-webrtc's "react-native >=0.60.0" peer (and its metro /
 	// image-size subtree) never enters the published consumer closure. The Node
 	// implementation of @libp2p/webrtc uses node-datachannel; the subtree is
-	// react-native-only dead weight here.
+	// react-native-only dead weight here. @peerbit/vite's Vite peer is satisfied
+	// by the consumer's own development dependency, as in an application.
 	run(
 		"npm",
 		[
@@ -330,6 +374,7 @@ try {
 	);
 	assert.equal(consumerManifest.overrides, undefined);
 	assert.deepEqual(consumerManifest.dependencies, dependencies);
+	assert.deepEqual(consumerManifest.devDependencies, devDependencies);
 	assert.equal(packedPackages.size, publishablePackages.length);
 
 	const lockfile = JSON.parse(
@@ -442,20 +487,52 @@ try {
 		}
 	}
 	assert.deepEqual(lockfile.packages[""].dependencies, dependencies);
+	// The production audit omits only what the consumer's own Vite brings.
+	assert.deepEqual(lockfile.packages[""].devDependencies, devDependencies);
 	const lockfilePackages = Object.entries(lockfile.packages);
 	const installedViteEntries = lockfilePackages.filter(([packagePath]) =>
 		packagePath.endsWith("node_modules/vite"),
 	);
+	assert.deepEqual(
+		installedViteEntries.map(([packagePath]) => packagePath),
+		["node_modules/vite"],
+		"the clean consumer must install exactly one Vite runtime, its own",
+	);
+	const installedVite = installedViteEntries[0][1];
 	assert.equal(
-		installedViteEntries.length,
-		1,
-		"the clean consumer must install exactly one Vite runtime",
+		installedVite.dev,
+		true,
+		"Vite must stay a development tool of the consumer, outside the published production closure",
 	);
 	assert.equal(
-		installedViteEntries[0][1].engines?.node,
+		installedVite.engines?.node,
 		viteNodeEngine,
-		"the clean consumer must retain Vite 7's Node.js engine contract",
+		"the clean consumer must retain Vite's Node.js engine contract",
 	);
+	const viteEdges = lockfilePackages.flatMap(([packagePath, entry]) =>
+		[
+			"dependencies",
+			"devDependencies",
+			"optionalDependencies",
+			"peerDependencies",
+		]
+			.filter((dependencyField) => entry[dependencyField]?.vite !== undefined)
+			.map(
+				(dependencyField) =>
+					`${packagePath || "(consumer)"} ${dependencyField} ${entry[dependencyField].vite}`,
+			),
+	);
+	assert.deepEqual(
+		viteEdges.sort(),
+		[
+			`(consumer) devDependencies ${vitePeerRange}`,
+			`node_modules/@peerbit/vite peerDependencies ${vitePeerRange}`,
+		],
+		"only the consumer and @peerbit/vite's peer edge may reach Vite",
+	);
+	const developmentOnlyEntries = lockfilePackages.filter(
+		([, entry]) => entry.dev === true,
+	).length;
 	for (const { manifest } of publishablePackages) {
 		const topLevelPath = `node_modules/${manifest.name}`;
 		const topLevelEntry = lockfile.packages[topLevelPath];
@@ -498,13 +575,14 @@ try {
 			);
 		}
 	}
-	const esbuildVersions = Object.entries(lockfile.packages)
-		.filter(([path]) => path.endsWith("node_modules/esbuild"))
+	// Vite 7 installs esbuild; Vite 8 leaves it an optional peer. Wherever the
+	// consumer installs esbuild, it must stay on the patched 0.27/0.28 line.
+	const esbuildVersions = lockfilePackages
+		.filter(([packagePath]) => packagePath.endsWith("node_modules/esbuild"))
 		.map(([, entry]) => entry.version);
-	assert(esbuildVersions.length > 0);
 	assert(
-		esbuildVersions.some((version) => /^0\.(27|28)\./.test(version)),
-		`expected Vite to install a compatible esbuild 0.27/0.28 line, got ${esbuildVersions.join(", ")}`,
+		esbuildVersions.every((version) => /^0\.(27|28)\./.test(version)),
+		`expected only the patched esbuild 0.27/0.28 line, got ${esbuildVersions.join(", ")}`,
 	);
 
 	if (!advisoryOnly) {
@@ -551,9 +629,9 @@ try {
 				" security roots and all " +
 				publishablePackages.length +
 				" publishable workspace packages as exact local tarballs, " +
-				"a peer-free install, esbuild " +
-				esbuildVersions.join(", ") +
-				", the isolated nested crypto install, and the Node 18 crypto wire contract.",
+				"a peer-free production install, the consumer's own Vite " +
+				installedVite.version +
+				" building with the packed plugin, the isolated nested crypto install, and the Node 18 crypto wire contract.",
 		);
 	} else {
 		console.log(
@@ -561,7 +639,11 @@ try {
 				publishablePackages.length +
 				" publishable workspace packages as exact local tarballs: " +
 				advisorySummary +
-				".",
+				". The consumer's own Vite " +
+				installedVite.version +
+				" and its " +
+				(developmentOnlyEntries - 1) +
+				" other development-only lock entries are outside the production audit.",
 		);
 	}
 } finally {

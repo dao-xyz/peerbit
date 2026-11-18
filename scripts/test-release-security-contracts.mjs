@@ -46,6 +46,12 @@ const viteManifest = JSON.parse(
 );
 const releasingGuide = await readRepositoryFile("RELEASING.md");
 const viteNodeEngine = "^20.19.0 || >=22.12.0";
+// Applications own Vite; @peerbit/vite only runs inside it. Each floor is the
+// first release of its major with the fixes for every Vite advisory published
+// when the range was set, including GHSA-p4f5-76q4-ffq7 (7.3.8, 8.3.7). The
+// workspace tests the oldest admitted line and the packed smoke the newest, so
+// admitting a third major needs its own CI coverage.
+const vitePeerRange = "^7.3.8 || ^8.3.7";
 
 assert.equal(
 	documentManifest.dependencies?.["@peerbit/time"],
@@ -60,7 +66,29 @@ assert.equal(
 assert.equal(
 	viteManifest.engines?.node,
 	viteNodeEngine,
-	"@peerbit/vite must declare the Node.js floor imposed by Vite 7",
+	"@peerbit/vite must declare the Node.js floor of its Vite peers",
+);
+assert.equal(
+	viteManifest.peerDependencies?.vite,
+	vitePeerRange,
+	"@peerbit/vite must take the application's Vite as a peer dependency with patched floors",
+);
+assert.notEqual(
+	viteManifest.peerDependenciesMeta?.vite?.optional,
+	true,
+	"@peerbit/vite must not make its Vite peer optional",
+);
+for (const dependencyField of ["dependencies", "optionalDependencies"]) {
+	assert.equal(
+		viteManifest[dependencyField]?.vite,
+		undefined,
+		`@peerbit/vite must not ship Vite in ${dependencyField}`,
+	);
+}
+assert.equal(
+	viteManifest.devDependencies?.vite,
+	vitePeerRange.split("||")[0].trim(),
+	"@peerbit/vite's own tests must run on the oldest Vite line its peer range admits",
 );
 for (const marker of [
 	"Published dependency advisories",
@@ -68,6 +96,8 @@ for (const marker of [
 	"--legacy-peer-deps",
 	"scanner unavailable",
 	"do not call a live vulnerability-advisory API",
+	"`@peerbit/vite` takes Vite as a peer dependency",
+	"outside the production audit",
 ]) {
 	assert(
 		releasingGuide.includes(marker),
@@ -899,6 +929,42 @@ assert.match(
 	/packedPackages\.get\("@peerbit\/vite"\)/,
 	"the published-package gate must inspect the packed @peerbit/vite manifest",
 );
+for (const [pattern, message] of [
+	[
+		/const vitePeerRange = packedPeerbitVite\.manifest\.peerDependencies\?\.vite;/,
+		"the packed consumer must take its Vite range from the packed @peerbit/vite peer",
+	],
+	[
+		/for \(const dependencyField of \["dependencies", "optionalDependencies"\]\)[\s\S]*?\[dependencyField\]\?\.vite,\s*undefined,/,
+		"no packed package may ship Vite as a runtime dependency",
+	],
+	[
+		/const devDependencies = \{ vite: vitePeerRange \};/,
+		"the packed consumer must install Vite as its own development dependency",
+	],
+	[
+		/lockfile\.packages\[""\]\.devDependencies, devDependencies\)/,
+		"the production audit may omit only the consumer's own Vite",
+	],
+	[
+		/installedVite\.dev,\s*true,/,
+		"Vite must stay outside the published production closure",
+	],
+	[
+		/`node_modules\/@peerbit\/vite peerDependencies \$\{vitePeerRange\}`/,
+		"only the consumer and the @peerbit/vite peer edge may reach Vite",
+	],
+	[
+		/"await vite\.build\(\{ \.\.\.viteConfig, plugins: peerbitVite\(\),/,
+		"the full published-package smoke must build a project with the packed plugin",
+	],
+	[
+		/"const viteServer = await vite\.createServer\(\{ \.\.\.viteConfig, plugins: peerbitVite\(\),/,
+		"the full published-package smoke must place the plugin in a Vite dev server",
+	],
+]) {
+	assert.match(publishedSecuritySmoke, pattern, message);
+}
 const publishedCryptoPackageSmoke = await readRepositoryFile(
 	"scripts/test-published-crypto-package-smoke.mjs",
 );
