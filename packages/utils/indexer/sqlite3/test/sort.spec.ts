@@ -152,7 +152,14 @@ describe("sort", () => {
 					expect(value).to.have.all.keys("id");
 				}
 				expect(statements).to.have.length(1);
-				expect(statements[0]).to.include(`ORDER BY "${table.name}#rank" DESC`);
+				// Sorted over several root tables, all() reads in the order key,
+				// whose aliases are the same in every arm: the order cannot name
+				// the root table whose arm is skipped, which is not read.
+				expect(statements[0]).to.include(`ORDER BY "__s0" DESC`);
+				const skipped = store.rootTables.find((root) => root !== table)!;
+				expect(statements[0]).to.not.match(
+					new RegExp(`\\bFROM ${skipped.name}\\b`),
+				);
 			} finally {
 				await iterator.close();
 			}

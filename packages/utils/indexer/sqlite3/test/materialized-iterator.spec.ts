@@ -639,6 +639,35 @@ describe("materialized iterator", () => {
 		expect(ids).to.deep.equal(range(0, 12).map(pad));
 	});
 
+	it("reads a sorted all() over several root tables in key order, with one statement", async () => {
+		index = await setup({ schema: Base, indexBy: ["id"] }, create);
+		const ranks = [2, 0, 1, 2, 0, 1, 3, 0];
+		for (const [i, rank] of ranks.entries()) {
+			await index.store.put(
+				i % 2 ? new VariantA(pad(i), rank) : new VariantB(pad(i), rank),
+			);
+		}
+		const stats = instrument(index.store as SQLiteIndex<any>);
+		for (const [direction, order] of [
+			// By rank, then by key in the direction of the rank.
+			[SortDirection.ASC, [1, 4, 7, 2, 5, 0, 3, 6]],
+			[SortDirection.DESC, [6, 3, 0, 5, 2, 7, 4, 1]],
+		] as const) {
+			const sort = [new Sort({ key: "rank", direction })];
+			const before = stats.runs.length;
+			const all = await index.store.iterate({ query: [], sort }).all();
+			expect(idsOf(all)).to.deep.equal(order.map(pad));
+			expect(all.map((row) => row.value.rank)).to.deep.equal(
+				order.map((i) => ranks[i]),
+			);
+			expect(kinds(stats.runs.slice(before))).to.deep.equal(["page"]);
+			// As next() reads it.
+			expect(
+				await drain(index.store.iterate({ query: [], sort }), 3),
+			).to.deep.equal(order.map(pad));
+		}
+	});
+
 	it("returns a key present in two root tables once, the first in order", async () => {
 		index = await setup({ schema: Base, indexBy: ["id"] }, create);
 		for (let i = 0; i < 6; i++) {

@@ -2309,12 +2309,31 @@ export class SQLiteIndex<T extends Record<string, any>>
 				}
 				this.assertOpen();
 				const scope = this.planner.scope(normalizedQuery);
-				const { sql, bindable } = convertSearchRequestToQuery(
-					normalizedQuery,
-					this.tables,
-					this._rootTables,
-					{ planner: scope, shape, fetchAll: true },
-				);
+				// A sorted search over several root tables reads its head page to
+				// the end (S1, LIMIT -1), in K order across the tables. The search
+				// statement orders by the first table's sort columns, which are
+				// NULL in the other tables' rows.
+				const inKeyOrder =
+					normalizedQuery.sort.length > 0 && this._rootTables.length > 1;
+				let sql: string;
+				let bindable: BindableValue[];
+				if (inKeyOrder) {
+					const head = convertSearchRequestToPageQuery(
+						normalizedQuery,
+						this.tables,
+						this._rootTables,
+						{ planner: scope, shape },
+					);
+					sql = head.sql;
+					bindable = bindKeyQuery(head.bindable, { limit: Infinity });
+				} else {
+					({ sql, bindable } = convertSearchRequestToQuery(
+						normalizedQuery,
+						this.tables,
+						this._rootTables,
+						{ planner: scope, shape, fetchAll: true },
+					));
+				}
 				await scope.beforePrepare();
 				if (explicitlyClosed) {
 					return [];
@@ -2352,20 +2371,28 @@ export class SQLiteIndex<T extends Record<string, any>>
 						key: StoredKey;
 					}[] = [];
 					for (const row of rows) {
-						const t = rootTables.findIndex(
-							(table) =>
-								row[getTablePrefixedField(table, this.primaryKeyString)] !=
-								null,
-						);
-						const key = {
-							t,
-							pk: row[
-								getTablePrefixedField(rootTables[t], this.primaryKeyString)
-							],
-						};
+						let key: StoredKey;
+						if (inKeyOrder) {
+							key = {
+								t: Number(row[ROOT_ORDINAL_ALIAS]),
+								pk: row[PRIMARY_KEY_ALIAS],
+							};
+						} else {
+							const t = rootTables.findIndex(
+								(table) =>
+									row[getTablePrefixedField(table, this.primaryKeyString)] !=
+									null,
+							);
+							key = {
+								t,
+								pk: row[
+									getTablePrefixedField(rootTables[t], this.primaryKeyString)
+								],
+							};
+						}
 						const k = keyOf(key);
 						if (seen.has(k)) {
-							continue; // one row per key
+							continue; // one row per key: sorted, the first in K order
 						}
 						seen.add(k);
 						found.push({ k, row, key });
