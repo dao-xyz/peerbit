@@ -1,5 +1,13 @@
 # Changelog
 
+## 6.2.42
+
+### Patch Changes
+
+- Updated dependencies [[`5911557`](https://github.com/dao-xyz/peerbit/commit/5911557a9aead1dcc1506e7f156b51752e23254b), [`20c3a4d`](https://github.com/dao-xyz/peerbit/commit/20c3a4d4a626534251e8d248442b797e4a631a2f), [`48b0bf1`](https://github.com/dao-xyz/peerbit/commit/48b0bf11d426d99c507fd928c780d173dca8a02a)]:
+  - @peerbit/blocks@4.3.7
+  - @peerbit/indexer-sqlite3@3.0.25
+
 ## 6.2.41
 
 ### Patch Changes

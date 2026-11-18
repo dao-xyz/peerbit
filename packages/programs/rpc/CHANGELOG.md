@@ -1,5 +1,13 @@
 # Changelog
 
+## 6.2.8
+
+### Patch Changes
+
+- Updated dependencies [[`5911557`](https://github.com/dao-xyz/peerbit/commit/5911557a9aead1dcc1506e7f156b51752e23254b)]:
+  - @peerbit/pubsub@5.4.17
+  - @peerbit/program@6.0.72
+
 ## 6.2.7
 
 ### Patch Changes

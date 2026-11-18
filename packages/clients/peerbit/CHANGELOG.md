@@ -1,5 +1,23 @@
 # Changelog
 
+## 5.4.14
+
+### Patch Changes
+
+- [#1548](https://github.com/dao-xyz/peerbit/pull/1548) [`5911557`](https://github.com/dao-xyz/peerbit/commit/5911557a9aead1dcc1506e7f156b51752e23254b) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Writes no longer wait for best-effort provider announcements. `put`, `putMany`, `putKnown` and `putKnownMany` (and so `SharedLog.append` and document puts) resolve once the blocks are stored locally, so a peer whose only bootstrap never answers no longer waits up to the 2-second bootstrap dial budget on every write. `onPut`/`onPutMany` now run afterwards as bounded background work, and `stop()` discards waiting CIDs and aborts running hooks through a `signal` passed as their new optional second argument. Closing a peer or a log therefore no longer waits for an unanswered provider dial or a congested control send, but a writer that stops right after writing may announce nothing.
+
+  `RemoteBlocks` and `DirectBlock` (in a peerbit client, `peer.services.blocks`) add `waitForStoredNotifications()`, which waits for the announcements of earlier writes; call it before `stop()` when they matter. Constructing either with `awaitPutHooks: true` keeps the previous behaviour of awaiting the hooks inside each write; `Peerbit.create()` does not offer that option. SharedLog and document stores expose neither yet: a SharedLog's block store is `sharedLog.log.blocks`, typed as `Blocks`.
+
+  Duplicate CIDs coalesce, and a write's new CIDs are queued together while fewer than 4096 CIDs wait, so one large write is announced in full. When a write arrives while 4096 or more CIDs wait, its new CIDs are not announced (any that were already waiting still are) and are counted as `dropped` in `getStoredNotificationTelemetry()`. The first overflow of each store generation is logged in the `peerbit:transport:blocks:stored-notifications:warn` scope, and each later overflow once at debug.
+
+  Unless `awaitPutHooks` is set, stores with an `onPutMany` hook, such as the peerbit client's block service and SharedLog block stores, now run one announcement at a time: blocks stored while one runs are announced together by the next call, and an announcement that waits on a congested tracker holds back the rest until it settles or the store stops. `onPutMany` also receives `batch`: true when its CIDs include a write of several blocks, false when they come only from writes of one block each (writes that queued behind a running announcement, or a lone write when `onPutMany` is the only hook). A SharedLog starts its log-wide provider lease only for batches, so whether a writer that does not replicate advertises the whole log no longer depends on whether its single appends happened to queue together. A native document batch is announced as one write.
+
+- Updated dependencies [[`5911557`](https://github.com/dao-xyz/peerbit/commit/5911557a9aead1dcc1506e7f156b51752e23254b), [`5911557`](https://github.com/dao-xyz/peerbit/commit/5911557a9aead1dcc1506e7f156b51752e23254b), [`20c3a4d`](https://github.com/dao-xyz/peerbit/commit/20c3a4d4a626534251e8d248442b797e4a631a2f), [`48b0bf1`](https://github.com/dao-xyz/peerbit/commit/48b0bf11d426d99c507fd928c780d173dca8a02a)]:
+  - @peerbit/blocks@4.3.7
+  - @peerbit/pubsub@5.4.17
+  - @peerbit/indexer-sqlite3@3.0.25
+  - @peerbit/program@6.0.72
+
 ## 5.4.13
 
 ### Patch Changes

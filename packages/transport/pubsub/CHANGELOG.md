@@ -1,5 +1,11 @@
 # Changelog
 
+## 5.4.17
+
+### Patch Changes
+
+- [#1548](https://github.com/dao-xyz/peerbit/pull/1548) [`5911557`](https://github.com/dao-xyz/peerbit/commit/5911557a9aead1dcc1506e7f156b51752e23254b) Thanks [@peerbit-org](https://github.com/peerbit-org)! - `FanoutTree.announceProvider` and `announceProviders` accept a `signal` that cancels the announcement, including a pending bootstrap dial and a control send that waits for queue capacity. Stopping the service still cancels it as well.
+
 ## 5.4.16
 
 ### Patch Changes
