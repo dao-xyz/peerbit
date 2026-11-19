@@ -1,0 +1,479 @@
+# THROWAWAY MEASUREMENT: DO NOT MERGE. Delete the branch
+# peerbit-org/exp-reconnect-measure-20261119 once its artifacts are read.
+#
+# Measures what a transport-loss reconnect costs shared-log, for
+# dao-xyz/peerbit#1560 ("don't rebalance when a dropped replica returns
+# unchanged") against its base. The harness is scripts/exp-reconnect-measure:
+# rc-driver.mjs forks two peers (rc-worker.mjs), seeds N entries on A, lets B
+# join and converge, then runs three phases. rest partitions, heals and
+# re-dials. writes does the same, with A writing 60 entries at 1/s after the
+# re-dial. control writes the 60 entries with no partition. The harness only
+# wraps SharedLog instance methods and reads fields; product code is the
+# variant's own. Both peers run SharedLog's production timings: the harness
+# drops the test store's 50 ms change debounce and 3 s role maturity before
+# the log opens, and a run fails unless SharedLog reports 500 ms and 5 s.
+#
+# Each matrix job is one N x replicas cell. It checks out and builds every
+# variant listed in scripts/exp-reconnect-measure/variants.json on one runner
+# and interleaves their runs (base, pr1, base, pr1, base, pr1), so the variants
+# share a machine. Jobs with min 3 end with one pr1 run whose partition is held
+# 25 s (rest phase only), to see the hold expire. The summarize job judges the
+# pass criteria over every run, against the planned matrix: a cell without its
+# runs (a failed run, or a job that died) makes its criteria INCOMPLETE.
+#
+# Triggered only by a push to the branch below. Read-only token, no secrets;
+# the only outputs are artifacts and the job summary.
+#
+# Budget, from local runs on an Apple-silicon laptop at load1 about 3.5:
+#   n=1500, 10 writes: 132 s per run.
+#   n=9000, base, 60 writes: 231 s per run. Seed 3.8 s, converge 11 s,
+#     quiesce 25 + 19 + 5 s, rest 17 s, writes 74 s, control 74 s.
+#   About 215 s of a run is fixed: the quiesces, the 15 s observation floor and
+#   2 x 60 writes at 1/s. The rest grows with N: seed and converge, and the
+#   inventory walk, which can stretch the rest and writes observations (it
+#   took 17 s and 67 s at 9,000; the cap is 180 s after the last write).
+#   Doubling the size-dependent part for a 4-vCPU runner gives about 5 min per
+#   run at 9,000 and 8 to 12 min at 27,000, so 7 runs take about 35 min and
+#   55 to 85 min. Installing and building both variants from cold takes about
+#   10 min (benchmark-noise-floor.yml builds two cohorts in 9 min, including
+#   a source build of wasm-pack).
+# Every timeout below is about 3x those estimates or more:
+#   run (rc-driver --run-timeout-ms): 20 / 35 min. At its deadline a run is
+#     abandoned: workers stopped, report.json written with ok: false and
+#     timedOut: true. The outer `timeout` (deadline + 4 min, then a kill 1 min
+#     later) only catches a driver that cannot get that far.
+#   measure step: 7 x (run timeout + 5 min) = 175 / 280 min. Before each run
+#     the step waits up to 3 min (LOAD_WAIT_MAX_SECONDS) for load1 below 2, and
+#     a driver that keeps its deadline has stopped its workers within 2 min of
+#     it, so 7 runs fit. Worst case, every run also hangs until the outer kill
+#     after a full load wait: a run then takes run timeout + 8 min, 7 runs
+#     need 196 / 301 min, and the step timeout cuts the last run (the long
+#     one) short. The upload still runs, and the summary lists the cell as
+#     missing.
+#   job: measure step + 45 min build step + 25 min setup, verification and
+#     upload = 245 / 350 min (GitHub-hosted jobs stop at 360). The upload runs
+#     even when the measure step times out.
+name: zz-reconnect-measure
+
+on:
+  push:
+    branches: [peerbit-org/exp-reconnect-measure-20261119]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zz-reconnect-measure
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  WASM_PACK_VERSION: 0.13.1
+  HARNESS_DIR: scripts/exp-reconnect-measure
+  # The measure job runs these; the summarize job expects them.
+  RUNS_PER_VARIANT: "3"
+  LONG_VARIANT: pr1
+  LONG_MIN: "3"
+  LONG_PARTITION_MS: "25000"
+
+jobs:
+  measure:
+    name: "measure (n=${{ matrix.n }}, min=${{ matrix.min }})"
+    runs-on: ubuntu-24.04
+    timeout-minutes: ${{ matrix.job_timeout_minutes }}
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        n: [9000, 27000]
+        min: [2, 3]
+        include:
+          - n: 9000
+            run_timeout_minutes: 20
+            measure_timeout_minutes: 175
+            job_timeout_minutes: 245
+          - n: 27000
+            run_timeout_minutes: 35
+            measure_timeout_minutes: 280
+            job_timeout_minutes: 350
+    env:
+      N: ${{ matrix.n }}
+      MIN: ${{ matrix.min }}
+      RUN_TIMEOUT_MINUTES: ${{ matrix.run_timeout_minutes }}
+      LOAD1_BELOW: "2"
+      LOAD_WAIT_MAX_SECONDS: "180"
+      VARIANTS_DIR: v
+      RUNS_DIR: runs
+    steps:
+      - name: Check out the harness
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          sparse-checkout: |
+            scripts/exp-reconnect-measure
+            scripts/ci
+
+      # pnpm's version comes from package.json's packageManager, as in ci.yml.
+      - uses: pnpm/action-setup@v4
+        with:
+          run_install: false
+
+      # The root lockfile is the base lockfile, so this restores the pnpm store
+      # cache master's CI already saved; both variant installs share the store.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      # Writes name<i>/sha<i> outputs for the checkout slots below and
+      # $RUNNER_TEMP/variants.tsv (name, tab, sha per line) for the run steps.
+      - name: Read the variants
+        id: variants
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          import fs from "node:fs";
+
+          const file = `${process.env.HARNESS_DIR}/variants.json`;
+          const SLOTS = 4; // one checkout step per slot below
+          const fail = (message) => {
+            console.log(`::error file=${file}::${message}`);
+            process.exit(1);
+          };
+          const variants = JSON.parse(fs.readFileSync(file, "utf8"));
+          if (!Array.isArray(variants) || variants.length < 1 || variants.length > SLOTS) {
+            fail(`expected an array of 1 to ${SLOTS} variants (add checkout slots for more)`);
+          }
+          const seen = new Set();
+          for (const variant of variants) {
+            const keys = Object.keys(variant ?? {}).sort().join(",");
+            if (keys !== "name,sha") fail(`each variant is { "name", "sha" }; got ${JSON.stringify(variant)}`);
+            if (!/^[a-z][a-z0-9-]{0,31}$/.test(variant.name)) fail(`bad name ${JSON.stringify(variant.name)}`);
+            if (!/^[0-9a-f]{40}$/.test(variant.sha)) fail(`${variant.name}: sha must be 40 lowercase hex digits`);
+            if (seen.has(variant.name)) fail(`duplicate name ${variant.name}`);
+            seen.add(variant.name);
+          }
+          const outputs = [`count=${variants.length}`];
+          variants.forEach((variant, index) => {
+            outputs.push(`name${index}=${variant.name}`, `sha${index}=${variant.sha}`);
+          });
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `${outputs.join("\n")}\n`);
+          fs.writeFileSync(
+            `${process.env.RUNNER_TEMP}/variants.tsv`,
+            variants.map((variant) => `${variant.name}\t${variant.sha}\n`).join(""),
+          );
+          for (const variant of variants) console.log(`${variant.name} ${variant.sha}`);
+          NODE
+
+      - name: Check out variant slot 1
+        if: steps.variants.outputs.name0 != ''
+        uses: actions/checkout@v4
+        with:
+          repository: dao-xyz/peerbit
+          ref: ${{ steps.variants.outputs.sha0 }}
+          path: v/${{ steps.variants.outputs.name0 }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Check out variant slot 2
+        if: steps.variants.outputs.name1 != ''
+        uses: actions/checkout@v4
+        with:
+          repository: dao-xyz/peerbit
+          ref: ${{ steps.variants.outputs.sha1 }}
+          path: v/${{ steps.variants.outputs.name1 }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Check out variant slot 3
+        if: steps.variants.outputs.name2 != ''
+        uses: actions/checkout@v4
+        with:
+          repository: dao-xyz/peerbit
+          ref: ${{ steps.variants.outputs.sha2 }}
+          path: v/${{ steps.variants.outputs.name2 }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Check out variant slot 4
+        if: steps.variants.outputs.name3 != ''
+        uses: actions/checkout@v4
+        with:
+          repository: dao-xyz/peerbit
+          ref: ${{ steps.variants.outputs.sha3 }}
+          path: v/${{ steps.variants.outputs.name3 }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Cache wasm-pack
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/wasm-pack
+          key: ${{ runner.os }}-wasm-pack-${{ env.WASM_PACK_VERSION }}
+
+      - name: Install wasm-pack and the wasm target
+        run: |
+          set -euo pipefail
+          export PATH="$HOME/.cargo/bin:$PATH"
+          ./scripts/ci/install-wasm-pack.sh
+          # Added once up front: concurrent wasm-pack builds otherwise race their
+          # own target installs (see benchmark-noise-floor.yml).
+          rustup target add wasm32-unknown-unknown
+
+      # @peerbit/shared-log... is the smallest closure that yields both files the
+      # harness imports: shared-log's dist (src and test/utils/stores) and, as a
+      # dev dependency of shared-log, packages/clients/peerbit/dist.
+      - name: Install and build the variants
+        timeout-minutes: 45
+        run: |
+          set -euo pipefail
+          while IFS=$'\t' read -r name sha <&3; do
+            tree="${VARIANTS_DIR}/${name}"
+            echo "::group::${name} (${sha}): pnpm install"
+            pnpm --dir "$tree" install --frozen-lockfile
+            echo "::endgroup::"
+            echo "::group::${name}: build @peerbit/shared-log and its workspace dependencies"
+            pnpm --dir "$tree" --filter "@peerbit/shared-log..." run build
+            echo "::endgroup::"
+          done 3< "${RUNNER_TEMP}/variants.tsv"
+
+      - name: Verify the builds and record provenance
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNS_DIR"
+          {
+            echo "workflow_sha=${GITHUB_SHA}"
+            echo "workflow_run=${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/attempts/${GITHUB_RUN_ATTEMPT}"
+            echo "image=${ImageOS:-unknown} ${ImageVersion:-unknown}"
+            echo "cpus=$(getconf _NPROCESSORS_ONLN)"
+            echo "node=$(node --version)"
+            echo "pnpm=$(pnpm --version)"
+            echo "rustc=$(rustc --version)"
+            echo "wasm_pack=$(wasm-pack --version)"
+          } > "${RUNS_DIR}/provenance.txt"
+          while IFS=$'\t' read -r name sha <&3; do
+            tree="${VARIANTS_DIR}/${name}"
+            head="$(git -C "$tree" rev-parse HEAD)"
+            if [ "$head" != "$sha" ]; then
+              echo "::error::${name}: checked out ${head}, expected ${sha}"
+              exit 1
+            fi
+            if [ -n "$(git -C "$tree" status --porcelain --untracked-files=no)" ]; then
+              echo "::error::${name}: the install or build changed tracked files"
+              git -C "$tree" status --short --untracked-files=no
+              exit 1
+            fi
+            for file in \
+              packages/clients/peerbit/dist/src/index.js \
+              packages/programs/data/shared-log/dist/src/index.js \
+              packages/programs/data/shared-log/dist/test/utils/stores/event-store.js; do
+              if [ ! -f "${tree}/${file}" ]; then
+                echo "::error::${name}: missing build output ${file}"
+                exit 1
+              fi
+            done
+            digest="$(sha256sum "${tree}/packages/programs/data/shared-log/dist/src/index.js" | cut -d ' ' -f 1)"
+            echo "variant=${name} sha=${sha} shared_log_dist_index_sha256=${digest}" | tee -a "${RUNS_DIR}/provenance.txt"
+          done 3< "${RUNNER_TEMP}/variants.tsv"
+
+      # Interleaved: run i of every variant before run i+1 of any. Each run waits
+      # (at most LOAD_WAIT_MAX_SECONDS) for load1 below LOAD1_BELOW, then runs
+      # rest, writes and control. A failed run is reported and the next one
+      # still runs; the step fails at the end if any run failed.
+      - name: Run the measurements
+        timeout-minutes: ${{ matrix.measure_timeout_minutes }}
+        run: |
+          set -euo pipefail
+          if ! [[ "$RUNS_PER_VARIANT" =~ ^[1-9][0-9]*$ && "$RUN_TIMEOUT_MINUTES" =~ ^[1-9][0-9]*$ ]]; then
+            echo "::error::RUNS_PER_VARIANT and RUN_TIMEOUT_MINUTES must be positive integers"
+            exit 1
+          fi
+          names=()
+          shas=()
+          while IFS=$'\t' read -r name sha <&3; do
+            names+=("$name")
+            shas+=("$sha")
+          done 3< "${RUNNER_TEMP}/variants.tsv"
+          mkdir -p "$RUNS_DIR"
+          run_timeout_ms=$((RUN_TIMEOUT_MINUTES * 60000))
+          # rc-driver stops its workers and writes report.json at its own
+          # deadline; this one only catches a driver that cannot get that far.
+          hard_timeout_seconds=$((RUN_TIMEOUT_MINUTES * 60 + 240))
+          failed=()
+
+          wait_for_low_load() {
+            local waited=0
+            local load1
+            while :; do
+              load1="$(node -p 'require("node:os").loadavg()[0].toFixed(2)')"
+              if awk -v load="$load1" -v limit="$LOAD1_BELOW" 'BEGIN { exit !((load + 0) < (limit + 0)) }'; then
+                echo "load1 ${load1} after waiting ${waited} s"
+                return 0
+              fi
+              if [ "$waited" -ge "$LOAD_WAIT_MAX_SECONDS" ]; then
+                echo "::warning::load1 still ${load1} after ${waited} s; starting anyway"
+                return 0
+              fi
+              sleep 5
+              waited=$((waited + 5))
+            done
+          }
+
+          run_one() {
+            local name="$1"
+            local sha="$2"
+            local label="$3"
+            shift 3
+            local run="${name}-${N}-min${MIN}-${label}"
+            local out="${RUNS_DIR}/${run}"
+            local status=0
+            local started
+            wait_for_low_load
+            started="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            echo "::group::${run}"
+            timeout --kill-after=60 "$hard_timeout_seconds" \
+              node "${HARNESS_DIR}/rc-driver.mjs" \
+                --root "${VARIANTS_DIR}/${name}" \
+                --variant "$name" \
+                --commit "$sha" \
+                --n "$N" \
+                --min "$MIN" \
+                --out "$out" \
+                --run-timeout-ms "$run_timeout_ms" \
+                "$@" 2>&1 | tee "${out}.driver.log" || status=$?
+            echo "::endgroup::"
+            printf '%s\t%s\t%s\t%s\n' "$run" "$started" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$status" >> "${RUNS_DIR}/timeline.tsv"
+            # The driver deletes the peer directories unless it was killed.
+            rm -rf "${out}/peer-A" "${out}/peer-B"
+            if [ "$status" -ne 0 ]; then
+              echo "::error::${run} exited with status ${status}"
+              failed+=("$run")
+            fi
+          }
+
+          for ((i = 1; i <= RUNS_PER_VARIANT; i++)); do
+            for index in "${!names[@]}"; do
+              run_one "${names[$index]}" "${shas[$index]}" "$i"
+            done
+          done
+
+          if [ "$MIN" = "$LONG_MIN" ]; then
+            long_index=""
+            for index in "${!names[@]}"; do
+              if [ "${names[$index]}" = "$LONG_VARIANT" ]; then
+                long_index="$index"
+              fi
+            done
+            if [ -n "$long_index" ]; then
+              run_one "$LONG_VARIANT" "${shas[$long_index]}" long \
+                --partition-ms "$LONG_PARTITION_MS" --phases rest
+            else
+              echo "::warning::no variant named ${LONG_VARIANT}; skipped the long-partition run"
+            fi
+          fi
+
+          if [ "${#failed[@]}" -gt 0 ]; then
+            echo "::error::${#failed[@]} run(s) failed: ${failed[*]}"
+            exit 1
+          fi
+
+      - name: Upload the runs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: measure-n${{ matrix.n }}-min${{ matrix.min }}
+          path: |
+            runs/
+            !runs/**/peer-A/**
+            !runs/**/peer-B/**
+          if-no-files-found: warn
+          retention-days: 14
+          overwrite: true
+
+  summarize:
+    name: summarize
+    needs: measure
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Check out the harness
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          sparse-checkout: |
+            scripts/exp-reconnect-measure
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+
+      # Each artifact lands in all-runs/<artifact name>/<run>/report.json.
+      - name: Download the runs
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          pattern: measure-n*
+          path: all-runs
+
+      # The planned matrix: variants.json x the measure job's n and min x 3
+      # phases, RUNS_PER_VARIANT runs each, plus one LONG_VARIANT rest run per n
+      # at LONG_MIN. The summary lists every planned cell without its runs as
+      # missing, so a job that died before uploading cannot pass silently.
+      - name: Summarize
+        env:
+          # Keep in step with jobs.measure.strategy.matrix.
+          EXPECT_N: "9000,27000"
+          EXPECT_MIN: "2,3"
+        run: |
+          set -euo pipefail
+          mkdir -p all-runs summary
+          node --input-type=module <<'NODE'
+          import fs from "node:fs";
+
+          const list = (name) => process.env[name].split(",").map((value) => Number(value.trim()));
+          const variants = JSON.parse(
+            fs.readFileSync(`${process.env.HARNESS_DIR}/variants.json`, "utf8"),
+          ).map((variant) => variant.name);
+          const expect = {
+            variants,
+            n: list("EXPECT_N"),
+            min: list("EXPECT_MIN"),
+            phases: ["rest", "writes", "control"],
+            runs: Number(process.env.RUNS_PER_VARIANT),
+            long:
+              variants.includes(process.env.LONG_VARIANT) && list("EXPECT_MIN").includes(Number(process.env.LONG_MIN))
+                ? [{ variant: process.env.LONG_VARIANT, min: [Number(process.env.LONG_MIN)], phases: ["rest"], runs: 1 }]
+                : [],
+          };
+          fs.writeFileSync(`${process.env.RUNNER_TEMP}/expect.json`, `${JSON.stringify(expect, null, 2)}\n`);
+          console.log(JSON.stringify(expect));
+          NODE
+          node "${HARNESS_DIR}/summarize.mjs" all-runs --out summary --expect "${RUNNER_TEMP}/expect.json"
+
+      - name: Upload the summary
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: measure-summary
+          path: |
+            summary/summary.md
+            summary/summary.json
+          if-no-files-found: warn
+          retention-days: 14
+          overwrite: true
+
+      - name: Add summary.md to the job summary
+        if: always()
+        run: |
+          set -euo pipefail
+          if [ -f summary/summary.md ]; then
+            # A step summary holds at most 1 MiB.
+            head -c 1000000 summary/summary.md >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "summarize.mjs wrote no summary.md; see the Summarize step log." >> "$GITHUB_STEP_SUMMARY"
+          fi
