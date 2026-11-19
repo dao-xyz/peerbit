@@ -1,5 +1,16 @@
 # Changelog
 
+## 3.1.55
+
+### Patch Changes
+
+- Updated dependencies [[`fae8e42`](https://github.com/dao-xyz/peerbit/commit/fae8e42746780b6ab14a1d1d8424d3d6e0cfa239)]:
+  - @peerbit/any-store@2.2.21
+  - peerbit@5.4.16
+  - @peerbit/blocks@4.3.8
+  - @peerbit/keychain@1.2.21
+  - @peerbit/program@6.0.73
+
 ## 3.1.54
 
 ### Patch Changes

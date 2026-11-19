@@ -1,5 +1,16 @@
 # Changelog
 
+## 2.0.132
+
+### Patch Changes
+
+- Updated dependencies [[`fae8e42`](https://github.com/dao-xyz/peerbit/commit/fae8e42746780b6ab14a1d1d8424d3d6e0cfa239)]:
+  - @peerbit/shared-log@16.0.47
+  - @peerbit/log@6.2.45
+  - @peerbit/canonical-host@1.0.96
+  - @peerbit/program@6.0.73
+  - @peerbit/canonical-client@1.1.76
+
 ## 2.0.131
 
 ### Patch Changes

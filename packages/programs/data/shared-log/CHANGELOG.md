@@ -1,5 +1,18 @@
 # Changelog
 
+## 16.0.47
+
+### Patch Changes
+
+- [#1558](https://github.com/dao-xyz/peerbit/pull/1558) [`fae8e42`](https://github.com/dao-xyz/peerbit/commit/fae8e42746780b6ab14a1d1d8424d3d6e0cfa239) Thanks [@peerbit-org](https://github.com/peerbit-org)! - A receive no longer writes a head's coordinate row again when an identical row is already stored and none of the head's predecessor rows is. This happens when repair sends heads again while an earlier copy of them is still being joined. Rows that are missing or differ are written as before, and with a native backbone or the Rust indexer (`@peerbit/indexer-rust`) every row is still written.
+
+- Updated dependencies [[`fae8e42`](https://github.com/dao-xyz/peerbit/commit/fae8e42746780b6ab14a1d1d8424d3d6e0cfa239)]:
+  - @peerbit/any-store@2.2.21
+  - @peerbit/log@6.2.45
+  - @peerbit/blocks@4.3.8
+  - @peerbit/rpc@6.2.9
+  - @peerbit/program@6.0.73
+
 ## 16.0.46
 
 ### Patch Changes

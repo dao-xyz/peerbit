@@ -1,5 +1,16 @@
 # Changelog
 
+## 3.2.173
+
+### Patch Changes
+
+- Updated dependencies [[`fae8e42`](https://github.com/dao-xyz/peerbit/commit/fae8e42746780b6ab14a1d1d8424d3d6e0cfa239)]:
+  - @peerbit/shared-log@16.0.47
+  - @peerbit/log@6.2.45
+  - @peerbit/trusted-network@6.0.149
+  - @peerbit/rpc@6.2.9
+  - @peerbit/program@6.0.73
+
 ## 3.2.172
 
 ### Patch Changes
