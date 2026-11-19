@@ -208,6 +208,17 @@ export class CheckedPruneCoordinator<T, R extends "u32" | "u64"> {
 		);
 	}
 
+	/** No checked-prune work is queued, running, retrying or reserved. */
+	isIdle(): boolean {
+		return (
+			this.pendingDeletes.size === 0 &&
+			this.sessions.size === 0 &&
+			this.retries.size === 0 &&
+			this.restartReservations.size === 0 &&
+			this.candidateTokens.size === 0
+		);
+	}
+
 	getPendingDelete(hash: string) {
 		return this.pendingDeletes.get(hash);
 	}
