@@ -1,5 +1,6 @@
 // This plain Node worker imports the compiled artifact under test. The parent
-// deliberately kills it immediately after the durability barriers resolve.
+// deliberately kills it immediately after the durability barriers (or the
+// synced putMany batches) resolve.
 const { createStore } = await import(
 	new URL("../dist/src/store.js", import.meta.url).href
 );
@@ -27,6 +28,13 @@ if (mode === "checkpoint") {
 			generation: committed.generation.toString(),
 		}) + "\n",
 	);
+} else if (mode === "putMany") {
+	const entries = [];
+	for (let i = 0; i < 200; i++) {
+		entries.push([`put-many-${i}`, new Uint8Array(64).fill(i)]);
+	}
+	await store.putMany(entries);
+	process.stdout.write('{"event":"ack","entries":200}\n');
 } else {
 	const sublevel = await store.sublevel("hard-kill-sublevel");
 	await sublevel.open();

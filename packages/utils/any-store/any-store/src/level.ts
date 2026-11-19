@@ -7,6 +7,9 @@ import { ClassicLevel } from "classic-level";
 import { v4 as uuid } from "uuid";
 import { copyExactUint8Array, getExactUint8ArrayByteLength } from "./bytes.js";
 
+/** The value bytes one `putMany` write batch may carry. */
+const PUT_MANY_BATCH_VALUE_BYTES = 4 * 1024 * 1024;
+
 type GetFn = (
 	key: string,
 ) => Uint8Array | undefined | Promise<Uint8Array | undefined>;
@@ -137,6 +140,44 @@ export class LevelStore implements AnyStore {
 			valueEncoding: "view",
 			sync: true,
 		} as any); // sync option to make sure read after write behaves correctly
+	}
+
+	/**
+	 * Writes the entries as synced LevelDB write batches instead of one synced
+	 * write per key. A batch ends before the next value would take it past
+	 * 4 MiB of values; a larger value is written in a batch of its own. Each
+	 * batch is atomic and on stable storage before the next starts, which is
+	 * the guarantee `put` gives one key.
+	 *
+	 * The values are not copied: a batch holds them until it is written, so
+	 * they must not change before `putMany` resolves. An iterable that reuses
+	 * one buffer for several entries stores its last bytes under all of them.
+	 */
+	async putMany(
+		entries: Iterable<readonly [string, Uint8Array]>,
+	): Promise<void> {
+		let operations: {
+			type: "put";
+			key: string;
+			value: Uint8Array;
+			valueEncoding: "view";
+		}[] = [];
+		let valueBytes = 0;
+		for (const [key, value] of entries) {
+			if (
+				operations.length > 0 &&
+				valueBytes + value.byteLength > PUT_MANY_BATCH_VALUE_BYTES
+			) {
+				await this.store.batch(operations, { sync: true } as any);
+				operations = [];
+				valueBytes = 0;
+			}
+			operations.push({ type: "put", key, value, valueEncoding: "view" });
+			valueBytes += value.byteLength;
+		}
+		if (operations.length > 0) {
+			await this.store.batch(operations, { sync: true } as any);
+		}
 	}
 
 	// Remove a value and key from the cache
