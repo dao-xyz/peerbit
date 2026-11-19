@@ -12227,6 +12227,27 @@ export class SharedLog<
 		}
 	}
 
+	/**
+	 * Targeted repair for a peer whose replication ranges came back unchanged:
+	 * an authoritative sweep now and the delayed authoritative sweeps. With
+	 * bypassKnownPeerHints, the immediate sweep queues the peer's entries
+	 * without the known-peer hints that may belong to the peer's previous
+	 * connection, and carries that bypass with them, so another frontier for
+	 * the peer that drains before the sweep queues anything cannot drop it.
+	 */
+	private scheduleUnchangedSuccessorRepair(
+		peerHash: string,
+		controller: AbortController,
+		bypassKnownPeerHints: boolean,
+	) {
+		const peers = new Set([peerHash]);
+		this.scheduleRepairSweep(
+			{ mode: "join-authoritative", peers, bypassKnownPeerHints },
+			controller,
+		);
+		this.scheduleJoinAuthoritativeRepair(peers, controller);
+	}
+
 	private async runRepairSweep(
 		repairLifecycleController: AbortController = this._instanceLifecycle
 			?.ownershipLifecycleController as AbortController,
@@ -25668,18 +25689,10 @@ export class SharedLog<
 						// session has no predecessor whose process could have left those
 						// hints: open() starts both the hints and the session registry
 						// empty, so its repair honours them.
-						const peers = new Set([fromHash]);
-						this.scheduleRepairSweep(
-							{
-								mode: "join-authoritative",
-								peers,
-								bypassKnownPeerHints: receiveSession.hasPredecessor,
-							},
+						this.scheduleUnchangedSuccessorRepair(
+							fromHash,
 							lane.ownershipLifecycleController,
-						);
-						this.scheduleJoinAuthoritativeRepair(
-							peers,
-							lane.ownershipLifecycleController,
+							receiveSession.hasPredecessor,
 						);
 					}
 				}
