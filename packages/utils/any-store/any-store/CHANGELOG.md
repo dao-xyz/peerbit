@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.2.21
+
+### Patch Changes
+
+- [#1558](https://github.com/dao-xyz/peerbit/pull/1558) [`fae8e42`](https://github.com/dao-xyz/peerbit/commit/fae8e42746780b6ab14a1d1d8424d3d6e0cfa239) Thanks [@peerbit-org](https://github.com/peerbit-org)! - LevelStore gains putMany, which writes many keys as one synced LevelDB write batch (split at 4 MiB of values) instead of one synced write per key. Block stores on LevelDB use it when they store several blocks at once.
+
 ## 2.2.20
 
 ### Patch Changes

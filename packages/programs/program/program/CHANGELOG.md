@@ -1,5 +1,13 @@
 # Changelog
 
+## 6.0.73
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @peerbit/blocks@4.3.8
+  - @peerbit/keychain@1.2.21
+
 ## 6.0.72
 
 ### Patch Changes

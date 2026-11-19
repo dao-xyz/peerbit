@@ -1,6 +1,6 @@
 {
 	"name": "@peerbit/rpc",
-	"version": "6.2.8",
+	"version": "6.2.9",
 	"description": "RPC calls for peers",
 	"repository": {
 		"type": "git",
