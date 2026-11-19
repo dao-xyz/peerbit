@@ -451,4 +451,453 @@ describe("entry inventory pass progress", () => {
 		expect(h.shared.rpc.request.called).to.equal(false);
 		expect(h.shared.rpc.send.called).to.equal(false);
 	});
+
+	type Harness = ReturnType<typeof harness>;
+	const presentKeys = (count: number) =>
+		Array.from({ length: count }, (_, index) => `present-${index}`);
+	// The harness scan keeps one offset across scans. A restarted pass walks
+	// again from the first key, so every scan here starts its own walk.
+	const freshScan = (h: Harness, keys: string[]) => {
+		h.shared._coordinates.scanAuthoritativeCoordinateKeys = (options: {
+			pageSize: number;
+			signal: AbortSignal;
+		}) => {
+			expect(options.pageSize).to.equal(ENTRY_INVENTORY_PAGE_SIZE);
+			expect(options.signal.aborted).to.equal(false);
+			let offset = 0;
+			return {
+				next: (): IndexKeyScanPage => {
+					const page = keys.slice(offset, offset + ENTRY_INVENTORY_PAGE_SIZE);
+					offset += page.length;
+					return {
+						status: offset === keys.length ? "complete" : "more",
+						keys: page,
+					};
+				},
+				close: () => {},
+			};
+		};
+	};
+	const drive = async (pass: EntryInventoryPass) => {
+		try {
+			while (true) {
+				const result = await pass.next();
+				if (result !== "more") return result;
+			}
+		} finally {
+			await pass.close();
+		}
+	};
+	// A finished no-op admission is a local write as far as a pass can tell.
+	const admit = async (log: Log<Uint8Array>, key: string) => {
+		const lock = await log.entryIndex.acquireHashMutationLocks([key]);
+		log.entryIndex.releaseHashMutationLocks(lock);
+	};
+	// The peer holds every hash. When `cut` is true for a request (counted from
+	// one), a local write lands before its reply returns.
+	const answerAllPresent = (
+		h: Harness,
+		source: Log<Uint8Array>,
+		cut: (request: number) => boolean,
+	) => {
+		const asked: string[][] = [];
+		h.shared.rpc.request.callsFake(
+			async (request: RequestEntryInventoryV1, options: any) => {
+				options.onPhysicalSettlement(Promise.resolve());
+				asked.push([...request.hashes]);
+				if (cut(asked.length)) await admit(source, request.hashes[0]);
+				return [
+					{
+						response: new ConfirmEntriesMessage({ hashes: request.hashes }),
+						from: { hashcode: () => h.peer },
+						message: {
+							header: {
+								session: h.shared._peerSyncCapabilitySessions.get(h.peer),
+							},
+						},
+					},
+				];
+			},
+		);
+		return asked;
+	};
+	const confirmations = (h: Harness) =>
+		h.shared._entryInventoryConfirmed?.get(h.peer) as
+			| { hashes: Set<string> }
+			| undefined;
+	const confirmedTotal = (h: Harness) => {
+		const total = h.shared._entryInventoryConfirmedTotal;
+		expect(total, "confirmed total").to.be.a("number");
+		return total as number;
+	};
+	// The fields removeRepairFrontierTarget touches besides the inventory.
+	const allowDeparture = (h: Harness) => {
+		const cancelJoinWarmupTarget = sinon.spy();
+		Object.assign(h.shared, {
+			joinWarmup: {
+				_warmupSessionsByTarget: new Map(),
+				cancelJoinWarmupTarget,
+			},
+			_repairFrontierByMode: new Map(),
+			_repairFrontierActiveTargetsByMode: new Map(),
+			_repairFrontierBypassKnownPeersByMode: new Map(),
+		});
+		return cancelJoinWarmupTarget;
+	};
+
+	it("asks each confirmed hash once while local writes restart the pass", async () => {
+		const source = await openLog();
+		const keys = presentKeys(4 * ENTRY_INVENTORY_PAGE_SIZE + 1);
+		const h = harness(source, keys);
+		freshScan(h, keys);
+		// A reply that crosses a local write is never acted on and its pass ends
+		// in a retry. The first twenty requests all cross one.
+		const asked = answerAllPresent(h, source, (request) => request <= 20);
+		const results: string[] = [];
+		while (results.length < 30 && results[results.length - 1] !== "complete") {
+			results.push(await drive(h.createPass()));
+		}
+		expect(asked.flat().length, "requested hashes").to.equal(keys.length);
+		expect(asked.flat(), "each key asked once, in order").to.deep.equal(keys);
+		expect(asked.length, "requests").to.equal(5);
+		expect(h.coordinate.callCount, "coordinate reads").to.equal(keys.length);
+		expect(h.leaders.callCount, "leader plans").to.equal(keys.length);
+		expect(results).to.deep.equal([
+			"retry",
+			"retry",
+			"retry",
+			"retry",
+			"retry",
+			"complete",
+		]);
+		expect(h.shared.rpc.send.called).to.equal(false);
+		expect(confirmations(h), "record after completion").to.equal(undefined);
+		expect(confirmedTotal(h)).to.equal(0);
+	});
+
+	it("forgets confirmations when the ownership snapshot changes", async () => {
+		const source = await openLog();
+		const keys = presentKeys(2 * ENTRY_INVENTORY_PAGE_SIZE);
+		const h = harness(source, keys);
+		freshScan(h, keys);
+		const asked = answerAllPresent(h, source, (request) => request === 1);
+		expect(await drive(h.createPass())).to.equal("retry");
+		expect(
+			confirmations(h)?.hashes.size,
+			"confirmations after the cut pass",
+		).to.equal(ENTRY_INVENTORY_PAGE_SIZE);
+		h.shared._instanceLifecycle._receiveOwnershipRevision++;
+		expect(await drive(h.createPass())).to.equal("complete");
+		expect(asked.slice(1)).to.deep.equal([
+			keys.slice(0, ENTRY_INVENTORY_PAGE_SIZE),
+			keys.slice(ENTRY_INVENTORY_PAGE_SIZE),
+		]);
+		expect(confirmedTotal(h)).to.equal(0);
+	});
+
+	for (const scope of [
+		"session",
+		"transport session",
+		"receive epoch",
+		"entry index",
+	] as const) {
+		it(`forgets confirmations when the ${scope} changes`, async () => {
+			const source = await openLog();
+			const keys = presentKeys(2 * ENTRY_INVENTORY_PAGE_SIZE);
+			const h = harness(source, keys);
+			freshScan(h, keys);
+			const asked = answerAllPresent(h, source, (request) => request === 1);
+			expect(await drive(h.createPass())).to.equal("retry");
+			expect(
+				confirmations(h)?.hashes.size,
+				"confirmations after the cut pass",
+			).to.equal(ENTRY_INVENTORY_PAGE_SIZE);
+			if (scope === "session") {
+				h.state.session = { phase: "open", isActive: () => true };
+			} else if (scope === "transport session") {
+				h.shared._peerSyncCapabilitySessions.set(h.peer, 8n);
+			} else if (scope === "receive epoch") {
+				h.state.receiveEpoch = {};
+			} else {
+				h.shared.log = await openLog();
+			}
+			const pass = h.shared.recoverPeerEntryInventory(
+				h.peer,
+				h.state.session,
+				owner.signal,
+			) as EntryInventoryPass;
+			passes.push(pass);
+			expect(await drive(pass)).to.equal("complete");
+			expect(asked.slice(1)).to.deep.equal([
+				keys.slice(0, ENTRY_INVENTORY_PAGE_SIZE),
+				keys.slice(ENTRY_INVENTORY_PAGE_SIZE),
+			]);
+			expect(confirmedTotal(h)).to.equal(0);
+		});
+	}
+
+	// Only the first reply is faulty. It also crosses a local write, the one case
+	// where a reply that is not acted on is still kept as presence.
+	for (const fault of [
+		"sent by another peer",
+		"on another transport session",
+		"with an unrequested hash",
+		"with a duplicate hash",
+		"with one hash too many",
+	] as const) {
+		it(`keeps no confirmations from a reply ${fault}`, async () => {
+			const source = await openLog();
+			const keys = presentKeys(ENTRY_INVENTORY_PAGE_SIZE);
+			const h = harness(source, keys);
+			freshScan(h, keys);
+			const asked: string[][] = [];
+			h.shared.rpc.request.callsFake(
+				async (request: RequestEntryInventoryV1, options: any) => {
+					options.onPhysicalSettlement(Promise.resolve());
+					asked.push([...request.hashes]);
+					const hashes = [...request.hashes];
+					if (asked.length > 1) return h.present(hashes);
+					await admit(source, hashes[0]);
+					if (fault === "with an unrequested hash") hashes[0] = "unrequested";
+					if (fault === "with a duplicate hash") hashes[1] = hashes[0];
+					if (fault === "with one hash too many") hashes.push(hashes[0]);
+					const [reply] = h.present(hashes);
+					if (fault === "sent by another peer")
+						reply.from = { hashcode: () => "another-peer" };
+					if (fault === "on another transport session")
+						reply.message.header.session = h.transportSession - 1n;
+					return [reply];
+				},
+			);
+			expect(await drive(h.createPass())).to.equal("retry");
+			expect(
+				confirmations(h)?.hashes.size ?? 0,
+				"confirmations from the rejected reply",
+			).to.equal(0);
+			expect(h.shared._entryInventoryConfirmedTotal ?? 0).to.equal(0);
+			expect(await drive(h.createPass())).to.equal("complete");
+			expect(asked, "the second pass asks the whole page").to.deep.equal([
+				keys,
+				keys,
+			]);
+			expect(confirmedTotal(h)).to.equal(0);
+		});
+	}
+
+	// A valid reply, but one of the pass's other fences fails while it is in
+	// flight.
+	for (const fence of [
+		"replication info is blocked",
+		"the cleanup gate closes",
+		"the ownership snapshot changes",
+		"its pass is aborted",
+	] as const) {
+		it(`keeps no confirmations from a reply that arrives after ${fence}`, async () => {
+			const source = await openLog();
+			const keys = presentKeys(ENTRY_INVENTORY_PAGE_SIZE);
+			const h = harness(source, keys);
+			freshScan(h, keys);
+			const fences = { blocked: false, gateOpen: true };
+			Object.assign(h.shared._peerSessions, {
+				isReplicationInfoBlocked: () => fences.blocked,
+				isReceiveCleanupGateOpen: () => fences.gateOpen,
+			});
+			const job = new AbortController();
+			const asked: string[][] = [];
+			h.shared.rpc.request.callsFake(
+				async (request: RequestEntryInventoryV1, options: any) => {
+					options.onPhysicalSettlement(Promise.resolve());
+					asked.push([...request.hashes]);
+					if (asked.length === 1) {
+						if (fence === "replication info is blocked") fences.blocked = true;
+						else if (fence === "the cleanup gate closes")
+							fences.gateOpen = false;
+						else if (fence === "the ownership snapshot changes")
+							h.shared._instanceLifecycle._receiveOwnershipRevision++;
+						else job.abort();
+					}
+					return h.present(request.hashes);
+				},
+			);
+			const pass = h.shared.recoverPeerEntryInventory(
+				h.peer,
+				h.session,
+				job.signal,
+			) as EntryInventoryPass;
+			passes.push(pass);
+			expect(await drive(pass)).to.equal("retry");
+			expect(
+				confirmations(h)?.hashes.size ?? 0,
+				"confirmations from the fenced reply",
+			).to.equal(0);
+			expect(h.shared._entryInventoryConfirmedTotal ?? 0).to.equal(0);
+			fences.blocked = false;
+			fences.gateOpen = true;
+			expect(await drive(h.createPass())).to.equal("complete");
+			expect(asked, "the second pass asks the whole page").to.deep.equal([
+				keys,
+				keys,
+			]);
+			expect(confirmedTotal(h)).to.equal(0);
+		});
+	}
+
+	it("asks only the unconfirmed hash after a write cuts its page", async () => {
+		const source = await openLog();
+		const held = (
+			await source.append(new Uint8Array([1]), { meta: { next: [] } })
+		).entry;
+		const receiver = await openLog();
+		const keys = presentKeys(2 * ENTRY_INVENTORY_PAGE_SIZE);
+		keys[5] = held.hash;
+		const h = harness(source, keys);
+		freshScan(h, keys);
+		const asked: string[][] = [];
+		h.shared.rpc.request.callsFake(
+			async (request: RequestEntryInventoryV1, options: any) => {
+				options.onPhysicalSettlement(Promise.resolve());
+				asked.push([...request.hashes]);
+				const present: string[] = [];
+				for (const hash of request.hashes) {
+					if (hash !== held.hash || (await receiver.has(hash)))
+						present.push(hash);
+				}
+				return h.present(present);
+			},
+		);
+		h.shared.rpc.send = sinon.spy(
+			async (message: ExchangeHeadsMessage<Uint8Array>, options: any) => {
+				await receiver.join(
+					message.heads.map((head) => head.entry),
+					{ signal: options.signal },
+				);
+				// A local write lands before the page asks again.
+				await admit(source, held.hash);
+			},
+		);
+		expect(await drive(h.createPass())).to.equal("retry");
+		expect(asked.length).to.equal(1);
+		expect(await drive(h.createPass())).to.equal("complete");
+		expect(
+			asked[1].length,
+			"hashes in the first request of the second pass",
+		).to.equal(1);
+		expect(asked[1]).to.deep.equal([held.hash]);
+		expect(h.shared.rpc.send.callCount).to.equal(1);
+		expect(asked.flat().length, "requested hashes").to.equal(
+			ENTRY_INVENTORY_PAGE_SIZE + 1 + ENTRY_INVENTORY_PAGE_SIZE,
+		);
+		expect(await receiver.has(held.hash)).to.equal(true);
+	});
+
+	it("caps the confirmations it keeps", async () => {
+		const source = await openLog();
+		const keys = presentKeys(4 * ENTRY_INVENTORY_PAGE_SIZE + 1);
+		const h = harness(source, keys);
+		freshScan(h, keys);
+		h.shared.entryInventoryConfirmedLimit = 200;
+		const asked = answerAllPresent(h, source, (request) => request <= 2);
+		expect(await drive(h.createPass())).to.equal("retry");
+		expect(confirmedTotal(h)).to.equal(ENTRY_INVENTORY_PAGE_SIZE);
+		expect(await drive(h.createPass())).to.equal("retry");
+		expect(confirmedTotal(h)).to.equal(200);
+		expect(confirmations(h)?.hashes.size).to.equal(200);
+		expect(await drive(h.createPass())).to.equal("complete");
+		expect(confirmedTotal(h)).to.equal(0);
+		expect(asked.map((hashes) => hashes.length)).to.deep.equal([
+			128, 128, 56, 128, 128, 1,
+		]);
+		expect(asked[2]).to.deep.equal(keys.slice(200, 256));
+		expect(asked.flat().length, "requested hashes").to.equal(569);
+	});
+
+	it("counts every peer's confirmations against one log-wide limit", async () => {
+		const source = await openLog();
+		const keys = presentKeys(4 * ENTRY_INVENTORY_PAGE_SIZE + 1);
+		const h = harness(source, keys);
+		freshScan(h, keys);
+		h.shared.entryInventoryConfirmedLimit = 200;
+		const other = {
+			session: {},
+			transportSession: 1n,
+			receiveEpoch: {},
+			revision: 0,
+			lower: source.entryIndex,
+			hashes: new Set(presentKeys(150).map((key) => `other-${key}`)),
+		};
+		h.shared._entryInventoryConfirmed = new Map([["other-peer", other]]);
+		h.shared._entryInventoryConfirmedTotal = 150;
+		const asked = answerAllPresent(h, source, (request) => request <= 2);
+		expect(await drive(h.createPass())).to.equal("retry");
+		expect(
+			confirmations(h)?.hashes.size,
+			"confirmations kept for this peer",
+		).to.equal(50);
+		expect(confirmedTotal(h)).to.equal(200);
+		expect(await drive(h.createPass())).to.equal("retry");
+		expect(
+			confirmations(h)?.hashes.size,
+			"confirmations kept for this peer",
+		).to.equal(50);
+		expect(await drive(h.createPass())).to.equal("complete");
+		expect(confirmedTotal(h)).to.equal(150);
+		expect(h.shared._entryInventoryConfirmed.get("other-peer")).to.equal(other);
+		expect(asked.map((hashes) => hashes.length)).to.deep.equal([
+			128, 78, 78, 128, 128, 128, 1,
+		]);
+	});
+
+	it("keeps no confirmations for a backend without key scans", async () => {
+		const source = await openLog();
+		const h = harness(source, ["held-entry"]);
+		h.shared._coordinates.scanAuthoritativeCoordinateKeys = () => undefined;
+		expect(await drive(h.createPass())).to.equal("complete");
+		expect(confirmations(h)).to.equal(undefined);
+		expect(h.shared.rpc.request.called).to.equal(false);
+	});
+
+	it("drops confirmations when the peer leaves", async () => {
+		const source = await openLog();
+		const keys = presentKeys(2 * ENTRY_INVENTORY_PAGE_SIZE);
+		const h = harness(source, keys);
+		freshScan(h, keys);
+		answerAllPresent(h, source, (request) => request === 1);
+		expect(await drive(h.createPass())).to.equal("retry");
+		expect(
+			confirmations(h)?.hashes.size,
+			"confirmations after the cut pass",
+		).to.equal(ENTRY_INVENTORY_PAGE_SIZE);
+		const cancelJoinWarmupTarget = allowDeparture(h);
+		h.shared.removeRepairFrontierTarget(h.peer);
+		expect(cancelJoinWarmupTarget.calledOnceWith(h.peer)).to.equal(true);
+		expect(confirmations(h), "record after the peer left").to.equal(undefined);
+		expect(confirmedTotal(h)).to.equal(0);
+	});
+
+	it("keeps no confirmations from a reply that arrives after the peer left", async () => {
+		const source = await openLog();
+		const keys = presentKeys(ENTRY_INVENTORY_PAGE_SIZE);
+		const h = harness(source, keys);
+		freshScan(h, keys);
+		allowDeparture(h);
+		const entered = gate();
+		const reply = gate();
+		h.shared.rpc.request.callsFake(
+			async (request: RequestEntryInventoryV1, options: any) => {
+				options.onPhysicalSettlement(Promise.resolve());
+				entered.resolve();
+				await reply.promise;
+				return h.present(request.hashes);
+			},
+		);
+		const result = advance(h.createPass());
+		await entered.promise;
+		h.shared.removeRepairFrontierTarget(h.peer);
+		reply.resolve();
+		// The harness has no scheduler to abort the pass, so only the identity of
+		// the record keeps this reply out of the log-wide total.
+		expect(await result).to.equal("complete");
+		expect(confirmations(h), "record after the peer left").to.equal(undefined);
+		expect(confirmedTotal(h)).to.equal(0);
+	});
 });
