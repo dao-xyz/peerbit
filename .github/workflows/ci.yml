@@ -283,7 +283,7 @@ jobs:
     name: Receipt liveness (${{ matrix.os }})
     needs: build_workspace
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 15
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -440,6 +440,16 @@ jobs:
           packages/transport/pubsub/dist/test/stale-root-cold-join.spec.js
           packages/transport/pubsub/dist/test/fanout-tree-bootstrap-dials.spec.js
           packages/clients/peerbit/dist/test/blocks-provider-directory.spec.js
+      - name: Test transport-loss reconnects without retries
+        timeout-minutes: 3
+        env:
+          AEGIR_RUNNER: node
+          NODE_ENV: test
+        run: >-
+          node scripts/ci/assert-tests-ran.mjs node ./node_modules/mocha/bin/mocha.js
+          --no-config --no-package --require chai-extend/chai-global.js
+          --timeout 60000 --retries 0 --no-exit
+          packages/programs/data/shared-log/dist/test/transport-loss-reconnect.spec.js
       - name: Test synchronizer teardown without retries or forced exit
         timeout-minutes: 3
         env:

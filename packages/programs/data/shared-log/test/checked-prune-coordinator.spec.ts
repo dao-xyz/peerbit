@@ -373,6 +373,62 @@ describe("checked prune coordinator", () => {
 		expect(coordinator.getRestartCandidate(restartEntry.hash)).to.be.undefined;
 	});
 
+	it("is idle only while no checked-prune work exists", () => {
+		const coordinator = new CheckedPruneCoordinator<Uint8Array, "u32">();
+		expect(coordinator.isIdle(), "a new coordinator").to.be.true;
+		const entry = { hash: "hash" } as any;
+		const leaders = new Set(["peer"]);
+		const work: [string, () => () => unknown][] = [
+			[
+				"a pending delete",
+				() => {
+					setPending(coordinator, "hash", pendingDelete(requestId(1)));
+					return () => coordinator.markDone("hash");
+				},
+			],
+			[
+				"a retry",
+				() => {
+					coordinator.setRetry("hash", {
+						attempts: 1,
+						generation: 1,
+						entry,
+						leaders,
+					});
+					return () => coordinator.clearRetry("hash");
+				},
+			],
+			[
+				"a candidate",
+				() => {
+					coordinator.trackCandidate("hash", entry, leaders);
+					return () => coordinator.invalidateCandidateToken("hash");
+				},
+			],
+			[
+				"a restart reservation",
+				() => {
+					const reservation = coordinator.reserveRestart("hash");
+					return () =>
+						coordinator.cancelRestartReservation("hash", reservation);
+				},
+			],
+			[
+				"a removal in progress",
+				() => {
+					coordinator.markRemoving("hash");
+					return () => coordinator.markDone("hash");
+				},
+			],
+		];
+		for (const [name, start] of work) {
+			const finish = start();
+			expect(coordinator.isIdle(), `with ${name}`).to.be.false;
+			finish();
+			expect(coordinator.isIdle(), `after ${name}`).to.be.true;
+		}
+	});
+
 	it("clears every authorization generation on close", () => {
 		let clears = 0;
 		const coordinator = new CheckedPruneCoordinator<Uint8Array, "u32">();
