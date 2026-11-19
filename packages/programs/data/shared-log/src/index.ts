@@ -12073,6 +12073,23 @@ export class SharedLog<
 		}
 	}
 
+	/**
+	 * Targeted repair for a peer whose replication ranges came back unchanged:
+	 * an authoritative sweep now and the delayed authoritative sweeps, without
+	 * the known-peer hints that may belong to the peer's previous connection.
+	 */
+	private scheduleUnchangedSuccessorRepair(
+		peerHash: string,
+		controller: AbortController,
+	) {
+		this._repairFrontierBypassKnownPeersByMode
+			.get("join-authoritative")
+			?.add(peerHash);
+		const peers = new Set([peerHash]);
+		this.scheduleRepairSweep({ mode: "join-authoritative", peers }, controller);
+		this.scheduleJoinAuthoritativeRepair(peers, controller);
+	}
+
 	private async runRepairSweep(
 		repairLifecycleController: AbortController = this._instanceLifecycle
 			?.ownershipLifecycleController as AbortController,
@@ -25476,16 +25493,8 @@ export class SharedLog<
 						// delivery evidence may belong to the superseded process. Reuse the
 						// receipt-driven authoritative repair path and bypass only those stale
 						// hints; do not synthesize public membership or range-change events.
-						this._repairFrontierBypassKnownPeersByMode
-							.get("join-authoritative")
-							?.add(fromHash);
-						const peers = new Set([fromHash]);
-						this.scheduleRepairSweep(
-							{ mode: "join-authoritative", peers },
-							lane.ownershipLifecycleController,
-						);
-						this.scheduleJoinAuthoritativeRepair(
-							peers,
+						this.scheduleUnchangedSuccessorRepair(
+							fromHash,
 							lane.ownershipLifecycleController,
 						);
 					}
