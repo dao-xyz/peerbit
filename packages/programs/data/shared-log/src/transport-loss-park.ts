@@ -27,6 +27,8 @@ export type TransportLossPark<T> = {
 	debouncer: object;
 	/** The ownership lifecycle that was current when the removal was held. */
 	controller: AbortController;
+	/** What the held owner may be missing; sent to it if the hold is restored. */
+	ledger: TransportLossLedger;
 	timer?: ReturnType<typeof setTimeout>;
 };
 
@@ -57,4 +59,52 @@ export const rowsMatchTransportLossPark = <
 		}
 	}
 	return true;
+};
+
+/** The most hashes a ledger keeps; the oldest are dropped first. */
+export const TRANSPORT_LOSS_LEDGER_LIMIT = 1024;
+
+/**
+ * What an owner whose transport-loss removal is under way or held may be
+ * missing: its unconfirmed append deliveries, then the hashes appended or
+ * admitted here since its removal started, oldest first. A restore sends them
+ * to the owner; any other end of the hold drops them, because the usual passes
+ * then deliver. When full, the oldest hash is dropped and counted; the
+ * restore's authoritative sweep still covers it.
+ */
+export type TransportLossLedger = {
+	hashes: Set<string>;
+	/**
+	 * Times a hash was dropped because the ledger was full. A hash recorded
+	 * again after it was dropped, as each entry of a batch larger than the
+	 * ledger is, can be dropped and counted again.
+	 */
+	evicted: number;
+	/** Removals of this owner that opened the ledger and have not returned. */
+	openers: number;
+};
+
+export const createTransportLossLedger = (): TransportLossLedger => ({
+	hashes: new Set(),
+	evicted: 0,
+	openers: 0,
+});
+
+/** Record a hash once; when the ledger is full, drop the oldest first. */
+export const noteTransportLossLedger = (
+	ledger: TransportLossLedger,
+	hash: string,
+	limit: number,
+): void => {
+	if (ledger.hashes.has(hash)) return;
+	if (limit < 1) {
+		ledger.evicted++;
+		return;
+	}
+	while (ledger.hashes.size >= limit) {
+		const oldest = ledger.hashes.values().next().value as string;
+		ledger.hashes.delete(oldest);
+		ledger.evicted++;
+	}
+	ledger.hashes.add(hash);
 };

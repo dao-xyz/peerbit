@@ -334,9 +334,13 @@ import {
 	SimpleSyncronizer,
 } from "./sync/simple.js";
 import {
+	TRANSPORT_LOSS_LEDGER_LIMIT,
 	TRANSPORT_LOSS_REMOVAL_GRACE_MS,
+	type TransportLossLedger,
 	type TransportLossPark,
 	type TransportLossReleaseReason,
+	createTransportLossLedger,
+	noteTransportLossLedger,
 	rowsMatchTransportLossPark,
 } from "./transport-loss-park.js";
 import { groupByGid, tryGroupByGidSync } from "./utils.js";
@@ -2805,6 +2809,14 @@ export class SharedLog<
 	private _placementPassesInFlight?: Set<object>;
 	// Test override for TRANSPORT_LOSS_REMOVAL_GRACE_MS. Not an option.
 	private transportLossRemovalGraceMs?: number;
+	// What each owner whose transport-loss removal is under way or held may be
+	// missing, by owner hash (see TransportLossLedger). Opened when such a
+	// removal starts, kept by its hold, sent to the owner when the hold is
+	// restored, dropped otherwise. Created in open(): deserialized instances
+	// skip field initializers.
+	private _transportLossLedgers?: Map<string, TransportLossLedger>;
+	// Test override for TRANSPORT_LOSS_LEDGER_LIMIT. Not an option.
+	private transportLossLedgerLimit?: number;
 	// A superseded removal may be the queue item that actually observed an active
 	// replicator. Carry that leave obligation to the transition that ultimately
 	// wins, while a winning reconnect clears it without emitting a stale leave.
@@ -2918,6 +2930,7 @@ export class SharedLog<
 		// Held removals belong to the poisoned generation, like the pending
 		// aggregate changes above; their timers were cleared just now.
 		this._transportLossParks?.clear();
+		this._transportLossLedgers?.clear();
 		for (const timer of this._joinAuthoritativeRepairTimersByDelay.values()) {
 			clearTimeout(timer);
 		}
@@ -7292,6 +7305,9 @@ export class SharedLog<
 			}
 			throw new PersistedDeliveryError(error, committedHashes);
 		} finally {
+			// An owner's removal may have started while this ran: plans made since
+			// leave it out, and a transfer to it may be lost with the transport.
+			this.noteTransportLossLedgers(committedHashes);
 			recoveryController.abort();
 			for (const state of recoveryByPeer.values()) {
 				clearTimeout(state.timer);
@@ -9354,11 +9370,17 @@ export class SharedLog<
 		let removed = false;
 		let removalCallCompleted = false;
 		let replicationInfoRecoveryEpochAdvanced = false;
+		let transportLossLedger: TransportLossLedger | undefined;
 
 		// Replication-info updates already serialize per peer. Put the hash-wide
 		// removal on the same queue so a newer reset cannot be deleted underneath
 		// itself by an older unsubscribe callback.
 		try {
+			// Entries planned or admitted from here on may skip this owner:
+			// record them in case its removal is held, so a restore can send them.
+			transportLossLedger = pruneIdleAtEntry
+				? this.openTransportLossLedger(keyHash)
+				: undefined;
 			await this.withReplicationInfoApplyQueue(keyHash, async () => {
 				this.throwIfReplicationOwnershipLifecycleInactive(
 					replicationOwnershipLifecycleController,
@@ -9469,6 +9491,7 @@ export class SharedLog<
 								keyHash,
 								deleted,
 								replicationOwnershipLifecycleController,
+								transportLossLedger,
 							);
 							this.throwIfReplicationOwnershipLifecycleInactive(
 								replicationOwnershipLifecycleController,
@@ -9596,6 +9619,9 @@ export class SharedLog<
 			});
 			removalCallCompleted = true;
 		} finally {
+			if (transportLossLedger) {
+				this.closeTransportLossLedger(keyHash, transportLossLedger);
+			}
 			if (releaseReceiveCleanupGate) {
 				releaseReceiveCleanupGate();
 				this.dispatchPersistedReceiptReadinessChange(keyHash);
@@ -9694,6 +9720,7 @@ export class SharedLog<
 		outcome: "parked" | "restored" | "released",
 		rows: number,
 		reason?: TransportLossReleaseReason,
+		delivery?: { pushed: number; evicted: number },
 	): void {
 		const profile = this._logProperties?.sync?.profile;
 		if (!profile) {
@@ -9705,7 +9732,7 @@ export class SharedLog<
 				component: "shared-log",
 				peer,
 				count: rows,
-				details: { outcome, reason },
+				details: { outcome, reason, ...delivery },
 			});
 		} catch {
 			// Advisory diagnostics must not change replication or lifecycle behavior.
@@ -9746,6 +9773,7 @@ export class SharedLog<
 		keyHash: string,
 		deleted: ReplicationRangeIndexable<R>[],
 		controller: AbortController,
+		ledger?: TransportLossLedger,
 	): Promise<TransportLossPark<ReplicationRangeIndexable<R>> | undefined> {
 		const parks = this._transportLossParks;
 		if (!parks || parks.has(keyHash) || !this.allowsTransportLossPark()) {
@@ -9771,6 +9799,10 @@ export class SharedLog<
 			timestamp: BigInt(+new Date()),
 			debouncer: this.replicationChangeDebounceFn,
 			controller,
+			ledger: this.seedTransportLossLedger(
+				keyHash,
+				ledger ?? createTransportLossLedger(),
+			),
 		};
 		const timer = setTimeout(
 			() => this.releaseTransportLossPark(keyHash, park, "grace"),
@@ -9780,6 +9812,7 @@ export class SharedLog<
 		park.timer = timer;
 		this._repairRetryTimers.add(timer);
 		parks.set(keyHash, park);
+		this._transportLossLedgers?.set(keyHash, park.ledger);
 		return park;
 	}
 
@@ -9804,6 +9837,7 @@ export class SharedLog<
 			return;
 		}
 		parks.delete(keyHash);
+		this.dropTransportLossLedger(keyHash, park.ledger);
 		this.clearTransportLossParkTimer(park);
 		this.emitTransportLossParkProfile(
 			keyHash,
@@ -9835,13 +9869,165 @@ export class SharedLog<
 		}
 	}
 
+	/** Open or join the ledger of an owner whose removal may still be held. */
+	private openTransportLossLedger(
+		peer: string,
+	): TransportLossLedger | undefined {
+		const ledgers = this._transportLossLedgers;
+		const parks = this._transportLossParks;
+		if (
+			!ledgers ||
+			!parks ||
+			parks.has(peer) ||
+			// A peer that owns no rows here has nothing to hold, so nothing would
+			// ever read its ledger.
+			!this.uniqueReplicators.has(peer) ||
+			!this.allowsTransportLossPark() ||
+			// Same bound as tryCreateTransportLossPark: a hold needs the replica
+			// floor to exceed the holds it would join.
+			parks.size >= this.getTransportLossReplicaFloor() - 1
+		) {
+			return undefined;
+		}
+		let ledger = ledgers.get(peer);
+		if (!ledger) {
+			ledger = createTransportLossLedger();
+			ledgers.set(peer, ledger);
+		}
+		ledger.openers++;
+		return ledger;
+	}
+
+	/** A removal that opened the ledger returned: drop it unless a hold keeps it. */
+	private closeTransportLossLedger(peer: string, ledger: TransportLossLedger) {
+		ledger.openers--;
+		if (
+			ledger.openers > 0 ||
+			this._transportLossParks?.get(peer)?.ledger === ledger
+		) {
+			return;
+		}
+		this.dropTransportLossLedger(peer, ledger);
+	}
+
+	private dropTransportLossLedger(peer: string, ledger: TransportLossLedger) {
+		if (this._transportLossLedgers?.get(peer) === ledger) {
+			this._transportLossLedgers.delete(peer);
+		}
+	}
+
+	/**
+	 * Put the owner's unconfirmed append deliveries ahead of what was recorded
+	 * since its removal started. Runs when the hold is created, inside the lane,
+	 * before departure cleanup drops the owner's frontier and known marks.
+	 */
+	private seedTransportLossLedger(
+		peer: string,
+		ledger: TransportLossLedger,
+	): TransportLossLedger {
+		const limit = this.transportLossLedgerLimit ?? TRANSPORT_LOSS_LEDGER_LIMIT;
+		const recorded = ledger.hashes;
+		ledger.hashes = new Set();
+		for (const obligations of [
+			this._appendBackfillPendingByTarget?.get(peer)?.keys(),
+			this._repairFrontierByMode.get("append-backfill")?.get(peer)?.keys(),
+		]) {
+			for (const hash of obligations ?? []) {
+				if (!this.isEntryKnownByPeer(hash, peer)) {
+					noteTransportLossLedger(ledger, hash, limit);
+				}
+			}
+		}
+		for (const hash of recorded) {
+			noteTransportLossLedger(ledger, hash, limit);
+		}
+		return ledger;
+	}
+
+	/** Record hashes in every open ledger except the given owner's. */
+	private noteTransportLossLedgers(hashes: Iterable<string>, except?: string) {
+		const ledgers = this._transportLossLedgers;
+		if (!ledgers || ledgers.size === 0) return;
+		const limit = this.transportLossLedgerLimit ?? TRANSPORT_LOSS_LEDGER_LIMIT;
+		for (const hash of hashes) {
+			for (const [peer, ledger] of ledgers) {
+				if (peer !== except) noteTransportLossLedger(ledger, hash, limit);
+			}
+		}
+	}
+
+	/**
+	 * Record a batch of local appends whose delivery is planned for the whole
+	 * batch before any entry reaches processLocalAppend. A plan made during a
+	 * hold leaves the held owner out of every entry, and once a restore drops
+	 * the ledger, the entries processed after it are recorded nowhere.
+	 */
+	private noteTransportLossAppendBatch(
+		entries: readonly { hash: string }[],
+		options: SharedAppendOptions<T> | undefined,
+	) {
+		if (
+			options?.target === "none" ||
+			(this._transportLossLedgers?.size ?? 0) === 0
+		) {
+			return;
+		}
+		this.noteTransportLossLedgers(entries.map((entry) => entry.hash));
+	}
+
+	/**
+	 * Send a restored owner what it may have missed while held, ahead of the
+	 * authoritative sweep, which still covers every entry it leads (including
+	 * any the ledger dropped when full). Runs in the ownership lane: no awaits.
+	 * `restoredFrom` is the owner's session and receive epoch when the restore
+	 * started; nothing is sent once either has changed.
+	 */
+	private deliverTransportLossLedger(
+		peer: string,
+		park: TransportLossPark<ReplicationRangeIndexable<R>>,
+		controller: AbortController,
+		restoredFrom: { session: PeerSession | null; receiveEpoch: object | null },
+	): { pushed: number; evicted: number } {
+		const ledger = park.ledger;
+		this.dropTransportLossLedger(peer, ledger);
+		const isStillCurrent = () =>
+			this.isRepairLifecycleActive(controller) &&
+			this._peerSessions.current(peer) === restoredFrom.session &&
+			this._peerSessions.receiveEpoch(peer) === restoredFrom.receiveEpoch;
+		const hashes: string[] = [];
+		for (const hash of ledger.hashes) {
+			// The owner's marks were cleared when it left: a mark now means it
+			// sent or confirmed the entry since.
+			if (!this.isEntryKnownByPeer(hash, peer)) hashes.push(hash);
+		}
+		if (
+			hashes.length === 0 ||
+			this.isAssumeSyncedRepairSuppressed() ||
+			// The owner left again while the restore read its plan: the push
+			// would go into the lost transport.
+			!isStillCurrent()
+		) {
+			return { pushed: 0, evicted: ledger.evicted };
+		}
+		void this.pushEntryHashes(peer, hashes, {
+			isStillCurrent,
+			priority: SYNC_MESSAGE_PRIORITY,
+			repairHint: true,
+			signal: controller.signal,
+		}).catch((error) => {
+			if (this.isRepairLifecycleActive(controller)) logger.error(error);
+		});
+		return { pushed: hashes.length, evicted: ledger.evicted };
+	}
+
 	/**
 	 * Restore a held owner whose Full brought back exactly the held rows, with
 	 * no pass pending or running and no prune work, while the owner, every
 	 * remaining owner and every other held owner still fit the replica floor.
 	 * Every entry then has the leaders it had before the departure, so both
-	 * passes are skipped and only the targeted repair for the owner runs.
-	 * Runs inside the ownership lane, after the rows were written back.
+	 * passes are skipped: the owner is sent what it may have missed while held,
+	 * and the targeted repair for it runs. Runs inside the ownership lane, after
+	 * the rows were written back.
 	 */
 	private async tryRestoreTransportLossPark(
 		fromHash: string,
@@ -9849,6 +10035,12 @@ export class SharedLog<
 		diffs: ReplicationChanges<ReplicationRangeIndexable<R>>,
 		controller: AbortController,
 	): Promise<boolean> {
+		// The apply that brought the owner back checked its session last, with
+		// no await since. A push must not outlive that session or receive epoch.
+		const restoredFrom = {
+			session: this._peerSessions.current(fromHash),
+			receiveEpoch: this._peerSessions.receiveEpoch(fromHash),
+		};
 		const isRestorable = () =>
 			this._transportLossParks?.get(fromHash) === park &&
 			this.replicationChangeDebounceFn === park.debouncer &&
@@ -9880,11 +10072,25 @@ export class SharedLog<
 		}
 		this._transportLossParks!.delete(fromHash);
 		this.clearTransportLossParkTimer(park);
+		// Send what the owner may have missed while held before the sweep, whose
+		// first round offers the oldest rows.
+		const delivery = this.deliverTransportLossLedger(
+			fromHash,
+			park,
+			controller,
+			restoredFrom,
+		);
 		// The owner's known-peer hints were cleared when it left, so the ones it
 		// has now came from its current connection, and its repair honours them,
 		// as a first session's repair does.
 		this.scheduleUnchangedSuccessorRepair(fromHash, controller, false);
-		this.emitTransportLossParkProfile(fromHash, "restored", park.rows.length);
+		this.emitTransportLossParkProfile(
+			fromHash,
+			"restored",
+			park.rows.length,
+			undefined,
+			delivery,
+		);
 		return true;
 	}
 
@@ -12215,6 +12421,16 @@ export class SharedLog<
 			this._appendBackfillPendingByTarget.set(target, entries);
 		}
 		entries.set(entry.hash, entry);
+		const ledger = this._transportLossLedgers?.get(target);
+		if (ledger) {
+			// Planned with this owner before its removal started: the send may be
+			// lost with the transport.
+			noteTransportLossLedger(
+				ledger,
+				entry.hash,
+				this.transportLossLedgerLimit ?? TRANSPORT_LOSS_LEDGER_LIMIT,
+			);
+		}
 		if (entries.size >= this.repairSweepTargetBufferSize) {
 			this.flushAppendBackfill(repairLifecycleController);
 			return;
@@ -17251,6 +17467,9 @@ export class SharedLog<
 			};
 		}
 
+		// Before the batch plan, which leaves a held owner out, and after it, in
+		// case an owner's removal started while it ran.
+		this.noteTransportLossAppendBatch(result.entries, options);
 		let nativeAppendPlans = await this.planAndPersistNativeAppendEntries(
 			result.entries,
 			minReplicasValue,
@@ -17260,6 +17479,7 @@ export class SharedLog<
 		this.throwIfReplicationOwnershipLifecycleInactive(
 			ownershipLifecycleController,
 		);
+		this.noteTransportLossAppendBatch(result.entries, options);
 		for (let i = 0; i < result.entries.length; i++) {
 			const processedPlan = await this.processLocalAppend(
 				result.entries[i]!,
@@ -17377,6 +17597,9 @@ export class SharedLog<
 			return result;
 		}
 
+		// Before the batch plan, which leaves a held owner out, and after it, in
+		// case an owner's removal started while it ran.
+		this.noteTransportLossAppendBatch(result.entries, options);
 		const nativeAppendPlans = await this.planAndPersistNativeAppendEntries(
 			result.entries,
 			minReplicasValue,
@@ -17386,6 +17609,7 @@ export class SharedLog<
 		this.throwIfReplicationOwnershipLifecycleInactive(
 			ownershipLifecycleController,
 		);
+		this.noteTransportLossAppendBatch(result.entries, options);
 		for (let i = 0; i < result.entries.length; i++) {
 			const entry = result.entries[i]!;
 			await this.processLocalAppend(entry, [], options, {
@@ -17461,6 +17685,9 @@ export class SharedLog<
 				ownershipLifecycleController,
 			);
 			throwIfDeliveryAborted();
+			// Committed without delivery: this settlement is their first send, and
+			// its plans leave out a held owner.
+			this.noteTransportLossLedgers(committedHashes);
 			await this.settlePersistedDelivery(
 				records,
 				minReplicasValue,
@@ -18364,6 +18591,14 @@ export class SharedLog<
 		this.throwIfReplicationOwnershipLifecycleInactive(
 			ownershipLifecycleController,
 		);
+		if (
+			options?.target !== "none" &&
+			(this._transportLossLedgers?.size ?? 0) > 0
+		) {
+			// A held owner is not among this entry's recipients, or the send to
+			// it may be lost with the transport.
+			this.noteTransportLossLedgers([entry.hash]);
+		}
 		const deferHeadCoordinatePersistence =
 			properties.deferHeadCoordinatePersistence ??
 			(entry.meta.type !== EntryType.CUT &&
@@ -18573,6 +18808,14 @@ export class SharedLog<
 		this.throwIfReplicationOwnershipLifecycleInactive(
 			ownershipLifecycleController,
 		);
+		if (
+			options?.target !== "none" &&
+			(this._transportLossLedgers?.size ?? 0) > 0
+		) {
+			// The plan may have run before an owner's removal started, with the
+			// owner as a recipient whose send may be lost with the transport.
+			this.noteTransportLossLedgers([entry.hash]);
+		}
 
 		if (properties.captureDeferredBackfillSource) {
 			let extras: Omit<
@@ -19533,6 +19776,7 @@ export class SharedLog<
 		this._gidPeersHistory = new Map();
 		this._successorFullRepairSessions = new WeakSet();
 		this._transportLossParks = new Map();
+		this._transportLossLedgers = new Map();
 		this._placementPassesInFlight = new Set();
 		this.resetGidPeerHistoryCleanupState();
 		const replicationChangeOwnershipLifecycleController =
@@ -22335,6 +22579,7 @@ export class SharedLog<
 			// Held removals belong to this ownership generation; their timers were
 			// cleared with the other repair timers.
 			this._transportLossParks?.clear();
+			this._transportLossLedgers?.clear();
 			this._recentRepairDispatch?.clear();
 			this._repairSweepRunning = false;
 			this._repairSweepPendingModes?.clear();
@@ -24814,6 +25059,18 @@ export class SharedLog<
 							}
 							for (const hash of admittedHashes) {
 								confirmedHashes.add(hash);
+							}
+							if ((this._transportLossLedgers?.size ?? 0) > 0) {
+								// At or above the floor, every owner a restore brings
+								// back leads these.
+								const floor = this.getTransportLossReplicaFloor();
+								const hashes: string[] = [];
+								for (const hash of admittedHashes) {
+									if ((receiveReplicaCounts.get(hash) ?? 0) >= floor) {
+										hashes.push(hash);
+									}
+								}
+								this.noteTransportLossLedgers(hashes, contextFromHash);
 							}
 							const checkedPruneStartedAt = syncProfileStart(syncProfile);
 							const ownershipChangedDuringReceive =
