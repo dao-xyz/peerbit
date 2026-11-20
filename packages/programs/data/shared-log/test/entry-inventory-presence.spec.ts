@@ -1,5 +1,6 @@
 import { deserialize, serialize } from "@dao-xyz/borsh";
 import { calculateRawCid } from "@peerbit/blocks-interface";
+import { Ed25519Keypair } from "@peerbit/crypto";
 import { toId } from "@peerbit/indexer-interface";
 import { SilentDelivery } from "@peerbit/stream-interface";
 import { TestSession } from "@peerbit/test-utils";
@@ -541,5 +542,56 @@ describe("entry inventory correlated presence", function () {
 		expect(
 			(firstReplies[0].response as ConfirmEntriesMessage).hashes,
 		).to.deep.equal([hashes[0]]);
+	});
+
+	// Seeds one kept confirmation for the peer. These tests only check that the
+	// record is dropped, so its scope need not match a live inventory pass.
+	const keepConfirmation = (log: any, peerHash: string) => {
+		log._entryInventoryConfirmed.set(peerHash, {
+			session: log._peerSessions.current(peerHash),
+			transportSession: 1n,
+			receiveEpoch: log._peerSessions.receiveEpoch(peerHash),
+			revision: log._instanceLifecycle._receiveOwnershipRevision,
+			lower: log.log.entryIndex,
+			hashes: new Set(["held-entry"]),
+		});
+		log._entryInventoryConfirmedTotal = 1;
+	};
+
+	it("drops kept inventory confirmations when the peer subscribes again", async () => {
+		const log = (await openStore()).log as any;
+		const remote = (await Ed25519Keypair.create()).publicKey;
+		const remoteHash = remote.hashcode();
+		sandbox.stub(log.rpc, "send").resolves([]);
+		const subscribe = (transportSession: bigint) =>
+			log._onSubscription({
+				detail: {
+					from: remote,
+					topics: [log.topic],
+					session: transportSession,
+				},
+			});
+		await subscribe(1n);
+		const opened = log._peerSessions.current(remoteHash);
+		expect(opened?.phase).to.equal("open");
+		keepConfirmation(log, remoteHash);
+		// A newer transport can announce a subscription without an unsubscribe.
+		await subscribe(2n);
+		expect(log._peerSessions.current(remoteHash)).to.not.equal(opened);
+		expect(
+			log._entryInventoryConfirmed.has(remoteHash),
+			"record after the peer subscribed again",
+		).to.equal(false);
+		expect(log._entryInventoryConfirmedTotal).to.equal(0);
+	});
+
+	it("drops kept inventory confirmations when the log closes", async () => {
+		const store = await openStore();
+		const log = store.log as any;
+		expect(log._entryInventoryConfirmed).to.be.instanceOf(Map);
+		keepConfirmation(log, "departed-peer");
+		await store.close();
+		expect(log._entryInventoryConfirmed.size).to.equal(0);
+		expect(log._entryInventoryConfirmedTotal).to.equal(0);
 	});
 });

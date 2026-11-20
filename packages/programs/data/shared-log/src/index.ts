@@ -1667,6 +1667,22 @@ const JOIN_AUTHORITATIVE_REPAIR_SWEEP_DELAYS_MS = [
 const APPEND_BACKFILL_DELAY_MS = 500;
 const ASSUME_SYNCED_REPAIR_SUPPRESSION_MS = 5_000;
 const REPAIR_CONFIRMATION_HASH_BATCH_SIZE = 1_024;
+// Total confirmed hashes kept per log for reconnect entry inventories.
+const ENTRY_INVENTORY_CONFIRMED_LIMIT = 65_536;
+
+// Hashes a peer reported present during a reconnect entry inventory. They are
+// trusted while every field but `hashes` is unchanged, so a pass restarted by a
+// local write does not ask about them again; a removal on the peer itself is
+// not rechecked until the pass completes or the scope changes. Not a delivery
+// receipt.
+type EntryInventoryConfirmations = {
+	session: PeerSession;
+	transportSession: bigint;
+	receiveEpoch: unknown;
+	revision: number;
+	lower: object;
+	hashes: Set<string>;
+};
 
 type RepairDispatchMode =
 	| "join-warmup"
@@ -2502,6 +2518,13 @@ export class SharedLog<
 	// boundaries, so host-side inference is unchanged.
 	private _coordinates!: CoordinatePersistenceCoordinator<any>;
 	private _entryInventoryRecovery?: EntryInventoryRecovery<PeerSession>;
+	// Per peer, the hashes it confirmed in the current inventory scope. Created
+	// in open(), since deserialized instances skip field initializers, or by
+	// entryInventoryConfirmationsFor on an instance that never ran open().
+	private _entryInventoryConfirmed?: Map<string, EntryInventoryConfirmations>;
+	private _entryInventoryConfirmedTotal?: number;
+	// Test override for ENTRY_INVENTORY_CONFIRMED_LIMIT.
+	private entryInventoryConfirmedLimit?: number;
 	private _completeLowerCoordinateRemoval?: (
 		hashes: readonly string[],
 		owner?: EntryIndexHashMutationLockOwner,
@@ -10951,6 +10974,7 @@ export class SharedLog<
 		options?: { expectedWarmupSession?: WarmupSession | null },
 	) {
 		this._entryInventoryRecovery?.forget(target);
+		this.forgetEntryInventoryConfirmations(target);
 		if (
 			options?.expectedWarmupSession === undefined ||
 			(options.expectedWarmupSession !== null &&
@@ -10976,6 +11000,74 @@ export class SharedLog<
 			session.isActive() &&
 			this._peerSessions.isCurrent(peer, session)
 		);
+	}
+
+	/**
+	 * The peer's confirmations for this scope. A record from another scope is
+	 * replaced by an empty one.
+	 */
+	private entryInventoryConfirmationsFor(
+		peer: string,
+		scope: Omit<EntryInventoryConfirmations, "hashes">,
+	): EntryInventoryConfirmations {
+		const records = (this._entryInventoryConfirmed ??= new Map<
+			string,
+			EntryInventoryConfirmations
+		>());
+		const existing = records.get(peer);
+		if (
+			existing &&
+			existing.session === scope.session &&
+			existing.transportSession === scope.transportSession &&
+			existing.receiveEpoch === scope.receiveEpoch &&
+			existing.revision === scope.revision &&
+			existing.lower === scope.lower
+		) {
+			return existing;
+		}
+		if (existing) {
+			this._entryInventoryConfirmedTotal =
+				(this._entryInventoryConfirmedTotal ?? 0) - existing.hashes.size;
+		}
+		const record: EntryInventoryConfirmations = {
+			...scope,
+			hashes: new Set(),
+		};
+		records.set(peer, record);
+		return record;
+	}
+
+	private recordEntryInventoryConfirmations(
+		peer: string,
+		confirmed: EntryInventoryConfirmations,
+		present: ReadonlySet<string>,
+		isCurrent: () => boolean,
+	) {
+		if (!isCurrent() || this._entryInventoryConfirmed?.get(peer) !== confirmed)
+			return;
+		const limit =
+			this.entryInventoryConfirmedLimit ?? ENTRY_INVENTORY_CONFIRMED_LIMIT;
+		let total = this._entryInventoryConfirmedTotal ?? 0;
+		for (const hash of present) {
+			if (total >= limit) break;
+			if (confirmed.hashes.has(hash)) continue;
+			confirmed.hashes.add(hash);
+			total++;
+		}
+		this._entryInventoryConfirmedTotal = total;
+	}
+
+	/** Drops the peer's record, or only `confirmed` when it is given. */
+	private forgetEntryInventoryConfirmations(
+		peer: string,
+		confirmed?: EntryInventoryConfirmations,
+	) {
+		const existing = this._entryInventoryConfirmed?.get(peer);
+		if (!existing || (confirmed !== undefined && existing !== confirmed))
+			return;
+		this._entryInventoryConfirmed!.delete(peer);
+		this._entryInventoryConfirmedTotal =
+			(this._entryInventoryConfirmedTotal ?? 0) - existing.hashes.size;
 	}
 
 	private recoverPeerEntryInventory(
@@ -11008,23 +11100,34 @@ export class SharedLog<
 		const receiveEpoch = this._peerSessions.receiveEpoch(peer);
 		const lower = this.log.entryIndex;
 		const generation = lower.captureMutationGeneration();
-		const current = () =>
+		// Every fence except the entry-index generation. What the peer reports
+		// present stays true across local writes, so it is kept while this holds.
+		const presenceCurrent = () =>
 			!signal.aborted &&
-			generation !== undefined &&
 			lower === this.log.entryIndex &&
-			lower.isMutationGenerationCurrent(generation) &&
 			this.isEntryInventoryPeerCurrent(peer, session) &&
 			!this._peerSessions.isReplicationInfoBlocked(peer) &&
 			this._peerSessions.isReceiveCleanupGateOpen(peer) &&
 			this._peerSessions.receiveEpoch(peer) === receiveEpoch &&
 			this._peerSyncCapabilitySessions.get(peer) === transportSession &&
 			this.isReceiveOwnershipSnapshotStable(revision);
+		const current = () =>
+			presenceCurrent() &&
+			generation !== undefined &&
+			lower.isMutationGenerationCurrent(generation);
 		if (!current()) return terminal("retry");
 		const cursor = this._coordinates.scanAuthoritativeCoordinateKeys({
 			pageSize: ENTRY_INVENTORY_PAGE_SIZE,
 			signal,
 		});
 		if (!cursor) return terminal("complete"); // No unbounded iterate/all fallback.
+		const confirmed = this.entryInventoryConfirmationsFor(peer, {
+			session,
+			transportSession,
+			receiveEpoch,
+			revision,
+			lower,
+		});
 		let incomplete = false;
 		return {
 			next: async () => {
@@ -11039,6 +11142,8 @@ export class SharedLog<
 				for (const key of page.keys) {
 					if (typeof key !== "string")
 						throw new Error("Coordinate inventory key is not a hash");
+					// The peer already confirmed it in this scope.
+					if (confirmed.hashes.has(key)) continue;
 					const coordinate =
 						await this._coordinates.getAuthoritativeCoordinateEntryForInventory(
 							key,
@@ -11062,6 +11167,13 @@ export class SharedLog<
 						hashes,
 						signal,
 						current,
+						(present) =>
+							this.recordEntryInventoryConfirmations(
+								peer,
+								confirmed,
+								present,
+								presenceCurrent,
+							),
 					))
 				) {
 					// A missed page is not proof of presence. Keep walking so loss or
@@ -11069,10 +11181,14 @@ export class SharedLog<
 					incomplete = true;
 				}
 				if (!current()) return "retry";
-				if (page.status === "complete")
-					return incomplete ? "retry" : "complete";
+				if (page.status === "complete") {
+					if (incomplete) return "retry";
+					this.forgetEntryInventoryConfirmations(peer, confirmed);
+					return "complete";
+				}
 				// Page-local arrays fall out of scope before the scheduler parks this
-				// pass. Only cursor position, fences and `incomplete` survive a turn.
+				// pass. Only cursor position, fences, `incomplete` and the bounded
+				// confirmation record survive a turn.
 				return "more";
 			},
 			close: () => cursor.close(),
@@ -11085,6 +11201,7 @@ export class SharedLog<
 		hashes: string[],
 		signal: AbortSignal,
 		isCurrent: () => boolean,
+		onPresent?: (present: ReadonlySet<string>) => void,
 	): Promise<boolean> {
 		const deadline = new AbortController();
 		const timer = setTimeout(() => deadline.abort(), 2_000);
@@ -11126,7 +11243,7 @@ export class SharedLog<
 					// charged until the physical operation actually relinquishes ownership.
 					await physical;
 				}
-				if (!current() || responses.length !== 1) return false;
+				if (responses.length !== 1) return false;
 				const result = responses[0]!;
 				if (
 					!(result.response instanceof ConfirmEntriesMessage) ||
@@ -11141,6 +11258,10 @@ export class SharedLog<
 					[...present].some((hash) => !requested.has(hash))
 				)
 					return false;
+				// A reply that crossed a local write is never acted on, but what the
+				// peer reported present is still true, so the caller may keep it.
+				onPresent?.(present);
+				if (!current()) return false;
 				const missing = hashes.filter((hash) => !present.has(hash));
 				if (missing.length === 0) return true;
 				if (!sent) {
@@ -19310,6 +19431,8 @@ export class SharedLog<
 		const membershipController =
 			this._instanceLifecycle!.membershipLifecycleController!;
 		this._entryInventoryRecovery?.close();
+		this._entryInventoryConfirmed = new Map();
+		this._entryInventoryConfirmedTotal = 0;
 		this._entryInventoryRecovery = new EntryInventoryRecovery({
 			signal: membershipController.signal,
 			isCurrent: (peer, session) =>
@@ -21828,6 +21951,8 @@ export class SharedLog<
 			this._openingSyncCapabilitiesByPeer?.clear();
 			this._gidPeersHistory?.clear();
 			this._successorFullRepairSessions = new WeakSet();
+			this._entryInventoryConfirmed?.clear();
+			this._entryInventoryConfirmedTotal = 0;
 			this._peerSyncCapabilities?.clear();
 			this._peerSyncCapabilitySessions?.clear();
 			this._peerSyncCapabilityTimestamps?.clear();
@@ -29683,6 +29808,10 @@ export class SharedLog<
 		// yield; a late queue completion must never enter the new session.
 		this._v2Receive.clearPeer(peerHash);
 		this._v2Send.clearPeer(peerHash);
+		// Inventory confirmations are scoped to the replaced session and are never
+		// read again. A newer subscription can arrive without an unsubscribe, so
+		// drop them here rather than wait for the peer to leave.
+		this.forgetEntryInventoryConfirmations(peerHash);
 		const capabilityTransportSession =
 			this._peerSyncCapabilitySessions.get(peerHash);
 		const canInheritCapability =
