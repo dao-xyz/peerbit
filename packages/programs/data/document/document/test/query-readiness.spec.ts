@@ -1,10 +1,21 @@
 import { AbortError, TimeoutError } from "@peerbit/time";
 import { expect } from "chai";
+import { AsyncLocalStorage, AsyncResource } from "node:async_hooks";
 import pDefer from "p-defer";
 import sinon from "sinon";
 import { DocumentIndex } from "../src/search.js";
 
 describe("query cover readiness", () => {
+	// The fake clock replaces the process-wide setTimeout, so work that other
+	// spec files in this mocha process leave behind (a peer that was never
+	// stopped, or libp2p work that finishes after a peer stops) can also put
+	// timers on it. Only the waiter's own timers are counted: the waiter starts
+	// in this async context, the events and aborts that reach its listeners are
+	// dispatched in it, and the callbacks of its timers run in it.
+	const waiterContext = new AsyncLocalStorage<true>();
+	const inWaiterContext = <T>(fn: () => T): T => waiterContext.run(true, fn);
+	let pendingWaiterTimers: Set<unknown>;
+	let unwrapTimers: (() => void) | undefined;
 	let clock: sinon.SinonFakeTimers;
 	let events: EventTarget;
 	let controller: AbortController;
@@ -18,8 +29,43 @@ describe("query cover readiness", () => {
 
 	beforeEach(() => {
 		clock = sinon.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+		const fakeSetTimeout = globalThis.setTimeout;
+		const fakeClearTimeout = globalThis.clearTimeout;
+		unwrapTimers = () => {
+			globalThis.setTimeout = fakeSetTimeout;
+			globalThis.clearTimeout = fakeClearTimeout;
+		};
+		pendingWaiterTimers = new Set();
+		globalThis.setTimeout = ((
+			callback: (...args: unknown[]) => void,
+			ms?: number,
+			...args: unknown[]
+		) => {
+			if (!waiterContext.getStore()) {
+				return fakeSetTimeout(callback, ms, ...args);
+			}
+			const timer = fakeSetTimeout(
+				AsyncResource.bind((...callbackArgs: unknown[]) => {
+					pendingWaiterTimers.delete(timer);
+					callback(...callbackArgs);
+				}),
+				ms,
+				...args,
+			);
+			pendingWaiterTimers.add(timer);
+			return timer;
+		}) as typeof setTimeout;
+		globalThis.clearTimeout = ((timer) => {
+			pendingWaiterTimers.delete(timer);
+			fakeClearTimeout(timer);
+		}) as typeof clearTimeout;
 		events = new EventTarget();
+		const dispatchEvent = events.dispatchEvent.bind(events);
+		events.dispatchEvent = (event) =>
+			inWaiterContext(() => dispatchEvent(event));
 		controller = new AbortController();
+		const abort = controller.abort.bind(controller);
+		controller.abort = (reason) => inWaiterContext(() => abort(reason));
 		getCover = sinon.stub().resolves(["self"]);
 		releases = [];
 		pending = [];
@@ -36,9 +82,20 @@ describe("query cover readiness", () => {
 			await clock.tickAsync(1_000);
 			await Promise.all(pending);
 		} finally {
+			// Put the clock's own functions back before sinon.restore() uninstalls
+			// the clock: some fake-timers versions look at the installed function
+			// to decide how to restore a global, and would delete setTimeout
+			// instead of restoring it if they found a wrapper there
+			unwrapTimers?.();
+			unwrapTimers = undefined;
 			sinon.restore();
 			clock.restore();
 		}
+	});
+
+	after(() => {
+		// Stop async context tracking for the spec files that run after this one
+		waiterContext.disable();
 	});
 
 	const gate = () => {
@@ -57,9 +114,13 @@ describe("query cover readiness", () => {
 			node: { identity: { publicKey: { hashcode: () => "self" } } },
 			_log: { getCover, events },
 		} as unknown as DocumentIndex<any, any, any>;
-		const operation = DocumentIndex.prototype["waitForCoverReady"].call(
-			context,
-			{ settle: "any", timeout: 100, signal: controller.signal, ...options },
+		const operation = inWaiterContext(() =>
+			DocumentIndex.prototype["waitForCoverReady"].call(context, {
+				settle: "any",
+				timeout: 100,
+				signal: controller.signal,
+				...options,
+			}),
 		);
 		pending.push(
 			operation.then(
@@ -82,7 +143,7 @@ describe("query cover readiness", () => {
 				true,
 			);
 		}
-		expect(clock.countTimers()).to.equal(0);
+		expect(pendingWaiterTimers.size).to.equal(0);
 		const calls = getCover.callCount;
 		events.dispatchEvent(new Event("replication:change"));
 		expect(getCover.callCount).to.equal(calls);
@@ -173,7 +234,7 @@ describe("query cover readiness", () => {
 		const result = start({ timeout: 0, onTimeout: "error" });
 		await clock.tickAsync(1_000);
 		expect(result()).to.equal(undefined);
-		expect(clock.countTimers()).to.equal(0);
+		expect(pendingWaiterTimers.size).to.equal(0);
 		controller.abort();
 		await clock.tickAsync(0);
 		expect(result()).to.be.instanceOf(AbortError);
