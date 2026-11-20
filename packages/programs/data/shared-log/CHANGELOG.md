@@ -1,5 +1,11 @@
 # Changelog
 
+## 16.0.48
+
+### Patch Changes
+
+- [#1561](https://github.com/dao-xyz/peerbit/pull/1561) [`6172dd7`](https://github.com/dao-xyz/peerbit/commit/6172dd7ae8a22626d501949439cc2768e60e663f) Thanks [@peerbit-org](https://github.com/peerbit-org)! - The reconnect entry inventory no longer asks a peer again about entries the peer already confirmed when a local write restarts the pass. Confirmations are kept for a peer while its session, transport session and receive epoch, the ownership snapshot and the entry index stay the same, up to 65,536 hashes per log, and are dropped when the pass completes or the peer reconnects or leaves. A pass still completes only after one walk without a local write.
+
 ## 16.0.47
 
 ### Patch Changes
