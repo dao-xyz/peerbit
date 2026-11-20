@@ -10983,9 +10983,12 @@ describe("index", () => {
 
 		describe("replication", () => {
 			let store: TestStore, store2: TestStore, store3: TestStore;
+			// The nested "search replicate" suite replaces the shared session with
+			// its own, so stop this suite's session through its own reference
+			let replicationSession: TestSession | undefined;
 
 			before(async () => {
-				session = await TestSession.connected(3);
+				session = replicationSession = await TestSession.connected(3);
 			});
 
 			beforeEach(async () => {
@@ -11015,7 +11018,7 @@ describe("index", () => {
 			});
 
 			after(async () => {
-				await session.stop();
+				await replicationSession?.stop();
 			});
 
 			it("drops when no longer replicating as observer", async () => {
@@ -15965,8 +15968,41 @@ describe("index", () => {
 
 			describe("signal", () => {
 				it("can closes on abort", async () => {
-					session = await TestSession.connected(1);
+					const session = await TestSession.connected(1);
+					try {
+						const store = new TestStore({
+							docs: new Documents<Document>(),
+						});
 
+						await session.peers[0].open(store, {
+							args: {
+								replicate: {
+									factor: 1,
+								},
+							},
+						});
+						const controller = new AbortController();
+						const iterator = store.docs.index.iterate(
+							{},
+							{
+								signal: controller.signal,
+							},
+						);
+
+						expect(iterator.done()).to.be.false;
+						controller.abort();
+						expect(iterator.done()).to.be.true;
+
+						expect(store.docs.index.hasPending).to.be.false;
+					} finally {
+						await session.stop();
+					}
+				});
+			});
+
+			it("can consume as async iterator", async () => {
+				const session = await TestSession.connected(1);
+				try {
 					const store = new TestStore({
 						docs: new Documents<Document>(),
 					});
@@ -15978,95 +16014,74 @@ describe("index", () => {
 							},
 						},
 					});
-					const controller = new AbortController();
+					await store.docs.put(new Document({ id: "1" }));
+					await store.docs.put(new Document({ id: "2" }));
+
+					// make iterator not close by waiting for joining
 					const iterator = store.docs.index.iterate(
 						{},
-						{
-							signal: controller.signal,
-						},
+						{ remote: { wait: { timeout: 5e3 } } },
 					);
 
-					expect(iterator.done()).to.be.false;
-					controller.abort();
-					expect(iterator.done()).to.be.true;
-
-					expect(store.docs.index.hasPending).to.be.false;
-				});
-			});
-
-			it("can consume as async iterator", async () => {
-				session = await TestSession.connected(1);
-
-				const store = new TestStore({
-					docs: new Documents<Document>(),
-				});
-
-				await session.peers[0].open(store, {
-					args: {
-						replicate: {
-							factor: 1,
-						},
-					},
-				});
-				await store.docs.put(new Document({ id: "1" }));
-				await store.docs.put(new Document({ id: "2" }));
-
-				// make iterator not close by waiting for joining
-				const iterator = store.docs.index.iterate(
-					{},
-					{ remote: { wait: { timeout: 5e3 } } },
-				);
-
-				let entries: Document[] = [];
-				for await (const entry of iterator) {
-					entries.push(entry);
+					let entries: Document[] = [];
+					for await (const entry of iterator) {
+						entries.push(entry);
+					}
+					await iterator.close();
+					expect(entries).to.have.length(2);
+					expect(entries[0].id).to.equal("1");
+					expect(entries[1].id).to.equal("2");
+				} finally {
+					await session.stop();
 				}
-				await iterator.close();
-				expect(entries).to.have.length(2);
-				expect(entries[0].id).to.equal("1");
-				expect(entries[1].id).to.equal("2");
 			});
 
 			describe("closePolicy", () => {
 				it("is manual keeps open", async () => {
-					session = await TestSession.connected(1);
+					const session = await TestSession.connected(1);
+					try {
+						const store = new TestStore({ docs: new Documents<Document>() });
+						await session.peers[0].open(store, {
+							args: { replicate: { factor: 1 } },
+						});
 
-					const store = new TestStore({ docs: new Documents<Document>() });
-					await session.peers[0].open(store, {
-						args: { replicate: { factor: 1 } },
-					});
+						const iterator = store.docs.index.iterate(
+							{},
+							{ closePolicy: "manual" },
+						);
+						expect(iterator.done()).to.be.false;
+						const next = await iterator.next(1);
+						expect(next).to.have.length(0);
+						expect(iterator.done()).to.be.false;
 
-					const iterator = store.docs.index.iterate(
-						{},
-						{ closePolicy: "manual" },
-					);
-					expect(iterator.done()).to.be.false;
-					const next = await iterator.next(1);
-					expect(next).to.have.length(0);
-					expect(iterator.done()).to.be.false;
-
-					await iterator.close();
-					expect(iterator.done()).to.be.true;
+						await iterator.close();
+						expect(iterator.done()).to.be.true;
+					} finally {
+						await session.stop();
+					}
 				});
 
 				it("onEmpty closes iterator when drained", async () => {
-					session = await TestSession.connected(1);
+					const session = await TestSession.connected(1);
+					try {
+						const store = new TestStore({ docs: new Documents<Document>() });
+						await session.peers[0].open(store, {
+							args: { replicate: { factor: 1 } },
+						});
 
-					const store = new TestStore({ docs: new Documents<Document>() });
-					await session.peers[0].open(store, {
-						args: { replicate: { factor: 1 } },
-					});
+						await store.docs.put(new Document({ id: "1" }));
 
-					await store.docs.put(new Document({ id: "1" }));
+						const iterator = store.docs.index.iterate(
+							{ sort: { key: "id", direction: SortDirection.ASC } },
+							{ local: true, remote: false /* , closePolicy: "onEmpty" */ }, // onEmpty is default
+						);
 
-					const iterator = store.docs.index.iterate(
-						{ sort: { key: "id", direction: SortDirection.ASC } },
-						{ local: true, remote: false /* , closePolicy: "onEmpty" */ }, // onEmpty is default
-					);
-
-					const first = await iterator.next(1);
-					expect(first.map((d) => d.id)).to.deep.equal(["1"]);
-					expect(iterator.done()).to.be.true;
+						const first = await iterator.next(1);
+						expect(first.map((d) => d.id)).to.deep.equal(["1"]);
+						expect(iterator.done()).to.be.true;
+					} finally {
+						await session.stop();
+					}
 				});
 			});
 		});
