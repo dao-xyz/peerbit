@@ -283,7 +283,7 @@ jobs:
     name: Receipt liveness (${{ matrix.os }})
     needs: build_workspace
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 15
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -337,6 +337,7 @@ jobs:
           packages/programs/data/shared-log/dist/test/coordinate-key-scan-durable.spec.js
           packages/programs/data/shared-log/dist/test/entry-inventory-presence.spec.js
           packages/programs/data/shared-log/dist/test/exact-entry-inventory-offer.spec.js
+          packages/programs/data/shared-log/dist/test/entry-inventory-settled-wake.spec.js
       # Fake-clock timer ownership must exclude delayed real-peer store work.
       - name: Test inventory clock ownership in isolated processes
         timeout-minutes: 3
@@ -373,6 +374,26 @@ jobs:
           --timeout 60000 --retries 0 --no-exit
           packages/programs/data/shared-log/dist/test/three-peer-held-entry-recovery.spec.js
           packages/programs/data/shared-log/dist/test/receive-provider-announcement.spec.js
+      - name: Test renewed-session reconnects with default and native storage
+        timeout-minutes: 5
+        env:
+          AEGIR_RUNNER: node
+          NODE_ENV: test
+        run: >-
+          node scripts/ci/assert-tests-ran.mjs node ./node_modules/mocha/bin/mocha.js
+          --no-config --no-package --require chai-extend/chai-global.js
+          --timeout 120000 --retries 0 --no-exit
+          packages/programs/data/shared-log/dist/test/renewed-session-reconnect-recovery.spec.js
+      - name: Test restart reconnects without retries
+        timeout-minutes: 3
+        env:
+          AEGIR_RUNNER: node
+          NODE_ENV: test
+        run: >-
+          node scripts/ci/assert-tests-ran.mjs node ./node_modules/mocha/bin/mocha.js
+          --no-config --no-package --require chai-extend/chai-global.js
+          --timeout 90000 --retries 0 --no-exit
+          packages/programs/data/shared-log/dist/test/restart-reconnect-recovery.spec.js
       - name: Test protected recovery without retries or forced exit
         timeout-minutes: 3
         working-directory: packages/programs/acl/trusted-network
