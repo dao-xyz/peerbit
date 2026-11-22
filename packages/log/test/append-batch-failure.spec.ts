@@ -372,6 +372,178 @@ describe("appendMany persistent metadata failure", () => {
 		}
 	}
 
+	const sortedRows = (rows: Map<string, string>) =>
+		[...rows].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+	const expectSameState = (
+		live: Awaited<ReturnType<typeof snapshot>>,
+		reopened: Awaited<ReturnType<typeof snapshot>>,
+		stage: string,
+	) => {
+		expect(live.length, `${stage}: in-memory length`).to.equal(reopened.length);
+		expect(live.count, `${stage}: index count`).to.equal(reopened.count);
+		expect(sortedRows(live.rows), `${stage}: persisted rows`).to.deep.equal(
+			sortedRows(reopened.rows),
+		);
+		expect(live.heads, `${stage}: public heads`).to.deep.equal(reopened.heads);
+		expect(live.indexedHeads, `${stage}: persisted heads`).to.deep.equal(
+			reopened.indexedHeads,
+		);
+		expect(live.array, `${stage}: array membership`).to.deep.equal(
+			reopened.array,
+		);
+		expect(live.has, `${stage}: public membership`).to.deep.equal(reopened.has);
+		expect(live.indexed, `${stage}: exact hash lookups`).to.deep.equal(
+			reopened.indexed,
+		);
+		expect(live.native, `${stage}: native membership`).to.deep.equal(
+			reopened.native,
+		);
+		for (const [key, cachedHash] of live.cache) {
+			expect(key, `${stage}: cache key`).to.equal(cachedHash);
+			expect(
+				reopened.indexed,
+				`${stage}: cache holds only entries a reopen finds`,
+			).to.include(key);
+		}
+	};
+
+	for (const nativeGraph of [false, true]) {
+		it(`a 100-entry batch that fails in its second chunk leaves memory equal to a reopen and retries each entry once with nativeGraph=${nativeGraph}`, async () => {
+			await open(nativeGraph);
+			const predecessor = (
+				await log!.append(new Uint8Array([200]), { meta: { next: [] } })
+			).entry;
+			await log!.entryIndex.flushPendingWrites();
+			const before = await snapshot([predecessor]);
+			const predecessorBefore = (await log!.entryIndex.properties.index.get(
+				toId(predecessor.hash),
+			))!.value;
+			expect(before.length).to.equal(1);
+			expect(before.count).to.equal(1);
+
+			const failure = new Error("injected second chunk rejection");
+			const db = indexer!.properties.db;
+			const exec = db.exec.bind(db);
+			const index = log!.entryIndex.properties.index;
+			const putBatch = index.putBatch!.bind(index);
+			let batchRows: string[] | undefined;
+			let insideBatch = false;
+			let savepoints = 0;
+			let releases = 0;
+			let releasesAtFailure: number | undefined;
+			sinon.stub(index, "putBatch").callsFake(async (rows) => {
+				if (batchRows) return putBatch(rows);
+				batchRows = rows.map((row) => row.hash);
+				insideBatch = true;
+				try {
+					return await putBatch(rows);
+				} finally {
+					insideBatch = false;
+				}
+			});
+			sinon.stub(db, "exec").callsFake(async (sql) => {
+				if (
+					insideBatch &&
+					sql.startsWith("SAVEPOINT peerbit_put_batch_") &&
+					++savepoints === 2
+				) {
+					releasesAtFailure = releases;
+					throw failure;
+				}
+				const result = await exec(sql);
+				if (
+					insideBatch &&
+					sql.startsWith("RELEASE SAVEPOINT peerbit_put_batch_")
+				)
+					releases++;
+				return result;
+			});
+			const batch = sinon.spy(log!.entryIndex, "putAppendBatch");
+			const result = await outcome(
+				log!.appendMany(
+					Array.from({ length: 100 }, (_, i) => new Uint8Array([i])),
+					{
+						meta: { next: [predecessor] },
+						// A JavaScript authorizer keeps both graph modes on the indexed batch.
+						canAppend: () => true,
+					},
+				),
+			);
+			expect(batch.callCount).to.equal(1);
+			const entries = batch.firstCall.args[0] as Entry<Uint8Array>[];
+			sinon.restore();
+			expect(result.error).to.equal(failure);
+			expect(entries).to.have.length(100);
+			expect(batchRows).to.deep.equal(entries.map((entry) => entry.hash));
+			// SQLite commits each 64-row chunk on its own, so the fault arrives after
+			// the first 64 rows of this batch are durable.
+			expect(savepoints).to.equal(2);
+			expect(releasesAtFailure).to.equal(1);
+
+			const all = [predecessor, ...entries];
+			const failed = await snapshot(all);
+			await close();
+			await open(nativeGraph);
+			const reopened = await snapshot(all);
+			expectSameState(failed, reopened, "after the failed batch");
+			// Compensation removes the committed chunk instead of leaving a prefix.
+			expect(sortedRows(reopened.rows)).to.deep.equal(sortedRows(before.rows));
+			expect(reopened.heads).to.deep.equal([predecessor.hash]);
+
+			// Retry the same signed entries, loaded from their stored blocks.
+			const retryEntries = await Promise.all(
+				entries.map(async (entry) => {
+					const stored = await Entry.fromMultihash<Uint8Array>(
+						store!,
+						entry.hash,
+					);
+					stored.init(log!);
+					return stored;
+				}),
+			);
+			const retryIndex = log!.entryIndex.properties.index;
+			const retryPutBatch = retryIndex.putBatch!.bind(retryIndex);
+			const retriedRows: string[] = [];
+			sinon.stub(retryIndex, "putBatch").callsFake(async (rows) => {
+				retriedRows.push(...rows.map((row) => row.hash));
+				return retryPutBatch(rows);
+			});
+			await log!.entryIndex.putAppendBatch(retryEntries, {
+				unique: true,
+				externalNextHashes: [predecessor.hash],
+			});
+			sinon.restore();
+			expect(sorted(retriedRows)).to.deep.equal(
+				sorted(entries.map((entry) => entry.hash)),
+			);
+
+			const head = entries.at(-1)!.hash;
+			const expectedRows = new Map(before.rows);
+			expectedRows.set(
+				predecessor.hash,
+				rowBytes(new ShallowEntry({ ...predecessorBefore, head: false })),
+			);
+			for (const entry of entries) {
+				expectedRows.set(
+					entry.hash,
+					rowBytes(entry.toShallow(entry.hash === head)),
+				);
+			}
+			const hashes = sorted(all.map((entry) => entry.hash));
+			const retried = await snapshot(all);
+			expect(retried.length).to.equal(101);
+			expect(retried.count).to.equal(101);
+			expect(sortedRows(retried.rows)).to.deep.equal(sortedRows(expectedRows));
+			expect(retried.heads).to.deep.equal([head]);
+			expect(retried.indexed).to.deep.equal(hashes);
+			expect(retried.has).to.deep.equal(hashes);
+			if (nativeGraph) expect(retried.native).to.deep.equal(hashes);
+			await close();
+			await open(nativeGraph);
+			expectSameState(retried, await snapshot(all), "after the retry");
+		});
+	}
+
 	for (const mode of ["get", "getMany"] as const) {
 		it(`invalidates completed and in-flight ${mode} cache publication on rollback`, async () => {
 			await open(false);
