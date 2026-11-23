@@ -13,7 +13,7 @@ import sinon from "sinon";
 import { createEntry } from "../src/entry-create.js";
 import { ShallowEntry } from "../src/entry-shallow.js";
 import { Entry } from "../src/entry.js";
-import { Log } from "../src/log.js";
+import { Log, type LogOptions } from "../src/log.js";
 
 const sorted = (hashes: Iterable<string>) => [...hashes].sort();
 const rowBytes = (row: ShallowEntry) =>
@@ -76,17 +76,29 @@ describe("appendMany persistent metadata failure", () => {
 			await rm(directory, { recursive: true, force: true });
 		}
 	});
-	const open = async (nativeGraph: boolean) => {
+	const open = async (nativeGraph: boolean, sharedLogOptions = false) => {
 		store = new AnyBlockStore(createStore(join(directory, "blocks")));
 		await store.start();
 		indexer = await create(join(directory, "index"));
 		log = new Log<Uint8Array>({ id: logId });
-		await log.open(store, identity, { indexer, nativeGraph });
+		await log.open(store, identity, {
+			indexer,
+			nativeGraph,
+			// SharedLog opens its log with a log-wide canAppend and a delete-commit
+			// hook, and without onGidRemoved.
+			...(sharedLogOptions
+				? { canAppend: () => true, __peerbitOnDeleteCommitted: async () => {} }
+				: {}),
+		} as LogOptions<Uint8Array>);
 		expect(log.appendDurability).to.equal("strict");
 		expect(await log.entryIndex.properties.index.persisted()).to.equal(true);
 		expect(Boolean(log.entryIndex.properties.nativeGraph)).to.equal(
 			nativeGraph,
 		);
+		expect(Boolean(log.entryIndex.properties.onDeleteCommitted)).to.equal(
+			sharedLogOptions,
+		);
+		expect(Boolean(log.entryIndex.properties.onGidRemoved)).to.equal(false);
 	};
 
 	const snapshot = async (entries: Entry<Uint8Array>[]) => {
@@ -408,141 +420,210 @@ describe("appendMany persistent metadata failure", () => {
 		}
 	};
 
-	for (const nativeGraph of [false, true]) {
-		it(`a 100-entry batch that fails in its second chunk leaves memory equal to a reopen and retries each entry once with nativeGraph=${nativeGraph}`, async () => {
-			await open(nativeGraph);
-			const predecessor = (
-				await log!.append(new Uint8Array([200]), { meta: { next: [] } })
-			).entry;
-			await log!.entryIndex.flushPendingWrites();
-			const before = await snapshot([predecessor]);
-			const predecessorBefore = (await log!.entryIndex.properties.index.get(
-				toId(predecessor.hash),
-			))!.value;
-			expect(before.length).to.equal(1);
-			expect(before.count).to.equal(1);
+	const failHundredEntryBatch = async (
+		nativeGraph: boolean,
+		sharedLogOptions: boolean,
+	) => {
+		await open(nativeGraph, sharedLogOptions);
+		const predecessor = (
+			await log!.append(new Uint8Array([200]), { meta: { next: [] } })
+		).entry;
+		await log!.entryIndex.flushPendingWrites();
+		const before = await snapshot([predecessor]);
+		const predecessorBefore = (await log!.entryIndex.properties.index.get(
+			toId(predecessor.hash),
+		))!.value;
+		expect(before.length).to.equal(1);
+		expect(before.count).to.equal(1);
 
-			const failure = new Error("injected second chunk rejection");
-			const db = indexer!.properties.db;
-			const exec = db.exec.bind(db);
-			const index = log!.entryIndex.properties.index;
-			const putBatch = index.putBatch!.bind(index);
-			let batchRows: string[] | undefined;
-			let insideBatch = false;
-			let savepoints = 0;
-			let releases = 0;
-			let releasesAtFailure: number | undefined;
-			sinon.stub(index, "putBatch").callsFake(async (rows) => {
-				if (batchRows) return putBatch(rows);
-				batchRows = rows.map((row) => row.hash);
-				insideBatch = true;
-				try {
-					return await putBatch(rows);
-				} finally {
-					insideBatch = false;
-				}
-			});
-			sinon.stub(db, "exec").callsFake(async (sql) => {
-				if (
-					insideBatch &&
-					sql.startsWith("SAVEPOINT peerbit_put_batch_") &&
-					++savepoints === 2
-				) {
-					releasesAtFailure = releases;
-					throw failure;
-				}
-				const result = await exec(sql);
-				if (
-					insideBatch &&
-					sql.startsWith("RELEASE SAVEPOINT peerbit_put_batch_")
-				)
-					releases++;
-				return result;
-			});
-			const batch = sinon.spy(log!.entryIndex, "putAppendBatch");
-			const result = await outcome(
-				log!.appendMany(
-					Array.from({ length: 100 }, (_, i) => new Uint8Array([i])),
-					{
-						meta: { next: [predecessor] },
-						// A JavaScript authorizer keeps both graph modes on the indexed batch.
-						canAppend: () => true,
-					},
-				),
-			);
-			expect(batch.callCount).to.equal(1);
-			const entries = batch.firstCall.args[0] as Entry<Uint8Array>[];
-			sinon.restore();
-			expect(result.error).to.equal(failure);
-			expect(entries).to.have.length(100);
-			expect(batchRows).to.deep.equal(entries.map((entry) => entry.hash));
-			// SQLite commits each 64-row chunk on its own, so the fault arrives after
-			// the first 64 rows of this batch are durable.
-			expect(savepoints).to.equal(2);
-			expect(releasesAtFailure).to.equal(1);
-
-			const all = [predecessor, ...entries];
-			const failed = await snapshot(all);
-			await close();
-			await open(nativeGraph);
-			const reopened = await snapshot(all);
-			expectSameState(failed, reopened, "after the failed batch");
-			// Compensation removes the committed chunk instead of leaving a prefix.
-			expect(sortedRows(reopened.rows)).to.deep.equal(sortedRows(before.rows));
-			expect(reopened.heads).to.deep.equal([predecessor.hash]);
-
-			// Retry the same signed entries, loaded from their stored blocks.
-			const retryEntries = await Promise.all(
-				entries.map(async (entry) => {
-					const stored = await Entry.fromMultihash<Uint8Array>(
-						store!,
-						entry.hash,
-					);
-					stored.init(log!);
-					return stored;
-				}),
-			);
-			const retryIndex = log!.entryIndex.properties.index;
-			const retryPutBatch = retryIndex.putBatch!.bind(retryIndex);
-			const retriedRows: string[] = [];
-			sinon.stub(retryIndex, "putBatch").callsFake(async (rows) => {
-				retriedRows.push(...rows.map((row) => row.hash));
-				return retryPutBatch(rows);
-			});
-			await log!.entryIndex.putAppendBatch(retryEntries, {
-				unique: true,
-				externalNextHashes: [predecessor.hash],
-			});
-			sinon.restore();
-			expect(sorted(retriedRows)).to.deep.equal(
-				sorted(entries.map((entry) => entry.hash)),
-			);
-
-			const head = entries.at(-1)!.hash;
-			const expectedRows = new Map(before.rows);
-			expectedRows.set(
-				predecessor.hash,
-				rowBytes(new ShallowEntry({ ...predecessorBefore, head: false })),
-			);
-			for (const entry of entries) {
-				expectedRows.set(
-					entry.hash,
-					rowBytes(entry.toShallow(entry.hash === head)),
-				);
+		const failure = new Error("injected second chunk rejection");
+		const db = indexer!.properties.db;
+		const exec = db.exec.bind(db);
+		const index = log!.entryIndex.properties.index;
+		const putBatch = index.putBatch!.bind(index);
+		const del = index.del.bind(index);
+		let batchRows: string[] | undefined;
+		let insideBatch = false;
+		let savepoints = 0;
+		let releases = 0;
+		let releasesAtFailure: number | undefined;
+		const deleted: string[] = [];
+		sinon.stub(index, "putBatch").callsFake(async (rows) => {
+			if (batchRows) return putBatch(rows);
+			batchRows = rows.map((row) => row.hash);
+			insideBatch = true;
+			try {
+				return await putBatch(rows);
+			} finally {
+				insideBatch = false;
 			}
-			const hashes = sorted(all.map((entry) => entry.hash));
-			const retried = await snapshot(all);
-			expect(retried.length).to.equal(101);
-			expect(retried.count).to.equal(101);
-			expect(sortedRows(retried.rows)).to.deep.equal(sortedRows(expectedRows));
-			expect(retried.heads).to.deep.equal([head]);
-			expect(retried.indexed).to.deep.equal(hashes);
-			expect(retried.has).to.deep.equal(hashes);
-			if (nativeGraph) expect(retried.native).to.deep.equal(hashes);
-			await close();
-			await open(nativeGraph);
-			expectSameState(retried, await snapshot(all), "after the retry");
 		});
+		sinon.stub(db, "exec").callsFake(async (sql) => {
+			if (
+				insideBatch &&
+				sql.startsWith("SAVEPOINT peerbit_put_batch_") &&
+				++savepoints === 2
+			) {
+				releasesAtFailure = releases;
+				throw failure;
+			}
+			const result = await exec(sql);
+			if (insideBatch && sql.startsWith("RELEASE SAVEPOINT peerbit_put_batch_"))
+				releases++;
+			return result;
+		});
+		sinon.stub(index, "del").callsFake(async (query) => {
+			const ids = await del(query);
+			deleted.push(...ids.map((id) => String(id.primitive)));
+			return ids;
+		});
+		const batch = sinon.spy(log!.entryIndex, "putAppendBatch");
+		const result = await outcome(
+			log!.appendMany(
+				Array.from({ length: 100 }, (_, i) => new Uint8Array([i])),
+				{
+					meta: { next: [predecessor] },
+					// A JavaScript authorizer keeps both graph modes on the indexed
+					// batch. With SharedLog's options the log-wide canAppend does that.
+					...(sharedLogOptions ? {} : { canAppend: () => true }),
+				},
+			),
+		);
+		expect(batch.callCount).to.equal(1);
+		const entries = batch.firstCall.args[0] as Entry<Uint8Array>[];
+		sinon.restore();
+		expect(result.error).to.equal(failure);
+		expect(entries).to.have.length(100);
+		expect(batchRows).to.deep.equal(entries.map((entry) => entry.hash));
+		// SQLite commits each 64-row chunk on its own, so the fault arrives after
+		// the first 64 rows of this batch are durable.
+		expect(savepoints).to.equal(2);
+		expect(releasesAtFailure).to.equal(1);
+		const all = [predecessor, ...entries];
+		return {
+			predecessor,
+			predecessorBefore,
+			before,
+			entries,
+			all,
+			// Compensation removes exactly the rows that were durable at the fault.
+			expectCommittedChunkRemoved: () =>
+				expect(sorted(deleted), "rows removed by compensation").to.deep.equal(
+					sorted(entries.slice(0, 64).map((entry) => entry.hash)),
+				),
+			failed: await snapshot(all),
+		};
+	};
+
+	const expectHundredEntryRetry = async (
+		{
+			predecessor,
+			predecessorBefore,
+			before,
+			entries,
+			all,
+		}: Awaited<ReturnType<typeof failHundredEntryBatch>>,
+		retryEntries: Entry<Uint8Array>[],
+		nativeGraph: boolean,
+		sharedLogOptions: boolean,
+	) => {
+		const retryIndex = log!.entryIndex.properties.index;
+		const retryPutBatch = retryIndex.putBatch!.bind(retryIndex);
+		const retriedRows: string[] = [];
+		sinon.stub(retryIndex, "putBatch").callsFake(async (rows) => {
+			retriedRows.push(...rows.map((row) => row.hash));
+			return retryPutBatch(rows);
+		});
+		await log!.entryIndex.putAppendBatch(retryEntries, {
+			unique: true,
+			externalNextHashes: [predecessor.hash],
+		});
+		sinon.restore();
+		expect(sorted(retriedRows)).to.deep.equal(
+			sorted(entries.map((entry) => entry.hash)),
+		);
+
+		const head = entries.at(-1)!.hash;
+		const expectedRows = new Map(before.rows);
+		expectedRows.set(
+			predecessor.hash,
+			rowBytes(new ShallowEntry({ ...predecessorBefore, head: false })),
+		);
+		for (const entry of entries) {
+			expectedRows.set(
+				entry.hash,
+				rowBytes(entry.toShallow(entry.hash === head)),
+			);
+		}
+		const hashes = sorted(all.map((entry) => entry.hash));
+		const retried = await snapshot(all);
+		expect(retried.length).to.equal(101);
+		expect(retried.count).to.equal(101);
+		expect(sortedRows(retried.rows)).to.deep.equal(sortedRows(expectedRows));
+		expect(retried.heads).to.deep.equal([head]);
+		expect(retried.indexed).to.deep.equal(hashes);
+		expect(retried.has).to.deep.equal(hashes);
+		if (nativeGraph) expect(retried.native).to.deep.equal(hashes);
+		await close();
+		await open(nativeGraph, sharedLogOptions);
+		expectSameState(retried, await snapshot(all), "after the retry");
+	};
+
+	for (const sharedLogOptions of [false, true]) {
+		const opened = sharedLogOptions ? " and SharedLog's open options" : "";
+		for (const nativeGraph of [false, true]) {
+			it(`a 100-entry batch that fails in its second chunk leaves memory equal to a reopen and retries each entry once with nativeGraph=${nativeGraph}${opened}`, async () => {
+				const batch = await failHundredEntryBatch(
+					nativeGraph,
+					sharedLogOptions,
+				);
+				await close();
+				await open(nativeGraph, sharedLogOptions);
+				const reopened = await snapshot(batch.all);
+				expectSameState(batch.failed, reopened, "after the failed batch");
+				// Compensation removes the committed chunk instead of leaving a prefix.
+				batch.expectCommittedChunkRemoved();
+				expect(sortedRows(reopened.rows)).to.deep.equal(
+					sortedRows(batch.before.rows),
+				);
+				expect(reopened.heads).to.deep.equal([batch.predecessor.hash]);
+
+				// Retry the same signed entries, loaded from their stored blocks.
+				const retryEntries = await Promise.all(
+					batch.entries.map(async (entry) => {
+						const stored = await Entry.fromMultihash<Uint8Array>(
+							store!,
+							entry.hash,
+						);
+						stored.init(log!);
+						return stored;
+					}),
+				);
+				await expectHundredEntryRetry(
+					batch,
+					retryEntries,
+					nativeGraph,
+					sharedLogOptions,
+				);
+			});
+
+			it(`a 100-entry batch that fails in its second chunk restores the prior state and a retry on the same log commits each entry once with nativeGraph=${nativeGraph}${opened}`, async () => {
+				const batch = await failHundredEntryBatch(
+					nativeGraph,
+					sharedLogOptions,
+				);
+				// Without a reopen, a stale length, cache or native fact would count
+				// the retried entries twice.
+				expectSameState(batch.failed, batch.before, "after the failed batch");
+				batch.expectCommittedChunkRemoved();
+				await expectHundredEntryRetry(
+					batch,
+					batch.entries,
+					nativeGraph,
+					sharedLogOptions,
+				);
+			});
+		}
 	}
 
 	for (const nativeGraph of [false, true]) {
