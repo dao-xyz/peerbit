@@ -293,6 +293,36 @@ describe("ordinary append batch metadata ownership", () => {
 		await exact([predecessor], [predecessor]);
 	});
 
+	it("keeps a predecessor that a buffered child still references when deleting its other child", async () => {
+		const predecessor = await append(212);
+		const child = await append(213, [predecessor]);
+		const buffered = await createEntry({
+			store,
+			identity,
+			data: new Uint8Array([214]),
+			meta: { next: [predecessor] },
+		});
+		// The deleting lease owns the predecessor, so the child count must add
+		// this pending sibling, which SQLite does not hold yet, without flushing.
+		await log.entryIndex.putNativeCommittedAppendFacts({
+			hash: buffered.hash,
+			unique: true,
+			externalNextHashes: [],
+			shallowEntry: buffered.toShallow(true),
+			isHead: true,
+		});
+		expect(log.entryIndex["pendingIndexWrites"].has(buffered.hash)).to.equal(
+			true,
+		);
+		const removed = await within(
+			log.delete(child.hash),
+			"delete beside a buffered sibling",
+		);
+		expect(removed?.hash).to.equal(child.hash);
+		await log.entryIndex.flushPendingWrites();
+		await exact([predecessor, buffered], [buffered]);
+	});
+
 	it("releases delete's initial hash lease when its row snapshot fails", async () => {
 		const entry = await append(215);
 		const index = log.entryIndex.properties.index;
