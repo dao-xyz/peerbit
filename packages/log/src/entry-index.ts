@@ -1582,12 +1582,16 @@ export class EntryIndex<T> {
 		hashes: string[],
 		owner: EntryIndexHashMutationLockOwner,
 	) {
-		await this.flushPendingWrites(hashes, owner);
+		// Snapshot the hashes the lease covers. The lease skips a missing hash
+		// (an in-memory next whose hash a concurrent rejoin cleared); it names no
+		// row, so restoring it would fail and leave the index poisoned.
+		const keys = [...new Set(hashes)].filter(Boolean);
+		await this.flushPendingWrites(keys, owner);
 		const snapshots = new Map<
 			string,
 			NativeCommittedAppendFactsHeadTransactionRow
 		>(
-			[...new Set(hashes)].map((hash) => [
+			keys.map((hash) => [
 				hash,
 				{
 					hash,
@@ -1597,7 +1601,6 @@ export class EntryIndex<T> {
 				},
 			]),
 		);
-		const keys = [...snapshots.keys()];
 		// Bound query size and avoid one read per entry on the batch fast path.
 		for (let i = 0; i < keys.length; i += 64) {
 			const iterator = this.properties.index.iterate({
@@ -1614,7 +1617,7 @@ export class EntryIndex<T> {
 		}
 		// Reuse exact-row compensation without staging uncommitted pending writes.
 		const transaction = this.beginNativeCommittedAppendFactsTransaction(
-			hashes,
+			keys,
 			owner,
 		);
 		transaction.headRows = [...snapshots.values()];

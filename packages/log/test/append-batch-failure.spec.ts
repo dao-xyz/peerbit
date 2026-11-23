@@ -10,6 +10,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import sinon from "sinon";
+import { createEntry } from "../src/entry-create.js";
 import { ShallowEntry } from "../src/entry-shallow.js";
 import { Entry } from "../src/entry.js";
 import { Log } from "../src/log.js";
@@ -541,6 +542,87 @@ describe("appendMany persistent metadata failure", () => {
 			await close();
 			await open(nativeGraph);
 			expectSameState(retried, await snapshot(all), "after the retry");
+		});
+	}
+
+	for (const nativeGraph of [false, true]) {
+		it(`a failed batch with a missing external next hash rethrows its own error and keeps the log writable with nativeGraph=${nativeGraph}`, async () => {
+			await open(nativeGraph);
+			const predecessor = (
+				await log!.append(new Uint8Array([200]), { meta: { next: [] } })
+			).entry;
+			await log!.entryIndex.flushPendingWrites();
+			const before = await snapshot([predecessor]);
+			const entries: Entry<Uint8Array>[] = [];
+			for (let i = 0; i < 65; i++)
+				entries.push(
+					await createEntry({
+						store: store!,
+						identity,
+						data: new Uint8Array([i]),
+						meta: { next: [entries.at(-1) ?? predecessor] },
+					}),
+				);
+
+			const failure = new Error("injected second chunk rejection");
+			const db = indexer!.properties.db;
+			const exec = db.exec.bind(db);
+			const index = log!.entryIndex.properties.index;
+			const putBatch = index.putBatch!.bind(index);
+			let insideBatch = false;
+			let savepoints = 0;
+			sinon.stub(index, "putBatch").callsFake(async (rows) => {
+				insideBatch = true;
+				try {
+					return await putBatch(rows);
+				} finally {
+					insideBatch = false;
+				}
+			});
+			sinon.stub(db, "exec").callsFake(async (sql) => {
+				if (
+					insideBatch &&
+					sql.startsWith("SAVEPOINT peerbit_put_batch_") &&
+					++savepoints === 2
+				)
+					throw failure;
+				return exec(sql);
+			});
+			// appendMany reads its predecessors' hashes after awaiting, and a
+			// concurrent rejoin of the same in-memory entry can clear one meanwhile.
+			const result = await outcome(
+				log!.entryIndex.putAppendBatch(entries, {
+					unique: true,
+					externalNextHashes: [
+						predecessor.hash,
+						undefined as unknown as string,
+					],
+				}),
+			);
+			sinon.restore();
+			expect(savepoints).to.equal(2);
+			expect(result.error).to.equal(failure);
+			const all = [predecessor, ...entries];
+			expectSameState(await snapshot(all), before, "after the failed batch");
+
+			// Compensation completed, so the index is not poisoned: the log keeps
+			// accepting writes and closes normally.
+			const later = (
+				await log!.append(new Uint8Array([201]), {
+					meta: { next: [predecessor] },
+				})
+			).entry;
+			await log!.entryIndex.flushPendingWrites();
+			const written = await snapshot([...all, later]);
+			expect(written.length).to.equal(2);
+			expect(written.heads).to.deep.equal([later.hash]);
+			await close();
+			await open(nativeGraph);
+			expectSameState(
+				written,
+				await snapshot([...all, later]),
+				"after a later append",
+			);
 		});
 	}
 
