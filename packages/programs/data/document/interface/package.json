@@ -1,6 +1,6 @@
 {
 	"name": "@peerbit/document-interface",
-	"version": "3.2.89",
+	"version": "3.2.90",
 	"description": "Document store interface",
 	"repository": {
 		"type": "git",
