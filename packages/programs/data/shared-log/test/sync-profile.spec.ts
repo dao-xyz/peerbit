@@ -123,6 +123,7 @@ describe("advisory sync profiling", () => {
 			_repairSweepPendingPeersByMode: new Map([
 				["churn", new Set(["private-peer"])],
 			]),
+			_repairSweepBypassKnownPeersByMode: new Map(),
 			joinWarmup: {
 				_repairSweepWarmupSessionByTarget: new Map(),
 				_warmupSessionsByTarget: new Map(),
@@ -249,6 +250,8 @@ describe("advisory sync profiling", () => {
 					expect(host.clearRepairFrontierHashes.firstCall.args).to.deep.equal([
 						"private-peer",
 						["private-known"],
+						undefined,
+						{ keepBypassingFrontiers: true },
 					]);
 					expect(host.pushRepairEntries.callCount).to.equal(
 						transport === "simple" ? 1 : 0,

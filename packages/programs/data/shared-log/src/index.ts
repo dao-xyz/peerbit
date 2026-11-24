@@ -2781,7 +2781,7 @@ export class SharedLog<
 	// The epoch tokens are PeerSession objects (src/peer-session.ts); the map
 	// itself lives on the registry. Stage-2 of the fence refactor.
 	private _peerSessions!: PeerSessionRegistry;
-	// An exact successor session gets at most one unchanged-Full repair. Weak
+	// Each peer session gets at most one unchanged-Full repair. Weak
 	// ownership keeps retired transport generations collectible without an
 	// identity-keyed cleanup path.
 	private _successorFullRepairSessions!: WeakSet<PeerSession>;
@@ -2902,6 +2902,9 @@ export class SharedLog<
 		this._joinAuthoritativeRepairPeersByDelay.clear();
 		this._repairSweepPendingModes.clear();
 		for (const peers of this._repairSweepPendingPeersByMode.values()) {
+			peers.clear();
+		}
+		for (const peers of this._repairSweepBypassKnownPeersByMode.values()) {
 			peers.clear();
 		}
 		this.joinWarmup.clearRepairSweepWarmupSessions();
@@ -4034,6 +4037,14 @@ export class SharedLog<
 	private _repairSweepRunning!: boolean;
 	private _repairSweepPendingModes!: Set<RepairDispatchMode>;
 	private _repairSweepPendingPeersByMode!: Map<RepairDispatchMode, Set<string>>;
+	// Pending peers whose sweep must queue its hashes with the known-mark bypass.
+	// The pass that takes a peer carries the bypass to the frontier together
+	// with the hashes, so a frontier for that peer that drains first, which
+	// drops its own bypass, cannot take this one with it.
+	private _repairSweepBypassKnownPeersByMode!: Map<
+		RepairDispatchMode,
+		Set<string>
+	>;
 	private _repairFrontierByMode!: Map<
 		RepairDispatchMode,
 		Map<string, Map<string, RepairDispatchEntry<R>>>
@@ -4466,6 +4477,7 @@ export class SharedLog<
 		this._repairSweepRunning = false;
 		this._repairSweepPendingModes = new Set();
 		this._repairSweepPendingPeersByMode = createRepairPendingPeersByMode();
+		this._repairSweepBypassKnownPeersByMode = createRepairPendingPeersByMode();
 		this._repairFrontierByMode = createRepairFrontierByMode() as Map<
 			RepairDispatchMode,
 			Map<string, Map<string, RepairDispatchEntry<R>>>
@@ -10898,6 +10910,7 @@ export class SharedLog<
 		hashes: Iterable<string>,
 		repairLifecycleController: AbortController = this._instanceLifecycle
 			?.ownershipLifecycleController as AbortController,
+		options?: { keepBypassingFrontiers?: boolean },
 	) {
 		if (!this.isRepairLifecycleActive(repairLifecycleController)) {
 			return;
@@ -10907,6 +10920,12 @@ export class SharedLog<
 			return;
 		}
 		for (const mode of REPAIR_DISPATCH_MODES) {
+			if (
+				options?.keepBypassingFrontiers === true &&
+				this._repairFrontierBypassKnownPeersByMode.get(mode)?.has(target)
+			) {
+				continue;
+			}
 			const pending = this._repairFrontierByMode.get(mode)?.get(target);
 			if (!pending) {
 				continue;
@@ -11523,7 +11542,13 @@ export class SharedLog<
 			// A custom synchronizer may mutate the Map once it receives it.
 			if (profile) selectedEntries = unknownEntries.size;
 			if (!isStillCurrent()) return;
-			this.clearRepairFrontierHashes(target, knownHashes);
+			// A known mark retires the hash only from frontiers that honour marks.
+			// A frontier that bypasses them (a peer whose marks may belong to its
+			// previous process, or churn) keeps the hash and its bypass until its
+			// own dispatch offers it and the peer confirms it.
+			this.clearRepairFrontierHashes(target, knownHashes, undefined, {
+				keepBypassingFrontiers: true,
+			});
 			if (unknownEntries.size === 0) {
 				outcome =
 					knownHashes.length === entries.size ? "known-suppressed" : "not-held";
@@ -12107,6 +12132,9 @@ export class SharedLog<
 			mode: RepairDispatchMode;
 			peers?: Iterable<string>;
 			warmupSessions?: ReadonlyMap<string, WarmupSession>;
+			// The pass that takes these peers queues their hashes with the
+			// known-mark bypass.
+			bypassKnownPeerHints?: boolean;
 		},
 		repairLifecycleController: AbortController = this._instanceLifecycle
 			?.ownershipLifecycleController as AbortController,
@@ -12115,6 +12143,10 @@ export class SharedLog<
 			return;
 		}
 		const pendingPeers = this._repairSweepPendingPeersByMode.get(options.mode);
+		const bypassPeers =
+			options.bypassKnownPeerHints === true
+				? this._repairSweepBypassKnownPeersByMode.get(options.mode)
+				: undefined;
 		if (pendingPeers) {
 			for (const peer of options.peers ?? []) {
 				if (options.mode === "join-warmup") {
@@ -12127,6 +12159,7 @@ export class SharedLog<
 					this.joinWarmup._repairSweepWarmupSessionByTarget.set(peer, session);
 				}
 				pendingPeers.add(peer);
+				bypassPeers?.add(peer);
 			}
 		}
 		if (!pendingPeers || pendingPeers.size === 0) {
@@ -12219,11 +12252,17 @@ export class SharedLog<
 				const pendingPeersByMode = cloneRepairPendingPeersByMode(
 					this._repairSweepPendingPeersByMode,
 				);
+				const bypassKnownPeersByMode = cloneRepairPendingPeersByMode(
+					this._repairSweepBypassKnownPeersByMode,
+				);
 				const pendingWarmupSessions = new Map(
 					this.joinWarmup._repairSweepWarmupSessionByTarget,
 				);
 				this._repairSweepPendingModes.clear();
 				for (const peers of this._repairSweepPendingPeersByMode.values()) {
+					peers.clear();
+				}
+				for (const peers of this._repairSweepBypassKnownPeersByMode.values()) {
 					peers.clear();
 				}
 				this.joinWarmup._repairSweepWarmupSessionByTarget.clear();
@@ -12361,6 +12400,7 @@ export class SharedLog<
 							bypassRecentDedupe: true,
 							bypassKnownPeerHints:
 								mode === "churn" ||
+								bypassKnownPeersByMode.get(mode)?.has(target) === true ||
 								this._repairFrontierBypassKnownPeersByMode
 									.get(mode)
 									?.has(target) === true,
@@ -12572,6 +12612,12 @@ export class SharedLog<
 								}
 							} else {
 								frontierTargets?.set(target, replacement);
+							}
+							// Merged hashes keep the bypass this pass carries for them.
+							if (bypassKnownPeersByMode.get(mode)?.has(target)) {
+								this._repairFrontierBypassKnownPeersByMode
+									.get(mode)
+									?.add(target);
 							}
 						}
 					}
@@ -18557,6 +18603,7 @@ export class SharedLog<
 		this._repairSweepRunning = false;
 		this._repairSweepPendingModes = new Set();
 		this._repairSweepPendingPeersByMode = createRepairPendingPeersByMode();
+		this._repairSweepBypassKnownPeersByMode = createRepairPendingPeersByMode();
 		this._repairFrontierByMode = createRepairFrontierByMode() as Map<
 			RepairDispatchMode,
 			Map<string, Map<string, RepairDispatchEntry<R>>>
@@ -19449,6 +19496,7 @@ export class SharedLog<
 				const peerHash = detail.hashcode();
 				const peerSession = this._peerSessions.current(peerHash);
 				if (peerSession?.phase !== "open" || !peerSession.isActive()) return;
+				const settled = this._v2Receive.hasCommittedFull(peerSession);
 				// Connectivity only wakes already-owned work. It never grants a
 				// capability, confirms replication, or renews the topic session.
 				this._v2Send.resumeAfterTransportRecovery(peerHash, peerSession);
@@ -19457,7 +19505,16 @@ export class SharedLog<
 					peerSession,
 					receiveEpoch: this._peerSessions.receiveEpoch(peerHash),
 				});
-				this._entryInventoryRecovery?.wake(peerHash, peerSession);
+				// Only a session whose peer Full has already committed starts the
+				// inventory pass. On a direct route, a session that a reconnect or a
+				// restart created has not committed its Full at its own edge (the
+				// Full answers a request sent on this transport), so it is skipped
+				// here, although the pass could plan from rows already in the
+				// replication index. That session's first Full repairs it instead:
+				// membership-driven repair when the Full changes those rows, and the
+				// unchanged-Full repair when it does not, including after a local
+				// restart, when the rows that the Full matches survived on disk.
+				if (settled) this._entryInventoryRecovery?.wake(peerHash, peerSession);
 			},
 			{ signal: membershipController.signal },
 		);
@@ -21903,6 +21960,9 @@ export class SharedLog<
 			this._repairSweepRunning = false;
 			this._repairSweepPendingModes?.clear();
 			for (const peers of this._repairSweepPendingPeersByMode?.values() ?? [])
+				peers.clear();
+			for (const peers of this._repairSweepBypassKnownPeersByMode?.values() ??
+				[])
 				peers.clear();
 			this.joinWarmup?.clearRepairSweepWarmupSessions();
 			this._repairSweepOptimisticGidPeersPending?.clear();
@@ -25430,9 +25490,11 @@ export class SharedLog<
 		) {
 			return;
 		}
+		// A first session's first Full counts too: after a local reopen, the
+		// persisted index can still hold the peer's rows, so its Full changes
+		// nothing although sends to the peer may have been cut short.
 		const isFirstSuccessorFull =
 			msg instanceof FullReplicationInfoV2Message &&
-			receiveSession.hasPredecessor &&
 			!this._successorFullRepairSessions.has(receiveSession);
 		const admission = this._v2Receive.reserve(msg, {
 			from,
@@ -25601,12 +25663,18 @@ export class SharedLog<
 						// delivery evidence may belong to the superseded process. Reuse the
 						// receipt-driven authoritative repair path and bypass only those stale
 						// hints; do not synthesize public membership or range-change events.
-						this._repairFrontierBypassKnownPeersByMode
-							.get("join-authoritative")
-							?.add(fromHash);
+						// The sweep carries the bypass to the hashes it queues, so another
+						// frontier for this peer that drains first cannot drop it. A first
+						// session has no predecessor whose process could have left those
+						// hints: open() starts both the hints and the session registry
+						// empty, so its repair honours them.
 						const peers = new Set([fromHash]);
 						this.scheduleRepairSweep(
-							{ mode: "join-authoritative", peers },
+							{
+								mode: "join-authoritative",
+								peers,
+								bypassKnownPeerHints: receiveSession.hasPredecessor,
+							},
 							lane.ownershipLifecycleController,
 						);
 						this.scheduleJoinAuthoritativeRepair(

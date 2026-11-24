@@ -26,6 +26,7 @@ import {
 	StoppedReplicating,
 	StoppedReplicationInfoV2Message,
 } from "../src/replication.js";
+import { ConfirmEntriesMessage } from "../src/sync/simple.js";
 import { EventStore } from "./utils/stores/index.js";
 
 describe("events", () => {
@@ -304,22 +305,6 @@ describe("events", () => {
 		expect(log.isEntryKnownByPeer(siblings[1]!.hash, remoteHash)).to.be.true;
 
 		const firstLane = await openV2ReceiveLane(log, remoteKey, 4_242n);
-		await db.log.onMessage(
-			new FullReplicationInfoV2Message({
-				receiverChallenge: firstLane.state.receiverBinding!.slice(),
-				senderEpoch: randomBytes(32),
-				sequence: 1n,
-				segments: [range.toReplicationRange()],
-			}),
-			firstLane.context(1n),
-		);
-		expect(firstLane.peerSession.hasPredecessor).to.be.false;
-
-		log._v2Receive.clearPeer(remoteHash);
-		log._v2Send.clearPeer(remoteHash);
-		const successorLane = await openV2ReceiveLane(log, remoteKey, 4_243n);
-		expect(successorLane.peerSession.hasPredecessor).to.be.true;
-
 		const repaired = new Set<string>();
 		let successorRepairDispatches = 0;
 		const publicChanges: string[] = [];
@@ -353,6 +338,51 @@ describe("events", () => {
 			);
 
 		try {
+			// The first session's Full repeats rows already in the index too, as
+			// after a local reopen, so it runs the same repair once. That session
+			// has no predecessor whose process could have left the known mark, so
+			// the repair honours it: it offers the other siblings, not the marked one.
+			await db.log.onMessage(
+				new FullReplicationInfoV2Message({
+					receiverChallenge: firstLane.state.receiverBinding!.slice(),
+					senderEpoch: randomBytes(32),
+					sequence: 1n,
+					segments: [range.toReplicationRange()],
+				}),
+				firstLane.context(1n),
+			);
+			expect(firstLane.peerSession.hasPredecessor).to.be.false;
+			await waitForResolved(
+				() => {
+					expect(repaired.has(siblings[0]!.hash)).to.be.true;
+					expect(repaired.has(siblings[2]!.hash)).to.be.true;
+				},
+				{ timeout: 1_000, delayInterval: 10 },
+			);
+			expect(log._successorFullRepairSessions.has(firstLane.peerSession)).to.be
+				.true;
+			expect(delayedRepair.calledOnce).to.be.true;
+			await waitForResolved(
+				() => {
+					expect(log._repairSweepRunning).to.be.false;
+					expect(log._repairSweepPendingModes.size).to.equal(0);
+					expect(
+						log._repairFrontierActiveTargetsByMode
+							.get("join-authoritative")
+							?.has(remoteHash) ?? false,
+					).to.be.false;
+				},
+				{ timeout: 1_000, delayInterval: 10 },
+			);
+			expect(repaired.has(siblings[1]!.hash)).to.be.false;
+			repaired.clear();
+			successorRepairDispatches = 0;
+
+			log._v2Receive.clearPeer(remoteHash);
+			log._v2Send.clearPeer(remoteHash);
+			const successorLane = await openV2ReceiveLane(log, remoteKey, 4_243n);
+			expect(successorLane.peerSession.hasPredecessor).to.be.true;
+
 			const successorSenderEpoch = randomBytes(32);
 			log.events.addEventListener("replication:change", onReplicationChange);
 			log.events.addEventListener("replicator:join", onReplicatorJoin);
@@ -372,7 +402,7 @@ describe("events", () => {
 			);
 			expect(log._successorFullRepairSessions.has(successorLane.peerSession)).to
 				.be.true;
-			expect(delayedRepair.calledOnce).to.be.true;
+			expect(delayedRepair.calledTwice).to.be.true;
 			expect(publicChanges).to.deep.equal([]);
 			expect(log.isEntryKnownByPeer(siblings[1]!.hash, remoteHash)).to.be.true;
 			expect(log._gidPeersHistory.get(siblings[1]!.meta.gid)?.has(remoteHash))
@@ -390,7 +420,7 @@ describe("events", () => {
 			);
 			await delay(25);
 			expect(successorRepairDispatches).to.equal(repairDispatches);
-			expect(delayedRepair.calledOnce).to.be.true;
+			expect(delayedRepair.calledTwice).to.be.true;
 
 			log._v2Receive.clearPeer(remoteHash);
 			log._v2Send.clearPeer(remoteHash);
@@ -407,7 +437,7 @@ describe("events", () => {
 			expect(log._successorFullRepairSessions.has(emptyLane.peerSession)).to.be
 				.false;
 			expect(successorRepairDispatches).to.equal(repairDispatches);
-			expect(delayedRepair.calledOnce).to.be.true;
+			expect(delayedRepair.calledTwice).to.be.true;
 
 			log._v2Receive.clearPeer(remoteHash);
 			log._v2Send.clearPeer(remoteHash);
@@ -426,12 +456,174 @@ describe("events", () => {
 			expect(log._successorFullRepairSessions.has(staleLane.peerSession)).to.be
 				.false;
 			expect(successorRepairDispatches).to.equal(repairDispatches);
-			expect(delayedRepair.calledOnce).to.be.true;
+			expect(delayedRepair.calledTwice).to.be.true;
 		} finally {
 			log.events.removeEventListener("replication:change", onReplicationChange);
 			log.events.removeEventListener("replicator:join", onReplicatorJoin);
 			findLeaders.restore();
 			delayedRepair.restore();
+			maybeMissing.restore();
+		}
+	});
+
+	it("keeps the mark bypass of a successor Full's repair when an older frontier for the peer drains before that repair's sweep queues anything", async () => {
+		const { db, log } = await openDisconnectedLog(2);
+		const remoteKey = session.peers[1].identity.publicKey;
+		const remoteHash = remoteKey.hashcode();
+		// The peer's previous process confirmed `delivered`; its new process
+		// holds nothing. `written` was written while the peer was away.
+		const { entry: delivered } = await db.add("delivered", {
+			meta: { next: [] },
+		});
+		const { entry: written } = await db.add("written", {
+			meta: { next: [] },
+		});
+		const range = makeReplicationRange(log, {
+			id: randomBytes(32),
+			ownerHash: remoteHash,
+			offset: 0.1,
+			timestamp: 1n,
+		});
+		await log.addReplicationRange([range], remoteKey, {
+			checkDuplicates: false,
+			rebalance: false,
+		});
+		log.markEntriesKnownByPeer([delivered.hash], remoteHash);
+
+		const offered: string[][] = [];
+		const maybeMissing = sinon
+			.stub(log.syncronizer, "onMaybeMissingEntries")
+			.callsFake(async (...args: unknown[]) => {
+				const [{ entries, targets }] = args as [
+					{
+						entries: ReadonlyMap<string, unknown>;
+						targets: string[];
+					},
+				];
+				if (targets.includes(remoteHash)) offered.push([...entries.keys()]);
+			});
+		const pushed: string[][] = [];
+		const push = sinon
+			.stub(log, "pushRepairEntries")
+			.callsFake(async (...args: unknown[]) => {
+				const [target, entries] = args as [
+					string,
+					ReadonlyMap<string, unknown>,
+				];
+				if (target === remoteHash) pushed.push([...entries.keys()]);
+			});
+		const delayedRepair = sinon.stub(log, "scheduleJoinAuthoritativeRepair");
+		const findLeaders = sinon
+			.stub(log, "findEntryReplicatedLeaderBatch")
+			.callsFake(async (...args: unknown[]) =>
+				(args[0] as unknown[]).map(
+					() => new Map([[remoteHash, { intersecting: true }]]),
+				),
+			);
+		// Holds the next sweep pass for the peer once it has taken its peers.
+		let holdPass = false;
+		let passHeld = false;
+		const releasePass = pDefer<void>();
+		const candidates = log.getFullReplicaRepairCandidates.bind(log);
+		const heldCandidates = sinon
+			.stub(log, "getFullReplicaRepairCandidates")
+			.callsFake(async (...args: unknown[]) => {
+				const [peers] = args as [Set<string> | undefined];
+				if (holdPass && peers?.has(remoteHash)) {
+					holdPass = false;
+					passHeld = true;
+					await releasePass.promise;
+				}
+				return candidates(...args);
+			});
+		const frontier = () =>
+			log._repairFrontierByMode.get("join-authoritative")?.get(remoteHash);
+		const bypassing = () =>
+			log._repairFrontierBypassKnownPeersByMode
+				.get("join-authoritative")
+				?.has(remoteHash) === true;
+		const sent = (hash: string) =>
+			[...offered, ...pushed].some((hashes) => hashes.includes(hash));
+
+		try {
+			const firstLane = await openV2ReceiveLane(log, remoteKey, 4_242n);
+			expect(firstLane.peerSession.hasPredecessor).to.be.false;
+			log._v2Receive.clearPeer(remoteHash);
+			log._v2Send.clearPeer(remoteHash);
+			const lane = await openV2ReceiveLane(log, remoteKey, 4_243n);
+			expect(lane.peerSession.hasPredecessor).to.be.true;
+
+			// A sweep that ran while the peer was away left an authoritative
+			// frontier that holds `written` and honours the mark on `delivered`.
+			log.scheduleRepairSweep({
+				mode: "join-authoritative",
+				peers: new Set([remoteHash]),
+			});
+			await waitForResolved(
+				() => {
+					expect(sent(written.hash)).to.be.true;
+					expect(frontier()?.has(written.hash)).to.be.true;
+					expect(frontier()?.has(delivered.hash)).to.be.false;
+				},
+				{ timeout: 1_000, delayInterval: 10 },
+			);
+			expect(bypassing()).to.be.false;
+			expect(sent(delivered.hash)).to.be.false;
+
+			// The successor Full repeats the rows, so it schedules the repair. Its
+			// sweep pass is held once it has taken the peer.
+			holdPass = true;
+			await db.log.onMessage(
+				new FullReplicationInfoV2Message({
+					receiverChallenge: lane.state.receiverBinding!.slice(),
+					senderEpoch: randomBytes(32),
+					sequence: 1n,
+					segments: [range.toReplicationRange()],
+				}),
+				lane.context(2n),
+			);
+			await waitForResolved(() => expect(passHeld).to.be.true, {
+				timeout: 1_000,
+				delayInterval: 10,
+			});
+			expect(log._successorFullRepairSessions.has(lane.peerSession)).to.be.true;
+			expect(delayedRepair.calledOnce).to.be.true;
+
+			// Meanwhile the peer confirms `written`: the older frontier drains, and
+			// its runner wakes to find it empty.
+			await db.log.onMessage(
+				new ConfirmEntriesMessage({ hashes: [written.hash] }),
+				lane.context(3n),
+			);
+			await waitForResolved(
+				() => {
+					expect(log.isEntryKnownByPeer(written.hash, remoteHash)).to.be.true;
+					expect(frontier()).to.equal(undefined);
+					expect(
+						log._repairFrontierActiveTargetsByMode
+							.get("join-authoritative")
+							?.has(remoteHash) ?? false,
+					).to.be.false;
+				},
+				{ timeout: 5_000, delayInterval: 10 },
+			);
+			expect(sent(delivered.hash)).to.be.false;
+
+			// The repair's pass still queues `delivered` with the bypass, so the
+			// mark its previous process left does not suppress it.
+			releasePass.resolve();
+			await waitForResolved(() => expect(sent(delivered.hash)).to.be.true, {
+				timeout: 2_000,
+				delayInterval: 10,
+			});
+			expect(frontier()?.has(delivered.hash)).to.be.true;
+			expect(bypassing()).to.be.true;
+		} finally {
+			releasePass.resolve();
+			heldCandidates.restore();
+			findLeaders.restore();
+			delayedRepair.restore();
+			push.restore();
 			maybeMissing.restore();
 		}
 	});

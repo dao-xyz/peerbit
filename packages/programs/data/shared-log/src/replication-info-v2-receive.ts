@@ -259,11 +259,14 @@ export class ReplicationInfoV2ReceiveCoordinator {
 	_receiveStates!: Map<string, ReplicationInfoV2ReceiveState>;
 	/**
 	 * Post-B12 V2 resync memory: sessions that have already taken one full
-	 * replication-info snapshot. Two load-bearing reads, both in
+	 * replication-info snapshot. Three load-bearing reads. Two are in
 	 * observeCapability: phase selection (a remembered session opens in
 	 * "resync" instead of "awaiting-full"), and capability refresh (the
 	 * preserveCutover decision, which keeps the memory only when a re-advert
-	 * arrives under the same session with a ready sender).
+	 * arrives under the same session with a ready sender). The third is
+	 * hasCommittedFull, which gates SharedLog's reconnect entry inventory wake:
+	 * dropping a session's memory also stops that session's inventory pass at
+	 * its later transport edges.
 	 */
 	_cutoverPeerSessions!: WeakSet<object>;
 	_localCapabilityReadyBySession!: WeakMap<object, LocalCapabilityReady>;
@@ -1861,6 +1864,16 @@ export class ReplicationInfoV2ReceiveCoordinator {
 			!this._reservedAdmissionsByPeer.has(properties.peerHash) &&
 			this.isStateCurrent(state)
 		);
+	}
+
+	/**
+	 * True once a Full for this exact PeerSession has committed (the only write
+	 * is in commit) and until its resync memory is dropped: clearPeer,
+	 * revokePeerCapability, or an observeCapability that cannot keep it. An
+	 * empty Full counts. SharedLog's reconnect entry inventory wake reads this.
+	 */
+	hasCommittedFull(peerSession: object): boolean {
+		return this._cutoverPeerSessions.has(peerSession);
 	}
 
 	commit(admission: ReplicationInfoV2ReceiveAdmission): boolean {

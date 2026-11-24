@@ -1,6 +1,6 @@
 import { serialize } from "@dao-xyz/borsh";
 import { AnyBlockStore } from "@peerbit/blocks";
-import { Ed25519Keypair } from "@peerbit/crypto";
+import { Ed25519Keypair, type PublicSignKey } from "@peerbit/crypto";
 import { Log } from "@peerbit/log";
 import { waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
@@ -434,6 +434,30 @@ describe("receive admission settled-session offline-author entry recovery", func
 								observeWritable,
 								{ signal: listeners.signal },
 							);
+						// What SharedLog's own listener saw at each replacement edge.
+						const edges: {
+							session: unknown;
+							phase?: string;
+							committed: boolean;
+						}[][] = [[], []];
+						for (const [index, peer] of peers.entries())
+							(peer.services.pubsub as any).addEventListener(
+								"peer:stream-ready",
+								({ detail }: CustomEvent<PublicSignKey>) => {
+									if (detail.hashcode() !== hashes[1 - index]) return;
+									const session = logs[index]._peerSessions.current(
+										hashes[1 - index],
+									);
+									edges[index].push({
+										session,
+										phase: session?.phase,
+										committed: session
+											? logs[index]._v2Receive._cutoverPeerSessions.has(session)
+											: false,
+									});
+								},
+								{ signal: listeners.signal },
+							);
 						phase = "replace writable streams before old retirement";
 						partitioned = false;
 						await holderPeer.dial(missingPeer.getMultiaddrs());
@@ -499,6 +523,20 @@ describe("receive admission settled-session offline-author entry recovery", func
 									message.hashes.includes(entry.hash),
 							),
 						).to.equal(true);
+						// The replacement keeps the settled session's committed Full, which
+						// is what lets its edge start the reconnect inventory pass.
+						for (let index = 0; index < 2; index++) {
+							expect(edges[index], "peer " + index + "'s replacement edges").not
+								.to.be.empty;
+							for (const edge of edges[index]) {
+								expect(edge.session === captured[index].session).to.equal(true);
+								expect(edge.phase).to.equal("open");
+								expect(
+									edge.committed,
+									"settled session keeps its committed Full at the edge",
+								).to.equal(true);
+							}
+						}
 					} catch (error) {
 						if (error instanceof Error)
 							error.message = phase + ": " + error.message;
