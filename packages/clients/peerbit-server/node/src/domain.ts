@@ -5,7 +5,7 @@ import type { DockerContainerInspection } from "./docker.js";
 const isNode = typeof process !== "undefined" && process.versions?.node != null;
 
 export const CERTBOT_IMAGE =
-	"jonasal/nginx-certbot:6.2.0-nginx1.31.2@sha256:59c217749aa27effc5109249902e1f5cdbfdfa26721d7dbd4e7162380a07c2cc";
+	"jonasal/nginx-certbot:6.2.0-nginx1.31.9@sha256:5b0a231608537796768ddfda251cac8400d7f261b9ebf19a24aa2e2973398ebf";
 export const CERTBOT_MANAGED_LABEL = "org.peerbit.managed";
 export const CERTBOT_MANAGED_LABEL_VALUE = "nginx-certbot";
 
