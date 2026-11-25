@@ -7,6 +7,10 @@ import {
 	replaceDockerContainer,
 	withQuiescedDockerContainer,
 } from "../src/docker.js";
+import {
+	CERTBOT_IMAGE,
+	buildCertbotContainerArguments,
+} from "../src/domain.js";
 
 type FakeContainer = {
 	healthStatus?: string;
@@ -303,6 +307,43 @@ describe("replaceDockerContainer", () => {
 			running: true,
 		});
 		expect(docker.containers.has(runningBackupName)).to.be.false;
+	});
+
+	it("keeps environment values out of a failed run's error", async () => {
+		const docker = createDocker({
+			[name]: { id: "legacy", running: true },
+		});
+		const email = "operator@example.com";
+		const execute: DockerExecutor = async (args) => {
+			if (args[0] !== "run") return docker.execute(args);
+			// child_process quotes the whole command line when a command fails.
+			throw new Error(
+				`Command failed: docker ${args.join(" ")}\ndocker: Error response from daemon: mount failed`,
+			);
+		};
+
+		let error: Error | undefined;
+		try {
+			await replaceDockerContainer(
+				name,
+				buildCertbotContainerArguments({
+					containerName: name,
+					email,
+					nginxConfigPath: "/state/nginx",
+					secretsPath: "/state/secrets",
+					uiPath: "/state/ui",
+				}),
+				{ ...options(docker), execute },
+			);
+		} catch (caught) {
+			error = caught as Error;
+		}
+
+		expect(error?.message).to.include("previous container restored");
+		expect(error?.message).not.to.include(email);
+		expect(error?.message).to.include("--env CERTBOT_EMAIL=<redacted> -v");
+		expect(error?.message).to.include(CERTBOT_IMAGE);
+		expect(error?.message).to.include("mount failed");
 	});
 
 	it("retries when a detached container exits after an initially good probe", async () => {
