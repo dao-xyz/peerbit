@@ -182,6 +182,41 @@ describe("getDomainFromConfig", () => {
 		expect(Date.now() - started).to.be.lessThan(250);
 	});
 
+	it("stops waiting when the new container keeps answering 403 or 404", async () => {
+		// Connection errors (443 is closed while a first-time setup waits for its
+		// certificate) and 5xx answers keep the wait going and reset the count.
+		const answers: Array<{ data: string; status: number } | Error> = [
+			Object.assign(new Error("connect ECONNREFUSED"), {
+				code: "ECONNREFUSED",
+			}),
+			{ data: "Not Found", status: 404 },
+			{ data: "Bad Gateway", status: 502 },
+			{ data: "Forbidden", status: 403 },
+			{ data: "Not Found", status: 404 },
+			{ data: "Not Found", status: 404 },
+		];
+		let requests = 0;
+		let error: Error | undefined;
+		try {
+			await waitForPeerbitDomain("node.example.com", {
+				challengeToken: "b".repeat(64),
+				delayIntervalMs: 0,
+				request: async () => {
+					const answer = answers[Math.min(requests++, answers.length - 1)];
+					if (answer instanceof Error) throw answer;
+					return answer;
+				},
+				timeoutMs: 2000,
+			});
+		} catch (caught) {
+			error = caught as Error;
+		}
+		expect(error?.message).to.include(
+			"answered HTTP 404 to 3 readiness requests in a row",
+		);
+		expect(requests).equal(answers.length);
+	});
+
 	it("pins the certificate container to an immutable image", () => {
 		expect(CERTBOT_IMAGE).to.match(
 			/^jonasal\/nginx-certbot:[^@]+@sha256:[a-f0-9]{64}$/,

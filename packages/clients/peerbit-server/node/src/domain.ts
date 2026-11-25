@@ -138,6 +138,14 @@ export const isPeerbitDomainChallengeResponse = (
 	challengeToken: string,
 ) => response.status === 200 && response.data === challengeToken;
 
+// A 403 or 404 over valid TLS comes from the new container serving its real
+// certificate, so the staged files it mounts are unreadable or missing and stay
+// that way. A first-time setup does not answer like that: jonasal/nginx-certbot
+// keeps the 443 server disabled until its certificate files exist, so those
+// requests fail to connect and are retried. Requiring a few answers in a row
+// tolerates a stray one and still starts the rollback within seconds.
+const DOMAIN_READINESS_DEFINITIVE_ANSWERS = 3;
+
 export const waitForPeerbitDomain = async (
 	domain: string,
 	options: {
@@ -184,6 +192,8 @@ export const waitForPeerbitDomain = async (
 
 	const deadline = Date.now() + timeoutMs;
 	let attempt = 0;
+	let definitiveAnswers = 0;
+	let lastStatus: number | undefined;
 	while (Date.now() < deadline) {
 		const remainingMs = deadline - Date.now();
 		const attemptTimeoutMs = Math.min(requestTimeoutMs, remainingMs);
@@ -213,12 +223,21 @@ export const waitForPeerbitDomain = async (
 			) {
 				return;
 			}
+			lastStatus = response.status;
+			definitiveAnswers =
+				lastStatus === 403 || lastStatus === 404 ? definitiveAnswers + 1 : 0;
 		} catch {
 			// DNS, TLS, HTTP, and per-request timeout failures are retried until the
 			// overall deadline. The old container remains available for rollback.
+			definitiveAnswers = 0;
 		} finally {
 			if (timer) clearTimeout(timer);
 			controller.abort();
+		}
+		if (definitiveAnswers >= DOMAIN_READINESS_DEFINITIVE_ANSWERS) {
+			throw new Error(
+				`Peerbit at https://${domain} answered HTTP ${lastStatus} to ${definitiveAnswers} readiness requests in a row`,
+			);
 		}
 
 		const sleepMs = Math.min(delayIntervalMs, deadline - Date.now());
