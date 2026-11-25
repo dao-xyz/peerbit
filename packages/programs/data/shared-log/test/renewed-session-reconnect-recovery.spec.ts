@@ -220,6 +220,7 @@ describe("receive admission renewed-session reconnect recovery", function () {
 						logs[0].syncronizer,
 						"onMaybeMissingEntries",
 					);
+					const pushes = sandbox.spy(logs[0], "pushEntryHashes");
 					const callsFor = (
 						spy: sinon.SinonSpy,
 						index: number,
@@ -556,23 +557,66 @@ describe("receive admission renewed-session reconnect recovery", function () {
 					assertUnwokenCycle(1);
 
 					// The same ordering with no drain, after a join-authoritative sweep
-					// for B ran while B was away. Whether that sweep offered anything
-					// into the dead transport is only reported, in this cycle's
-					// failure messages.
+					// for B ran while B was away. The sweep names B, which makes B a
+					// full-replica repair candidate, so A must send this cycle's
+					// entries into the dead transport, and delivery after the return
+					// must not wait on those sends.
 					cycle = 2;
 					const timersPending =
 						logs[0]._joinAuthoritativeRepairTimersByDelay.size;
-					let offeredDuringAbsence: boolean | undefined;
+					let repairForBRunning: boolean | undefined;
+					let sentDuringAbsence: string | undefined;
 					const cycle2 = (text: string) =>
-						`cycle 2 (timersPending=${timersPending}, offeredDuringAbsence=${offeredDuringAbsence ?? "unrecorded"}): ${text}`;
+						`cycle 2 (timersPending=${timersPending}, repairForBRunning=${repairForBRunning ?? "unrecorded"}, sentDuringAbsence=${sentDuringAbsence ?? "unrecorded"}): ${text}`;
 					phase = cycle2("partition");
 					await partition();
 					phase = cycle2("write while partitioned");
 					const a2 = await write(2);
+					// Nothing carried this cycle's entries before it wrote them, and B
+					// stays away until the heal below, so every send of them until
+					// then went into the dead transport.
+					const cycle2Hashes = new Set([a2.entry.hash, offline[1].entry.hash]);
+					const carriesCycle2Entry = (entryHashes: Iterable<string>) => {
+						for (const hash of entryHashes)
+							if (cycle2Hashes.has(hash)) return true;
+						return false;
+					};
+					const sendsToB = () => {
+						const offered = offers.getCalls().some((call) => {
+							const { entries, targets } = call.args[0] as {
+								entries: ReadonlyMap<string, unknown>;
+								targets: string[];
+							};
+							return (
+								targets.includes(hashes[1]) &&
+								carriesCycle2Entry(entries.keys())
+							);
+						});
+						const pushed = pushes
+							.getCalls()
+							.some(
+								(call) =>
+									call.args[0] === hashes[1] &&
+									carriesCycle2Entry(call.args[1] as string[]),
+							);
+						return offered
+							? pushed
+								? "offered and pushed"
+								: "offered"
+							: pushed
+								? "pushed"
+								: "nothing";
+					};
 					phase = cycle2(
 						"run a delayed join-authoritative sweep while B is away",
 					);
-					const offersBefore = offers.callCount;
+					// One of cycle 1's delayed sweeps can fire while B is away and
+					// start the repair for B first. This sweep then adds this cycle's
+					// entries to that repair, whose next round pushes them.
+					repairForBRunning =
+						logs[0]._repairFrontierActiveTargetsByMode
+							.get("join-authoritative")
+							?.has(hashes[1]) === true;
 					logs[0].scheduleRepairSweep({
 						mode: "join-authoritative",
 						peers: new Set([hashes[1]]),
@@ -584,20 +628,17 @@ describe("receive admission renewed-session reconnect recovery", function () {
 						},
 						{ timeout: 5_000 },
 					);
-					offeredDuringAbsence = offers
-						.getCalls()
-						.slice(offersBefore)
-						.some((call) => {
-							const { entries, targets } = call.args[0] as {
-								entries: ReadonlyMap<string, unknown>;
-								targets: string[];
-							};
-							return (
-								targets.includes(hashes[1]) &&
-								(entries.has(a2.entry.hash) ||
-									entries.has(offline[1].entry.hash))
-							);
-						});
+					phase = cycle2("A sent this cycle's entries into the dead transport");
+					await waitForResolved(
+						() => {
+							sentDuringAbsence = sendsToB();
+							expect(
+								sentDuringAbsence,
+								"the sweep names B, a full-replica repair candidate, so A offers or pushes a2 or the imported cycle-2 head into the dead transport",
+							).not.to.equal("nothing");
+						},
+						{ timeout: 5_000 },
+					);
 					phase = cycle2("heal with Subscribe processing held");
 					const hold2 = holdSubscriptionsUntilBothEdges(2);
 					await heal();
