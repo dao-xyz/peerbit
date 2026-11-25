@@ -242,6 +242,30 @@ export const pullDockerImage = async (
 const errorMessage = (error: any): string =>
 	error?.message || error?.stderr || String(error);
 
+/**
+ * A failed `docker run` quotes its whole command line, and `--env` values can be
+ * private, such as the certificate contact email. Keep the variable names and
+ * the rest of the command readable, without the values.
+ */
+const redactDockerEnvironment = (message: string, args: readonly string[]) => {
+	for (let index = 0; index < args.length; index++) {
+		const assignment =
+			args[index] === "--env" || args[index] === "-e"
+				? args[index + 1]
+				: args[index].startsWith("--env=")
+					? args[index].slice("--env=".length)
+					: undefined;
+		const separator = assignment?.indexOf("=") ?? -1;
+		if (assignment && separator > 0 && separator < assignment.length - 1) {
+			message = message.replaceAll(
+				assignment,
+				`${assignment.slice(0, separator)}=<redacted>`,
+			);
+		}
+	}
+	return message;
+};
+
 export const DOCKER_REPLACEMENT_LABEL = "org.peerbit.replacement";
 export const DOCKER_REPLACEMENT_ORIGINAL_ID_LABEL =
 	"org.peerbit.replacement.original-id";
@@ -815,7 +839,11 @@ export const replaceDockerContainer = async (
 		}
 
 		const startReplacement = async () => {
-			const result = await execute(labeledRunArgs);
+			const result = await execute(labeledRunArgs).catch((error) => {
+				throw new Error(
+					redactDockerEnvironment(errorMessage(error), labeledRunArgs),
+				);
+			});
 			const returnedId = result.stdout.trim();
 			if (returnedId) replacementId = returnedId;
 			const started = await inspectOwnedReplacement(

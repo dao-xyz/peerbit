@@ -22,6 +22,7 @@ import {
 	pruneDomainGenerations,
 	replaceUiFolder,
 	resolvePeerbitCertbotInterruptedPair,
+	stageDomainGeneration,
 	waitForPeerbitDomain,
 } from "../src/domain.js";
 
@@ -179,6 +180,41 @@ describe("getDomainFromConfig", () => {
 		}
 		expect(error?.message).to.include("Timed out waiting");
 		expect(Date.now() - started).to.be.lessThan(250);
+	});
+
+	it("stops waiting when the new container keeps answering 403 or 404", async () => {
+		// Connection errors (443 is closed while a first-time setup waits for its
+		// certificate) and 5xx answers keep the wait going and reset the count.
+		const answers: Array<{ data: string; status: number } | Error> = [
+			Object.assign(new Error("connect ECONNREFUSED"), {
+				code: "ECONNREFUSED",
+			}),
+			{ data: "Not Found", status: 404 },
+			{ data: "Bad Gateway", status: 502 },
+			{ data: "Forbidden", status: 403 },
+			{ data: "Not Found", status: 404 },
+			{ data: "Not Found", status: 404 },
+		];
+		let requests = 0;
+		let error: Error | undefined;
+		try {
+			await waitForPeerbitDomain("node.example.com", {
+				challengeToken: "b".repeat(64),
+				delayIntervalMs: 0,
+				request: async () => {
+					const answer = answers[Math.min(requests++, answers.length - 1)];
+					if (answer instanceof Error) throw answer;
+					return answer;
+				},
+				timeoutMs: 2000,
+			});
+		} catch (caught) {
+			error = caught as Error;
+		}
+		expect(error?.message).to.include(
+			"answered HTTP 404 to 3 readiness requests in a row",
+		);
+		expect(requests).equal(answers.length);
 	});
 
 	it("pins the certificate container to an immutable image", () => {
@@ -530,6 +566,64 @@ describe("getDomainFromConfig", () => {
 			expect(fs.existsSync(path.join(destination, "stale.html"))).to.be.false;
 			expect(fs.existsSync(path.join(destination, "source"))).to.be.false;
 		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("stages a generation that NGINX workers can read under a restrictive umask", async function () {
+		if (process.platform === "win32") this.skip();
+		const root = fs.mkdtempSync(
+			path.join(os.tmpdir(), "peerbit-domain-stage-"),
+		);
+		const previousUmask = process.umask(0o077);
+		try {
+			const uiSource = path.join(root, "source");
+			fs.mkdirSync(path.join(uiSource, "assets"), {
+				mode: 0o700,
+				recursive: true,
+			});
+			fs.writeFileSync(path.join(uiSource, "index.html"), "ui", {
+				mode: 0o600,
+			});
+			fs.writeFileSync(path.join(uiSource, "assets", "app.js"), "app", {
+				mode: 0o600,
+			});
+			const generationRoot = path.join(root, "generations", "generation-1");
+			const challenge = "a".repeat(64);
+			const token = `ui/.well-known/peerbit-generation/${challenge}`;
+
+			await stageDomainGeneration({
+				domain: "node.example.com",
+				nginxConfigPath: path.join(generationRoot, "nginx"),
+				readinessChallenge: challenge,
+				uiPath: path.join(generationRoot, "ui"),
+				uiSource,
+			});
+
+			const mode = (relative: string) =>
+				fs.statSync(path.join(generationRoot, relative)).mode & 0o777;
+			for (const directory of [
+				"nginx",
+				"ui",
+				"ui/assets",
+				"ui/.well-known",
+				"ui/.well-known/peerbit-generation",
+			]) {
+				expect(mode(directory), directory).equal(0o755);
+			}
+			for (const file of [
+				"nginx/default.conf",
+				"ui/index.html",
+				"ui/assets/app.js",
+				token,
+			]) {
+				expect(mode(file), file).equal(0o644);
+			}
+			expect(fs.readFileSync(path.join(generationRoot, token), "utf8")).equal(
+				challenge,
+			);
+		} finally {
+			process.umask(previousUmask);
 			fs.rmSync(root, { recursive: true, force: true });
 		}
 	});

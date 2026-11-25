@@ -138,6 +138,14 @@ export const isPeerbitDomainChallengeResponse = (
 	challengeToken: string,
 ) => response.status === 200 && response.data === challengeToken;
 
+// A 403 or 404 over valid TLS comes from the new container serving its real
+// certificate, so the staged files it mounts are unreadable or missing and stay
+// that way. A first-time setup does not answer like that: jonasal/nginx-certbot
+// keeps the 443 server disabled until its certificate files exist, so those
+// requests fail to connect and are retried. Requiring a few answers in a row
+// tolerates a stray one and still starts the rollback within seconds.
+const DOMAIN_READINESS_DEFINITIVE_ANSWERS = 3;
+
 export const waitForPeerbitDomain = async (
 	domain: string,
 	options: {
@@ -184,6 +192,8 @@ export const waitForPeerbitDomain = async (
 
 	const deadline = Date.now() + timeoutMs;
 	let attempt = 0;
+	let definitiveAnswers = 0;
+	let lastStatus: number | undefined;
 	while (Date.now() < deadline) {
 		const remainingMs = deadline - Date.now();
 		const attemptTimeoutMs = Math.min(requestTimeoutMs, remainingMs);
@@ -213,12 +223,21 @@ export const waitForPeerbitDomain = async (
 			) {
 				return;
 			}
+			lastStatus = response.status;
+			definitiveAnswers =
+				lastStatus === 403 || lastStatus === 404 ? definitiveAnswers + 1 : 0;
 		} catch {
 			// DNS, TLS, HTTP, and per-request timeout failures are retried until the
 			// overall deadline. The old container remains available for rollback.
+			definitiveAnswers = 0;
 		} finally {
 			if (timer) clearTimeout(timer);
 			controller.abort();
+		}
+		if (definitiveAnswers >= DOMAIN_READINESS_DEFINITIVE_ANSWERS) {
+			throw new Error(
+				`Peerbit at https://${domain} answered HTTP ${lastStatus} to ${definitiveAnswers} readiness requests in a row`,
+			);
 		}
 
 		const sleepMs = Math.min(delayIntervalMs, deadline - Date.now());
@@ -630,6 +649,50 @@ export const replaceUiFolder = async (source: string, destination: string) => {
 	}
 };
 
+/**
+ * Write the UI, readiness token and NGINX config that a generation's container
+ * mounts. NGINX workers read them as an unprivileged user, so folders get 0755
+ * and files 0644 explicitly: the caller's umask masks the modes that mkdir and
+ * write create, and the copied UI keeps its source modes.
+ */
+export const stageDomainGeneration = async (properties: {
+	domain: string;
+	nginxConfigPath: string;
+	readinessChallenge: string;
+	uiPath: string;
+	uiSource: string;
+}) => {
+	const fs = await import("fs");
+	const path = await import("path");
+	await replaceUiFolder(properties.uiSource, properties.uiPath);
+	const readinessChallengeDirectory = path.join(
+		properties.uiPath,
+		".well-known",
+		"peerbit-generation",
+	);
+	fs.mkdirSync(readinessChallengeDirectory, { recursive: true });
+	fs.writeFileSync(
+		path.join(readinessChallengeDirectory, properties.readinessChallenge),
+		properties.readinessChallenge,
+		"utf8",
+	);
+	await createConfig(properties.nginxConfigPath, properties.domain);
+
+	const makeReadable = (target: string) => {
+		const stats = fs.lstatSync(target);
+		if (stats.isDirectory()) {
+			fs.chmodSync(target, 0o755);
+			for (const entry of fs.readdirSync(target)) {
+				makeReadable(path.join(target, entry));
+			}
+		} else if (stats.isFile()) {
+			fs.chmodSync(target, 0o644);
+		}
+	};
+	makeReadable(properties.uiPath);
+	makeReadable(properties.nginxConfigPath);
+};
+
 export const startCertbot = async (
 	domain: string,
 	email: string,
@@ -667,19 +730,13 @@ export const startCertbot = async (
 	let replacementPrepared = false;
 	let rollbackDispositionHandled = false;
 	try {
-		await replaceUiFolder(await getUIPath(), uiPath);
-		const readinessChallengeDirectory = path.join(
-			uiPath,
-			".well-known",
-			"peerbit-generation",
-		);
-		fs.mkdirSync(readinessChallengeDirectory, { recursive: true });
-		fs.writeFileSync(
-			path.join(readinessChallengeDirectory, readinessChallenge),
+		await stageDomainGeneration({
+			domain,
+			nginxConfigPath,
 			readinessChallenge,
-			"utf8",
-		);
-		await createConfig(nginxConfigPath, domain);
+			uiPath,
+			uiSource: await getUIPath(),
+		});
 
 		// Reconfiguration keeps the old container and generation as a stopped
 		// backup until the new container and active-generation pointer both succeed.
