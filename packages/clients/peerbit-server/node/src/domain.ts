@@ -630,6 +630,50 @@ export const replaceUiFolder = async (source: string, destination: string) => {
 	}
 };
 
+/**
+ * Write the UI, readiness token and NGINX config that a generation's container
+ * mounts. NGINX workers read them as an unprivileged user, so folders get 0755
+ * and files 0644 explicitly: the caller's umask masks the modes that mkdir and
+ * write create, and the copied UI keeps its source modes.
+ */
+export const stageDomainGeneration = async (properties: {
+	domain: string;
+	nginxConfigPath: string;
+	readinessChallenge: string;
+	uiPath: string;
+	uiSource: string;
+}) => {
+	const fs = await import("fs");
+	const path = await import("path");
+	await replaceUiFolder(properties.uiSource, properties.uiPath);
+	const readinessChallengeDirectory = path.join(
+		properties.uiPath,
+		".well-known",
+		"peerbit-generation",
+	);
+	fs.mkdirSync(readinessChallengeDirectory, { recursive: true });
+	fs.writeFileSync(
+		path.join(readinessChallengeDirectory, properties.readinessChallenge),
+		properties.readinessChallenge,
+		"utf8",
+	);
+	await createConfig(properties.nginxConfigPath, properties.domain);
+
+	const makeReadable = (target: string) => {
+		const stats = fs.lstatSync(target);
+		if (stats.isDirectory()) {
+			fs.chmodSync(target, 0o755);
+			for (const entry of fs.readdirSync(target)) {
+				makeReadable(path.join(target, entry));
+			}
+		} else if (stats.isFile()) {
+			fs.chmodSync(target, 0o644);
+		}
+	};
+	makeReadable(properties.uiPath);
+	makeReadable(properties.nginxConfigPath);
+};
+
 export const startCertbot = async (
 	domain: string,
 	email: string,
@@ -667,19 +711,13 @@ export const startCertbot = async (
 	let replacementPrepared = false;
 	let rollbackDispositionHandled = false;
 	try {
-		await replaceUiFolder(await getUIPath(), uiPath);
-		const readinessChallengeDirectory = path.join(
-			uiPath,
-			".well-known",
-			"peerbit-generation",
-		);
-		fs.mkdirSync(readinessChallengeDirectory, { recursive: true });
-		fs.writeFileSync(
-			path.join(readinessChallengeDirectory, readinessChallenge),
+		await stageDomainGeneration({
+			domain,
+			nginxConfigPath,
 			readinessChallenge,
-			"utf8",
-		);
-		await createConfig(nginxConfigPath, domain);
+			uiPath,
+			uiSource: await getUIPath(),
+		});
 
 		// Reconfiguration keeps the old container and generation as a stopped
 		// backup until the new container and active-generation pointer both succeed.

@@ -22,6 +22,7 @@ import {
 	pruneDomainGenerations,
 	replaceUiFolder,
 	resolvePeerbitCertbotInterruptedPair,
+	stageDomainGeneration,
 	waitForPeerbitDomain,
 } from "../src/domain.js";
 
@@ -530,6 +531,64 @@ describe("getDomainFromConfig", () => {
 			expect(fs.existsSync(path.join(destination, "stale.html"))).to.be.false;
 			expect(fs.existsSync(path.join(destination, "source"))).to.be.false;
 		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("stages a generation that NGINX workers can read under a restrictive umask", async function () {
+		if (process.platform === "win32") this.skip();
+		const root = fs.mkdtempSync(
+			path.join(os.tmpdir(), "peerbit-domain-stage-"),
+		);
+		const previousUmask = process.umask(0o077);
+		try {
+			const uiSource = path.join(root, "source");
+			fs.mkdirSync(path.join(uiSource, "assets"), {
+				mode: 0o700,
+				recursive: true,
+			});
+			fs.writeFileSync(path.join(uiSource, "index.html"), "ui", {
+				mode: 0o600,
+			});
+			fs.writeFileSync(path.join(uiSource, "assets", "app.js"), "app", {
+				mode: 0o600,
+			});
+			const generationRoot = path.join(root, "generations", "generation-1");
+			const challenge = "a".repeat(64);
+			const token = `ui/.well-known/peerbit-generation/${challenge}`;
+
+			await stageDomainGeneration({
+				domain: "node.example.com",
+				nginxConfigPath: path.join(generationRoot, "nginx"),
+				readinessChallenge: challenge,
+				uiPath: path.join(generationRoot, "ui"),
+				uiSource,
+			});
+
+			const mode = (relative: string) =>
+				fs.statSync(path.join(generationRoot, relative)).mode & 0o777;
+			for (const directory of [
+				"nginx",
+				"ui",
+				"ui/assets",
+				"ui/.well-known",
+				"ui/.well-known/peerbit-generation",
+			]) {
+				expect(mode(directory), directory).equal(0o755);
+			}
+			for (const file of [
+				"nginx/default.conf",
+				"ui/index.html",
+				"ui/assets/app.js",
+				token,
+			]) {
+				expect(mode(file), file).equal(0o644);
+			}
+			expect(fs.readFileSync(path.join(generationRoot, token), "utf8")).equal(
+				challenge,
+			);
+		} finally {
+			process.umask(previousUmask);
 			fs.rmSync(root, { recursive: true, force: true });
 		}
 	});
